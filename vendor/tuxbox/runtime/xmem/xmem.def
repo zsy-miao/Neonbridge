@@ -1,0 +1,36 @@
+LIBRARY xmem
+EXPORTS
+    XMemAlloc @1
+    XMemAllocDefault @2
+    XMemAllocatePhysicalPages @3
+    XMemCreateWin32Heap @4
+    XMemDumpMemoryStats @5
+    XMemFree @6
+    XMemFreeDefault @7
+    XMemFreePhysicalPages @8
+    XMemGetAllocationHysteresis @9
+    XMemGetAllocationStatistics @10
+    XMemGetFreePageStatistics @11
+    XMemGetPartitionHandleAndId @12
+    XMemGetPhysicalMemoryLayout @13
+    XMemGetTitleHeap @14
+    XMemGetWin32HeapStatistics @15
+    XMemGetWorkingSetStatistics @16
+    XMemGetWriteWatch @17
+    XMemHistoryData @18 DATA
+    XMemIsToolsMemAvailable @19
+    XMemMakeTag @20
+    XMemMapPhysicalPages @21
+    XMemMapPhysicalPagesScatter @22
+    XMemPreallocateFreeSpace @23
+    XMemResumeWriteWatch @24
+    XMemSetAllocationHooks @25
+    XMemSetAllocationHysteresis @26
+    XMemSetOption @27
+    XMemSetWin32HeapTrackingHooks @28
+    XMemSetWinHttpHooks=tuxbox_xhttp.XbSetWinHttpHooks @29
+    XMemTransferMemory @30
+    XMemVirtualAlloc @31
+    XMemVirtualQuery @32
+    TuxBoxCopyPageMappings PRIVATE
+    TuxBoxValidatePinnedPageMappings PRIVATE

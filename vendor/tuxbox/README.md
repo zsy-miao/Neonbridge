@@ -1,0 +1,1 @@
+Vendored from TuxBox (github.com/brcly/TuxBox) 938c402: the Rust console-library providers under runtime/ (plus GameInput abi.cpp), used by `6ixpack launch`. Test guests, Python tooling and the Proton-only shader prep are left out. runtime/dxbc is Apache-2.0; the rest of TuxBox ships no top-level license.

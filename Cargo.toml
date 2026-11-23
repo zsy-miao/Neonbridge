@@ -1,0 +1,15 @@
+[package]
+name = "sixlaunch"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "6ixlaunch"
+path = "src/main.rs"
+
+[workspace]
+exclude = ["vendor"]
+
+[profile.release]
+opt-level = 3

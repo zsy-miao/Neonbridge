@@ -1,0 +1,118 @@
+//! 6ixpack: the console's `G:` drive (the title's install root, e.g. `G:/appdata0.rpf`)
+//! is the folder that holds the exe. The exe's path-taking file imports are patched
+//! so `G:\...` / `G:/...` resolve there; every rewrite is logged (TUXBOX_LOG).
+
+use std::ffi::c_void;
+
+use crate::loader::{exe_dir, log, patch_imports};
+
+type H = *mut c_void;
+
+unsafe extern "system" {
+    fn CreateFileW(p: *const u16, access: u32, share: u32, sa: *mut c_void, disp: u32, flags: u32, tmpl: H) -> H;
+    fn CreateDirectoryW(p: *const u16, sa: *mut c_void) -> i32;
+    fn DeleteFileW(p: *const u16) -> i32;
+    fn RemoveDirectoryW(p: *const u16) -> i32;
+    fn FindFirstFileW(p: *const u16, data: *mut c_void) -> H;
+    fn GetFileAttributesW(p: *const u16) -> u32;
+    fn GetFileAttributesA(p: *const u8) -> u32;
+    fn GetFileAttributesExW(p: *const u16, level: i32, info: *mut c_void) -> i32;
+    fn SetFileAttributesW(p: *const u16, attrs: u32) -> i32;
+    fn MoveFileExW(from: *const u16, to: *const u16, flags: u32) -> i32;
+}
+
+const SEP: u16 = b'\\' as u16;
+const SLASH: u16 = b'/' as u16;
+
+/// `G:` path -> NUL-terminated path under the exe directory; `None` leaves it alone.
+fn map(p: *const u16) -> Option<Vec<u16>> {
+    if p.is_null() {
+        return None;
+    }
+    let (d, c) = unsafe { (*p, *p.add(1)) };
+    if !(d == b'G' as u16 || d == b'g' as u16) || c != b':' as u16 {
+        return None;
+    }
+    let s = unsafe { *p.add(2) };
+    if !(s == 0 || s == SEP || s == SLASH) {
+        return None;
+    }
+    let mut n = 2;
+    while unsafe { *p.add(n) } != 0 {
+        n += 1;
+    }
+    let rest = unsafe { std::slice::from_raw_parts(p.add(2), n - 2) };
+    let rest = if rest.first().is_some_and(|&c| c == SEP || c == SLASH) { &rest[1..] } else { rest };
+    let mut out = exe_dir()?.to_vec();
+    out.extend(rest.iter().map(|&c| if c == SLASH { SEP } else { c }));
+    log(&format!("{} -> {}", String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) }), String::from_utf16_lossy(&out)));
+    out.push(0);
+    Some(out)
+}
+
+/// Run `f` with the mapped path (or the original).
+fn with<R>(p: *const u16, f: impl FnOnce(*const u16) -> R) -> R {
+    match map(p) {
+        Some(m) => f(m.as_ptr()),
+        None => f(p),
+    }
+}
+
+unsafe extern "system" fn create_file_w(p: *const u16, a: u32, s: u32, sa: *mut c_void, d: u32, fl: u32, t: H) -> H {
+    with(p, |p| unsafe { CreateFileW(p, a, s, sa, d, fl, t) })
+}
+unsafe extern "system" fn create_directory_w(p: *const u16, sa: *mut c_void) -> i32 {
+    with(p, |p| unsafe { CreateDirectoryW(p, sa) })
+}
+unsafe extern "system" fn delete_file_w(p: *const u16) -> i32 {
+    with(p, |p| unsafe { DeleteFileW(p) })
+}
+unsafe extern "system" fn remove_directory_w(p: *const u16) -> i32 {
+    with(p, |p| unsafe { RemoveDirectoryW(p) })
+}
+unsafe extern "system" fn find_first_file_w(p: *const u16, d: *mut c_void) -> H {
+    with(p, |p| unsafe { FindFirstFileW(p, d) })
+}
+unsafe extern "system" fn get_file_attributes_w(p: *const u16) -> u32 {
+    with(p, |p| unsafe { GetFileAttributesW(p) })
+}
+unsafe extern "system" fn get_file_attributes_a(p: *const u8) -> u32 {
+    if p.is_null() {
+        return unsafe { GetFileAttributesA(p) };
+    }
+    let w: Vec<u16> = unsafe { std::ffi::CStr::from_ptr(p.cast()) }.to_string_lossy().encode_utf16().chain([0]).collect();
+    match map(w.as_ptr()) {
+        Some(m) => unsafe { GetFileAttributesW(m.as_ptr()) },
+        None => unsafe { GetFileAttributesA(p) },
+    }
+}
+unsafe extern "system" fn get_file_attributes_ex_w(p: *const u16, l: i32, i: *mut c_void) -> i32 {
+    with(p, |p| unsafe { GetFileAttributesExW(p, l, i) })
+}
+unsafe extern "system" fn set_file_attributes_w(p: *const u16, a: u32) -> i32 {
+    with(p, |p| unsafe { SetFileAttributesW(p, a) })
+}
+unsafe extern "system" fn move_file_ex_w(from: *const u16, to: *const u16, f: u32) -> i32 {
+    with(from, |from| with(to, |to| unsafe { MoveFileExW(from, to, f) }))
+}
+
+pub(crate) unsafe fn install() {
+    let n = unsafe {
+        patch_imports(
+            |d| d.starts_with("api-ms-win-core-file-") || d == "kernel32.dll" || d == "kernelbase.dll",
+            &[
+                ("CreateFileW", create_file_w as *const () as usize),
+                ("CreateDirectoryW", create_directory_w as *const () as usize),
+                ("DeleteFileW", delete_file_w as *const () as usize),
+                ("RemoveDirectoryW", remove_directory_w as *const () as usize),
+                ("FindFirstFileW", find_first_file_w as *const () as usize),
+                ("GetFileAttributesW", get_file_attributes_w as *const () as usize),
+                ("GetFileAttributesA", get_file_attributes_a as *const () as usize),
+                ("GetFileAttributesExW", get_file_attributes_ex_w as *const () as usize),
+                ("SetFileAttributesW", set_file_attributes_w as *const () as usize),
+                ("MoveFileExW", move_file_ex_w as *const () as usize),
+            ],
+        )
+    };
+    log(&format!("{n} file import(s) patched; G:\\ maps to the exe folder"));
+}
