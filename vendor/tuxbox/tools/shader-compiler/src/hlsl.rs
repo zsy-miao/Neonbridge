@@ -2829,9 +2829,41 @@ impl<'a> Emitter<'a> {
                 }
                 Enc::Mtbuf => {
                     let rs = ins.src.get(1).and_then(sg).ok_or("mtbuf: bad srsrc")?;
-                    let raw = self.mesh_raw_descriptor(sym, rs)?
-                        .ok_or("typed buffer load requires a verified linear root SRV")?;
-                    self.res.insert(idx, vec![raw]);
+                    if let Some(raw) = self.mesh_raw_descriptor(sym, rs)? {
+                        self.res.insert(idx, vec![raw]);
+                        continue;
+                    }
+                    if let Some(Sym::DirectRaw(slot)) = sym.get(&rs) {
+                        self.res.insert(idx, vec![Res::Raw(*slot, false)]);
+                        continue;
+                    }
+                    if sym.get(&rs) == Some(&Sym::HeapDescriptor(4)) {
+                        self.res.insert(idx, vec![Res::HeapMubuf(rs)]);
+                        continue;
+                    }
+                    // A table descriptor: the host typed view's format performs the same
+                    // conversion as the instruction's, so it loads like buffer_load_format.
+                    if ins.op >= 4 {
+                        return Err("typed buffer store requires a verified linear root SRV".into());
+                    }
+                    let cands = self.desc_candidates(sym.get(&rs)).ok_or_else(|| {
+                        format!("mtbuf at {:#x}: s{rs} not a buffer descriptor ({:?})", ins.offset, sym.get(&rs))
+                    })?;
+                    let mut out: Vec<(u32, Res)> = Vec::new();
+                    for (table, off) in &cands {
+                        let (kind, slot) = self.table_binding(*table, *off, 32)?;
+                        let is_uav = match kind {
+                            Some(0) => false,
+                            Some(1) => true,
+                            other => return Err(format!("mtbuf at {:#x}: buffer in table of kind {other:?}", ins.offset)),
+                        };
+                        self.tbuf.insert((is_uav, slot));
+                        out.push((((*table as u32) << 24) | off, Res::TBuf(slot, is_uav)));
+                    }
+                    self.res.insert(idx, vec![out[0].1]);
+                    if out.len() > 1 {
+                        self.bsel.insert(idx, (rs, out));
+                    }
                 }
                 // buffer_gl0_inv / buffer_gl1_inv (MUBUF 0x71 / 0x72) have no resource operands.
                 Enc::Mubuf if ins.op == 0x71 || ins.op == 0x72 => {}
@@ -5745,6 +5777,47 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     fn emit_mtbuf(&mut self, idx: usize, ins: &Insn) -> Result<(), String> {
+        if let Some(Res::HeapMubuf(src)) = self.res.get(&idx).and_then(|r| r.first()).copied() {
+            // Element-indexed typed load through a heap view; the host view format converts.
+            let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
+            if ins.op >= 4 || (idxen && (offen || ins.aux.imm != 0)) || !self.zero_buffer_offset(ins)
+                || (ins.raw.get(1).copied().unwrap_or(0) >> 23) & 1 != 0 {
+                return Err("unsupported heap typed buffer addressing or modifiers".into());
+            }
+            let float = match ins.aux.imm2 {
+                24 | 50 | 56 => true,
+                60 => false,
+                f => return Err(format!("unsupported typed buffer format {f}")),
+            };
+            let Opnd::Vgpr(base) = ins.dst[0] else { return Err("invalid MTBUF destination".into()); };
+            // Every supported format is one dword, so a byte offset selects element offset / 4.
+            let element = if idxen {
+                r(&ins.src[0])?
+            } else {
+                let v = if offen { r(&ins.src[0])? } else { "0u".into() };
+                format!("(({v} + {}u) >> 2)", ins.aux.imm as u32)
+            };
+            let t = self.tmp;
+            self.tmp += 1;
+            self.regs.insert(format!("s{src}"));
+            let ty = if float { "float4" } else { "uint4" };
+            self.line(&format!("Buffer<{ty}> tb_hb{t} = ResourceDescriptorHeap[NonUniformResourceIndex(s{src})];"));
+            self.line(&format!("{ty} t{t} = tb_hb{t}[{element}];"));
+            for k in 0..=ins.op as u8 {
+                let dst = base.checked_add(k).ok_or("MTBUF destination overflows")?;
+                let c = XYZW[k as usize];
+                let v = if float { format!("asuint(t{t}.{c})") } else { format!("t{t}.{c}") };
+                self.wv(&Opnd::Vgpr(dst), &v)?;
+            }
+            return Ok(());
+        }
+        if let Some(Res::TBuf(..)) = self.res.get(&idx).and_then(|r| r.first()) {
+            // dword1[23] is TFE as in MUBUF, but dword0[18:16] hold the opcode where
+            // MUBUF keeps its LDS bit, so clear them before reusing the typed load.
+            let mut typed = ins.clone();
+            if let Some(first) = typed.raw.first_mut() { *first &= !0x7_0000; }
+            return self.emit_mubuf(idx, &typed);
+        }
         let Some(Res::Raw(slot, false)) = self.res.get(&idx).and_then(|r| r.first()).copied() else {
             return Err("typed buffer load has no verified linear root SRV".into());
         };
