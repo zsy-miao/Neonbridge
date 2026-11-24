@@ -169,6 +169,14 @@ pub(super) unsafe extern "system" fn wait_value64(
     target: u64,
     flags: u32,
 ) {
+    // TUXBOX_MEMORY_WAITS=0 (rebox d35c75f, re-derived): a bisect switch for
+    // stalls; the GPU memory wait is not recorded.
+    if crate::env_toggle!("TUXBOX_MEMORY_WAITS") == Some("0") {
+        static SKIPPED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&SKIPPED, || format!(
+            "GPU memory waits skipped (TUXBOX_MEMORY_WAITS=0); first at {address:#x}"));
+        return;
+    }
     let mut state = recording(list);
     if !state.ensure_open(&list.native) {
         return;
