@@ -287,7 +287,11 @@ unsafe fn make_compute(
     };
     let (translation, reflected) = match layout {
         Some(TableLayout::Reflected(table)) => {
-            let Some(code) = super::shader_cache::compute_with_root(bytes, table.layout.payload()) else {
+            // Embedded RTS0 cannot be replaced. The translator reads that original
+            // root and fills only the slots the appended signature adds.
+            let code = super::shader_cache::compute_with_root(bytes, table.layout.payload())
+                .or_else(|| super::shader_cache::prepared(bytes));
+            let Some(code) = code else {
                 super::compute_table::capture_stage_root(bytes, &table.original);
                 crate::diagnostics::compute_failure(bytes, E_NOTIMPL.0);
                 return unsafe { null_compute(this, root.map(|p| &p.native), desc, out) }.unwrap_or(E_NOTIMPL);

@@ -103,7 +103,7 @@ fn reflected_tables(
     let mut scalar_index = None;
     let mut resolve_constants = None;
     let mut recovered_samplers = Vec::new();
-    let bindings = match (program, signature.params.as_slice()) {
+    let bindings = match (&program, signature.params.as_slice()) {
         (Program::Compute(shader), params) => {
             let tables = match params {
                 [tables @ .., last] if matches!(last.kind, RootParamKind::Constants { num32: 1..=4, .. }) => tables,
@@ -176,7 +176,12 @@ fn reflected_tables(
         }
         _ => return Ok(TableLayout::Unsupported),
     };
-    let Some(bindings) = bindings else { return Ok(TableLayout::Unsupported) };
+    let Some(bindings) = bindings else {
+        if let Program::Compute(shader) = program {
+            return append_corroborated_ranges(device, original, shader, &signature, node);
+        }
+        return Ok(TableLayout::Unsupported);
+    };
     if signature.version != 2 || (bindings.is_empty() && scalar_index.is_none()) {
         return Ok(TableLayout::Unsupported);
     }
@@ -409,6 +414,128 @@ fn extend_root_from(
             index_map: index_map.then_some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
         })))
     }
+}
+
+/// Keep every embedded range and append FSSM slots the root left out.
+/// Shaders that already translate keep their parameter indexes. The game's
+/// descriptor-table handle still addresses the slot FSSM recorded.
+fn append_corroborated_ranges(
+    device: &ID3D12Device,
+    original: &RootSource,
+    shader: &[u8],
+    signature: &tuxbox_dxbc::rootsig::RootSig,
+    node: u32,
+) -> Result<TableLayout> {
+    if signature.version != 2 {
+        return Ok(TableLayout::Unsupported);
+    }
+    let extra = tuxbox_dxbc::compute_table::missing_root_descriptors(shader, signature);
+    if extra.is_empty() {
+        return Ok(TableLayout::Unsupported);
+    }
+    let bytes = original.serialized();
+    unsafe {
+        let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
+        D3D12CreateVersionedRootSignatureDeserializer(
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            &ID3D12VersionedRootSignatureDeserializer::IID,
+            (&raw mut reader).cast(),
+        )?;
+        let reader = reader.ok_or(E_POINTER)?;
+        let mut desc = *reader.GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_1)?;
+        let source = desc.Anonymous.Desc_1_1;
+        if source.NumParameters as usize != signature.params.len() || source.pParameters.is_null() {
+            return Err(E_INVALIDARG.into());
+        }
+        let mut parameters =
+            std::slice::from_raw_parts(source.pParameters, signature.params.len()).to_vec();
+        let mut stored = vec![Vec::new(); signature.params.len()];
+        let mut lengths = vec![0u32; signature.params.len()];
+        let mut accessed_views = Vec::new();
+        for (index, param) in signature.params.iter().enumerate() {
+            let RootParamKind::Table(declared) = &param.kind else { continue };
+            let additions: Vec<_> = extra.iter().filter(|binding| binding.table as usize == index).collect();
+            if additions.is_empty() {
+                continue;
+            }
+            let table = parameters[index].Anonymous.DescriptorTable;
+            let guest = std::slice::from_raw_parts(
+                table.pDescriptorRanges,
+                table.NumDescriptorRanges as usize,
+            );
+            let mut ranges = guest.to_vec();
+            for binding in &additions {
+                let ty = D3D12_DESCRIPTOR_RANGE_TYPE(binding.kind as i32);
+                let flags = guest
+                    .iter()
+                    .find(|range| range.RangeType == ty)
+                    .map(|range| range.Flags)
+                    .unwrap_or(
+                        D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE
+                            | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE,
+                    );
+                ranges.push(D3D12_DESCRIPTOR_RANGE1 {
+                    RangeType: ty,
+                    NumDescriptors: 1,
+                    BaseShaderRegister: binding.register,
+                    RegisterSpace: binding.space,
+                    Flags: flags,
+                    OffsetInDescriptorsFromTableStart: binding.slot,
+                });
+            }
+            stored[index] = ranges;
+            parameters[index].Anonymous.DescriptorTable = D3D12_ROOT_DESCRIPTOR_TABLE1 {
+                NumDescriptorRanges: stored[index].len() as u32,
+                pDescriptorRanges: stored[index].as_ptr(),
+            };
+            let Some((mut extent, mut views)) = finite_table(declared) else { continue };
+            for binding in &additions {
+                extent = extent.max(binding.slot.saturating_add(1));
+                if binding.kind < 2 {
+                    views.push(binding.slot..binding.slot + 1);
+                }
+            }
+            lengths[index] = extent;
+            accessed_views.extend(views.into_iter().map(|range| (index, range)));
+        }
+        desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let mut blob = None;
+        D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
+        let blob = blob.ok_or(E_POINTER)?;
+        let bytes = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
+        let native = device.CreateRootSignature(node, bytes)?;
+        Ok(TableLayout::Reflected(Arc::new(ComputeTable {
+            native,
+            original: original.clone(),
+            layout: RootSource::new(bytes),
+            lengths,
+            accessed_views,
+            index_map: None,
+        })))
+    }
+}
+
+/// Exclusive end of a finite descriptor table, plus the SRV and UAV spans in it.
+fn finite_table(
+    ranges: &[tuxbox_dxbc::rootsig::RootRange],
+) -> Option<(u32, Vec<std::ops::Range<u32>>)> {
+    let mut end = 0u32;
+    let mut extent = 0u32;
+    let mut views = Vec::new();
+    for range in ranges {
+        if range.num == u32::MAX {
+            return None;
+        }
+        let start = if range.offset_in_table == u32::MAX { end } else { range.offset_in_table };
+        let next = start.checked_add(range.num)?;
+        end = next;
+        extent = extent.max(next);
+        if range.range_type < 2 {
+            views.push(start..next);
+        }
+    }
+    Some((extent, views))
 }
 
 pub(super) fn capture_stage_root(stage: &[u8], root: &RootSource) {

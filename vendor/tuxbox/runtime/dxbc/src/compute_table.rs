@@ -224,6 +224,283 @@ fn read_bindings(
     Some((bindings, resolve_constants))
 }
 
+/// One physical descriptor whose FSSM user-data record, used-resource row, and
+/// PSV binding name the same register. `byte_offset` is the scalar load's
+/// immediate table offset. The hardware SGPR is the low byte of the user-data
+/// location. Returns `(kind, register, space)`: 0 SRV, 1 UAV, 2 CBV.
+///
+/// An unrelated resource that would make [`read_bindings`] fail does not reject
+/// this slot. Root constants and inline samplers are not descriptor loads.
+pub fn corroborated_descriptor(
+    program: &[u8],
+    resources: &[[u32; 4]],
+    stage: u32,
+    sgpr: u8,
+    byte_offset: u32,
+) -> Option<(u32, u32, u32)> {
+    let (kind, register, space, table, slot) =
+        slot_binding(program, resources, stage, sgpr, byte_offset)?;
+    let conflict = user_data_records(program)?.any(|[class, offset, width, _, location]| {
+        if class != 3 || width != 1 || offset % 8 != 0 {
+            return false;
+        }
+        let Ok(other_sgpr) = u8::try_from(location & 0xff) else { return false };
+        let Some(other_offset) = offset.checked_mul(4) else { return false };
+        if other_sgpr == sgpr && other_offset == byte_offset {
+            return false;
+        }
+        slot_binding(program, resources, stage, other_sgpr, other_offset).is_some_and(
+            |(other_kind, other_register, other_space, other_table, other_slot)| {
+                (other_kind, other_register, other_space) == (kind, register, space)
+                    && (other_table, other_slot) != (table, slot)
+            },
+        )
+    });
+    (!conflict).then_some((kind, register, space))
+}
+
+/// The same descriptor as [`corroborated_descriptor`], when `root` leaves its
+/// table slot empty and does not already declare that register.
+pub fn uncovered_descriptor(
+    program: &[u8],
+    resources: &[[u32; 4]],
+    stage: u32,
+    sgpr: u8,
+    byte_offset: u32,
+    root: &crate::rootsig::RootSig,
+) -> Option<(u32, u32, u32)> {
+    let (kind, register, space) =
+        corroborated_descriptor(program, resources, stage, sgpr, byte_offset)?;
+    let table = table_parameter(stage, sgpr)?;
+    let slot = byte_offset / 32;
+    if !matches!(
+        root.params.get(table as usize).map(|param| &param.kind),
+        Some(crate::rootsig::RootParamKind::Table(_))
+    ) || table_covers_slot(root, table, slot)
+        || root_declares(root, kind, register, space)
+    {
+        return None;
+    }
+    Some((kind, register, space))
+}
+
+/// FSSM descriptor slots missing from an embedded root. Each returned binding
+/// is one range to append: the slot is uncovered and the register is free.
+pub fn missing_root_descriptors(bytes: &[u8], root: &crate::rootsig::RootSig) -> Vec<Binding> {
+    let Some((program, resources)) = stage_program(bytes, 5) else {
+        return Vec::new();
+    };
+    let Some(users) = user_data_records(&program) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for [class, offset, width, _, location] in users {
+        if class != 3 || width != 1 || offset % 8 != 0 {
+            continue;
+        }
+        let Ok(sgpr) = u8::try_from(location & 0xff) else { continue };
+        let Some(byte_offset) = offset.checked_mul(4) else { continue };
+        let Some((kind, register, space)) =
+            uncovered_descriptor(&program, &resources, 5, sgpr, byte_offset, root)
+        else {
+            continue;
+        };
+        let Some(table) = table_parameter(5, sgpr) else { continue };
+        let binding = Binding { table, kind, register, space, slot: offset / 8 };
+        if found.iter().any(|seen: &Binding| {
+            (seen.table, seen.slot) == (binding.table, binding.slot)
+                || (seen.kind, seen.register, seen.space) == (kind, register, space)
+        }) {
+            continue;
+        }
+        found.push(binding);
+    }
+    found
+}
+
+fn table_parameter(stage: u32, sgpr: u8) -> Option<u32> {
+    let base = match stage {
+        5 => 4,
+        0 | 1 => 8,
+        _ => return None,
+    };
+    u32::from(sgpr).checked_sub(base)
+}
+
+fn slot_binding(
+    program: &[u8],
+    resources: &[[u32; 4]],
+    stage: u32,
+    sgpr: u8,
+    byte_offset: u32,
+) -> Option<(u32, u32, u32, u32, u32)> {
+    if byte_offset % 32 != 0 {
+        return None;
+    }
+    let dword_offset = byte_offset / 4;
+    let mut users = user_data_records(program)?.filter(|row| {
+        row[0] == 3 && row[1] == dword_offset && row[2] == 1 && (row[4] & 0xff) == u32::from(sgpr)
+    });
+    let Some([3, _, 1, register, user_location]) = users.next() else { return None };
+    if users.next().is_some() {
+        return None;
+    }
+    let mut used = records(program)?.filter(|row| {
+        row[1] == dword_offset && row[2] == register && (row[4] >> 8) == user_location
+    });
+    let Some([class, _, _, shape, location]) = used.next() else { return None };
+    if used.next().is_some() {
+        return None;
+    }
+    let (kind, psv_type) = descriptor_class(class, location, shape, stage, register, resources)?;
+    if kind >= 3 {
+        return None;
+    }
+    let mut spaces = resources.iter().filter_map(|[ty, space, lower, upper]| {
+        (*ty == psv_type && *lower == register && *upper == register).then_some(*space)
+    });
+    let space = spaces.next()?;
+    if spaces.next().is_some() {
+        return None;
+    }
+    let table = if stage == 5 {
+        let table = location >> 16;
+        if table != table_parameter(stage, sgpr)? {
+            return None;
+        }
+        table
+    } else if stage <= 1 {
+        if location >> 16 != 0 {
+            return None;
+        }
+        0
+    } else {
+        return None;
+    };
+    Some((kind, register, space, table, byte_offset / 32))
+}
+
+/// Class and PSV type for one descriptor load. Copies the resource arms of
+/// [`read_bindings`] and stops before root constants and samplers.
+fn descriptor_class(
+    class: u32,
+    location: u32,
+    shape: u32,
+    stage: u32,
+    register: u32,
+    resources: &[[u32; 4]],
+) -> Option<(u32, u32)> {
+    Some(match (class, location) {
+        (0x300, 0x408 | 0x10508) if stage == 5 => (0, 3),
+        (0x300 | 0x303, 0x404 | 0x10504) if stage == 5 => {
+            let uav = class == 0x303;
+            let typed = if uav { 6 } else { 3 };
+            let raw = typed + 1;
+            let structured = typed + 2;
+            let mut types = resources.iter().filter_map(|[ty, _, lower, upper]| {
+                if *lower != register || *upper != register {
+                    return None;
+                }
+                ((*ty == raw && shape == 1)
+                    || ((*ty == typed || *ty == structured)
+                        && (4..=2048).contains(&shape)
+                        && shape.is_multiple_of(4)))
+                .then_some(*ty)
+            });
+            let ty = types.next()?;
+            if types.next().is_some() {
+                return None;
+            }
+            (u32::from(uav), ty)
+        }
+        (0x303, 0x408 | 0x10508) if stage == 5 => (1, 6),
+        (0x302, 0x404 | 0x10504) if stage == 5 => (2, 2),
+        (0x300, 0x808) if stage <= 1 => (0, 3),
+        (0x303, 0x808) if stage <= 1 => (1, 6),
+        (0x300, 0x804) if stage <= 1 && shape == 1 => (0, 4),
+        (0x300, 0x804) if stage <= 1 && (4..=2048).contains(&shape) && shape.is_multiple_of(4) => {
+            (0, 5)
+        }
+        (0x302, 0x804) if stage <= 1 => (2, 2),
+        _ => return None,
+    })
+}
+
+fn table_covers_slot(root: &crate::rootsig::RootSig, table: u32, slot: u32) -> bool {
+    let Some(crate::rootsig::RootParamKind::Table(ranges)) =
+        root.params.get(table as usize).map(|param| &param.kind)
+    else {
+        return false;
+    };
+    let mut next = 0u64;
+    ranges.iter().any(|range| {
+        let start = if range.offset_in_table == u32::MAX {
+            next
+        } else {
+            u64::from(range.offset_in_table)
+        };
+        next = start.saturating_add(u64::from(range.num));
+        (start..next).contains(&u64::from(slot))
+    })
+}
+
+fn root_declares(root: &crate::rootsig::RootSig, kind: u32, register: u32, space: u32) -> bool {
+    use crate::rootsig::RootParamKind;
+    root.params.iter().any(|param| match &param.kind {
+        RootParamKind::Table(ranges) => ranges.iter().any(|range| {
+            range.range_type == kind
+                && range.space == space
+                && register.checked_sub(range.base_register).is_some_and(|delta| delta < range.num)
+        }),
+        RootParamKind::Descriptor { kind: declared, register: reg, space: sp } => {
+            *declared == kind && *reg == register && *sp == space
+        }
+        RootParamKind::Constants { register: reg, space: sp, .. } => {
+            kind == 2 && *reg == register && *sp == space
+        }
+    })
+}
+
+fn stage_program(bytes: &[u8], stage: u32) -> Option<(Vec<u8>, Vec<[u32; 4]>)> {
+    let dxbc = Dxbc::parse(bytes).ok()?;
+    let part = |tag| {
+        let chunk = dxbc.chunk(tag)?;
+        bytes.get(chunk.offset..chunk.offset + chunk.size)
+    };
+    let dxil = part(b"DXIL")?;
+    if word(dxil, 0)? >> 16 != stage || dxil.get(8..12)? != b"DXIL" {
+        return None;
+    }
+    let resources = psv_resources(part(b"PSV0")?)?;
+    let mut programs = xdat::programs(dxil.get(24..)?).ok()?;
+    if programs.len() != 1 {
+        return None;
+    }
+    let program = programs.pop()?;
+    if records(&program).is_none() {
+        return None;
+    }
+    Some((program, resources))
+}
+
+fn psv_resources(psv: &[u8]) -> Option<Vec<[u32; 4]>> {
+    let table = psv.get(4 + word(psv, 0)? as usize..)?;
+    let count = word(table, 0)? as usize;
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    let stride = word(table, 4)? as usize;
+    if stride < 16 {
+        return None;
+    }
+    let rows = table.get(8..)?.get(..count.checked_mul(stride)?)?;
+    let mut resources = Vec::with_capacity(count);
+    for row in rows.chunks_exact(stride) {
+        resources.push([word(row, 0)?, word(row, 4)?, word(row, 8)?, word(row, 12)?]);
+    }
+    Some(resources)
+}
+
 /// Wave32 layout with two table pointers, four root constants and both heaps.
 /// GroupID follows in s12. Return the register encoded for those constants.
 pub fn resolve_constants_register(program: &[u8]) -> Option<u32> {
@@ -443,4 +720,91 @@ pub fn scalar_heap_operand(isa: &[u8], count: u32) -> Option<(u32, u32)> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rootsig::{RootParam, RootParamKind, RootRange, RootSig};
+
+    fn put_u32(buf: &mut [u8], at: usize, value: u32) {
+        buf[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn put_u64(buf: &mut [u8], at: usize, value: u64) {
+        buf[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn program(user: &[[u32; 5]], used: &[[u32; 5]]) -> Vec<u8> {
+        let user_at = 0xf0u64;
+        let used_at = user_at + (user.len() * 20) as u64;
+        let len = 16 + used_at as usize + used.len() * 20;
+        let mut bytes = vec![0u8; len];
+        bytes[..8].copy_from_slice(b"FSSM\x01\x01\0\0");
+        put_u32(&mut bytes, 8, (len - 16) as u32);
+        put_u64(&mut bytes, 0xe8, user_at);
+        put_u64(&mut bytes, 0xf0, used_at);
+        put_u32(&mut bytes, 0xf8, user.len() as u32);
+        put_u32(&mut bytes, 0xfc, used.len() as u32);
+        for (index, row) in user.iter().chain(used).enumerate() {
+            let at = if index < user.len() { user_at } else { used_at };
+            let row_index = if index < user.len() { index } else { index - user.len() };
+            for (word, value) in row.iter().enumerate() {
+                put_u32(&mut bytes, 16 + at as usize + row_index * 20 + word * 4, *value);
+            }
+        }
+        bytes
+    }
+
+    fn root(ranges: Vec<RootRange>) -> RootSig {
+        RootSig {
+            version: 2,
+            flags: 0,
+            params: vec![
+                RootParam { visibility: 0, kind: RootParamKind::Table(Vec::new()) },
+                RootParam { visibility: 0, kind: RootParamKind::Table(ranges) },
+            ],
+            num_static_samplers: 0,
+            static_samplers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn corroborated_cbv_uses_the_free_register_only() {
+        let image = program(&[[3, 0xc8, 1, 28, 0x105]], &[[0x302, 0xc8, 28, 0, 0x10504]]);
+        let resources = [[2u32, 1, 28, 28]];
+        assert_eq!(corroborated_descriptor(&image, &resources, 5, 5, 0x320), Some((2, 28, 1)));
+        let open = root(vec![RootRange {
+            range_type: 0, num: 16, base_register: 0, space: 0, offset_in_table: 0,
+        }]);
+        assert_eq!(uncovered_descriptor(&image, &resources, 5, 5, 0x320, &open), Some((2, 28, 1)));
+        let taken = root(vec![RootRange {
+            range_type: 2, num: 1, base_register: 28, space: 1, offset_in_table: 16,
+        }]);
+        assert_eq!(uncovered_descriptor(&image, &resources, 5, 5, 0x320, &taken), None);
+    }
+
+    #[test]
+    fn rejects_ambiguous_unaligned_and_non_descriptor_slots() {
+        let duplicated = program(
+            &[[3, 0xc8, 1, 28, 0x105], [3, 0xc8, 1, 28, 0x105]],
+            &[[0x302, 0xc8, 28, 0, 0x10504]],
+        );
+        assert_eq!(corroborated_descriptor(&duplicated, &[[2, 1, 28, 28]], 5, 5, 0x320), None);
+        let sampler = program(&[[3, 0, 1, 3, 0x105]], &[[0x401, 0, 3, 0, 0x10500]]);
+        assert_eq!(corroborated_descriptor(&sampler, &[[1, 0, 3, 3]], 5, 5, 0), None);
+        let image = program(&[[3, 0xc8, 1, 28, 0x105]], &[[0x302, 0xc8, 28, 0, 0x10504]]);
+        assert_eq!(corroborated_descriptor(&image, &[[2, 1, 28, 28]], 5, 5, 0x324), None);
+    }
+
+    #[test]
+    fn same_register_at_two_slots_fails_closed() {
+        let image = program(
+            &[[3, 0xc8, 1, 28, 0x105], [3, 0xd0, 1, 28, 0x105]],
+            &[[0x302, 0xc8, 28, 0, 0x10504], [0x302, 0xd0, 28, 0, 0x10504]],
+        );
+        let resources = [[2u32, 1, 28, 28]];
+        assert_eq!(corroborated_descriptor(&image, &resources, 5, 5, 0x320), None);
+        assert_eq!(corroborated_descriptor(&image, &resources, 5, 5, 0x340), None);
+    }
 }

@@ -95,7 +95,8 @@ impl Pool {
             mouse: MouseMotion::default(),
             scan_at: 0,
             pads: [None; PORTS],
-            desktop: (std::env::var_os("TUXBOX_KEYBOARD_GAMEPAD").is_some_and(|v| v == "1"))
+            // On by default, as documented; TUXBOX_KEYBOARD_GAMEPAD=0 leaves only XInput.
+            desktop: (std::env::var_os("TUXBOX_KEYBOARD_GAMEPAD").is_none_or(|v| v != "0"))
                 .then(DesktopPad::default),
         }
     }
