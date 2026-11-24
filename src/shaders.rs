@@ -269,6 +269,13 @@ fn run(cmd: &mut Command, timeout: Duration) -> Result<(), ToolError> {
 }
 
 /// Pin the compiler (a private copy of xshader) and return the persistent cache dir.
+/// The TB_* switches xshader inherits, as sorted NAME=value.
+fn xshader_switches() -> Vec<String> {
+    let mut switches: Vec<String> = std::env::vars().filter(|(k, _)| k.starts_with("TB_")).map(|(k, v)| format!("{k}={v}")).collect();
+    switches.sort();
+    switches
+}
+
 fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools, PathBuf), String> {
     fs::create_dir_all(private).map_err(|e| e.to_string())?;
     let xshader = private.join("xshader.exe");
@@ -284,6 +291,14 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
     }
     for t in [&xshader, &tools.dxc] {
         fp.update(sha256(&fs::read(t).map_err(|e| e.to_string())?).as_bytes());
+    }
+    // xshader inherits this process's environment, and its TB_* switches change
+    // the code it emits: a cache made under other switches answered for them
+    // (a TB_ switch reached only shaders not yet cached). With none set the key
+    // is unchanged, so the existing cache stays valid.
+    for s in xshader_switches() {
+        fp.update(b"-E");
+        fp.update(s.as_bytes());
     }
     let cache = cache_root.join("runtime").join(hex(&fp.finalize()));
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
@@ -683,6 +698,10 @@ impl Worker {
         // Outside the session: Sandboxie forces programs started from a box folder into the box.
         let private = cache_root.join(format!("xshader-{}", std::process::id()));
         let (tools, cache) = bind_cache(&tools, &cache_root, &private)?;
+        let switches = xshader_switches();
+        if !switches.is_empty() {
+            log(format!("shader cache keyed by the xshader switches {}", switches.join(" ")));
+        }
         let id = cache.file_name().unwrap().to_string_lossy().into_owned();
         fs::write(session_dir.join("compiler-id.tmp"), &id)
             .and_then(|_| fs::rename(session_dir.join("compiler-id.tmp"), session_dir.join("compiler-id")))
