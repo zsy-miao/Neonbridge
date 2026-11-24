@@ -398,8 +398,8 @@ Compiler release (github.com/microsoft/DirectXShaderCompiler) and set the DXC
 environment variable to its bin\x64\dxc.exe. tuxbox\dxcompiler.dll and
 tuxbox\dxil.dll are the Windows SDK's redistributable copies (Redist\D3D\x64).
 
-Options: neonbridge --help. NEONBRIDGE_WINDOWED=1 starts in a window instead of
-borderless fullscreen; Alt+Enter or F11 toggles.
+Options: neonbridge --help. The game starts in a 16:9 window; Alt+Enter or F11
+toggles borderless fullscreen (TUXBOX_FULLSCREEN=1 starts borderless).
 
 Licences: LICENSE (Neonbridge), tuxbox\LICENSE (TuxBox runtime),
 tuxbox\NOTICE-acphal (LGPL xma code in AcpHal.dll).
