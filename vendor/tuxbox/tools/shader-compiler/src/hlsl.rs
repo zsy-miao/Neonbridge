@@ -1214,57 +1214,132 @@ fn mask_high_shadow() -> bool {
     std::env::var("TB_MASK_HIGH_SHADOW").map_or(true, |v| v.trim() != "0")
 }
 
-fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
-    let mut masks = BTreeSet::<u8>::new();
-    let mut reads = BTreeSet::new();
-    let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
-    let mut half = BTreeMap::<u8, bool>::new();
-    let is_mask = |masks: &BTreeSet<u8>, o: &Opnd| match o {
+/// May-be-a-lane-mask state before an instruction: SGPRs that hold a lane mask
+/// and the 32-bit halves of pairs assembled from masks (`true`) or constants.
+#[derive(Clone, Default, PartialEq)]
+struct MaskState {
+    masks: BTreeSet<u8>,
+    half: BTreeMap<u8, bool>,
+}
+
+fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
+    match o {
         Opnd::ExecLo | Opnd::VccLo => true,
         Opnd::Sgpr(n) => masks.contains(n),
         _ => false,
-    };
-    for (i, ins) in insns.iter().enumerate() {
-        let m = ins.mnemonic.as_str();
-        match (m, ins.src.first()) {
-            ("s_bcnt1_i32_b64", Some(o)) if is_mask(&masks, o) => { reads.insert(i); }
-            ("v_mbcnt_lo_u32_b32", Some(o)) if is_mask(&masks, o) => { reads.insert(i); }
-            ("v_mbcnt_hi_u32_b32", Some(Opnd::VccHi | Opnd::ExecHi)) => { reads.insert(i); }
-            // With the high dword shadowed it is read as the integer it holds.
-            ("v_mbcnt_hi_u32_b32", Some(Opnd::Sgpr(n))) if *n > 0 && masks.contains(&(n - 1)) && !mask_high_shadow() => { reads.insert(i); }
-            _ => {}
-        }
-        let [Opnd::Sgpr(d)] = ins.dst[..] else { continue; };
-        let wide = m.ends_with("_b64") || m.starts_with("v_cmp");
-        masks.retain(|&n| !(n == d || (wide && n == d + 1) || n + 1 == d));
-        let mask = m.starts_with("v_cmp")
-            || m.ends_with("_saveexec_b64")
-            || (matches!(m, "s_mov_b64" | "s_and_b64" | "s_or_b64" | "s_andn2_b64" | "s_xor_b64")
-                && ins.src.iter().any(|o| is_mask(&masks, o)));
-        if mask { masks.insert(d); }
-        // A pair assembled by two 32-bit moves, one half from a lane mask and the
-        // other a constant (or both from masks), is a lane mask too: wave64 code
-        // built from wave32 halves. TB_MASK_HALF_PAIR=0 turns this off.
-        if half_pairs {
-            let kind = if m == "s_mov_b32" {
-                match ins.src.first() {
-                    Some(Opnd::ExecLo | Opnd::ExecHi | Opnd::VccLo | Opnd::VccHi) => Some(true),
-                    Some(Opnd::Sgpr(n)) if masks.contains(n) || (*n > 0 && masks.contains(&(n - 1))) => Some(true),
-                    Some(Opnd::ConstInt(_) | Opnd::Literal(_)) => Some(false),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            half.remove(&d);
-            if wide { half.remove(&(d + 1)); }
-            if let Some(k) = kind {
-                half.insert(d, k);
-                let p = d & !1;
-                if let (Some(&a), Some(&b)) = (half.get(&p), half.get(&(p + 1))) {
-                    if a || b { masks.insert(p); }
-                }
+    }
+}
+
+fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>) {
+    let MaskState { masks, half } = state;
+    let is_mask = is_lane_mask;
+    let m = ins.mnemonic.as_str();
+    match (m, ins.src.first()) {
+        ("s_bcnt1_i32_b64", Some(o)) if is_mask(masks, o) => { reads.insert(i); }
+        ("v_mbcnt_lo_u32_b32", Some(o)) if is_mask(masks, o) => { reads.insert(i); }
+        ("v_mbcnt_hi_u32_b32", Some(Opnd::VccHi | Opnd::ExecHi)) => { reads.insert(i); }
+        // With the high dword shadowed it is read as the integer it holds.
+        ("v_mbcnt_hi_u32_b32", Some(Opnd::Sgpr(n))) if *n > 0 && masks.contains(&(n - 1)) && !mask_high_shadow() => { reads.insert(i); }
+        _ => {}
+    }
+    let [Opnd::Sgpr(d)] = ins.dst[..] else { return; };
+    let wide = m.ends_with("_b64") || m.starts_with("v_cmp");
+    masks.retain(|&n| !(n == d || (wide && n == d + 1) || n + 1 == d));
+    let mask = m.starts_with("v_cmp")
+        || m.ends_with("_saveexec_b64")
+        || (matches!(m, "s_mov_b64" | "s_and_b64" | "s_or_b64" | "s_andn2_b64" | "s_xor_b64")
+            && ins.src.iter().any(|o| is_mask(masks, o)));
+    if mask { masks.insert(d); }
+    // A pair assembled by two 32-bit moves, one half from a lane mask and the
+    // other a constant (or both from masks), is a lane mask too: wave64 code
+    // built from wave32 halves. TB_MASK_HALF_PAIR=0 turns this off.
+    if half_pairs {
+        let kind = if m == "s_mov_b32" {
+            match ins.src.first() {
+                Some(Opnd::ExecLo | Opnd::ExecHi | Opnd::VccLo | Opnd::VccHi) => Some(true),
+                Some(Opnd::Sgpr(n)) if masks.contains(n) || (*n > 0 && masks.contains(&(n - 1))) => Some(true),
+                Some(Opnd::ConstInt(_) | Opnd::Literal(_)) => Some(false),
+                _ => None,
             }
+        } else {
+            None
+        };
+        half.remove(&d);
+        if wide { half.remove(&(d + 1)); }
+        if let Some(k) = kind {
+            half.insert(d, k);
+            let p = d & !1;
+            if let (Some(&a), Some(&b)) = (half.get(&p), half.get(&(p + 1))) {
+                if a || b { masks.insert(p); }
+            }
+        }
+    }
+}
+
+/// The SGPRs read as lane masks, by the paths into each instruction rather than
+/// program order: a mask written at a loop's end reaches its top only by the back
+/// edge (five-star-recomp b5fe3a7/48c08b8, GPL-3.0, ThatRecompDev: a register that
+/// is a mask on one path and an integer on another). A register that may be a mask
+/// on any path into a read is read as one. TB_MASK_CFG=0 follows program order.
+fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
+    let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
+    let mut reads = BTreeSet::new();
+    let linear = std::env::var("TB_MASK_CFG").is_ok_and(|v| v.trim() == "0");
+    if linear {
+        let mut state = MaskState::default();
+        for (i, ins) in insns.iter().enumerate() {
+            mask_step(&mut state, ins, i, half_pairs, &mut reads);
+        }
+        return reads;
+    }
+    let index: HashMap<i64, usize> = insns.iter().enumerate().map(|(i, ins)| (ins.offset as i64, i)).collect();
+    let successors = |i: usize| -> Vec<usize> {
+        let ins = &insns[i];
+        let m = ins.mnemonic.as_str();
+        let mut out = Vec::new();
+        if m == "s_branch" || m.starts_with("s_cbranch_") {
+            if let Some(&t) = index.get(&(ins.offset as i64 + 4 + ins.aux.imm * 4)) {
+                out.push(t);
+            }
+        }
+        let falls = !matches!(m, "s_branch" | "s_endpgm" | "s_setpc_b64" | "s_rfe_b64");
+        if falls && i + 1 < insns.len() {
+            out.push(i + 1);
+        }
+        out
+    };
+    let mut before: Vec<Option<MaskState>> = vec![None; insns.len()];
+    if insns.is_empty() {
+        return reads;
+    }
+    before[0] = Some(MaskState::default());
+    let mut work = std::collections::VecDeque::from([0usize]);
+    let mut scratch = BTreeSet::new();
+    while let Some(i) = work.pop_front() {
+        let mut state = before[i].clone().unwrap_or_default();
+        mask_step(&mut state, &insns[i], i, half_pairs, &mut scratch);
+        for s in successors(i) {
+            let joined = match &before[s] {
+                None => state.clone(),
+                Some(old) => {
+                    let mut j = old.clone();
+                    j.masks.extend(state.masks.iter().copied());
+                    for (&k, &v) in &state.half {
+                        *j.half.entry(k).or_insert(v) |= v;
+                    }
+                    j
+                }
+            };
+            if before[s].as_ref() != Some(&joined) {
+                before[s] = Some(joined);
+                work.push_back(s);
+            }
+        }
+    }
+    for (i, ins) in insns.iter().enumerate() {
+        if let Some(state) = &before[i] {
+            let mut state = state.clone();
+            mask_step(&mut state, ins, i, half_pairs, &mut reads);
         }
     }
     reads
