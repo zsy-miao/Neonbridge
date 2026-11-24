@@ -73,7 +73,8 @@ impl Spans {
         let end = va.checked_add(len.max(1))?;
         for (lo, v) in self.by_lo.range(..=va).rev().take(64) {
             for (i, s) in v.iter().enumerate() {
-                if s.device == device && !s.retired && end <= s.hi && (va - lo) % align.max(1) == 0 {
+                let offset = (va - lo) / align.max(1) * align.max(1);
+                if s.device == device && !s.retired && end - (va - lo - offset) <= s.hi {
                     return Some((*lo, i));
                 }
             }
@@ -100,6 +101,30 @@ impl Spans {
         (lo, v.len() - 1)
     }
 
+    /// Retires the spans [lo, hi) covers whole: a new span over them
+    /// serves every placement they could. Retiring every overlapping span
+    /// (test50) made each new span retire its neighbours, so the next
+    /// placement in their range made yet another heap, while the title kept
+    /// the old textures alive: 2078 span heaps (6691 MiB) in 126 s.
+    pub(super) fn retire_covered(&mut self, device: usize, lo: u64, hi: u64) -> usize {
+        let mut n = 0;
+        for (_, v) in self.by_lo.range_mut(lo..hi) {
+            for s in v.iter_mut() {
+                if s.device == device && !s.retired && s.hi <= hi {
+                    s.retired = true;
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    /// Retired spans and their heap bytes (still held by live textures).
+    fn retired(&self) -> (u64, u64) {
+        self.by_lo.values().flatten().filter(|s| s.retired).fold((0, 0), |(n, b), s| (n + 1, b + s.heap_bytes))
+    }
+
+    #[cfg(test)]
     pub(super) fn retire_overlapping(&mut self, device: usize, lo: u64, hi: u64) -> usize {
         let mut n = 0;
         for (_, v) in self.by_lo.range_mut(..hi) {
@@ -147,7 +172,17 @@ static SPAN_COUNT: AtomicU64 = AtomicU64::new(0);
 static SPAN_BYTES: AtomicU64 = AtomicU64::new(0);
 static PLACED: AtomicU64 = AtomicU64::new(0);
 static SHARED: AtomicU64 = AtomicU64::new(0);
-static FALLBACK: AtomicU64 = AtomicU64::new(0);
+/// Committed fallbacks by reason, named in REASONS.
+static FALLBACK: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+const REASONS: [&str; 6] = ["MSAA", "tier-1 heaps", "alignment over 64 KiB", "no allocation size", "heap not created", "placement failed"];
+const MSAA: usize = 0;
+const TIER1: usize = 1;
+const ALIGN: usize = 2;
+const SIZE: usize = 3;
+const HEAP: usize = 4;
+const PLACE: usize = 5;
+static RETIRED: AtomicU64 = AtomicU64::new(0);
+static RETIRED_BYTES: AtomicU64 = AtomicU64::new(0);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -252,6 +287,9 @@ fn housekeeping(sp: &mut Spans) -> Vec<Span> {
         SPAN_COUNT.fetch_sub(1, Relaxed);
         SPAN_BYTES.fetch_sub(s.heap_bytes, Relaxed);
     }
+    let (n, bytes) = sp.retired();
+    RETIRED.store(n, Relaxed);
+    RETIRED_BYTES.store(bytes, Relaxed);
     idle
 }
 
@@ -273,14 +311,17 @@ pub(super) fn place(
     xbox_size: u64,
     clear: Option<&D3D12_CLEAR_VALUE>,
 ) -> Option<(ID3D12Resource, u64, Placed)> {
-    if !enabled() || va == 0 || host.SampleDesc.Count > 1 || !mixed_heaps(device) {
+    if !enabled() || va == 0 {
         return None;
     }
-    let made = place_locked(device, va, host, xbox_size, clear);
-    if made.is_none() {
-        FALLBACK.fetch_add(1, Relaxed);
-    }
-    made
+    let made = if host.SampleDesc.Count > 1 {
+        Err(MSAA)
+    } else if !mixed_heaps(device) {
+        Err(TIER1)
+    } else {
+        place_locked(device, va, host, xbox_size, clear)
+    };
+    made.map_err(|reason| FALLBACK[reason].fetch_add(1, Relaxed)).ok()
 }
 
 fn place_locked(
@@ -289,7 +330,7 @@ fn place_locked(
     host: &D3D12_RESOURCE_DESC,
     xbox_size: u64,
     clear: Option<&D3D12_CLEAR_VALUE>,
-) -> Option<(ID3D12Resource, u64, Placed)> {
+) -> Result<(ID3D12Resource, u64, Placed), usize> {
     let mut desc = *host;
     let mut info = D3D12_RESOURCE_ALLOCATION_INFO::default();
     let target = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
@@ -305,8 +346,11 @@ fn place_locked(
         info = unsafe { device.GetResourceAllocationInfo(0, std::slice::from_ref(&desc)) };
     }
     let (size, align) = (info.SizeInBytes, info.Alignment);
-    if size == 0 || size == u64::MAX || align == 0 || align > PLACEMENT_ALIGN || !va.is_multiple_of(align) {
-        return None;
+    if size == 0 || size == u64::MAX || align == 0 {
+        return Err(SIZE);
+    }
+    if align > PLACEMENT_ALIGN {
+        return Err(ALIGN);
     }
     let id = device.as_raw() as usize;
     let mut idle;
@@ -314,11 +358,14 @@ fn place_locked(
         let mut sp = lock(&SPANS);
         idle = housekeeping(&mut sp);
         let fresh_span = |sp: &mut Spans, lo: u64, hi: u64, bytes: u64| {
-            let heap = create_heap(device, bytes)?;
-            sp.retire_overlapping(id, lo, hi);
-            Some(sp.insert(Span { lo, hi, device: id, heap: Some(heap), heap_bytes: round_up(bytes, PLACEMENT_ALIGN),
+            let heap = create_heap(device, bytes).ok_or(HEAP)?;
+            sp.retire_covered(id, lo, hi);
+            Ok::<_, usize>(sp.insert(Span { lo, hi, device: id, heap: Some(heap), heap_bytes: round_up(bytes, PLACEMENT_ALIGN),
                 retired: false, live: HashSet::new(), owners: Vec::new() }))
         };
+        // A va finer than the alignment is placed at the aligned offset below
+        // it: textures over the same guest bytes still share heap bytes, and
+        // claim() orders any overlap, exact or not.
         let (key, fresh) = match (oversize_span(va, size, xbox_size), sp.find(id, va, size, align)) {
             (Some((lo, hi)), _) => (fresh_span(&mut sp, lo, hi, size)?, true),
             (None, Some(k)) => (k, false),
@@ -328,9 +375,9 @@ fn place_locked(
             }
         };
         let span = sp.get_mut(key);
-        let offset = va - span.lo;
+        let offset = (va - span.lo) / align * align;
         let mut native: Option<ID3D12Resource> = None;
-        let heap = span.heap.as_ref()?;
+        let heap = span.heap.as_ref().ok_or(PLACE)?;
         let hr = unsafe { device.CreatePlacedResource(heap, offset, &desc, D3D12_RESOURCE_STATE_COMMON, clear.map(core::ptr::from_ref), &mut native) };
         match (hr, native) {
             (Ok(()), Some(native)) => {
@@ -338,7 +385,7 @@ fn place_locked(
                 span.live.insert(raw);
                 let placed = Placed { lo: span.lo, heap: span.id(), bytes: offset..offset + size, native: raw };
                 let spans = sp.len();
-                Some((native, fresh, placed, spans))
+                Ok((native, fresh, placed, spans))
             }
             (hr, _) => {
                 static N: AtomicU64 = AtomicU64::new(0);
@@ -348,22 +395,23 @@ fn place_locked(
                         desc.Width, desc.Height, desc.Format.0, hr.err()));
                 }
                 idle.extend(housekeeping(&mut sp));
-                None
+                Err(PLACE)
             }
         }
     };
     drop(idle);
     let (native, fresh, placed, spans) = made?;
     let total = PLACED.fetch_add(1, Relaxed) + 1;
+    let fallbacks: u64 = FALLBACK.iter().map(|f| f.load(Relaxed)).sum();
     if !fresh {
         SHARED.fetch_add(1, Relaxed);
     }
     if total <= 8 || total.is_power_of_two() {
         crate::diagnostics::log_line(format_args!(
             "placed textures: va={va:#x} -> span [{:#x}, ..) +{:#x}{} | placed {total}, sharing a span {}, committed fallbacks {}, spans live {spans}",
-            placed.lo, placed.bytes.start, if fresh { " (new heap)" } else { "" }, SHARED.load(Relaxed), FALLBACK.load(Relaxed)));
+            placed.lo, placed.bytes.start, if fresh { " (new heap)" } else { "" }, SHARED.load(Relaxed), fallbacks));
     }
-    Some((native, size, placed))
+    Ok((native, size, placed))
 }
 
 /// A span-placed texture is gone: its span is released, after the registry
@@ -406,7 +454,10 @@ pub(crate) struct Stats {
     pub(crate) span_bytes: u64,
     pub(crate) placed: u64,
     pub(crate) shared: u64,
-    pub(crate) fallback: u64,
+    /// Committed fallbacks by reason, e.g. "MSAA 3, placement failed 1".
+    pub(crate) fallback: String,
+    pub(crate) retired: u64,
+    pub(crate) retired_bytes: u64,
 }
 
 pub(crate) fn stats() -> Stats {
@@ -415,7 +466,13 @@ pub(crate) fn stats() -> Stats {
         span_bytes: SPAN_BYTES.load(Relaxed),
         placed: PLACED.load(Relaxed),
         shared: SHARED.load(Relaxed),
-        fallback: FALLBACK.load(Relaxed),
+        fallback: {
+            let parts: Vec<String> = REASONS.iter().zip(&FALLBACK).map(|(r, f)| (r, f.load(Relaxed)))
+                .filter(|(_, n)| *n != 0).map(|(r, n)| format!("{r} {n}")).collect();
+            if parts.is_empty() { "none".into() } else { parts.join(", ") }
+        },
+        retired: RETIRED.load(Relaxed),
+        retired_bytes: RETIRED_BYTES.load(Relaxed),
     }
 }
 
@@ -433,7 +490,9 @@ mod tests {
         let k = s.insert(span(0x10_0000, 0x50_0000));
         assert_eq!(s.find(1, 0x10_0000, 0x1000, 0x10000), Some(k));
         assert_eq!(s.find(1, 0x20_0000, 0x10000, 0x10000), Some(k));
-        assert_eq!(s.find(1, 0x20_1000, 0x10000, 0x10000), None);
+        // A finer va lands at the aligned offset below it.
+        assert_eq!(s.find(1, 0x20_1000, 0x10000, 0x10000), Some(k));
+        assert_eq!(s.find(1, 0x4f_1000, 0x10000, 0x10000), Some(k));
         assert_eq!(s.find(1, 0x4f_0000, 0x20000, 0x10000), None);
         assert_eq!(s.find(2, 0x10_0000, 0x1000, 0x10000), None);
         s.get_mut(k).live.insert(7);
@@ -453,6 +512,16 @@ mod tests {
         assert_eq!(s.retire_overlapping(1, 0x18_0000, 0x28_0000), 1);
         assert!(s.get(a).retired && !s.get(b).retired);
         assert_eq!(s.find(1, 0x10_0000, 0x1000, 0x1000), None);
+    }
+
+    #[test]
+    fn a_new_span_retires_only_the_ones_it_covers() {
+        let mut s = Spans::default();
+        let a = s.insert(span(0x10_0000, 0x20_0000));
+        let b = s.insert(span(0x18_0000, 0x30_0000));
+        assert_eq!(s.retire_covered(1, 0x10_0000, 0x28_0000), 1);
+        assert!(s.get(a).retired && !s.get(b).retired);
+        assert_eq!(s.retired().0, 1);
     }
 
     #[test]
