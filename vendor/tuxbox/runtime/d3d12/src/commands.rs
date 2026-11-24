@@ -1258,6 +1258,22 @@ fn reject(queue: &Queue, error: HRESULT) {
     };
 }
 
+/// A bad batch drops only itself: latching the error on the queue made every
+/// later submission return early, so the title kept presenting black frames.
+/// Device loss still latches, since nothing after it can run.
+fn drop_batch(queue: &Queue, error: HRESULT) {
+    use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_DEVICE_HUNG, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET};
+    if matches!(error, DXGI_ERROR_DEVICE_REMOVED | DXGI_ERROR_DEVICE_HUNG | DXGI_ERROR_DEVICE_RESET) {
+        reject(queue, error);
+        return;
+    }
+    static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = DROPPED.fetch_add(1, Ordering::Relaxed);
+    if n < 4 || (n + 1).is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("dropped a command-list batch: {error:?} ({} so far)", n + 1));
+    }
+}
+
 unsafe extern "system" fn execute_frame(
     queue: &Queue, count: u32, lists: *const *mut c_void, frame_token: u64, flags: u32,
 ) {
@@ -1399,7 +1415,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
         },
     );
     if let Err(error) = result {
-        reject(queue, error);
+        drop_batch(queue, error);
     } else if let Some((token, flags)) = frame {
         static FIRST: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
         crate::diagnostics::log_once(&FIRST[flags as usize], || format!(

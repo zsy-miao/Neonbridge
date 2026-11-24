@@ -366,13 +366,29 @@ impl Arena {
                     crate::diagnostics::display::texture_view(destination.ptr, None, None);
                     kind.write(&self.device, destination);
                 } else {
-                    if crate::diagnostics::display::trace_views() {
-                        crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
-                            "unresolved inline descriptor at {cell:#x}, source {:#x}, version {} (table entry {index}/{length})",
-                            record.source, record.version,
+                    // A stale record (its source was rewritten or freed) used to
+                    // fail the whole command list, and the queue then dropped
+                    // every later batch: frames kept presenting, all black.
+                    // Bind a null of the kind the shader reads instead, and
+                    // leave the slot uncached so a later resolution replaces it.
+                    static UNRESOLVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let n = UNRESOLVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if n < 4 || (n + 1).is_power_of_two() {
+                        crate::diagnostics::log_line(format_args!(
+                            "unresolved inline descriptor at {cell:#x}, source {:#x}, version {} (table entry {index}/{length}); bound null ({} so far)",
+                            record.source, record.version, n + 1,
                         ));
                     }
-                    return Err(E_INVALIDARG.into());
+                    let kind = kinds
+                        .and_then(|(kinds, parameter)| kinds.get(parameter, index as u32))
+                        .unwrap_or(super::null_kinds::NullKind::DEFAULT);
+                    self.imported.copy_to(self.stride, destination.ptr, 0, 1);
+                    self.placed.copy_to(self.stride, destination.ptr, 0, 1);
+                    self.scenes.copy_to(self.stride, destination.ptr, 0, 1);
+                    crate::diagnostics::display::texture_view(destination.ptr, None, None);
+                    kind.write(&self.device, destination);
+                    tables.resident_records.remove(&slot);
+                    continue;
                 }
                 tables.resident_records.insert(slot, resident_key);
             }
