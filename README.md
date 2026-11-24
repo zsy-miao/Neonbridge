@@ -37,6 +37,7 @@ Runtime fixes in the vendored TuxBox provider:
   - B5G5R5A1 UAVs are viewed as R16_UINT.
   - R32_UINT render targets are castable to R9G9B9E5.
 - **Memory D3D12 can't import:** buffers and placed buffers that span separately mapped title pages use device-local copies.
+- **Shader translator (`xshader`):** legacy FMA keeps `c` for 0×inf and 0×NaN; `v_movrelsd_2_b32`, `v_swaprel_b32`, `v_sat_pk_u8_i16` and `image_gather4_l` on 2D images translate.
 - **Shader compiler:** the launcher stages the SDK's `dxcompiler.dll` and `dxil.dll` beside the game for rectangle-list pipelines.
 - **Diagnostics:**
   - A PresentX heartbeat every 300 frames.
@@ -45,8 +46,8 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Open
 
-- **Startup assert:** with `TUXBOX_PREWARM=0` the title stops on its own `int 3` about 4 s in, after its first frame: a command-list Reset returns E_INVALIDARG.
-- **Shader translation:** offline `--build-shaders` refuses most programs, mainly descriptors without the title's root layout. Refusal reasons are now kept in `.unsupported` and tallied.
+- **Startup assert:** with `TUXBOX_PREWARM=0` the title stops on its own `int 3` about 4 s in, after its first frame. One of its command lists records a call the desktop runtime rejects, so the host `Close` fails with E_INVALIDARG and every later `Reset` of that list fails too. It also happens on code from before the black-frame fixes. Next: find the rejected call (needs the D3D12 debug layer), or rebuild the host list after a failed `Close`.
+- **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Refusal reasons are kept in `.unsupported` and tallied.
 - **No window on screen:** the game presents, but no window appears on the desktop.
 - **Early exit:** some runs exit with code 1 after about 40 s, without an exception.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
@@ -55,7 +56,7 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Roadmap
 
-1. **Get past the startup assert, then see the frames.** Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
+1. **Get past the startup assert, then see the frames.** Find the call that breaks the command list. Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
 2. **Stay running.** Find what calls process exit in the early-exit runs (`--debug` records the exit stack).
 3. **Correct colour.** Pack 5551 in the shader, or substitute B5G5R5A1 UAV and render-target images with R8G8B8A8.
 4. **Speed.** Back each XMem pool with one section and join in-order page runs, so GPU imports span them without copies.

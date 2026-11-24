@@ -295,6 +295,7 @@ impl Recording {
                 // The factory closed the empty native list to release its allocator.
                 // Reopen with its original bindings when the first operation records.
                 if let Err(error) = unsafe { native.Reset(allocator, initial.as_ref()) } {
+                    crate::diagnostics::log_line(format_args!("fresh list reopen failed {:#010x}", error.code().0));
                     self.error = error.code();
                     return false;
                 }
@@ -399,6 +400,7 @@ unsafe extern "system" fn reset(
 ) -> HRESULT {
     let device = parent(&list.parent);
     let Some(allocator) = (unsafe { device::allocator(allocator, device) }) else {
+        crate::diagnostics::log_line(format_args!("list reset: {allocator:p} is not a known allocator"));
         return E_INVALIDARG;
     };
     // SAFETY: the guest holds the initial pipeline through this reset.
@@ -430,6 +432,15 @@ unsafe extern "system" fn reset(
                 Err(error) => error.code(),
             };
         }
+        if hr == E_INVALIDARG {
+            // Still refused with an idle allocator: the host list may have
+            // been left open by a failed recording. Close it and retry once.
+            let closed = unsafe { native.Close() };
+            hr = host_reset(&allocator.native);
+            crate::diagnostics::log_line(format_args!(
+                "list reset retry after host Close ({:?}): {:#010x}", closed.as_ref().err().map(|e| e.code()), hr.0
+            ));
+        }
     }
     if hr.is_ok() {
         state.phase = ListState::Open;
@@ -460,6 +471,12 @@ unsafe extern "system" fn reset(
         state.sampled_heaps.clear();
         state.error = S_OK;
     }
+    if hr.is_err() {
+        crate::diagnostics::log_line(format_args!(
+            "list reset failed {:#010x}: list type {} phase {:?} error {:#010x}",
+            hr.0, unsafe { native.GetType() }.0, mem::discriminant(&state.phase), state.error.0
+        ));
+    }
     hr
 }
 
@@ -471,6 +488,7 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         ListState::Open => {
             if let Err(error) = state.prefix.finish(&list.native) { state.error = error.code(); }
             if let Err(error) = unsafe { list.native.Close() } {
+                crate::diagnostics::log_line(format_args!("host list Close failed {:#010x} (recorded error {:#010x})", error.code().0, state.error.0));
                 state.error = error.code();
             }
         }
