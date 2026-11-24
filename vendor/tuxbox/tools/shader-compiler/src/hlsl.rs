@@ -6407,9 +6407,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // Address = element index (IDXEN: first address register) * stride + byte offset
         // (OFFEN: the next address register, or the first when there is no index) + imm.
         let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
-        if !self.zero_buffer_offset(ins) {
-            return Err("MUBUF with a dynamic SOFFSET is unsupported".into());
-        }
+        // A non-zero SOFFSET adds to the byte offset, like OFFEN.
+        let soffset = if self.zero_buffer_offset(ins) { None } else {
+            let o = ins.src.get(2).ok_or("MUBUF without SOFFSET")?;
+            self.touch(o);
+            Some(r(o)?)
+        };
         let n = Self::mubuf_dwords(&ins.mnemonic).ok_or("unsupported MUBUF op")?;
         let a0 = ins.src[0];
         let a1 = match a0 {
@@ -6424,6 +6427,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.touch(&a1);
                 Some(r(&a1)?)
             }
+        };
+        let voff = match (voff, soffset) {
+            (Some(v), Some(s)) => Some(format!("({v} + {s})")),
+            (v, s) => v.or(s),
         };
         let w0 = ins.aux.imm as u32 / 4;
         let vd = match ins.dst[0] {
