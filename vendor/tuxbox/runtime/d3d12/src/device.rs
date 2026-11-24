@@ -971,6 +971,36 @@ unsafe extern "system" fn release_device(this: *mut Device) -> u32 {
     }) }
 }
 
+/// CreateDerivedPipelineStateX(base, patch count, patches, riid, out): the
+/// base pipeline with 0x14C-byte tagged patches (part 0 depth-stencil, 1
+/// rasterizer, 2 blend, 3 sample mask; xcl device_x.rs). Fallback until the
+/// base descriptions are kept: the base pipeline itself (patches ignored,
+/// logged), so the title gets a working pipeline instead of a null one.
+/// TUXBOX_DERIVED_PSO=fail answers E_FAIL.
+unsafe extern "system" fn derived_pipeline(
+    _: &Device, base: *mut c_void, count: u32, patches: *const u8, riid: *const GUID, out: *mut *mut c_void,
+) -> HRESULT {
+    if out.is_null() {
+        return E_POINTER;
+    }
+    unsafe { out.write(core::ptr::null_mut()) };
+    if base.is_null() || riid.is_null() || crate::env_toggle!("TUXBOX_DERIVED_PSO") == Some("fail") {
+        return windows::Win32::Foundation::E_FAIL;
+    }
+    static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        let parts: Vec<u32> = (0..count.min(8) as usize)
+            .filter(|_| !patches.is_null())
+            .map(|i| unsafe { patches.add(i * 0x14C).cast::<u32>().read_unaligned() })
+            .collect();
+        crate::diagnostics::log_line(format_args!(
+            "CreateDerivedPipelineStateX: base {base:p}, {count} patch(es) parts {parts:?} ignored; the base pipeline is returned"));
+    }
+    type Query = unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT;
+    // SAFETY: base is a live COM object (our pipeline proxy); slot 0 is QueryInterface.
+    unsafe { (*base.cast::<*const Query>()).read()(base, riid, out) }
+}
+
 // 192 slots, past the title's highest device slot (Leonida's retail boot chain):
 // a shorter table hands the title a null pointer instead of a logged E_NOTIMPL.
 static DEVICE: Slots<192> = {
@@ -1004,6 +1034,7 @@ static DEVICE: Slots<192> = {
     slots[44] = crate::slot!(traced::place_virtual);
     slots[48] = crate::slot!(create_queue_x);
     // Precompiled graphics PSO with separate driver metadata and GPU shader addresses.
+    slots[55] = crate::slot!(derived_pipeline);
     slots[57] = crate::slot!(compute::deserialize_pipeline_x);
     slots[60] = crate::slot!(graphics::create_pipeline);
     slots[61] = crate::slot!(views::sampler_x);
@@ -1163,4 +1194,25 @@ mod traced {
     ) -> HRESULT {
         report(133, unsafe { heap::place_virtual_layout(device, address, desc, layout, clear, iid, out) }, layout.0, desc)
     }
+}
+
+/// Committed read-write memory inside the console GPU window [2 GiB,
+/// 0x1f_e000_0000) (xmem's WINDOW), where title addresses resolve for the
+/// GPU; 0 on failure.
+pub(crate) fn title_window_alloc(bytes: usize) -> usize {
+    use windows::Win32::System::Memory::*;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    let mut requirements = MEM_ADDRESS_REQUIREMENTS {
+        LowestStartingAddress: (1usize << 31) as *mut c_void,
+        HighestEndingAddress: (0x1f_e000_0000usize - 1) as *mut c_void,
+        Alignment: 0,
+    };
+    let mut param = MEM_EXTENDED_PARAMETER::default();
+    param.Anonymous1._bitfield = MemExtendedParameterAddressRequirements.0 as u64;
+    param.Anonymous2.Pointer = (&raw mut requirements).cast();
+    // SAFETY: the requirement outlives the call; a null address lets the OS choose.
+    let base = unsafe {
+        VirtualAlloc2(Some(GetCurrentProcess()), None, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE.0, Some(&mut [param]))
+    };
+    base as usize
 }

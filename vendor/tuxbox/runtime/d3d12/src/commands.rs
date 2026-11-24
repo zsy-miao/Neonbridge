@@ -1565,11 +1565,54 @@ fn cpu_copy_after(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>) {
 /// Newer-layout list slot 80, DispatchX(x, y, z, flags): a Dispatch whose
 /// console flags have no host meaning (rebox d907249).
 unsafe extern "system" fn dispatch_x(list: &List, x: u32, y: u32, z: u32, flags: u32) {
+    // Off by default, as rebox (c553d53) drops it: TUXBOX_DISPATCHX=1 runs it.
+    if crate::env_toggle!("TUXBOX_DISPATCHX") != Some("1") {
+        static DROPPED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&DROPPED, || format!("DispatchX ({x}, {y}, {z}) flags {flags:#x} dropped; TUXBOX_DISPATCHX=1 runs it"));
+        return;
+    }
     if flags != 0 {
         static FLAGS: std::sync::Once = std::sync::Once::new();
         crate::diagnostics::log_once(&FLAGS, || format!("DispatchX flags {flags:#x} ignored"));
     }
     unsafe { compute::dispatch(list, x, y, z) }
+}
+
+/// AllocateEmbeddedX(size, alignment), list slot 148: memory the title fills
+/// and then binds by address (XboxBvhBuilder), so it must be committed title
+/// memory inside the GPU window. Carved from 1 MiB arenas that are never
+/// reused (a list's GPU work may still read them); capped at 256 MiB, after
+/// which it answers null (logged).
+unsafe extern "system" fn allocate_embedded(_: &List, size: u64, alignment: u64) -> *mut c_void {
+    use std::sync::Mutex;
+    struct Arena { base: usize, size: usize, used: usize }
+    static ARENA: Mutex<Option<Arena>> = Mutex::new(None);
+    static TOTAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    const CAP: usize = 256 << 20;
+    let alignment = (alignment.max(16) as usize).next_power_of_two();
+    let size = size as usize;
+    let mut arena = ARENA.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(a) = arena.as_mut() {
+        let at = (a.base + a.used).next_multiple_of(alignment);
+        if at + size <= a.base + a.size {
+            a.used = at + size - a.base;
+            return at as *mut c_void;
+        }
+    }
+    let bytes = (size + alignment).max(1 << 20).next_multiple_of(1 << 16);
+    if TOTAL.fetch_add(bytes, Ordering::Relaxed) + bytes > CAP {
+        static FULL: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FULL, || format!("AllocateEmbeddedX: {CAP:#x} bytes used; {size:#x} bytes refused"));
+        return core::ptr::null_mut();
+    }
+    let base = device::title_window_alloc(bytes);
+    if base == 0 {
+        crate::diagnostics::log_line(format_args!("AllocateEmbeddedX: {bytes:#x}-byte arena failed"));
+        return core::ptr::null_mut();
+    }
+    let at = base.next_multiple_of(alignment);
+    *arena = Some(Arena { base, size: bytes, used: at + size - base });
+    at as *mut c_void
 }
 
 /// FillMemoryWith{32,64,128}BitValueX (newer-layout list slots 63-65): the
@@ -1773,6 +1816,7 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     // Older #78 DispatchX and #84 CopyResourceX (rebox d907249).
     slots[80] = crate::slot!(dispatch_x);
     slots[86] = crate::slot!(copy_resource);
+    slots[148] = crate::slot!(allocate_embedded);
     slots[70] = crate::slot!(graphics::depth_bounds);
     slots[75] = crate::slot!(graphics::force_shader_depth_order);
     slots[142] = crate::slot!(graphics::sample_mask);
