@@ -777,6 +777,22 @@ pub(crate) fn host_state(state: D3D12_RESOURCE_STATES, texture: bool) -> D3D12_R
     })
 }
 
+/// Desktop D3D12 takes a committed resource on an UPLOAD heap only in GENERIC_READ
+/// and on a READBACK heap only in COPY_DEST; any other initial state, COMMON
+/// included, is E_INVALIDARG. Other heaps (and the custom L0 heap of a linear
+/// readback image) keep the title's state. Ported from X2W 3556bc28 (lukaslw-lab,
+/// MIT). TUXBOX_COMMITTED_HEAP_STATE=0 passes the title's state through.
+fn committed_state(heap: D3D12_HEAP_TYPE, state: D3D12_RESOURCE_STATES) -> D3D12_RESOURCE_STATES {
+    if crate::env_toggle!("TUXBOX_COMMITTED_HEAP_STATE") == Some("0") {
+        return state;
+    }
+    match heap {
+        D3D12_HEAP_TYPE_UPLOAD => D3D12_RESOURCE_STATE_GENERIC_READ,
+        D3D12_HEAP_TYPE_READBACK => D3D12_RESOURCE_STATE_COPY_DEST,
+        _ => state,
+    }
+}
+
 unsafe extern "system" fn create_resource<const EXTENDED: bool>(
     this: &Device,
     properties: *const D3D12_HEAP_PROPERTIES,
@@ -880,7 +896,7 @@ unsafe extern "system" fn create_resource<const EXTENDED: bool>(
             &host_heap,
             flags,
             primary.as_ref().unwrap_or(&host_desc),
-            host_state(initial, desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER),
+            committed_state(host_heap.Type, host_state(initial, desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER)),
             Some(host_clear.as_ref().map_or(clear, core::ptr::from_ref)),
             &mut native,
         )
