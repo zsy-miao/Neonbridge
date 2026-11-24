@@ -170,6 +170,15 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x(
 ) -> HRESULT {
     // SAFETY: the guest supplies a readable IID and writable output slot.
     let hr = unsafe { check_output::<ID3D12PipelineState>(iid, out) };
+    // Xbox2Windows builds pipelines from this slot's state blocks (blend from
+    // CB_BLENDn_CONTROL at state block A + 0xD0, e0b2e867); ours is not
+    // built yet. Log the first calls so a run shows whether the title uses it.
+    static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+        crate::diagnostics::log_line(format_args!(
+            "device slot 57 (pipeline from state blocks) called, desc {_desc:p}, from title RVA {:#x}: E_NOTIMPL (not built yet)",
+            crate::survey::title_rva().unwrap_or(0)));
+    }
     if hr.is_err() { hr } else { E_NOTIMPL }
 }
 
