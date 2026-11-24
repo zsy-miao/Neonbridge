@@ -1776,6 +1776,7 @@ static LIST_SLOTS: Slots<149> = {
     slots[68] = crate::slot!(graphics::depth_bounds);
     slots[71] = crate::slot!(write_marker);
     slots[72] = crate::slot!(queries::timestamp_at);
+    slots[73] = crate::slot!(memory_wait::wait_value32);
     slots[74] = crate::slot!(memory_wait::wait_value64);
     slots[83] = crate::slot!(copy_texture);
     slots[84] = crate::slot!(copy_resource);

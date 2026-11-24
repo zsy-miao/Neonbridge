@@ -70,6 +70,8 @@ impl Prefix {
 struct Word {
     resource: ID3D12Resource,
     mapped: usize,
+    /// 64-bit word (slot 74) or 32-bit word (slot 73, Wait32X).
+    wide: bool,
 }
 
 impl Drop for Word {
@@ -79,19 +81,20 @@ impl Drop for Word {
 }
 
 impl Word {
-    fn map(list: &List, address: u64) -> Result<Self> {
-        if address == 0 || !address.is_multiple_of(8) {
+    fn map(list: &List, address: u64, wide: bool) -> Result<Self> {
+        let bytes = word_bytes(wide);
+        if address == 0 || !address.is_multiple_of(bytes as u64) {
             return Err(E_INVALIDARG.into());
         }
         let (buffer, gpu) =
-            unsafe { device::command_buffer_address(parent(&list.parent), address, 8)? };
+            unsafe { device::command_buffer_address(parent(&list.parent), address, bytes as u64)? };
         let resource = buffer.ok_or(E_NOTIMPL)?;
         let offset = gpu
             .checked_sub(unsafe { resource.GetGPUVirtualAddress() })
             .ok_or(E_INVALIDARG)? as usize;
         let range = D3D12_RANGE {
             Begin: offset,
-            End: offset.checked_add(8).ok_or(E_INVALIDARG)?,
+            End: offset.checked_add(bytes).ok_or(E_INVALIDARG)?,
         };
         let mut base = ptr::null_mut();
         unsafe { resource.Map(0, Some(&range), Some(&mut base))? };
@@ -102,15 +105,29 @@ impl Word {
         Ok(Self {
             resource,
             mapped: base.addr() + offset,
+            wide,
         })
     }
 
     fn reached(&self, value: u64, comparison: u32) -> bool {
         // X64 aligned 64-bit load. The COM resource and its CPU mapping stay alive
         // until all queued waits release their segment.
-        let now = unsafe { AtomicU64::from_ptr(self.mapped as *mut u64).load(Ordering::Acquire) };
+        let now = if self.wide {
+            unsafe { AtomicU64::from_ptr(self.mapped as *mut u64).load(Ordering::Acquire) }
+        } else {
+            u64::from(unsafe { std::sync::atomic::AtomicU32::from_ptr(self.mapped as *mut u32).load(Ordering::Acquire) })
+        };
         compare(now, value, comparison)
     }
+}
+
+#[cfg(test)]
+#[test]
+fn wait32_words_are_dword_sized_and_aligned() {
+    assert_eq!(word_bytes(false), 4);
+    assert_eq!(word_bytes(true), 8);
+    assert!(0x1004u64.is_multiple_of(word_bytes(false) as u64));
+    assert!(!0x1004u64.is_multiple_of(word_bytes(true) as u64));
 }
 
 /// D3D12_COMPARISON_FUNC of `now` against `target` (the console's memory
@@ -162,12 +179,46 @@ pub(super) fn note_write(list: &List, state: &mut super::Recording, what: &str, 
     if state.stalled_writes.len() < 8 { state.stalled_writes.push(address); }
 }
 
+fn word_bytes(wide: bool) -> usize {
+    if wide { 8 } else { 4 }
+}
+
+/// List slot 73 (Wait32X): the 32-bit form of slot 74, the same comparisons
+/// on a dword (Research port-everything item 2). TUXBOX_MEMORY_WAITS=0 skips
+/// it like slot 74; TUXBOX_WAIT32=0 leaves it inert as when unmapped.
+pub(super) unsafe extern "system" fn wait_value32(
+    list: &List,
+    address: u64,
+    comparison: u32,
+    target: u32,
+    flags: u32,
+) {
+    if crate::env_toggle!("TUXBOX_WAIT32") == Some("0") {
+        return;
+    }
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || format!(
+        "32-bit GPU memory wait (list slot 73) first at {address:#x}, comparison {comparison}, target {target:#x} (TUXBOX_WAIT32=0 leaves it inert)"));
+    unsafe { wait_value(list, address, comparison, u64::from(target), flags, false) }
+}
+
 pub(super) unsafe extern "system" fn wait_value64(
     list: &List,
     address: u64,
     comparison: u32,
     target: u64,
     flags: u32,
+) {
+    unsafe { wait_value(list, address, comparison, target, flags, true) }
+}
+
+unsafe fn wait_value(
+    list: &List,
+    address: u64,
+    comparison: u32,
+    target: u64,
+    flags: u32,
+    wide: bool,
 ) {
     // TUXBOX_MEMORY_WAITS=0 (rebox d35c75f, re-derived): a bisect switch for
     // stalls; the GPU memory wait is not recorded.
@@ -192,7 +243,7 @@ pub(super) unsafe extern "system" fn wait_value64(
             crate::diagnostics::log_once(&ODD, || format!("GPU memory wait comparison {comparison} waits as >="));
             7
         } };
-        let word = Word::map(list, address)?;
+        let word = Word::map(list, address, wide)?;
         if comparison == 8 || (comparison == 7 && target == 0) {
             return Ok(());
         }
@@ -246,7 +297,8 @@ pub(super) unsafe extern "system" fn wait_value64(
     })();
     if let Err(error) = result {
         crate::diagnostics::recording_error(format_args!(
-            "64-bit GPU memory wait {address:#x} >= {target:#x} ({:?})",
+            "{}-bit GPU memory wait {address:#x} >= {target:#x} ({:?})",
+            word_bytes(wide) * 8,
             error.code()
         ));
         state.error = error.code();
