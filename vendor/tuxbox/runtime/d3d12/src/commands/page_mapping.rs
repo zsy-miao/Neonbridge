@@ -270,7 +270,20 @@ pub(crate) fn remapped_under_import(address: u64) -> String {
         r.start, r.end, at.elapsed().as_millis()))
 }
 
+static ANY_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether pages under a GPU-imported range overlapping [lo, hi) were
+/// remapped (the import keeps the old ones; see device views cbv_snapshot).
+pub(crate) fn remapped_import_over(lo: u64, hi: u64) -> bool {
+    if !ANY_PINNED.load(Ordering::Relaxed) {
+        return false;
+    }
+    let pinned = PINNED.lock().unwrap_or_else(|e| e.into_inner());
+    pinned.iter().any(|(r, _)| r.start < hi && lo < r.end)
+}
+
 fn pinned_remapped(import: &Range<u64>) {
+    ANY_PINNED.store(true, Ordering::Relaxed);
     {
         let mut pinned = PINNED.lock().unwrap_or_else(|e| e.into_inner());
         if pinned.len() >= 256 {

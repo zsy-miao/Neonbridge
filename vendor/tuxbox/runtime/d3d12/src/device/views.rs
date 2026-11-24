@@ -1,5 +1,6 @@
 //! Standard Xbox resource views and samplers, device slots 17 through 22.
 mod byte_offset;
+mod cbv_snapshot;
 mod shadow;
 pub(super) use byte_offset::AddressViews;
 pub(crate) use shadow::Shadows;
@@ -62,6 +63,14 @@ pub(super) unsafe extern "system" fn cbv(
         let address = value.BufferLocation;
         if address != 0 && value.SizeInBytes != 0 {
             let guest = unsafe { &*desc }.SizeInBytes.max(1);
+            let copied = (cbv_snapshot::on()
+                && crate::commands::page_mapping::remapped_import_over(address, address.saturating_add(u64::from(value.SizeInBytes))))
+                .then(|| cbv_snapshot::copy(device, address, u64::from(guest), u64::from(value.SizeInBytes)).ok())
+                .flatten();
+            if let Some((gpu, chunk)) = copied {
+                value.BufferLocation = gpu;
+                owner = Some(chunk);
+            } else {
             match buffer_at(device, address, u64::from(value.SizeInBytes), 1, false) {
                 Ok(buffer) => {
                     if let Some(buffer) = &buffer {
@@ -83,6 +92,7 @@ pub(super) unsafe extern "system" fn cbv(
                         value.BufferLocation = 0;
                     }
                 },
+            }
             }
             // Xbox constant buffers sit on 16-byte boundaries; read one that
             // misses a 256-byte host boundary from a copy that starts on one.
