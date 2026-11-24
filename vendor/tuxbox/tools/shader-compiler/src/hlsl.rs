@@ -1617,7 +1617,37 @@ pub fn translate_stencil_target(ex: &ShaderExtract, slot: u32) -> Result<Transla
     translate_outputs(ex, None, &[], Some(slot))
 }
 
+/// Structured HLSL longer than this many bytes per byte of guest code is emitted again in the
+/// block-dispatch (`tb_pc`) form. Each guard of the structured form lists every pending skip
+/// flag, so its size grows with the square of the flags that are pending at once: xcl measured
+/// one retail program at 455 B per byte (148 MB of HLSL, 14 MB as pc blocks), the next largest
+/// at 61. Ported from xcl 69a892c (GPL-2.0). TB_STRUCTURED_BOUND=0 off.
+const STRUCTURED_BYTES_PER_CODE_BYTE: usize = 128;
+const OVERSIZED_STRUCTURED: &str = "structured HLSL past STRUCTURED_BYTES_PER_CODE_BYTE";
+
+thread_local! {
+    /// Set while a program is translated again after its structured form was oversized.
+    static STRUCTURED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_order: &[String],
+    stencil_target: Option<u32>) -> Result<Translated, String> {
+    match translate_outputs_once(ex, feeds_ps, output_order, stencil_target) {
+        Err(why) if why == OVERSIZED_STRUCTURED => {
+            STRUCTURED_OFF.with(|c| c.set(true));
+            let again = translate_outputs_once(ex, feeds_ps, output_order, stencil_target);
+            STRUCTURED_OFF.with(|c| c.set(false));
+            eprintln!(
+                "xshader: structured HLSL over {STRUCTURED_BYTES_PER_CODE_BYTE} B per code byte ({} code bytes); emitted as pc blocks (xcl 69a892c; TB_STRUCTURED_BOUND=0 off)",
+                ex.isa.len()
+            );
+            again
+        }
+        out => out,
+    }
+}
+
+fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_order: &[String],
     stencil_target: Option<u32>) -> Result<Translated, String> {
     if stencil_target.is_none() {
         if let Some(hlsl) = crate::independent_hlsl(ex) {
@@ -4556,6 +4586,25 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     ///   Loops must be properly nested, have one back-edge per header, and must not be
     ///   entered from outside except through the header — otherwise `Err`.
     fn emit_body(&mut self, is_ps: bool) -> Result<(), String> {
+        // The dispatch form cannot hold implicit-derivative sampling (pixel shaders) or DPP quad
+        // exchanges, so those keep the structured form whatever its size.
+        let can_dispatch = !is_ps && !self.insns.iter().any(is_quad_exchange);
+        if can_dispatch && STRUCTURED_OFF.with(|c| c.get()) {
+            return self.emit_body_dispatch(is_ps, 0);
+        }
+        let start = self.body.len();
+        self.emit_body_structured(is_ps)?;
+        let bound = STRUCTURED_BYTES_PER_CODE_BYTE.saturating_mul(self.ex.isa.len());
+        // (Interleaved loops already fell back to the dispatch form inside.)
+        if can_dispatch && self.body.len() - start > bound && !self.body[start..].contains("uint tb_sel = tb_pc;")
+            && !std::env::var("TB_STRUCTURED_BOUND").is_ok_and(|v| v.trim() == "0")
+        {
+            return Err(OVERSIZED_STRUCTURED.into());
+        }
+        Ok(())
+    }
+
+    fn emit_body_structured(&mut self, is_ps: bool) -> Result<(), String> {
         let mut off2idx: HashMap<usize, usize> = self.insns.iter().enumerate().map(|(i, x)| (x.offset, i)).collect();
         // A branch to the address just past the last instruction leaves the program (same as
         // reaching the final s_endpgm).
