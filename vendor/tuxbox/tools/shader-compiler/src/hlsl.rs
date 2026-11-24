@@ -5022,6 +5022,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let c = match m {
                     "s_bitcmp0_b32" => format!("((({} >> ({} & 31u)) & 1u) == 0u)", r(&s[0])?, r(&s[1])?),
                     "s_bitcmp1_b32" => format!("((({} >> ({} & 31u)) & 1u) != 0u)", r(&s[0])?, r(&s[1])?),
+                    // Bit (S1 & 63) of the 64-bit pair S0: low word below 32, else high word.
+                    "s_bitcmp0_b64" | "s_bitcmp1_b64" => {
+                        let (lo, hi_word, n) = (r(&s[0])?, r(&hi(&s[0]))?, r(&s[1])?);
+                        let bit = format!("(((({n} & 63u) < 32u ? {lo} : {hi_word}) >> ({n} & 31u)) & 1u)");
+                        format!("({bit} {} 0u)", if m == "s_bitcmp0_b64" { "==" } else { "!=" })
+                    }
                     "s_cmp_eq_u64" => format!(
                         "({} == {} && {} == {})",
                         r(&s[0])?,
