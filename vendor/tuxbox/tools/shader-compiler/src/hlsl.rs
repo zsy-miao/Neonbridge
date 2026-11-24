@@ -237,9 +237,14 @@ const HALF_HELPERS: &str = r#"uint tb_trig_f16(uint bits, bool cosine) {
 }
 uint tb_f16_rtz(float x) { return tb_f16_cvt(x, true); }
 bool tb_isnan(float x) { return (asuint(x) & 0x7fffffffu) > 0x7f800000u; }
-float tb_min(float a, float b) { return tb_isnan(a) ? b : (tb_isnan(b) ? a : (a < b ? a : b)); }
-float tb_max(float a, float b) { return tb_isnan(a) ? b : (tb_isnan(b) ? a : (a > b ? a : b)); }
+// Hardware min/max order signed zeros: max(-0, +0) = +0, min(-0, +0) = -0.
+float tb_fmin(float a, float b) { return (a == 0.0 && b == 0.0) ? asfloat(asuint(a) | asuint(b)) : min(a, b); }
+float tb_fmax(float a, float b) { return (a == 0.0 && b == 0.0) ? asfloat(asuint(a) & asuint(b)) : max(a, b); }
+float tb_min(float a, float b) { return tb_isnan(a) ? b : (tb_isnan(b) ? a : tb_fmin(a, b)); }
+float tb_max(float a, float b) { return tb_isnan(a) ? b : (tb_isnan(b) ? a : tb_fmax(a, b)); }
 float tb_med3(float a, float b, float c) { if (tb_isnan(a) || tb_isnan(b) || tb_isnan(c)) return tb_min(tb_min(a, b), c); float mx = tb_max(tb_max(a, b), c); if (mx == a) return tb_max(b, c); if (mx == b) return tb_max(a, c); return tb_max(a, b); }
+// x * 65535 rounded once to nearest even: the double product is exact (24 + 16 bits).
+uint tb_unorm16(float x) { precise double p = (double)saturate(x) * 65535.0; uint q = (uint)p; precise double rem = p - (double)q; return q + ((rem > 0.5 || (rem == 0.5 && (q & 1u) != 0u)) ? 1u : 0u); }
 float tb_ldexp(float x, int n) { n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
 "#;
 
@@ -315,6 +320,15 @@ fn sreg_opnd(n: u8) -> Opnd {
         106 => Opnd::VccLo,
         107 => Opnd::VccHi,
         n => Opnd::Sgpr(n),
+    }
+}
+
+/// High half of a 64-bit operand of a signed (`_i64`) instruction: a 32-bit
+/// literal is sign-extended, as for the 64-bit compares (compare.rs).
+fn hi_signed(o: &Opnd) -> Opnd {
+    match o {
+        Opnd::Literal(v) => Opnd::ConstInt(if (*v as i32) < 0 { -1 } else { 0 }),
+        other => hi(other),
     }
 }
 
@@ -476,6 +490,9 @@ struct Emitter<'a> {
     /// PS attribute index -> input register (registers the shader actually reads).
     ps_attrs: Vec<u32>,
     pulled_attrs: BTreeSet<usize>,
+    /// A PS reads the interpolation weights in v0/v1 as plain values (not
+    /// through v_interp), so they must be loaded from SV_Barycentrics.
+    plain_weights: bool,
     flat_attrs: BTreeSet<usize>,
     /// VS parameter-export index -> output register.
     out_params: Vec<u32>,
@@ -1327,7 +1344,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         hlsl,
         entry: "main",
         profile,
-        needs_barycentrics: !em.pulled_attrs.is_empty(),
+        needs_barycentrics: em.needs_bary(),
         packed_dot_product: fspx_wave.is_some(),
         typed_int64_atomics: !em.wide_visibility_uavs.is_empty() || em.packed.as_ref().is_some_and(|p| !p.wide_images.is_empty()),
         required_wave_size,
@@ -1674,6 +1691,7 @@ impl<'a> Emitter<'a> {
             // a system value sharing it (observed: PARTICLE_RANDOM unread + SV_IsFrontFace read
             // in the same register still occupies an attribute slot; d26fd88ff8712f9e).
             pulled_attrs: BTreeSet::new(),
+            plain_weights: false,
             flat_attrs: BTreeSet::new(),
             ps_in_interp: InputInterp::default(),
             out_interp: InputInterp::default(),
@@ -1799,9 +1817,13 @@ impl<'a> Emitter<'a> {
             .iter()
             .any(|i| i.enc == Enc::Sopp && Self::branch_cond(i.op).is_some() && i.aux.imm < 0);
         let mut original_weights = !(has_back_edge && self.insns.iter().any(writes_weight));
+        let mut plain_read = false;
         let mut i = 0;
         while i < self.insns.len() {
             let ins = &self.insns[i];
+            if ins.enc != Enc::Vinterp && original_weights && ins.src.iter().any(|o| matches!(o, Opnd::Vgpr(0 | 1))) {
+                plain_read = true;
+            }
             if ins.enc == Enc::Vinterp {
                 let attr = ins.aux.imm as usize;
                 if ins.op == 2 && ins.raw[0] & 255 == 2 {
@@ -1834,6 +1856,13 @@ impl<'a> Emitter<'a> {
             i += 1;
         }
         self.pulled_attrs.extend(self.flat_attrs.intersection(&smooth));
+        // v0/v1 hold the weights only when the shader interpolates something.
+        self.plain_weights = plain_read && !smooth.is_empty();
+    }
+
+    /// The PS loads interpolation weights from SV_Barycentrics.
+    fn needs_bary(&self) -> bool {
+        !self.pulled_attrs.is_empty() || self.plain_weights
     }
 
     /// Classify descriptor loads and bind them to HLSL registers.
@@ -4009,11 +4038,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let d = d.ok_or("no dst")?;
                 let (a, b) = (r(&s[0])?, r(&s[1])?);
                 if matches!(m, "s_lshr_b64" | "s_ashr_i64" | "s_bfe_u64" | "s_bfe_i64") {
-                    self.touch(&hi(&s[0]));
-                    let upper = r(&hi(&s[0]))?;
+                    let signed = m.ends_with("i64");
+                    let high = if signed { hi_signed(&s[0]) } else { hi(&s[0]) };
+                    self.touch(&high);
+                    let upper = r(&high)?;
                     let t = self.tmp;
                     self.tmp += 1;
-                    let signed = m.ends_with("i64");
                     let call = if m.starts_with("s_bfe") { "tb_field64" } else { "tb_shr64" };
                     self.line(&format!("uint2 t{t} = {call}({a}, {upper}, {b}, {signed}); scc = any(t{t} != 0u);"));
                     self.ws(&d, &format!("t{t}.x"))?;
@@ -5174,8 +5204,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 "v_sub_f16" => format!("{a} - {b}"),
                 "v_subrev_f16" => format!("{b} - {a}"),
                 "v_mul_f16" => format!("{a} * {b}"),
-                "v_max_f16" => format!("max({a}, {b})"),
-                _ => format!("min({a}, {b})"),
+                "v_max_f16" => format!("tb_fmax({a}, {b})"),
+                _ => format!("tb_fmin({a}, {b})"),
             };
             return self.wv(&d, &hres(e));
         }
@@ -5335,7 +5365,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             let lo = self.fm(ins, 0)?;
             let hi = self.fm(ins, 1)?;
-            return self.wv(&d, &format!("((uint)round(saturate({lo}) * 65535.0) | ((uint)round(saturate({hi}) * 65535.0) << 16))"));
+            return self.wv(&d, &format!("(tb_unorm16({lo}) | (tb_unorm16({hi}) << 16))"));
         }
         if m == "v_cvt_pk_u8_f32" {
             if ins.aux.mask & !9 != 0 || ins.raw[0] & 0xf800 != 0 || ins.aux.imm2 != 0 {
@@ -5375,8 +5405,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     "v_pk_fma_f16" => format!("{} * {} + {}", v[0], v[1], v[2]),
                     "v_pk_add_f16" => format!("{} + {}", v[0], v[1]),
                     "v_pk_mul_f16" => format!("{} * {}", v[0], v[1]),
-                    "v_pk_min_f16" => format!("min({}, {})", v[0], v[1]),
-                    _ => format!("max({}, {})", v[0], v[1]),
+                    "v_pk_min_f16" => format!("tb_fmin({}, {})", v[0], v[1]),
+                    _ => format!("tb_fmax({}, {})", v[0], v[1]),
                 });
             }
             if w0 & (1 << 15) != 0 {
@@ -5394,8 +5424,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if matches!(m.as_str(), "v_min3_f16" | "v_max3_f16" | "v_med3_f16") {
             let (a, b, c) = (h16(&s[0])?, h16(&s[1])?, h16(&s[2])?);
             let e = match m.as_str() {
-                "v_min3_f16" => format!("min(min({a}, {b}), {c})"),
-                "v_max3_f16" => format!("max(max({a}, {b}), {c})"),
+                "v_min3_f16" => format!("tb_fmin(tb_fmin({a}, {b}), {c})"),
+                "v_max3_f16" => format!("tb_fmax(tb_fmax({a}, {b}), {c})"),
                 _ => format!("tb_med3({a}, {b}, {c})"),
             };
             return self.wv(&d, &hres(e));
@@ -5691,6 +5721,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // 64-bit vector shifts: value and result are register pairs (lo, hi).
             let pair_hi = |o: &Opnd| match o {
                 Opnd::Vgpr(n) => Opnd::Vgpr(n + 1),
+                other if m == "v_ashrrev_i64" => hi_signed(other),
                 other => hi(other),
             };
             let n = format!("({} & 63u)", r(&s[0])?);
@@ -5791,15 +5822,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 a=fa()?, b=fb()?, c=fc()?)),
             "v_mul_f32" if legacy => Some(format!("tb_mull({}, {})", fa()?, fb()?)),
             "v_mul_f32" => Some(format!("{} * {}", fa()?, fb()?)),
-            "v_min_f32" => Some(format!("min({}, {})", fa()?, fb()?)),
-            "v_max_f32" => Some(format!("max({}, {})", fa()?, fb()?)),
+            "v_min_f32" => Some(format!("tb_fmin({}, {})", fa()?, fb()?)),
+            "v_max_f32" => Some(format!("tb_fmax({}, {})", fa()?, fb()?)),
             "v_mac_f32" | "v_fmac_f32" => Some(format!("{} * {} + asfloat({dn})", fa()?, fb()?)),
             "v_madmk_f32" | "v_fmamk_f32" => Some(format!("{} * {k} + {}", fa()?, fb()?)),
             "v_madak_f32" | "v_fmaak_f32" => Some(format!("{} * {} + {k}", fa()?, fb()?)),
             "v_mad_f32" if legacy => Some(format!("tb_mull({}, {}) + {}", fa()?, fb()?, fc()?)),
             "v_mad_f32" | "v_fma_f32" => Some(format!("{} * {} + {}", fa()?, fb()?, fc()?)),
-            "v_min3_f32" => Some(format!("min(min({}, {}), {})", fa()?, fb()?, fc()?)),
-            "v_max3_f32" => Some(format!("max(max({}, {}), {})", fa()?, fb()?, fc()?)),
+            "v_min3_f32" => Some(format!("tb_fmin(tb_fmin({}, {}), {})", fa()?, fb()?, fc()?)),
+            "v_max3_f32" => Some(format!("tb_fmax(tb_fmax({}, {}), {})", fa()?, fb()?, fc()?)),
             // ISA: any NaN operand -> V_MIN3_F32 of the three; otherwise the median.
             "v_med3_f32" => Some(format!("tb_med3({}, {}, {})", fa()?, fb()?, fc()?)),
             "v_ldexp_f32" => Some(format!("tb_ldexp({}, asint({b}))", fa()?)),
@@ -6121,6 +6152,71 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     /// The host view supplies what the console descriptor encoded: formatted
     /// accesses read a typed buffer, IDXEN advances by the view's structure
     /// stride, and byte addressing uses a raw view.
+    /// D16 typed-buffer access: component k lives in the half k % 2 of VGPR
+    /// vd + k / 2 (`_d16_hi_x`: the high half of vd). A load converts each
+    /// component to 16 bits and keeps the half it does not write; a store reads
+    /// the halves back to the view's element type.
+    fn typed_d16(&mut self, ins: &Insn, nm: &str, is_uav: bool, slot: u32, n: u8, index: &str, vd: u8) -> Result<(), String> {
+        let high = ins.mnemonic.contains("_d16_hi_");
+        if high && n != 1 {
+            return Err("unsupported D16 high-half typed-buffer op".into());
+        }
+        let ty = self.tbuf_ty.get(&(is_uav, slot)).copied();
+        let place = |k: u8| -> Result<(Opnd, u32), String> {
+            let reg = vd.checked_add(k / 2).ok_or("D16 VGPR overflows")?;
+            Ok((Opnd::Vgpr(reg), if high || k % 2 == 1 { 16 } else { 0 }))
+        };
+        if ins.mnemonic.contains("_store_") {
+            if !is_uav {
+                return Err("buffer_store_format to a non-UAV table".into());
+            }
+            let mut c = vec![];
+            for k in 0..4u8 {
+                if k >= n {
+                    c.push(if ty.is_some() { "0u".into() } else { "0.0".into() });
+                    continue;
+                }
+                let (o, shift) = place(k)?;
+                self.touch(&o);
+                let word = format!("(({} >> {shift}u) & 0xffffu)", r(&o)?);
+                c.push(match ty {
+                    Some(2) => format!("(asint({word} << 16) >> 16)"),
+                    Some(_) => word,
+                    None => format!("f16tof32({word})"),
+                });
+            }
+            let ctor = match ty { Some(2) => "int4", Some(_) => "uint4", None => "float4" };
+            self.line(&format!("if (exec_lo & 1u) {nm}[{index}] = {ctor}({});", c.join(", ")));
+            return Ok(());
+        }
+        let t = self.tmp;
+        self.tmp += 1;
+        let ety = match ty { Some(2) => "int4", Some(_) => "uint4", None => "float4" };
+        self.line(&format!("{ety} t{t} = {nm}[{index}];"));
+        let half = |k: u8| {
+            let c = XYZW[k as usize];
+            match ety {
+                "float4" => format!("f32tof16(t{t}.{c})"),
+                "int4" => format!("((uint)t{t}.{c} & 0xffffu)"),
+                _ => format!("(t{t}.{c} & 0xffffu)"),
+            }
+        };
+        for j in 0..n.div_ceil(2) {
+            let (o, _) = place(j * 2)?;
+            let value = if high {
+                self.touch(&o);
+                format!("(({} & 0xffffu) | ({} << 16))", r(&o)?, half(0))
+            } else if j * 2 + 1 < n {
+                format!("({} | ({} << 16))", half(j * 2), half(j * 2 + 1))
+            } else {
+                self.touch(&o);
+                format!("(({} & 0xffff0000u) | {})", r(&o)?, half(j * 2))
+            };
+            self.wv(&o, &value)?;
+        }
+        Ok(())
+    }
+
     fn heap_mubuf(&mut self, ins: &Insn, src: u16) -> Result<(), String> {
         let m = ins.mnemonic.as_str();
         let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
@@ -6136,6 +6232,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let rw = if load { "" } else { "RW" };
         let index = format!("NonUniformResourceIndex(s{src})");
         let format = m.contains("_format_");
+        if m.contains("_d16") {
+            // D16 packs halves converted by the view's numeric format, which a heap view does not declare.
+            return Err(format!("{m} through a heap descriptor unsupported"));
+        }
         let width: u8 = if format {
             match m.rsplit('_').next() { Some("x") => 1, Some("xy") => 2, Some("xyz") => 3, Some("xyzw") => 4,
                 _ => return Err(format!("{m} through a heap descriptor unsupported")) }
@@ -6380,7 +6480,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     Some("xyzw") => 4,
                     _ => 0,
                 };
-                if offen || ins.aux.imm != 0 || comps == 0 {
+                if offen || ins.aux.imm != 0 || comps == 0 || ins.mnemonic.contains("_d16") {
                     return Err("uint typed-buffer MUBUF form unsupported".into());
                 }
                 // Without IDXEN the access addresses element 0.
@@ -6424,6 +6524,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 _ => return Err("bad vdata".into()),
             };
             let nm = if is_uav { format!("utb{slot}") } else { format!("stb{slot}") };
+            if ins.mnemonic.contains("_d16_") {
+                return self.typed_d16(ins, &nm, is_uav, slot, n, &index, vd);
+            }
             if ins.mnemonic.starts_with("buffer_store") {
                 if !is_uav {
                     return Err("buffer_store_format to a non-UAV table".into());
@@ -7741,7 +7844,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
         // Outputs matching per-vertex pixel-shader inputs must use the same modifier, so the
         // producer needs the macro too (both stages are compiled for the same shader model).
         let out_uses_macro = !is_ps && self.out_interp.0.iter().any(|(_, m)| m == "TB_VERTEX_INPUT");
-        if !self.pulled_attrs.is_empty() || out_uses_macro {
+        if self.needs_bary() || out_uses_macro {
             h.push_str("#if __SHADER_TARGET_MAJOR >= 6\n#define TB_VERTEX_INPUT nointerpolation\n#else\n#define TB_VERTEX_INPUT\n#endif\n");
         }
         let _ = writeln!(h, "struct SIn {{");
@@ -7787,7 +7890,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
                 let _ = writeln!(h, "    {interp}{ty} i{ei} : {};", semantic(e));
             }
         }
-        if !self.pulled_attrs.is_empty() {
+        if self.needs_bary() {
             h.push_str("#if __SHADER_TARGET_MAJOR >= 6\n    float3 tb_bary : SV_Barycentrics;\n#endif\n");
         }
         let pos_field = match ex.input_sig.iter().position(|e| e.sysval == 1) {
@@ -7945,7 +8048,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             let _ = writeln!(init, "    uint tb_quad = ((uint){pos_field}.x & 1u) | (((uint){pos_field}.y & 1u) << 1);");
         }
         if is_ps {
-            if !self.pulled_attrs.is_empty() {
+            if self.needs_bary() {
                 init.push_str("#if __SHADER_TARGET_MAJOR >= 6\n");
                 for (reg, weight) in [("v0","y"),("v1","z")] {
                     if self.regs.contains(reg) { let _ = writeln!(init, "    {reg} = asuint(i.tb_bary.{weight});"); }
