@@ -452,6 +452,19 @@ fn f(o: &Opnd) -> Result<String, String> {
 /// first two families only). The unsigned small floats (5-bit exponent, no
 /// sign) shift into half-float position: 11-bit << 4, 10-bit << 5; exact for
 /// denormals, infinities and NaNs. A 3-channel format reads w as 1.
+/// The f32 bits of a typed buffer load's binary16 (or 11/10-bit float, shifted
+/// to the half layout) channel `h`, as a uint. GFX10 typed loads keep a NaN's
+/// payload, signaling ones included, and HLSL's f16tof32 need not. For exponent
+/// 31, widen with exponent 15 and set the f32's high exponent bit again.
+/// VIctory-zhai f876a82 (zhaibingye, GPL-3.0), ported. TB_TYPED_NAN_BITS=0
+/// converts with f16tof32 alone.
+fn typed_half_bits(h: &str) -> String {
+    if std::env::var("TB_TYPED_NAN_BITS").is_ok_and(|v| v.trim() == "0") {
+        return format!("asuint(f16tof32({h}))");
+    }
+    format!("(asuint(f16tof32(({h}) ^ ((({h}) & 0x7c00u) == 0x7c00u ? 0x4000u : 0u))) | ((({h}) & 0x7c00u) == 0x7c00u ? 0x40000000u : 0u))")
+}
+
 fn packed_typed_channel(packed: &str, format: u32, channel: u32) -> String {
     let (widths, mode): (&[u32], u32) = match format {
         30..=36 => (&[11, 11, 10], format - 30),
@@ -472,7 +485,7 @@ fn packed_typed_channel(packed: &str, format: u32, channel: u32) -> String {
         3 => format!("asuint(float({signed}))"),
         4 => field,
         5 => format!("asuint({signed})"),
-        _ => format!("asuint(f16tof32({field} << {}u))", 15 - w),
+        _ => typed_half_bits(&format!("({field} << {}u)", 15 - w)),
     }
 }
 
@@ -2022,6 +2035,13 @@ fn translate_outputs_lone(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     stencil_target: Option<u32>) -> Result<Translated, String> {
     let first = translate_outputs_once(ex, feeds_ps, output_order, stencil_target);
     if first.is_ok() || ex.stage != Stage::Compute || stencil_target.is_some() { return first; }
+    // Once this exact exchange subset is recognized, a later binding or
+    // emitter error must not silently replace its collectives with copies.
+    let mut original = disassemble(&ex.isa);
+    if (ex.root_sig.is_some() || original.iter().all(|i| !matches!(i.enc, Enc::Smem | Enc::Mubuf)))
+        && wave_sum::straight_exchange(&mut original, compute_group(ex)) {
+        return first;
+    }
     // Appends only: each lane may allocate for itself.
     let alone = lone_lane::retry(|| translate_outputs_once(ex, feeds_ps, output_order, stencil_target))
         .and_then(|t| lone_lane::check(&t.hlsl).map(|()| t));
@@ -2119,9 +2139,14 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     let lane_masks = if general_elections { lane_mask_reads(&insns) } else { BTreeSet::new() };
     let reflection = reflection_compact::prepare(ex, &mut insns);
     let group_extrema = group_extrema::prepare(ex, &mut insns);
+    let straight_exchange = ex.stage == Stage::Compute && !lone_lane::on()
+        && !wave_cull && !page_waves && !resolve_wave32 && !allocation_wave64
+        && (ex.root_sig.is_some() || insns.iter().all(|i| !matches!(i.enc, Enc::Smem | Enc::Mubuf)))
+        && wave_sum::straight_exchange(&mut insns, compute_group(ex));
     let required_wave_size = if wave_cull {
         fspx_wave.filter(|&width| width == 32)
-    } else { lower_wave_reductions(&mut insns)? };
+    } else if straight_exchange { None }
+      else { lower_wave_reductions(&mut insns)? };
     let required_wave_size = if resolve_wave32 {
         if matches!(required_wave_size, Some(64)) || insns.iter().any(is_quad_exchange) {
             return Err("resolve Wave32 requires a compatible wave reduction".into());
@@ -2281,8 +2306,9 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
             return Err(format!("wave operation requires complete {width}-lane compute waves"));
         }
     }
-    em.portable_wave64 = required_wave_size == Some(64)
-        && ex.stage == Stage::Compute && compute_group(ex) == [64, 1, 1]
+    em.portable_wave64 = (straight_exchange || (required_wave_size == Some(64)
+        && compute_group(ex) == [64, 1, 1]))
+        && ex.stage == Stage::Compute
         && !wave_cull && !page_waves && !allocation_wave64 && !requires_ballot
         && !em.compute_swizzle && !em.indexed_lane && !em.compute_heap
         && em.packed.is_none() && !uses_quad_add && !uses_bpermute && !probe_trace
@@ -2290,7 +2316,10 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         && !instance_cull && !hzb_cull && view_cull.is_none() && !post_cull
         && !hair_visibility_indirect && !hair_visibility_single && hair_compact.is_none()
         && !subsurface_setup && !material_classify && !classify_tiles && !reflection && !group_extrema
-        && wave_sum::portable_single_wave(&em.insns);
+        && (straight_exchange || wave_sum::portable_single_wave(&em.insns));
+    if straight_exchange && !em.portable_wave64 {
+        return Err("straight DPP8 exchange conflicts with a specialized lowering".into());
+    }
     if is_ps {
         em.find_export_epilogs();
         em.classify_interpolation();
@@ -7567,6 +7596,24 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if matches!(m.as_str(), "v_interp_p1ll_f16" | "v_interp_p1lv_f16" | "v_interp_p2_f16") {
             return self.emit_f16_interp(ins);
         }
+        if ins.enc == Enc::Vop2 && ins.op == wave_sum::DPP8_EXCHANGE {
+            if !self.portable_wave64 { return Err("DPP8 exchange without convergent group".into()); }
+            let a = r(&s[0])?;
+            let b = r(&s[1])?;
+            let selector = ins.aux.imm as u32;
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("uint t{t} = tb_reduction_read(gtid.x, {a}, (gtid.x & ~7u) | (({selector:#x}u >> (3u * (gtid.x & 7u))) & 7u));"));
+            let value = match m.as_str() {
+                "v_add_nc_u32" => format!("t{t} + {b}"),
+                "v_and_b32" => format!("t{t} & {b}"),
+                "v_or_b32" => format!("t{t} | {b}"),
+                "v_min_u32" => format!("min(t{t}, {b})"),
+                "v_max_u32" => format!("max(t{t}, {b})"),
+                _ => return Err("unsupported DPP8 exchange operation".into()),
+            };
+            return self.wv(&d, &value);
+        }
         if ins.enc == Enc::Vop2 && ins.op == wave_sum::DPP_REDUCE {
             // Read the partner before the EXEC-guarded write, including when VDST aliases VSRC.
             let lane = match ins.aux.imm {
@@ -9033,7 +9080,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 20 | 22 if channel == 0 => packed.clone(),
                 20 | 22 => (if channel == 3 { if ins.aux.imm2 == 22 { "asuint(1.0f)" } else { "1u" } } else { "0u" }).to_string(),
                 // BUFFER_FORMAT_16_FLOAT.
-                13 if channel == 0 => format!("asuint(f16tof32({packed}))"),
+                13 if channel == 0 => typed_half_bits(&format!("({packed} & 0xffffu)")),
                 13 => (if channel == 3 { "asuint(1.0f)" } else { "0u" }).to_string(),
                 // BUFFER_FORMAT_16_16_16_16_UINT: four 16-bit unsigned channels.
                 69 if upstream_ff1_fmt69() => tbuf_16_16_16_16_uint_channel(channel, &packed, &packed1),
@@ -9041,12 +9088,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 // one 8-byte element, x/y in the first dword, z/w in the second.
                 // Xbox2Windows 5d0dce30 (#1699, triggered02, MIT), re-derived;
                 // TB_TYPED_HALF4=0 reads (0, 0, 0, 1) as before.
-                71 if half4 => format!("asuint(f16tof32({} >> {}u))", if channel < 2 { &packed } else { &packed1 }, (channel % 2) * 16),
+                71 if half4 => typed_half_bits(&format!("(({} >> {}u) & 0xffffu)", if channel < 2 { &packed } else { &packed1 }, (channel % 2) * 16)),
                 // BUFFER_FORMAT_16_16_UNORM / UINT / FLOAT.
                 23 | 27 | 29 if channel >= 2 => (if channel == 3 { if ins.aux.imm2 == 27 { "1u" } else { "asuint(1.0f)" } } else { "0u" }).to_string(),
                 23 => format!("asuint(float(({packed} >> {}u) & 65535u) / 65535.0f)", channel * 16),
                 27 => format!("(({packed} >> {}u) & 65535u)", channel * 16),
-                29 => format!("asuint(f16tof32({packed} >> {}u))", channel * 16),
+                29 => typed_half_bits(&format!("(({packed} >> {}u) & 0xffffu)", channel * 16)),
                 f @ 30..=49 => packed_typed_channel(&packed, f as u32, channel as u32),
                 // Unknown formats read (0, 0, 0, 1) so the shader still translates;
                 // TB_TYPED_STRICT=1 refuses them instead.
@@ -10104,6 +10151,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
     }
 
+    /// Whether implicit derivatives exist here: pixel shaders, and compute groups
+    /// SM 6.6 can split into quads.
+    fn derivatives_available(&self) -> bool {
+        match self.ex.stage {
+            Stage::Pixel => true,
+            Stage::Compute => self.ex.psv_threads.is_some_and(|[x, y, z]| {
+                x != 0 && y != 0 && z != 0 && ((x % 4 == 0 && y == 1 && z == 1) || (x % 2 == 0 && y % 2 == 0))
+            }),
+            _ => false,
+        }
+    }
+
     fn require_compute_derivatives(&mut self) -> Result<(), String> {
         if self.is_cs && !self.compute_derivatives {
             // SM 6.6 groups derivatives into runs of four X lanes or 2x2 XY quads.
@@ -10902,8 +10961,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // (X3570/X3511). The console GPU computes those derivatives per quad regardless of
         // control flow; there is no SM5 equivalent, so inside emitted loops such samples
         // are APPROXIMATED with LOD 0 (exact for single-mip textures, too sharp otherwise).
-        let in_loop = self.loop_depth > 0;
-        if in_loop && matches!(modi, 0 | 1 | 5 | 6) {
+        // Outside a pixel shader (and a compute group SM 6.6 cannot split into quads)
+        // there are no screen derivatives: DXC rejects Sample/SampleBias/SampleCmp
+        // there. Sample LOD 0 (the bias as the level) instead of refusing, as
+        // victory-gta6 578d459 (fxceless, GPL-3.0) does for the 730 compute
+        // programs it found. TB_DERIV_STRICT=1 keeps the old behaviour.
+        let no_deriv = matches!(modi, 0 | 1 | 5 | 6) && !self.derivatives_available()
+            && !std::env::var("TB_DERIV_STRICT").is_ok_and(|v| v.trim() == "1");
+        if no_deriv {
+            self.line("// APPROX-NO-DERIV-SAMPLE: implicit-derivative sample outside a pixel shader emitted as LOD 0");
+        }
+        let in_loop = self.loop_depth > 0 || no_deriv;
+        if self.loop_depth > 0 && matches!(modi, 0 | 1 | 5 | 6) {
             self.line("// APPROX-LOOP-SAMPLE: implicit-derivative sample inside a loop emitted as LOD 0");
         }
         let call = if let Some(z) = &zref {

@@ -141,6 +141,17 @@ fn run() -> Result<(), Error> {
         }
         return Ok(());
     }
+    if source == "--refusals" {
+        let dir = PathBuf::from(args.next().ok_or("--refusals requires a request directory")?);
+        let mut json = false;
+        for extra in args {
+            match extra.to_str() {
+                Some("--json") => json = true,
+                _ => return Err(format!("unknown option {extra:?}").into()),
+            }
+        }
+        return refusal_census(&dir, json).map_err(Error::Other);
+    }
     if source == "--list-emitters" {
         if args.next().is_some() {
             return Err("--list-emitters takes no arguments".into());
@@ -234,6 +245,122 @@ fn run() -> Result<(), Error> {
     );
     fs::write(&output, hlsl).map_err(|e| format!("{}: {e}", output.display()))?;
     Ok(())
+}
+
+/// Reasons with offsets, immediates and register numbers replaced by `#`, so
+/// that one refusal site counts once however many programs reach it. Cause
+/// numbers written as plain words (a format ID, a dimension) stay visible.
+fn normalize_refusal(reason: &str) -> String {
+    let first = reason.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let b = first.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        let boundary = i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+        if boundary && b[i] == b'0' && b.get(i + 1) == Some(&b'x') {
+            let mut j = i + 2;
+            while j < b.len() && b[j].is_ascii_hexdigit() { j += 1; }
+            out.push('#');
+            i = j;
+            continue;
+        }
+        if boundary && matches!(b[i], b's' | b'v' | b't' | b'u' | b'b') && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() { j += 1; }
+            if j == b.len() || !(b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                out.push(b[i] as char);
+                out.push('#');
+                i = j;
+                continue;
+            }
+        }
+        out.push(b[i] as char);
+        i += 1;
+    }
+    out
+}
+
+fn json_string(s: &str) -> String {
+    let mut out = String::from('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Read-only census of translator refusal sites over a request directory (the
+/// idea of Xbox2Windows 5510deca/b4d1cf01/425cd53b, avt0m4t and contributors,
+/// MIT). Every file is translated in memory, without dxc, and nothing is
+/// written. xshader stops at the first refusal, so each program counts its
+/// first site only: fixing one can expose the next. A program that takes over
+/// TB_REFUSALS_TIMEOUT seconds (default 60) counts as `timeout`.
+fn refusal_census(dir: &Path, json: bool) -> Result<(), String> {
+    use std::collections::BTreeMap;
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .collect();
+    files.sort();
+    let limit = std::time::Duration::from_secs(
+        env::var("TB_REFUSALS_TIMEOUT").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(60),
+    );
+    // (outcome, stage, reason) -> programs
+    let mut rows: BTreeMap<(&'static str, String, String), u32> = BTreeMap::new();
+    let (mut ok, mut total) = (0u32, 0u32);
+    for path in &files {
+        let Ok(bytes) = fs::read(path) else { continue };
+        total += 1;
+        if bytes.starts_with(&2_u32.to_le_bytes()) {
+            ok += 1; // ray library: not translated by the HLSL emitter
+            continue;
+        }
+        let shader = match extract(&bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                *rows.entry(("failed", "decode".into(), normalize_refusal(&e))).or_default() += 1;
+                continue;
+            }
+        };
+        let stage = format!("{:?}", shader.stage).to_lowercase();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| translate(&shader, None, None, None)));
+            let _ = tx.send(match result {
+                Ok(Ok(_)) => None,
+                Ok(Err(Error::Unsupported(e))) => Some(("unsupported", e)),
+                Ok(Err(Error::Other(e))) => Some(("failed", e)),
+                Err(_) => Some(("crash", "translator panic".to_string())),
+            });
+        });
+        match rx.recv_timeout(limit) {
+            Ok(None) => ok += 1,
+            Ok(Some((kind, reason))) => *rows.entry((kind, stage, normalize_refusal(&reason))).or_default() += 1,
+            Err(_) => *rows.entry(("timeout", stage, format!("over {} s", limit.as_secs()))).or_default() += 1,
+        }
+    }
+    let mut sorted: Vec<_> = rows.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if json {
+        let items: Vec<String> = sorted.iter().map(|((kind, stage, reason), n)| format!(
+            "{{\"outcome\":{},\"stage\":{},\"reason\":{},\"programs\":{n}}}",
+            json_string(kind), json_string(stage), json_string(reason))).collect();
+        println!("{{\"programs\":{total},\"translated\":{ok},\"refusals\":[{}]}}", items.join(","));
+    } else {
+        println!("{total} programs, {ok} translated, {} refused (first site each)", total - ok);
+        println!("{:>8}  {:<11} {:<9} reason", "programs", "outcome", "stage");
+        for ((kind, stage, reason), n) in &sorted {
+            println!("{n:>8}  {kind:<11} {stage:<9} {reason}");
+        }
+    }
+    // A timed-out translation may still be running on its thread.
+    std::process::exit(0);
 }
 
 fn main() -> std::process::ExitCode {

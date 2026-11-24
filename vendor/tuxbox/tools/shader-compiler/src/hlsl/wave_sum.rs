@@ -4,6 +4,80 @@ use super::{Emitter, Enc, Insn, Opnd};
 
 pub(super) const DPP_REDUCE: u32 = 0x7ff1;
 pub(super) const READ_LANE: u32 = 0x7ff2;
+// A straight-line DPP8 exchange is not a reduction. Preserve the actual
+// partner, and do not let the approximate single-lane retry erase it.
+pub(super) const DPP8_EXCHANGE: u32 = 0x7fe7;
+
+/// Prove a full-EXEC, single 32-thread group (also valid as a partial
+/// wave64), or a 64-thread group with only within-octet exchanges.
+/// No branch, EXEC modification, early return, LDS or unknown operands.
+/// Static descriptor loads and a single terminal store can be admitted;
+/// the main emitter still resolves their resource and address metadata.
+/// Each DPP8 source lane remains inside the group; constant readlane is
+/// only allowed at 32 threads where wave32/wave64 agree for lanes 0..31.
+pub(super) fn straight_exchange(insns: &mut [Insn], group: [u32; 3]) -> bool {
+    if !matches!(group, [32, 1, 1] | [64, 1, 1]) || insns.len() > 4096
+        || insns.last().is_none_or(|i| i.mnemonic != "s_endpgm")
+    { return false; }
+    let mut found = false;
+    let mut stored = false;
+    for (idx, i) in insns.iter().enumerate() {
+        if !i.is_complete() { return false; }
+        let ordinary = |o: &Opnd| matches!(o, Opnd::Vgpr(_) | Opnd::Sgpr(0..=105)
+            | Opnd::ConstInt(_) | Opnd::ConstF32(_) | Opnd::Literal(_));
+        if stored && !matches!(i.mnemonic.as_str(), "s_waitcnt" | "s_nop" | "s_endpgm") {
+            return false;
+        }
+        if i.enc == Enc::Vop2 && i.src.first() == Some(&Opnd::Raw(233)) {
+            if !matches!(i.mnemonic.as_str(), "v_add_nc_u32" | "v_and_b32" |
+                "v_or_b32" | "v_min_u32" | "v_max_u32")
+                || !matches!(i.dst[..], [Opnd::Vgpr(_)])
+                || !matches!(i.src[..], [Opnd::Raw(233), Opnd::Vgpr(_)])
+                || i.raw.len() != 2 { return false; }
+            found = true;
+        } else if i.mnemonic == "v_readlane_b32" {
+            let [Opnd::Vgpr(dst @ 0..=105)] = i.dst[..] else { return false };
+            let (Some(Opnd::Vgpr(src)), Some(Opnd::ConstInt(lane @ 0..=31))) =
+                (i.src.first(), i.src.get(1)) else { return false };
+            if group[0] != 32 || i.raw.as_slice() !=
+                [0xd7600000 | u32::from(dst), ((128 + *lane as u32) << 9) | 256 | u32::from(*src)]
+            { return false; }
+        } else if i.enc == Enc::Smem && i.mnemonic == "s_load_dwordx4" {
+            // Descriptor loads only; actual resource provenance is checked
+            // by the normal resource resolver. No runtime scalar offset.
+            if i.raw.get(1).is_none_or(|w| w >> 25 != 0x7d)
+                || !i.src.iter().chain(&i.dst).all(ordinary) { return false; }
+        } else if i.enc == Enc::Mubuf && i.mnemonic == "buffer_store_dword" {
+            // One terminal write, with no subsequent shared exchange or
+            // memory read. The normal emitter validates address and binding.
+            if !found || !i.src.iter().chain(&i.dst).all(ordinary) { return false; }
+            stored = true;
+        } else if i.enc == Enc::Sopp {
+            if !(matches!(i.mnemonic.as_str(), "s_nop" | "s_waitcnt")
+                || i.mnemonic == "s_endpgm" && idx+1 == insns.len()) { return false; }
+        } else if !(matches!(i.mnemonic.as_str(), "v_mov_b32" | "v_add_nc_u32"
+            | "v_sub_nc_u32" | "v_subrev_nc_u32" | "v_and_b32" | "v_or_b32"
+            | "v_xor_b32" | "v_min_u32" | "v_max_u32" | "v_lshlrev_b32"
+            | "v_lshrrev_b32" | "s_mov_b32" | "s_movk_i32")
+            && i.src.iter().chain(&i.dst).all(ordinary)) { return false; }
+    }
+    if !found { return false; }
+    for i in insns {
+        if i.enc == Enc::Vop2 && i.src.first() == Some(&Opnd::Raw(233)) {
+            let control = i.raw[1];
+            i.op = DPP8_EXCHANGE;
+            i.src[0] = Opnd::Vgpr(control as u8);
+            i.aux.imm = i64::from(control >> 8);
+        } else if i.mnemonic == "v_readlane_b32" {
+            let Opnd::Vgpr(dst) = i.dst[0] else { unreachable!() };
+            i.op = READ_LANE;
+            i.dst[0] = Opnd::Sgpr(dst);
+            i.src.truncate(2);
+        }
+    }
+    true
+}
+
 /// Divergent reductions: per-half wave intrinsics over the participating lanes.
 pub(super) const HALF_REDUCE: u32 = 0x7ff3;
 pub(super) const HALF_READ: u32 = 0x7ff4;
@@ -637,6 +711,40 @@ mod tests {
         ops[from] = branch(op);
         ops[from].aux.imm = to as i64 - from as i64 - 1;
         offsets(ops);
+    }
+
+    #[test]
+    fn straight_dpp8_exchange_is_not_a_lane_local_copy() {
+        let (mut ex, _, _) = fixture::shader(32);
+        let words = [0x2800_00e9u32, 0xde54_c100, 0xd760_0007, 0x0001_0100, 0xbf81_0000];
+        ex.isa = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        ex.isa_data = ex.isa.clone();
+        let translated = super::super::translate(&ex).unwrap();
+        assert!(translated.hlsl.contains("tb_reduction_read(gtid.x, v0, (gtid.x & ~7u)"));
+        assert!(translated.hlsl.contains("tb_reduction_read(gtid.x, v0, 0x0u)"));
+        assert_eq!(translated.required_wave_size, None);
+        let ops = crate::rdna2::disassemble(&ex.isa);
+        for group in [[16,1,1],[64,1,1],[32,2,1]] {
+            assert!(!straight_exchange(&mut ops.clone(), group));
+        }
+        let mut branch = ops.clone();
+        branch.insert(0, self::branch(2));
+        assert!(!straight_exchange(&mut branch,[32,1,1]));
+        let mut mask = ops.clone();
+        mask.insert(0, insn("s_mov_b32", Enc::Sop1, 3,
+            vec![Opnd::ExecLo],vec![Opnd::ConstInt(0)]));
+        assert!(!straight_exchange(&mut mask,[32,1,1]));
+        let mut dynamic = ops.clone();
+        dynamic[1].src[1] = Opnd::Sgpr(8);
+        assert!(!straight_exchange(&mut dynamic,[32,1,1]));
+        let mut after_store = ops.clone();
+        after_store.insert(1, insn("buffer_store_dword", Enc::Mubuf, 0,
+            vec![Opnd::Vgpr(4)],vec![Opnd::Vgpr(5),Opnd::Sgpr(16)]));
+        assert!(!straight_exchange(&mut after_store,[32,1,1]));
+        let mut exchange = ops.clone();
+        exchange.remove(1);
+        assert!(straight_exchange(&mut exchange,[64,1,1]));
+        assert_eq!(exchange[0].op,DPP8_EXCHANGE);
     }
 
     #[test]
