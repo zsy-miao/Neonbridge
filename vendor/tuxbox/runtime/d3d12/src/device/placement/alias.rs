@@ -51,6 +51,8 @@ pub(super) struct Span {
     device: usize,
     heap: Option<ID3D12Heap>,
     heap_bytes: u64,
+    /// In system memory (a custom L0 heap), made under device-memory pressure.
+    system: bool,
     pub(super) retired: bool,
     pub(super) live: HashSet<usize>,
     /// Heap offsets and the texture whose bytes they hold now.
@@ -69,12 +71,17 @@ pub(super) struct Spans {
 }
 
 impl Spans {
+    #[cfg(test)]
     pub(super) fn find(&self, device: usize, va: u64, len: u64, align: u64) -> Option<(u64, usize)> {
+        self.find_where(device, va, len, align, |_| true)
+    }
+
+    pub(super) fn find_where(&self, device: usize, va: u64, len: u64, align: u64, accept: impl Fn(&Span) -> bool) -> Option<(u64, usize)> {
         let end = va.checked_add(len.max(1))?;
         for (lo, v) in self.by_lo.range(..=va).rev().take(64) {
             for (i, s) in v.iter().enumerate() {
                 let offset = (va - lo) / align.max(1) * align.max(1);
-                if s.device == device && !s.retired && end - (va - lo - offset) <= s.hi {
+                if s.device == device && !s.retired && end - (va - lo - offset) <= s.hi && accept(s) {
                     return Some((*lo, i));
                 }
             }
@@ -182,6 +189,8 @@ const SIZE: usize = 3;
 const HEAP: usize = 4;
 const PLACE: usize = 5;
 static RETIRED: AtomicU64 = AtomicU64::new(0);
+static SYSTEM_COUNT: AtomicU64 = AtomicU64::new(0);
+static SYSTEM_BYTES: AtomicU64 = AtomicU64::new(0);
 static RETIRED_BYTES: AtomicU64 = AtomicU64::new(0);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -257,10 +266,55 @@ fn reservation(va: u64) -> Option<(u64, u64)> {
     (end > base).then_some((base, end))
 }
 
-fn create_heap(device: &ID3D12Device, size: u64) -> Option<ID3D12Heap> {
+/// Device-local usage over TUXBOX_PLACED_SYSTEM_PCT (default 80) percent of
+/// the budget, read at most every 250 ms. test52/53 ran out of device memory
+/// with 22-24k live placed textures (7-8 GiB) in span heaps on a ~7 GiB
+/// budget; on the console they live in title memory. Over the line, new
+/// sampled-texture spans go to system memory (a custom L0 heap the GPU reads
+/// over PCIe); render targets and depth stay in device memory. The title's
+/// own pages (OpenExistingHeapFromAddress, alias.rs Kind::Title) hold only
+/// buffers and row-major textures, so they can't take tiled textures.
+/// TUXBOX_PLACED_SYSTEM_PCT=0 keeps every span in device memory.
+fn under_pressure(device: &ID3D12Device) -> bool {
+    use std::sync::OnceLock;
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIAdapter, IDXGIAdapter3, IDXGIFactory4};
+    let pct: u64 = crate::env_toggle!("TUXBOX_PLACED_SYSTEM_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(80);
+    if pct == 0 {
+        return false;
+    }
+    static ADAPTER: OnceLock<Option<IDXGIAdapter3>> = OnceLock::new();
+    static CHECKED: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+    let mut checked = lock(&CHECKED);
+    if let Some((at, over)) = *checked && at.elapsed().as_millis() < 250 {
+        return over;
+    }
+    let adapter = ADAPTER.get_or_init(|| {
+        let luid = unsafe { device.GetAdapterLuid() };
+        unsafe { CreateDXGIFactory1::<IDXGIFactory4>() }.ok()
+            .and_then(|f| unsafe { f.EnumAdapterByLuid::<IDXGIAdapter>(luid) }.ok())
+            .and_then(|a| a.cast().ok())
+    });
+    let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+    let over = adapter.as_ref().is_some_and(|a| unsafe { a.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info) }.is_ok()
+        && info.Budget != 0 && info.CurrentUsage.saturating_mul(100) > info.Budget.saturating_mul(pct));
+    if over != checked.is_some_and(|(_, was)| was) {
+        crate::diagnostics::log_line(format_args!("placed textures: device local {} of {} MiB is {} {pct}%; new sampled-texture spans go to {} memory (TUXBOX_PLACED_SYSTEM_PCT)",
+            info.CurrentUsage >> 20, info.Budget >> 20, if over { "over" } else { "back under" }, if over { "system" } else { "device" }));
+    }
+    *checked = Some((std::time::Instant::now(), over));
+    over
+}
+
+fn create_heap(device: &ID3D12Device, size: u64, system: bool) -> Option<ID3D12Heap> {
+    let properties = if system {
+        D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_CUSTOM, CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE,
+            MemoryPoolPreference: D3D12_MEMORY_POOL_L0, CreationNodeMask: 1, VisibleNodeMask: 1 }
+    } else {
+        D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() }
+    };
     let desc = D3D12_HEAP_DESC {
         SizeInBytes: round_up(size, PLACEMENT_ALIGN),
-        Properties: D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() },
+        Properties: properties,
         Alignment: PLACEMENT_ALIGN,
         Flags: D3D12_HEAP_FLAG_NONE,
     };
@@ -268,13 +322,17 @@ fn create_heap(device: &ID3D12Device, size: u64) -> Option<ID3D12Heap> {
     if let Err(e) = unsafe { device.CreateHeap(&desc, &mut heap) } {
         static N: AtomicU64 = AtomicU64::new(0);
         if N.fetch_add(1, Relaxed) < 8 {
-            crate::diagnostics::log_line(format_args!("placed textures: CreateHeap({:#x}) failed {e}; committed copy instead", desc.SizeInBytes));
+            crate::diagnostics::log_line(format_args!("placed textures: CreateHeap({:#x}{}) failed {e}", desc.SizeInBytes, if system { ", system memory" } else { "" }));
         }
         return None;
     }
     crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedSpanHeap, desc.SizeInBytes);
     SPAN_COUNT.fetch_add(1, Relaxed);
     SPAN_BYTES.fetch_add(desc.SizeInBytes, Relaxed);
+    if system {
+        SYSTEM_COUNT.fetch_add(1, Relaxed);
+        SYSTEM_BYTES.fetch_add(desc.SizeInBytes, Relaxed);
+    }
     heap
 }
 
@@ -286,6 +344,10 @@ fn housekeeping(sp: &mut Spans) -> Vec<Span> {
     for s in &idle {
         SPAN_COUNT.fetch_sub(1, Relaxed);
         SPAN_BYTES.fetch_sub(s.heap_bytes, Relaxed);
+        if s.system {
+            SYSTEM_COUNT.fetch_sub(1, Relaxed);
+            SYSTEM_BYTES.fetch_sub(s.heap_bytes, Relaxed);
+        }
     }
     let (n, bytes) = sp.retired();
     RETIRED.store(n, Relaxed);
@@ -357,16 +419,23 @@ fn place_locked(
     let made = {
         let mut sp = lock(&SPANS);
         idle = housekeeping(&mut sp);
+        // Render targets and depth stay in device memory.
+        let target = host.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) != D3D12_RESOURCE_FLAGS(0);
+        let system = !target && under_pressure(device);
         let fresh_span = |sp: &mut Spans, lo: u64, hi: u64, bytes: u64| {
-            let heap = create_heap(device, bytes).ok_or(HEAP)?;
+            let (heap, system) = match create_heap(device, bytes, system) {
+                Some(heap) => (heap, system),
+                None if system => (create_heap(device, bytes, false).ok_or(HEAP)?, false),
+                None => return Err(HEAP),
+            };
             sp.retire_covered(id, lo, hi);
-            Ok::<_, usize>(sp.insert(Span { lo, hi, device: id, heap: Some(heap), heap_bytes: round_up(bytes, PLACEMENT_ALIGN),
+            Ok::<_, usize>(sp.insert(Span { lo, hi, device: id, heap: Some(heap), heap_bytes: round_up(bytes, PLACEMENT_ALIGN), system,
                 retired: false, live: HashSet::new(), owners: Vec::new() }))
         };
         // A va finer than the alignment is placed at the aligned offset below
         // it: textures over the same guest bytes still share heap bytes, and
         // claim() orders any overlap, exact or not.
-        let (key, fresh) = match (oversize_span(va, size, xbox_size), sp.find(id, va, size, align)) {
+        let (key, fresh) = match (oversize_span(va, size, xbox_size), sp.find_where(id, va, size, align, |s| !(target && s.system))) {
             (Some((lo, hi)), _) => (fresh_span(&mut sp, lo, hi, size)?, true),
             (None, Some(k)) => (k, false),
             (None, None) => {
@@ -458,6 +527,8 @@ pub(crate) struct Stats {
     pub(crate) fallback: String,
     pub(crate) retired: u64,
     pub(crate) retired_bytes: u64,
+    pub(crate) system: u64,
+    pub(crate) system_bytes: u64,
 }
 
 pub(crate) fn stats() -> Stats {
@@ -473,6 +544,8 @@ pub(crate) fn stats() -> Stats {
         },
         retired: RETIRED.load(Relaxed),
         retired_bytes: RETIRED_BYTES.load(Relaxed),
+        system: SYSTEM_COUNT.load(Relaxed),
+        system_bytes: SYSTEM_BYTES.load(Relaxed),
     }
 }
 
@@ -481,7 +554,7 @@ mod tests {
     use super::*;
 
     fn span(lo: u64, hi: u64) -> Span {
-        Span { lo, hi, device: 1, heap: None, heap_bytes: 0, retired: false, live: HashSet::new(), owners: Vec::new() }
+        Span { lo, hi, device: 1, heap: None, heap_bytes: 0, system: false, retired: false, live: HashSet::new(), owners: Vec::new() }
     }
 
     #[test]
