@@ -12,11 +12,10 @@
 //! TUXBOX_CLOAK_WINDOW=0 turns the cloak off; the class brush and the fit stay
 //! (the launcher's curtain remains a second guard).
 //!
-//! Borderless windowed fullscreen is the default: the title's main window (an
+//! Borderless windowed fullscreen (opt-in, TUXBOX_FULLSCREEN=1): the title's main window (an
 //! explicit size of at least 1280x720) is created as a popup covering the whole
 //! monitor it asked for, and d3d12 letterboxes the image to keep its aspect.
-//! NEONBRIDGE_WINDOWED=1 or TUXBOX_FULLSCREEN=0 keeps the 16:9 window inside
-//! the work area. Alt+Enter or F11 toggles between the two at run time
+//! The default is the 16:9 window inside the work area. Alt+Enter or F11 toggles between the two at run time
 //! (TUXBOX_ALT_ENTER=0 leaves both keys to the title).
 //!
 //! TUXBOX_MONITOR=primary|nearest|N picks the monitor (default: the primary
@@ -54,7 +53,14 @@ unsafe extern "system" {
     fn GetClientRect(hwnd: H, rect: *mut Rect) -> i32;
     fn ClientToScreen(hwnd: H, point: *mut Point) -> i32;
     fn ClipCursor(rect: *const Rect) -> i32;
+    fn ShowWindow(hwnd: H, cmd: i32) -> i32;
+    fn SetForegroundWindow(hwnd: H) -> i32;
 }
+
+const SW_SHOW: i32 = 5;
+const SWP_NOSIZE: u32 = 0x0001;
+const SWP_NOMOVE: u32 = 0x0002;
+const SWP_SHOWWINDOW: u32 = 0x0040;
 
 /// The monitor TUXBOX_MONITOR names, if it names one: `primary`, or a 0-based
 /// index into EnumDisplayMonitors. `nearest` (or unset) returns None.
@@ -174,12 +180,14 @@ const SWP_FRAMECHANGED: u32 = 0x0020;
 const WM_SYSKEYDOWN: u32 = 0x0104;
 const VK_RETURN: usize = 0x0D;
 
-/// Borderless windowed fullscreen unless NEONBRIDGE_WINDOWED=1 or TUXBOX_FULLSCREEN=0.
+/// Borderless windowed fullscreen at creation: opt-in with TUXBOX_FULLSCREEN=1
+/// or NEONBRIDGE_WINDOWED=0 while the default popup showed no picture (game
+/// audible, window not seen). Alt+Enter/F11 still toggle at run time.
 fn fullscreen_default() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
-        !std::env::var("NEONBRIDGE_WINDOWED").is_ok_and(|v| v.trim() == "1")
-            && std::env::var("TUXBOX_FULLSCREEN").map_or(true, |v| v.trim() != "0")
+        std::env::var("TUXBOX_FULLSCREEN").is_ok_and(|v| v.trim() == "1")
+            || std::env::var("NEONBRIDGE_WINDOWED").is_ok_and(|v| v.trim() == "0")
     })
 }
 
@@ -340,7 +348,12 @@ pub extern "system" fn uncloak_windows() {
     for hwnd in windows {
         unsafe {
             if IsWindow(hwnd as H) != 0 && cloak(hwnd as H, false) {
-                log(&format!("window: uncloaked {hwnd:#x}"));
+                // Bring it to the front: launched from another window, a
+                // monitor-sized popup can stay behind it, heard but not seen.
+                ShowWindow(hwnd as H, SW_SHOW);
+                SetWindowPos(hwnd as H, std::ptr::null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                let front = SetForegroundWindow(hwnd as H) != 0;
+                log(&format!("window: uncloaked {hwnd:#x} (brought to the front: {front})"));
             }
         }
     }
@@ -403,7 +416,7 @@ unsafe extern "system" fn create_window_ex_a(ex: u32, class: *const u8, name: *c
         None => (x, y, w, h),
     };
     if fullscreen.is_some() {
-        log(&format!("window: created borderless fullscreen at {fw}x{fh}+{fx}+{fy} instead of {w}x{h}+{x}+{y} (NEONBRIDGE_WINDOWED=1 keeps a window; Alt+Enter toggles)"));
+        log(&format!("window: created borderless fullscreen at {fw}x{fh}+{fx}+{fy} instead of {w}x{h}+{x}+{y} (TUXBOX_FULLSCREEN=1; Alt+Enter toggles)"));
     } else if (fx, fy, fw, fh) != (x, y, w, h) {
         log(&format!("window: created at {fw}x{fh}+{fx}+{fy} instead of {w}x{h}+{x}+{y} (one monitor, 16:9)"));
     }
