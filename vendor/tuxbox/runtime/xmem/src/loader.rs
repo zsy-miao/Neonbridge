@@ -180,6 +180,7 @@ pub(crate) unsafe fn install() {
         crate::xaudio::install();
         crate::affinity::install();
         crate::bink::install();
+        crate::exit_trace::install();
         crate::write_watch::install();
         crate::net::install();
         crate::window::install();

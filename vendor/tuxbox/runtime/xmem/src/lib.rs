@@ -1,6 +1,7 @@
 //! CPU-backed Xbox default allocations. Callers retain ownership until the matching free.
 mod affinity;
 mod bink;
+mod exit_trace;
 mod console_cpu;
 mod console_mode;
 mod diagnostics;

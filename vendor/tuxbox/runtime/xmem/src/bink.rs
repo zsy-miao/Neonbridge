@@ -60,7 +60,7 @@ struct Window {
 
 static WINDOW: Mutex<Option<Window>> = Mutex::new(None);
 
-fn module_of(address: u64) -> String {
+pub(crate) fn module_of(address: u64) -> String {
     unsafe extern "system" {
         fn GetModuleHandleExW(flags: u32, address: *const c_void, module: *mut *mut c_void) -> i32;
     }
