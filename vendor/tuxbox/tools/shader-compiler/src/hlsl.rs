@@ -1674,7 +1674,19 @@ impl<'a> Emitter<'a> {
                         .filter(|_| ex.required_features.is_some_and(|f| f & (3 << 25) == 0));
                     full.into_iter().chain(tuxbox_dxbc::inline_sampler::literal_sites(&ex.isa, visibility))
                         .find(|recovered| recovered.descriptors == private).map(|recovered| recovered.sites)
-                }).unwrap_or_default(),
+                })
+                // Root-less programs declaring several samplers, or a root with no static
+                // samplers: the literal words cannot be matched to the title's registers, so
+                // use the private slots inline_sampler::sites derives from the ISA alone
+                // (space 32765); the runtime recovers the same descriptors.
+                .or_else(|| (matches!(ex.stage, Stage::Compute | Stage::Pixel)
+                    && ((ex.root_sig.is_none() && ex.resources.iter().filter(|r| r.res_type == 1).count() > 1)
+                        || (ex.root_sig.as_ref().is_some_and(|r| r.static_samplers.is_empty())
+                            && ex.resources.iter().any(|r| r.res_type == 1))))
+                    .then(|| tuxbox_dxbc::inline_sampler::sites(&ex.isa, if ex.stage == Stage::Pixel { 5 } else { 0 }))
+                    .flatten()
+                    .map(|recovered| recovered.sites))
+                .unwrap_or_default(),
             declared_samplers: declared_samplers(ex),
             lane_masks: BTreeSet::new(),
             binding_spaces: BTreeMap::new(),
@@ -2477,6 +2489,26 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// Raw SRV behind a root descriptor whose GPU address arrives in user SGPR `sgpr`:
+    /// the one FSSM class-0x100 row at that SGPR and the one PSV raw SRV at its register.
+    fn root_raw_srv(&mut self, sgpr: u8) -> Option<Res> {
+        let mut rows = tuxbox_dxbc::compute_table::records(&self.ex.fssm)?
+            .filter(|&[class, _, _, _, loc]| class == 0x100 && (loc >> 8) & 0xff == u32::from(sgpr));
+        let [_, _, register, _, _] = rows.next()?;
+        if rows.next().is_some() {
+            return None;
+        }
+        let mut raw = self.ex.resources.iter().filter(|p| p.res_type == 4 && p.lower == register && p.upper == register);
+        let space = raw.next()?.space;
+        if raw.next().is_some() {
+            return None;
+        }
+        if self.binding_spaces.insert((0, register), space).is_some_and(|old| old != space) {
+            return None;
+        }
+        self.raw_binding(register, false)
+    }
+
     fn raw_binding(&mut self, slot: u32, is_uav: bool) -> Option<Res> {
         let ty = if is_uav { 7 } else { 4 };
         if self.ex.resources.iter().any(|p| p.res_type == ty && p.space == self.binding_spaces.get(&(u32::from(is_uav), slot)).copied().unwrap_or(0) && p.lower <= slot && slot <= p.upper) {
@@ -2655,6 +2687,8 @@ impl<'a> Emitter<'a> {
         let block_start = range.start;
         let inline_samplers = self.resource_heap_base.is_some()
             || (self.ex.root_sig.is_none() && self.ex.resources.iter().any(|r| r.res_type == 1))
+            // Literal sampler words can name any static sampler with identical state.
+            || self.ex.root_sig.as_ref().is_some_and(|r| !r.static_samplers.is_empty())
             || (self.ex.stage == Stage::Compute && self.ex.root_sig.as_ref().is_some_and(|r| !r.static_samplers.is_empty())
                 && self.ex.resources.iter().filter(|r| r.res_type == 1).count() > 1);
         for idx in range {
@@ -2982,6 +3016,15 @@ impl<'a> Emitter<'a> {
                         for k in d..d+n as u16 { sym.remove(&k); written.insert(k); }
                         continue;
                     }
+                    // A V# built inline from a root descriptor's GPU address (FSSM class 0x100
+                    // row at that user SGPR) reads the raw SRV PSV declares at its register.
+                    if let Some(Sym::Table(t)) = sym.get(&b).copied() {
+                        if let Some(raw) = self.root_raw_srv(t) {
+                            self.res.insert(idx, vec![raw]);
+                            for k in d..d+n as u16 { sym.remove(&k); written.insert(k); }
+                            continue;
+                        }
+                    }
                     // CBV descriptors sit on a 32-byte stride (cb1 is loaded from table offset
                     // 0x20 in MainOnePassPointLightPS).
                     let cands = self.desc_candidates(sym.get(&b)).ok_or_else(|| {
@@ -3080,6 +3123,12 @@ impl<'a> Emitter<'a> {
                         self.res.insert(idx, vec![Res::HeapMubuf(rs)]);
                         continue;
                     }
+                    if let Some(Sym::Table(t)) = sym.get(&rs).copied() {
+                        if let Some(raw) = self.root_raw_srv(t) {
+                            self.res.insert(idx, vec![raw]);
+                            continue;
+                        }
+                    }
                     let cands = self.desc_candidates(sym.get(&rs)).ok_or_else(|| {
                         format!("mubuf at {:#x}: s{rs} not a buffer descriptor ({:?})", ins.offset, sym.get(&rs))
                     })?;
@@ -3156,6 +3205,7 @@ impl<'a> Emitter<'a> {
                                 (self.ex.stage == Stage::Compute).then(|| sampler_heap::guarded_words(insns, idx, ss as u8, compute_group(self.ex))).flatten()
                             });
                             words.and_then(|w| sampler_heap::inline_sampler(self.ex, w))
+                                .or_else(|| self.static_sampler())
                         } else { self.static_sampler() } {
                             if self.binding_spaces.insert((3, slot), space).is_some_and(|old| old != space) {
                                 return Err(format!("static sampler s{slot} overlaps another space"));
