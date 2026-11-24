@@ -430,7 +430,7 @@ unsafe fn make_compute(
                 .or_else(|| super::shader_cache::prepared(bytes));
             let Some(code) = code else {
                 super::compute_table::capture_stage_root(bytes, &table.original);
-                crate::diagnostics::compute_failure(bytes, E_NOTIMPL.0);
+                crate::diagnostics::compute_failure(bytes, E_NOTIMPL.0, super::shader_cache::take_reason());
                 return unsafe { null_compute(this, root.map(|p| &p.native), desc, out) }.unwrap_or(E_NOTIMPL);
             };
             (Some(code), Some(table))
@@ -522,7 +522,7 @@ unsafe fn make_compute(
     }
     if let Err(error) = &native {
         if let Some(root) = root { super::compute_table::capture_stage_root(bytes, &root.state); }
-        crate::diagnostics::compute_failure(bytes, error.code().0);
+        crate::diagnostics::compute_failure(bytes, error.code().0, "host CreateComputePipelineState rejected it");
         if let Some(status) = unsafe { null_compute(this, root.map(|p| &p.native), desc, out) } {
             return status;
         }

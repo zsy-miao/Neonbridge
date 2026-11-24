@@ -183,7 +183,7 @@ pub(super) fn presented(width: u64, height: u32) {
 
 /// A shader's container ID and chunk types let the package tools locate the
 /// original program without copying shader bytecode into the game log.
-pub(super) fn compute_failure(shader: &[u8], status: i32) {
+pub(super) fn compute_failure(shader: &[u8], status: i32, why: &str) {
     // Each distinct program is worth one line; repeats of the same ID add nothing.
     static FAILURES: Seen<Option<[u8; 16]>> = Seen::new(64);
     let id = (shader.starts_with(b"DXBC") && shader.len() >= 32)
@@ -217,8 +217,9 @@ pub(super) fn compute_failure(shader: &[u8], status: i32) {
         } else {
             "unrecognized shader container".to_owned()
         };
+        let why = if why.is_empty() { "no translation" } else { why };
         format!(
-            "compute pipeline creation failed ({status:#010x}, {} bytes, {description})",
+            "compute pipeline creation failed ({status:#010x}, {} bytes, {description}): {why}",
             shader.len()
         )
     });

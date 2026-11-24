@@ -33,6 +33,36 @@ thread_local! {
     static MISSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Pipeline workers wait for the translator without spending the budget.
     static UNBOUNDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// A title thread building a pipeline it waits on (the compute steal)
+    /// waits for the translator until this instant instead of the budget.
+    static DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// Why this thread's last request returned no translation.
+    static REASON: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
+/// Sets (or clears) this thread's translator deadline; returns the previous one.
+pub(crate) fn wait_until(deadline: Option<Instant>) -> Option<Instant> {
+    DEADLINE.with(|d| d.replace(deadline))
+}
+
+/// Why the last request on this thread returned no translation ("" if none failed).
+pub(crate) fn take_reason() -> &'static str {
+    REASON.with(|r| r.replace(""))
+}
+
+fn reason(why: &'static str) {
+    REASON.with(|r| r.set(why));
+}
+
+/// Whether this thread's translator waits draw on the frame budget: false on
+/// workers and on a title thread with a deadline of its own.
+fn budgeted() -> bool {
+    !UNBOUNDED.with(|u| u.get()) && DEADLINE.with(|d| d.get()).is_none()
+}
+
+/// A title thread whose deadline has passed gives up as on a spent budget.
+fn past_deadline() -> bool {
+    DEADLINE.with(|d| d.get()).is_some_and(|d| Instant::now() >= d)
 }
 
 /// Whether a request on this thread missed the wait budget since the last call.
@@ -211,7 +241,7 @@ fn request(
     let mut busy = LOCKS[bucket].try_lock();
     while matches!(busy, Err(std::sync::TryLockError::WouldBlock))
         && !UNBOUNDED.with(|u| u.get())
-        && WAIT_BUDGET_MS.fetch_sub(1, Ordering::Relaxed) > 0
+        && (if budgeted() { WAIT_BUDGET_MS.fetch_sub(1, Ordering::Relaxed) > 0 } else { !past_deadline() })
     {
         std::thread::sleep(Duration::from_millis(1));
         busy = LOCKS[bucket].try_lock();
@@ -222,6 +252,7 @@ fn request(
         Err(std::sync::TryLockError::WouldBlock) => {
             if !UNBOUNDED.with(|u| u.get()) && crate::env_toggle!("TUXBOX_SHADER_LOCK_SKIP") != Some("0") {
                 MISSED.with(|m| m.set(true));
+                reason("translator bucket busy past the wait budget");
                 static SKIPPED: AtomicUsize = AtomicUsize::new(0);
                 let skipped = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
                 if skipped <= 4 || skipped.is_power_of_two() {
@@ -250,6 +281,7 @@ fn request(
             return Some(bytes);
         }
         if cached_refusal(cache, key) {
+            reason("translator refused it (cached .unsupported)");
             return None;
         }
     }
@@ -265,11 +297,22 @@ fn request(
         if let Some(bytes) = read_portable_file(&result, stage) {
             return Some(bytes);
         }
-        if failed.exists() || start.elapsed() >= Duration::from_secs(90) {
+        if failed.exists() {
+            reason("translator refused or failed it (.failed; see shader-worker.log)");
             return None;
         }
-        if !UNBOUNDED.with(|u| u.get()) && WAIT_BUDGET_MS.fetch_sub(25, Ordering::Relaxed) <= 0 {
+        if start.elapsed() >= Duration::from_secs(90) {
+            reason("translator gave no reply in 90 s");
+            return None;
+        }
+        if past_deadline() {
             MISSED.with(|m| m.set(true));
+            reason("translator still busy at the title wait deadline");
+            return None;
+        }
+        if budgeted() && WAIT_BUDGET_MS.fetch_sub(25, Ordering::Relaxed) <= 0 {
+            MISSED.with(|m| m.set(true));
+            reason("frame wait budget spent");
             static DROPPED: AtomicUsize = AtomicUsize::new(0);
             let dropped = DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
             if dropped.is_power_of_two() {

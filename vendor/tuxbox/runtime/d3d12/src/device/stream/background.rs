@@ -119,7 +119,7 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
     }
     promote(slot);
     if steal_on() && let Some(job) = steal(slot) {
-        build_here(job);
+        build_here(job, limit);
         if let Some(built) = slot.built.get() {
             return Some(built);
         }
@@ -597,14 +597,23 @@ fn steal(slot: &Arc<Upgrade>) -> Option<Job> {
     jobs.created.remove(at)
 }
 
-/// Builds a job on this thread as a worker would, keeping its priority.
-fn build_here(job: Job) {
+/// Builds a job on this thread as a worker would, keeping its priority. Its
+/// translator wait lasts up to `limit` (the title's wait) rather than the frame
+/// budget: test109 lost 61 compute pipelines to E_NOTIMPL when a spent budget
+/// ended the stolen build at once and marked it failed for good. A build that
+/// runs out of time goes back to the front of the workers' queue.
+fn build_here(job: Job, limit: std::time::Duration) {
     use windows::Win32::System::Threading::*;
     let started = std::time::Instant::now();
     let priority = unsafe { GetThreadPriority(GetCurrentThread()) };
     crate::big_stack::run(|| {
         let was = WORKER.with(|w| w.replace(true));
+        let stealing = STEALING.with(|s| s.replace(true));
+        let deadline = crate::device::shader_cache::wait_until(Some(started + limit));
+        let _ = crate::device::shader_cache::take_missed();
         build(job);
+        crate::device::shader_cache::wait_until(deadline);
+        STEALING.with(|s| s.set(stealing));
         WORKER.with(|w| w.set(was));
     });
     let _ = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY(priority)) };
@@ -672,6 +681,11 @@ fn send(job: Job, bound: bool) {
     ready.notify_one();
 }
 
+thread_local! {
+    /// This title thread is building a stolen job (see build_here).
+    static STEALING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn build(mut job: Job) {
     // The title released the pipeline before a worker reached it.
     if Arc::strong_count(&job.slot) > 1 {
@@ -705,6 +719,15 @@ fn build(mut job: Job) {
             Some(proxy) if !nulled => {
                 let _ = job.slot.built.set(Built(proxy));
                 &MADE
+            }
+            _ if STEALING.with(|s| s.get()) && crate::device::shader_cache::take_missed() => {
+                // Out of time, not untranslatable: back to the workers, first in line.
+                let (lock, ready) = &JOBS;
+                let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
+                g.get_or_insert_with(Default::default).bound.push_front(job);
+                drop(g);
+                ready.notify_one();
+                return;
             }
             _ => {
                 crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesUntranslatable);
