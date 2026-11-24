@@ -18,11 +18,16 @@ pub(crate) enum Category {
     ImageInDeviceMemory,
     CommittedResource,
     PlacedLayout,
+    RenderHeap,
+    HeapImport,
+    PlacedTexture,
+    DescTable,
 }
 
-const NAMES: [&str; 6] = ["shadow copies", "shadow imports", "device buffers", "images in device memory", "committed resources", "slot 133 placements"];
-static COUNTS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
-static BYTES: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+const N: usize = 10;
+const NAMES: [&str; N] = ["shadow copies", "shadow imports", "device buffers", "images in device memory", "committed resources", "slot 133 placements", "render heaps", "heap imports", "placed textures (committed)", "descriptor table buffers"];
+static COUNTS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+static BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 
 pub(crate) fn note(category: Category, bytes: u64) {
     COUNTS[category as usize].fetch_add(1, Relaxed);
@@ -83,7 +88,7 @@ pub(crate) fn start(luid: LUID) {
             let adapter: Option<IDXGIAdapter3> = unsafe { CreateDXGIFactory1::<IDXGIFactory4>() }.ok()
                 .and_then(|f| unsafe { f.EnumAdapterByLuid::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>(luid) }.ok())
                 .and_then(|a| a.cast().ok());
-            let mut last = [(0u64, 0u64); 6];
+            let mut last = [(0u64, 0u64); N];
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(every));
                 let query = |group| {
@@ -98,8 +103,8 @@ pub(crate) fn start(luid: LUID) {
                     dwLength: size_of::<windows::Win32::System::SystemInformation::MEMORYSTATUSEX>() as u32, ..Default::default()
                 };
                 let _ = unsafe { windows::Win32::System::SystemInformation::GlobalMemoryStatusEx(&mut status) };
-                let mut deltas = [(0u64, 0u64, 0u64, 0u64); 6];
-                for i in 0..6 {
+                let mut deltas = [(0u64, 0u64, 0u64, 0u64); N];
+                for i in 0..N {
                     let (count, bytes) = (COUNTS[i].load(Relaxed), BYTES[i].load(Relaxed));
                     deltas[i] = (count - last[i].0, bytes - last[i].1, count, bytes);
                     last[i] = (count, bytes);
@@ -114,7 +119,7 @@ pub(crate) fn start(luid: LUID) {
 #[cfg(test)]
 #[test]
 fn the_line_names_only_categories_that_ever_grew() {
-    let mut deltas = [(0, 0, 0, 0); 6];
+    let mut deltas = [(0, 0, 0, 0); N];
     deltas[0] = (3, 3 << 20, 10, 40 << 20);
     let text = line((8 << 30, 6 << 30), (16 << 30, 1 << 30), 9 << 30, 2 << 30, 32 << 30, &deltas);
     assert!(text.contains("device local 6144/8192 MiB"));

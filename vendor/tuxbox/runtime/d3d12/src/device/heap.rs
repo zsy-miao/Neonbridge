@@ -298,6 +298,7 @@ pub(super) fn import_buffer_with_heap(
         let host: ID3D12Device3 = device.native.cast()?;
         let native = unsafe { host.OpenExistingHeapFromAddress(region.AllocationBase) }
             .inspect_err(|e| import_failure("OpenExistingHeapFromAddress", base, size, e))?;
+        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
         Arc::new(ImportedHeap { native, _pin: pin })
     };
     let mut resource = None;
@@ -718,9 +719,19 @@ impl RenderHeaps {
         if !(address - start).is_multiple_of(alignment) {
             start = address;
         }
-        let overlapped: Vec<u64> = heaps.range(start..stop).map(|(&base, _)| base).collect();
-        for base in overlapped {
-            heaps.remove(&base);
+        // Each overlap made a heap over the union while the earlier heaps
+        // stayed alive with their images, so a pool the title keeps placing
+        // into grew a new union-sized heap each time (test47: device memory
+        // +5 GB in 20 s). Past the cap the image gets a heap of its own size.
+        let own = !union_fits(stop - start, end - address);
+        if own {
+            (start, stop) = (address, end);
+            note_own_heap(stop - start);
+        } else {
+            let overlapped: Vec<u64> = heaps.range(start..stop).map(|(&base, _)| base).collect();
+            for base in overlapped {
+                heaps.remove(&base);
+            }
         }
         let desc = D3D12_HEAP_DESC {
             SizeInBytes: stop - start, Alignment: alignment.max(65536),
@@ -729,10 +740,47 @@ impl RenderHeaps {
         };
         let mut native = None;
         unsafe { device.CreateHeap(&desc, &mut native)? };
+        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes);
         let heap = Arc::new(RenderHeap { native: native.ok_or(E_POINTER)?, end: stop });
         heaps.insert(start, Arc::downgrade(&heap));
         Ok((heap, address - start))
     }
+}
+
+/// Whether an image of `own` bytes may share a heap spanning `union`
+/// bytes: at most twice its size or TUXBOX_RENDER_HEAP_UNION_MB (default
+/// 64), whichever is larger. TUXBOX_RENDER_HEAP_UNION_MB=0 always unions.
+fn union_fits(union: u64, own: u64) -> bool {
+    static CAP: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    let cap = *CAP.get_or_init(|| match crate::env_toggle!("TUXBOX_RENDER_HEAP_UNION_MB").and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(0) => None,
+        Some(mb) => Some(mb << 20),
+        None => Some(64 << 20),
+    });
+    union_fits_cap(union, own, cap)
+}
+
+fn union_fits_cap(union: u64, own: u64, cap: Option<u64>) -> bool {
+    cap.is_none_or(|cap| union <= cap.max(own.saturating_mul(2)))
+}
+
+fn note_own_heap(bytes: u64) {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "render heap union over the cap: image gets its own {bytes:#x}-byte heap and aliases nothing ({n} so far; TUXBOX_RENDER_HEAP_UNION_MB=0 always unions)"));
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_union_past_the_cap_is_refused() {
+    let mib = 1u64 << 20;
+    assert!(union_fits_cap(32 * mib, 16 * mib, Some(64 * mib)));
+    assert!(!union_fits_cap(512 * mib, 16 * mib, Some(64 * mib)));
+    assert!(union_fits_cap(200 * mib, 100 * mib, Some(64 * mib)));
+    assert!(union_fits_cap(1 << 40, 1, None));
 }
 
 fn unaligned_fallback() -> bool {
@@ -1048,6 +1096,7 @@ impl PagePools {
                         if refused.len() < 4096 { refused.push((base, size, std::time::Instant::now())); }
                     }
                 })?;
+            crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
             Ok(Arc::new(ImportedHeap { native, _pin: pin }))
         };
         if size == u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT) {

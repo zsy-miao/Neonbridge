@@ -1344,7 +1344,11 @@ mod traced {
     ) -> HRESULT {
         let place = || unsafe { heap::place_virtual_layout(device, address, desc, layout, clear, iid, out) };
         let status = retry_out_of_memory(device, 133, place);
-        if status.is_ok() { crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedLayout, 0); }
+        if status.is_ok() && let Some(d) = unsafe { desc.as_ref() } {
+            // Description size (texels or buffer bytes), not the allocation.
+            crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedLayout,
+                d.Width * u64::from(d.Height) * u64::from(d.DepthOrArraySize));
+        }
         report(133, status, layout.0, desc)
     }
 

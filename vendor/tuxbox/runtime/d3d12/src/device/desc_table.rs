@@ -346,6 +346,7 @@ fn committed(device: &ID3D12Device, kind: D3D12_HEAP_TYPE, width: u64, state: D3
     let heap = D3D12_HEAP_PROPERTIES { Type: kind, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
     let mut out: Option<ID3D12Resource> = None;
     unsafe { device.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(width), state, None, &mut out)? };
+    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::DescTable, width);
     out.ok_or(E_POINTER.into())
 }
 

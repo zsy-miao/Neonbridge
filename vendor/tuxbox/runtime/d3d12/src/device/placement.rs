@@ -56,6 +56,8 @@ fn committed(
             &mut native,
         )?;
     }
+    let bytes = unsafe { device.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) }.SizeInBytes;
+    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedTexture, if bytes == u64::MAX { 0 } else { bytes });
     native.ok_or_else(|| E_POINTER.into())
 }
 
