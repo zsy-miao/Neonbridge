@@ -108,7 +108,7 @@ pub(super) enum Argument {
 
 impl From<&GuestPipeline> for Pipeline {
     fn from(p: &GuestPipeline) -> Self {
-        let (native, data) = crate::device::compute::current(p);
+        let (native, data, _) = crate::device::compute::current(p);
         Self::Regular(native.clone(), data.scene_root.clone(), data.reflected.clone(), data.raster_table.clone())
     }
 }

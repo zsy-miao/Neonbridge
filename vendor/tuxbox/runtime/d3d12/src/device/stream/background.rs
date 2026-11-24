@@ -5,6 +5,12 @@
 //! and published it in the proxy's upgrade slot. Command lists read that slot
 //! whenever they bind the pipeline, so the render thread never waits on the
 //! translator or on the driver's compile.
+//!
+//! Pipelines no earlier run bound are lazy (VIctory makes every host pipeline
+//! on first use: the title creates some 60,000 in its first 20 s and draws
+//! with a few dozen). Their proxies hold a shared placeholder; the first bind
+//! queues them and waits within the frame's budget, and command lists drop
+//! draws and dispatches until they exist.
 use super::super::compute::{Pipeline, create_pipeline_x};
 use super::super::Device;
 use super::{AMPLIFICATION_X, MESH_X, STENCIL_X, layout};
@@ -30,6 +36,10 @@ impl Built {
 #[derive(Default)]
 pub(crate) struct Upgrade {
     built: OnceLock<Built>,
+    /// A lazy pipeline's description until its first bind hands it to the workers.
+    deferred: Mutex<Option<(IUnknown, Work)>>,
+    /// A worker found no translation for it: it stays a null pipeline.
+    failed: std::sync::atomic::AtomicBool,
 }
 
 // SAFETY: D3D12 objects are free-threaded. The built state is published once
@@ -42,6 +52,78 @@ impl Upgrade {
     pub(crate) fn get(&self) -> Option<&Built> {
         self.built.get()
     }
+}
+
+/// Signalled whenever a worker finishes a pipeline.
+static DONE: (Mutex<()>, std::sync::Condvar) = (Mutex::new(()), std::sync::Condvar::new());
+
+/// The pipeline to bind for a command list: a lazy pipeline is handed to
+/// the workers on its first bind, and waited for while the title's frame
+/// has translator budget left (VIctory's `make::ready`). `None` while it is
+/// still being made: the list drops its draws and dispatches.
+pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
+    if let Some(built) = slot.built.get() {
+        return Some(built);
+    }
+    let deferred = slot.deferred.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some((device, work)) = deferred {
+        send(Job { device, work, slot: slot.clone() });
+    }
+    let (lock, done) = &DONE;
+    let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
+    while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) {
+        let step = std::time::Duration::from_millis(5);
+        if !crate::device::shader_cache::spend_wait(step) {
+            break;
+        }
+        held = done.wait_timeout(held, step).unwrap_or_else(|e| e.into_inner()).0;
+    }
+    drop(held);
+    slot.built.get()
+}
+
+/// A pipeline the title created but no command list bound yet. Its proxy
+/// holds a shared placeholder; nothing is translated or compiled until a
+/// command list binds it.
+pub(in crate::device) fn lazy(device: IUnknown, work: Work) -> Arc<Upgrade> {
+    let slot = Arc::new(Upgrade::default());
+    *slot.deferred.lock().unwrap_or_else(|e| e.into_inner()) = Some((device, work));
+    LAZY.fetch_add(1, Ordering::Relaxed);
+    slot
+}
+
+static LAZY: AtomicU64 = AtomicU64::new(0);
+
+struct Placeholder(usize, ID3D12PipelineState);
+// SAFETY: D3D12 objects are free-threaded; it is never mutated.
+unsafe impl Send for Placeholder {}
+// SAFETY: as above.
+unsafe impl Sync for Placeholder {}
+
+/// One resource-free compute pipeline on an empty root signature, shared by
+/// every lazy pipeline of the (first) device until it is made.
+pub(in crate::device) fn placeholder(device: &Device) -> Option<ID3D12PipelineState> {
+    static PLACEHOLDER: OnceLock<Option<Placeholder>> = OnceLock::new();
+    let owner = ptr::from_ref(device) as usize;
+    let made = PLACEHOLDER.get_or_init(|| {
+        let code = super::super::fallback::shader(super::super::fallback::Stage::Compute)?;
+        let mut blob = None;
+        let desc = D3D12_ROOT_SIGNATURE_DESC::default();
+        unsafe { D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &mut blob, None) }.ok()?;
+        let blob = blob?;
+        let bytes = unsafe { slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()) };
+        let root: ID3D12RootSignature = unsafe { device.native.CreateRootSignature(0, bytes) }.ok()?;
+        let compute = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+            pRootSignature: core::mem::ManuallyDrop::new(Some(root)),
+            CS: super::super::fallback::bytecode(code),
+            ..Default::default()
+        };
+        let mut compute = compute;
+        let pipeline = unsafe { device.native.CreateComputePipelineState(&compute) };
+        unsafe { core::mem::ManuallyDrop::drop(&mut compute.pRootSignature) };
+        Some(Placeholder(owner, pipeline.ok()?))
+    });
+    made.as_ref().filter(|p| p.0 == owner).map(|p| p.1.clone())
 }
 
 /// A self-owned deep copy of a guest pipeline stream. Guest pointers are only
@@ -258,7 +340,11 @@ pub(in crate::device) fn mark_nulled() {
 /// pipeline exists.
 pub(in crate::device) fn queue(device: IUnknown, work: Work) -> Arc<Upgrade> {
     let slot = Arc::new(Upgrade::default());
-    let job = Job { device, work, slot: slot.clone() };
+    send(Job { device, work, slot: slot.clone() });
+    slot
+}
+
+fn send(job: Job) {
     static SENDER: OnceLock<Option<Mutex<std::sync::mpsc::Sender<Job>>>> = OnceLock::new();
     let sender = SENDER.get_or_init(|| {
         let (sender, receiver) = std::sync::mpsc::channel::<Job>();
@@ -292,10 +378,9 @@ pub(in crate::device) fn queue(device: IUnknown, work: Work) -> Arc<Upgrade> {
         .as_ref()
         .map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).send(job));
     if !matches!(sent, Some(Ok(()))) {
-        // No worker: the pipeline keeps its null host pipeline.
+        // No worker: the pipeline is never made.
         WAITING.fetch_sub(1, Ordering::Relaxed);
     }
-    slot
 }
 
 fn build(mut job: Job) {
@@ -325,8 +410,14 @@ fn build(mut job: Job) {
                 let _ = job.slot.built.set(Built(proxy));
                 &MADE
             }
-            _ => &FAILED,
+            _ => {
+                job.slot.failed.store(true, Ordering::Relaxed);
+                &FAILED
+            }
         };
+        let (lock, done) = &DONE;
+        drop(lock.lock().unwrap_or_else(|e| e.into_inner()));
+        done.notify_all();
         let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
         let left = WAITING.fetch_sub(1, Ordering::Relaxed) - 1;
         if count.is_power_of_two() || left == 0 {
@@ -340,7 +431,8 @@ fn build(mut job: Job) {
 fn log(left: u64) {
     let made = MADE.load(Ordering::Relaxed);
     let failed = FAILED.load(Ordering::Relaxed);
+    let lazy = LAZY.load(Ordering::Relaxed);
     crate::diagnostics::log_once(&std::sync::Once::new(), || {
-        format!("background pipelines: {made} made, {failed} untranslatable, {left} waiting")
+        format!("background pipelines: {made} made, {failed} untranslatable, {left} waiting, {lazy} created lazily")
     });
 }

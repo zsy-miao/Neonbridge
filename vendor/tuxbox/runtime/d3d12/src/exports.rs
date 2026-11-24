@@ -244,3 +244,10 @@ unsafe extern "system" fn zero_memory(
     }
     S_OK
 }
+
+/// Saves the pipeline library and used-pipeline list now (for a host's
+/// end-of-run path; the d3d12 runtime also saves every 20 s and on window close).
+#[unsafe(no_mangle)]
+pub extern "system" fn tuxbox_save_pipeline_cache() {
+    crate::device::pipeline_cache::save_now();
+}

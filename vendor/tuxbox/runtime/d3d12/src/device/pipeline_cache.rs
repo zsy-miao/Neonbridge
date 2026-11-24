@@ -238,6 +238,14 @@ fn save(dir: &Path) {
     }
 }
 
+/// Saves the library and the used list now, if anything changed (at the end
+/// of a run, as VIctory's `save_pipeline_cache`).
+pub(crate) fn save_now() {
+    if let Some(dir) = folder() {
+        save(dir);
+    }
+}
+
 /// Starts the saver thread once.
 fn saver() {
     static STARTED: AtomicBool = AtomicBool::new(false);

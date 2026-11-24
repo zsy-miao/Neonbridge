@@ -33,14 +33,15 @@ pub(crate) fn take_missed() -> bool {
     MISSED.with(|m| m.replace(false))
 }
 
-thread_local! {
-    static NO_WAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// While set, requests on this thread submit their work but do not wait for
-/// it, as if the budget were spent (pipelines no earlier run used).
-pub(crate) fn no_wait(on: bool) {
-    NO_WAIT.with(|n| n.set(on));
+/// Draws `step` from the frame's wait budget (a bind waiting for a lazy
+/// pipeline's worker); false once it is spent.
+pub(crate) fn spend_wait(step: Duration) -> bool {
+    let ms = step.as_millis().max(1) as i64;
+    let left = WAIT_BUDGET_MS.fetch_sub(ms, Ordering::Relaxed) > 0;
+    if !left {
+        MISSED.with(|m| m.set(true));
+    }
+    left
 }
 
 /// This build's translation cache folder, once the worker has published it.
@@ -212,10 +213,6 @@ fn request(
     if let Err(err) = submit(&pending, &dir.join("requests"))
         && err.kind() != io::ErrorKind::AlreadyExists
     {
-        return None;
-    }
-    if NO_WAIT.with(|n| n.get()) && !UNBOUNDED.with(|u| u.get()) {
-        MISSED.with(|m| m.set(true));
         return None;
     }
     let start = Instant::now();

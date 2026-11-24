@@ -20,6 +20,7 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, object: *mut c_void) 
     };
     state.bindings.pipeline = Some(super::compute_bindings::Pipeline::Ray(native.clone()));
     state.bindings.draw_trace = None;
+    state.pipeline_pending = false;
     unsafe {
         host.SetPipelineState1(native);
     }

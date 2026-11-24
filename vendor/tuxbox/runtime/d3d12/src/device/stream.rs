@@ -644,13 +644,20 @@ pub(super) unsafe extern "system" fn create_pipeline(
     if !worker {
         state.key = unsafe { guest_key(device, desc) }.map(Into::into);
     }
-    // A pipeline no earlier run bound goes straight to the workers: the
-    // title spends none of its wait budget on it (VIctory's lazy pipelines).
-    let lazy = state.key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(false));
+    // A pipeline no earlier run bound is made on its first bind (VIctory's
+    // lazy pipelines); the ones an earlier run bound are made now.
+    if !worker
+        && state.key.as_deref().is_none_or(|key| super::pipeline_cache::used_before(key) != Some(true))
+        && let Some(placeholder) = background::placeholder(device)
+        && let Some(stream) = unsafe { background::OwnedStream::copy(desc) }
+    {
+        state.lazy = true;
+        let _ = state.upgrade.set(background::lazy((*identity(device)).clone(), background::Work::Stream(stream)));
+        crate::diagnostics::pipeline_stream(desc.SizeInBytes, None);
+        return unsafe { wrap_pageable(Ok(placeholder), &compute::PIPELINE, device, state, out) };
+    }
     let _ = shader_cache::take_missed();
-    shader_cache::no_wait(lazy);
     let native = unsafe { create(device, desc, &mut state) };
-    shader_cache::no_wait(false);
     // A translation missed the wait budget: the title gets this pipeline now
     // and a worker makes the real one from a private copy of the stream.
     if shader_cache::take_missed()

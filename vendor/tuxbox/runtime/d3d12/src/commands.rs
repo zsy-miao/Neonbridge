@@ -37,6 +37,17 @@ enum ListState {
     Closed,
 }
 
+/// Count draws and dispatches dropped for a pipeline still being made.
+fn dropped_for_pending() {
+    static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dropped = DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if dropped.is_power_of_two() {
+        crate::diagnostics::log_once(&std::sync::Once::new(), || {
+            format!("dropped {dropped} draws/dispatches whose pipeline was still being made")
+        });
+    }
+}
+
 struct Recording {
     prefix: memory_wait::Prefix,
     timestamp_page: Option<(ID3D12QueryHeap, u32)>,
@@ -50,6 +61,9 @@ struct Recording {
     trace_target: Option<ID3D12Resource>,
     trace_samples: Vec<(String, crate::present::sampler::Sample)>,
     null_pipeline: bool,
+    /// The bound pipeline is lazy and still being made: draws and
+    /// dispatches are dropped until the list binds it again once it exists.
+    pipeline_pending: bool,
     media: Option<media::Recording>,
     placed_reads: Vec<Arc<Texture>>,
     placed_writes: Vec<Arc<Texture>>,
@@ -89,6 +103,10 @@ impl Recording {
     }
 
     fn compute_dispatch(&mut self, list: &List, dispatch: impl FnOnce()) {
+        if self.pipeline_pending {
+            dropped_for_pending();
+            return;
+        }
         if let Some(table) = self.bindings.reflected_table::<true>() {
             if let Err(error) = self.bindings.with_reflected_table::<true>(
                 table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(),
@@ -144,6 +162,10 @@ impl Recording {
     }
 
     fn draw(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
+        if self.pipeline_pending {
+            dropped_for_pending();
+            return;
+        }
         if rasterizes {
             crate::diagnostics::display::draw(self.display_bound, self.null_pipeline);
         }
@@ -404,6 +426,7 @@ unsafe extern "system" fn reset(
             state.media = Some(media::Recording::new(allocator));
         }
         state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
+        state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
         if let Some(targets) = &mut state.stencil_targets {
             targets.unbind();
         }
@@ -1455,6 +1478,8 @@ unsafe extern "system" fn present(
             // and would otherwise wait for this frame's flip until its own
             // watchdog fires. Treat the close as a request to quit.
             crate::diagnostics::log_once(&std::sync::Once::new(), || "presentation window closed; exiting title".into());
+            // Compiled host pipelines and the used list, kept for the next run.
+            device::pipeline_cache::save_now();
             use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
             let _ = unsafe { TerminateProcess(GetCurrentProcess(), 0) };
         }
@@ -1606,6 +1631,7 @@ pub(crate) unsafe fn wrap_command_list(
             trace_target: None,
             trace_samples: Vec::new(),
             null_pipeline: false,
+            pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),
             bound_placed_targets: Vec::new(),

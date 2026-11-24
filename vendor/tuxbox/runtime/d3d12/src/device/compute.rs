@@ -32,21 +32,29 @@ pub(crate) struct PipelineData {
     /// whether a command list has bound it yet.
     pub(crate) key: Option<std::sync::Arc<str>>,
     pub(crate) used: std::sync::atomic::AtomicBool,
+    /// The native is a shared placeholder until a worker makes the pipeline.
+    pub(crate) lazy: bool,
 }
 
 /// The host pipeline and state to bind: a worker's rebuild once it exists.
-pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData) {
+/// The flag is set while a lazy pipeline is still being made: the list
+/// drops its draws and dispatches.
+pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, bool) {
     if let Some(key) = &p.state.key
         && !p.state.used.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         super::pipeline_cache::note_used(key);
     }
-    match p.state.upgrade.get().and_then(|u| u.get()) {
+    let Some(slot) = p.state.upgrade.get() else {
+        return (&p.native, &p.state, false);
+    };
+    let built = if p.state.lazy { super::stream::background::ready(slot) } else { slot.get() };
+    match built {
         Some(built) => {
             let p = built.pipeline();
-            (&p.native, &p.state)
+            (&p.native, &p.state, false)
         }
-        None => (&p.native, &p.state),
+        None => (&p.native, &p.state, p.state.lazy),
     }
 }
 
@@ -193,12 +201,26 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     use super::stream::background;
     let worker = background::on_worker();
     let key = if worker { None } else { unsafe { compute_key(this, desc) } };
-    // As for streams: a pipeline no earlier run bound waits for nothing.
-    let lazy = key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(false));
+    // As for streams: a pipeline no earlier run bound is made on first bind.
+    if !worker
+        && key.as_deref().is_none_or(|key| super::pipeline_cache::used_before(key) != Some(true))
+        && extension_count == 0
+        && let Some(guest) = unsafe { desc.as_ref() }
+        && guest.CachedPSO.CachedBlobSizeInBytes == 0
+        && !guest.CS.pShaderBytecode.is_null()
+        && guest.CS.BytecodeLength != 0
+        && guest.CS.BytecodeLength <= isize::MAX as usize
+        && unsafe { check_output::<ID3D12PipelineState>(iid, out) }.is_ok()
+        && let Some(placeholder) = background::placeholder(this)
+    {
+        let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
+        let work = background::Work::Compute(background::OwnedCompute::copy(guest, bytes));
+        let state = PipelineData { key: key.map(Into::into), lazy: true, ..Default::default() };
+        let _ = state.upgrade.set(background::lazy((*identity(this)).clone(), work));
+        return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
+    }
     let _ = super::shader_cache::take_missed();
-    super::shader_cache::no_wait(lazy);
     let status = unsafe { make_compute(this, desc, extension_count, extensions, iid, out) };
-    super::shader_cache::no_wait(false);
     let missed = super::shader_cache::take_missed();
     if status.is_err() || worker {
         return status;
