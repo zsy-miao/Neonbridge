@@ -36,8 +36,8 @@ fn translate(
 
     let translated = if let Some(path) = consumer {
         let bytes = read(path)?;
-        if !matches!(shader.stage, Stage::Vertex | Stage::Geometry) {
-            return Err("expected a vertex or geometry producer and a pixel consumer".into());
+        if !matches!(shader.stage, Stage::Vertex | Stage::Geometry | Stage::Mesh) {
+            return Err("expected a vertex, geometry or mesh producer and a pixel consumer".into());
         }
         let actual = pixel_order.map(read).transpose()?;
         // A portable original consumer has no native ISA to translate. Read
@@ -49,7 +49,7 @@ fn translate(
             if actual.as_deref().is_some_and(|code| code != bytes.as_slice()) {
                 return Err(Error::Unsupported("portable pixel consumer differs from its bound bytecode".into()));
             }
-            hlsl::InputInterp(modifiers)
+            hlsl::InputInterp(modifiers, None)
         } else {
             let pixel = extract(&bytes)?;
             if pixel.stage != Stage::Pixel {
@@ -71,7 +71,13 @@ fn translate(
                     _ => {}
                 }
             }
-            hlsl::translate(&pixel).map_err(Error::Unsupported)?.ps_input_interp
+            let mut interp = hlsl::translate(&pixel).map_err(Error::Unsupported)?.ps_input_interp;
+            // A linked mesh producer drops the vertex outputs this pixel shader does
+            // not declare (five-star-recomp 1236bfa, GPL-3.0, ThatRecompDev).
+            if shader.stage == Stage::Mesh {
+                interp.1 = Some(pixel.input_sig.iter().map(|i| format!("{}{}", i.name, i.index)).collect());
+            }
+            interp
         };
         let order = actual.as_deref().map(meta::pixel_input_order)
             .unwrap_or_else(|| if is_portable { meta::pixel_input_order(&bytes) } else { Vec::new() });

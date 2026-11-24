@@ -137,8 +137,12 @@ pub struct Translated {
 /// `_REGISTERMASK`). Seen in Fortnite: a geometry shader wrote TEXCOORD0.xy and
 /// SV_RenderTargetArrayIndex to r0.xy and r2.x, its pixel shader read TEXCOORD0 per vertex
 /// (`nointerpolation`) and DXC packed SV_RenderTargetArrayIndex into r0.z.
+///
+/// The second field, when known, is every semantic the pixel shader declares as an
+/// input: a linked mesh producer leaves its other vertex outputs out of the struct
+/// (five-star-recomp 1236bfa).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct InputInterp(pub Vec<(String, String)>);
+pub struct InputInterp(pub Vec<(String, String)>, pub Option<Vec<String>>);
 
 impl InputInterp {
     fn get(&self, semantic: &str) -> Option<&str> {

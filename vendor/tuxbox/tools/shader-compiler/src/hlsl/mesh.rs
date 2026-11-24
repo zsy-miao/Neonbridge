@@ -213,22 +213,32 @@ pub(super) fn translate(
     em.line(&format!(
         "{guarded} = lane < {prims} ? checkedConn : {unguarded};"
     ));
+    // Vertex outputs the linked pixel shader does not declare stay out of the
+    // struct (five-star-recomp 1236bfa, GPL-3.0, ThatRecompDev): fewer rows fit
+    // more vertices under DXC's 32 KiB. Position and clip/cull distances stay.
+    // The export registers are still mapped over the whole signature.
+    // TB_MESH_DROP_UNREAD=0 keeps every output.
+    let read_by_ps = interpolation.and_then(|i| i.1.as_ref())
+        .filter(|_| std::env::var("TB_MESH_DROP_UNREAD").map_or(true, |v| v.trim() != "0"));
+    let vertex_sig: Vec<SigElement> = ex.output_sig.iter()
+        .filter(|e| e.sysval != 0 || read_by_ps.is_none_or(|ps| ps.iter().any(|s| s.eq_ignore_ascii_case(&semantic(e)))))
+        .cloned().collect();
     write_exports(
         &mut em,
         "vertex",
-        &ex.output_sig,
+        &vertex_sig,
         &exports.vertex_exports,
         &vertex_regs,
         32,
     )?;
     // A dropped primitive is also degenerate, so its cull flag can go where the outputs
     // would exceed the 32 KiB a mesh shader may write.
-    let elements = ex.output_sig.len() + ex.primitive_sig.len() + 1;
+    let elements = vertex_sig.len() + ex.primitive_sig.len() + 1;
     let cull = elements * 16 * usize::from(info.vertices.max(128)) <= 32768;
     let primitives = cull || !ex.primitive_sig.is_empty();
     // Groups with more vertices than this are dropped by the size guard below.
     let primitive_rows = if primitives { ex.primitive_sig.len() + usize::from(cull) } else { 0 };
-    let max_vertices = mesh_vertex_budget(ex.output_sig.len(), primitive_rows, usize::from(info.vertices));
+    let max_vertices = mesh_vertex_budget(vertex_sig.len(), primitive_rows, usize::from(info.vertices));
     if max_vertices == 0 {
         return Err("mesh vertex outputs exceed the 32 KiB output limit".into());
     }
@@ -237,7 +247,7 @@ pub(super) fn translate(
         h.push_str(&super::page_waves::declarations([128, 1, 1], false));
     }
     em.push_helpers(&mut h);
-    signature(&mut h, "Vertex", &ex.output_sig, &ex.flat_outputs, interpolation)?;
+    signature(&mut h, "Vertex", &vertex_sig, &ex.flat_outputs, interpolation)?;
     signature(&mut h, "Primitive", &ex.primitive_sig, &[], None)?;
     if !cull {
         h = h.replace("    bool cull : SV_CullPrimitive;\n", "");
