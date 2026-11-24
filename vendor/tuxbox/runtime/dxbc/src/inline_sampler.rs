@@ -284,6 +284,20 @@ fn states(isa: &[u8], visibility: u32, skip: bool, describable: bool) -> Option<
                         r = *src;
                         None
                     }
+                    // TuxBox 4cd8d1c: follow the requested half of an aligned
+                    // SGPR pair copy. TUXBOX_SAMPLER_PAIR_MOVES=0 refuses it.
+                    ("s_mov_b64", [Opnd::Sgpr(src)]) if op.enc == Enc::Sop1 && pair_moves() => {
+                        let [Opnd::Sgpr(dst)] = op.dst[..] else { return None };
+                        if dst > 104 || *src > 104 || dst % 2 != 0 || *src % 2 != 0 {
+                            return None;
+                        }
+                        let half = r.checked_sub(dst)?;
+                        if half > 1 {
+                            return None;
+                        }
+                        r = src.checked_add(half)?;
+                        None
+                    }
                     _ => Some(constant_word(op, r)?),
                 };
                 if let Some(value) = value {
@@ -463,4 +477,8 @@ mod tests {
         words[6] = 0xbf84_0002; // s_cbranch_scc0 also allows the point filter.
         assert!(classify(&words).is_none());
     }
+}
+
+fn pair_moves() -> bool {
+    std::env::var("TUXBOX_SAMPLER_PAIR_MOVES").map_or(true, |v| v.trim() != "0")
 }
