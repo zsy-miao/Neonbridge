@@ -572,6 +572,34 @@ type ImportKey = (usize, u64, u64);
 static LIVE: std::sync::Mutex<Option<std::collections::HashMap<ImportKey, std::sync::Weak<ImportedHeap>>>> = std::sync::Mutex::new(None);
 /// Ranges being opened now (one opener each; see `PagePools::import`).
 static OPENING: (std::sync::Mutex<Vec<ImportKey>>, std::sync::Condvar) = (std::sync::Mutex::new(Vec::new()), std::sync::Condvar::new());
+/// test102 collapsed to 0.2 fps with its recording threads spending a third
+/// of their time in OpenExistingHeapFromAddress1 for ranges they had opened
+/// moments before: placed textures re-read after their pages were reclaimed
+/// dropped the last reference to each import, so the next one opened it
+/// again in the kernel. The last TUXBOX_IMPORT_KEEP (512; 0 off) imports
+/// stay referenced for two seconds, so a live-import reuse finds them.
+fn keep_recent(heap: &Arc<ImportedHeap>) {
+    use std::collections::VecDeque;
+    use std::time::{Duration, Instant};
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    static KEPT: std::sync::Mutex<VecDeque<(Instant, Arc<ImportedHeap>)>> = std::sync::Mutex::new(VecDeque::new());
+    let limit = *LIMIT.get_or_init(|| crate::env_toggle!("TUXBOX_IMPORT_KEEP").and_then(|v| v.parse().ok()).unwrap_or(512));
+    if limit == 0 {
+        return;
+    }
+    let now = Instant::now();
+    // Released outside the lock: a heap's last reference may go here.
+    let mut gone = Vec::new();
+    {
+        let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        while kept.front().is_some_and(|(at, _)| now.duration_since(*at) > Duration::from_secs(2)) || kept.len() >= limit {
+            if let Some(old) = kept.pop_front() { gone.push(old); } else { break; }
+        }
+        kept.push_back((now, heap.clone()));
+    }
+    drop(gone);
+}
+
 fn note_live(key: ImportKey, heap: &Arc<ImportedHeap>) {
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     let map = live.get_or_insert_with(std::collections::HashMap::new);
@@ -1489,6 +1517,7 @@ impl PagePools {
         let heap = self.import_uncached(device, base, size, pin);
         if let Ok(heap) = &heap {
             note_live(key, heap);
+            keep_recent(heap);
         }
         if single {
             OPENING.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|k| *k != key);
