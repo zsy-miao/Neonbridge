@@ -42,6 +42,8 @@ enum Payload {
     Quota,
     Blobs(Vec<(String, Vec<u8>)>),
     Folder(String),
+    Button(u32),
+    Text(String),
 }
 
 struct Operation {
@@ -955,5 +957,273 @@ pub(super) unsafe extern "system" fn save_files_folder_result(_: &Object, block:
 pub(super) unsafe extern "system" fn save_files_quota(_: &Object, _user: *mut c_void, _scid: *const i8, out: *mut i64) -> i32 {
     if out.is_null() { return POINTER; }
     unsafe { out.write(SAVE_QUOTA) };
+    OK
+}
+
+// ---------------------------------------------------------------------------
+// XGameUi (class dfcd4649). There is no system UI offline: a message dialog
+// answers its default button, an error dialog is dismissed, text entry answers
+// TUXBOX_TEXT_ENTRY or the title's default text (TUXBOX_TEXT_ENTRY_CANCEL=1
+// cancels it instead), and every other dialog (profile card, achievements,
+// player picker, invites, web authentication, state share) completes as
+// cancelled by the user (E_ABORT), which titles handle as a closed dialog.
+// TUXBOX_RUNTIME_SERVICES without XGameUi withholds the class (old behaviour).
+
+const ABORT: i32 = 0x80004004u32 as i32;
+
+/// 3: XGameUiShowMessageDialogAsync(async, title, content, first, second, third, default, cancel).
+#[allow(clippy::too_many_arguments)]
+pub(super) unsafe extern "system" fn ui_message_dialog_async(
+    _: &Object, block: *mut c_void, title: *const i8, content: *const i8,
+    _first: *const i8, _second: *const i8, _third: *const i8, default: u32, _cancel: u32,
+) -> i32 {
+    let (title, content) = unsafe { (text(title).unwrap_or_default(), text(content).unwrap_or_default()) };
+    super::report(format_args!("game dialog: \"{title}\": \"{content}\" answered with button {default}"));
+    unsafe { complete(block, OK, 4, Payload::Button(default)) }
+}
+/// 4: XGameUiShowMessageDialogResult(async, button*).
+pub(super) unsafe extern "system" fn ui_message_dialog_result(_: &Object, block: *mut c_void, out: *mut u32) -> i32 {
+    if out.is_null() { return POINTER; }
+    match take(block) {
+        Ok(Payload::Button(b)) => { unsafe { out.write(b) }; OK }
+        Ok(_) => INVALID,
+        Err(status) => status,
+    }
+}
+/// 14: XGameUiShowErrorDialogAsync(async, errorCode, context).
+pub(super) unsafe extern "system" fn ui_error_dialog_async(_: &Object, block: *mut c_void, code: i32, context: *const i8) -> i32 {
+    let context = unsafe { text(context).unwrap_or_default() };
+    super::report(format_args!("game error dialog: {:#010x} \"{context}\" dismissed", code as u32));
+    unsafe { complete(block, OK, 0, Payload::Empty) }
+}
+/// Result slots whose outputs a cancelled dialog never fills (15 and the
+/// cancelled dialogs' results): the operation's status.
+pub(super) unsafe extern "system" fn ui_empty_result(_: &Object, block: *mut c_void) -> i32 {
+    match take(block) {
+        Ok(_) => OK,
+        Err(status) => status,
+    }
+}
+/// The other dialogs' Async slots: the XAsyncBlock comes first; they complete
+/// as cancelled by the user.
+pub(super) unsafe extern "system" fn ui_cancelled<const N: usize>(_: &Object, block: *mut c_void) -> i32 {
+    super::report(format_args!("game UI slot {N}: no system UI offline, completed as cancelled (E_ABORT)"));
+    unsafe { complete(block, ABORT, 0, Payload::Empty) }
+}
+/// 12 / 18 / 25: result-size and count slots (async, out*): the size of a
+/// text answer, otherwise the operation's failure.
+pub(super) unsafe extern "system" fn ui_result_size(_: &Object, block: *mut c_void, out: *mut u32) -> i32 {
+    let operations = OPERATIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(operation) = operations.get(&(block as usize)) else { return INVALID };
+    if operation.status < 0 {
+        return operation.status;
+    }
+    if out.is_null() { return POINTER; }
+    // XGameUiShowTextEntryResultSize writes a uint32_t.
+    unsafe { out.write(operation.size as u32) };
+    OK
+}
+/// 16: XGameUiSetNotificationPositionHint(position): nothing to place.
+pub(super) extern "system" fn ui_notification_hint(_: &Object, _position: u32) {}
+
+/// 17: XGameUiShowTextEntryAsync(async, title, description, defaultText, inputScope, maxTextLength).
+pub(super) unsafe extern "system" fn ui_text_entry_async(
+    _: &Object, block: *mut c_void, title: *const i8, _description: *const i8, default: *const i8, _scope: u32, max: u32,
+) -> i32 {
+    let title = unsafe { text(title).unwrap_or_default() };
+    if std::env::var("TUXBOX_TEXT_ENTRY_CANCEL").is_ok_and(|v| v.trim() == "1") {
+        super::report(format_args!("text entry \"{title}\": cancelled (TUXBOX_TEXT_ENTRY_CANCEL=1)"));
+        return unsafe { complete(block, ABORT, 0, Payload::Empty) };
+    }
+    let mut answer = std::env::var("TUXBOX_TEXT_ENTRY").ok().unwrap_or_else(|| unsafe { text(default) }.unwrap_or_default());
+    if max > 0 {
+        answer = answer.chars().take(max as usize).collect();
+    }
+    super::report(format_args!("text entry \"{title}\": answered \"{answer}\" (TUXBOX_TEXT_ENTRY sets the answer)"));
+    let size = answer.len() + 1;
+    unsafe { complete(block, OK, size, Payload::Text(answer)) }
+}
+/// 19: XGameUiShowTextEntryResult(async, bufferSize, buffer, bufferUsed*).
+pub(super) unsafe extern "system" fn ui_text_entry_result(_: &Object, block: *mut c_void, size: u32, out: *mut u8, used: *mut u32) -> i32 {
+    if out.is_null() { return POINTER; }
+    {
+        let operations = OPERATIONS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(op) = operations.get(&(block as usize))
+            && op.status >= 0
+            && (size as usize) < op.size
+        {
+            return INSUFFICIENT_BUFFER;
+        }
+    }
+    match take(block) {
+        Ok(Payload::Text(answer)) => {
+            unsafe {
+                core::ptr::copy_nonoverlapping(answer.as_ptr(), out, answer.len());
+                out.add(answer.len()).write(0);
+                if !used.is_null() { used.write(answer.len() as u32 + 1) };
+            }
+            OK
+        }
+        Ok(_) => INVALID,
+        Err(status) => status,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// XAccessibility (class 3e241977): closed captions off, high contrast off,
+// speech-to-text display accepted and dropped, and a silent speech
+// synthesizer: it creates handles and every stream is a short silent WAV, so
+// narration code runs without a voice. TUXBOX_SPEECH=refuse makes
+// XSpeechSynthesizerCreate fail instead (no synthesizer).
+
+static SPEECH_HANDLES: LazyLock<Mutex<std::collections::HashSet<usize>>> = LazyLock::new(Default::default);
+
+fn silent_wav() -> &'static [u8] {
+    static WAV: LazyLock<Vec<u8>> = LazyLock::new(|| {
+        // 100 ms of 16 kHz mono 16-bit PCM silence.
+        let (rate, samples) = (16_000u32, 1_600u32);
+        let data = samples * 2;
+        let mut w = Vec::with_capacity(44 + data as usize);
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&(36 + data).to_le_bytes());
+        w.extend_from_slice(b"WAVEfmt ");
+        w.extend_from_slice(&16u32.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes());
+        w.extend_from_slice(&rate.to_le_bytes());
+        w.extend_from_slice(&(rate * 2).to_le_bytes());
+        w.extend_from_slice(&2u16.to_le_bytes());
+        w.extend_from_slice(&16u16.to_le_bytes());
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&data.to_le_bytes());
+        w.resize(44 + data as usize, 0);
+        w
+    });
+    &WAV
+}
+
+fn speech_handle_valid(h: usize) -> bool {
+    SPEECH_HANDLES.lock().unwrap_or_else(|e| e.into_inner()).contains(&h)
+}
+
+/// 3: XClosedCaptionGetProperties(properties*): three colours, edge, style,
+/// font scale (float), enabled (bool): captions off at scale 1.
+pub(super) unsafe extern "system" fn caption_properties(_: &Object, out: *mut u8) -> i32 {
+    if out.is_null() { return POINTER; }
+    unsafe {
+        core::ptr::write_bytes(out, 0, 25);
+        out.add(20).cast::<f32>().write_unaligned(1.0);
+    }
+    OK
+}
+/// 4: XClosedCaptionSetEnabled(enabled).
+pub(super) extern "system" fn caption_set_enabled(_: &Object, _enabled: bool) -> i32 { OK }
+/// 5: XHighContrastGetMode(mode*): Off.
+pub(super) unsafe extern "system" fn high_contrast(_: &Object, out: *mut u32) -> i32 {
+    if out.is_null() { return POINTER; }
+    unsafe { out.write(0) };
+    OK
+}
+/// 6, 7, 18-20: speech-to-text display calls; there is no display to show them.
+pub(super) extern "system" fn speech_to_text_ignored(_: &Object) -> i32 { OK }
+/// 17: XSpeechToTextBeginHypothesisString(speaker, content, type, hypothesisId*).
+pub(super) unsafe extern "system" fn speech_to_text_begin(_: &Object, _speaker: *const i8, _content: *const i8, _kind: u32, id: *mut u32) -> i32 {
+    static NEXT_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    if !id.is_null() {
+        unsafe { id.write(NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) };
+    }
+    OK
+}
+/// 8: XSpeechSynthesizerEnumerateInstalledVoices(context, callback): no voices.
+pub(super) extern "system" fn speech_enumerate_voices(_: &Object, _context: *mut c_void, _callback: *const c_void) -> i32 { OK }
+/// 9: XSpeechSynthesizerCreate(handle*).
+pub(super) unsafe extern "system" fn speech_create(_: &Object, out: *mut usize) -> i32 {
+    if out.is_null() { return POINTER; }
+    if std::env::var("TUXBOX_SPEECH").is_ok_and(|v| v.trim().eq_ignore_ascii_case("refuse")) {
+        unsafe { out.write(0) };
+        return 0x80004005u32 as i32; // E_FAIL
+    }
+    let h = new_handle();
+    SPEECH_HANDLES.lock().unwrap_or_else(|e| e.into_inner()).insert(h);
+    super::report(format_args!("speech synthesizer: silent synthesizer created (TUXBOX_SPEECH=refuse fails it)"));
+    unsafe { out.write(h) };
+    OK
+}
+/// 10 / 14: close a synthesizer or a stream.
+pub(super) extern "system" fn speech_close(_: &Object, handle: usize) -> i32 {
+    SPEECH_HANDLES.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
+    OK
+}
+/// 11: XSpeechSynthesizerSetDefaultVoice(handle); 12: SetCustomVoice(handle, voiceId).
+pub(super) extern "system" fn speech_set_voice(_: &Object, handle: usize) -> i32 {
+    if speech_handle_valid(handle) { OK } else { INVALID }
+}
+/// 13 / 21: CreateStreamFromText / FromSsml(handle, text, stream*).
+pub(super) unsafe extern "system" fn speech_create_stream(_: &Object, handle: usize, _text: *const i8, out: *mut usize) -> i32 {
+    if out.is_null() { return POINTER; }
+    if !speech_handle_valid(handle) { return INVALID; }
+    let h = new_handle();
+    SPEECH_HANDLES.lock().unwrap_or_else(|e| e.into_inner()).insert(h);
+    unsafe { out.write(h) };
+    OK
+}
+/// 15: XSpeechSynthesizerGetStreamDataSize(stream, size*).
+pub(super) unsafe extern "system" fn speech_stream_size(_: &Object, stream: usize, out: *mut usize) -> i32 {
+    if out.is_null() { return POINTER; }
+    if !speech_handle_valid(stream) { return INVALID; }
+    unsafe { out.write(silent_wav().len()) };
+    OK
+}
+/// 16: XSpeechSynthesizerGetStreamData(stream, bufferSize, buffer, bufferUsed*).
+pub(super) unsafe extern "system" fn speech_stream_data(_: &Object, stream: usize, size: usize, out: *mut u8, used: *mut usize) -> i32 {
+    if out.is_null() { return POINTER; }
+    if !speech_handle_valid(stream) { return INVALID; }
+    let wav = silent_wav();
+    if size < wav.len() { return INSUFFICIENT_BUFFER; }
+    unsafe {
+        core::ptr::copy_nonoverlapping(wav.as_ptr(), out, wav.len());
+        if !used.is_null() { used.write(wav.len()) };
+    }
+    OK
+}
+
+// ---------------------------------------------------------------------------
+// XGame launch slots. XLaunchNewGame ends the title and starts another one:
+// the request (exe path, then arguments) goes to
+// %LOCALAPPDATA%\TuxBox\relaunch\<exe stem>.txt and the process exits; the
+// launcher starts the requested title in its place. TUXBOX_RELAUNCH=0 logs the
+// request and keeps running (old behaviour).
+
+fn relaunch_request_path() -> Option<std::path::PathBuf> {
+    let stem = std::env::current_exe().ok()?.file_stem()?.to_string_lossy().into_owned();
+    let base = std::env::var_os("LOCALAPPDATA")?;
+    Some(std::path::Path::new(&base).join("TuxBox").join("relaunch").join(format!("{stem}.txt")))
+}
+
+/// 4: void XLaunchNewGame(exePath, args, defaultUser).
+pub(super) unsafe extern "system" fn game_launch_new(_: &Object, exe: *const i8, args: *const i8, _user: *mut c_void) {
+    let (exe, args) = unsafe { (text(exe).unwrap_or_default(), text(args).unwrap_or_default()) };
+    if std::env::var("TUXBOX_RELAUNCH").is_ok_and(|v| v.trim() == "0") {
+        super::report(format_args!("XLaunchNewGame(\"{exe}\", \"{args}\") ignored (TUXBOX_RELAUNCH=0)"));
+        return;
+    }
+    let Some(path) = relaunch_request_path() else {
+        super::report(format_args!("XLaunchNewGame(\"{exe}\", \"{args}\") ignored: no LOCALAPPDATA"));
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(&path, format!("{exe}\n{args}\n")) {
+        super::report(format_args!("XLaunchNewGame(\"{exe}\", \"{args}\") ignored: {e}"));
+        return;
+    }
+    eprintln!("TuxBox xgameruntime: XLaunchNewGame(\"{exe}\", \"{args}\"): exiting for the launcher to relaunch (TUXBOX_RELAUNCH=0 ignores it)");
+    std::process::exit(0);
+}
+/// 5: XLaunchRestartOnCrash(args, reserved): accepted; nothing restarts the title.
+pub(super) unsafe extern "system" fn game_restart_on_crash(_: &Object, args: *const i8, _reserved: u32) -> i32 {
+    let args = unsafe { text(args).unwrap_or_default() };
+    super::report(format_args!("XLaunchRestartOnCrash(\"{args}\") accepted"));
     OK
 }

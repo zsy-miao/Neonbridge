@@ -1,29 +1,33 @@
 //! Survey of runtime API classes TuxBox does not implement yet. Each class
 //! answers QueryApiImpl with an interface whose every method logs its slot,
 //! the first five integer arguments and the caller, then returns E_NOTIMPL.
-//! The six identified classes are served by `services` (slots it implements)
+//! The identified classes (XUser, XGame, XPackage, XPersistentLocalStorage,
+//! XNetworking, XDisplay, XGameSave, XAccessibility, XGameUi) are served by `services` (slots it implements)
 //! by default; TUXBOX_RUNTIME_SERVICES=0 withholds them. TUXBOX_RUNTIME_PROBE=1
 //! also exposes the unidentified class.
 use super::{NOT_IMPLEMENTED, Object, Slot, report};
 use std::sync::atomic::AtomicU32;
 use windows_sys::core::GUID;
 
-pub(super) const CLASSES: [(GUID, &str); 10] = [
+pub(super) const CLASSES: [(GUID, &str); 11] = [
     (GUID::from_u128(0x01acd177_91f9_4763_a38e_ccbb55ce32e0), "XUser"),
     (GUID::from_u128(0x973a344e_24bf_4d0f_8457_56c534892b29), "XGame"),
     (GUID::from_u128(0xaf406016_e850_4aa8_a88d_2f3dcb9dac7e), "XPackage"),
     (GUID::from_u128(0xf4faf4d4_2d04_4fce_b3e0_474a713a3e84), "XPersistentLocalStorage"),
     (GUID::from_u128(0x37e56907_2f10_41e8_b72f_36edb185331a), "XNetworking"),
     (GUID::from_u128(0x03f0fe74_fdd9_4e5c_b630_f9339c47acc5), "XDisplay"),
-    (GUID::from_u128(0x3e241977_6237_41e9_8559_102c2d9983f1), "Unknown3e241977"),
+    (GUID::from_u128(0x3e241977_6237_41e9_8559_102c2d9983f1), "XAccessibility"),
     (GUID::from_u128(0xb884675d_b738_4a9c_815d_9a9a1e0c6c9b), "Unknownb884675d"),
     (GUID::from_u128(0x704c3f58_e629_4cc2_b197_30511b996fe2), "XGameSave"),
     // XUser's gamertag interface (IID cef4fac0); selected by IID, not class.
     (GUID::from_u128(0xcef4fac0_7676_4a94_a119_4c43f9eb5b74), "XUserGamertag"),
+    (GUID::from_u128(0xdfcd4649_4ff8_4043_ba07_35d607df98b0), "XGameUi"),
 ];
 
 /// Interfaces chosen by IID within a class.
 pub(super) const GAMERTAG: usize = 9;
+const ACCESSIBILITY: usize = 6;
+const GAME_UI: usize = 10;
 
 pub(super) fn enabled() -> bool {
     std::env::var_os("TUXBOX_RUNTIME_PROBE").is_some_and(|v| v == "1")
@@ -64,9 +68,9 @@ macro_rules! service {
     ($f:path) => { Slot($f as *const ()) };
 }
 
-static TABLES: [[Slot; 64]; 10] = {
+static TABLES: [[Slot; 64]; 11] = {
     use super::services::*;
-    let mut t = [table!(0), table!(1), table!(2), table!(3), table!(4), table!(5), table!(6), table!(7), table!(8), table!(9)];
+    let mut t = [table!(0), table!(1), table!(2), table!(3), table!(4), table!(5), table!(6), table!(7), table!(8), table!(9), table!(10)];
     // XUser
     t[0][3] = service!(user_duplicate);
     t[0][4] = service!(user_close);
@@ -118,6 +122,54 @@ static TABLES: [[Slot; 64]; 10] = {
     t[0][34] = service!(user_unregister_change);
     // XGame
     t[1][3] = service!(game_title_id);
+    t[1][4] = service!(game_launch_new);
+    t[1][5] = service!(game_restart_on_crash);
+    // XAccessibility (closed captions, high contrast, speech)
+    t[6][3] = service!(caption_properties);
+    t[6][4] = service!(caption_set_enabled);
+    t[6][5] = service!(high_contrast);
+    t[6][6] = service!(speech_to_text_ignored);
+    t[6][7] = service!(speech_to_text_ignored);
+    t[6][8] = service!(speech_enumerate_voices);
+    t[6][9] = service!(speech_create);
+    t[6][10] = service!(speech_close);
+    t[6][11] = service!(speech_set_voice);
+    t[6][12] = service!(speech_set_voice);
+    t[6][13] = service!(speech_create_stream);
+    t[6][14] = service!(speech_close);
+    t[6][15] = service!(speech_stream_size);
+    t[6][16] = service!(speech_stream_data);
+    t[6][17] = service!(speech_to_text_begin);
+    t[6][18] = service!(speech_to_text_ignored);
+    t[6][19] = service!(speech_to_text_ignored);
+    t[6][20] = service!(speech_to_text_ignored);
+    t[6][21] = service!(speech_create_stream);
+    // XGameUi
+    t[10][3] = service!(ui_message_dialog_async);
+    t[10][4] = service!(ui_message_dialog_result);
+    t[10][5] = service!(ui_cancelled::<5>);
+    t[10][6] = service!(ui_empty_result);
+    t[10][7] = service!(ui_cancelled::<7>);
+    t[10][8] = service!(ui_empty_result);
+    t[10][9] = service!(ui_cancelled::<9>);
+    t[10][10] = service!(ui_empty_result);
+    t[10][11] = service!(ui_cancelled::<11>);
+    t[10][12] = service!(ui_result_size);
+    t[10][13] = service!(ui_empty_result);
+    t[10][14] = service!(ui_error_dialog_async);
+    t[10][15] = service!(ui_empty_result);
+    t[10][16] = service!(ui_notification_hint);
+    t[10][17] = service!(ui_text_entry_async);
+    t[10][18] = service!(ui_result_size);
+    t[10][19] = service!(ui_text_entry_result);
+    t[10][24] = service!(ui_cancelled::<24>);
+    t[10][25] = service!(ui_result_size);
+    t[10][26] = service!(ui_empty_result);
+    t[10][27] = service!(ui_cancelled::<27>);
+    t[10][30] = service!(ui_cancelled::<30>);
+    t[10][31] = service!(ui_empty_result);
+    t[10][40] = service!(ui_cancelled::<40>);
+    t[10][41] = service!(ui_empty_result);
     // XPackage
     t[2][3] = service!(package_identifier);
     t[2][4] = service!(package_is_packaged);
@@ -146,12 +198,12 @@ pub(super) fn available(index: usize) -> bool {
         Ok(list) if list == "0" => false,
         Ok(list) => list.split(',').any(|name| name.trim() == CLASSES[index].1),
     };
-    (index < 6 || index == 8 || index == GAMERTAG) && selected || enabled()
+    (index < 6 || index == 8 || index == GAMERTAG || index == ACCESSIBILITY || index == GAME_UI) && selected || enabled()
 }
-pub(super) static OBJECTS: [super::ProbeObject; 10] = {
+pub(super) static OBJECTS: [super::ProbeObject; 11] = {
     let mut i = 0;
-    let mut out = [const { super::ProbeObject { vtable: &TABLES[0], references: AtomicU32::new(0) } }; 10];
-    while i < 10 {
+    let mut out = [const { super::ProbeObject { vtable: &TABLES[0], references: AtomicU32::new(0) } }; 11];
+    while i < 11 {
         out[i] = super::ProbeObject { vtable: &TABLES[i], references: AtomicU32::new(0) };
         i += 1;
     }
