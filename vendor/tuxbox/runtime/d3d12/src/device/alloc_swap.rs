@@ -48,6 +48,9 @@ struct Table {
     native_pending: HashMap<usize, Vec<(ID3D12Fence, u64)>>,
     /// One fence per queue (raw) and its last value.
     queues: HashMap<usize, (ID3D12Fence, u64)>,
+    /// Host allocators of released guests kept until no list references them
+    /// and their submissions are done.
+    orphans: Vec<Host>,
 }
 
 // SAFETY: D3D12 objects are free-threaded; the table is behind a mutex.
@@ -123,6 +126,10 @@ pub(crate) fn submitted(queue: &ID3D12CommandQueue, lists: &[usize]) {
     }
     for host in hosts {
         let mut placed = false;
+        for h in t.orphans.iter_mut().filter(|h| h.allocator.as_raw() as usize == host) {
+            h.pending.push((fence.clone(), value));
+            placed = true;
+        }
         for g in t.guests.values_mut() {
             for h in g.current.iter_mut().chain(g.aside.iter_mut()) {
                 if h.allocator.as_raw() as usize == host {
@@ -137,6 +144,44 @@ pub(crate) fn submitted(queue: &ID3D12CommandQueue, lists: &[usize]) {
     }
 }
 
+/// TUXBOX_ALLOC_RELEASE=0: a released guest's entries stay, as before.
+pub(crate) fn release_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("TUXBOX_ALLOC_RELEASE").is_ok_and(|v| v.trim() == "0"))
+}
+
+/// The guest allocator's last Release (xcl 5c3ff31, re-derived): its entry
+/// goes, so a later allocator at the same address starts clean, and its host
+/// allocators (swapped and `overflow`) are dropped once nothing records on
+/// them and the GPU has passed their submissions.
+pub(crate) fn released(guest: &Allocator, overflow: Vec<ID3D12CommandAllocator>) {
+    if !release_enabled() {
+        return;
+    }
+    let mut guard = table();
+    let t = &mut *guard;
+    let mut hosts: Vec<Host> = Vec::new();
+    if let Some(g) = t.guests.remove(&key(guest)) {
+        hosts.extend(g.current);
+        hosts.extend(g.aside);
+    }
+    for allocator in std::iter::once(guest.native.clone()).chain(overflow) {
+        let raw = allocator.as_raw() as usize;
+        let pending = t.native_pending.remove(&raw).unwrap_or_default();
+        if !hosts.iter().any(|h| h.allocator.as_raw() as usize == raw) {
+            hosts.push(Host { allocator, pending });
+        }
+    }
+    t.orphans.extend(hosts);
+    prune(t);
+}
+
+/// Drop orphaned host allocators that are idle.
+fn prune(t: &mut Table) {
+    let lists = &t.lists;
+    t.orphans.retain_mut(|h| referenced(lists, h.allocator.as_raw() as usize) || !done(&mut h.pending));
+}
+
 static SWAPS: AtomicU64 = AtomicU64::new(0);
 static CREATED: AtomicU64 = AtomicU64::new(0);
 static REUSED: AtomicU64 = AtomicU64::new(0);
@@ -149,6 +194,7 @@ pub(crate) fn reset(guest: &Allocator) -> Option<windows::core::HRESULT> {
     }
     let mut guard = table();
     let t = &mut *guard;
+    prune(t);
     let k = key(guest);
     let g = t.guests.entry(k).or_default();
     let (current_raw, busy) = match &mut g.current {
@@ -218,4 +264,16 @@ pub(crate) fn reset(guest: &Allocator) -> Option<windows::core::HRESULT> {
         ));
     }
     Some(windows::Win32::Foundation::S_OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn referenced_hosts_are_found_by_raw_pointer() {
+        let lists: HashMap<usize, usize> = [(1, 0x10), (2, 0x20)].into_iter().collect();
+        assert!(referenced(&lists, 0x20));
+        assert!(!referenced(&lists, 0x30));
+    }
 }

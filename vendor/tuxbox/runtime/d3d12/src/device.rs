@@ -180,7 +180,7 @@ pub(crate) fn overflow_allocators(guest: &Allocator) -> Vec<ID3D12CommandAllocat
     table.iter().filter(|o| o.0 == key).map(|o| o.1.clone()).collect()
 }
 
-/// A new host allocator of `kind` for `guest`, kept until the process ends.
+/// A new host allocator of `kind` for `guest`, kept until the guest is released.
 pub(crate) fn add_overflow_allocator(guest: &Allocator, kind: D3D12_COMMAND_LIST_TYPE) -> windows::core::Result<ID3D12CommandAllocator> {
     let mut device: Option<ID3D12Device> = None;
     unsafe { guest.native.GetDevice(&mut device)? };
@@ -223,8 +223,31 @@ unsafe extern "system" fn reset_allocator(this: &Allocator) -> HRESULT {
 // commands never requests a guest page.
 extern "system" fn set_allocator_callback(_: &Allocator, _: *const c_void, _: *mut c_void) {}
 
+/// Last Release: forget the guest's host allocators (alloc_swap::released) and
+/// its OVERFLOW entries, which are keyed by address and would otherwise pass
+/// to a later allocator at the same address.
+unsafe extern "system" fn release_allocator(this: *mut Allocator) -> u32 {
+    unsafe {
+        crate::proxy::release_with(this, || {
+            if !alloc_swap::release_enabled() {
+                return;
+            }
+            let guest = &*this;
+            let key = this as usize;
+            let overflow: Vec<ID3D12CommandAllocator> = {
+                let mut table = OVERFLOW.lock().unwrap_or_else(|e| e.into_inner());
+                let mut gone = Vec::new();
+                table.retain(|o| if o.0 == key { gone.push(o.1.clone()); false } else { true });
+                gone
+            };
+            alloc_swap::released(guest, overflow);
+        })
+    }
+}
+
 static ALLOCATOR: Slots<16> = {
     let mut slots = child_slots::<ID3D12CommandAllocator, MediaResources, 16>();
+    slots[2] = crate::slot!(release_allocator);
     slots[8] = crate::slot!(reset_allocator);
     slots[9] = crate::slot!(set_allocator_callback);
     slots
