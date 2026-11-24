@@ -639,9 +639,10 @@ fn run_summary(text: &str, code: Option<i32>) -> String {
         let l = l.to_ascii_lowercase();
         ["panicked", "presentx failed", "device removed", "0x887a0005", "0x887a0006", "fatal", "access violation", "stack overflow"].iter().any(|k| l.contains(k))
     });
+    let fps = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split(" (").nth(1)?.strip_suffix(" fps)").map(str::to_owned)).unwrap_or_else(|| "-".into());
     let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
     format!(
-        "[launch] summary: exit={exit} presents={presents} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \
+        "[launch] summary: exit={exit} presents={presents} fps={fps} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \
 refused-calls={} graphics-only-drops={} barrier-rewrites={} slot131-cache-barriers={} null-root-views={} barriers-fitted={} probe-rejects={} cannot-record={} unbalanced-closes={} first-fatal={}",
         lits.len(), lits.last().unwrap_or(&"-"), count("host list Close failed"), count("rebuilt host list"),
         count("dropped a command-list batch"), count("unresolved inline descriptor"), count("PresentX failed"),

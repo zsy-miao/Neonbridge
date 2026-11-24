@@ -2003,9 +2003,20 @@ unsafe fn present_planes(
         let index = COUNT.fetch_add(1, Ordering::Relaxed);
         if let Some(site) = EARLY.get(index) {
             crate::diagnostics::log_once(site, || format!("completed PresentX #{} token={} source={:p}",index+1,plane.token,unsafe { *plane.resources }));
-        } else if (index + 1) % 300 == 0 {
-            // A heartbeat: the early lines alone made a running game look stalled.
-            crate::diagnostics::log_line(format_args!("completed PresentX #{}", index + 1));
+        } else {
+            // A heartbeat every 10 s with the frame rate since the last one: the
+            // early lines alone made a running game look stalled, and a count
+            // heartbeat stayed silent when slow frames never reached it.
+            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // ms since START
+            static LAST_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
+            let last = LAST.load(Ordering::Relaxed);
+            if now >= last + 10_000 && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                let frames = (index + 1).saturating_sub(LAST_INDEX.swap(index + 1, Ordering::Relaxed));
+                let fps = if last == 0 { 0.0 } else { frames as f64 * 1000.0 / (now - last) as f64 };
+                crate::diagnostics::log_line(format_args!("completed PresentX #{} ({fps:.1} fps)", index + 1));
+            }
         }
     }
     result
