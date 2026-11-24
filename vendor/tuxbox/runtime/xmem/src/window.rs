@@ -53,7 +53,7 @@ unsafe extern "system" {
     fn GetClientRect(hwnd: H, rect: *mut Rect) -> i32;
     fn ClientToScreen(hwnd: H, point: *mut Point) -> i32;
     fn ClipCursor(rect: *const Rect) -> i32;
-    fn ShowWindow(hwnd: H, cmd: i32) -> i32;
+    fn ShowWindowAsync(hwnd: H, cmd: i32) -> i32;
     fn SetForegroundWindow(hwnd: H) -> i32;
 }
 
@@ -61,6 +61,7 @@ const SW_SHOW: i32 = 5;
 const SWP_NOSIZE: u32 = 0x0001;
 const SWP_NOMOVE: u32 = 0x0002;
 const SWP_SHOWWINDOW: u32 = 0x0040;
+const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
 
 /// The monitor TUXBOX_MONITOR names, if it names one: `primary`, or a 0-based
 /// index into EnumDisplayMonitors. `nearest` (or unset) returns None.
@@ -352,10 +353,22 @@ pub extern "system" fn uncloak_windows() {
             if IsWindow(hwnd as H) != 0 && cloak(hwnd as H, false) {
                 // Bring it to the front: launched from another window, a
                 // monitor-sized popup can stay behind it, heard but not seen.
-                ShowWindow(hwnd as H, SW_SHOW);
-                SetWindowPos(hwnd as H, std::ptr::null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                let front = SetForegroundWindow(hwnd as H) != 0;
-                log(&format!("window: uncloaked {hwnd:#x} (brought to the front: {front})"));
+                // This runs on the present thread while the window's own
+                // thread waits on that present, so nothing here may send to
+                // the window synchronously: ShowWindow/SetWindowPos/
+                // SetForegroundWindow deadlocked the first PresentX (test40,
+                // presents=0, watchdog at 34 s). Show and raise are posted;
+                // the foreground request runs on a thread of its own.
+                ShowWindowAsync(hwnd as H, SW_SHOW);
+                SetWindowPos(hwnd as H, std::ptr::null_mut(), 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+                if std::env::var("TUXBOX_UNCLOAK_FOREGROUND").map_or(true, |v| v.trim() != "0") {
+                    let _ = std::thread::Builder::new().name("TuxBox foreground".into()).spawn(move || {
+                        let front = SetForegroundWindow(hwnd as H) != 0;
+                        log(&format!("window: {hwnd:#x} foreground request: {front}"));
+                    });
+                }
+                log(&format!("window: uncloaked {hwnd:#x} (show and raise posted; TUXBOX_UNCLOAK_FOREGROUND=0 skips the foreground request)"));
             }
         }
     }
