@@ -25,7 +25,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus, plays the intro videos and shows the story loading screens. After them the picture goes black and the game ends about five minutes in: either its own hang watchdog fires or Windows runs out of commit memory. Both are being traced.
+- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus, plays the intro videos and shows the story loading screens. After them the first cutscene starts and its sound plays, but almost nothing is drawn and the game stops: nearly every draw waits on a pipeline the GPU driver is still building. Building all of the game's pipelines ahead of time is the next fix.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and at least 20 GB of free commit (RAM plus page file); the game grows to about 19 GB.
@@ -34,7 +34,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## Roadmap
 
-1. **Past the loading screens:** no hang at the scene load, with shaders compiled fast enough that the game never waits on them.
+1. **Past the loading screens:** build every pipeline ahead of time so the first cutscene draws and never waits on the driver.
 2. **Memory:** keep commit well under the PC's limit and the game's ~8 GB of textures within the GPU's video-memory budget.
 3. **Speed:** hold 30 fps; it peaks at about 35 today and sinks below 20 once video memory overflows.
 4. **Correct pictures:** the remaining BCPack texture modes and 5551 colour.
