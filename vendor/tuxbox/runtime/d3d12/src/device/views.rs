@@ -399,6 +399,21 @@ fn uav_imports() -> bool {
     crate::env_toggle!("TUXBOX_UAV_IMPORTS") != Some("0")
 }
 
+/// test121 (after 15b2fe6): with address UAVs on imported title pages the
+/// GPU wrote system memory across the bus and took ~100 ms a frame from
+/// boot on. TUXBOX_UAV_DEVICE_COPY=1 serves an address UAV of up to
+/// TUXBOX_UAV_DEVICE_COPY_MAX bytes (16 MiB) from the shadow module's
+/// device-local copy instead: filled from the title pages before each
+/// submission and written back after it. Larger views keep the import.
+/// Opt-in until a run compares it with TUXBOX_UAV_IMPORTS=0.
+fn device_copy(bytes: u64) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static MAX: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_UAV_DEVICE_COPY") == Some("1"))
+        && bytes <= *MAX.get_or_init(|| crate::env_toggle!("TUXBOX_UAV_DEVICE_COPY_MAX")
+            .and_then(|v| v.trim().parse().ok()).unwrap_or(16 << 20))
+}
+
 fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool)
     -> windows::core::Result<Option<std::sync::Arc<TextureAddress>>> {
     use windows::Win32::Foundation::E_INVALIDARG;
@@ -1404,8 +1419,9 @@ pub(super) unsafe extern "system" fn address_uav(
     // TUXBOX_UAV_IMPORTS, or a placed resource's) cannot hold the view:
     // it goes through the written-back copy instead.
     let uav_capable = |e: &TextureAddress| (unsafe { e.native.GetDesc() }.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS).0 != 0;
+    let direct = !device_copy(width);
     let entry = match buffer_at(device, desc.address, width, element as u32, false) {
-        Ok(Some(entry)) if entry.offset(desc.address).is_multiple_of(element) && uav_capable(&entry) => {
+        Ok(Some(entry)) if direct && entry.offset(desc.address).is_multiple_of(element) && uav_capable(&entry) => {
             unsafe { view.Anonymous.Buffer.FirstElement += entry.offset(desc.address) / element };
             entry
         }
