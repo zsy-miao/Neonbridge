@@ -11,7 +11,7 @@ use windows::core::{GUID, HRESULT, Interface};
 // lower than the corresponding desktop subobject tags.
 const AMPLIFICATION_X: i32 = 23;
 const MESH_X: i32 = 24;
-const STENCIL_X: i32 = 26;
+pub(super) const STENCIL_X: i32 = 26;
 
 pub(super) mod background;
 pub(crate) use background::Upgrade;
@@ -24,7 +24,7 @@ fn subobject<T>() -> (usize, usize) {
     )
 }
 
-fn layout(tag: i32) -> Option<(usize, usize)> {
+pub(super) fn layout(tag: i32) -> Option<(usize, usize)> {
     Some(match tag {
         0 => subobject::<*mut c_void>(), // root signature
         1..=6 | AMPLIFICATION_X | MESH_X => subobject::<D3D12_SHADER_BYTECODE>(),
@@ -784,11 +784,15 @@ pub(super) unsafe extern "system" fn create_pipeline(
         && let Some(stream) = unsafe { background::OwnedStream::copy(desc) }
     {
         state.lazy = true;
+        state.derive_from = super::derived::keep(desc);
         let work = background::Work::Stream(stream);
         let owner = (*identity(device)).clone();
         let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });
         crate::diagnostics::pipeline_stream(desc.SizeInBytes, None);
         return unsafe { wrap_pageable(Ok(placeholder), &compute::PIPELINE, device, state, out) };
+    }
+    if !worker {
+        state.derive_from = super::derived::keep(desc);
     }
     let _ = shader_cache::take_missed();
     let _ = shader_cache::take_misses();

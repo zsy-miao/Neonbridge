@@ -39,6 +39,8 @@ pub(crate) struct PipelineData {
     /// A compute pipeline (slot 62): its dispatches wait for it rather than drop
     /// (see `wait_pending_compute`).
     pub(crate) compute: bool,
+    /// The guest stream it was made from, for CreateDerivedPipelineStateX.
+    pub(in crate::device) derive_from: Option<std::sync::Arc<super::stream::background::OwnedStream>>,
 }
 
 /// The host pipeline and state to bind: a worker's rebuild once it exists.

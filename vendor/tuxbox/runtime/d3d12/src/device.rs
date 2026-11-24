@@ -39,6 +39,7 @@ pub(crate) use fence::hang_lines as fence_hang_lines;
 mod graphics;
 mod heap;
 mod reserved;
+mod derived;
 pub(crate) mod indirect;
 pub(crate) mod media;
 pub(crate) mod placement;
@@ -1199,7 +1200,7 @@ unsafe extern "system" fn release_device(this: *mut Device) -> u32 {
 /// logged), so the title gets a working pipeline instead of a null one.
 /// TUXBOX_DERIVED_PSO=fail answers E_FAIL.
 unsafe extern "system" fn derived_pipeline(
-    _: &Device, base: *mut c_void, count: u32, patches: *const u8, riid: *const GUID, out: *mut *mut c_void,
+    device: &Device, base: *mut c_void, count: u32, patches: *const u8, riid: *const GUID, out: *mut *mut c_void,
 ) -> HRESULT {
     if out.is_null() {
         return E_POINTER;
@@ -1207,6 +1208,9 @@ unsafe extern "system" fn derived_pipeline(
     unsafe { out.write(core::ptr::null_mut()) };
     if base.is_null() || riid.is_null() || crate::env_toggle!("TUXBOX_DERIVED_PSO") == Some("fail") {
         return windows::Win32::Foundation::E_FAIL;
+    }
+    if let Some(status) = unsafe { derived::create(device, base, count, patches, riid, out) } {
+        return status;
     }
     static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {

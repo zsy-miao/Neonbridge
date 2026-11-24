@@ -516,6 +516,82 @@ impl OwnedStream {
             pPipelineStateSubobjectStream: self.storage.as_mut_ptr().cast(),
         }
     }
+
+    /// Bytes this copy owns (the derived-pipeline store's budget).
+    pub(in crate::device) fn owned_bytes(&self) -> usize {
+        self.size + self._bytes.iter().map(Vec::len).sum::<usize>()
+    }
+
+    /// This stream with each `(tags, payload)` written over the first record
+    /// whose tag is listed (the payload's leading bytes), else added as a new
+    /// record of the first tag before the console stencil record. That record
+    /// is rewritten to agree with a patched depth-stencil state. The result's
+    /// pointers still name this copy's arrays, so it lives no longer than
+    /// `self`. For CreateDerivedPipelineStateX (palmetto b00248ca).
+    pub(in crate::device) fn patched(&self, patches: &[(&[i32], &[u8])]) -> Option<Vec<MaybeUninit<usize>>> {
+        let input = unsafe { slice::from_raw_parts(self.storage.as_ptr().cast::<u8>(), self.size) };
+        let mut out: Vec<u8> = Vec::with_capacity(self.size + 512);
+        let mut applied = vec![false; patches.len()];
+        let mut stencil: Option<D3D12_DEPTH_STENCIL_DESC1> = None;
+        let mut at = 0;
+        let add_missing = |out: &mut Vec<u8>, applied: &mut [bool]| -> Option<()> {
+            for (i, (tags, payload)) in patches.iter().enumerate() {
+                if applied[i] {
+                    continue;
+                }
+                let (offset, bytes) = super::layout(tags[0])?;
+                let start = out.len();
+                out.resize(start + bytes, 0);
+                out[start..start + 4].copy_from_slice(&tags[0].to_le_bytes());
+                let n = payload.len().min(bytes - offset);
+                out[start + offset..start + offset + n].copy_from_slice(&payload[..n]);
+                applied[i] = true;
+            }
+            Some(())
+        };
+        while at < self.size {
+            let tag = i32::from_le_bytes(input[at..at + 4].try_into().ok()?);
+            let (offset, bytes) = super::layout(tag)?;
+            let start = out.len();
+            out.extend_from_slice(&input[at..at + bytes]);
+            if tag == super::STENCIL_X {
+                // It ends the stream: a new record goes before it.
+                out.truncate(start);
+                add_missing(&mut out, &mut applied)?;
+                let start = out.len();
+                out.extend_from_slice(&input[at..at + bytes]);
+                if let Some(depth) = stencil {
+                    let enabled = u8::from(depth.StencilEnable.as_bool());
+                    let payload = &mut out[start + offset..start + offset + 18];
+                    payload.fill(0);
+                    payload[12..18].copy_from_slice(&[depth.StencilReadMask, depth.StencilWriteMask, 0, 0, enabled, enabled]);
+                }
+                break;
+            }
+            if let Some(i) = patches.iter().position(|(tags, _)| tags.contains(&tag)) {
+                if !applied[i] {
+                    let payload = patches[i].1;
+                    let n = payload.len().min(bytes - offset);
+                    out[start + offset..start + offset + n].copy_from_slice(&payload[..n]);
+                    applied[i] = true;
+                }
+            }
+            if matches!(tag, 11 | 21) {
+                let mut depth = D3D12_DEPTH_STENCIL_DESC1::default();
+                let n = (bytes - offset).min(size_of::<D3D12_DEPTH_STENCIL_DESC1>());
+                unsafe { ptr::copy_nonoverlapping(out[start + offset..].as_ptr(), (&raw mut depth).cast::<u8>(), n) };
+                stencil = Some(depth);
+            }
+            at += bytes;
+        }
+        add_missing(&mut out, &mut applied)?;
+        if out.len() > 4096 || !out.len().is_multiple_of(size_of::<usize>()) {
+            return None;
+        }
+        let mut storage = vec![MaybeUninit::<usize>::uninit(); out.len() / size_of::<usize>()];
+        unsafe { ptr::copy_nonoverlapping(out.as_ptr(), storage.as_mut_ptr().cast::<u8>(), out.len()) };
+        Some(storage)
+    }
 }
 
 /// A self-owned copy of a slot 62 compute descriptor (no extensions).
