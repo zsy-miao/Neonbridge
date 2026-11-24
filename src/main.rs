@@ -542,6 +542,7 @@ q
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    splash::watch(exe);
     let tee = |r: Box<dyn std::io::Read + Send>, mut f: fs::File| {
         std::thread::spawn(move || {
             for line in BufReader::new(r).split(b'\n').map_while(Result::ok) {

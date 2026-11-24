@@ -4,10 +4,18 @@
 //! progress bar. The launcher moves it through its stages with [`status`];
 //! [`close`] hides it when the title's first PresentX completes (or it exits).
 //! NEONBRIDGE_SPLASH=0 turns it off.
+//!
+//! [`watch`] stops the title's first, unpainted window flashing white across
+//! both monitors: titles create it at 3840x2160 and only the swap chain used
+//! to fit it. The watcher fits it into one monitor's work area as soon as it
+//! exists, and the loading screen becomes a dark curtain over it until the
+//! first frame.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicIsize, Ordering};
-use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::core::BOOL;
+use windows_sys::Win32::Foundation::{CloseHandle, COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -61,6 +69,123 @@ pub fn close() {
     let hwnd = WINDOW.swap(-2, Ordering::AcqRel);
     if hwnd > 0 {
         unsafe { PostMessageW(hwnd as HWND, WM_CLOSE, 0, 0) };
+    }
+}
+
+/// Fits the windows of the game process `exe` into the primary monitor's work
+/// area from the moment they exist, and covers them with the loading screen
+/// until [`close`]. Runs on its own thread and polls every few milliseconds, so
+/// a window spanning both monitors moves before it is ever painted.
+pub fn watch(exe: &std::path::Path) {
+    let Some(name) = exe.file_name().map(|n| n.to_string_lossy().to_lowercase()) else { return };
+    let _ = std::thread::Builder::new().name("neonbridge window watch".into()).spawn(move || {
+        let start = std::time::Instant::now();
+        let mut names: std::collections::HashMap<u32, bool> = std::collections::HashMap::new();
+        let mut covered = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        while WINDOW.load(Ordering::Acquire) != -2 && start.elapsed().as_secs() < 600 {
+            for hwnd in top_level_windows() {
+                let mut pid = 0;
+                unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+                if !*names.entry(pid).or_insert_with(|| image_name(pid).is_some_and(|n| n == name)) {
+                    continue;
+                }
+                let Some(bounds) = fit(hwnd) else { continue };
+                let splash = WINDOW.load(Ordering::Acquire);
+                if splash > 0 && !rect_eq(&bounds, &covered) {
+                    covered = bounds;
+                    unsafe {
+                        SetWindowPos(splash as HWND, HWND_TOPMOST, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+                        InvalidateRect(splash as HWND, std::ptr::null(), 0);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+    });
+}
+
+fn rect_eq(a: &RECT, b: &RECT) -> bool {
+    (a.left, a.top, a.right, a.bottom) == (b.left, b.top, b.right, b.bottom)
+}
+
+fn top_level_windows() -> Vec<HWND> {
+    unsafe extern "system" fn visit(hwnd: HWND, out: LPARAM) -> BOOL {
+        unsafe { (*(out as *mut Vec<HWND>)).push(hwnd) };
+        1
+    }
+    let mut out: Vec<HWND> = Vec::new();
+    unsafe { EnumWindows(Some(visit), &mut out as *mut Vec<HWND> as LPARAM) };
+    out
+}
+
+fn image_name(pid: u32) -> Option<String> {
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut buffer = [0u16; 1024];
+        let mut len = buffer.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut len) != 0;
+        CloseHandle(process);
+        if !ok {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buffer[..len as usize]);
+        Some(path.rsplit('\\').next().unwrap_or_default().to_lowercase())
+    }
+}
+
+/// Moves a title window that leaves its monitor's work area into the primary
+/// monitor's, keeping its client aspect, and returns its bounds once visible.
+/// Tool, owned and child windows are left alone (None), as is a window that is
+/// already fullscreen on, or inside, one monitor.
+fn fit(hwnd: HWND) -> Option<RECT> {
+    unsafe {
+        let extended = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        if extended & WS_EX_TOOLWINDOW != 0 || style & WS_CHILD != 0 || !GetWindow(hwnd, GW_OWNER).is_null() {
+            return None;
+        }
+        let mut current: RECT = std::mem::zeroed();
+        let mut client: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut current) == 0 || GetClientRect(hwnd, &mut client) == 0 {
+            return None;
+        }
+        let visible = IsWindowVisible(hwnd) != 0;
+        let mut mine: MONITORINFO = std::mem::zeroed();
+        mine.cbSize = size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mine) != 0
+            && (rect_eq(&current, &mine.rcMonitor)
+                || (current.left >= mine.rcWork.left && current.top >= mine.rcWork.top && current.right <= mine.rcWork.right && current.bottom <= mine.rcWork.bottom))
+        {
+            return visible.then_some(current);
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY), &mut info) == 0 {
+            return None;
+        }
+        let work = info.rcWork;
+        let mut frame: RECT = std::mem::zeroed();
+        AdjustWindowRectEx(&mut frame, style, (!GetMenu(hwnd).is_null()).into(), extended);
+        let (border_w, border_h) = (frame.right - frame.left, frame.bottom - frame.top);
+        let (mut w, mut h) = (i64::from(client.right), i64::from(client.bottom));
+        if w <= 0 || h <= 0 {
+            (w, h) = (16, 9);
+        }
+        let available_w = i64::from(work.right - work.left - border_w);
+        let available_h = i64::from(work.bottom - work.top - border_h);
+        if available_w <= 0 || available_h <= 0 {
+            return None;
+        }
+        let client_w = available_w.min(available_h * w / h).max(1);
+        let client_h = (client_w * h / w).max(1);
+        let (outer_w, outer_h) = (client_w as i32 + border_w, client_h as i32 + border_h);
+        let left = work.left + (work.right - work.left - outer_w) / 2;
+        let top = work.top + (work.bottom - work.top - outer_h) / 2;
+        SetWindowPos(hwnd, std::ptr::null_mut(), left, top, outer_w, outer_h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+        visible.then_some(RECT { left, top, right: left + outer_w, bottom: top + outer_h })
     }
 }
 
@@ -177,6 +302,14 @@ unsafe fn paint(hwnd: HWND) {
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let screen = BeginPaint(hwnd, &mut ps);
+        // Once watch() has stretched the window into a curtain over the title,
+        // the card sits centred on plain background.
+        let mut client: RECT = std::mem::zeroed();
+        GetClientRect(hwnd, &mut client);
+        let (ox, oy) = ((client.right - WIDTH).max(0) / 2, (client.bottom - HEIGHT).max(0) / 2);
+        if ox > 0 || oy > 0 {
+            fill(screen, client, BACKGROUND);
+        }
         // Double-buffered to avoid flicker at 30 Hz.
         let dc = CreateCompatibleDC(screen);
         let bitmap = CreateCompatibleBitmap(screen, WIDTH, HEIGHT);
@@ -210,7 +343,7 @@ unsafe fn paint(hwnd: HWND) {
         fill(dc, RECT { left: glint.max(bar.left), right: (glint + 60).min(filled), ..bar }, CYAN);
         text(dc, &format!("{:.0}%", shown * 100.0), RECT { left: 32, top: 162, right: WIDTH - 32, bottom: 186 }, TEXT, small, DT_RIGHT | DT_VCENTER);
 
-        BitBlt(screen, 0, 0, WIDTH, HEIGHT, dc, 0, 0, SRCCOPY);
+        BitBlt(screen, ox, oy, WIDTH, HEIGHT, dc, 0, 0, SRCCOPY);
         SelectObject(dc, old_bitmap);
         DeleteObject(bitmap);
         DeleteDC(dc);
