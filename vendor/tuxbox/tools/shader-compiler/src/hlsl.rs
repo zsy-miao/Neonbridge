@@ -26,6 +26,8 @@ mod compare;
 mod uniform_texel;
 mod pixel_quad;
 mod mubuf_offsets;
+#[cfg(test)]
+mod raw_width;
 mod fssm_bindings;
 mod micropoly;
 mod mesh;
