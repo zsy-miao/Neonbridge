@@ -1,5 +1,11 @@
 //! Present one RGBA8, BGRA8 (either sRGB or not), RGB10A2 or RGBA16F guest
 //! texture through a triple-buffered DXGI swap chain.
+//!
+//! The chain is a composition swap chain shown through one DirectComposition
+//! visual that is scaled and centred to keep the image's aspect in whatever
+//! client area the window has (borderless fullscreen leaves black bars from
+//! the window's class brush). TUXBOX_LETTERBOX=0, or a failure to build it,
+//! falls back to the HWND swap chain stretched to the client area.
 
 mod overlay;
 mod window;
@@ -15,7 +21,71 @@ use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::*;
+use windows::Win32::Graphics::DirectComposition::{
+    DCompositionCreateDevice2, IDCompositionDevice, IDCompositionScaleTransform, IDCompositionTarget,
+    IDCompositionVisual,
+};
 use windows::core::{HRESULT, Interface, Result};
+
+/// A DirectComposition visual holding the swap chain, scaled and centred in
+/// the window's client area.
+struct Letterbox {
+    device: IDCompositionDevice,
+    _target: IDCompositionTarget,
+    visual: IDCompositionVisual,
+    scale: IDCompositionScaleTransform,
+    /// (client width, client height, image width, image height) last laid out.
+    laid_out: (i32, i32, u32, u32),
+}
+
+fn letterbox_enabled() -> bool {
+    std::env::var("TUXBOX_LETTERBOX").map_or(true, |v| v.trim() != "0")
+}
+
+impl Letterbox {
+    /// SAFETY: `hwnd` is a live window owned by this process.
+    unsafe fn new(hwnd: windows::Win32::Foundation::HWND, chain: &IDXGISwapChain1) -> Result<Self> {
+        unsafe {
+            let device: IDCompositionDevice = DCompositionCreateDevice2(None::<&windows::core::IUnknown>)?;
+            let target = device.CreateTargetForHwnd(hwnd, true)?;
+            let visual = device.CreateVisual()?;
+            let scale = device.CreateScaleTransform()?;
+            visual.SetContent(chain)?;
+            visual.SetTransform(&scale)?;
+            target.SetRoot(&visual)?;
+            Ok(Self { device, _target: target, visual, scale, laid_out: (0, 0, 0, 0) })
+        }
+    }
+
+    /// Fit a `width` x `height` image to the client area, keeping its aspect;
+    /// committed only when the client or image size changed.
+    unsafe fn layout(&mut self, hwnd: windows::Win32::Foundation::HWND, width: u32, height: u32) -> Result<()> {
+        let mut client = windows::Win32::Foundation::RECT::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut client)? };
+        let (cw, ch) = (client.right - client.left, client.bottom - client.top);
+        if cw <= 0 || ch <= 0 || width == 0 || height == 0 || self.laid_out == (cw, ch, width, height) {
+            return Ok(());
+        }
+        let factor = (cw as f32 / width as f32).min(ch as f32 / height as f32);
+        let (shown_w, shown_h) = (width as f32 * factor, height as f32 * factor);
+        // The offset applies after the transform: centre the scaled image.
+        unsafe {
+            self.scale.SetScaleX2(factor)?;
+            self.scale.SetScaleY2(factor)?;
+            self.visual.SetOffsetX2(((cw as f32 - shown_w) / 2.0).round())?;
+            self.visual.SetOffsetY2(((ch as f32 - shown_h) / 2.0).round())?;
+            self.device.Commit()?;
+        }
+        if self.laid_out.0 == 0 {
+            crate::diagnostics::log_line(format_args!(
+                "presentation letterboxed {width}x{height} into {cw}x{ch} at {:.0}x{:.0} (TUXBOX_LETTERBOX=0 stretches)",
+                shown_w, shown_h
+            ));
+        }
+        self.laid_out = (cw, ch, width, height);
+        Ok(())
+    }
+}
 
 /// The flip-model back-buffer format a plane copies into. Flip swap chains take
 /// no sRGB formats; CopyResource between UNORM and UNORM_SRGB of one family is legal.
@@ -123,6 +193,7 @@ struct SwapChain {
     fence: ID3D12Fence,
     frames: [Frame; 3],
     window: OutputWindow,
+    letterbox: Option<Letterbox>,
     width: u32,
     height: u32,
     format: DXGI_FORMAT,
@@ -161,9 +232,24 @@ impl SwapChain {
                 ..Default::default()
             };
             let factory: IDXGIFactory2 = CreateDXGIFactory1()?;
-            let base = factory.CreateSwapChainForHwnd(queue, window.hwnd(), &params, None, None)?;
+            let composed = letterbox_enabled()
+                .then(|| -> Result<(IDXGISwapChain1, Letterbox)> {
+                    let chain = factory.CreateSwapChainForComposition(queue, &params, None)?;
+                    let letterbox = Letterbox::new(window.hwnd(), &chain)?;
+                    Ok((chain, letterbox))
+                })
+                .and_then(|built| {
+                    built.map_err(|error| crate::diagnostics::log_line(format_args!(
+                        "presentation: letterbox unavailable ({error}); stretching to the window"
+                    ))).ok()
+                });
+            let (base, letterbox) = match composed {
+                Some((chain, letterbox)) => (chain, Some(letterbox)),
+                None => (factory.CreateSwapChainForHwnd(queue, window.hwnd(), &params, None, None)?, None),
+            };
             Ok(Self {
                 chain: base.cast()?,
+                letterbox,
                 fence: device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?,
                 frames: [Frame::new(device)?, Frame::new(device)?, Frame::new(device)?],
                 window,
@@ -212,6 +298,9 @@ impl SwapChain {
                 self.format = desc.Format;
             }
             self.window.keep_fitted(self.width, self.height);
+            if let Some(letterbox) = &mut self.letterbox {
+                let _ = letterbox.layout(self.window.hwnd(), self.width, self.height);
+            }
             // The maximum fence value reports device removal and must stay reserved.
             let next_value = self.next.checked_add(1).ok_or(E_FAIL)?;
             let index = self.chain.GetCurrentBackBufferIndex();

@@ -11,6 +11,12 @@
 //!   uncloaks it at its first present (`TuxBoxUncloakWindows`), or after 30 s.
 //! TUXBOX_CLOAK_WINDOW=0 turns the cloak off; the class brush and the fit stay
 //! (the launcher's curtain remains a second guard).
+//!
+//! Borderless windowed fullscreen is the default: the title's main window (an
+//! explicit size of at least 1280x720) is created as a popup covering the whole
+//! monitor it asked for, and d3d12 letterboxes the image to keep its aspect.
+//! NEONBRIDGE_WINDOWED=1 or TUXBOX_FULLSCREEN=0 keeps the 16:9 window inside
+//! the work area. Alt+Enter toggles between the two at run time.
 
 use std::ffi::c_void;
 use std::sync::Mutex;
@@ -30,6 +36,101 @@ unsafe extern "system" {
     fn IsWindow(hwnd: H) -> i32;
     fn DefWindowProcA(hwnd: H, msg: u32, w: usize, l: isize) -> isize;
     fn DefWindowProcW(hwnd: H, msg: u32, w: usize, l: isize) -> isize;
+    fn MonitorFromPoint(pt: Point, flags: u32) -> H;
+    fn MonitorFromWindow(hwnd: H, flags: u32) -> H;
+    fn GetMonitorInfoW(monitor: H, info: *mut MonitorInfo) -> i32;
+    fn GetWindowLongPtrW(hwnd: H, index: i32) -> isize;
+    fn SetWindowLongPtrW(hwnd: H, index: i32, value: isize) -> isize;
+    fn SetWindowPos(hwnd: H, after: H, x: i32, y: i32, w: i32, h: i32, flags: u32) -> i32;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct MonitorInfo {
+    size: u32,
+    monitor: Rect,
+    work: Rect,
+    flags: u32,
+}
+
+const MONITOR_DEFAULTTONEAREST: u32 = 2;
+const MONITOR_DEFAULTTOPRIMARY: u32 = 1;
+const GWL_STYLE: i32 = -16;
+const GWL_EXSTYLE: i32 = -20;
+const WS_POPUP: u32 = 0x8000_0000;
+/// Caption, frame, system menu, minimize and maximize boxes (WS_OVERLAPPEDWINDOW).
+const WS_FRAME_BITS: u32 = 0x00CF_0000;
+/// WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE.
+const WS_EX_FRAME_BITS: u32 = 0x0002_0301;
+const SWP_NOZORDER: u32 = 0x0004;
+const SWP_NOACTIVATE: u32 = 0x0010;
+const SWP_FRAMECHANGED: u32 = 0x0020;
+const WM_SYSKEYDOWN: u32 = 0x0104;
+const VK_RETURN: usize = 0x0D;
+
+/// Borderless windowed fullscreen unless NEONBRIDGE_WINDOWED=1 or TUXBOX_FULLSCREEN=0.
+fn fullscreen_default() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("NEONBRIDGE_WINDOWED").is_ok_and(|v| v.trim() == "1")
+            && std::env::var("TUXBOX_FULLSCREEN").map_or(true, |v| v.trim() != "0")
+    })
+}
+
+unsafe fn monitor_rects(monitor: H) -> Option<(Rect, Rect)> {
+    let mut info = MonitorInfo { size: size_of::<MonitorInfo>() as u32, ..Default::default() };
+    (!monitor.is_null() && unsafe { GetMonitorInfoW(monitor, &mut info) } != 0).then_some((info.monitor, info.work))
+}
+
+/// The largest 16:9 window with `style` that fits `work`, centred.
+unsafe fn windowed_bounds(work: Rect, style: u32, ex: u32) -> (i32, i32, i32, i32) {
+    let (aw, ah) = (work.right - work.left, work.bottom - work.top);
+    let mut frame = Rect::default();
+    unsafe { AdjustWindowRectEx(&mut frame, style, 0, ex) };
+    let (bw, bh) = (frame.right - frame.left, frame.bottom - frame.top);
+    let client_w = i64::from(aw - bw).min(i64::from(ah - bh) * 16 / 9).max(16);
+    let client_h = client_w * 9 / 16;
+    let (ow, oh) = (client_w as i32 + bw, client_h as i32 + bh);
+    (work.left + (aw - ow) / 2, work.top + (ah - oh) / 2, ow, oh)
+}
+
+/// Alt+Enter: switch the window between borderless fullscreen on its monitor
+/// and a 16:9 framed window in that monitor's work area.
+unsafe fn toggle_fullscreen(hwnd: H) {
+    unsafe {
+        let Some((monitor, work)) = monitor_rects(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)) else { return };
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        if style & WS_POPUP == 0 {
+            let style = (style & !WS_FRAME_BITS) | WS_POPUP;
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex & !WS_EX_FRAME_BITS) as isize);
+            SetWindowPos(hwnd, std::ptr::null_mut(), monitor.left, monitor.top, monitor.right - monitor.left,
+                monitor.bottom - monitor.top, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            log("window: Alt+Enter -> borderless fullscreen");
+        } else {
+            let style = (style & !WS_POPUP) | WS_FRAME_BITS;
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
+            let (x, y, w, h) = windowed_bounds(work, style, ex);
+            SetWindowPos(hwnd, std::ptr::null_mut(), x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            log("window: Alt+Enter -> windowed 16:9");
+        }
+    }
+}
+
+/// Alt+Enter (WM_SYSKEYDOWN, VK_RETURN, context bit 29, not a repeat).
+/// TUXBOX_ALT_ENTER=0 leaves the key to the title.
+fn alt_enter(msg: u32, w: usize, l: isize) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    msg == WM_SYSKEYDOWN && w == VK_RETURN && (l >> 29) & 1 != 0 && (l >> 30) & 1 == 0
+        && *ON.get_or_init(|| std::env::var("TUXBOX_ALT_ENTER").map_or(true, |v| v.trim() != "0"))
 }
 
 const WM_SYSCOMMAND: u32 = 0x0112;
@@ -48,6 +149,10 @@ fn drop_key_menu(msg: u32, w: usize) -> bool {
 }
 
 unsafe extern "system" fn def_window_proc_a(hwnd: H, msg: u32, w: usize, l: isize) -> isize {
+    if alt_enter(msg, w, l) {
+        unsafe { toggle_fullscreen(hwnd) };
+        return 0;
+    }
     if drop_key_menu(msg, w) {
         static LOGGED: std::sync::Once = std::sync::Once::new();
         LOGGED.call_once(|| log("window: dropped the Alt/F10 key menu (SC_KEYMENU; TUXBOX_KEY_MENU=1 allows it)"));
@@ -57,6 +162,10 @@ unsafe extern "system" fn def_window_proc_a(hwnd: H, msg: u32, w: usize, l: isiz
 }
 
 unsafe extern "system" fn def_window_proc_w(hwnd: H, msg: u32, w: usize, l: isize) -> isize {
+    if alt_enter(msg, w, l) {
+        unsafe { toggle_fullscreen(hwnd) };
+        return 0;
+    }
     if drop_key_menu(msg, w) {
         return 0;
     }
@@ -156,8 +265,23 @@ unsafe fn fitted(ex: u32, style: u32, menu: bool, x: i32, y: i32, w: i32, h: i32
 
 unsafe extern "system" fn create_window_ex_a(ex: u32, class: *const u8, name: *const u8, style: u32, x: i32, y: i32, w: i32, h: i32, parent: H, menu: H, inst: H, param: *mut c_void) -> H {
     let top = parent.is_null() && style & WS_CHILD == 0;
-    let (fx, fy, fw, fh) = if top { unsafe { fitted(ex, style, !menu.is_null(), x, y, w, h) } } else { (x, y, w, h) };
-    if (fx, fy, fw, fh) != (x, y, w, h) {
+    // The main window: an explicit size of at least 1280x720.
+    let main = top && w != i32::MIN && h != i32::MIN && w >= 1280 && h >= 720;
+    let mut fullscreen = None;
+    if main && fullscreen_default() {
+        let point = if x == i32::MIN { Point { x: 0, y: 0 } } else { Point { x, y } };
+        let flags = if x == i32::MIN { MONITOR_DEFAULTTOPRIMARY } else { MONITOR_DEFAULTTONEAREST };
+        fullscreen = unsafe { monitor_rects(MonitorFromPoint(point, flags)) }.map(|(monitor, _)| monitor);
+    }
+    let (ex, style) = if fullscreen.is_some() { (ex & !WS_EX_FRAME_BITS, (style & !WS_FRAME_BITS) | WS_POPUP) } else { (ex, style) };
+    let (fx, fy, fw, fh) = match fullscreen {
+        Some(m) => (m.left, m.top, m.right - m.left, m.bottom - m.top),
+        None if top => unsafe { fitted(ex, style, !menu.is_null(), x, y, w, h) },
+        None => (x, y, w, h),
+    };
+    if fullscreen.is_some() {
+        log(&format!("window: created borderless fullscreen at {fw}x{fh}+{fx}+{fy} instead of {w}x{h}+{x}+{y} (NEONBRIDGE_WINDOWED=1 keeps a window; Alt+Enter toggles)"));
+    } else if (fx, fy, fw, fh) != (x, y, w, h) {
         log(&format!("window: created at {fw}x{fh}+{fx}+{fy} instead of {w}x{h}+{x}+{y} (one monitor, 16:9)"));
     }
     let hwnd = unsafe { CreateWindowExA(ex, class, name, style, fx, fy, fw, fh, parent, menu, inst, param) };
@@ -185,5 +309,5 @@ pub(crate) unsafe fn install() {
             ],
         )
     };
-    log(&format!("window: {n} window import(s) patched (black class brush, one-monitor fit, cloak until the first present, no Alt/F10 key menu)"));
+    log(&format!("window: {n} window import(s) patched (black class brush, borderless fullscreen or one-monitor fit, cloak until the first present, no Alt/F10 key menu, Alt+Enter toggle)"));
 }
