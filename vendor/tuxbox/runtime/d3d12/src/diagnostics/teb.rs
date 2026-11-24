@@ -6,6 +6,7 @@
 //!   static TLS array). Logs whether those offsets hold on this Windows build.
 //! - TUXBOX_DUMP_RVAS=rva[:len],...: the title image's bytes at those RVAs
 //!   (default 16 bytes each), to confirm patched instructions at run time.
+//! - TUXBOX_BREAK_RVAS=rva,...: register-log breakpoints there (breaks.rs).
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{TLS_OUT_OF_INDEXES, TlsAlloc, TlsFree, TlsSetValue};
 
@@ -15,6 +16,9 @@ pub(crate) fn run() {
     }
     if let Ok(list) = std::env::var("TUXBOX_DUMP_RVAS") {
         dump(&list);
+    }
+    if let Ok(list) = std::env::var("TUXBOX_BREAK_RVAS") {
+        super::breaks::install(&list);
     }
 }
 

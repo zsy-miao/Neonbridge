@@ -101,6 +101,15 @@ unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
             }
             if write(&reason, context, unsafe { GetCurrentThreadId() }) {
                 detail(context, fault_address);
+                if super::crash_detail::enabled() {
+                    // The other threads at the fault (VIctory-style), and a small dump.
+                    let lines = all_stacks();
+                    self::record(format_args!("crash record: {} other threads' stacks follow", lines.len()));
+                    for line in lines {
+                        self::record(format_args!("crash record: {line}"));
+                    }
+                    minidump(info);
+                }
             }
         }
     }
@@ -110,6 +119,31 @@ unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
         return unsafe { std::mem::transmute::<usize, F>(previous)(info) };
     }
     0 // EXCEPTION_CONTINUE_SEARCH
+}
+
+/// %LOCALAPPDATA%\6ixpack\logs\crash_<pid>.dmp: threads, modules, the
+/// faulting context and memory the stacks point at (TUXBOX_CRASH_DUMP=0 off).
+fn minidump(info: &EXCEPTION_POINTERS) {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::System::Diagnostics::Debug::{
+        MINIDUMP_EXCEPTION_INFORMATION, MINIDUMP_TYPE, MiniDumpScanMemory, MiniDumpWithIndirectlyReferencedMemory, MiniDumpWriteDump,
+    };
+    if std::env::var_os("TUXBOX_CRASH_DUMP").is_some_and(|v| v == "0") {
+        return;
+    }
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else { return };
+    let path = std::path::Path::new(&base).join("6ixpack").join("logs").join(format!("crash_{}.dmp", std::process::id()));
+    let Ok(file) = std::fs::File::create(&path) else { return };
+    let exception = MINIDUMP_EXCEPTION_INFORMATION {
+        ThreadId: unsafe { GetCurrentThreadId() },
+        ExceptionPointers: info as *const _ as *mut _,
+        ClientPointers: false.into(),
+    };
+    let kind = MINIDUMP_TYPE(MiniDumpWithIndirectlyReferencedMemory.0 | MiniDumpScanMemory.0);
+    let written = unsafe {
+        MiniDumpWriteDump(windows::Win32::System::Threading::GetCurrentProcess(), GetCurrentProcessId(), HANDLE(file.as_raw_handle()), kind, Some(&exception), None, None)
+    };
+    record(format_args!("crash record: minidump {} {}", path.display(), if written.is_ok() { "written" } else { "failed" }));
 }
 
 /// A record of the calling thread, for fail-fast and panics.

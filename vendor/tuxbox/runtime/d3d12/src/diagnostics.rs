@@ -586,6 +586,7 @@ pub(crate) mod crash;
 pub(crate) mod ctl;
 mod crash_detail;
 pub(crate) mod teb;
+mod breaks;
 pub(crate) mod null_causes;
 pub(crate) mod sampler;
 
