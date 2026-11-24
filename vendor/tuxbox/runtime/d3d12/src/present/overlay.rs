@@ -64,7 +64,9 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                 let font = GetStockObject(ANSI_FIXED_FONT);
                 let old = SelectObject(dc, font);
                 #[allow(static_mut_refs)]
-                if let Some(rate) = RATE.as_mut() {
+                // Never hand DrawTextW an empty slice: its pointer is dangling, and a
+                // fault inside a window procedure ends the process (0xc000041d, test7).
+                if let Some(rate) = RATE.as_mut().filter(|r| !r.text.is_empty()) {
                     DrawTextW(dc, &mut rate.text, &mut rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 }
                 SelectObject(dc, old);
@@ -126,7 +128,7 @@ fn run() {
     unsafe {
         #[allow(static_mut_refs)]
         {
-            RATE = Some(Rate { text: Vec::new(), last: Instant::now(), count: PRESENTS.load(Ordering::Relaxed) });
+            RATE = Some(Rate { text: "-- fps".encode_utf16().collect(), last: Instant::now(), count: PRESENTS.load(Ordering::Relaxed) });
         }
         let Ok(module) = GetModuleHandleW(None) else { return };
         let instance = HINSTANCE(module.0);
