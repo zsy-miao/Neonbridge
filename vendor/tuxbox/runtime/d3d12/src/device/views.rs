@@ -198,6 +198,12 @@ pub(crate) unsafe fn refresh_shadows(owner: &windows::core::IUnknown, queue: &ID
     unsafe { shadow::refresh(device, queue) }
 }
 
+/// Upload the literal sampler lookup table ahead of a submission's lists.
+pub(crate) unsafe fn flush_desc_table(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    unsafe { device.state.desc_table.flush(&device.native, queue) }
+}
+
 pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     unsafe { shadow::write_back(device, queue) }
@@ -780,6 +786,7 @@ pub(super) unsafe extern "system" fn sampler(
         fail_call(format_args!("null D3D12 sampler description"));
     }
     unsafe { device.native.CreateSampler(desc, handle) };
+    device.state.desc_table.created(handle.ptr, unsafe { &*desc });
 }
 
 // Xbox extended sampler state separates the minification, magnification and

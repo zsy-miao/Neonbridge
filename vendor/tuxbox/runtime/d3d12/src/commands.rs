@@ -1784,6 +1784,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                         }
                         if let Some(owner) = queue.parent.as_ref() {
                             device::refresh_shadows(owner, &queue.native)?;
+                            device::flush_desc_table(owner, &queue.native)?;
                         }
                         memory_wait::submit(queue, host, splits)?;
                         if let Some(owner) = queue.parent.as_ref() {

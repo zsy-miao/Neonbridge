@@ -22,6 +22,7 @@ mod compute_table;
 mod mesh_table;
 pub(crate) mod depth;
 mod descriptor_copy;
+pub(crate) mod desc_table;
 pub(crate) mod descriptor_paging;
 mod dxgi;
 mod features;
@@ -46,7 +47,7 @@ pub(crate) mod pipeline_cache;
 mod stream;
 mod title_memory;
 mod views;
-pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, refresh_shadows, write_back_shadows};
+pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, refresh_shadows, flush_desc_table, write_back_shadows};
 
 type Device = Proxy<ID3D12Device, dxgi::DxgiDevice>;
 pub(crate) enum Backing {
@@ -373,6 +374,7 @@ pub(crate) struct DescriptorHeapState {
     _placed_targets: Option<placement::HeapViews<placement::Texture>>,
     _imported_views: Option<placement::DescriptorRange<views::DescriptorBacking>>,
     _scene_views: Option<placement::DescriptorRange<blas::SceneView>>,
+    _samplers: Option<desc_table::HeapGuard>,
 }
 type DescriptorHeap = Proxy<ID3D12DescriptorHeap, DescriptorHeapState>;
 
@@ -520,6 +522,12 @@ unsafe extern "system" fn create_heap(
             Err(error) => return error.code(),
         }
     } else {
+        // Shader-visible sampler heaps get the D3D12 maximum: the slots above
+        // the title's hold host samplers for literal S# words (desc_table).
+        let visible_samplers = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: desc_table::SAMPLER_HEAP_SLOTS, ..*desc };
+        let desc = if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER
+            && desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
+            && desc.NumDescriptors <= desc_table::SAMPLER_HEAP_SLOTS { &visible_samplers } else { desc };
         match unsafe { this.native.CreateDescriptorHeap::<ID3D12DescriptorHeap>(desc) } {
             Ok(native) => {
                 // Host contents of unwritten slots are undefined.
@@ -538,9 +546,13 @@ unsafe extern "system" fn create_heap(
         &resident_desc,
         D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
     );
+    let cpu_start = arena.as_ref().map_or_else(|| unsafe { native.GetCPUDescriptorHandleForHeapStart().ptr }, |arena| arena.base());
+    let samplers = (desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER).then(|| this.state.desc_table.sampler_heap(
+        &this.native, cpu_start, desc.NumDescriptors, desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+    ));
     let state = DescriptorHeapState {
         desc: *desc,
-        cpu_start: arena.as_ref().map_or_else(|| unsafe { native.GetCPUDescriptorHandleForHeapStart().ptr }, |arena| arena.base()),
+        cpu_start,
         arena,
         placed_views,
         _placed_targets: this.state.placements.targets.heap(&this.native, &native, &resident_desc, D3D12_DESCRIPTOR_HEAP_TYPE_RTV),
@@ -554,6 +566,7 @@ unsafe extern "system" fn create_heap(
             &resident_desc,
             D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
         ),
+        _samplers: samplers,
     };
     unsafe { wrap_pageable(Ok(native), &HEAP, this, state, out) }
 }

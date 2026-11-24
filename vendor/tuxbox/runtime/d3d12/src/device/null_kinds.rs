@@ -109,7 +109,7 @@ fn word(bytes: &[u8], at: usize) -> Option<u32> {
 }
 
 /// PSV0 resource bindings: (resource type, space, lower, upper, kind).
-fn bindings(shader: &[u8]) -> Vec<[u32; 5]> {
+pub(super) fn bindings(shader: &[u8]) -> Vec<[u32; 5]> {
     let read = || -> Option<Vec<[u32; 5]>> {
         let dxbc = tuxbox_dxbc::Dxbc::parse(shader).ok()?;
         let chunk = dxbc.chunk(b"PSV0")?;

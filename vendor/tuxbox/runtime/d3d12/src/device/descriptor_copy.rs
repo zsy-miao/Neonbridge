@@ -141,6 +141,10 @@ unsafe fn copy_host_range(device: &Device, count: u32, dst: D3D12_CPU_DESCRIPTOR
         return;
     }
     let from = registry.copy_source(src);
+    if kind == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER {
+        let stride = unsafe { device.native.GetDescriptorHandleIncrementSize(kind) } as usize;
+        device.state.desc_table.copied(dst.ptr, src.ptr, count, stride);
+    }
     if kind == D3D12_DESCRIPTOR_HEAP_TYPE_RTV {
         let stride = unsafe { device.native.GetDescriptorHandleIncrementSize(kind) } as usize;
         device.state.placements.targets.copy(stride, std::iter::once((dst.ptr, count)), std::iter::once((src.ptr, count)));
