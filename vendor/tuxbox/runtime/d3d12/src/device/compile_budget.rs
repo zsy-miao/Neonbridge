@@ -12,6 +12,16 @@
 //! compile goes ahead after TUXBOX_COMPILE_BUDGET_WAIT_MS (30000) so a machine
 //! that never frees enough cannot hold a pipeline forever.
 //! TUXBOX_COMPILE_BUDGET=0 never waits.
+//!
+//! The 4096 B per byte figure and the reserves are five-star's NVIDIA mesh
+//! measurements, and nothing here had checked them. test132 (RTX 4060, 38 GB
+//! commit) never had the 8 GB commit reserve free once the title held 18 GB, so
+//! every compile of 256 KiB or more waited the full 30 s. `measure` records
+//! what each driver compile actually takes, independent of the switch: the
+//! peak process-private growth over the compile, sampled every 20 ms, and what
+//! is still held when it returns. It logs one line per compile of 256 KiB or
+//! more (and a running maximum per KiB of DXIL), so the estimate and the
+//! reserves can be derived from this machine. TUXBOX_COMPILE_MEASURE=0 off.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -121,4 +131,62 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
         }
     }
     Some(Admitted(estimate))
+}
+
+static MEASURED: AtomicU64 = AtomicU64::new(0);
+static ACTIVE: AtomicU64 = AtomicU64::new(0);
+/// Largest peak growth seen, in bytes per KiB of DXIL.
+static WORST_PER_KIB: AtomicU64 = AtomicU64::new(0);
+
+/// One driver compile being measured; dropping it logs the result.
+pub(super) struct Measured {
+    shader_bytes: u64,
+    start: u64,
+    started: std::time::Instant,
+    peak: std::sync::Arc<AtomicU64>,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    others: u64,
+}
+
+pub(super) fn measure(shader_bytes: u64) -> Option<Measured> {
+    if shader_bytes < TINY_SHADER_BYTES || crate::env_toggle!("TUXBOX_COMPILE_MEASURE") == Some("0") {
+        return None;
+    }
+    let start = crate::diagnostics::memory::private_bytes();
+    let peak = std::sync::Arc::new(AtomicU64::new(start));
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (p, d) = (peak.clone(), done.clone());
+    let sampler = std::thread::Builder::new().name("TuxBox compile measure".into()).spawn(move || {
+        while !d.load(Ordering::Relaxed) {
+            p.fetch_max(crate::diagnostics::memory::private_bytes(), Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    if sampler.is_err() {
+        return None;
+    }
+    let others = ACTIVE.fetch_add(1, Ordering::Relaxed);
+    Some(Measured { shader_bytes, start, started: std::time::Instant::now(), peak, done, others })
+}
+
+impl Drop for Measured {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Relaxed);
+        ACTIVE.fetch_sub(1, Ordering::Relaxed);
+        let end = crate::diagnostics::memory::private_bytes();
+        let peak = self.peak.load(Ordering::Relaxed).max(end).saturating_sub(self.start);
+        let kept = end.saturating_sub(self.start);
+        let kib = (self.shader_bytes >> 10).max(1);
+        // Only compiles that ran alone say what one compile takes.
+        if self.others == 0 {
+            WORST_PER_KIB.fetch_max(peak / kib, Ordering::Relaxed);
+        }
+        let n = MEASURED.fetch_add(1, Ordering::Relaxed) + 1;
+        let (physical, commit) = available();
+        crate::diagnostics::log_line(format_args!(
+            "compile budget: measured a driver compile of {} KiB of DXIL: {} ms, private peak +{} MiB ({} B per DXIL byte), +{} MiB still held after; {} other compiles running at its start; worst alone so far {} B per DXIL byte (budget assumes {BYTES_PER_SHADER_BYTE}, at least {} MiB); {} MiB physical, {} MiB commit free ({n} measured; TUXBOX_COMPILE_MEASURE=0 off)",
+            self.shader_bytes >> 10, self.started.elapsed().as_millis(), peak >> 20, peak / self.shader_bytes.max(1),
+            kept >> 20, self.others, WORST_PER_KIB.load(Ordering::Relaxed) / 1024, MINIMUM_ESTIMATE >> 20,
+            physical >> 20, commit >> 20));
+    }
 }

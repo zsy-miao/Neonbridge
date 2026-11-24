@@ -93,6 +93,7 @@ fn load_or_make(
     // five-star afdd699: the driver compile waits for the memory it may take.
     let make = || {
         let _admitted = super::compile_budget::enter(shader_bytes);
+        let _measured = super::compile_budget::measure(shader_bytes);
         crate::big_stack::run(make)
     };
     let Some(name) = name.map(|n| HSTRING::from(n.as_str())) else {
