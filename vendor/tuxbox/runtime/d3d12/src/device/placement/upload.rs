@@ -15,7 +15,9 @@ pub(super) struct Change {
 // These COM objects must survive the asynchronous copy, even if the guest
 // drops all associated resource and queue references immediately after Submit.
 struct Upload {
-    _buffer: ID3D12Resource,
+    buffer: ID3D12Resource,
+    /// The buffer's pool bucket (0: not pooled).
+    bucket: u64,
     _allocator: ID3D12CommandAllocator,
     list: ID3D12CommandList,
     _textures: Vec<ID3D12Resource>,
@@ -30,6 +32,55 @@ pub(super) struct Transfer {
     scratch: Vec<u8>,
     watch: super::watch::Watch,
     refreshes: u64,
+    pool: Vec<(u64, ID3D12Resource)>,
+    pool_bytes: u64,
+}
+
+// Upload buffer recycling, from omonkeyz/xbox-emulator
+// crates/compat/d3d12_xs/src/upload.rs (de1e1da, GPL-3.0-or-later):
+// sizes round up to a power of two of at least 64 KiB, a buffer goes back to
+// the pool when its copy's fence completes, and the pool holds at most
+// 256 MiB. test49 created 5639 MiB of upload buffers, one per batch.
+// TUXBOX_UPLOAD_POOL=0 makes a buffer of the exact size per batch as before.
+const POOL_CAP_BYTES: u64 = 256 << 20;
+const POOL_MIN_BUCKET: u64 = 64 << 10;
+
+fn upload_pool() -> bool {
+    crate::env_toggle!("TUXBOX_UPLOAD_POOL") != Some("0")
+}
+
+fn pool_bucket(bytes: u64) -> u64 {
+    bytes.max(POOL_MIN_BUCKET).next_power_of_two()
+}
+
+fn pool_take<T>(pool: &mut Vec<(u64, T)>, pool_bytes: &mut u64, size: u64) -> Option<T> {
+    let i = pool.iter().rposition(|(s, _)| *s == size)?;
+    let (s, b) = pool.swap_remove(i);
+    *pool_bytes -= s;
+    Some(b)
+}
+
+fn pool_give<T>(pool: &mut Vec<(u64, T)>, pool_bytes: &mut u64, size: u64, buf: T, cap: u64) -> bool {
+    if *pool_bytes + size > cap {
+        return false;
+    }
+    pool.push((size, buf));
+    *pool_bytes += size;
+    true
+}
+
+#[cfg(test)]
+#[test]
+fn upload_buckets_are_pooled_by_size_under_the_cap() {
+    assert_eq!(pool_bucket(1), 64 << 10);
+    assert_eq!(pool_bucket((64 << 10) + 1), 128 << 10);
+    let (mut pool, mut bytes) = (Vec::new(), 0);
+    assert!(pool_give(&mut pool, &mut bytes, 64, 'a', 128));
+    assert!(pool_give(&mut pool, &mut bytes, 64, 'b', 128));
+    assert!(!pool_give(&mut pool, &mut bytes, 64, 'c', 128));
+    assert_eq!(pool_take(&mut pool, &mut bytes, 128), None);
+    assert_eq!(pool_take(&mut pool, &mut bytes, 64), Some('b'));
+    assert_eq!(bytes, 64);
 }
 
 impl Transfer {
@@ -47,6 +98,8 @@ impl Transfer {
             scratch: Vec::new(),
             watch: Default::default(),
             refreshes: 0,
+            pool: Vec::new(),
+            pool_bytes: 0,
         })
     }
 
@@ -69,7 +122,11 @@ impl Transfer {
             .front()
             .is_some_and(|(tick, _)| *tick <= completed)
         {
-            self.pending.pop_front();
+            if let Some((_, upload)) = self.pending.pop_front()
+                && upload.bucket != 0
+            {
+                pool_give(&mut self.pool, &mut self.pool_bytes, upload.bucket, upload.buffer, POOL_CAP_BYTES);
+            }
         }
         let mut changes = Vec::new();
         let watch = super::watch::enabled().then(|| {
@@ -103,7 +160,7 @@ impl Transfer {
                 }
             }
         }
-        let upload = Upload::record(device, &changes)?;
+        let upload = Upload::record(device, &changes, &mut self.pool, &mut self.pool_bytes)?;
         for mips in changes.chunk_by(|a, b| Arc::ptr_eq(&a.texture, &b.texture)) {
             // A guest may use a different queue on each submission. Order
             // replacement writes after every outstanding reader of this texture.
@@ -153,7 +210,7 @@ impl Drop for Transfer {
 }
 
 impl Upload {
-    fn record(device: &ID3D12Device, changes: &[Change]) -> Result<Self> {
+    fn record(device: &ID3D12Device, changes: &[Change], pool: &mut Vec<(u64, ID3D12Resource)>, pool_bytes: &mut u64) -> Result<Self> {
         let alignment = u64::from(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
         let mut total = 0u64;
         let mut offsets = Vec::with_capacity(changes.len());
@@ -170,9 +227,10 @@ impl Upload {
             .ok()
             .filter(|n| *n <= isize::MAX as usize)
             .ok_or(E_OUTOFMEMORY)?;
+        let bucket = if upload_pool() { pool_bucket(total) } else { 0 };
         let desc = D3D12_RESOURCE_DESC {
             Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
-            Width: total,
+            Width: if bucket != 0 { bucket } else { total },
             Height: 1,
             DepthOrArraySize: 1,
             MipLevels: 1,
@@ -183,13 +241,16 @@ impl Upload {
             Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
             ..Default::default()
         };
-        let buffer = committed(
-            device,
-            D3D12_HEAP_TYPE_UPLOAD,
-            &desc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            None,
-        )?;
+        let buffer = match (bucket != 0).then(|| pool_take(pool, pool_bytes, bucket)).flatten() {
+            Some(buffer) => buffer,
+            None => committed(
+                device,
+                D3D12_HEAP_TYPE_UPLOAD,
+                &desc,
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                None,
+            )?,
+        };
         let allocator = unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY)? };
         let list: ID3D12GraphicsCommandList =
             unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, &allocator, None)? };
@@ -244,7 +305,8 @@ impl Upload {
             list.Close()?;
         }
         Ok(Self {
-            _buffer: buffer,
+            buffer,
+            bucket,
             _allocator: allocator,
             list: list.cast()?,
             _textures: destinations,
