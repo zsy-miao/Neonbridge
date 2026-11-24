@@ -33,6 +33,20 @@ static PRESENTS: AtomicU64 = AtomicU64::new(0);
 static PREVIOUS_FILTER: AtomicUsize = AtomicUsize::new(0);
 static RECORDED: AtomicBool = AtomicBool::new(false);
 
+/// Log line plus a copy in %LOCALAPPDATA%ixpack\logs\crash_<pid>.log, so a
+/// run started without the launcher (no log capture) still leaves the record.
+fn record(text: std::fmt::Arguments<'_>) {
+    super::log_line(text);
+    use std::io::Write;
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else { return };
+    let dir = std::path::Path::new(&base).join("6ixpack").join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("crash_{}.log", std::process::id()));
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{text}");
+    }
+}
+
 fn enabled() -> bool {
     std::env::var_os("TUXBOX_CRASH_RECORD").is_none_or(|v| v != "0")
 }
@@ -109,17 +123,17 @@ struct Aligned(CONTEXT);
 
 fn write(reason: &str, context: &CONTEXT, thread: u32) {
     if RECORDED.swap(true, Ordering::Relaxed) {
-        super::log_line(format_args!("crash record: {reason} (thread {thread}; a record was already written)"));
+        record(format_args!("crash record: {reason} (thread {thread}; a record was already written)"));
         return;
     }
     let list = modules();
     let c = context;
-    super::log_line(format_args!("crash record: {reason} on thread {thread} at {}", label(&list, c.Rip as usize)));
+    record(format_args!("crash record: {reason} on thread {thread} at {}", label(&list, c.Rip as usize)));
     super::log_line(format_args!(
         "crash record: rax={:#x} rbx={:#x} rcx={:#x} rdx={:#x} rsi={:#x} rdi={:#x} rbp={:#x} rsp={:#x} r8={:#x} r9={:#x} r10={:#x} r11={:#x} r12={:#x} r13={:#x} r14={:#x} r15={:#x}",
         c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.Rbp, c.Rsp, c.R8, c.R9, c.R10, c.R11, c.R12, c.R13, c.R14, c.R15));
     let stack = unsafe { scan(c.Rsp as usize) };
-    super::log_line(format_args!("crash record: stack {}", stack_text(&list, c.Rip as usize, &stack)));
+    record(format_args!("crash record: stack {}", stack_text(&list, c.Rip as usize, &stack)));
 }
 
 /// Copy up to SCAN_WORDS of committed stack from rsp.
@@ -195,7 +209,7 @@ fn hang_report(presents: u64, seconds: u64) {
         }
         let _ = CloseHandle(snap);
     }
-    super::log_line(format_args!("hang: no frame presented for {seconds} s after present #{presents}; {} threads' stacks follow", threads.len()));
+    record(format_args!("hang: no frame presented for {seconds} s after present #{presents}; {} threads' stacks follow", threads.len()));
     let mut context = Box::new(Aligned(CONTEXT::default()));
     let mut stack = vec![0usize; SCAN_WORDS];
     for tid in threads {
@@ -205,7 +219,7 @@ fn hang_report(presents: u64, seconds: u64) {
         let _ = unsafe { CloseHandle(handle) };
         let Some(words) = words else { continue };
         let name = super::threads::name_of(tid);
-        super::log_line(format_args!("hang: thread {name}({tid}): {}", stack_text(&list, context.0.Rip as usize, &stack[..words])));
+        record(format_args!("hang: thread {name}({tid}): {}", stack_text(&list, context.0.Rip as usize, &stack[..words])));
     }
 }
 
