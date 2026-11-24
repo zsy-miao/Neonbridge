@@ -22,12 +22,23 @@ struct PageRange {
 
 const _: () = assert!(size_of::<Batch>() == 24 && size_of::<PageRange>() == 12);
 
+/// ERROR_INVALID_PARAMETER with the reason logged (first eight, then powers
+/// of two): test43's CopyPageMappingsBatchX 0x80070057 had no d3d12 reason.
+fn refused(reason: &str) -> u32 {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::loader::log(&format!("page mappings refused in xmem: {reason} ({n} so far)"));
+    }
+    ERROR_INVALID_PARAMETER
+}
+
 unsafe fn array<'a, T>(pointer: *const T, count: u32) -> Result<&'a [T], u32> {
     if count == 0 {
         return Ok(&[]);
     }
     if pointer.is_null() || !pointer.is_aligned() {
-        return Err(ERROR_INVALID_PARAMETER);
+        return Err(refused("null or unaligned array"));
     }
     // The queue owns the validated native arrays through this synchronous call.
     Ok(unsafe { slice::from_raw_parts(pointer, count as usize) })
@@ -137,7 +148,7 @@ impl Pool {
     ) -> Result<Vec<Change>, u32> {
         let source_end = source
             .checked_add(pages as usize * PAGE)
-            .ok_or(ERROR_INVALID_PARAMETER)?;
+            .ok_or_else(|| refused("pool end overflows"))?;
         let mut targets = HashMap::new();
         for batch in batches {
             let mut at = batch.destination;
@@ -146,15 +157,15 @@ impl Pool {
                     continue;
                 } // This mode consumes no destination pages.
                 if range.mode > 2 || at == 0 || !at.is_multiple_of(PAGE) {
-                    return Err(ERROR_INVALID_PARAMETER);
+                    return Err(refused("range mode above 2, or a null or unaligned destination"));
                 }
                 if range.count == 0 {
                     continue;
                 }
                 let bytes = range.count as usize * PAGE;
-                let end = at.checked_add(bytes).ok_or(ERROR_INVALID_PARAMETER)?;
+                let end = at.checked_add(bytes).ok_or_else(|| refused("destination end overflows"))?;
                 if at < source_end && source < end {
-                    return Err(ERROR_INVALID_PARAMETER);
+                    return Err(refused("destination overlaps the registered pool"));
                 }
                 if range.mode != 2 {
                     let n = if range.mode == 0 { range.count } else { 1 };
@@ -162,7 +173,7 @@ impl Pool {
                         || !source.is_multiple_of(PAGE)
                         || range.source.checked_add(n).is_none_or(|last| last > pages)
                     {
-                        return Err(ERROR_INVALID_PARAMETER);
+                        return Err(refused("source pages outside the registered pool"));
                     }
                 }
                 targets
