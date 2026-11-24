@@ -557,6 +557,14 @@ pub(super) unsafe extern "system" fn uav(
             };
             &raw const translated
         }
+        // Desktop D3D12 has no typed B5G5R5A1 UAV; the image is castable to
+        // R16_UINT (allocation::packed_uav_formats), so view its bits as that.
+        Some(view) if view.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B5G5R5A1_UNORM => {
+            translated = D3D12_UNORDERED_ACCESS_VIEW_DESC {
+                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16_UINT, ..*view
+            };
+            &raw const translated
+        }
         _ => desc,
     };
     if let Some(guest) = substitute.filter(|g| super::format::is_depth(g)) {
@@ -571,7 +579,14 @@ pub(super) unsafe extern "system" fn uav(
             guest.Format.0, guest.Width, guest.Height, guest.DepthOrArraySize, guest.Flags.0,
             view.Format.0, view.ViewDimension.0
         ));
-        unsafe { device.native.CreateUnorderedAccessView(None, None, Some(view), handle) };
+        // A null view has no planes: a stencil-plane slice removes the device.
+        let mut null = *view;
+        match null.ViewDimension {
+            D3D12_UAV_DIMENSION_TEXTURE2D => null.Anonymous.Texture2D.PlaneSlice = 0,
+            D3D12_UAV_DIMENSION_TEXTURE2DARRAY => null.Anonymous.Texture2DArray.PlaneSlice = 0,
+            _ => {}
+        }
+        unsafe { checked_uav(device, None, None, &null, handle) };
         return;
     }
     if let Some(pair) = unsafe { super::resource_proxy(object, identity(device).as_raw()) }
@@ -603,32 +618,35 @@ pub(super) unsafe extern "system" fn uav(
             Format: DXGI_FORMAT_R32_FLOAT,
             ..*view
         };
-        unsafe {
-            device
-                .native
-                .CreateUnorderedAccessView(&pair.image, None, Some(&host), handle)
-        };
+        unsafe { checked_uav(device, Some(&pair.image), None, &host, handle) };
         return;
     }
     if let Some((mode, offset, stride)) = byte_view {
         mode.create_uav(device, buffer.expect("placed buffer"), counter, unsafe { *desc }, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("placed UAV offset={offset} stride={stride}: {:?}", e.code())));
     } else {
-        unsafe { device.native.CreateUnorderedAccessView(buffer, counter, Some(desc), handle) };
-        if unsafe { device.native.GetDeviceRemovedReason() }.is_err() {
-            static BAD_UAV: std::sync::Once = std::sync::Once::new();
-            let res = buffer.map(|r| unsafe { r.GetDesc() });
-            let view = unsafe { desc.as_ref() }.map(|v| format!("format={} dimension={} {}", v.Format.0, v.ViewDimension.0, match v.ViewDimension {
-                D3D12_UAV_DIMENSION_BUFFER => format!("{:?}", unsafe { v.Anonymous.Buffer }),
-                D3D12_UAV_DIMENSION_TEXTURE2D => format!("{:?}", unsafe { v.Anonymous.Texture2D }),
-                D3D12_UAV_DIMENSION_TEXTURE2DARRAY => format!("{:?}", unsafe { v.Anonymous.Texture2DArray }),
-                D3D12_UAV_DIMENSION_TEXTURE3D => format!("{:?}", unsafe { v.Anonymous.Texture3D }),
-                _ => String::new(),
-            }));
-            crate::diagnostics::log_once(&BAD_UAV, || format!(
-                "UAV creation removed the device: view {view:?}; counter {}; resource {:?}", counter.is_some(),
-                res.map(|r| format!("dimension={} {}x{}x{} mips={} format={} flags={:#x} layout={}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.MipLevels, r.Format.0, r.Flags.0, r.Layout.0))));
-        }
+        unsafe { checked_uav(device, buffer, counter.as_ref().copied(), desc, handle) };
+    }
+}
+
+/// CreateUnorderedAccessView that logs, once, the call that removes the device.
+unsafe fn checked_uav(device: &Device, resource: Option<&ID3D12Resource>, counter: Option<&ID3D12Resource>,
+    desc: *const D3D12_UNORDERED_ACCESS_VIEW_DESC, handle: D3D12_CPU_DESCRIPTOR_HANDLE) {
+    let before = unsafe { device.native.GetDeviceRemovedReason() }.is_ok();
+    unsafe { device.native.CreateUnorderedAccessView(resource, counter, Some(desc), handle) };
+    if before && unsafe { device.native.GetDeviceRemovedReason() }.is_err() {
+        static BAD_UAV: std::sync::Once = std::sync::Once::new();
+        let res = resource.map(|r| unsafe { r.GetDesc() });
+        let view = unsafe { desc.as_ref() }.map(|v| format!("format={} dimension={} {}", v.Format.0, v.ViewDimension.0, match v.ViewDimension {
+            D3D12_UAV_DIMENSION_BUFFER => format!("{:?}", unsafe { v.Anonymous.Buffer }),
+            D3D12_UAV_DIMENSION_TEXTURE2D => format!("{:?}", unsafe { v.Anonymous.Texture2D }),
+            D3D12_UAV_DIMENSION_TEXTURE2DARRAY => format!("{:?}", unsafe { v.Anonymous.Texture2DArray }),
+            D3D12_UAV_DIMENSION_TEXTURE3D => format!("{:?}", unsafe { v.Anonymous.Texture3D }),
+            _ => String::new(),
+        }));
+        crate::diagnostics::log_once(&BAD_UAV, || format!(
+            "UAV creation removed the device: view {view:?}; counter {}; resource {:?}", counter.is_some(),
+            res.map(|r| format!("dimension={} {}x{}x{} mips={} format={} flags={:#x} layout={}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.MipLevels, r.Format.0, r.Flags.0, r.Layout.0))));
     }
 }
 
