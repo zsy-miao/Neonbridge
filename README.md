@@ -4,7 +4,7 @@
 
 **In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6Launch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
 
-It's an early work in progress: the GTA VI Xbox build starts and draws frames, and now reaches the lit player-selection prompt (Account Picker / Screen Narration / TuxBox), but test runs reach only 2.4 fps (mostly our own diagnostics) and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
+It's an early work in progress: the GTA VI Xbox build starts, renders its intro screens (the GTA stars) and reaches the player-selection prompt (Account Picker / Screen Narration / TuxBox), but test runs reach only 2.4 fps (mostly our own diagnostics) and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -27,15 +27,16 @@ The Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own dump)
 
 - Runs natively on Windows with the console DLLs replaced by Rust providers.
 - Passes `xgameruntime` initialisation, maps the console `G:` drive to the executable's folder and mounts every `.rpf` archive.
-- Creates a D3D12 device and presents frames continuously, with no device removal. Runs have passed 900 frames at about 5 fps after a slow load.
+- Creates a D3D12 device and renders lit frames in its window: the GTA stars intro, then the player-selection prompt. A 5-minute test run had no device removal and no `Close` failures.
 
 Runtime fixes in the vendored TuxBox provider:
 
-- **Black-frame causes:**
+- **Rendering fixes:**
   - A stale inline descriptor binds a typed null instead of failing the command list.
   - A failed batch drops only itself, instead of blocking every later submission.
   - A GPU memory wait after rendering commands is skipped, instead of rejecting the list.
   - Placed textures over unmapped pages upload zero-filled, instead of never refreshing.
+- **Present barrier:** the end-of-frame barrier that sends the display surface to present used layout 31, which desktop D3D12 rejects, so every frame's `Close` failed. Layouts outside the desktop range are now recorded as COMMON (= PRESENT). This is the fix that made frames appear.
 - **Presentation:** the swap chain resizes when the title changes its output size or format.
 - **Startup crash fixed:** the title's list slot 131 call is a cache barrier but was routed to the ray-tracing build path, which read garbage memory; it now records a cache barrier. A host list whose `Close` fails is rebuilt instead of failing every later `Reset`.
 - **Root views:** root CBV/SRV/UAV binds import up to 64 KiB of committed title memory (they imported 1 byte before); an uncommitted address binds null.
@@ -57,14 +58,11 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Open
 
-- **Black frames fixed:** the end-of-frame barrier that sends the display surface to present used layout 31, which desktop D3D12 rejects, so every frame's `Close` failed. Layouts outside the desktop range are now recorded as COMMON (= PRESENT), Close no longer fails, and the player-selection prompt draws.
 - **Frame rate:** a 5-minute run under the debugger reached 2.4 fps with lit frames and no Close failures. Most of the cost was `TUXBOX_LIST_RING` (a stack walk on every recording call, plus a scratch `Close` for every barrier), which is now cheaper, with the probe split out. A clean baseline (no `--debug`, no ring) hasn't been measured yet.
 - **Title assert:** a release-build size check at game+0x4ffd879 hits `int 3` and then falls through. The runtime steps over it (ported from upstream TuxBox), and so does the `--debug` script.
 - **Input:** keyboard and mouse drive a virtual pad (see [Controls](#controls)). It's not confirmed yet that the title reads it at the player-selection prompt.
-- **Later screens:** according to other projects, screens after the start screen go black again until blend state is read from the pipeline's render-state block.
+- **Later screens:** according to other projects, screens after the start screen need blend state read from the pipeline's render-state block before they draw correctly.
 - **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Also ported: private samplers for root-less roots, literal sampler matching, raw SRVs behind root descriptors, and compute descriptors the runtime appends from FSSM/PSV records. `--build-shaders` ranks refusals by construct and reason, and dxc retries at `-O0` when `-O1` times out.
-- **No window on screen:** the game presents, but no window appears on the desktop.
-- **Early exit:** some runs exit with code 1 after about 40 s, without an exception.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
 - **Memory layout:** title memory is mapped as separate 64 KiB section views. D3D12 can't open one heap across them, so large buffers fall back to per-submission copies. Backing each pool with one section would remove the copies.
 - **Shader prewarm:** a full prewarm (`TUXBOX_PREWARM`, on by default) waits on remaining translator refusals in `xshader`. Use `TUXBOX_PREWARM=0` for quick runs.
@@ -72,11 +70,11 @@ Runtime fixes in the vendored TuxBox provider:
 ## Roadmap
 
 1. **Get past the start screen.** Pick the profile, raise the frame rate, and take blend state from the pipeline's render-state block so later screens draw.
-2. **Stay running.** Find what calls process exit in the early-exit runs (`--debug` records the exit stack).
+2. **Stay running.** Keep long runs going past the menus (`--debug` records any crash or exit stack).
 3. **Correct colour.** Pack 5551 in the shader, or substitute B5G5R5A1 UAV and render-target images with R8G8B8A8.
 4. **Speed.** Back each XMem pool with one section and join in-order page runs, so GPU imports span them without copies.
 5. **Shaders.** Finish the remaining `xshader` refusals (dynamic `s_load` offsets, mesh shaders), then run a full prewarm and ship the pipeline cache.
-6. **Input and audio.** Check GameInput and the audio path once the title reaches its menu.
+6. **Input and audio.** Confirm the title reads the virtual pad at the player-selection prompt, then check audio.
 7. **Playable.** Reach the menu, load into the world, profile frame time.
 
 No game files, keys or binaries are in this repository. Bring your own copy of the game. Not affiliated with Rockstar, Take-Two or Microsoft.
