@@ -164,6 +164,9 @@ enum Res {
     HeapSamplerAt(u16),
     /// s_load of a sampler-heap descriptor at byte offset s<n>.
     SamplerHeapLoad(u16),
+    /// Inline-built S# words no static sampler matches: the heap index comes
+    /// from the runtime's descriptor lookup table (Leonida descriptor_table).
+    SamplerLookup([u32; 4]),
     Uav(u32, u32), // slot, dim
     Buf(u32, bool), // slot, is_uav (structured buffer)
     Raw(u32, bool), // slot, is_uav (byte-address buffer)
@@ -419,6 +422,8 @@ struct Emitter<'a> {
     /// stores: (is_uav, slot) -> 1 uint, 2 sint. Absent = float (the default).
     img_ty: BTreeMap<(bool, u32), u8>,
     uses_heap_sampler: bool,
+    /// Declares tb_desc_table / tb_desc_lookup for Res::SamplerLookup.
+    desc_lookup: bool,
     resource_heap_base: Option<u8>,
     /// The heap base comes from compute user data (FSSM class 5) of a program the
     /// root-based `heap_register` does not cover; see `compute_heap_base`.
@@ -1672,6 +1677,7 @@ impl<'a> Emitter<'a> {
             tbuf_ty: BTreeMap::new(),
             img_ty: BTreeMap::new(),
             uses_heap_sampler: false,
+            desc_lookup: false,
             resource_heap_base: sampler_heap::resource_base(ex).or_else(|| heap_register(ex)).or_else(|| compute_heap_base(ex)),
             compute_heap: sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none() && compute_heap_base(ex).is_some(),
             sampler_heap_base: (sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none())
@@ -3366,6 +3372,15 @@ impl<'a> Emitter<'a> {
                                 return Err(format!("static sampler s{slot} overlaps another space"));
                             }
                             samp_res.push((0, Res::Samp(slot)));
+                        } else if let (true, Some(w)) = (inline_samplers, (|| {
+                            let word = |n| match sym.get(&(ss + n)) { Some(Sym::InlineWord(w)) => Some(*w), _ => None };
+                            Some([word(0)?, word(1)?, word(2)?, word(3)?])
+                        })()) {
+                            // Literal sampler state that no static sampler matches: look the
+                            // words up in the runtime's descriptor table instead of refusing.
+                            self.uses_heap_sampler = true;
+                            self.desc_lookup = true;
+                            samp_res.push((0, Res::SamplerLookup(w)));
                         } else {
                             return Err(format!("mimg at {:#x}: s{ss} not a sampler descriptor ({:?})", ins.offset, sym.get(&ss)));
                         }
@@ -7533,7 +7548,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         let sslot = match rs.get(1) {
             Some(Res::Samp(s)) => Some(*s),
-            Some(Res::HeapSampler(_) | Res::HeapSamplerAt(_)) => None,
+            Some(Res::HeapSampler(_) | Res::HeapSamplerAt(_) | Res::SamplerLookup(_)) => None,
             _ => return Err("image op without sampler unsupported".into()),
         };
         // RDNA2 sample/gather family. Opcode = family base (0x20 sample, 0x40 gather4) +
@@ -7677,6 +7692,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let ty = if cmp { "SamplerComparisonState" } else { "SamplerState" };
             self.regs.insert(format!("s{reg}"));
             self.line(&format!("{ty} {name} = SamplerDescriptorHeap[NonUniformResourceIndex(s{reg})];"));
+            name
+        } else if let Some(Res::SamplerLookup(w)) = rs.get(1).copied() {
+            let name = format!("tb_sampler{idx}");
+            let ty = if cmp { "SamplerComparisonState" } else { "SamplerState" };
+            let key = [w[0], w[1], w[2], w[3], u32::MAX, u32::MAX, u32::MAX, u32::MAX];
+            let hash = key.iter().fold(2166136261u32, |h, &k| (h ^ k).wrapping_mul(16777619));
+            self.line(&format!("{ty} {name} = SamplerDescriptorHeap[tb_desc_lookup({hash:#x}u, uint4({:#x}u, {:#x}u, {:#x}u, {:#x}u), uint4(0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu))];", w[0], w[1], w[2], w[3]));
             name
         } else if let Some(s) = sslot {
             if cmp { format!("scmp{s}") } else { format!("samp{s}") }
@@ -8149,6 +8171,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         if self.heap_words != 0 {
             let _ = writeln!(h, "struct TBHeapWords {{ uint w[{}]; }};", self.heap_words);
+        }
+        if self.desc_lookup {
+            // Leonida's descriptor table: word 0 = mask, then (mask + 1) entries of
+            // key[8], heap index, 0xA11CA7ED when occupied. Probe 8 slots from the
+            // FNV-1a hash of the key without stopping at holes; a miss is index 0.
+            h.push_str("ByteAddressBuffer tb_desc_table : register(t1, space32766);
+uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
+    uint mask = tb_desc_table.Load(0);
+    [loop] for (uint p = 0u; p < 8u; p++) {
+        uint e = 4u + ((hash + p) & mask) * 40u;
+        if (tb_desc_table.Load(e + 36u) == 0xa11ca7edu && all(tb_desc_table.Load4(e) == a) && all(tb_desc_table.Load4(e + 16u) == b)) return tb_desc_table.Load(e + 32u);
+    }
+    return 0u;
+}
+");
         }
         if self.compute_heap && !self.heap_map {
             // Without TuxBox's index map the guest heap index is the host heap index.
