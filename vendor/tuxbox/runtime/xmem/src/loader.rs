@@ -137,6 +137,7 @@ pub(crate) unsafe fn install() {
         crate::write_watch::install();
         crate::net::install();
         crate::window::install();
+        crate::console_mode::install();
     }
 }
 
