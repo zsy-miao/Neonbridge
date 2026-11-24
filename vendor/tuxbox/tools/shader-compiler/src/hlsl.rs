@@ -4841,6 +4841,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     /// Wrap a float result with VOP3 omod/clamp and convert to uint bits.
     fn fres(&self, ins: &Insn, e: String) -> String {
+        format!("asuint({})", Self::omod_clamp(ins, e))
+    }
+
+    /// VOP3 omod (x2, x4, /2) then clamp, in that order, on a float value.
+    fn omod_clamp(ins: &Insn, e: String) -> String {
         let mut e = e;
         if ins.enc == Enc::Vop3 {
             e = match ins.aux.imm2 {
@@ -4853,7 +4858,19 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 e = format!("saturate({e})");
             }
         }
-        format!("asuint({e})")
+        e
+    }
+
+    /// The f32 value a half-result conversion rounds, with its VOP3 omod and
+    /// clamp applied first. Scaling by 2, 4 or 1/2 and saturating commute with
+    /// rounding to half (outside half denormals and overflow). Xbox2Windows
+    /// ceccbcae/d7346d7e (PR #1707, MIT, triggered02) does the f32 results;
+    /// TB_CVT_F16_OMOD=0 drops the modifiers as before.
+    fn half_source(ins: &Insn, e: String) -> String {
+        if std::env::var("TB_CVT_F16_OMOD").is_ok_and(|v| v.trim() == "0") {
+            return e;
+        }
+        Self::omod_clamp(ins, e)
     }
 
     fn pair_high(&mut self, operand: &Opnd) -> Result<String, String> {
@@ -6495,10 +6512,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             return self.wv(&d, &hres(e));
         }
         if m == "v_cvt_f16_u16" {
-            return self.wv(&d, &format!("tb_f16_rne((float)(({}) & 0xffffu))", r(&s[0])?));
+            return self.wv(&d, &format!("tb_f16_rne({})", Self::half_source(ins, format!("(float)(({}) & 0xffffu)", r(&s[0])?))));
         }
         if m == "v_cvt_f16_i16" {
-            return self.wv(&d, &format!("tb_f16_rne((float)(asint(({}) << 16) >> 16))", r(&s[0])?));
+            return self.wv(&d, &format!("tb_f16_rne({})", Self::half_source(ins, format!("(float)(asint(({}) << 16) >> 16)", r(&s[0])?))));
         }
         if m == "v_cvt_u16_f16" {
             // Truncating, saturating; NaN converts to 0 (tested on the 16-bit pattern: the
@@ -7411,11 +7428,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_cvt_rpi_i32_f32" => format!("asuint((int)floor({} + 0.5))", fa()?),
             // Round to nearest even. HLSL f32tof16's rounding is the driver's choice
             // (observed: truncation on the development GPU), so it is not used.
-            "v_cvt_f16_f32" if self.regs.contains("tb_fp_mode") => format!("tb_mode_half({}, tb_fp_mode)", fa()?),
-            "v_cvt_f16_f32" => format!("tb_f16_rne({})", fa()?),
+            "v_cvt_f16_f32" if self.regs.contains("tb_fp_mode") => format!("tb_mode_half({}, tb_fp_mode)", Self::half_source(ins, fa()?)),
+            "v_cvt_f16_f32" => format!("tb_f16_rne({})", Self::half_source(ins, fa()?)),
             // Round toward zero (ISA: "ignore the current rounding mode"): finite values never
             // become infinity (|x| >= 65504 gives 65504).
-            "v_cvt_pkrtz_f16_f32" => format!("(tb_f16_rtz({}) | (tb_f16_rtz({}) << 16))", fa()?, fb()?),
+            "v_cvt_pkrtz_f16_f32" => format!("(tb_f16_rtz({}) | (tb_f16_rtz({}) << 16))",
+                Self::half_source(ins, fa()?), Self::half_source(ins, fb()?)),
             _ => return Err("unsupported vector op".into()),
         };
         self.wv(&d, &e)
