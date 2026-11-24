@@ -69,7 +69,11 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
                         let last = context.Rax + (passes - 1) * 64;
                         std::ptr::write_bytes(line as *mut u8, 0, ((last & !63) + 64 - line) as usize);
                         context.Rax += passes * 64;
-                        context.EFlags &= !1; // jb not taken
+                        if std::env::var("TUXBOX_CLZERO_FLAGS").map_or(true, |v| v.trim() != "0") {
+                            context.EFlags = cmp_flags(context.EFlags, context.Rax, end);
+                        } else {
+                            context.EFlags &= !1; // jb not taken
+                        }
                         context.Rip += 12;
                     }
                     _ => {
@@ -93,6 +97,21 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
         }
         CONTINUE_EXECUTION
     }
+}
+
+/// EFlags after `cmp lhs, rhs` (leonida 3b8c1555, apply_cmp_flags): the
+/// skipped loop's last compare sets CF, PF, AF, ZF, SF and OF, not just CF.
+/// TUXBOX_CLZERO_FLAGS=0 only clears CF.
+fn cmp_flags(eflags: u32, lhs: u64, rhs: u64) -> u32 {
+    let diff = lhs.wrapping_sub(rhs);
+    let mut flags = eflags & !0x8D5;
+    if lhs < rhs { flags |= 0x1; }
+    if (diff as u8).count_ones() % 2 == 0 { flags |= 0x4; }
+    if (lhs ^ rhs ^ diff) & 0x10 != 0 { flags |= 0x10; }
+    if diff == 0 { flags |= 0x40; }
+    if diff >> 63 != 0 { flags |= 0x80; }
+    if ((lhs ^ rhs) & (lhs ^ diff)) >> 63 != 0 { flags |= 0x800; }
+    flags
 }
 
 fn misc_enabled() -> bool {
