@@ -8534,7 +8534,14 @@ uint tb_heap_index(uint i) { return i; }
             if self.compute_swizzle || self.indexed_lane {
                 writeln!(h, "groupshared uint tb_swizzle[{}];", tx * ty_ * tz).unwrap();
             }
-            if let Some(width) = self.required_wave_size { writeln!(h, "[WaveSize({width})]").unwrap(); }
+            // A device whose WaveLaneCountMin..Max excludes `width` (wave32-only GPUs
+            // for wave64) rejects the PSO; the builder defines TB_NO_WAVESIZE_<width>
+            // there so the kernel still runs on the host wave (KestrelX 1b32904).
+            if let Some(width) = self.required_wave_size {
+                writeln!(h, "#ifndef TB_NO_WAVESIZE_{width}
+[WaveSize({width})]
+#endif").unwrap();
+            }
             // These kernels enable all 64 lanes for a reduction. Start the extra
             // rows inactive so they never participate in the guest's memory work.
             let padded = self.wave_cull && matches!([tx, ty_, tz], [4, 4, 1] | [32, 1, 1]);
