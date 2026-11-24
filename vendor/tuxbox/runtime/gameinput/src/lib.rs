@@ -70,39 +70,41 @@ struct Pool {
     auto_start: AutoStart,
 }
 
-/// Injected A presses so the title's player-selection prompt ("Account
+/// One injected A press so the title's player-selection prompt ("Account
 /// Picker / Screen Narration / <gamertag>"), which waits on A, passes without
-/// a key press. The prompt's arrival time varies with load speed, so A is
-/// pulsed: from `delay` after the first pad poll, held across several polls
-/// (at least 400 ms), then released for 4 s, up to 12 times (about a minute).
-/// Any real button on a physical pad stops it, so it never fights the
-/// player. Only runs while the title's window has focus (the launcher brings it
-/// to the front when the loading screen closes).
+/// a key press. The prompt follows the silent sign-in (xgameruntime sets
+/// TUXBOX_SIGNED_IN at XUserAddAsync), so the press waits for that plus
+/// `delay`, holds A across several polls (at least 400 ms) and releases. If the
+/// title did not read the A while it was held, it tries again after 3 s, at
+/// most 3 times; once the title has read it, it never presses again, so menus
+/// never see an injected A. A real pad button stops it too.
 /// TUXBOX_AUTO_START=0 turns it off; a number sets the delay in seconds after
-/// the first pad poll (default 8).
+/// sign-in (default 3).
 enum AutoStart {
     Off,
-    Waiting { delay: u64, first: Option<u64>, polls: u32 },
-    Pressing { since: u64, polls: u32, pulse: u32 },
-    Gap { until: u64, pulse: u32 },
+    Waiting { delay: u64, since: Option<u64>, tries: u32 },
+    Pressing { since: u64, polls: u32, tries: u32 },
     Done,
 }
 
-const PULSES: u32 = 12;
-const GAP: u64 = 4_000_000;
+const TRIES: u32 = 3;
+
+/// Set by gi_pad when the title reads a pad sample with A held.
+static A_READ: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl AutoStart {
     fn from_env() -> Self {
         let delay = match std::env::var("TUXBOX_AUTO_START") {
             Ok(v) if v.trim() == "0" => return Self::Off,
-            Ok(v) => v.trim().parse::<u64>().unwrap_or(8).max(1),
-            Err(_) => 8,
+            Ok(v) => v.trim().parse::<u64>().unwrap_or(3),
+            Err(_) => 3,
         };
-        Self::Waiting { delay: delay * 1_000_000, first: None, polls: 0 }
+        Self::Waiting { delay: delay * 1_000_000, since: None, tries: 0 }
     }
 
     /// Advance once per pad poll; `real` is the pad's own button mask. True while A is held.
     fn step(&mut self, now: u64, real: u32) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
         if real != 0 && !matches!(self, Self::Off | Self::Done) {
             eprintln!("TuxBox gameinput: auto start: stopped, a real button ({real:#x}) was pressed");
             *self = Self::Done;
@@ -110,30 +112,35 @@ impl AutoStart {
         }
         match self {
             Self::Off | Self::Done => false,
-            Self::Waiting { delay, first, polls } => {
-                let start = *first.get_or_insert(now);
-                *polls += 1;
-                if now - start >= *delay && *polls >= 30 {
-                    eprintln!("TuxBox gameinput: auto start: pulsing A for the player-selection prompt ({} s after the first pad poll; TUXBOX_AUTO_START=0 turns this off)",
-                        (now - start) / 1_000_000);
-                    *self = Self::Pressing { since: now, polls: 1, pulse: 1 };
-                    return true;
+            Self::Waiting { delay, since, tries } => {
+                if since.is_none() {
+                    if std::env::var_os("TUXBOX_SIGNED_IN").is_none() {
+                        return false;
+                    }
+                    *since = Some(now);
                 }
-                false
-            }
-            Self::Pressing { since, polls, pulse } => {
-                *polls += 1;
-                if *polls > 4 && now - *since >= 400_000 {
-                    eprintln!("TuxBox gameinput: auto start: A pulse {pulse}/{PULSES} released");
-                    *self = if *pulse >= PULSES { Self::Done } else { Self::Gap { until: now + GAP, pulse: *pulse } };
+                if now - since.unwrap_or(now) < *delay {
                     return false;
                 }
+                *tries += 1;
+                eprintln!("TuxBox gameinput: auto start: pressing A once for the player-selection prompt (try {tries}/{TRIES}; TUXBOX_AUTO_START=0 turns this off)");
+                A_READ.store(false, Relaxed);
+                *self = Self::Pressing { since: now, polls: 1, tries: *tries };
                 true
             }
-            Self::Gap { until, pulse } => {
-                if now >= *until {
-                    *self = Self::Pressing { since: now, polls: 1, pulse: *pulse + 1 };
+            Self::Pressing { since, polls, tries } => {
+                *polls += 1;
+                if *polls <= 4 || now - *since < 400_000 {
                     return true;
+                }
+                if A_READ.load(Relaxed) {
+                    eprintln!("TuxBox gameinput: auto start: the title read the A; no further presses");
+                    *self = Self::Done;
+                } else if *tries >= TRIES {
+                    eprintln!("TuxBox gameinput: auto start: the title never read the A after {TRIES} tries; giving up");
+                    *self = Self::Done;
+                } else {
+                    *self = Self::Waiting { delay: 3_000_000, since: Some(now), tries: *tries };
                 }
                 false
             }
@@ -506,6 +513,9 @@ unsafe extern "system" fn gi_mouse(this: &Object, out: Option<&mut sample::Mouse
 unsafe extern "system" fn gi_pad(this: &Object, out: Option<&mut sample::Pad>) -> bool {
     if let (Sample::Pad(data), Some(out)) = (&this.reading().sample, out) {
         note_pad(data.buttons);
+        if data.buttons & 0x4 != 0 {
+            A_READ.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         *out = *data;
         true
     } else {

@@ -171,6 +171,9 @@ pub(super) unsafe extern "system" fn user_max_users(_: &Object, out: *mut u32) -
 /// XUserAddAsync: every add request signs in the same local user.
 pub(super) unsafe extern "system" fn user_add_async(_: &Object, options: u32, block: *mut c_void) -> i32 {
     super::report(format_args!("XUserAddAsync options {options:#x}: signing in the local user"));
+    // gameinput's one auto A press for the player-selection prompt waits for this.
+    // SAFETY: one process-wide flag; the readers only test for its presence.
+    unsafe { std::env::set_var("TUXBOX_SIGNED_IN", "1") };
     unsafe { complete(block, OK, 0, Payload::User) }
 }
 pub(super) unsafe extern "system" fn user_add_result(_: &Object, block: *mut c_void, out: *mut *mut c_void) -> i32 {
