@@ -86,7 +86,7 @@ pub(super) unsafe extern "system" fn info(
         return out;
     }
     let descs = unsafe { slice::from_raw_parts(descs, count as usize) };
-    if descs.iter().any(|d| matches!(d.Layout.0, 0x100..=0x102 | 0x105 | 0x109)
+    if descs.iter().any(|d| matches!(d.Layout.0, 0x100..=0x102 | 0x105 | 0x109 | 0x10a)
         || !packed_uav_formats(d.Format, d.Flags).is_empty()) {
         // The guest will allocate these bytes itself and pass the address to
         // CreatePlacedResourceX. Account for the Xbox planes and batch padding.
@@ -96,7 +96,7 @@ pub(super) unsafe extern "system" fn info(
             let layout = if let Some(pitch) = super::placement::nv12_pitch(desc) {
                 let y = pitch * u64::from(desc.Height);
                 D3D12_RESOURCE_ALLOCATION_INFO { SizeInBytes: y + y / 2, Alignment: 256 }
-            } else if matches!(desc.Layout.0, 0x100..=0x102 | 0x105 | 0x109) {
+            } else if matches!(desc.Layout.0, 0x100..=0x102 | 0x105 | 0x109 | 0x10a) {
                 match super::placement::color_plane(desc) {
                     Ok(plane) => D3D12_RESOURCE_ALLOCATION_INFO {
                         SizeInBytes: plane.size,

@@ -280,8 +280,12 @@ impl Texture {
             return Ok(());
         }
         // In layout 0x105, X occupies the low address bits through byte 15.
+        // The display swizzle (0x10a) interleaves Y below 16 bytes for small
+        // elements, so it is copied an element at a time.
         let run = if self.desc.Layout.0 == 0x100 {
             mip.elements as usize
+        } else if self.desc.Layout.0 == 0x10a {
+            1
         } else {
             16 / element
         };

@@ -415,7 +415,7 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
     let Some(desc) = (unsafe { desc.as_ref() }) else { return E_INVALIDARG };
     if let Err(error) = GPU_APERTURE.wait(address, 1) { return error.code(); }
     if address != 0 && desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER
-        && matches!(desc.Layout.0, 0x100..=0x102 | 0x105 | 0x109) {
+        && matches!(desc.Layout.0, 0x100..=0x102 | 0x105 | 0x109 | 0x10a) {
         // Placed CPU-visible images promote from COMMON. The uploader handles
         // the guest's pitch or swizzle before a queue reads the texture.
         let state = match layout {

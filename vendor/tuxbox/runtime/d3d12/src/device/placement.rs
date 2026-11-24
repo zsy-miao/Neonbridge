@@ -151,8 +151,9 @@ pub(super) fn color_plane(desc: &D3D12_RESOURCE_DESC) -> Result<Plane> {
     if matches!(layout.layout, 257 | 258) {
         return Plane::compute_microtile(&layout).map_err(|status| HRESULT(status).into());
     }
-    if layout.layout == 265 {
-        // 64 KiB standard swizzle, as selected by XGCreateTextureComputer.
+    if matches!(layout.layout, 265 | 266) {
+        // 64 KiB standard (0x109) or display (0x10a, SW_64KB_D, mips allowed)
+        // swizzle, as selected by XGCreateTextureComputer.
         return Plane::compute_sparse_64k(&layout).map_err(|status| HRESULT(status).into());
     }
     if desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D && desc.Layout.0 == 0x100
