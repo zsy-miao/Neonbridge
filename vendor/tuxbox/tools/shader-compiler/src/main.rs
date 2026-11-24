@@ -42,14 +42,29 @@ fn translate(
         let actual = pixel_order.map(read).transpose()?;
         // A portable original consumer has no native ISA to translate. Read
         // its interpolation directly; retain native consumer handling otherwise.
-        let portable = tuxbox_xshader::psv::portable_pixel_interp(&bytes);
+        let portable = tuxbox_xshader::psv::portable_pixel_interface(&bytes);
         let is_portable = portable.is_some();
         let mut producer = shader.clone();
-        let interp = if let Some(modifiers) = portable {
+        let interp = if let Some(interface) = portable {
             if actual.as_deref().is_some_and(|code| code != bytes.as_slice()) {
                 return Err(Error::Unsupported("portable pixel consumer differs from its bound bytecode".into()));
             }
-            hlsl::InputInterp(modifiers, None)
+            // Portable consumers need the same component-type repair as
+            // native consumers. Only established 32-bit types are supported.
+            // TuxBox 6a2ca92 (Valdi320, PR #117).
+            for output in producer.output_sig.iter_mut().filter(|o| o.sysval == 0) {
+                let mut matches = interface.inputs.iter().filter(|i| i.sysval == 0
+                    && i.index == output.index && i.name.eq_ignore_ascii_case(&output.name));
+                if let Some(input) = matches.next() {
+                    if matches.next().is_some() || !matches!(input.comp_type, 1..=3) {
+                        return Err(Error::Unsupported("ambiguous or unsupported portable pixel component type".into()));
+                    }
+                    output.comp_type = input.comp_type;
+                }
+            }
+            let read = (shader.stage == Stage::Mesh)
+                .then(|| interface.inputs.iter().map(|i| format!("{}{}", i.name, i.index)).collect());
+            hlsl::InputInterp(interface.interpolation, read)
         } else {
             let pixel = extract(&bytes)?;
             if pixel.stage != Stage::Pixel {

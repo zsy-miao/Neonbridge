@@ -112,6 +112,17 @@ pub fn parse_psv0(body: &[u8]) -> Result<Vec<PsvResource>, String> {
 /// Layout: Microsoft DXC, DxilPipelineStateValidation.h, PSVSignatureElement0.
 /// Cross-check physical rows against ISG1/ISGN instead of guessing qualifiers.
 pub fn portable_pixel_interp(code: &[u8]) -> Option<Vec<(String, String)>> {
+    portable_pixel_interface(code).map(|interface| interface.interpolation)
+}
+
+pub struct PortablePixelInterface {
+    pub interpolation: Vec<(String, String)>,
+    pub inputs: Vec<tuxbox_dxbc::SigElement>,
+}
+
+/// Return the validated input signature alongside its interpolation. The
+/// linker must use both to preserve the raw 32-bit console exports.
+pub fn portable_pixel_interface(code: &[u8]) -> Option<PortablePixelInterface> {
     use tuxbox_dxbc::{Dxbc, parse_signature_part};
     let container = Dxbc::parse(code).ok()?;
     let part = |tag| {
@@ -143,7 +154,9 @@ pub fn portable_pixel_interp(code: &[u8]) -> Option<Vec<(String, String)>> {
     let (indexes, rest) = rest.get(4..)?.split_at_checked(index_count.checked_mul(4)?)?;
     let elements = usize::from(runtime[28]);
     let total_elements = elements + usize::from(runtime[29]) + usize::from(runtime[30]);
-    if total_elements == 0 { return input.is_empty().then(Vec::new); }
+    if total_elements == 0 {
+        return input.is_empty().then_some(PortablePixelInterface { interpolation: Vec::new(), inputs: input });
+    }
     let stride = word(rest, 0)? as usize;
     if stride < 16 { return None; }
     let records = rest.get(4..)?.get(..total_elements.checked_mul(stride)?)?;
@@ -189,7 +202,8 @@ pub fn portable_pixel_interp(code: &[u8]) -> Option<Vec<(String, String)>> {
             result.push((format!("{}{}", e.name, e.index), mode.to_owned()));
         }
     }
-    input.iter().enumerate().all(|(i, e)| (e.sysval != 0 && e.register == u32::MAX) || found.contains(&i)).then_some(result)
+    input.iter().enumerate().all(|(i, e)| (e.sysval != 0 && e.register == u32::MAX) || found.contains(&i))
+        .then_some(PortablePixelInterface { interpolation: result, inputs: input })
 }
 
 #[cfg(test)]

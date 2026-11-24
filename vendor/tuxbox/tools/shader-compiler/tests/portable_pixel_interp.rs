@@ -1,4 +1,4 @@
-use tuxbox_xshader::psv::portable_pixel_interp;
+use tuxbox_xshader::psv::{portable_pixel_interp, portable_pixel_interface};
 
 fn words(values: &[u32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
@@ -47,6 +47,19 @@ fn metadata_must_match_signature_and_interpolation() {
         assert!(portable_pixel_interp(&bad).is_none());
     }
     let valid = fixture(2,1,1,0);
+    let interface = portable_pixel_interface(&valid).unwrap();
+    assert_eq!(interface.inputs.len(), 1);
+    assert_eq!(interface.inputs[0].comp_type, 3);
+    assert_eq!(interface.inputs[0].name, "TEXCOORD");
+    // Legacy signature component type at record word 3. The validated
+    // interface must retain the integer distinction, not just qualifiers.
+    for kind in 1u32..=3 {
+        let mut bytes = fixture(1,1,1,0);
+        let container = tuxbox_xshader::Dxbc::parse(&bytes).unwrap();
+        let offset = container.chunk(b"ISGN").unwrap().offset + 8 + 12;
+        bytes[offset..offset+4].copy_from_slice(&kind.to_le_bytes());
+        assert_eq!(portable_pixel_interface(&bytes).unwrap().inputs[0].comp_type, kind);
+    }
     for n in 0..valid.len() { assert!(portable_pixel_interp(&valid[..n]).is_none()); }
 }
 
@@ -54,6 +67,8 @@ fn metadata_must_match_signature_and_interpolation() {
 fn dxc_generated_portable_consumer_if_supplied() {
     let Some(path) = std::env::var_os("TUXBOX_TEST_PORTABLE_PIXEL") else { return; };
     let bytes = std::fs::read(path).unwrap();
-    let interp = portable_pixel_interp(&bytes).expect("DXC-generated pixel metadata");
+    let interface = portable_pixel_interface(&bytes).expect("DXC-generated pixel metadata");
+    let interp = interface.interpolation;
+    assert_eq!(interface.inputs.iter().filter(|e|e.sysval==0).map(|e|e.comp_type).collect::<Vec<_>>(), vec![1,3,3]);
     assert_eq!(interp, vec![("TEXCOORD0".into(),"nointerpolation".into()),("TEXCOORD1".into(),"centroid".into()),("TEXCOORD2".into(),"noperspective".into())]);
 }
