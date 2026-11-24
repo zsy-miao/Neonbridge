@@ -878,6 +878,42 @@ struct ComputeQueueDesc {
     engine_index: u32,
 }
 
+/// Device slot 109, a console extension called as (this, out) whose
+/// measured callers read back one dword (palmetto 57767366, re-derived).
+/// Zero is published only into a caller stack slot: some call sites pass an
+/// object field, and a dword written there would cut a pointer in half.
+/// TUXBOX_SLOT109=0 leaves it unmapped (answers 0, writes nothing).
+unsafe extern "system" fn slot109(this: usize, out: usize, a: usize, b: usize) -> i32 {
+    let frame = core::ptr::addr_of!(out) as usize;
+    let on = crate::env_toggle!("TUXBOX_SLOT109") != Some("0");
+    let written = on && stack_slot(frame, out);
+    if written {
+        // A dword on the caller's own stack, within 16 MiB of this frame.
+        unsafe { (out as *mut u32).write_unaligned(0) };
+    }
+    static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+        crate::diagnostics::log_line(format_args!(
+            "device slot 109 ({this:#x}, {out:#x}, {a:#x}, {b:#x}) from title RVA {:#x}: {}",
+            crate::survey::title_rva().unwrap_or(0),
+            if written { "zero published to the caller's stack slot" } else { "nothing written (not a stack address)" }));
+    }
+    0
+}
+
+fn stack_slot(frame: usize, address: usize) -> bool {
+    address != 0 && address.abs_diff(frame) < 16 << 20
+}
+
+#[cfg(test)]
+#[test]
+fn slot109_writes_only_near_its_own_frame() {
+    assert!(stack_slot(0x7ff_e000, 0x7ff_e100));
+    assert!(stack_slot(0x7ff_e000, 0x7ff_e000 - 0x10_0000));
+    assert!(!stack_slot(0x7ff_e000, 0x2_0000_0000));
+    assert!(!stack_slot(0x7ff_e000, 0));
+}
+
 unsafe extern "system" fn create_queue_x(
     this: &Device,
     desc: *const ComputeQueueDesc,
@@ -1112,6 +1148,7 @@ static DEVICE: Slots<192> = {
     slots[102] = crate::slot!(ray_build::prebuild);
     slots[106] = crate::slot!(ray_pipeline::add);
     slots[108] = crate::slot!(allocation::info2_watched);
+    slots[109] = crate::slot!(slot109);
     slots[115] = crate::slot!(state_object::deserialize);
     slots[127] = crate::slot!(traced::committed_layout);
     slots[133] = crate::slot!(traced::place_virtual_layout);
