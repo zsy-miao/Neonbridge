@@ -1940,7 +1940,16 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     em.view_cull = view_cull;
     em.light_grid = light_grid;
     em.emit_body(is_ps)?;
-    if ex.stage == Stage::Pixel || fspx_wave.is_some()
+    // Compute: every guest VGPR write was its own `if (exec_lo & 1u)` (1428 in
+    // 727f287e, 5524 in a64767c5), each a block DXC's -O1 merges back. One region
+    // per run of pure ALU writes cut dxc -O1 from 10.8 s to 4.0 s (727f287e, same
+    // DXIL size) and from 70 s to 34 s (a64767c5). exec_group only groups writes
+    // with no wave, quad, derivative or memory access, and every other statement
+    // closes the region, so each write still sees its own EXEC.
+    // TB_EXEC_GROUP_COMPUTE=0 groups only the two programs named below.
+    let group_compute = ex.stage == Stage::Compute
+        && std::env::var("TB_EXEC_GROUP_COMPUTE").map_or(true, |v| v.trim() != "0");
+    if ex.stage == Stage::Pixel || fspx_wave.is_some() || group_compute
         || (ex.stage == Stage::Compute
             && (packed_root::matches_program(&ex.isa, 60424, 0xc449ec66f2170fb3)
                 || packed_root::matches_program(&ex.isa, 56932, 0x5504968d23557c53)))
@@ -5676,6 +5685,27 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         self.tmp += 1;
                         self.line(&format!("uint t{t}s = (uint)(asint({ah}) >> 31); uint t{t}h = {ah} ^ t{t}s; uint t{t}l = {a} ^ t{t}s;"));
                         self.ws(&d, &format!("(t{t}h != 0u ? 31u - firstbithigh(t{t}h) : (t{t}l != 0u ? 63u - firstbithigh(t{t}l) : ~0u))"))
+                    }
+                    // First active lane of the guest wave32 (sibling of the s_bcnt1 fix above;
+                    // Xbox2Windows 07c262a4 by henriazz10, MIT). One invocation holds only its
+                    // own exec bit, so firstbitlow(exec_lo) read 0 on every active lane and ~0 on
+                    // inactive ones: wrong unless guest lane 0 was active, and not uniform across
+                    // the wave. The ballot word holding this lane is its wave32's exec mask, also
+                    // inside a guarded region (the reference folds to 0 only outside one).
+                    // TB_FF1_EXEC_WAVE=0 keeps the lane's own bit.
+                    "s_ff1_i32_b32"
+                        if s[0] == Opnd::ExecLo
+                            && !self.resolve_wave32
+                            && std::env::var("TB_FF1_EXEC_WAVE").map_or(true, |v| v.trim() != "0") =>
+                    {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line("#if __SHADER_TARGET_MAJOR >= 6");
+                        self.line(&format!("uint4 t{t}b = WaveActiveBallot((exec_lo & 1u) != 0u); uint t{t} = firstbitlow(t{t}b[WaveGetLaneIndex() >> 5]);"));
+                        self.line("#else");
+                        self.line(&format!("uint t{t} = firstbitlow(exec_lo & 1u);"));
+                        self.line("#endif");
+                        self.ws(&d, &format!("t{t}"))
                     }
                     "s_ff1_i32_b32" => self.ws(&d, &format!("firstbitlow({a})")),
                     // s_ff1_i32_b64 is firstbitlow over the 64-bit value: the low word
