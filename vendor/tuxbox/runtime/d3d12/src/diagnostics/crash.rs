@@ -311,6 +311,46 @@ fn hang_report(presents: u64, seconds: u64) {
     for line in crate::device::fence_hang_lines() {
         record(format_args!("hang: {line}"));
     }
+    for line in peek_lines() {
+        record(format_args!("hang: {line}"));
+    }
+}
+
+/// TUXBOX_HANG_PEEK="0x9c3d660:4,0x9c3be58:8": the hang report also prints these
+/// main-image offsets, so a stall in the title's own job system shows the counters
+/// that decide it (unset or bad entries are skipped; read only if committed).
+fn peek_lines() -> Vec<String> {
+    let Ok(spec) = std::env::var("TUXBOX_HANG_PEEK") else { return Vec::new() };
+    let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return Vec::new() };
+    let base = base.0 as usize;
+    let mut out = Vec::new();
+    for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (off, len) = item.split_once(':').unwrap_or((item, "8"));
+        let off = usize::from_str_radix(off.trim_start_matches("0x"), 16).ok();
+        let len = len.parse::<usize>().ok().filter(|&n| n > 0 && n <= 256);
+        let (Some(off), Some(len)) = (off, len) else { continue };
+        let at = base + off;
+        let mut info = MEMORY_BASIC_INFORMATION::default();
+        let readable = unsafe { VirtualQuery(Some(at as _), &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } != 0
+            && info.State == MEM_COMMIT
+            && (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)).0 == 0
+            && at + len <= info.BaseAddress as usize + info.RegionSize;
+        if !readable {
+            out.push(format!("peek game+{off:#x}: not readable"));
+            continue;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(at as *const u8, len) };
+        let words: Vec<String> = bytes
+            .chunks(if len % 8 == 0 { 8 } else { 4.min(len) })
+            .map(|c| {
+                let mut v = [0u8; 8];
+                v[..c.len()].copy_from_slice(c);
+                format!("{:#x}", u64::from_le_bytes(v))
+            })
+            .collect();
+        out.push(format!("peek game+{off:#x} ({len} B): {}", words.join(" ")));
+    }
+    out
 }
 
 /// Every thread's stack now, one line each (for `neonbridge ctl stack`).
