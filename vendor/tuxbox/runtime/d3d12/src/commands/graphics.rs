@@ -297,6 +297,13 @@ fn note_null_stream(address: u64, bytes: u32, error: Option<windows::core::HRESU
     }
 }
 
+/// IASetVertexBuffers(start, count, NULL) clears those slots with explicit
+/// empty views (TUXBOX_NULL_VIEWS_UNBIND=0 forwards the null pointer;
+/// VIctory 31ce30f, re-derived).
+fn null_views_unbind() -> bool {
+    crate::env_toggle!("TUXBOX_NULL_VIEWS_UNBIND") != Some("0")
+}
+
 pub(super) unsafe extern "system" fn vertex_buffers(
     list: &List,
     start: u32,
@@ -311,6 +318,13 @@ pub(super) unsafe extern "system" fn vertex_buffers(
         || count > D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - start
     {
         state.error = E_INVALIDARG;
+        return;
+    }
+    if views.is_null() && count != 0 && null_views_unbind() {
+        // A null view array unbinds the slots: bind empty views explicitly
+        // rather than trusting the driver with a null pointer.
+        let empty = [D3D12_VERTEX_BUFFER_VIEW::default(); D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT as usize];
+        unsafe { list.native.IASetVertexBuffers(start, Some(&empty[..count as usize])) };
         return;
     }
     if views.is_null() || count == 0 {
