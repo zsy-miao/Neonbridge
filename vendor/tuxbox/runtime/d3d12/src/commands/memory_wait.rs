@@ -258,12 +258,16 @@ impl Worker {
                                     "GPU memory wait {:#x} >= {:#x} stalled 2 s", job.segment.address, job.segment.target
                                 ));
                             }
-                            if waited >= Duration::from_secs(10) {
+                            // rebox 69005a5 releases after 2 s; TUXBOX_WAIT_RELEASE_MS
+                            // overrides (the old 10 s was most of a frame budget per stall).
+                            let release = Duration::from_millis(crate::env_toggle!("TUXBOX_WAIT_RELEASE_MS")
+                                .and_then(|v| v.parse().ok()).unwrap_or(2000));
+                            if waited >= release {
                                 static RELEASED: AtomicU64 = AtomicU64::new(0);
                                 let n = RELEASED.fetch_add(1, Ordering::Relaxed);
                                 crate::diagnostics::log_line(format_args!(
-                                    "GPU memory wait for target {:#x} released by the watchdog after 10 s ({} so far)",
-                                    job.segment.target, n + 1
+                                    "GPU memory wait {:#x} >= {:#x} released by the watchdog after {:?} ({} so far)",
+                                    job.segment.address, job.segment.target, release, n + 1
                                 ));
                                 break;
                             }
