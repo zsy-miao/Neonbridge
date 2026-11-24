@@ -19,10 +19,89 @@ const SHAPE_XMA_ARRAY_OFFSET: usize = 0x38;
 const SHAPE_XMA_CONTEXT_SIZE: usize = 64;
 const HAL_VTABLE_SLOTS: usize = 32;
 
+/// One committed region; an APU address is an offset into it. `offset` is
+/// the high-water mark. Blocks ApuFree gives back go on a free list of
+/// extents below it, merged with free neighbours, and are handed out first
+/// fit in address order (Xbox2Windows 64b6d2d3 and f9033a9b, MIT, ported), so
+/// while nothing is freed the offsets are those of a bump allocator.
+/// TUXBOX_APU_FREE=0 keeps ApuFree a no-op.
 struct ApuHeap {
     base: usize,
     size: usize,
     offset: usize,
+    /// Free extents below `offset`: start -> length.
+    free: std::collections::BTreeMap<usize, usize>,
+    /// Live blocks: start -> length.
+    used: std::collections::BTreeMap<usize, usize>,
+    used_bytes: usize,
+}
+
+impl ApuHeap {
+    /// First fit in the free list, else past the high-water mark.
+    fn take(&mut self, size: usize, alignment: usize) -> Option<usize> {
+        let pad_for = |start: usize| (alignment - (self.base + start) % alignment) % alignment;
+        let fit = self.free.iter().find_map(|(&start, &len)| {
+            let pad = pad_for(start);
+            (pad.checked_add(size)? <= len).then_some((start, len, pad))
+        });
+        let at = if let Some((start, len, pad)) = fit {
+            self.free.remove(&start);
+            if pad != 0 {
+                self.free.insert(start, pad);
+            }
+            let rest = len - pad - size;
+            if rest != 0 {
+                self.free.insert(start + pad + size, rest);
+            }
+            let at = start + pad;
+            // Reused memory reads as zero, like fresh pages.
+            // SAFETY: [at, at+size) lies inside the committed region and no live block.
+            unsafe { ptr::write_bytes((self.base + at) as *mut u8, 0, size) };
+            at
+        } else {
+            let start = self.offset;
+            let pad = pad_for(start);
+            let end = start.checked_add(pad)?.checked_add(size)?;
+            if end > self.size {
+                return None;
+            }
+            if pad != 0 {
+                self.give_extent(start, pad);
+            }
+            self.offset = end;
+            start + pad
+        };
+        self.used.insert(at, size);
+        self.used_bytes += size;
+        Some(at)
+    }
+
+    /// Frees the live block starting at `at`; false for anything else.
+    fn give(&mut self, at: usize) -> bool {
+        let Some(len) = self.used.remove(&at) else { return false };
+        self.used_bytes -= len;
+        self.give_extent(at, len);
+        true
+    }
+
+    fn give_extent(&mut self, mut start: usize, mut len: usize) {
+        if let Some((&before, &before_len)) = self.free.range(..start).next_back()
+            && before + before_len == start
+        {
+            self.free.remove(&before);
+            start = before;
+            len += before_len;
+        }
+        if let Some(after_len) = self.free.remove(&(start + len)) {
+            len += after_len;
+        }
+        self.free.insert(start, len);
+    }
+}
+
+fn apu_free_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TUXBOX_APU_FREE").is_none_or(|v| v != "0"))
 }
 
 static APU_HEAP: Mutex<Option<ApuHeap>> = Mutex::new(None);
@@ -44,16 +123,10 @@ fn apu_allocate(size: usize, alignment: usize) -> Option<(usize, u32)> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let heap = heap.as_mut()?;
-    let current = heap.base.checked_add(heap.offset)?;
-    let aligned = current.checked_add(alignment.checked_sub(1)?)? & !(alignment - 1);
-    let end = aligned.checked_add(size)?;
-    let heap_end = heap.base.checked_add(heap.size)?;
-    let apu_address = u32::try_from(aligned.checked_sub(heap.base)?).ok()?;
-    if end > heap_end {
-        return None;
-    }
-    heap.offset = end.checked_sub(heap.base)?;
-    Some((aligned, apu_address))
+    let end = heap.offset.checked_add(alignment)?.checked_add(size)?;
+    u32::try_from(end).ok()?;
+    let at = heap.take(size, alignment)?;
+    Some((heap.base + at, at as u32))
 }
 
 /// Create the host-backed memory region used for APU allocations.
@@ -77,6 +150,9 @@ pub extern "system" fn apu_create_heap(size_bytes: u32, _flags: u32) -> i32 {
         base,
         size,
         offset: 0,
+        free: Default::default(),
+        used: Default::default(),
+        used_bytes: 0,
     });
     S_OK
 }
@@ -156,8 +232,8 @@ pub unsafe extern "system" fn apu_heap_get_state(state_out: *mut u32, _index: u3
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (free, used) = match heap.as_ref() {
         Some(heap) => (
-            heap.size.saturating_sub(heap.offset).min(u32::MAX as usize) as u32,
-            heap.offset.min(u32::MAX as usize) as u32,
+            heap.size.saturating_sub(heap.used_bytes).min(u32::MAX as usize) as u32,
+            heap.used_bytes.min(u32::MAX as usize) as u32,
         ),
         None => (0, 0),
     };
@@ -169,10 +245,20 @@ pub unsafe extern "system" fn apu_heap_get_state(state_out: *mut u32, _index: u3
     S_OK
 }
 
-/// Individual heap blocks are reclaimed when the process tears down its APU heap.
+/// Gives back the live block starting at `block`. Null is a no-op and S_OK;
+/// anything else that is not the start of a live block (unknown, inside a
+/// block, already freed) is E_INVALIDARG and leaves the heap as it was.
 #[unsafe(export_name = "ApuFree")]
-pub extern "system" fn apu_free(_block: *mut c_void) -> i32 {
-    S_OK
+pub extern "system" fn apu_free(block: *mut c_void) -> i32 {
+    if block.is_null() || !apu_free_on() {
+        return S_OK;
+    }
+    let mut heap = APU_HEAP.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(heap) = heap.as_mut() else { return E_INVALIDARG };
+    match (block as usize).checked_sub(heap.base) {
+        Some(at) if heap.give(at) => S_OK,
+        _ => E_INVALIDARG,
+    }
 }
 
 /// Allocate the XMA context array Frosty requests in its SHAPE context record.
