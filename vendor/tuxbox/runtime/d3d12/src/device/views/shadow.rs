@@ -77,6 +77,8 @@ pub(crate) struct Shadows {
     /// Writable copies by resource pointer, to mark them written.
     by_copy: Mutex<HashMap<usize, (u64, u64, bool)>>,
     recorders: Mutex<Vec<Recorder>>,
+    /// Imported title pages by (page, width), shared by every shadow over them.
+    sources: Mutex<HashMap<(u64, u64), ID3D12Resource>>,
 }
 
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -98,6 +100,56 @@ fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>) {
     if entries.len() > KEPT {
         entries.retain(|_, e| e.view.strong_count() > 0);
     }
+}
+
+/// TUXBOX_SHADOW_IMPORT_CACHE=0: every new shadow imports its title pages
+/// again. On: a shadow at a new address over pages an earlier shadow imported
+/// (ring constant buffers advancing each frame) reuses that import; the
+/// busiest thread spent most of each frame in OpenExistingHeapFromAddress1.
+fn import_cache() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_IMPORT_CACHE") != Some("0")
+}
+
+/// TUXBOX_SHADOW_COPY_REUSE=0: every new read-only shadow creates its device
+/// copy. On: it takes the copy of a dead read-only shadow of the same size.
+fn copy_reuse() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_COPY_REUSE") != Some("0")
+}
+
+static IMPORTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static IMPORT_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static COPIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static COPY_REUSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn note_cache() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let total = IMPORTS.load(Relaxed) + IMPORT_HITS.load(Relaxed) + COPIES.load(Relaxed) + COPY_REUSES.load(Relaxed);
+    if total.is_power_of_two() && total >= 64 {
+        crate::diagnostics::log_line(format_args!(
+            "shadow caches: {} imports, {} reused (TUXBOX_SHADOW_IMPORT_CACHE=0 off); {} copies created, {} reused (TUXBOX_SHADOW_COPY_REUSE=0 off)",
+            IMPORTS.load(Relaxed), IMPORT_HITS.load(Relaxed), COPIES.load(Relaxed), COPY_REUSES.load(Relaxed)));
+    }
+}
+
+/// Title pages [page, page + width) imported as one buffer, cached.
+fn import_source(device: &Device, page: u64, width: u64) -> Result<ID3D12Resource> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let shadows = &device.state.shadows;
+    let cache = import_cache();
+    if cache && let Some(source) = lock(&shadows.sources).get(&(page, width)) {
+        IMPORT_HITS.fetch_add(1, Relaxed);
+        return Ok(source.clone());
+    }
+    let source = crate::device::heap::import_buffer(device, page, &buffer(width), D3D12_RESOURCE_STATE_COMMON)?;
+    IMPORTS.fetch_add(1, Relaxed);
+    if cache {
+        let mut sources = lock(&shadows.sources);
+        if sources.len() >= KEPT {
+            sources.clear();
+        }
+        sources.insert((page, width), source.clone());
+    }
+    Ok(source)
 }
 
 /// A view of `bytes` at `address` whose resource begins exactly at `address`.
@@ -131,7 +183,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     }
     let page = address & !0xffff;
     let width = (address - page + bytes).next_multiple_of(65536);
-    let pieces = match crate::device::heap::import_buffer(device, page, &buffer(width), D3D12_RESOURCE_STATE_COMMON) {
+    let pieces = match import_source(device, page, width) {
         Ok(source) => vec![(source, address - page, 0, bytes)],
         // The range spans separately mapped title pages that no single heap can
         // open; split it in halves on 64 KiB boundaries until each part opens,
@@ -146,17 +198,25 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         }
         Err(e) => return Err(e),
     };
-    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
-    let mut copy: Option<ID3D12Resource> = None;
-    unsafe {
-        // Whole 256-byte units, so a constant buffer view of it is valid.
-        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &D3D12_RESOURCE_DESC {
-                Flags: if writable { D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS } else { D3D12_RESOURCE_FLAG_NONE },
-                ..buffer(bytes.next_multiple_of(256))
-            },
-            D3D12_RESOURCE_STATE_COMMON, None, &mut copy)?;
-    }
-    let copy = copy.ok_or(E_POINTER)?;
+    let size = bytes.next_multiple_of(256);
+    let reused = if !writable && copy_reuse() {
+        let dead = entries.iter()
+            .find(|(k, e)| !k.2 && !e.written && e.view.strong_count() == 0
+                && unsafe { e.copy.GetDesc() }.Width == size)
+            .map(|(k, _)| *k);
+        dead.and_then(|k| entries.remove(&k)).map(|e| e.copy)
+    } else { None };
+    let copy = match reused {
+        Some(copy) => {
+            COPY_REUSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            copy
+        }
+        None => {
+            COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            new_copy(device, size, writable)?
+        }
+    };
+    note_cache();
     // Not registered by address: CBVs, UAVs and command arguments at this VA
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
@@ -172,6 +232,21 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     Ok(view)
 }
 
+fn new_copy(device: &Device, size: u64, writable: bool) -> Result<ID3D12Resource> {
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
+    let mut copy: Option<ID3D12Resource> = None;
+    unsafe {
+        // Whole 256-byte units, so a constant buffer view of it is valid.
+        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &D3D12_RESOURCE_DESC {
+                Flags: if writable { D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS } else { D3D12_RESOURCE_FLAG_NONE },
+                ..buffer(size)
+            },
+            D3D12_RESOURCE_STATE_COMMON, None, &mut copy)?;
+    }
+    let copy = copy.ok_or(E_POINTER)?;
+    Ok(copy)
+}
+
 /// Imports title pages [from, to) (64 KiB aligned) as few buffers as will
 /// open, appending the pieces of the shadow `address..address + bytes`.
 fn split_import(
@@ -185,7 +260,7 @@ fn split_import(
     if from >= to {
         return Ok(());
     }
-    match crate::device::heap::import_buffer(device, from, &buffer(to - from), D3D12_RESOURCE_STATE_COMMON) {
+    match import_source(device, from, to - from) {
         Ok(source) => {
             let (start, end) = (address.max(from), (address + bytes).min(to));
             if start < end {
