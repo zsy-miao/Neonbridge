@@ -2621,10 +2621,23 @@ impl<'a> Emitter<'a> {
                         sym.insert(2000 + *v as u16, Sym::Code);
                     }
                 }
+                // A heap byte offset computed per lane, elected by a waterfall loop:
+                // `v = i << 5; s = v_readfirstlane v; s_load [heap], s`.
+                Enc::Vop2 | Enc::Vop3
+                    if self.resource_heap_base.is_some() && ins.mnemonic == "v_lshlrev_b32"
+                        && ins.src.first() == Some(&Opnd::ConstInt(5)) =>
+                {
+                    if let Some(Opnd::Vgpr(v)) = ins.dst.first() {
+                        sym.insert(2000 + *v as u16, Sym::HeapOffset);
+                    }
+                }
                 Enc::Vop1 if ins.mnemonic == "v_readfirstlane_b32" => {
-                    let code = matches!(ins.src.first(), Some(Opnd::Vgpr(v)) if sym.get(&(2000 + *v as u16)) == Some(&Sym::Code));
+                    let source = match ins.src.first() { Some(Opnd::Vgpr(v)) => sym.get(&(2000 + *v as u16)).copied(), _ => None };
+                    let code = source == Some(Sym::Code);
                     if let Some(d) = ins.dst.first().and_then(sg) {
-                        if code {
+                        if source == Some(Sym::HeapOffset) {
+                            sym.insert(d, Sym::HeapOffset);
+                        } else if code {
                             sym.insert(d, Sym::Code);
                         } else {
                             sym.remove(&d);
