@@ -33,7 +33,13 @@ const GRAPHICS_ACCESS: i32 = D3D12_BARRIER_ACCESS_VERTEX_BUFFER.0 | D3D12_BARRIE
 /// list type: known bits only, compute lists without graphics stages or
 /// accesses, and NONE sync paired with NO_ACCESS. An invalid barrier made
 /// the host Close fail with E_INVALIDARG.
+/// TUXBOX_ENHANCED_FIX=0 records enhanced barriers as the title wrote them.
+fn enhanced_fix() -> bool {
+    crate::env_toggle!("TUXBOX_ENHANCED_FIX") != Some("0")
+}
+
 fn fix_half(sync: &mut D3D12_BARRIER_SYNC, access: &mut D3D12_BARRIER_ACCESS, compute: bool) {
+    if !enhanced_fix() { return; }
     let mut s = sync.0 & KNOWN_SYNC;
     let mut a = access.0 & KNOWN_ACCESS;
     if a & D3D12_BARRIER_ACCESS_NO_ACCESS.0 != 0 {
@@ -98,6 +104,7 @@ fn compute_layout(layout: D3D12_BARRIER_LAYOUT) -> D3D12_BARRIER_LAYOUT {
 }
 
 fn fix_texture(item: &mut D3D12_TEXTURE_BARRIER, compute: bool, simultaneous: bool) {
+    if !enhanced_fix() { return; }
     let original = (item.SyncBefore.0, item.SyncAfter.0, item.AccessBefore.0, item.AccessAfter.0, item.LayoutBefore.0, item.LayoutAfter.0);
     if compute {
         item.LayoutBefore = compute_layout(item.LayoutBefore);
@@ -231,7 +238,7 @@ unsafe fn record(
                         | D3D12_BARRIER_ACCESS_DEPTH_STENCIL_READ.0 | D3D12_BARRIER_ACCESS_SHADING_RATE_SOURCE.0
                         | D3D12_BARRIER_ACCESS_RESOLVE_DEST.0 | D3D12_BARRIER_ACCESS_RESOLVE_SOURCE.0;
                     for access in [&mut item.AccessBefore, &mut item.AccessAfter] {
-                        if access.0 != D3D12_BARRIER_ACCESS_NO_ACCESS.0 { access.0 &= !texture_only; }
+                        if enhanced_fix() && access.0 != D3D12_BARRIER_ACCESS_NO_ACCESS.0 { access.0 &= !texture_only; }
                     }
                     let fixed = (item.SyncBefore.0, item.SyncAfter.0, item.AccessBefore.0, item.AccessAfter.0, 0, 0);
                     if fixed != original { note_rewrite("buffer", original, fixed); }

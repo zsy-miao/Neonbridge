@@ -393,6 +393,12 @@ impl Recording {
     }
 }
 
+/// TUXBOX_XARGS_STRICT=1: slots 67, 71 and 72 refuse GTA's argument shapes
+/// again (unknown cache masks, marker flags, plain 64-bit value writes).
+pub(super) fn xargs_strict() -> bool {
+    crate::env_toggle!("TUXBOX_XARGS_STRICT").is_some_and(|v| v != "0")
+}
+
 fn strict_lists() -> bool {
     static STRICT: OnceLock<bool> = OnceLock::new();
     *STRICT.get_or_init(|| std::env::var_os("TUXBOX_STRICT_LISTS").is_some_and(|v| v != "0"))
@@ -842,8 +848,11 @@ unsafe extern "system" fn transition(
             let texture = needs_dimension
                 && unsafe { resource.native.GetDesc().Dimension }
                     != D3D12_RESOURCE_DIMENSION_BUFFER;
-            host.before = list_state(device::host_state(host.before, texture), kind);
-            host.after = list_state(device::host_state(host.after, texture), kind);
+            // TUXBOX_LIST_STATE_FIX=0 records the states unrestricted.
+            let restrict = crate::env_toggle!("TUXBOX_LIST_STATE_FIX") != Some("0");
+            let fix = |state| if restrict { list_state(state, kind) } else { state };
+            host.before = fix(device::host_state(host.before, texture));
+            host.after = fix(device::host_state(host.after, texture));
             if resource.state.unbacked_uav() {
                 // The host depth image has no unordered access; see unbacked_uav.
                 for state in [&mut host.before, &mut host.after] {
@@ -1043,6 +1052,11 @@ unsafe extern "system" fn flush_texture_cache(list: &List, mask: u32, address: u
     }
     // The mask selects the caches to flush. Both can use the same host
     // global memory barrier, which also covers subranges and empty ranges.
+    if !matches!(mask, 0xc0_0000 | 0x3000) && xargs_strict() {
+        crate::diagnostics::recording_error(format_args!("texture cache flush mask {mask:#x}"));
+        state.error = E_NOTIMPL;
+        return;
+    }
     if !matches!(mask, 0xc0_0000 | 0x3000) {
         // A global barrier covers every cache (rebox and xcl ignore the mask).
         static OTHER: std::sync::Once = std::sync::Once::new();
@@ -1428,6 +1442,10 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
         state.error = E_INVALIDARG;
         return;
     }
+    if (flags != 0 || reserved != 0) && xargs_strict() {
+        state.error = E_INVALIDARG;
+        return;
+    }
     if flags != 0 || reserved != 0 {
         // Cache-flush and engine selectors; the host write is ordered anyway
         // (leonida-ce ignores them too).
@@ -1532,7 +1550,11 @@ unsafe extern "system" fn reset_extended(list: &List, allocator: *mut c_void, in
 unsafe extern "system" fn slot131(list: &List, a: u32, b: usize, c: u64, d: u64) {
     let entries = b as *const build_raytracing::Entry;
     let bytes = (a as usize).checked_mul(size_of::<build_raytracing::Entry>());
-    if a != 0 && b > 0xffff && bytes.is_some_and(|n| accessible(b, n, false)) {
+    // TUXBOX_SLOT131=build|barrier forces one form; unset tells them apart.
+    let forced = crate::env_toggle!("TUXBOX_SLOT131");
+    if forced == Some("build")
+        || (forced != Some("barrier") && a != 0 && b > 0xffff && bytes.is_some_and(|n| accessible(b, n, false)))
+    {
         unsafe { build_raytracing::batch(list, a, entries) };
         return;
     }
@@ -1624,7 +1646,9 @@ unsafe extern "system" fn execute_frame(
     crate::diagnostics::log_once(&FIRST, || format!(
         "queue slot 35 first call: a1={count:#x} a2={lists:p} a3={frame_token:#x} a4={flags:#x}"));
     let device = parent(&queue.parent);
-    let first_is_list = (1..=256).contains(&count)
+    // TUXBOX_QSLOT35=pair|exec forces one form; unset tells them apart.
+    let forced = crate::env_toggle!("TUXBOX_QSLOT35");
+    let first_is_list = forced != Some("pair") && (forced == Some("exec") || (1..=256).contains(&count)
         && accessible(lists as usize, count as usize * size_of::<*mut c_void>(), false)
         && {
             let item = unsafe { *lists };
@@ -1635,7 +1659,7 @@ unsafe extern "system" fn execute_frame(
                         .or_else(|| unwrap(item, device, &EXTENDED_LIST_SLOTS))
                 }
                 .is_some()
-        };
+        });
     if !first_is_list {
         if accessible(lists as usize, 16, true) {
             let mut ticks = 0i64;

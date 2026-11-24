@@ -41,6 +41,15 @@ pub(super) unsafe extern "system" fn clear(
     };
 }
 
+/// The host descriptor behind a UAV clear's CPU handle;
+/// TUXBOX_UAV_CLEAR_XLATE=0 passes the title handle through unchanged.
+fn uav_clear_cpu(list: &List, cpu: D3D12_CPU_DESCRIPTOR_HANDLE) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+    if crate::env_toggle!("TUXBOX_UAV_CLEAR_XLATE") == Some("0") {
+        return cpu;
+    }
+    unsafe { crate::device::host_cpu_descriptor(parent(&list.parent), cpu) }
+}
+
 pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
     list: &List,
     gpu: D3D12_GPU_DESCRIPTOR_HANDLE,
@@ -83,11 +92,11 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
             if arena.contains(cpu.ptr as u64) {
                 arena.cpu(cpu.ptr)
             } else {
-                unsafe { crate::device::host_cpu_descriptor(parent(&list.parent), cpu) }
+                uav_clear_cpu(list, cpu)
             },
         )
     } else {
-        (gpu, unsafe { crate::device::host_cpu_descriptor(parent(&list.parent), cpu) })
+        (gpu, uav_clear_cpu(list, cpu))
     };
     if let Err(error) = recording.prepare_copy(resource.state.placed(), None) {
         recording.error = error;

@@ -20,6 +20,15 @@ macro_rules! slot {
 }
 pub(crate) use slot;
 
+/// A run-matrix switch: the environment variable's value, read once per site.
+macro_rules! env_toggle {
+    ($name:literal) => {{
+        static VALUE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        VALUE.get_or_init(|| std::env::var($name).ok()).as_deref()
+    }};
+}
+pub(crate) use env_toggle;
+
 use core::ffi::c_void;
 use core::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};

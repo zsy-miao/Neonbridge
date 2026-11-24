@@ -103,6 +103,7 @@ pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, val
     if !state.ensure_open(&list.native) { return; }
     let result = (|| -> windows::core::Result<()> {
         if address == 0 || !address.is_multiple_of(4) { return Err(E_INVALIDARG.into()); }
+        if mode & 3 == 0 && super::xargs_strict() { return Err(E_INVALIDARG.into()); }
         if mode & 3 == 0 {
             let (resource, gpu) = unsafe { crate::device::command_buffer_address(parent(&list.parent), address, 8)? };
             if let Some(buffer) = &resource { super::raytracing::retain(&state, &[buffer])?; }
