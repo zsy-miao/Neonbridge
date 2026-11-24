@@ -81,6 +81,7 @@ use sampler_heap::DirectSampler;
 mod reflection_probe;
 mod wave_scan;
 mod exit_stubs;
+mod skip_bits;
 use packed_root::{PackedRoot, RootAbi};
 
 pub struct Translated {
@@ -4614,6 +4615,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             && !std::env::var("TB_STRUCTURED_BOUND").is_ok_and(|v| v.trim() == "0")
         {
             return Err(OVERSIZED_STRUCTURED.into());
+        }
+        // After the size bound, which is measured on the bool form.
+        if skip_bits::enabled() && !self.body[start..].contains("uint tb_sel = tb_pc;") {
+            if let Some(packed) = skip_bits::pack(&self.body[start..]) {
+                self.body.truncate(start);
+                self.body.push_str(&packed);
+            }
         }
         Ok(())
     }
