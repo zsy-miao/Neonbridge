@@ -16,6 +16,15 @@
 //! arguments replayed and waited on, else BinkDoFrame), at most
 //! TUXBOX_BINK_CATCHUP (default 2) per call, so audio keeps the movie's rate
 //! while fewer frames are shown. TUXBOX_BINK_CATCHUP=0 decodes none.
+//!
+//! The play log at b7f0f56 still ran 27.0 of 30 frames/s, with 1 s audio
+//! gaps: catching up only whole frames behind, two at a time, after
+//! BinkNextFrame left the movie up to a frame behind its clock all the time.
+//! Now it catches up as soon as it is any fraction behind, to TUXBOX_BINK_LEAD
+//! frames (default 1) ahead of the clock, at most TUXBOX_BINK_CATCHUP (now 4)
+//! per call. The catch-up also runs when the title asks BinkWait, unless the
+//! title's own asynchronous decode is in flight. The 10 s line logs the
+//! smallest lead over the clock.
 use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -122,8 +131,9 @@ fn record(index: usize, movie: u64, result: u64, us: u64) {
             c.total_us as f64 / 1e3 / f64::from(c.count), c.max_us as f64 / 1e3, c.nonzero)
     }).collect();
     let movie_line = match (header(window.movie), window.first_frame) {
-        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, TUXBOX_BINK_CATCHUP) against {:.2} nominal",
+        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, TUXBOX_BINK_CATCHUP; smallest lead over the clock {}, TUXBOX_BINK_LEAD) against {:.2} nominal",
             h[0], h[1], h[3], h[2], f64::from(window.last_frame.wrapping_sub(first)) / seconds, window.caught_up,
+            MIN_LEAD.lock().unwrap_or_else(|e| e.into_inner()).take().map_or("-".into(), |ms| format!("{ms:.0} ms")),
             if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) }),
         _ => String::new(),
     };
@@ -147,8 +157,22 @@ static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
 fn catch_up_cap() -> u32 {
     use std::sync::OnceLock;
     static CAP: OnceLock<u32> = OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2))
+    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(4))
 }
+
+/// Frames ahead of its clock a movie is decoded to: TUXBOX_BINK_LEAD (default 1).
+fn lead_frames() -> f64 {
+    use std::sync::OnceLock;
+    static LEAD: OnceLock<f64> = OnceLock::new();
+    *LEAD.get_or_init(|| std::env::var("TUXBOX_BINK_LEAD").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1.0))
+}
+
+/// The title's BinkDoFrameAsyncMulti not yet completed by its BinkDoFrameAsyncWait.
+static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The smallest lead of the movie over its clock since the last record, in ms
+/// (negative: behind), measured after each catch-up.
+static MIN_LEAD: Mutex<Option<f64>> = Mutex::new(None);
 
 fn note_multi(movie: u64, b: u64, c: u64, d: u64) {
     let mut clock = CLOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -184,7 +208,9 @@ unsafe fn catch_up(movie: u64) {
             clock.first_frame = frame;
             return;
         }
-        (behind.floor().max(0.0) as u32, clock.multi)
+        // Any fraction behind counts: decode up to the lead past the clock.
+        let wanted = behind + lead_frames();
+        (if behind > 0.0 { wanted.ceil().max(0.0) as u32 } else { 0 }, clock.multi)
     };
     let real = |i: usize| -> F4 { unsafe { std::mem::transmute(REAL[i].load(Ordering::Acquire)) } };
     let mut done = 0;
@@ -205,6 +231,14 @@ unsafe fn catch_up(movie: u64) {
     if done != 0 {
         *CAUGHT_UP.lock().unwrap_or_else(|e| e.into_inner()) += done;
     }
+    if let Some(h) = header(movie)
+        && let Some(clock) = CLOCK.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|c| c.movie == movie)
+    {
+        let target = f64::from(clock.first_frame) + clock.started.elapsed().as_secs_f64() * rate;
+        let lead_ms = (f64::from(h[3]) - target) / rate * 1000.0;
+        let mut min = MIN_LEAD.lock().unwrap_or_else(|e| e.into_inner());
+        *min = Some(min.map_or(lead_ms, |m| m.min(lead_ms)));
+    }
 }
 
 unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
@@ -220,8 +254,13 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
         _ => record(index, a, result, us),
     }
     match index {
-        ASYNC_MULTI => note_multi(a, b, c, d),
+        ASYNC_MULTI => {
+            note_multi(a, b, c, d);
+            IN_FLIGHT.store(true, Ordering::Relaxed);
+        }
+        ASYNC_WAIT if result as u32 != 0 => IN_FLIGHT.store(false, Ordering::Relaxed),
         NEXT_FRAME => unsafe { catch_up(a) },
+        WAIT if !IN_FLIGHT.load(Ordering::Relaxed) && std::env::var_os("TUXBOX_BINK_WAIT_CATCHUP").is_none_or(|v| v != "0") => unsafe { catch_up(a) },
         _ => {}
     }
     result
