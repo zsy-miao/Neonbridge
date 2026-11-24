@@ -41,6 +41,7 @@ enum ListState {
 
 /// Count draws and dispatches dropped for a pipeline still being made.
 fn dropped_for_pending() {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DroppedPending);
     static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let dropped = DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if dropped.is_power_of_two() {
@@ -121,6 +122,11 @@ impl Recording {
     }
 
     fn compute_dispatch(&mut self, list: &List, dispatch: impl FnOnce()) {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchCalls);
+        let dispatch = move || {
+            crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchesRecorded);
+            dispatch()
+        };
         if self.pipeline_pending {
             dropped_for_pending();
             return;
@@ -187,6 +193,11 @@ impl Recording {
     }
 
     fn draw(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawCalls);
+        let draw = move || {
+            crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawsRecorded);
+            draw()
+        };
         if self.pipeline_pending {
             dropped_for_pending();
             return;
@@ -340,6 +351,7 @@ impl Recording {
         if !self.can_record(native) { return false; }
         let kind = unsafe { native.GetType() };
         if kind == D3D12_COMMAND_LIST_TYPE_DIRECT { return true; }
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::GraphicsOnOtherLists);
         static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = DROPPED.fetch_add(1, Ordering::Relaxed);
         if n < 8 || (n + 1).is_power_of_two() {
@@ -375,6 +387,7 @@ impl Recording {
         {
             return;
         }
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::RefusedCalls);
         static FORGIVEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = FORGIVEN.fetch_add(1, Ordering::Relaxed);
         if n < 8 || (n + 1).is_power_of_two() {
@@ -1170,6 +1183,7 @@ unsafe extern "system" fn clear_rtv(
     count: u32,
     rects: *const RECT,
 ) {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::ClearsRtv);
     let mut state = recording(list);
     if !state.can_record_graphics(&list.native) {
         return;
@@ -1888,6 +1902,7 @@ fn drop_batch(queue: &Queue, error: HRESULT) {
         reject(queue, error);
         return;
     }
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BatchesDropped);
     static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = DROPPED.fetch_add(1, Ordering::Relaxed);
     if n < 4 || (n + 1).is_power_of_two() {
@@ -2379,6 +2394,7 @@ unsafe fn present_planes(
     // otherwise waits forever for this token's flip.
     unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
     crate::device::shader_cache::frame_presented();
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::Presents);
     if result == S_OK {
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         static EARLY: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
@@ -2409,6 +2425,9 @@ unsafe fn present_planes(
                     "frame time {frame_ms:.1} ms: gpu latency {gpu} ms (present signal to GPU done); cpu ms/frame: {}",
                     crate::diagnostics::threads::split(frames.max(1) as f64, frame_ms)));
                 for line in hot {
+                    crate::diagnostics::log_line(format_args!("{line}"));
+                }
+                if let Some(line) = crate::diagnostics::frame_work::report() {
                     crate::diagnostics::log_line(format_args!("{line}"));
                 }
                 if let Some(line) = crate::diagnostics::audio::engine_report() {

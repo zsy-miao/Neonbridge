@@ -16,6 +16,7 @@ pub(super) unsafe extern "system" fn clear(
     count: u32,
     rects: *const RECT,
 ) {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::ClearsDepth);
     let mut recording = recording(list);
     if !recording.can_record_graphics(&list.native) {
         return;
@@ -59,6 +60,7 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
     count: u32,
     rects: *const RECT,
 ) {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::ClearsUav);
     let mut recording = recording(list);
     if !recording.can_record(&list.native) {
         return;

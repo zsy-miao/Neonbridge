@@ -56,7 +56,12 @@ pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, boo
             let p = built.pipeline();
             (&p.native, &p.state, false)
         }
-        None => (&p.native, &p.state, p.state.lazy),
+        None => {
+            if p.state.lazy && super::stream::background::failed(slot) {
+                crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BindsUntranslatable);
+            }
+            (&p.native, &p.state, p.state.lazy)
+        }
     }
 }
 
@@ -306,6 +311,9 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     }
     let _ = super::shader_cache::take_missed();
     let status = unsafe { make_compute(this, desc, extension_count, extensions, iid, out) };
+    if status.is_err() {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesRefused);
+    }
     let missed = super::shader_cache::take_missed();
     if status.is_err() || worker {
         return status;

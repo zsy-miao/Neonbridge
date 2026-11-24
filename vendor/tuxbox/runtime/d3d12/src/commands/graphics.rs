@@ -52,7 +52,10 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
             state.bindings.draw_trace = data.draw_trace.clone();
             unsafe { list.native.SetPipelineState(native) };
         }
-        _ => state.error = E_INVALIDARG,
+        _ => {
+            crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BindsRefused);
+            state.error = E_INVALIDARG;
+        }
     }
 }
 

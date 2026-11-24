@@ -741,6 +741,9 @@ pub(super) unsafe extern "system" fn create_pipeline(
         desc.SizeInBytes,
         native.as_ref().err().map(|e| e.code().0),
     );
+    if native.is_err() {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesRefused);
+    }
     unsafe { wrap_pageable(native, &compute::PIPELINE, device, state, out) }
 }
 

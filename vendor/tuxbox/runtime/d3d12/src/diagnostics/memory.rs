@@ -139,7 +139,14 @@ fn commit_breakdown() -> String {
     let mut by_base: std::collections::HashMap<(u64, u32), u64> = std::collections::HashMap::new();
     let mut address = 0u64;
     let mut regions = 0u32;
+    // Bounded: a walk of millions of regions under memory pressure must not
+    // hold up the stats thread (test58 logged no commit line at all).
+    let started = std::time::Instant::now();
+    let budget = std::time::Duration::from_secs(2);
     while address < 0x7fff_ffff_0000 && regions < 4_000_000 {
+        if regions % 4096 == 0 && started.elapsed() > budget {
+            break;
+        }
         let mut m = MEMORY_BASIC_INFORMATION::default();
         if unsafe { VirtualQuery(Some(address as *const core::ffi::c_void), &mut m, size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 {
             break;
@@ -161,8 +168,9 @@ fn commit_breakdown() -> String {
         format!("{base:#x} {} {} MiB", if *kind == MAPPED { "mapped" } else { "private" }, mib(*bytes))
     }).collect();
     let small = largest.iter().skip(8).fold((0u64, 0u64), |(n, b), (_, s)| (n + 1, b + s));
-    format!("commit: private {} MiB, mapped {} MiB, image {} MiB in {regions} regions; largest allocations: {}; the other {} allocations {} MiB (TUXBOX_COMMIT_BREAKDOWN=0 off)",
-        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), top.join(", "), small.0, mib(small.1))
+    let partial = if address < 0x7fff_ffff_0000 { format!(" (partial: stopped at {address:#x})") } else { String::new() };
+    format!("commit: private {} MiB, mapped {} MiB, image {} MiB in {regions} regions, walked in {} ms{partial}; largest allocations: {}; the other {} allocations {} MiB (TUXBOX_COMMIT_BREAKDOWN=0 off)",
+        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), started.elapsed().as_millis(), top.join(", "), small.0, mib(small.1))
 }
 
 #[cfg(test)]

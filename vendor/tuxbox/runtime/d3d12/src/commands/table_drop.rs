@@ -42,6 +42,7 @@ pub(super) fn drops(error: HRESULT, what: &str) -> bool {
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn note(what: &str) {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DroppedTable);
     let n = DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
     if n <= 4 || n.is_power_of_two() {
         crate::diagnostics::log_line(format_args!(

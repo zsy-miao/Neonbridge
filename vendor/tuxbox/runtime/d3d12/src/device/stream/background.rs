@@ -68,6 +68,11 @@ pub(crate) fn never() -> Arc<Upgrade> {
     Arc::new(slot)
 }
 
+/// Its worker could not make it: it stays the placeholder.
+pub(crate) fn failed(slot: &Upgrade) -> bool {
+    slot.built.get().is_none() && slot.failed.load(Ordering::Relaxed)
+}
+
 pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     if let Some(built) = slot.built.get() {
         return Some(built);
@@ -421,6 +426,7 @@ fn build(mut job: Job) {
                 &MADE
             }
             _ => {
+                crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesUntranslatable);
                 job.slot.failed.store(true, Ordering::Relaxed);
                 &FAILED
             }
