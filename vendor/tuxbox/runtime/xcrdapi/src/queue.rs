@@ -647,7 +647,48 @@ fn run_read(shared: &Shared, entry: &Entry) -> Result<(), HRESULT> {
     result
 }
 
+/// Failed requests by cause (entry kind and HRESULT), logged with the 1st-4th
+/// failure and then at powers of two, so a stall shows whether streaming is
+/// losing requests and why. Idea from Xbox2Windows #1781 (0ad04b91, 8c77885b,
+/// MasterDomino, MIT). TUXBOX_STORAGE_FAILURE_CAUSES=0 turns it off.
+fn count_failure(entry: &Entry, hr: HRESULT) {
+    if std::env::var_os("TUXBOX_STORAGE_FAILURE_CAUSES").is_some_and(|v| v == "0") {
+        return;
+    }
+    let kind = match entry {
+        Entry::Read(_) => "read",
+        Entry::Status(..) => "status",
+        Entry::Signal(..) => "fence",
+        Entry::Invalid(..) => "invalid",
+        Entry::Refused(..) => "refused",
+        Entry::Event(_) => "event",
+    };
+    static CAUSES: Mutex<Vec<(&'static str, i32, u64)>> = Mutex::new(Vec::new());
+    static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut causes = lock(&CAUSES);
+    match causes.iter_mut().find(|c| c.0 == kind && c.1 == hr.0) {
+        Some(c) => c.2 += 1,
+        None => causes.push((kind, hr.0, 1)),
+    }
+    let n = TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        let name = |code: i32| match HRESULT(code) {
+            c if c == HRESULT::from_win32(ERROR_HANDLE_EOF.0) => "past end of file",
+            c if c == HRESULT::from_win32(windows::Win32::Foundation::ERROR_NOACCESS.0) => "destination not writable",
+            c if c == E_OUTOFMEMORY => "destination too small",
+            c if c == E_INVALIDARG => "invalid request",
+            c if c == E_NOTIMPL => "not implemented",
+            _ => "other",
+        };
+        let list: Vec<String> = causes.iter()
+            .map(|(k, c, count)| format!("{k} {c:#010x} ({}) x{count}", name(*c)))
+            .collect();
+        log(format_args!("storage failures by cause after {n}: {} (TUXBOX_STORAGE_FAILURE_CAUSES=0 off)", list.join(", ")));
+    }
+}
+
 fn signal_error(shared: &Shared, entry: &Entry, hr: HRESULT) {
+    count_failure(entry, hr);
     let mut state = lock(&shared.state);
     state.error_count = state.error_count.saturating_add(1);
     if state.first_error.is_none() {
