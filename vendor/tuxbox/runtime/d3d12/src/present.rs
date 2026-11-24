@@ -49,6 +49,11 @@ fn occluded_status() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_OCCLUDED_STATUS").map_or(true, |v| v.trim() != "0"))
 }
 
+fn window_reports() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_WINDOW_REPORTS").map_or(true, |v| v.trim() != "0"))
+}
+
 fn letterbox_enabled() -> bool {
     std::env::var("TUXBOX_LETTERBOX").is_ok_and(|v| v.trim() == "1")
 }
@@ -346,6 +351,16 @@ impl SwapChain {
             frame.list.Reset(&frame.allocator, None)?;
             record_copy(&frame.list, source, &buffer);
             let sample = (sampler::due() || crate::diagnostics::ctl::screenshot_pending()).then(|| sampler::record(&frame.list, source, D3D12_RESOURCE_STATE_COMMON)).flatten();
+            // What reaches the window: the swap chain's own back buffer after
+            // the copy, beside the first source samples and at presents 1, 60
+            // and 600 (test102: lit source samples, black window).
+            static WINDOW_SAMPLES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let shown = window_reports() && (matches!(self.next, 1 | 60 | 600)
+                || (sample.is_some() && WINDOW_SAMPLES.load(std::sync::atomic::Ordering::Relaxed) < 12));
+            let window_sample = shown.then(|| {
+                WINDOW_SAMPLES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                sampler::record(&frame.list, &buffer, D3D12_RESOURCE_STATE_PRESENT)
+            }).flatten();
             frame.list.Close()?;
             frame.source = Some(source.clone());
             queue.ExecuteCommandLists(&[Some(ID3D12CommandList::clone(&frame.list))]);
@@ -360,9 +375,25 @@ impl SwapChain {
                 wait_for(&self.fence, self.next)?;
                 sample.report("present");
             }
+            let present_number = self.next;
             self.next = next_value;
             // Return DXGI status codes such as DXGI_STATUS_OCCLUDED to the guest.
             let status = self.chain.Present(1, DXGI_PRESENT(0));
+            if let Some(window_sample) = window_sample {
+                let _ = wait_for(&self.fence, present_number);
+                window_sample.report("window back buffer");
+                let line = format!(
+                    "presentation at present {present_number}: Present returned {:#010x}, {}x{} format {}, {}, letterbox {} (TUXBOX_WINDOW_REPORTS=0 off)",
+                    status.0, self.width, self.height, self.format.0, self.window.describe(), self.letterbox.is_some());
+                crate::diagnostics::log_once(&std::sync::Once::new(), || line);
+            }
+            if status.is_err() {
+                static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!("presentation: swap chain Present failed {:#010x} ({n} so far)", status.0));
+                }
+            }
             uncloak_title_windows();
             // A title that sees DXGI_STATUS_OCCLUDED may stop presenting for good
             // (xvalkyrie): pace it briefly and report S_OK.

@@ -68,6 +68,44 @@ impl OutputWindow {
     pub(super) fn is_open(&self) -> bool {
         unsafe { IsWindow(Some(self.hwnd())).as_bool() }
     }
+
+    /// What the swap chain's window looks like to the desktop, for the
+    /// one-time window reports (black window with lit presents, test102).
+    pub(super) fn describe(&self) -> String {
+        let hwnd = self.hwnd();
+        let mut client = RECT::default();
+        let mut window = RECT::default();
+        unsafe {
+            let _ = GetClientRect(hwnd, &mut client);
+            let _ = GetWindowRect(hwnd, &mut window);
+            let title = title_window();
+            format!(
+                "window {:#x} ({}) visible={} iconic={} cloaked={} foreground={} client={}x{} at {},{} {}x{}; title window now {:#x}{}",
+                hwnd.0 as usize,
+                if self._owner.is_some() { "TuxBox's own" } else { "the title's" },
+                IsWindowVisible(hwnd).as_bool(),
+                IsIconic(hwnd).as_bool(),
+                cloaked(hwnd).map_or("?".to_string(), |c| format!("{c:#x}")),
+                GetForegroundWindow() == hwnd,
+                client.right - client.left, client.bottom - client.top,
+                window.left, window.top, window.right - window.left, window.bottom - window.top,
+                title.0 as usize,
+                if !title.is_invalid() && title != hwnd { " (a different window: the swap chain is not on it)" } else { "" },
+            )
+        }
+    }
+}
+
+/// DWMWA_CLOAKED through dwmapi.dll, loaded on demand.
+fn cloaked(hwnd: HWND) -> Option<u32> {
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    type Get = unsafe extern "system" fn(HWND, u32, *mut core::ffi::c_void, u32) -> i32;
+    unsafe {
+        let module = LoadLibraryW(windows::core::w!("dwmapi.dll")).ok()?;
+        let get: Get = core::mem::transmute(GetProcAddress(module, windows::core::s!("DwmGetWindowAttribute"))?);
+        let mut value = 0u32;
+        (get(hwnd, 14, (&mut value as *mut u32).cast(), 4) >= 0).then_some(value)
+    }
 }
 
 fn title_window() -> HWND {
@@ -97,7 +135,45 @@ fn title_window() -> HWND {
     unsafe {
         let _ = EnumWindows(Some(visit), LPARAM(core::ptr::from_mut(&mut best) as isize));
     }
+    if best.0.is_invalid() && hidden_title_window() {
+        unsafe { let _ = EnumWindows(Some(hidden), LPARAM(core::ptr::from_mut(&mut best) as isize)); }
+        if !best.0.is_invalid() {
+            crate::diagnostics::log_line(format_args!(
+                "presentation: no visible title window yet; using its hidden top-level window {:#x} instead of a window of our own (TUXBOX_HIDDEN_TITLE_WINDOW=0 off)",
+                best.0.0 as usize));
+        }
+    }
     best.0
+}
+
+/// A title whose window is not shown yet at its first present (xmem shows it
+/// at that present) would get a TuxBox window of its own, while the title's
+/// window comes up black over it. Its largest hidden, unowned top-level
+/// window of at least 640x360 is used instead. TUXBOX_HIDDEN_TITLE_WINDOW=0 off.
+fn hidden_title_window() -> bool {
+    std::env::var("TUXBOX_HIDDEN_TITLE_WINDOW").map_or(true, |v| v.trim() != "0")
+}
+
+unsafe extern "system" fn hidden(hwnd: HWND, parameter: LPARAM) -> BOOL {
+    let mut pid = 0;
+    let mut bounds = RECT::default();
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if pid == GetCurrentProcessId()
+            && GetWindow(hwnd, GW_OWNER).is_err()
+            && style & WS_CHILD.0 as isize == 0
+            && GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as isize == 0
+            && GetWindowRect(hwnd, &mut bounds).is_ok()
+        {
+            let (w, h) = (i64::from(bounds.right - bounds.left), i64::from(bounds.bottom - bounds.top));
+            let best = &mut *(parameter.0 as *mut (HWND, i64));
+            if w >= 640 && h >= 360 && w * h > best.1 {
+                *best = (hwnd, w * h);
+            }
+        }
+    }
+    true.into()
 }
 
 fn monitor_info(monitor: HMONITOR) -> Result<MONITORINFO> {
