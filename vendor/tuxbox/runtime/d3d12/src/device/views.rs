@@ -57,9 +57,12 @@ pub(super) unsafe extern "system" fn cbv(
     let mut aligned = unsafe { desc.as_ref() }.copied();
     let mut owner = None;
     if let Some(value) = &mut aligned {
-        if value.SizeInBytes <= D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16 {
-            value.SizeInBytes = value.SizeInBytes.next_multiple_of(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
-        }
+        // ScarlettCompat 2ffcb48 (MIT): a size past 64 KiB, or one not a
+        // multiple of 256, is a debug-layer error that can remove the device.
+        // A shader reads at most 4096 constants, so the view stops there.
+        value.SizeInBytes = value.SizeInBytes
+            .min(D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16)
+            .next_multiple_of(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
         let address = value.BufferLocation;
         if address != 0 && value.SizeInBytes != 0 {
             let guest = unsafe { &*desc }.SizeInBytes.max(1);
@@ -122,6 +125,11 @@ pub(super) unsafe extern "system" fn cbv(
         crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
             "invalid CBV: guest {:#x}+{} host {:#x}+{} imported={}",
             guest.BufferLocation, guest.SizeInBytes, value.BufferLocation, value.SizeInBytes, owner.is_some()));
+    }
+    // A view left without a buffer is written as a null CBV, not a size at
+    // address zero.
+    if let Some(value) = &mut aligned && value.BufferLocation == 0 {
+        *value = D3D12_CONSTANT_BUFFER_VIEW_DESC::default();
     }
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::ConstantBuffer { _address: owner }));
     unsafe {
