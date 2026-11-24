@@ -40,13 +40,19 @@ pub(crate) fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         }
     };
     pipe.write_all(format!("{line}\n").as_bytes())?;
-    let mut reply = String::new();
-    // ERROR_BROKEN_PIPE (109) after the server's reply is the normal end.
-    match pipe.read_to_string(&mut reply) {
-        Ok(_) => {}
-        Err(e) if e.raw_os_error() == Some(109) => {}
-        Err(e) => return Err(e.into()),
+    // The server writes, flushes and disconnects: ERROR_BROKEN_PIPE (109) or
+    // ERROR_PIPE_NOT_CONNECTED (233) after the reply is the normal end, and the
+    // bytes read before it are the reply.
+    let mut reply = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => reply.extend_from_slice(&chunk[..n]),
+            Err(e) if matches!(e.raw_os_error(), Some(109 | 233)) => break,
+            Err(e) => return Err(e.into()),
+        }
     }
-    print!("{reply}");
+    print!("{}", String::from_utf8_lossy(&reply));
     Ok(())
 }

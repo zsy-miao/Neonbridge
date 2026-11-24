@@ -137,6 +137,10 @@ fn help() -> String {
 // ---- log access: the launcher points stderr at its log file; read its tail ----
 
 fn log_path() -> Option<std::path::PathBuf> {
+    // The launcher pipes stderr and names the log file it tees into.
+    if let Some(path) = std::env::var_os("TUXBOX_LOG_FILE").filter(|p| !p.is_empty()) {
+        return Some(path.into());
+    }
     let handle = unsafe { GetStdHandle(STD_ERROR_HANDLE) }.ok()?;
     if handle.is_invalid() {
         return None;

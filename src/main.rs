@@ -660,6 +660,8 @@ q
         .current_dir(game)
         .args(&argv[1..])
         .env("TUXBOX_LOG", std::env::var("TUXBOX_LOG").unwrap_or_else(|_| "stderr".into()))
+        // stderr is a pipe the launcher tees into the log; ctl status/log read this file.
+        .env("TUXBOX_LOG_FILE", &log)
         // One readback every 120 presents: cheap, and every summary gets lit= samples.
         .env("TUXBOX_TRACE_PRESENT", std::env::var("TUXBOX_TRACE_PRESENT").unwrap_or_else(|_| "120".into()))
         .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
