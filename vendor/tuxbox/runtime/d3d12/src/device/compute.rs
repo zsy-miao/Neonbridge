@@ -247,6 +247,19 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
         native = create(&host);
     }
     unsafe { ManuallyDrop::drop(&mut host.pRootSignature) };
+    if let Some(table) = reflected.as_ref().filter(|t| t.lengths.is_empty() && t.index_map.is_some()) {
+        // 6ixpack: heap-indexed compute pipelines on the generated index-map root.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static MADE: AtomicU32 = AtomicU32::new(0);
+        static FAILED: AtomicU32 = AtomicU32::new(0);
+        let _ = table;
+        let (counter, what) = if native.is_ok() { (&MADE, "created") } else { (&FAILED, "failed") };
+        let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            let code = native.as_ref().err().map(|e| e.code().0).unwrap_or(0);
+            crate::diagnostics::log_once(&std::sync::Once::new(), || format!("heap compute pipeline {what} ({n} so far, last {code:#x})"));
+        }
+    }
     if let Err(error) = &native {
         if let Some(root) = root { super::compute_table::capture_stage_root(bytes, &root.state); }
         crate::diagnostics::compute_failure(bytes, error.code().0);
