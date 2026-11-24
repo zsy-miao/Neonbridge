@@ -3634,6 +3634,35 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     /// Condition under which a SOPP branch opcode is taken (None = not a branch).
+    /// s_cbranch_execz/execnz test EXEC across the whole wave: a lane whose own
+    /// bit is clear still follows the wave's branch, so the scalar work in the
+    /// region stays uniform (vector writes are guarded by EXEC). SM 5 has no wave
+    /// intrinsics and keeps the per-lane test (palmetto rdna2spirv).
+    fn exec_vote(&self, op: u32) -> Option<&'static str> {
+        if self.resolve_wave32 || self.wave_cull || self.packed.is_some() {
+            return None;
+        }
+        match op {
+            8 => Some("!WaveActiveAnyTrue((exec_lo & 1u) != 0u)"),
+            9 => Some("WaveActiveAnyTrue((exec_lo & 1u) != 0u)"),
+            _ => None,
+        }
+    }
+
+    /// Emit `line(vote)` on SM 6 and `line(fallback)` below it.
+    fn vote_line(&mut self, vote: Option<&str>, fallback: &str, line: impl Fn(&str) -> String) {
+        match vote {
+            Some(v) => {
+                self.line("#if __SHADER_TARGET_MAJOR >= 6");
+                self.line(&line(v));
+                self.line("#else");
+                self.line(&line(fallback));
+                self.line("#endif");
+            }
+            None => self.line(&line(fallback)),
+        }
+    }
+
     fn branch_cond(op: u32) -> Option<&'static str> {
         Some(match op {
             2 => "true",
@@ -3918,7 +3947,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if back.contains_key(&i) {
                 // Evaluate the back-edge condition inside the guard (a skipped branch is not taken).
                 let cond = wave_cull::branch_condition(self, ins, Self::branch_cond(ins.op).unwrap_or("false"));
-                self.line(&format!("tb_c{i} = ({cond});"));
+                let vote = self.exec_vote(ins.op);
+                self.vote_line(vote, &cond, |c| format!("tb_c{i} = ({c});"));
                 if labels.contains(&i) {
                     // A `continue` jumped here: iterate again regardless of the condition.
                     self.line(&format!("tb_c{i} = tb_c{i} || j{i};"));
@@ -4318,7 +4348,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 };
                 if let (Some(c), Some(t)) = (cond, br) {
                     let c = if self.resolve_wave32 { wave_cull::branch_condition(self, ins, &c) } else { c };
-                    self.line(&format!("if ({c}) j{t} = true;"));
+                    let vote = self.exec_vote(ins.op);
+                    self.vote_line(vote, &c, |c| format!("if ({c}) j{t} = true;"));
                 }
                 Ok(())
             }
