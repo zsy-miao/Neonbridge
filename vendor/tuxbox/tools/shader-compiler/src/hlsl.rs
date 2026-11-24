@@ -421,6 +421,9 @@ struct Emitter<'a> {
     /// Words per element in `TBHeapWords` (structured heap buffers); 0 = unused.
     heap_words: u32,
     private_samplers: BTreeMap<usize, u32>,
+    /// Literal sampler sites of a request without a root, bound to the one static
+    /// sampler PSV declares (register, space); see `declared_samplers`.
+    declared_samplers: BTreeMap<usize, (u32, u32)>,
     /// Instructions reading a lane mask as wave data (see `lane_mask_reads`).
     lane_masks: BTreeSet<usize>,
     binding_spaces: BTreeMap<(u32, u32), u32>,
@@ -930,6 +933,33 @@ fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
 /// SFI0 bit 26: the shader indexes SamplerDescriptorHeap.
 fn sampler_heap_indexed(ex: &ShaderExtract) -> bool {
     ex.required_features.is_some_and(|f| f & (1 << 26) != 0)
+}
+
+/// A request without a root binds against the guest root, which must hold the
+/// static samplers the shader declares. When PSV declares exactly one sampler,
+/// every FSSM inlined-static-sampler record names it, and every sampling
+/// instruction uses one literal state, those sites sample that declared register.
+fn declared_samplers(ex: &ShaderExtract) -> BTreeMap<usize, (u32, u32)> {
+    (|| {
+        if ex.root_sig.is_some() || !matches!(ex.stage, Stage::Compute | Stage::Pixel)
+            || ex.required_features.is_some_and(|f| f & (3 << 25) != 0)
+        {
+            return None;
+        }
+        let mut samplers = ex.resources.iter().filter(|r| r.res_type == 1);
+        let sampler = samplers.next()?;
+        if samplers.next().is_some() || sampler.lower != sampler.upper || sampler.space == 32765 {
+            return None;
+        }
+        let mut rows = tuxbox_dxbc::compute_table::records(&ex.fssm)?.filter(|row| row[0] == 0x401).peekable();
+        rows.peek()?;
+        if !rows.all(|row| row[2] == sampler.lower) {
+            return None;
+        }
+        let found = tuxbox_dxbc::inline_sampler::sites(&ex.isa, if ex.stage == Stage::Pixel { 5 } else { 0 })?;
+        (found.descriptors.len() == 1)
+            .then(|| found.sites.keys().map(|&pc| (pc, (sampler.lower, sampler.space))).collect())
+    })().unwrap_or_default()
 }
 
 fn heap_register(ex: &ShaderExtract) -> Option<u8> {
@@ -1645,6 +1675,7 @@ impl<'a> Emitter<'a> {
                     full.into_iter().chain(tuxbox_dxbc::inline_sampler::literal_sites(&ex.isa, visibility))
                         .find(|recovered| recovered.descriptors == private).map(|recovered| recovered.sites)
                 }).unwrap_or_default(),
+            declared_samplers: declared_samplers(ex),
             lane_masks: BTreeSet::new(),
             binding_spaces: BTreeMap::new(),
             mesh_bindings: None,
@@ -1795,7 +1826,39 @@ impl<'a> Emitter<'a> {
                 return Ok((Some(range.range_type), register, range.space));
             }
         }
-        Err(format!("unmapped descriptor at s{sgpr} + {offset:#x}"))
+        // The root ranges do not cover this physical slot: the pipeline root is
+        // rebuilt from the FSSM binding table (runtime compute_table), so bind the
+        // register that table names for it.
+        self.fssm_binding(sgpr, offset, stride)
+            .ok_or_else(|| format!("unmapped descriptor at s{sgpr} + {offset:#x}"))
+    }
+
+    /// The FSSM 1.1 binding record for the resource descriptor at byte `offset`
+    /// of the table in user SGPR `sgpr`: (class, register, space). Records hold
+    /// the class, dword offset, register, shape and location (SGPR in bits 8..16);
+    /// PSV gives the register space. These are the bindings the runtime builds
+    /// reflected root tables from (tuxbox_dxbc::compute_table::bindings).
+    fn fssm_binding(&self, sgpr: u8, offset: u32, stride: u32) -> Option<(Option<u32>, u32, u32)> {
+        if stride != 32 || offset % 32 != 0 {
+            return None;
+        }
+        let mut found = tuxbox_dxbc::compute_table::records(&self.ex.fssm)?.filter_map(|[class, dwords, register, _, location]| {
+            let kind = match class { 0x300 => 0, 0x303 => 1, 0x302 => 2, _ => return None };
+            ((location >> 8) & 0xff == u32::from(sgpr) && u64::from(dwords) * 4 == u64::from(offset)).then_some((kind, register))
+        });
+        let (kind, register) = found.next()?;
+        if found.next().is_some() {
+            return None;
+        }
+        let class = |t: u32| match t { 2 => Some(2), 3..=5 => Some(0), 6..=9 => Some(1), _ => None };
+        let mut spaces = self.ex.resources.iter()
+            .filter(|r| class(r.res_type) == Some(kind) && r.lower <= register && register <= r.upper)
+            .map(|r| r.space);
+        let space = spaces.next()?;
+        if spaces.any(|other| other != space) {
+            return None;
+        }
+        Some((Some(kind), register, space))
     }
 
     /// Standard adjacent P1/P2 pairs consume the rasterizer's interpolant. A shader
@@ -2425,13 +2488,20 @@ impl<'a> Emitter<'a> {
         if kind.is_some() {
             return Ok((kind, slot));
         }
+        let by_record = |em: &mut Self| -> Result<(Option<u32>, u32), String> {
+            let Some((Some(kind), register, space)) = em.fssm_binding(table, offset, 32) else { return Ok((None, slot)) };
+            if em.binding_spaces.insert((kind, register), space).is_some_and(|previous| previous != space) {
+                return Err(format!("descriptor class {kind} register {register} is used in multiple spaces"));
+            }
+            Ok((Some(kind), register))
+        };
         let class = |t: u32| match t { 2 => Some(2), 3..=5 => Some(0), 6..=9 => Some(1), _ => None };
         let mut found = self.ex.resources.iter()
             .filter(|r| r.lower <= slot && slot <= r.upper)
             .filter_map(|r| Some((class(r.res_type)?, r.space)));
-        let Some(first) = found.next() else { return Ok((None, slot)) };
+        let Some(first) = found.next() else { return by_record(self) };
         if found.any(|other| other != first) {
-            return Ok((None, slot));
+            return by_record(self);
         }
         if self.binding_spaces.insert((first.0, slot), first.1).is_some_and(|previous| previous != first.1) {
             return Err(format!("descriptor class {} register {slot} is used in multiple spaces", first.0));
@@ -3065,6 +3135,8 @@ impl<'a> Emitter<'a> {
                             samp_res.push((0, Res::HeapSamplerAt(ss)));
                         } else if let Some((slot, space)) = if let Some(&slot) = self.private_samplers.get(&ins.offset) {
                             Some((slot, 32765))
+                        } else if let Some(&declared) = self.declared_samplers.get(&ins.offset) {
+                            Some(declared)
                         } else if inline_samplers {
                             let word = |n| match sym.get(&(ss + n)) {
                                 Some(Sym::InlineWord(w)) => Some(*w),
