@@ -13,6 +13,7 @@ mod timer;
 mod window;
 mod physical_pages;
 mod pools;
+mod read_commit;
 mod shared_pages;
 mod virtual_memory;
 mod write_watch;

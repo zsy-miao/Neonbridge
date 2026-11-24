@@ -140,6 +140,7 @@ pub(crate) unsafe fn install() {
                 ("GetFileAttributesExW", get_file_attributes_ex_w as *const () as usize),
                 ("SetFileAttributesW", set_file_attributes_w as *const () as usize),
                 ("MoveFileExW", move_file_ex_w as *const () as usize),
+                ("ReadFile", crate::read_commit::read_file as *const () as usize),
             ],
         )
     };
