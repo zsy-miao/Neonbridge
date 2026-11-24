@@ -116,6 +116,32 @@ pub(super) struct Segment {
     prefix: Option<(ID3D12CommandList, ID3D12CommandAllocator)>,
     word: Word,
     target: u64,
+    address: u64,
+}
+
+/// Guest addresses of waits that stalled 2 s (up to 16). Writes recorded or
+/// submitted later to the same 4 KiB page are logged, to tell a missing write
+/// from one queued behind the wait (rebox d69d0da).
+static STALLED: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
+static STALLED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Whether `address` lies on the page of a wait that stalled.
+pub(super) fn on_stalled_page(address: u64) -> bool {
+    let n = STALLED_COUNT.load(Ordering::Relaxed).min(16) as usize;
+    n != 0 && STALLED[..n].iter().any(|a| a.load(Ordering::Relaxed) & !0xfff == address & !0xfff)
+}
+
+/// A recorded write to a stalled page: logged now, and kept on the list so
+/// its submission is logged too.
+pub(super) fn note_write(list: &List, state: &mut super::Recording, what: &str, address: u64, value: u64) {
+    if !on_stalled_page(address) { return; }
+    static LOGGED: AtomicU64 = AtomicU64::new(0);
+    if LOGGED.fetch_add(1, Ordering::Relaxed) < 32 {
+        crate::diagnostics::log_line(format_args!(
+            "{what} {address:#x} = {value:#x} recorded in list {list:p} (thread {}, guest RVA {:#x}), on the page of a stalled GPU memory wait",
+            unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }, crate::survey::title_rva().unwrap_or(0)));
+    }
+    if state.stalled_writes.len() < 8 { state.stalled_writes.push(address); }
 }
 
 pub(super) unsafe extern "system" fn wait_value64(
@@ -184,6 +210,7 @@ pub(super) unsafe extern "system" fn wait_value64(
             prefix,
             word,
             target,
+            address,
         }));
         Ok(())
     })();
@@ -225,8 +252,10 @@ impl Worker {
                             let waited = started.elapsed();
                             if !warned && waited >= Duration::from_secs(2) {
                                 warned = true;
+                                let slot = STALLED_COUNT.fetch_add(1, Ordering::Relaxed) as usize;
+                                if slot < 16 { STALLED[slot].store(job.segment.address, Ordering::Relaxed); }
                                 crate::diagnostics::log_line(format_args!(
-                                    "GPU memory wait for target {:#x} stalled 2 s", job.segment.target
+                                    "GPU memory wait {:#x} >= {:#x} stalled 2 s", job.segment.address, job.segment.target
                                 ));
                             }
                             if waited >= Duration::from_secs(10) {

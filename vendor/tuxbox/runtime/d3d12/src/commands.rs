@@ -79,6 +79,8 @@ struct Recording {
     /// TUXBOX_LIST_RING=1: guest caller RVAs of the latest recording calls,
     /// dumped when the host Close rejects the list.
     ring: std::collections::VecDeque<usize>,
+    /// Writes this list records to the page of a stalled GPU memory wait.
+    stalled_writes: Vec<u64>,
     /// Queries begun and not yet ended, ended at Close: an open query makes
     /// the host Close fail.
     open_queries: Vec<(ID3D12QueryHeap, D3D12_QUERY_TYPE, u32)>,
@@ -596,6 +598,7 @@ unsafe extern "system" fn reset(
         state.scalar_descriptors.clear();
         state.sampled_heaps.clear();
         state.ring.clear();
+        state.stalled_writes.clear();
         state.open_queries.clear();
         state.split_barriers.clear();
         state.error = S_OK;
@@ -1462,6 +1465,7 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
         static FLAGS: std::sync::Once = std::sync::Once::new();
         crate::diagnostics::log_once(&FLAGS, || format!("marker write flags {flags:#x} {reserved:#x} ignored"));
     }
+    memory_wait::note_write(list, &mut state, "marker write", address, u64::from(value));
     let result = (|| -> windows::core::Result<()> {
         let (resource, dest) = unsafe { device::command_buffer_address(parent(&list.parent), address, 4)? };
         if let Some(buffer) = &resource { raytracing::retain(&state, &[buffer])?; }
@@ -1730,6 +1734,15 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             }
             .ok_or(E_INVALIDARG)?;
             let state = recording(list);
+            if !state.stalled_writes.is_empty() {
+                static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                if LOGGED.fetch_add(1, Ordering::Relaxed) < 32 {
+                    crate::diagnostics::log_line(format_args!(
+                        "list {list:p} writing {:x?} (pages of stalled GPU memory waits) submitted on queue {:p} type {} (thread {})",
+                        state.stalled_writes, queue, queue.state.kind.0,
+                        unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }));
+                }
+            }
             if !matches!(state.phase, ListState::Closed)
                 || state.error.is_err()
                 || unsafe { list.native.GetType() } != queue.state.kind
@@ -2121,6 +2134,7 @@ pub(crate) unsafe fn wrap_command_list(
             scalar_descriptors: Default::default(),
             sampled_heaps: Vec::new(),
             ring: std::collections::VecDeque::new(),
+            stalled_writes: Vec::new(),
             open_queries: Vec::new(),
             split_barriers: Vec::new(),
             media: compact.then(|| media::Recording::new(allocator)),
