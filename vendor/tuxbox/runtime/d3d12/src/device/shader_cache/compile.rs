@@ -14,7 +14,11 @@ use std::time::{Duration, Instant};
 /// dropped, while the worker finishes and caches it for the next launch's
 /// prewarm. The title's threads never block on the translator past the budget.
 static WAIT_BUDGET_MS: AtomicI64 = AtomicI64::new(60_000);
-const FRAME_BUDGET_MS: i64 = 500;
+/// test65 fell from 14.6 to 1.6 fps once the game's first scenes bound
+/// pipelines the workers were still compiling (the driver, 565 ms a frame):
+/// the binds spent up to 300 ms of the old 500 ms per frame waiting. 50 ms
+/// keeps frames presenting and drops those draws until the workers finish.
+const FRAME_BUDGET_MS: i64 = 50;
 
 /// A title frame was presented: grant the next frame its wait budget.
 /// TUXBOX_FRAME_WAIT_MS overrides it: lower trades dropped draws (pipelines
