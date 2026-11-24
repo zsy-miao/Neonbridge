@@ -110,16 +110,24 @@ pub fn pixel(shader: &[u8]) -> Option<[u32; 13]> {
 }
 
 fn descriptor(words: [u32; 4], reg: u32, space: u32, visibility: u32) -> Option<[u32; 13]> {
-    let [address, 0xc00000, filters, 0] = words else {
+    // Word 0: clamp x/y/z [8:0], max aniso ratio [11:9], depth compare [14:12].
+    // Word 3: border color type [31:30]; a border color pointer is not representable.
+    let [address, 0xc00000, filters, border] = words else {
         return None;
     };
-    let (filter, aniso) = match (filters, address >> 9) {
+    if address >> 15 != 0 || border & 0x3fff_ffff != 0 || border >> 30 == 3 {
+        return None;
+    }
+    let (filter, aniso) = match (filters, (address >> 9) & 7) {
         (0x14000000, 0) => (0, 1),
         (0x14500000, 0) => (0x14, 1),
         (0x18500000, 0) => (0x15, 1),
         (0x18f00000, 2) => (0x55, 4),
         _ => return None,
     };
+    // SQ_TEX_DEPTH_COMPARE_* is D3D12_COMPARISON_FUNC minus one.
+    let compare = (address >> 12) & 7;
+    let filter = if compare != 0 { filter | 0x80 } else { filter };
     let axis = |shift: u32| match (address >> shift) & 7u32 {
         0 => Some(1),
         2 => Some(3),
@@ -133,8 +141,8 @@ fn descriptor(words: [u32; 4], reg: u32, space: u32, visibility: u32) -> Option<
         axis(6)?,
         0,
         aniso,
-        1,
-        0,
+        compare + 1,
+        border >> 30,
         0,
         12.0_f32.to_bits(),
         reg,
@@ -154,6 +162,16 @@ pub struct InlineSamplers {
 /// compiler may fold several equal samplers to the same state, so a recovered
 /// root uses private slots whose identity comes from the four descriptor words.
 pub fn sites(isa: &[u8], visibility: u32) -> Option<InlineSamplers> {
+    sites_where(isa, visibility, false)
+}
+
+/// Like [`sites`], skipping samplers that are not literal, such as those a
+/// heap-indexed shader loads from the sampler heap.
+pub fn literal_sites(isa: &[u8], visibility: u32) -> Option<InlineSamplers> {
+    sites_where(isa, visibility, true)
+}
+
+fn sites_where(isa: &[u8], visibility: u32, partial: bool) -> Option<InlineSamplers> {
     use std::collections::{BTreeMap, BTreeSet};
     let ops = rdna2::disassemble(isa);
     if ops.len() > 32768 || !matches!(visibility, 0 | 5) {
@@ -252,11 +270,18 @@ pub fn sites(isa: &[u8], visibility: u32) -> Option<InlineSamplers> {
         let Opnd::Sgpr(base) = *op.src.last()? else {
             return None;
         };
-        let mut words = [0; 4];
-        for (n, word) in words.iter_mut().enumerate() {
-            *word = reaching(i, base.checked_add(n as u8)?)?;
+        let words = (|| {
+            let mut words = [0; 4];
+            for (n, word) in words.iter_mut().enumerate() {
+                *word = reaching(i, base.checked_add(n as u8)?)?;
+            }
+            Some(words)
+        })();
+        match words {
+            Some(words) if !partial || descriptor(words, 0, 0, visibility).is_some() => { states.insert(op.offset, words); }
+            None if partial => {}
+            _ => return None,
         }
-        states.insert(op.offset, words);
     }
     let unique: BTreeSet<_> = states.values().copied().collect();
     if unique.is_empty() || unique.len() > 128 {
@@ -335,6 +360,23 @@ pub fn private(shader: &[u8], stage: u32) -> Option<Vec<[u32; 13]>> {
         )?
         .descriptors,
     )
+}
+
+/// Private static samplers for the literal sampler states of a heap-indexed
+/// compute shader, whose other samplers come from the guest sampler heap.
+pub fn heap_compute(shader: &[u8]) -> Option<Vec<[u32; 13]>> {
+    let d = Dxbc::parse(shader).ok()?;
+    let c = d.chunk(b"DXIL")?;
+    let dxil = shader.get(c.offset..c.offset + c.size)?;
+    if word(dxil, 0)? >> 16 != 5 {
+        return None;
+    }
+    let programs = xdat::programs(dxil.get(24..)?).ok()?;
+    let [program] = programs.as_slice() else {
+        return None;
+    };
+    let found = literal_sites(&fssm::decode(program).ok()?.isa, 0)?.descriptors;
+    (!found.is_empty()).then_some(found)
 }
 
 #[cfg(test)]

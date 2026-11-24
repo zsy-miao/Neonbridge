@@ -46,7 +46,9 @@ pub(super) fn reflected(
         && parse_rts0(original.payload()).is_ok_and(|s| s.flags & 0x400 != 0)
         && heap_indexed(shader)
     {
-        return heap_compute(device, original, node);
+        let samplers = parse_rts0(original.payload()).ok().filter(|s| s.static_samplers.is_empty())
+            .and_then(|_| tuxbox_dxbc::inline_sampler::heap_compute(shader)).unwrap_or_default();
+        return heap_compute(device, original, node, &samplers);
     }
     Ok(layout)
 }
@@ -253,16 +255,7 @@ fn reflected_tables(
             });
             desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         }
-        let samplers: Vec<_> = recovered_samplers.into_iter().map(|s| D3D12_STATIC_SAMPLER_DESC {
-            Filter: D3D12_FILTER(s[0] as i32),
-            AddressU: D3D12_TEXTURE_ADDRESS_MODE(s[1] as i32),
-            AddressV: D3D12_TEXTURE_ADDRESS_MODE(s[2] as i32),
-            AddressW: D3D12_TEXTURE_ADDRESS_MODE(s[3] as i32),
-            MipLODBias: f32::from_bits(s[4]), MaxAnisotropy: s[5],
-            ComparisonFunc: D3D12_COMPARISON_FUNC(s[6] as i32), BorderColor: D3D12_STATIC_BORDER_COLOR(s[7] as i32),
-            MinLOD: f32::from_bits(s[8]), MaxLOD: f32::from_bits(s[9]), ShaderRegister: s[10], RegisterSpace: s[11],
-            ShaderVisibility: D3D12_SHADER_VISIBILITY(s[12] as i32),
-        }).collect();
+        let samplers: Vec<_> = recovered_samplers.iter().map(static_sampler).collect();
         if !samplers.is_empty() {
             desc.Anonymous.Desc_1_1.pStaticSamplers = samplers.as_ptr();
             desc.Anonymous.Desc_1_1.NumStaticSamplers = samplers.len() as u32;
@@ -285,6 +278,19 @@ fn reflected_tables(
     }
 }
 
+fn static_sampler(s: &[u32; 13]) -> D3D12_STATIC_SAMPLER_DESC {
+    D3D12_STATIC_SAMPLER_DESC {
+        Filter: D3D12_FILTER(s[0] as i32),
+        AddressU: D3D12_TEXTURE_ADDRESS_MODE(s[1] as i32),
+        AddressV: D3D12_TEXTURE_ADDRESS_MODE(s[2] as i32),
+        AddressW: D3D12_TEXTURE_ADDRESS_MODE(s[3] as i32),
+        MipLODBias: f32::from_bits(s[4]), MaxAnisotropy: s[5],
+        ComparisonFunc: D3D12_COMPARISON_FUNC(s[6] as i32), BorderColor: D3D12_STATIC_BORDER_COLOR(s[7] as i32),
+        MinLOD: f32::from_bits(s[8]), MaxLOD: f32::from_bits(s[9]), ShaderRegister: s[10], RegisterSpace: s[11],
+        ShaderVisibility: D3D12_SHADER_VISIBILITY(s[12] as i32),
+    }
+}
+
 /// The shader indexes ResourceDescriptorHeap (SFI0 bit 25).
 fn heap_indexed(shader: &[u8]) -> bool {
     let Ok(d) = tuxbox_dxbc::Dxbc::parse(shader) else { return false };
@@ -297,7 +303,7 @@ fn heap_indexed(shader: &[u8]) -> bool {
 /// The guest signature plus a root SRV holding the resource index map, which
 /// translated compute shaders read as `t0, space32766` to turn guest heap
 /// indices into resident ones.
-fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32) -> Result<TableLayout> {
+fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32, samplers: &[[u32; 13]]) -> Result<TableLayout> {
     let bytes = original.serialized();
     unsafe {
         let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
@@ -323,6 +329,12 @@ fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32) -> Resu
         });
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        // Literal sampler states in the ISA, as private static samplers in space 32765.
+        let samplers: Vec<_> = samplers.iter().map(|s| static_sampler(s)).collect();
+        if !samplers.is_empty() {
+            desc.Anonymous.Desc_1_1.pStaticSamplers = samplers.as_ptr();
+            desc.Anonymous.Desc_1_1.NumStaticSamplers = samplers.len() as u32;
+        }
         let mut blob = None;
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
