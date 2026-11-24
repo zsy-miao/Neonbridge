@@ -58,7 +58,7 @@ pub(super) mod dsp {
             return;
         }
         let line = format!(
-            "TuxBox chad: last {:.1} s: {} activates, {} deactivates, {} commands completed ({} with silent output for a transform not computed; TUXBOX_CHAD_STRICT=1 refuses them), {} refused, {} invalid",
+            "TuxBox chad: last {:.1} s: {} activates, {} deactivates, {} commands completed ({} with silent output for a transform not computed; TUXBOX_CHAD_STRICT=0 only), {} refused, {} invalid",
             (now - started) as f64 / 1e3, ACTIVATES.swap(0, Relaxed), DEACTIVATES.swap(0, Relaxed),
             SUBMITTED.swap(0, Relaxed), SHORTCUT.swap(0, Relaxed), REFUSED.swap(0, Relaxed), INVALID.swap(0, Relaxed));
         if std::env::var_os("TUXBOX_LOG").is_some_and(|v| v == "stderr") {

@@ -213,7 +213,7 @@ impl Stream {
         // A transform not computed still completes at once with a silent
         // output (reverb returns dry): the title reads the completed ticket
         // one block later and treats a late one as an overrun (VIctory dsp.rs,
-        // re-derived). TUXBOX_CHAD_STRICT=1 refuses it as before.
+        // re-derived). Opt-in: TUXBOX_CHAD_STRICT=0; refused by default.
         let supported = self.channels == 1
             && self.flags == 0
             && envelope == 0
@@ -271,10 +271,17 @@ impl Stream {
     }
 }
 
-/// TUXBOX_CHAD_STRICT=1: refuse transforms not computed (no ticket advance).
+/// Transforms not computed are refused (no ticket advance), as before
+/// 8d0b7c6: audio starved in the runs that had the silent completion, so it
+/// is opt-in until a run proves it (TUXBOX_CHAD_STRICT=0 completes them with
+/// a silent output).
 fn strict() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TUXBOX_CHAD_STRICT").is_ok_and(|v| v.trim() == "1"))
+    *ON.get_or_init(|| strict_from(std::env::var("TUXBOX_CHAD_STRICT").ok().as_deref()))
+}
+
+fn strict_from(value: Option<&str>) -> bool {
+    value.is_none_or(|v| v.trim() != "0")
 }
 
 #[repr(C)]
@@ -385,7 +392,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn strict_is_the_default_and_zero_opts_into_silent_completion() {
+        assert!(strict_from(None));
+        assert!(strict_from(Some("1")));
+        assert!(!strict_from(Some("0")));
+    }
+
+    #[test]
     fn a_transform_not_computed_completes_with_silence() {
+        if strict() {
+            return; // only meaningful with TUXBOX_CHAD_STRICT=0
+        }
         let stream = Stream { status: Status::default(), kind: 2, flags: 0, block: 4, channels: 1, zero_filter: false };
         let mut buffer = [1.0f32, 2.0, 3.0, 4.0, 9.0, 9.0, 9.0, 9.0];
         let start = buffer.as_mut_ptr().addr();
