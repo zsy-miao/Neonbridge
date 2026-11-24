@@ -83,8 +83,11 @@ struct Mip {
 
 #[derive(Default)]
 struct Contents {
-    // An exact copy makes writes to shared pages and all-zero rewrites observable.
-    previous: Vec<Vec<u8>>,
+    // A 64-bit hash of each level's last guest bytes (None: unknown) makes
+    // writes to shared pages and all-zero rewrites observable. test68 kept an
+    // exact copy of every level of its 33000 live textures: host private
+    // commit grew from 3 to 11 GB in blocks of a few MiB.
+    previous: Vec<Option<u64>>,
     uploaded: u64,
     readers: Vec<(ID3D12Fence, u64)>,
     /// When each large level was last read back from guest memory (see
@@ -107,6 +110,34 @@ struct Contents {
 pub(super) fn refresh_read_budget() -> u64 {
     static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MB.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(32)) << 20
+}
+
+/// Textures whose pages another texture had claimed since their last
+/// refresh (each re-reads every level): the refresh log line reports it.
+pub(super) static LOST_CLAIMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A fast 64-bit hash of a level's bytes (four multiply-rotate lanes).
+pub(super) fn level_hash(bytes: &[u8]) -> u64 {
+    const K: [u64; 4] = [0x9e37_79b9_7f4a_7c15, 0xc2b2_ae3d_27d4_eb4f, 0x1656_67b1_9e37_79f9, 0xff51_afd7_ed55_8ccd];
+    let mut lanes = [K[0] ^ bytes.len() as u64, K[1], K[2], K[3]];
+    let mut chunks = bytes.chunks_exact(32);
+    for chunk in &mut chunks {
+        for (i, lane) in lanes.iter_mut().enumerate() {
+            let w = u64::from_le_bytes(chunk[i * 8..i * 8 + 8].try_into().unwrap());
+            *lane = (*lane ^ w).wrapping_mul(K[3]).rotate_left(31);
+        }
+    }
+    let mut tail = [0u8; 32];
+    let rest = chunks.remainder();
+    tail[..rest.len()].copy_from_slice(rest);
+    for (i, lane) in lanes.iter_mut().enumerate() {
+        let w = u64::from_le_bytes(tail[i * 8..i * 8 + 8].try_into().unwrap());
+        *lane = (*lane ^ w ^ rest.len() as u64).wrapping_mul(K[3]).rotate_left(31);
+    }
+    let mut h = lanes[0] ^ lanes[1].rotate_left(17) ^ lanes[2].rotate_left(34) ^ lanes[3].rotate_left(51);
+    h ^= h >> 33;
+    h = h.wrapping_mul(K[3]);
+    h ^ (h >> 29)
 }
 
 fn big_snapshot(size: u64, last: Option<std::time::Instant>, unchanged: Option<bool>) -> bool {
@@ -272,7 +303,7 @@ impl Drop for Texture {
             // xcl remove(): the newest covered older texture is mapped again
             // and re-uploaded whole.
             if pages::remap(older) {
-                lock(&older.contents).previous.iter_mut().for_each(Vec::clear);
+                lock(&older.contents).previous.iter_mut().for_each(|p| *p = None);
                 if older.superseded.swap(false, Ordering::Relaxed) {
                     pool::superseded(older.bytes, false);
                 }
@@ -502,7 +533,7 @@ impl Texture {
             });
         }
         let contents = Mutex::new(Contents {
-            previous: vec![Vec::new(); mips.len()],
+            previous: vec![None; mips.len()],
             readers,
             ..Default::default()
         });
@@ -593,13 +624,27 @@ impl Texture {
         for other in previous.iter().flatten() {
             inherited.extend(lock(&other.contents).readers.iter().cloned());
         }
-        let lost = previous.is_some();
+        // A texture of the same description at the same address (the title
+        // recreating it) lays the shared bytes out identically: nothing to
+        // upload again. test68 re-read thousands of levels a refresh as such
+        // pairs took the pages from each other. TUXBOX_CLAIM_SAME_KEEP=0 always
+        // re-reads.
+        let same = |other: &Arc<Texture>| {
+            let (a, b) = (&self.desc, &other.desc);
+            other.address == self.address && a.Dimension == b.Dimension && a.Width == b.Width && a.Height == b.Height
+                && a.DepthOrArraySize == b.DepthOrArraySize && a.MipLevels == b.MipLevels && a.Format == b.Format
+                && a.Layout == b.Layout && a.SampleDesc.Count == b.SampleDesc.Count
+        };
+        let keep = crate::env_toggle!("TUXBOX_CLAIM_SAME_KEEP") != Some("0");
+        let lost = previous.as_ref().is_some_and(|others| !keep || others.is_empty() || !others.iter().all(same));
         drop(previous);
         let mut contents = lock(&self.contents);
         if lost {
-            contents.previous.iter_mut().for_each(Vec::clear);
-            contents.readers.extend(inherited);
+            LOST_CLAIMS.fetch_add(1, Ordering::Relaxed);
+            contents.previous.iter_mut().for_each(|p| *p = None);
         }
+        // A later upload over the shared pages still waits for their readers.
+        contents.readers.extend(inherited);
         let mut skipped = 0;
         if contents.big_at.len() < self.mips.len() {
             contents.big_at.resize(self.mips.len(), None);
@@ -607,7 +652,7 @@ impl Texture {
         for (level, mip) in self.mips.iter().enumerate() {
             let range = self.address + mip.source.start..self.address + mip.source.end;
             // No CPU write since the last compare: the snapshot would match.
-            if !contents.previous[level].is_empty() && watch.is_some_and(|w| w.unchanged(range.clone())) {
+            if contents.previous[level].is_some() && watch.is_some_and(|w| w.unchanged(range.clone())) {
                 skipped += 1;
                 continue;
             }
@@ -634,14 +679,16 @@ impl Texture {
                 contents.big_at[level] = Some(std::time::Instant::now());
             }
             if !self.snapshot_mip(mip, scratch)? {
-                contents.previous[level].clear();
+                contents.previous[level] = None;
                 continue;
             }
-            if *scratch != contents.previous[level] {
+            let hash = level_hash(scratch);
+            if contents.previous[level] != Some(hash) {
                 changes.push(upload::Change {
                     texture: self.clone(),
                     level,
                     bytes: std::mem::take(scratch),
+                    hash,
                 });
             }
         }

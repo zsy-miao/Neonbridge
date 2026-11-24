@@ -10,6 +10,8 @@ pub(super) struct Change {
     pub(super) texture: Arc<Texture>,
     pub(super) level: usize,
     pub(super) bytes: Vec<u8>,
+    /// `level_hash` of `bytes`
+    pub(super) hash: u64,
 }
 
 // These COM objects must survive the asynchronous copy, even if the guest
@@ -142,8 +144,8 @@ impl Transfer {
         self.refreshes += 1;
         if matches!(self.refreshes, 1 | 100 | 1000 | 10000 | 100000) {
             crate::diagnostics::log_line(format_args!(
-                "placed textures refresh #{}: {skipped} of {mips} mips skipped by write watch (unwritten), {} changed{}",
-                self.refreshes, changes.len(), if watch.is_none() { "; no write watch (TUXBOX_PLACED_WATCH=0 or xmem without TuxBoxTakeWriteWatch)" } else { "" }));
+                "placed textures refresh #{}: {skipped} of {mips} mips skipped by write watch (unwritten) or deferred, {} changed, {} textures so far re-read after another claimed their pages{}",
+                self.refreshes, changes.len(), super::LOST_CLAIMS.load(std::sync::atomic::Ordering::Relaxed), if watch.is_none() { "; no write watch (TUXBOX_PLACED_WATCH=0 or xmem without TuxBoxTakeWriteWatch)" } else { "" }));
         }
         if changes.is_empty() {
             return Ok(());
@@ -189,7 +191,11 @@ impl Transfer {
         }
         for change in changes {
             let mut state = lock(&change.texture.contents);
-            self.scratch = std::mem::replace(&mut state.previous[change.level], change.bytes);
+            state.previous[change.level] = Some(change.hash);
+            // Keep the largest buffer for the next snapshot; the rest are freed.
+            if change.bytes.capacity() > self.scratch.capacity() {
+                self.scratch = change.bytes;
+            }
             state.uploaded = tick;
             state.readers.clear();
         }

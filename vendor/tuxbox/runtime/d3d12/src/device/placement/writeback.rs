@@ -141,7 +141,7 @@ impl Readback {
                 // region covers this mip. Recheck on every publication, since
                 // the guest can commit backing after creating the texture.
                 if region.0 - address >= size && !mapped_region(&region.1) {
-                    state.previous[level].clear();
+                    state.previous[level] = None;
                     continue;
                 }
                 tiled.clear();
@@ -186,7 +186,7 @@ impl Readback {
                 }
                 // Include padding from guest memory in the comparison baseline:
                 // upload::refresh compares the entire physical mip snapshot.
-                texture.snapshot_mip(mip, &mut state.previous[level])?;
+                state.previous[level] = texture.snapshot_mip(mip, &mut tiled)?.then(|| super::level_hash(&tiled));
             }
             Ok(())
         });
