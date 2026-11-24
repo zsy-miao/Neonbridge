@@ -20,9 +20,9 @@
 //!
 //! TUXBOX_MONITOR=primary|nearest|N picks the monitor (default: the primary
 //! for a default position, else the one nearest the requested position; N is
-//! the 0-based enumeration index). The process is made per-monitor DPI aware
+//! the 0-based enumeration index). The process can be made per-monitor DPI aware
 //! (v2) before any window exists so rcMonitor is in real pixels
-//! (TUXBOX_DPI_AWARE=0 skips it; rebox 49e3f2a). TUXBOX_CLIP_CURSOR=1 confines
+//! (opt-in with TUXBOX_DPI_AWARE=1; rebox 49e3f2a). TUXBOX_CLIP_CURSOR=1 confines
 //! the cursor to the client area while the window is active.
 
 use std::ffi::c_void;
@@ -99,7 +99,9 @@ unsafe fn target_monitor(x: i32, y: i32) -> H {
 
 /// Per-monitor DPI awareness v2, set before the title creates a window.
 unsafe fn make_dpi_aware() {
-    if std::env::var("TUXBOX_DPI_AWARE").is_ok_and(|v| v.trim() == "0") {
+    // Opt-in (TUXBOX_DPI_AWARE=1) until A/B runs clear it: with it, the title
+    // stopped drawing (clears only) in the borderless runs.
+    if !std::env::var("TUXBOX_DPI_AWARE").is_ok_and(|v| v.trim() == "1") {
         return;
     }
     let user32: Vec<u16> = "user32.dll\0".encode_utf16().collect();
@@ -113,7 +115,7 @@ unsafe fn make_dpi_aware() {
         // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2; fails harmlessly when the
         // manifest or the title already chose a mode.
         let ok = set(-4) != 0;
-        log(&format!("window: per-monitor DPI awareness v2 {} (TUXBOX_DPI_AWARE=0 skips)", if ok { "set" } else { "already chosen" }));
+        log(&format!("window: per-monitor DPI awareness v2 {} (TUXBOX_DPI_AWARE=1)", if ok { "set" } else { "already chosen" }));
     }
 }
 
