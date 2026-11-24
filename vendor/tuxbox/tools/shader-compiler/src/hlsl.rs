@@ -120,6 +120,10 @@ enum Sym {
     HeapSampler(DirectSampler),
     HeapOffset,
     HeapDescriptor(u32),
+    /// A byte offset (`index << 4`) into the guest sampler heap, from shader data.
+    SamplerHeapOffset,
+    /// A sampler from the guest sampler heap whose index the s_load stored in this register.
+    HeapSamplerAt,
     InlineWord(u32),
     Table(u8),
     Desc { table: u8, off: u32, k: u32 },
@@ -154,6 +158,10 @@ enum Res {
     Tex(u32, u32), // slot, dim
     Samp(u32),
     HeapSampler(DirectSampler),
+    /// SamplerDescriptorHeap[s<n>]: index stored by the fetching s_load.
+    HeapSamplerAt(u16),
+    /// s_load of a sampler-heap descriptor at byte offset s<n>.
+    SamplerHeapLoad(u16),
     Uav(u32, u32), // slot, dim
     Buf(u32, bool), // slot, is_uav (structured buffer)
     Raw(u32, bool), // slot, is_uav (byte-address buffer)
@@ -841,6 +849,11 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<bool, String> {
 /// CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED). The console ABI places it after the root
 /// parameters: one SGPR per table, two per root descriptor and one per
 /// constant (compute: s4 + 2 tables + 4 constants = s10).
+/// SFI0 bit 26: the shader indexes SamplerDescriptorHeap.
+fn sampler_heap_indexed(ex: &ShaderExtract) -> bool {
+    ex.required_features.is_some_and(|f| f & (1 << 26) != 0)
+}
+
 fn heap_register(ex: &ShaderExtract) -> Option<u8> {
     use crate::meta::RootParamKind;
     let root = ex.root_sig.as_ref()?;
@@ -2535,6 +2548,8 @@ impl<'a> Emitter<'a> {
                         };
                         if let Some(index) = entry.and_then(|n| sampler_heap::index(self.ex, n)) {
                             sym.insert(d, Sym::SamplerOffset(index));
+                        } else if sampler_heap_indexed(self.ex) {
+                            sym.insert(d, Sym::SamplerHeapOffset);
                         } else { sym.remove(&d); }
                         written.insert(d);
                     }
@@ -2631,12 +2646,20 @@ impl<'a> Emitter<'a> {
                         sym.insert(2000 + *v as u16, Sym::HeapOffset);
                     }
                 }
+                Enc::Vop2 | Enc::Vop3
+                    if sampler_heap_indexed(self.ex) && ins.mnemonic == "v_lshlrev_b32"
+                        && ins.src.first() == Some(&Opnd::ConstInt(4)) =>
+                {
+                    if let Some(Opnd::Vgpr(v)) = ins.dst.first() {
+                        sym.insert(2000 + *v as u16, Sym::SamplerHeapOffset);
+                    }
+                }
                 Enc::Vop1 if ins.mnemonic == "v_readfirstlane_b32" => {
                     let source = match ins.src.first() { Some(Opnd::Vgpr(v)) => sym.get(&(2000 + *v as u16)).copied(), _ => None };
                     let code = source == Some(Sym::Code);
                     if let Some(d) = ins.dst.first().and_then(sg) {
-                        if source == Some(Sym::HeapOffset) {
-                            sym.insert(d, Sym::HeapOffset);
+                        if matches!(source, Some(Sym::HeapOffset | Sym::SamplerHeapOffset)) {
+                            sym.insert(d, source.unwrap());
                         } else if code {
                             sym.insert(d, Sym::Code);
                         } else {
@@ -2715,6 +2738,18 @@ impl<'a> Emitter<'a> {
                                 sym.insert(d, Sym::HeapSampler(index));
                                 continue;
                             }
+                        }
+                        // The guest sampler heap pointer is a user SGPR the shader never writes.
+                        if sym.get(&soff) == Some(&Sym::SamplerHeapOffset) && n == 4 && ins.aux.imm == 0
+                            && sym.get(&b).is_none() && !written.contains(&b)
+                        {
+                            for k in 0..4 {
+                                sym.remove(&(d + k));
+                                written.insert(d + k);
+                            }
+                            sym.insert(d, Sym::HeapSamplerAt);
+                            self.res.insert(idx, vec![Res::SamplerHeapLoad(soff)]);
+                            continue;
                         }
                         return Err(format!("s_load at {:#x}: dynamic soffset unsupported", ins.offset));
                     }
@@ -2874,6 +2909,9 @@ impl<'a> Emitter<'a> {
                         } else if let Some(Sym::HeapSampler(index)) = sym.get(&ss) {
                             self.uses_heap_sampler = true;
                             samp_res.push((0, Res::HeapSampler(*index)));
+                        } else if sym.get(&ss) == Some(&Sym::HeapSamplerAt) {
+                            self.uses_heap_sampler = true;
+                            samp_res.push((0, Res::HeapSamplerAt(ss)));
                         } else if let Some((slot, space)) = if let Some(&slot) = self.private_samplers.get(&ins.offset) {
                             Some((slot, 32765))
                         } else if inline_samplers {
@@ -4235,6 +4273,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             Enc::Smem if self.packed.is_some() => self.emit_packed_load(idx, ins),
             Enc::Smem => {
                 if ins.op <= 4 {
+                    if let Some(Res::SamplerHeapLoad(offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
+                        let value = ssrc_name(u32::from(offset))?;
+                        self.regs.insert(value.clone());
+                        let dst = d.ok_or("missing sampler descriptor destination")?;
+                        self.touch(&dst);
+                        self.ws(&dst, &format!("({value} >> 4)"))?;
+                        return Ok(());
+                    }
                     if let Some(Res::HeapLoad(offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
                         let value = ssrc_name(u32::from(offset))?;
                         self.regs.insert(value.clone());
@@ -6635,7 +6681,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         let sslot = match rs.get(1) {
             Some(Res::Samp(s)) => Some(*s),
-            Some(Res::HeapSampler(_)) => None,
+            Some(Res::HeapSampler(_) | Res::HeapSamplerAt(_)) => None,
             _ => return Err("image op without sampler unsupported".into()),
         };
         // RDNA2 sample/gather family. Opcode = family base (0x20 sample, 0x40 gather4) +
@@ -6773,6 +6819,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let ty = if cmp { "SamplerComparisonState" } else { "SamplerState" };
             self.line(&format!("{ty} {name} = SamplerDescriptorHeap[tb_index{}_{}.{}];",
                 key.register, key.space, XYZW[key.component as usize]));
+            name
+        } else if let Some(Res::HeapSamplerAt(reg)) = rs.get(1).copied() {
+            let name = format!("tb_sampler{idx}");
+            let ty = if cmp { "SamplerComparisonState" } else { "SamplerState" };
+            self.regs.insert(format!("s{reg}"));
+            self.line(&format!("{ty} {name} = SamplerDescriptorHeap[NonUniformResourceIndex(s{reg})];"));
             name
         } else if let Some(s) = sslot {
             if cmp { format!("scmp{s}") } else { format!("samp{s}") }
