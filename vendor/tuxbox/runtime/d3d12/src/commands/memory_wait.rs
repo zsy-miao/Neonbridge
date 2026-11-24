@@ -138,10 +138,18 @@ pub(super) unsafe extern "system" fn wait_value64(
             return Ok(());
         }
         if state.prefix.in_body {
-            crate::diagnostics::recording_error(format_args!(
-                "GPU memory wait after rendering commands"
-            ));
-            return Err(E_NOTIMPL.into());
+            // Waits are honoured only at a native list boundary. Failing here
+            // rejected the whole list (black frames); dropping the wait keeps
+            // the rendering and only loosens ordering with the signalling queue.
+            static SKIPPED: AtomicU64 = AtomicU64::new(0);
+            let n = SKIPPED.fetch_add(1, Ordering::Relaxed);
+            if n < 4 || (n + 1).is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "GPU memory wait {address:#x} >= {target:#x} after rendering commands skipped ({} so far)",
+                    n + 1
+                ));
+            }
+            return Ok(());
         }
         state
             .prefix

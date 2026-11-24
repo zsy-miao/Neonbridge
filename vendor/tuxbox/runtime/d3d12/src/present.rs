@@ -169,13 +169,27 @@ impl SwapChain {
             if !self.window.is_open() {
                 return Err(DXGI_ERROR_ACCESS_LOST.into());
             }
-            self.window.keep_fitted(self.width, self.height);
             if u64::from(self.width) != desc.Width
                 || self.height != desc.Height
                 || self.format != desc.Format
             {
-                return Err(E_NOTIMPL.into());
+                // The title changed its presented size or format (xcl #711):
+                // retire every frame, release back-buffer references, resize.
+                let width = u32::try_from(desc.Width).map_err(|_| E_INVALIDARG)?;
+                for frame in &mut self.frames {
+                    wait_for(&self.fence, frame.retire)?;
+                    frame.source = None;
+                }
+                self.chain.ResizeBuffers(0, width, desc.Height, desc.Format, DXGI_SWAP_CHAIN_FLAG(0))?;
+                crate::diagnostics::log_line(format_args!(
+                    "presentation resized {}x{} fmt={} -> {width}x{} fmt={}",
+                    self.width, self.height, self.format.0, desc.Height, desc.Format.0
+                ));
+                self.width = width;
+                self.height = desc.Height;
+                self.format = desc.Format;
             }
+            self.window.keep_fitted(self.width, self.height);
             // The maximum fence value reports device removal and must stay reserved.
             let next_value = self.next.checked_add(1).ok_or(E_FAIL)?;
             let index = self.chain.GetCurrentBackBufferIndex();
