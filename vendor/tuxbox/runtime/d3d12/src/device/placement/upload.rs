@@ -134,8 +134,9 @@ impl Transfer {
             &self.watch
         });
         let (mut skipped, mut mips) = (0, 0);
+        let mut budget = super::refresh_read_budget();
         for texture in textures {
-            skipped += texture.changed(&mut changes, &mut self.scratch, watch)?;
+            skipped += texture.changed(&mut changes, &mut self.scratch, watch, &mut budget)?;
             mips += texture.mips.len();
         }
         self.refreshes += 1;

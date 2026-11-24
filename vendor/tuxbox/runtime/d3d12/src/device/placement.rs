@@ -98,14 +98,22 @@ struct Contents {
 /// in full whenever the texture lost its pages to another one, and the title
 /// had a 5808x5808 texture, hundreds of MiB a level, with a 1 GiB host
 /// allocation appearing as private commit grew 6 GB. A level larger than
-/// TUXBOX_SNAPSHOT_BIG_MB (64) is read again only when the write watch saw a
+/// TUXBOX_SNAPSHOT_BIG_MB (16) is read again only when the write watch saw a
 /// CPU write in it, or none was ever read, and at most every
-/// TUXBOX_SNAPSHOT_BIG_MS (500); 0 MB reads every level every time.
+/// TUXBOX_SNAPSHOT_BIG_MS (500); 0 MB reads every level every time. test67
+/// froze the same way with no level over 64 MiB, and its write watch skipped
+/// no level in any refresh, so each refresh also reads back at most
+/// TUXBOX_REFRESH_READ_MB (32) of levels; the rest wait for a later one.
+pub(super) fn refresh_read_budget() -> u64 {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MB.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(32)) << 20
+}
+
 fn big_snapshot(size: u64, last: Option<std::time::Instant>, unchanged: Option<bool>) -> bool {
     use std::sync::OnceLock;
     static LIMITS: OnceLock<(u64, u64)> = OnceLock::new();
     let (mb, ms) = *LIMITS.get_or_init(|| (
-        crate::env_toggle!("TUXBOX_SNAPSHOT_BIG_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(64),
+        crate::env_toggle!("TUXBOX_SNAPSHOT_BIG_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(16),
         crate::env_toggle!("TUXBOX_SNAPSHOT_BIG_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(500),
     ));
     if mb == 0 || size <= mb << 20 {
@@ -576,6 +584,7 @@ impl Texture {
         changes: &mut Vec<upload::Change>,
         scratch: &mut Vec<u8>,
         watch: Option<&watch::Watch>,
+        budget: &mut u64,
     ) -> Result<usize> {
         // Another texture over the same span bytes wrote them since this one
         // did: wait for its readers and upload every level again.
@@ -607,6 +616,20 @@ impl Texture {
                 skipped += 1;
                 continue;
             }
+            // The first level of a refresh always reads (progress); later ones
+            // stop at the budget (0: unlimited) and are read next time.
+            let limit = refresh_read_budget();
+            if limit != 0 && *budget != limit && size > *budget {
+                static DEFERRED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = DEFERRED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "placed textures: a {} KiB level deferred to a later refresh, over its read-back budget ({n} so far; TUXBOX_REFRESH_READ_MB=0 reads all)", size >> 10));
+                }
+                skipped += 1;
+                continue;
+            }
+            *budget = budget.saturating_sub(size);
             if size > 1 << 20 {
                 contents.big_at[level] = Some(std::time::Instant::now());
             }
