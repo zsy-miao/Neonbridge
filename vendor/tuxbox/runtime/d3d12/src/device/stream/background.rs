@@ -761,6 +761,17 @@ fn promote(slot: &Arc<Upgrade>) {
     if slot.built.get().is_some() || slot.failed.load(Ordering::Relaxed) || !priority() {
         return;
     }
+    {
+        // In the compile pool: ahead of the prefetches there, and no longer one.
+        let mut q = COMPILE.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = q.iter().position(|(j, p)| *p && Arc::ptr_eq(&j.slot, slot))
+            && let Some((job, _)) = q.remove(at)
+        {
+            let first = q.iter().position(|(_, p)| *p).unwrap_or(q.len());
+            q.insert(first, (job, false));
+            return;
+        }
+    }
     let mut g = JOBS.0.lock().unwrap_or_else(|e| e.into_inner());
     let Some(jobs) = g.as_mut() else { return };
     if let Some(at) = jobs.created.iter().position(|j| Arc::ptr_eq(&j.slot, slot))
@@ -869,10 +880,15 @@ fn send(job: Job, bound: bool) {
                     crate::device::shader_cache::wait_unbounded();
                     // Below the title's own loading and recording threads.
                     worker_priority();
+                    // Ready workers wait only briefly on the translator.
+                    crate::device::shader_cache::patience(handoff_wait());
                     loop {
                         let (job, prefetch) = next_job();
                         PREFETCH.with(|p| p.set(prefetch));
+                        HANDING.with(|h| h.set(handoff_wait().map(|_| prefetch)));
+                        let _ = crate::device::shader_cache::take_missed();
                         build(job);
+                        HANDING.with(|h| h.set(None));
                         PREFETCH.with(|p| p.set(false));
                     }
                 });
@@ -897,7 +913,99 @@ fn send(job: Job, bound: bool) {
     ready.notify_one();
 }
 
+/// OpenScarlett-OCE f8f5b79/e301ed9's tiered pools (the idea, re-derived;
+/// AGPL, nothing copied): our ready workers waited unbounded on the
+/// translator, so two uncached big programs held both workers for tens of
+/// seconds and every pipeline behind them, cached or not, waited too (the
+/// title's watchdog kills). A ready worker now waits on one translator
+/// request at most TUXBOX_PIPELINE_HANDOFF_MS (default 150) and then hands
+/// the pipeline to a below-normal compile pool (TUXBOX_COMPILE_WORKERS,
+/// default 2) that waits as long as the translation takes. The translation
+/// keeps running in the launcher meanwhile. A build a title thread waits on
+/// stays on its worker. TUXBOX_PIPELINE_HANDOFF_MS=0 off.
+fn handoff_wait() -> Option<std::time::Duration> {
+    let ms = crate::env_toggle!("TUXBOX_PIPELINE_HANDOFF_MS").map_or(Some(150), |v| v.trim().parse::<u64>().ok());
+    ms.filter(|&ms| ms > 0).map(std::time::Duration::from_millis)
+}
+
+/// Pipelines whose translations were not ready, and whether each is a prefetch.
+static COMPILE: (Mutex<std::collections::VecDeque<(Job, bool)>>, std::sync::Condvar) =
+    (Mutex::new(std::collections::VecDeque::new()), std::sync::Condvar::new());
+
+fn hand_off(job: Job, prefetch: bool) {
+    static STARTED: OnceLock<bool> = OnceLock::new();
+    let started = *STARTED.get_or_init(|| {
+        let workers = crate::env_toggle!("TUXBOX_COMPILE_WORKERS")
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .map_or(2, |n| n.min(16));
+        crate::diagnostics::log_line(format_args!(
+            "compile pool: {workers} workers for pipelines whose translation is not ready (TUXBOX_COMPILE_WORKERS=N; TUXBOX_PIPELINE_HANDOFF_MS=0 off)"));
+        let mut any = false;
+        for i in 0..workers {
+            let spawned = std::thread::Builder::new()
+                .name(format!("tuxbox-compile-{i}"))
+                .stack_size(crate::big_stack::STACK_BYTES)
+                .spawn(move || {
+                    WORKER.with(|w| w.set(true));
+                    crate::big_stack::mark_big();
+                    crate::device::shader_cache::wait_unbounded();
+                    worker_priority();
+                    loop {
+                        let (lock, ready) = &COMPILE;
+                        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+                        let (job, prefetch) = loop {
+                            if let Some(next) = q.pop_front() {
+                                break next;
+                            }
+                            q = ready.wait(q).unwrap_or_else(|e| e.into_inner());
+                        };
+                        drop(q);
+                        PREFETCH.with(|p| p.set(prefetch));
+                        build(job);
+                        PREFETCH.with(|p| p.set(false));
+                    }
+                });
+            any |= spawned.is_ok();
+        }
+        any
+    });
+    if !started {
+        // No compile pool: this worker keeps the job, first in line, and
+        // waits on it unbounded from now on, as before.
+        crate::device::shader_cache::patience(None);
+        let (lock, ready) = &JOBS;
+        let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
+        g.get_or_insert_with(Default::default).bound.push_front(job);
+        drop(g);
+        ready.notify_one();
+        return;
+    }
+    let (lock, ready) = &COMPILE;
+    let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+    // A bound pipeline goes ahead of prefetches.
+    if prefetch {
+        q.push_back((job, true));
+    } else {
+        let at = q.iter().position(|(_, p)| *p).unwrap_or(q.len());
+        q.insert(at, (job, false));
+    }
+    let queued = q.len();
+    drop(q);
+    ready.notify_one();
+    static HANDED: AtomicU64 = AtomicU64::new(0);
+    let n = HANDED.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "background pipelines: a {} pipeline whose translation is not ready went to the compile pool ({queued} there, {n} so far; TUXBOX_PIPELINE_HANDOFF_MS=0 off)",
+            if prefetch { "prefetched" } else { "bound" }));
+    }
+}
+
 thread_local! {
+    /// Set on a ready worker while it builds a job: Some(prefetch) when a
+    /// translator miss hands the job to the compile pool.
+    static HANDING: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     /// This title thread is building a stolen job (see build_here).
     static STEALING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -933,6 +1041,14 @@ fn build(mut job: Job) {
             Some(proxy) if !nulled => {
                 let _ = job.slot.built.set(Built(proxy));
                 &MADE
+            }
+            _ if let Some(prefetch) = HANDING.with(|h| h.get())
+                && crate::device::shader_cache::take_missed() =>
+            {
+                // Its translation is still being made: the compile pool waits
+                // for it, and this worker goes on to pipelines that are ready.
+                hand_off(job, prefetch);
+                return;
             }
             _ if STEALING.with(|s| s.get()) && crate::device::shader_cache::take_missed() => {
                 // Out of time, not untranslatable: back to the workers, first in line.

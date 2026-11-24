@@ -42,6 +42,9 @@ thread_local! {
     /// A title thread building a pipeline it waits on (the compute steal)
     /// waits for the translator until this instant instead of the budget.
     static DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// A ready pipeline worker waits this long on one translator request (or
+    /// a busy bucket) before it hands the pipeline to the compile pool.
+    static PATIENCE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
     /// Why this thread's last request returned no translation.
     static REASON: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
     /// The key of this thread's request in progress, and the (key, reason)
@@ -76,6 +79,16 @@ fn urged() -> bool {
 /// Sets (or clears) this thread's translator deadline; returns the previous one.
 pub(crate) fn wait_until(deadline: Option<Instant>) -> Option<Instant> {
     DEADLINE.with(|d| d.replace(deadline))
+}
+
+/// Sets (or clears) how long this worker waits on one translator request
+/// before giving up as missed; returns the previous value.
+pub(crate) fn patience(wait: Option<Duration>) -> Option<Duration> {
+    PATIENCE.with(|p| p.replace(wait))
+}
+
+fn out_of_patience(since: Instant) -> bool {
+    PATIENCE.with(|p| p.get()).is_some_and(|p| since.elapsed() >= p)
 }
 
 /// Why the last request on this thread returned no translation ("" if none failed).
@@ -279,10 +292,21 @@ fn request(
     // Rather than giving up at once (a dropped draw, rebox c86c310's idea), it
     // first polls the bucket while the frame's wait budget lasts, so the wait
     // stays bounded by the same budget as the translator wait below.
+    // A ready pipeline worker (PATIENCE) must not sit behind a compile-pool
+    // thread holding the bucket for a long translation: it polls the bucket
+    // up to its patience and then hands its pipeline on.
+    let patient = PATIENCE.with(|p| p.get()).is_some();
+    let polled = Instant::now();
     let mut busy = LOCKS[bucket].try_lock();
     while matches!(busy, Err(std::sync::TryLockError::WouldBlock))
-        && !UNBOUNDED.with(|u| u.get())
-        && (if budgeted() { WAIT_BUDGET_MS.fetch_sub(1, Ordering::Relaxed) > 0 } else { !past_deadline() })
+        && (!UNBOUNDED.with(|u| u.get()) || patient)
+        && (if patient {
+            !out_of_patience(polled)
+        } else if budgeted() {
+            WAIT_BUDGET_MS.fetch_sub(1, Ordering::Relaxed) > 0
+        } else {
+            !past_deadline()
+        })
     {
         std::thread::sleep(Duration::from_millis(1));
         busy = LOCKS[bucket].try_lock();
@@ -291,6 +315,11 @@ fn request(
         Ok(guard) => guard,
         Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
         Err(std::sync::TryLockError::WouldBlock) => {
+            if patient {
+                MISSED.with(|m| m.set(true));
+                reason("translator bucket busy past the ready worker's wait (handed to the compile pool)");
+                return None;
+            }
             if !UNBOUNDED.with(|u| u.get()) && crate::env_toggle!("TUXBOX_SHADER_LOCK_SKIP") != Some("0") {
                 MISSED.with(|m| m.set(true));
                 reason("translator bucket busy past the wait budget");
@@ -373,6 +402,12 @@ fn request(
         if past_deadline() {
             MISSED.with(|m| m.set(true));
             reason("translator still busy at the title wait deadline");
+            return None;
+        }
+        // A title thread waiting on this build keeps it here (hurry/urge target this thread).
+        if out_of_patience(start) && !urged() {
+            MISSED.with(|m| m.set(true));
+            reason("translator still busy past the ready worker's wait (handed to the compile pool)");
             return None;
         }
         if budgeted() && WAIT_BUDGET_MS.fetch_sub(25, Ordering::Relaxed) <= 0 {
