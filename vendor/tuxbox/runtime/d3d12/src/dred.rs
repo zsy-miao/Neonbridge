@@ -203,7 +203,20 @@ static SELECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// SDK is chosen with ID3D12SDKConfiguration::SetSDKVersion, which works only
 /// before D3D12Core loads and only with Windows Developer Mode on. On success the
 /// normal D3D12CreateDevice makes the debug device. Call first in device creation.
+///
+/// test91: SetSDKVersion succeeded, then D3D12CreateDevice failed
+/// 0x887E0003 (D3D12_ERROR_INVALID_REDIST) and the title died on WARP. The
+/// choice is process-wide and cannot be taken back, so it now needs
+/// TUXBOX_D3D12_SDK_GLOBAL=1 as well; otherwise only the device factory is
+/// tried, whose failure leaves the normal device working.
+pub(crate) fn sdk_selected() -> bool {
+    SELECTED.load(std::sync::atomic::Ordering::Acquire)
+}
+
 pub(crate) fn select_sdk() {
+    if std::env::var("TUXBOX_D3D12_SDK_GLOBAL").map_or(true, |v| v.trim() != "1") {
+        return;
+    }
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     static ONCE: std::sync::Once = std::sync::Once::new();
     let Ok(path) = std::env::var("TUXBOX_D3D12_SDK") else { return };

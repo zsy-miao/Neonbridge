@@ -1277,6 +1277,13 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
         Ok(native) => native,
         // No usable hardware device: the WARP software rasterizer, slow but
         // running (TUXBOX_WARP=0 fails as before).
+        // A device refused under the Agility SDK (test91: INVALID_REDIST) is
+        // the SDK's fault, and the title dies on WARP: report it instead.
+        Err(error) if crate::dred::sdk_selected() => {
+            crate::diagnostics::log_line(format_args!(
+                "D3D12CreateDevice failed {:?} under the Agility SDK chosen by SetSDKVersion; not falling back to WARP. Unset TUXBOX_D3D12_SDK_GLOBAL (or TUXBOX_D3D12_SDK)", error.code()));
+            return error.code();
+        }
         Err(error) => match adapters::warp() {
             Some(software) => {
                 crate::diagnostics::log_line(format_args!("D3D12CreateDevice failed {:?}; falling back to WARP", error.code()));
