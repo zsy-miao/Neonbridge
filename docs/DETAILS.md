@@ -132,6 +132,7 @@ These are in the vendored TuxBox provider:
   - One thread opens a given range as a heap at a time; the rest take its heap (`TUXBOX_IMPORT_SINGLE=0` off).
   - An import over pages from more than one OS allocation goes straight to the shadow copy (`TUXBOX_IMPORT_PRECHECK=0` asks the driver), refused ranges are remembered by page for about 1 s (`TUXBOX_REFUSED_PAGES=0` off), and the reservation walk is bounded (`TUXBOX_RESERVATION_WALK_ALL=1` walks to the end).
   - A read-only shadow (an address SRV, or the CBV fallback) over title pages that can't be opened as a heap, even one 64 KiB page at a time, reads them through an upload buffer the CPU fills from title memory before each refresh, instead of binding a null view that reads zeros (`TUXBOX_SHADOW_CPU=0` binds null). Writable views are unchanged.
+  - Single-level R8 and R8G8 textures at least 256 wide (video planes) are read on every refresh, past the byte and time budgets, so a video's YUV-to-RGB draw never mixes a stale plane with fresh ones, which smeared the loading videos (`TUXBOX_PLANE_UNBUDGETED=0` budgets them like the rest).
   - Shadows are hashed (`TUXBOX_SHADOW_HASH_LOCKED=1`) and released (`TUXBOX_SHADOW_DROP_LOCKED=1`) outside the shadow lock, pruned only after the map grows (`TUXBOX_SHADOW_PRUNE_EVERY=1` scans every call), and dead ones are freed before a remap of their range (`TUXBOX_SHADOW_RELEASE_ON_REMAP=0` keeps them).
   - A descriptor publish walks only the tables that can hold its slots (`TUXBOX_PUBLISH_SCAN_ALL=1` walks them all).
 - **xmem page mapping:**
@@ -165,6 +166,7 @@ These are in the vendored TuxBox provider:
   - The f64 `v_trunc`, `v_ceil`, `v_rndne`, `v_floor` and `v_fract`, and `v_frexp_exp`/`v_frexp_mant` (f32 and f64); `v_pipeflush` and `v_clrexcp` are no-ops (`TB_VOP1_F64=0` refuses them).
   - Half-result conversions (`v_cvt_f16_f32`, `v_cvt_f16_u16/i16`, `v_cvt_pkrtz_f16_f32`) apply the VOP3 output modifier, then the clamp, to the f32 value before rounding, instead of dropping both (`TB_CVT_F16_OMOD=0` drops them).
   - `s_bitreplicate_b64_b32` from any source, SCC unchanged (`TB_BITREPLICATE=0` refuses it).
+  - `ds_cmpst_b32` and `ds_cmpst_rtn_b32` as LDS compare-exchange (`TB_DS_CMPST=0` refuses them).
   - A constant moved into one EXEC half on wave64 (`s_mov_b32 exec_lo, 0xffff0000`) sets each lane of that half from its own bit and keeps the other half, instead of writing the raw constant over the whole mask (`TB_EXEC_HALF_CONST=0` writes the raw constant; five-star-recomp a245f29).
 - **Launch:**
   - A neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off). The game window is kept on one monitor at 16:9, and the game ends when the launcher does (`NEONBRIDGE_JOB=0`).
