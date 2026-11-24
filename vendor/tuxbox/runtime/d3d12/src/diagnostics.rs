@@ -553,6 +553,8 @@ pub(crate) mod gpu_clock {
 /// CPU time per frame of every thread in the process (title and ours), from
 /// GetThreadTimes deltas between heartbeats: says whether a title thread is
 /// CPU-bound or the frame is spent waiting.
+pub(crate) mod sampler;
+
 pub(crate) mod threads {
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -605,6 +607,10 @@ pub(crate) mod threads {
         rows.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
         let total: f64 = rows.iter().map(|r| r.0).sum();
         let busy = rows.iter().filter(|r| r.0 > frame_ms * 0.5).count();
+        // The next interval samples where the busiest threads execute.
+        let hot: Vec<(u32, String)> = rows.iter().take(2).filter(|r| r.0 > frame_ms * 0.2)
+            .map(|(_, tid)| (*tid, names.get(tid).cloned().unwrap_or_else(|| "?".into()))).collect();
+        super::sampler::watch(&hot);
         let top = rows.iter().take(6).map(|(ms, tid)| {
             format!("{}({tid}) {ms:.1}", names.get(tid).map_or("?", String::as_str))
         }).collect::<Vec<_>>().join(", ");

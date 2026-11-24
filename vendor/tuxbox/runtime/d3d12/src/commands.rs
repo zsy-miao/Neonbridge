@@ -2102,9 +2102,15 @@ unsafe fn present_planes(
                 crate::diagnostics::log_line(format_args!(
                     "completed PresentX #{} ({fps:.1} fps; ms/frame: {})", index + 1, crate::diagnostics::cost::split(frames)));
                 // Separate line: the frame's GPU latency and every thread's CPU time.
+                // Samples of the interval's busiest threads are read before
+                // the split picks the next interval's threads.
+                let hot = crate::diagnostics::sampler::report();
                 crate::diagnostics::log_line(format_args!(
                     "frame time {frame_ms:.1} ms: gpu latency {gpu} ms (present signal to GPU done); cpu ms/frame: {}",
                     crate::diagnostics::threads::split(frames.max(1) as f64, frame_ms)));
+                for line in hot {
+                    crate::diagnostics::log_line(format_args!("{line}"));
+                }
             }
         }
     }

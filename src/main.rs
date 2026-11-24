@@ -382,6 +382,8 @@ fn build_providers(tuxbox: &Path, out: &Path) -> Result<Vec<PathBuf>, Box<dyn Er
                 .arg(format!("/def:{}", tuxbox.join(def).display()))
                 .arg(format!("/implib:{stem}.lib"))
                 .arg(format!("/out:{dll}"))
+                // symbol addresses for the sampler's "module+0xRVA" (see hot_lines)
+                .arg(format!("/map:{stem}.map"))
                 .args(&objs)
                 // extra libs (CRT first) before the Rust archive, so DllMain binds to the
                 // CRT stub, not to an import library that also exports it (xinput.lib)
@@ -607,6 +609,9 @@ q
     let (game_text, cdb_text) = text.split_once("\n---- cdb ----\n").unwrap_or((&text, ""));
     // Under --debug the child is cdb: the game's own exit code is in cdb's exit event.
     println!("{}", run_summary(game_text, cdb_exit_code(cdb_text).or(if debug.is_some() { None } else { status.code() })));
+    for l in hot_lines(game_text) {
+        println!("[launch] {l}");
+    }
     // The fps above is not the game's own while these run: say which were on.
     let mut costly: Vec<String> = ["TUXBOX_LIST_RING", "TUXBOX_SURVEY", "TUXBOX_TRACE_RASTER_INPUTS", "TUXBOX_STRICT_LISTS"].iter()
         .filter(|k| std::env::var(k).is_ok_and(|v| !v.is_empty() && v != "0")).map(|k| k.to_string()).collect();
@@ -635,7 +640,75 @@ fn print_summary(log: &Path) -> Result<(), Box<dyn Error>> {
         println!("[launch:debug] {l}");
     }
     println!("{}", run_summary(game_text, cdb_exit_code(cdb_text)));
+    for l in hot_lines(game_text) {
+        println!("[launch] {l}");
+    }
     Ok(())
+}
+
+/// The last heartbeat's "hot thread ..." lines (where the busiest threads
+/// execute), with each provider "module+0xRVA" named from the link map
+/// written beside the provider DLL.
+fn hot_lines(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(last) = lines.iter().rposition(|l| l.contains("hot thread ")) else { return Vec::new() };
+    let first = lines[..last].iter().rposition(|l| !l.contains("hot thread ")).map_or(0, |i| i + 1);
+    let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+    let mut maps: HashMap<String, Option<Vec<(u64, String)>>> = HashMap::new();
+    lines[first..=last].iter().filter_map(|l| l.split_once("hot thread ")).map(|(_, rest)| {
+        let named: Vec<String> = rest.split(' ').map(|word| {
+            let core = word.trim_end_matches([',', ';']);
+            let tail = &word[core.len()..];
+            let Some((module, rva)) = core.split_once("+0x") else { return word.to_owned() };
+            let Ok(rva) = u64::from_str_radix(rva, 16) else { return word.to_owned() };
+            let symbols = maps.entry(module.to_owned()).or_insert_with(|| map_symbols(&out.join(format!("{module}.map"))));
+            match symbols.as_ref().and_then(|v| v[..v.partition_point(|e| e.0 <= rva)].last()) {
+                Some((start, name)) if rva - start < 0x10000 => format!("{module}!{name}{tail}"),
+                _ => word.to_owned(),
+            }
+        }).collect();
+        format!("hot thread {}", named.join(" "))
+    }).collect()
+}
+
+/// (RVA, name) of every symbol in an MSVC link map, by address.
+fn map_symbols(map: &Path) -> Option<Vec<(u64, String)>> {
+    let text = String::from_utf8_lossy(&fs::read(map).ok()?).into_owned();
+    let base = text.lines().find_map(|l| l.trim().strip_prefix("Preferred load address is "))
+        .and_then(|h| u64::from_str_radix(h.trim(), 16).ok())?;
+    let mut symbols: Vec<(u64, String)> = text.lines().filter_map(|l| {
+        let mut fields = l.split_whitespace();
+        let (place, name, address) = (fields.next()?, fields.next()?, fields.next()?);
+        if place.len() != 13 || place.as_bytes()[4] != b':' || address.len() != 16 {
+            return None;
+        }
+        Some((u64::from_str_radix(address, 16).ok()?.checked_sub(base)?, demangle(name)))
+    }).collect();
+    symbols.sort();
+    Some(symbols)
+}
+
+/// Rust's legacy symbol names ("_ZN4core3ptr4read17h0123456789abcdefE") as paths.
+fn demangle(name: &str) -> String {
+    let Some(mut rest) = name.strip_prefix("_ZN").and_then(|r| r.strip_suffix('E')) else { return name.to_owned() };
+    let mut parts = Vec::new();
+    while !rest.is_empty() {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let Ok(len) = rest[..digits].parse::<usize>() else { return name.to_owned() };
+        let Some(part) = rest.get(digits..digits + len) else { return name.to_owned() };
+        rest = &rest[digits + len..];
+        // the trailing hash segment
+        if rest.is_empty() && len == 17 && part.starts_with('h') {
+            break;
+        }
+        let mut part = part.to_owned();
+        for (from, to) in [("$LT$", "<"), ("$GT$", ">"), ("$u20$", " "), ("$RF$", "&"), ("$BP$", "*"), ("$C$", ","),
+            ("$LP$", "("), ("$RP$", ")"), ("$u7b$", "{"), ("$u7d$", "}"), ("$u5b$", "["), ("$u5d$", "]"), ("..", "::")] {
+            part = part.replace(from, to);
+        }
+        parts.push(part.trim_start_matches('_').to_owned());
+    }
+    parts.join("::").replace(' ', "")
 }
 
 /// The debuggee's exit code from cdb's "Exit process 0:pid, code X" event.
