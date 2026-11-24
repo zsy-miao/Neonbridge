@@ -1107,6 +1107,42 @@ fn overlap_note(what: &str) {
     }
 }
 
+/// Whether a written texture's range overlaps another texture of the batch.
+/// test108: submit time grew from 0.5 to 18.8 ms a frame as the heaps' views
+/// (gathered into every batch) grew to tens of thousands of textures; this
+/// was a writes x textures scan, now a sort and sweep by range start.
+fn written_overlap(textures: &[Arc<Texture>], writes: &[Arc<Texture>]) -> bool {
+    let written: std::collections::HashSet<*const Texture> = writes.iter().map(Arc::as_ptr).collect();
+    let mut spans: Vec<(u64, u64, bool)> = textures.iter()
+        .map(|t| { let r = t.range(); (r.start, r.end, written.contains(&Arc::as_ptr(t))) })
+        .filter(|s| s.0 < s.1)
+        .collect();
+    spans.sort_unstable_by_key(|s| s.0);
+    // Furthest end so far of any span, and of a written one.
+    let (mut end_any, mut end_written) = (0u64, 0u64);
+    for (start, end, write) in spans {
+        if start < end_written || (write && start < end_any) {
+            return true;
+        }
+        end_any = end_any.max(end);
+        if write {
+            end_written = end_written.max(end);
+        }
+    }
+    false
+}
+
+/// Logs the largest batch so far each time it doubles.
+fn batch_size_note(textures: usize, writes: usize) {
+    static MAX: AtomicU64 = AtomicU64::new(0);
+    let n = textures as u64;
+    let max = MAX.load(Ordering::Relaxed);
+    if n >= 256 && n >= max.saturating_mul(2) && MAX.compare_exchange(max, n, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        crate::diagnostics::log_line(format_args!(
+            "placed textures: a batch now covers {textures} textures ({writes} written), most gathered from its descriptor heaps' views"));
+    }
+}
+
 fn overlaps(a: &Range<u64>, b: &Range<u64>) -> bool {
     a.start < b.end && b.start < a.end
 }
@@ -1174,7 +1210,10 @@ pub(crate) unsafe fn submit(
             super::heap::residency::evict_idle(&device.native);
         }
     }
-    placements.views.gather(heaps, textures, writes);
+    {
+        let _site = crate::diagnostics::cost::site();
+        placements.views.gather(heaps, textures, writes);
+    }
     unique(writes);
     textures
         .try_reserve(writes.len())
@@ -1184,32 +1223,31 @@ pub(crate) unsafe fn submit(
         return execute();
     }
     unique(textures);
+    batch_size_note(textures.len(), writes.len());
     remap_used(textures);
     unmap_idle(&placements.memory.images);
     unsafe { pages::before_execute(queue) };
-    oom_retry(device, "residency (spans)", || alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref())))?;
-    oom_retry(device, "residency (pages)", || pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t)))?;
+    {
+        let _site = crate::diagnostics::cost::site();
+        oom_retry(device, "residency (spans)", || alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref())))?;
+        oom_retry(device, "residency (pages)", || pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t)))?;
+    }
     // test63: refusing a batch whose written texture overlaps another of its
     // textures dropped five batches, with the lists in them that write GPU
     // memory wait words, and every queue then stalled on those words 2 s at
     // a time (0.1 fps). The batch now runs: overlapping layouts see each
     // other's bytes as the console's would. TUXBOX_OVERLAP_STRICT=1 refuses.
     let strict = crate::env_toggle!("TUXBOX_OVERLAP_STRICT") == Some("1");
-    for writer in writes.iter() {
-        if textures
-            .iter()
-            .any(|t| !Arc::ptr_eq(writer, t) && overlaps(&writer.range(), &t.range()))
-        {
-            if strict {
-                crate::diagnostics::recording_error(format_args!(
-                    "overlapping placed texture layouts in one GPU write batch"
-                ));
-                return Err(E_NOTIMPL.into());
-            }
-            overlap_note("a written placed texture overlaps another texture of its batch");
-            break;
+    if !writes.is_empty() && written_overlap(textures, writes) {
+        if strict {
+            crate::diagnostics::recording_error(format_args!(
+                "overlapping placed texture layouts in one GPU write batch"
+            ));
+            return Err(E_NOTIMPL.into());
         }
+        overlap_note("a written placed texture overlaps another texture of its batch");
     }
+    let _refresh_site = crate::diagnostics::cost::site();
 
     let mut slot = lock(&placements.memory.submissions);
     HRESULT(placements.memory.failed.load(Ordering::Acquire)).ok()?;
@@ -1278,6 +1316,8 @@ pub(crate) unsafe fn submit(
         }
         oom_log(format_args!("placed texture refresh of {} textures skipped on E_OUTOFMEMORY: the batch runs with their previous bytes (TUXBOX_PLACED_OOM_STRICT=1 drops it)", refresh.len()));
     }
+    drop(_refresh_site);
+    let _wait_site = crate::diagnostics::cost::site();
     // Each upload fence this batch's textures were last uploaded on, with
     // the highest tick needed from it.
     let mut required: Vec<(ID3D12Fence, u64)> = Vec::new();
@@ -1305,6 +1345,7 @@ pub(crate) unsafe fn submit(
             }
         }
     }
+    drop(_wait_site);
     let tick = transfer.tick()?;
     let publication = if writes.is_empty() {
         None
@@ -1365,6 +1406,7 @@ pub(crate) unsafe fn submit(
             });
         }
     }
+    let _site = crate::diagnostics::cost::site();
     for texture in textures {
         let mut state = lock(&texture.contents);
         state
