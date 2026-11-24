@@ -553,9 +553,16 @@ fn decode_bc1_blocks(symbols: &[u16], target: usize, output: &mut [u8]) -> bool 
     true
 }
 
-/// Which BCPack modes decode: BC1 (1) and BC7 (7).
+/// Which BCPack modes decode: BC1 (1) and BC7 (7) here; BC3, BC4, BC5 and
+/// BC6H (3-6) through `bcpack_victory` (TUXBOX_BCPACK_VICTORY=0 fills them
+/// with solid blocks, as before). test140 filled 64+ BC5 requests solid.
 pub(crate) fn decodes(mode: u8) -> bool {
-    matches!(mode, 1 | 7)
+    matches!(mode, 1 | 7) || (matches!(mode, 3..=6) && victory_on())
+}
+
+fn victory_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_BCPACK_VICTORY").map_or(true, |v| v.trim() != "0"))
 }
 
 /// Decodes a BCPack stream of `mode` filling all of `output`; false refuses it.
@@ -574,6 +581,13 @@ pub(crate) fn decode(input: &[u8], mode: u8, output: &mut [u8]) -> bool {
             const AB: [u8; 12] = [7, 7, 4, 5, 4, 4, 5, 4, 7, 7, 7, 7];
             decode_lanes(input, &AB, blocks).is_some_and(|s| decode_bc1_blocks(&s, blocks, output))
         }
+        3..=6 if victory_on() => match crate::bcpack_victory::decode(mode, input, output.len()) {
+            Ok(blocks) => {
+                output.copy_from_slice(&blocks);
+                true
+            }
+            Err(_) => false,
+        },
         _ => false,
     }
 }

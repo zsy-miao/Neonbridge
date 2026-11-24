@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 mod abi;
 mod bcpack;
+mod bcpack_victory;
 mod queue;
 
 use abi::*;
