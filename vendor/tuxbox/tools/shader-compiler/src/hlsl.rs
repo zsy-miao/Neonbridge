@@ -306,6 +306,38 @@ fn f(o: &Opnd) -> Result<String, String> {
 }
 
 /// Low `width` bits set, saturated to one word. Keep full-width shifts out of the generated code.
+/// One channel of a GFX10 packed typed-buffer format (unified formats 30-49),
+/// as HLSL returning the VGPR's uint bits. Families, channels from bit 0
+/// (Mesa ac_formats; numbers from LLVM UfmtGFX10): 30-36 10_11_11 (x11 y11
+/// z10), 37-43 11_11_10 (x10 y11 z11), 44-49 10_10_10_2 (x2 y10 z10 w10).
+/// Within a family: UNORM, SNORM, USCALED, SSCALED, UINT, SINT, FLOAT (the
+/// first two families only). The unsigned small floats (5-bit exponent, no
+/// sign) shift into half-float position: 11-bit << 4, 10-bit << 5; exact for
+/// denormals, infinities and NaNs. A 3-channel format reads w as 1.
+fn packed_typed_channel(packed: &str, format: u32, channel: u32) -> String {
+    let (widths, mode): (&[u32], u32) = match format {
+        30..=36 => (&[11, 11, 10], format - 30),
+        37..=43 => (&[10, 11, 11], format - 37),
+        _ => (&[2, 10, 10, 10], format - 44),
+    };
+    let integer = mode == 4 || mode == 5;
+    let Some(&w) = widths.get(channel as usize) else {
+        return (if integer { "1u" } else { "asuint(1.0f)" }).to_string();
+    };
+    let off: u32 = widths[..channel as usize].iter().sum();
+    let field = format!("(({packed} >> {off}u) & {}u)", (1u32 << w) - 1);
+    let signed = format!("(asint({packed} << {}u) >> {}u)", 32 - off - w, 32 - w);
+    match mode {
+        0 => format!("asuint(float({field}) / {}.0f)", (1u32 << w) - 1),
+        1 => format!("asuint(max(-1.0f, float({signed}) / {}.0f))", (1u32 << (w - 1)) - 1),
+        2 => format!("asuint(float({field}))"),
+        3 => format!("asuint(float({signed}))"),
+        4 => field,
+        5 => format!("asuint({signed})"),
+        _ => format!("asuint(f16tof32({field} << {}u))", 15 - w),
+    }
+}
+
 fn low_mask(width: &str) -> String {
     format!("(({width}) >= 32u ? 0xffffffffu : ((1u << (({width}) & 31u)) - 1u))")
 }
@@ -6739,7 +6771,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 23 => format!("asuint(float(({packed} >> {}u) & 65535u) / 65535.0f)", channel * 16),
                 27 => format!("(({packed} >> {}u) & 65535u)", channel * 16),
                 29 => format!("asuint(f16tof32({packed} >> {}u))", channel * 16),
-                _ => return Err(format!("unsupported typed buffer format {}", ins.aux.imm2)),
+                f @ 30..=49 => packed_typed_channel(&packed, f as u32, channel as u32),
+                // Unknown formats read (0, 0, 0, 1) so the shader still translates;
+                // TB_TYPED_STRICT=1 refuses them instead.
+                f if std::env::var_os("TB_TYPED_STRICT").is_some_and(|v| v == "1") => {
+                    return Err(format!("unsupported typed buffer format {f}"));
+                }
+                _ => (if channel == 3 { "asuint(1.0f)" } else { "0u" }).to_string(),
             };
             let dst = base
                 .checked_add(channel as u8)
