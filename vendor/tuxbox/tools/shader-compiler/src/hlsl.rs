@@ -1581,18 +1581,6 @@ fn dump_program(ex: &ShaderExtract, dir: &std::path::Path, why: Option<&str>) {
     }
 }
 
-/// The iterations every structured loop of one invocation may run together
-/// before each leaves through its first exit. Graphics invocations run by the
-/// million a draw, so a runaway loop there costs far more: they get 4096,
-/// compute threads 65536 (five-star-recomp 6b51cf9, GPL-3.0).
-/// TB_GRAPHICS_LOOP_CAP overrides the graphics cap (65536 is the old one).
-fn loop_cap(stage: Stage) -> u32 {
-    if stage == Stage::Compute {
-        return 65536;
-    }
-    std::env::var("TB_GRAPHICS_LOOP_CAP").ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(4096)
-}
-
 /// TB_LOG_LINK=1: when a VS/GS is translated for a pixel shader, log every
 /// interpolant that does not link: a PS input the stage does not write, and a
 /// stage output the PS does not read, with its register and mask (rebox 560e3ec,
@@ -4838,9 +4826,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let exits: Vec<String> = labels.iter().filter(|&&t| t > i).map(|t| format!("j{t}")).collect();
                 let exit = if exits.is_empty() { String::new() } else { format!(" && !({})", exits.join(" || ")) };
                 let guard = if self.wave_cull || self.light_grid || probe_trace || self.packed.as_ref().is_some_and(|p| p.copy_backedges.contains(&i) || p.bounded_backedges.contains(&i)) {
-                    String::new()
+                    ""
                 } else {
-                    format!(" && ++tb_guard < {}u", loop_cap(self.ex.stage))
+                    " && ++tb_guard < 65536u"
                 };
                 if view_cull.is_some_and(|p| p.back == ins.offset) {
                     // The guest iterates cb0[12] views. Retired lanes must
