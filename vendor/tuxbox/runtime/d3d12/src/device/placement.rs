@@ -716,6 +716,9 @@ impl Texture {
                     crate::diagnostics::log_line(format_args!(
                         "placed textures: a {} KiB level deferred to a later refresh, over its read-back budget ({n} so far; TUXBOX_REFRESH_READ_MB=0 reads all)", size >> 10));
                 }
+                // Spent: the rest of this refresh defers, and the next one
+                // starts at this texture (upload.rs refresh).
+                *budget = 0;
                 skipped += 1;
                 continue;
             }

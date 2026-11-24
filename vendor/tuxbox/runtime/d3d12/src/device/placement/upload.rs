@@ -37,6 +37,8 @@ pub(super) struct Transfer {
     spare: Vec<Vec<u8>>,
     watch: super::watch::Watch,
     refreshes: u64,
+    /// Where the next refresh starts in its texture list (see `refresh`).
+    cursor: usize,
     pool: Vec<(u64, ID3D12Resource)>,
     pool_bytes: u64,
 }
@@ -106,6 +108,7 @@ impl Transfer {
             spare: Vec::new(),
             watch: Default::default(),
             refreshes: 0,
+            cursor: 0,
             pool: Vec::new(),
             pool_bytes: 0,
         })
@@ -143,10 +146,32 @@ impl Transfer {
         });
         let (mut skipped, mut mips) = (0, 0);
         let mut budget = super::refresh_read_budget();
-        for texture in textures {
-            skipped += texture.changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
-            mips += texture.mips.len();
+        // test72 deferred 524288 levels: each refresh walked its textures in
+        // the same order and spent the budget on the same leading ones, so
+        // the tail never read. A refresh now starts where the last one ran
+        // out, and stops reading after TUXBOX_REFRESH_READ_MS (4; 0: no time
+        // limit) as well as at the byte budget. TUXBOX_REFRESH_ROTATE=0
+        // always starts at the first texture.
+        let rotate = crate::env_toggle!("TUXBOX_REFRESH_ROTATE") != Some("0");
+        static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let ms = *MS.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(4));
+        let limited = budget != 0;
+        let started = std::time::Instant::now();
+        let count = textures.len();
+        let start = if rotate && count != 0 { self.cursor % count } else { 0 };
+        let mut stopped = None;
+        for k in 0..count {
+            let i = (start + k) % count;
+            if limited && budget != 0 && ms != 0 && k != 0 && started.elapsed() >= std::time::Duration::from_millis(ms) {
+                budget = 0;
+            }
+            skipped += textures[i].changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
+            mips += textures[i].mips.len();
+            if limited && stopped.is_none() && budget == 0 {
+                stopped = Some(i);
+            }
         }
+        self.cursor = stopped.unwrap_or(start);
         self.refreshes += 1;
         if matches!(self.refreshes, 1 | 100 | 1000 | 10000 | 100000) {
             crate::diagnostics::log_line(format_args!(
