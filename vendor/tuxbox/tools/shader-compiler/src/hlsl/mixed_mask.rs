@@ -31,8 +31,8 @@ pub(super) fn bitwise(ins: &Insn) -> Option<&str> {
 }
 
 /// With the masks known before `ins`: the source position of the lane mask
-/// when the other source is a plain number (an SGPR that is no mask, or a
-/// constant other than 0 and all ones, whose bits differ by lane).
+/// when the other source is a plain number (an SGPR that is no mask, a
+/// constant or NULL).
 pub(super) fn mask_position(masks: &BTreeSet<u8>, ins: &Insn) -> Option<usize> {
     // s_bitcmp0/1 of a lane mask tests one bit of the whole mask, not this
     // lane's (Xbox2Windows 7ea49908 / ca1ed1a9, MIT, refuse the projected mask;
@@ -45,8 +45,11 @@ pub(super) fn mask_position(masks: &BTreeSet<u8>, ins: &Insn) -> Option<usize> {
     }
     let number = |o: &Opnd| match *o {
         Opnd::Sgpr(n) => !masks.contains(&n) && !(n > 0 && masks.contains(&(n - 1))),
-        Opnd::Literal(v) => v != 0 && v != u32::MAX,
-        Opnd::ConstInt(v) => v != 0 && v != -1,
+        // Constants and NULL too, 0 and all ones included (xcl 15fff3b): a
+        // per-lane SCC of `exec ^ -1` is 1 in every lane, the wave's is 0
+        // when every lane is in EXEC. A negative inline constant's high word
+        // is all ones, a literal's is zero (`hi`).
+        Opnd::Literal(_) | Opnd::ConstInt(_) | Opnd::Null => true,
         _ => false,
     };
     (0..2).find(|&k| is_lane_mask(masks, &ins.src[k]) && number(&ins.src[1 - k]))
