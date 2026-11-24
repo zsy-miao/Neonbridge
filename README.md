@@ -4,7 +4,7 @@
 
 **Neonbridge is an open-source GTA VI (GTA 6) launcher for Windows PC.** It starts the Xbox Series X|S build of Grand Theft Auto VI, dumped from a console you own, natively on Windows. It isn't a slow whole-console emulator: Xbox Series consoles and Windows PCs use the same x64 processor family, so the game's own code runs directly. Neonbridge only swaps the console system pieces it calls into (graphics, files, input, sound) for Windows versions built on D3D12.
 
-**Where it is today:** GTA VI boots, plays its intro (the GTA stars) and reaches the player-selection prompt, where it takes keyboard input through a virtual Xbox pad. It runs at about 4 fps and **isn't playable yet** (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of the game. No game files are included or linked.
+**Where it is today:** GTA VI boots, plays its intro (the GTA stars) and reaches the player-selection prompt, where it takes keyboard input through a virtual Xbox pad. It runs at about 5 fps and **isn't playable yet** (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of the game. No game files are included or linked.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively, and its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -39,7 +39,8 @@ What the Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own 
 - **Boot:** it runs natively with the console DLLs replaced by Rust providers, passes `xgameruntime` initialisation, maps the console `G:` drive to the executable's folder and mounts every `.rpf` archive.
 - **Rendering:** it creates a D3D12 device and draws lit frames in its own window: the GTA stars intro, then the player-selection prompt (Account Picker / Screen Narration / TuxBox). Command lists close cleanly every frame, with no device removal.
 - **Input:** the title reads the virtual pad at the player-selection prompt, and an A press (Enter or Z) reaches it.
-- **Longest clean run:** 413 lit frames at 3.9 fps without the debugger, ending on a fail-fast exit (`0xc0000602`) that's being traced.
+- **Saves:** game saves and settings are written to `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`, so choices should carry over between launches (new, not yet confirmed in a run).
+- **Longest run:** 344 s and 1777 frames at about 4.5 fps, ending on a fail-fast exit (`0xc0000602`) that a `--debug` run is tracing.
 
 ### Runtime fixes
 
@@ -50,6 +51,8 @@ These are in the vendored TuxBox provider:
 - **Startup crash:** the title's list slot 131 call is a cache barrier, but it was routed to the ray-tracing build path, which read garbage memory. It now records a cache barrier. A host list whose `Close` fails is rebuilt instead of failing every later `Reset`.
 - **Title asserts:** a release-build size check at game+0x4ffd879 hits `int 3` and then falls through, so the runtime steps over it when its bytes match (ported from upstream TuxBox).
 - **Texture layouts:** Xbox layout 0x10a (64 KiB display swizzle, mipped) gets a real size and placement, instead of an invalid one that crashed the title.
+- **Copies:** list slot 62 (`CopyMemoryToMemoryX`) records a buffer copy instead of failing fast.
+- **Game saves (`xgameruntime`):** XGameSave containers, blobs, updates, quota and the save-files folder are stored on disk instead of returning nothing.
 - **Rendering:**
   - A stale inline descriptor binds a typed null instead of failing the command list.
   - A failed batch drops only itself, instead of blocking every later submission.
@@ -74,12 +77,17 @@ These are in the vendored TuxBox provider:
   - Compute-heap stores, wave width, VCC branch votes across the wave, `bpermute`, and many single instructions translate.
   - Hint and debug SOPPs are no-ops.
   - dxc retries at `-O0` when `-O1` times out.
+  - `[WaveSize]` widths the host GPU lacks are compiled out (`TB_NO_WAVESIZE_<n>`), using the wave range the runtime reads from the device.
+- **Speed:**
+  - Buffer binds keep their imported memory alive, so recording dropped from about 156 ms to under 2 ms per frame.
+  - Copies of buffers that span separately mapped pages are merged, and buffers are written back only after the GPU actually wrote them.
+- **Launch:** a neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off).
 
 ### Diagnostics
 
 - **`--debug`:** runs under cdb and dumps registers, stacks, the memory region and code around a fault. Title `int 3` asserts are logged and stepped over.
 - **Run summary:** the launcher prints one line with fps, the per-frame cost split (record, close, submit, present, waits), the most expensive recording calls, lit-frame samples and failure counters. `--timeout S` ends a run cleanly, and `--summary LOG` summarises an old log.
-- **Heartbeat:** the present heartbeat logs fps every 10 s. An fps overlay shows in the game window, and `TUXBOX_FPS=0` hides it.
+- **Heartbeat:** the present heartbeat logs fps every 10 s, plus GPU latency per frame and each thread's CPU time. An fps overlay shows in the game window, and `TUXBOX_FPS=0` hides it.
 - **Diagnostic switches:**
   - `TUXBOX_TRACE_PRESENT=60` samples whether frames are lit.
   - `TUXBOX_LIST_RING=1` logs the last list calls when a host `Close` fails.
@@ -89,16 +97,15 @@ These are in the vendored TuxBox provider:
 
 ## Open
 
-- **Frame rate:** recording takes about 156 ms per frame. Vertex buffer, index buffer and timestamp binds each re-import title memory from scratch, at 6-9 ms per call, and the same bug leaves copied vertex data unfilled. The fix (keep each view alive per list, plus a small recent-use cache) is in progress. Submitting takes another 40 ms and is next to be split.
-- **Fail-fast exit:** the clean run ended on `0xc0000602` with no stack in the log, so a `--debug` run is catching it.
+- **Frame rate (about 5 fps):** about 117 large buffers sit over separately mapped 64 KiB pages that D3D12 can't open as one heap, so every submission copies roughly 640 MB in and out. Mapping those buffers onto the game's memory as tiles removed the GPU device in testing, so it's off for now (`TUXBOX_TILED_ALIAS=1`). Next: map the game's memory in bigger pieces, or copy only the parts each frame uses.
+- **Fail-fast exit:** the 344 s run ended on `0xc0000602` with no stack in the log, so a `--debug` run is catching it.
 - **Later screens:** according to other projects, screens after the start screen need blend state read from the pipeline's render-state block before they draw correctly.
 - **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders. A full prewarm (`TUXBOX_PREWARM`, on by default) waits on these.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
-- **Memory layout:** title memory is mapped as separate 64 KiB section views. D3D12 can't open one heap across them, so large buffers fall back to per-submission copies. Backing each pool with one section would remove the copies.
 
 ## Roadmap
 
-1. **Speed.** Stop re-importing title memory on every bind, split the submit cost, then back each XMem pool with one section so GPU imports need no copies.
+1. **Speed.** Back each XMem pool with one section (or copy only what a frame touches) so GPU imports need no per-submission copies.
 2. **Get past the start screen.** Fix the fail-fast exit, pick the profile, and take blend state from the pipeline's render-state block so later screens draw.
 3. **Correct colour.** Pack 5551 in the shader, or substitute R8G8B8A8 for B5G5R5A1 UAV and render-target images.
 4. **Shaders.** Finish the remaining `xshader` refusals, then run a full prewarm and ship the pipeline cache.
