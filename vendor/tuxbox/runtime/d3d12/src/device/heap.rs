@@ -472,7 +472,35 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
     let (native, heap) = match import_buffer_with_heap(device, base, &host, D3D12_RESOURCE_STATE_COMMON) {
         Ok(resource) => resource,
         Err(error) if error.code() == E_INVALIDARG => {
-            // Title pages from different sections: no heap spans them.
+            // Title pages from different sections: no heap spans them. A
+            // reserved buffer whose 64 KiB tiles map onto each page's own heap
+            // aliases them without a copy; the device copy is the fallback
+            // (its refresh and write-back cost ~1.3 GB per submission).
+            if crate::env_toggle!("TUXBOX_TILED_ALIAS") != Some("0") {
+                let tile_base = address & !0xffff;
+                let tile_delta = address - tile_base;
+                match desc.Width.checked_add(tile_delta).ok_or_else(|| E_INVALIDARG.into())
+                    .and_then(|width| tiled_alias(device, tile_base, &D3D12_RESOURCE_DESC { Width: width, ..host }))
+                {
+                    Ok((native, heap)) => {
+                        static TILED: std::sync::Once = std::sync::Once::new();
+                        crate::diagnostics::log_once(&TILED, || format!(
+                            "placed buffer at {address:#x} ({} bytes) spans separately mapped pages; aliased by tile mappings", desc.Width));
+                        let buffer = super::views::TextureAddress::with_heap(
+                            device, &native, address as usize, false, None, None, None, tile_delta, Some(heap),
+                        );
+                        return unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
+                            super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) };
+                    }
+                    Err(e) => {
+                        static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        if FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                            crate::diagnostics::log_line(format_args!(
+                                "tile-mapped alias at {address:#x} ({} bytes) failed: {:?}; using a device copy", host.Width, e.code()));
+                        }
+                    }
+                }
+            }
             let (native, buffer) = match super::views::shadow_buffer(device, address, desc.Width) {
                 Ok(shadow) => shadow,
                 Err(e) => return e.code(),
@@ -494,6 +522,80 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
     );
     unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
         super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) }
+}
+
+/// One queue and fence per device for tile mappings, waited on the CPU so the
+/// mapping precedes every later use on any queue.
+static TILE_QUEUES: std::sync::Mutex<Vec<(usize, ID3D12CommandQueue, ID3D12Fence, u64)>> = std::sync::Mutex::new(Vec::new());
+
+/// A reserved buffer over title pages [base, base + width) whose tiles map,
+/// page by page, onto each page's imported heap: the same bytes as the title's
+/// pages, without one heap spanning them. Returns the first page's heap for
+/// view aliases (they fail over to a view copy across pages).
+fn tiled_alias(device: &Device, base: u64, host: &D3D12_RESOURCE_DESC) -> windows::core::Result<(ID3D12Resource, Arc<ImportedHeap>)> {
+    const TILE: u64 = 65536;
+    if !base.is_multiple_of(TILE) {
+        return Err(E_INVALIDARG.into());
+    }
+    let width = host.Width.next_multiple_of(TILE);
+    let tiles = width / TILE;
+    if tiles == 0 || tiles > 4096 {
+        return Err(E_INVALIDARG.into());
+    }
+    let page_desc = D3D12_RESOURCE_DESC {
+        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: TILE, Height: 1, DepthOrArraySize: 1, MipLevels: 1,
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        ..Default::default()
+    };
+    let mut heaps = Vec::with_capacity(tiles as usize);
+    for i in 0..tiles {
+        let (_, heap) = import_buffer_with_heap(device, base + i * TILE, &page_desc, D3D12_RESOURCE_STATE_COMMON)?;
+        heaps.push(heap);
+    }
+    let desc = D3D12_RESOURCE_DESC {
+        Width: width,
+        Flags: D3D12_RESOURCE_FLAGS(host.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0),
+        Alignment: 0,
+        ..page_desc
+    };
+    let mut resource: Option<ID3D12Resource> = None;
+    unsafe { device.native.CreateReservedResource(&desc, D3D12_RESOURCE_STATE_COMMON, None, &mut resource)? };
+    let resource = resource.ok_or(E_POINTER)?;
+    let owner = core::ptr::from_ref(device) as usize;
+    let mut queues = TILE_QUEUES.lock().unwrap_or_else(|e| e.into_inner());
+    if !queues.iter().any(|q| q.0 == owner) {
+        let queue: ID3D12CommandQueue = unsafe { device.native.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC {
+            Type: D3D12_COMMAND_LIST_TYPE_DIRECT, ..Default::default() })? };
+        let fence: ID3D12Fence = unsafe { device.native.CreateFence(0, D3D12_FENCE_FLAG_NONE)? };
+        queues.push((owner, queue, fence, 0));
+    }
+    let entry = queues.iter_mut().find(|q| q.0 == owner).ok_or(E_POINTER)?;
+    for (i, heap) in heaps.iter().enumerate() {
+        let start = D3D12_TILED_RESOURCE_COORDINATE { X: i as u32, Y: 0, Z: 0, Subresource: 0 };
+        let size = D3D12_TILE_REGION_SIZE { NumTiles: 1, UseBox: false.into(), Width: 1, Height: 1, Depth: 1 };
+        let (offset, count) = (0u32, 1u32);
+        unsafe { entry.1.UpdateTileMappings(&resource, 1, Some(&start), Some(&size), &heap.native, 1, None, Some(&offset), Some(&count), D3D12_TILE_MAPPING_FLAG_NONE) };
+    }
+    entry.3 += 1;
+    unsafe {
+        entry.1.Signal(&entry.2, entry.3)?;
+        entry.2.SetEventOnCompletion(entry.3, windows::Win32::Foundation::HANDLE::default())?;
+        device.native.GetDeviceRemovedReason()?;
+    }
+    drop(queues);
+    // Tiles borrow their heaps: keep every page's import alive with the resource.
+    for (i, heap) in heaps.iter().enumerate() {
+        let key = GUID::from_u128(IMPORTED_HEAP.to_u128() ^ ((i as u128 + 1) << 64));
+        static MARKER: Slots<8> = child_slots::<ID3D12Heap, Arc<ImportedHeap>, 8>();
+        let mut out = core::ptr::null_mut();
+        unsafe {
+            crate::proxy::allocate(&MARKER, &[], heap.native.clone(), None, heap.clone(), &mut out).ok()?;
+            let marker = windows::core::IUnknown::from_raw(out);
+            resource.SetPrivateDataInterface(&key, &marker)?;
+        }
+    }
+    Ok((resource, heaps.swap_remove(0)))
 }
 
 pub(super) struct RenderHeap {
