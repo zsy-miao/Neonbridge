@@ -149,7 +149,7 @@ impl Mappings {
                 )
             };
             for import in overlaps {
-                unsafe {
+                let checked = unsafe {
                     validate(
                         batches.len() as u32,
                         batches.as_ptr(),
@@ -158,8 +158,17 @@ impl Mappings {
                         import.start,
                         import.end,
                     )
+                };
+                // A real replacement inside a GPU-imported range: the imported
+                // heap keeps the pages it saw. Refusing it (E_NOTIMPL) also
+                // rejected the queue, so every later CopyPageMappingsBatchX
+                // and submission failed (test36). Apply the CPU remap anyway,
+                // logged; TUXBOX_PINNED_REMAP=0 refuses as before.
+                if checked == E_NOTIMPL && pinned_remap() {
+                    pinned_remapped(import);
+                    continue;
                 }
-                .ok()?;
+                checked.ok()?;
             }
         }
         unsafe {
@@ -172,6 +181,31 @@ impl Mappings {
         }
         .ok()
     }
+}
+
+fn pinned_remap() -> bool {
+    crate::env_toggle!("TUXBOX_PINNED_REMAP") != Some("0")
+}
+
+fn pinned_remapped(import: &Range<u64>) {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if remap_logged(n) {
+        crate::diagnostics::log_line(format_args!(
+            "CopyPageMappingsBatchX remaps pages inside GPU-imported range {:#x}..{:#x}: applied on the CPU, the imported heap keeps its old pages ({n} so far; TUXBOX_PINNED_REMAP=0 refuses)",
+            import.start, import.end));
+    }
+}
+
+fn remap_logged(n: u64) -> bool {
+    n <= 8 || n.is_power_of_two()
+}
+
+#[cfg(test)]
+#[test]
+fn pinned_remaps_log_first_eight_then_powers_of_two() {
+    assert!(remap_logged(1) && remap_logged(8) && remap_logged(64));
+    assert!(!remap_logged(9) && !remap_logged(100));
 }
 
 struct Pending {
