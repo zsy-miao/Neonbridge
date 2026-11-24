@@ -10,6 +10,7 @@
 //! `--restore` puts it back.
 
 mod shaders;
+mod splash;
 
 use std::{
     collections::HashMap,
@@ -124,8 +125,12 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         None => None,
     };
 
+    if mode == Mode::Run {
+        splash::show("Building the TuxBox runtime");
+    }
     let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
     let dlls = build_providers(&tuxbox, &out)?;
+    splash::status(0.3, "Staging the runtime beside the game");
     if mode == Mode::BuildOnly {
         println!("[launch] built {} providers in {}", dlls.len(), out.display());
         return Ok(());
@@ -144,6 +149,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         println!("[launch] staged {} providers beside {}; not started (--stage-only)", dlls.len(), target.display());
         return Ok(());
     }
+    splash::status(0.4, "Preparing shaders");
     // Runtime shader worker (TuxBox runtime_shaders.py on Windows): xshader + SDK dxc.
     let worker = if std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() == Ok("0") { None } else {
         match (build_xshader(&tuxbox, &out), shaders::find_dxc()) {
@@ -196,6 +202,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
+    splash::status(0.6, "Starting the game");
     let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), trace_throws, sandbox, &env, timeout);
     if let Some((w, _, session, log_path)) = worker {
         let st = w.stop();
@@ -537,6 +544,12 @@ q
         std::thread::spawn(move || {
             for line in BufReader::new(r).split(b'\n').map_while(Result::ok) {
                 let line = String::from_utf8_lossy(&line);
+                // The loading screen stays up until the title's first frame.
+                if line.contains("completed PresentX #1 ") {
+                    splash::close();
+                } else if line.contains("D3D12") {
+                    splash::status(0.8, "Waiting for the first frame");
+                }
                 eprintln!("{line}");
                 let _ = writeln!(f, "{line}");
             }
@@ -562,6 +575,7 @@ q
     };
     let _ = (a.join(), b.join());
     wait_for_image(exe);
+    splash::close();
     println!("[launch] exited with {status}{} after {:.1}s", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default(), t.elapsed().as_secs_f64());
     if debug.is_some() {
         // Sandboxie redirects the debugger's log write into the box; fetch it back.
@@ -732,7 +746,9 @@ fn ntstatus(c: u32) -> &'static str {
 
 fn main() {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    if let Err(e) = run(&args) {
+    let result = run(&args);
+    splash::close();
+    if let Err(e) = result {
         eprintln!("neonbridge: {e}");
         std::process::exit(1);
     }
