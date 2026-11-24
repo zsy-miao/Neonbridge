@@ -145,7 +145,24 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
             if let Some(buffer) = buffer { super::raytracing::retain(state, &[&buffer])?; }
             Ok(va)
         });
-    match result { Ok(va) => Some(va), Err(e) => { state.error = e.code(); None } }
+    match result {
+        Ok(va) => Some(va),
+        // Xbox2Windows 109e7dc8 (MIT): an unresolvable bind left the previous
+        // root view bound, so the draw read a stale buffer. It is bound as
+        // null now (the zeroed sink) and the list goes on. TUXBOX_ROOT_STALE_CLEAR=0
+        // refuses the call again, keeping the previous binding.
+        Err(e) if crate::env_toggle!("TUXBOX_ROOT_STALE_CLEAR") != Some("0") => {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "root view at title address {guest:#x} did not resolve ({:#010x}); bound as null instead of keeping the previous one (guest RVA {:#x}; {n} so far; TUXBOX_ROOT_STALE_CLEAR=0 off)",
+                    e.code().0, crate::survey::title_rva().unwrap_or(0)));
+            }
+            Some(0)
+        }
+        Err(e) => { state.error = e.code(); None }
+    }
 }
 
 pub(super) unsafe extern "system" fn constant_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64) {
