@@ -346,6 +346,21 @@ fn commit_title_range(address: *mut u8, bytes: usize) {
     }
 }
 
+/// Whether xmem knows every page of the range committed in its lazy
+/// read-write views (TuxBoxViewState), so no VirtualQuery walk is needed: one
+/// scans the whole region, 16 ms per GiB of view (test137).
+fn known_committed(address: usize, bytes: usize) -> bool {
+    type State = unsafe extern "system" fn(usize, usize, *mut usize, *mut usize) -> u32;
+    static STATE: OnceLock<Option<State>> = OnceLock::new();
+    let state = STATE.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, b"TuxBoxViewState\0".as_ptr()) };
+        (!f.is_null()).then(|| core::mem::transmute::<*const c_void, State>(f))
+    });
+    state.is_some_and(|state| unsafe { state(address, bytes, core::ptr::null_mut(), core::ptr::null_mut()) } & 3 == 3)
+}
+
 /// xmem's TuxBoxReadPhysicalPages / TuxBoxWritePhysicalPages.
 fn xmem_pages(write: bool) -> Option<PageCopy> {
     static FUNCTIONS: OnceLock<[Option<PageCopy>; 2]> = OnceLock::new();
@@ -1153,6 +1168,9 @@ fn writable(at: usize, len: usize) -> bool {
     // would. test136 failed 512+ decompress/BCPack stores here (0x800703e6)
     // and the title asserted at game+0x4033ca4; only ReadFile committed.
     commit_title_range(at as *mut u8, len);
+    if known_committed(at, len) {
+        return true;
+    }
     let mut p = at;
     while p < end {
         let mut region = MEMORY_BASIC_INFORMATION::default();

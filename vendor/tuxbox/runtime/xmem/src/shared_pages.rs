@@ -328,6 +328,7 @@ fn unmap_once(address: usize) -> Result<(), u32> {
         Value: address as _,
     };
     if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, MEM_PRESERVE_PLACEHOLDER) } != 0 {
+        crate::lazy_commit::note_unmap(address);
         return Ok(());
     }
     let error = os_error("unmap:244");
@@ -344,6 +345,7 @@ fn unmap_once(address: usize) -> Result<(), u32> {
     if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, 0) } == 0 {
         return Err(os_error("unmap:256"));
     }
+    crate::lazy_commit::note_unmap(address);
     let placeholder = unsafe {
         VirtualAlloc2(GetCurrentProcess(), address as _, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, ptr::null_mut(), 0)
     };

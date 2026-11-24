@@ -2394,8 +2394,19 @@ fn drop_batch(queue: &Queue, error: HRESULT) {
 /// Committed memory of `len` bytes at `at`, readable (and writable if asked).
 pub(crate) fn accessible(at: usize, len: usize, write: bool) -> bool {
     use windows::Win32::System::Memory::*;
+    if at == 0 {
+        return false;
+    }
+    // A lazy title view (read-write) xmem knows committed, after committing
+    // what the GPU alone wrote: no VirtualQuery, which scans the whole region.
+    if device::view_state(at, len).covered() {
+        device::commit_lazy(at, len);
+        if device::view_state(at, len).committed() {
+            return true;
+        }
+    }
     let mut region = MEMORY_BASIC_INFORMATION::default();
-    if at == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+    if unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
         return false;
     }
     // A word or buffer only the GPU wrote (a fence word, a counter) is still

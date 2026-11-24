@@ -55,7 +55,7 @@ pub(crate) mod null_kinds;
 pub(crate) mod pipeline_cache;
 mod stream;
 mod title_memory;
-pub(crate) use title_memory::commit_lazy;
+pub(crate) use title_memory::{commit_lazy, view_state};
 mod views;
 pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, is_null_rtv, refresh_shadows, note_shadow_write, flush_desc_table, desc_table_address, view_formats_address, write_back_shadows};
 

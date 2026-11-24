@@ -751,6 +751,11 @@ fn note_live(key: ImportKey, heap: &Arc<ImportedHeap>) {
 fn one_allocation(base: u64, size: u64) -> bool {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
     let end = base.saturating_add(size);
+    let view = super::view_state(base as usize, size as usize);
+    if view.committed() {
+        // Covered by lazy views: one allocation only if one view holds it.
+        return view.one_view();
+    }
     let mut at = base;
     let mut allocation = None;
     while at < end {
@@ -1592,6 +1597,11 @@ fn validate_shared_range(start: u64, end: u64) -> windows::core::Result<()> {
 /// E_INVALIDARG this check gave the reserved pool.
 fn validate_title_range(start: u64, end: u64, lazy: bool) -> windows::core::Result<()> {
     use windows::Win32::System::Memory::{MEM_COMMIT, MEM_MAPPED, MEM_RESERVE, MEMORY_BASIC_INFORMATION, PAGE_READWRITE, VirtualQuery};
+    // Lazy read-write views xmem knows of pass without the VirtualQuery walk.
+    let view = super::view_state(start as usize, end.saturating_sub(start) as usize);
+    if view.committed() || (lazy && view.covered()) {
+        return Ok(());
+    }
     let mut cursor = start;
     while cursor < end {
         let mut region = MEMORY_BASIC_INFORMATION::default();

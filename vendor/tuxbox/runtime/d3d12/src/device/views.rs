@@ -420,9 +420,18 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     let tight = !(address - nearest).is_multiple_of(u64::from(stride));
     // A buffer only the GPU writes is still reserved in a lazy title view.
     super::commit_lazy(address as usize, bytes as usize);
+    // A lazy view xmem knows committed answers without the VirtualQuery,
+    // which scans the whole region (test137: tens of ms on the page pool).
+    let view = super::view_state(address as usize, bytes as usize);
     let mut region = MEMORY_BASIC_INFORMATION::default();
-    if unsafe { VirtualQuery(Some(address as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT
-        || backed_image(device, address, region.AllocationBase.addr()) {
+    let allocation = if view.committed() && view.one_view() {
+        Some(view.base)
+    } else if unsafe { VirtualQuery(Some(address as _), &mut region, size_of_val(&region)) } != 0 && region.State == MEM_COMMIT {
+        Some(region.AllocationBase.addr())
+    } else {
+        None
+    };
+    if allocation.is_none_or(|base| backed_image(device, address, base)) {
         return if required { Err(E_INVALIDARG.into()) } else { Ok(None) };
     }
     let mut host = D3D12_RESOURCE_DESC {
