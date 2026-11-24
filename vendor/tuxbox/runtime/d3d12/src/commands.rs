@@ -1533,16 +1533,68 @@ fn drop_batch(queue: &Queue, error: HRESULT) {
     }
 }
 
+/// Committed memory of `len` bytes at `at`, readable (and writable if asked).
+fn accessible(at: usize, len: usize, write: bool) -> bool {
+    use windows::Win32::System::Memory::*;
+    let mut region = MEMORY_BASIC_INFORMATION::default();
+    if at == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+        return false;
+    }
+    let protect = region.Protect;
+    let readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY
+        | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    let writable = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    region.State == MEM_COMMIT
+        && (protect & (PAGE_GUARD | PAGE_NOACCESS)).0 == 0
+        && (protect & if write { writable } else { readable }).0 != 0
+        && at.checked_add(len).is_some_and(|end| end <= region.BaseAddress as usize + region.RegionSize)
+}
+
+// Device11 queue slot 35. xcl and rebox call it ExecuteCommandListsX(count,
+// lists, value, flags); palmetto (the GTA VI runtime) treats it as a clock
+// calibration that writes two QPC ticks to the pointer in the second
+// argument, and the title faults on stack garbage when they stay unwritten.
+// Tell the two apart by whether the second argument holds our list proxies.
 unsafe extern "system" fn execute_frame(
     queue: &Queue, count: u32, lists: *const *mut c_void, frame_token: u64, flags: u32,
 ) {
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || format!(
+        "queue slot 35 first call: a1={count:#x} a2={lists:p} a3={frame_token:#x} a4={flags:#x}"));
+    let device = parent(&queue.parent);
+    let first_is_list = (1..=256).contains(&count)
+        && accessible(lists as usize, count as usize * size_of::<*mut c_void>(), false)
+        && {
+            let item = unsafe { *lists };
+            accessible(item as usize, size_of::<usize>(), false)
+                && unsafe {
+                    unwrap::<ID3D12GraphicsCommandList, ListData>(item, device, &LIST_SLOTS)
+                        .or_else(|| unwrap(item, device, &DEVICE11_LIST_SLOTS))
+                        .or_else(|| unwrap(item, device, &EXTENDED_LIST_SLOTS))
+                }
+                .is_some()
+        };
+    if !first_is_list {
+        if accessible(lists as usize, 16, true) {
+            let mut ticks = 0i64;
+            let _ = unsafe { windows::Win32::System::Performance::QueryPerformanceCounter(&mut ticks) };
+            let out = lists.cast_mut().cast::<i64>();
+            unsafe { out.write_unaligned(ticks); out.add(1).write_unaligned(ticks); }
+        }
+        static CALIBRATION: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&CALIBRATION, || format!(
+            "queue slot 35 treated as clock calibration (a1={count:#x} a2={lists:p})"));
+        return;
+    }
     // Both flags select how the console assembles its GPU packets. Bit 0
     // suppresses a hardware buffer switch and bit 1 chains indirect buffers.
     // The desktop queue owns its packet storage and takes the ordered list
     // array in one submission. The frame token labels that submission.
     if queue.state.kind != D3D12_COMMAND_LIST_TYPE_DIRECT || flags & !3 != 0 {
         crate::diagnostics::recording_error(format_args!("extended command-list submission flags {flags:#x}"));
-        reject(queue, E_NOTIMPL);
+        // Drop this batch only: latching the queue error dropped every
+        // later submission too.
+        drop_batch(queue, E_NOTIMPL);
         return;
     }
     unsafe { execute_batch(queue, count, lists, Some((frame_token, flags))) };
