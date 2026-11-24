@@ -4,6 +4,7 @@ mod diagnostics;
 mod heap;
 mod history;
 mod loader;
+mod net;
 mod options;
 mod partitions;
 mod paths;

@@ -133,14 +133,21 @@ pub(crate) unsafe fn install() {
         );
         log(&format!("{patched} LoadLibrary import(s) redirected; console libraries load from {}", String::from_utf16_lossy(&full[..cut])));
         crate::paths::install();
+        crate::net::install();
     }
 }
 
 /// Point the exe's imports named in `hooks` at the replacements, for every
 /// imported DLL that `dll` accepts (lower-case name). Returns the slots patched.
 pub(crate) unsafe fn patch_imports(dll: impl Fn(&str) -> bool, hooks: &[(&str, usize)]) -> usize {
+    unsafe { patch_module_imports(GetModuleHandleW(ptr::null()), dll, hooks, &[]) }
+}
+
+/// [`patch_imports`] for any loaded `module`; `ordinals` hooks imports made by
+/// ordinal (ws2_32 is mostly imported that way).
+pub(crate) unsafe fn patch_module_imports(module: Hmod, dll: impl Fn(&str) -> bool, hooks: &[(&str, usize)], ordinals: &[(u16, usize)]) -> usize {
     unsafe {
-        let exe = GetModuleHandleW(ptr::null()) as *mut u8;
+        let exe = module as *mut u8;
         if exe.is_null() {
             return 0;
         }
@@ -166,9 +173,15 @@ pub(crate) unsafe fn patch_imports(dll: impl Fn(&str) -> bool, hooks: &[(&str, u
                     if entry == 0 {
                         break;
                     }
-                    if entry >> 63 == 0 {
+                    let found = if entry >> 63 == 0 {
                         let func = ansi_to_string(exe.add(entry as usize + 2));
-                        if let Some(&(_, h)) = hooks.iter().find(|(n, _)| *n == func) {
+                        hooks.iter().find(|(n, _)| *n == func).map(|&(_, h)| (func, h))
+                    } else {
+                        let ordinal = entry as u16;
+                        ordinals.iter().find(|(o, _)| *o == ordinal).map(|&(_, h)| (format!("#{ordinal}"), h))
+                    };
+                    {
+                        if let Some((func, h)) = found {
                             let slot = exe.add(iat_rva + i * 8) as *mut usize;
                             let mut old = 0u32;
                             if VirtualProtect(slot.cast(), 8, 0x04, &mut old) != 0 {
