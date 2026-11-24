@@ -257,6 +257,34 @@ fn translate(
                 Instances::Gpu(patched)
             }
             Err(e) if e.code() != E_INVALIDARG => return Err(e),
+            // A direct array at a foreign address: the fixup kernel reads it
+            // through a root view of the raw address, as the build itself does.
+            Err(_) if !indirect && foreign_instances() => {
+                let patched = unsafe {
+                    blas::instance_fixup::Instances::record(owner, host, address, count as u32)?
+                };
+                unsafe {
+                    state.bindings.restore(host);
+                }
+                retain(state, &[patched.output()])?;
+                desc.Inputs.Anonymous.InstanceDescs =
+                    unsafe { patched.output().GetGPUVirtualAddress() };
+                foreign_note("a direct array at a foreign address goes through the GPU address fixup");
+                Instances::Gpu(patched)
+            }
+            // A GPU array of pointers cannot be dereferenced by the fixup
+            // kernel. With BLASes relocated its records would name stale
+            // addresses, so the TLAS is built empty instead of leaving the
+            // whole list out of its batch.
+            _ if indirect && foreign_instances() && unsafe { blas::has_relocations(owner) } => {
+                desc.Inputs.NumDescs = 0;
+                foreign_note("a GPU pointer array with relocated BLASes builds an empty TLAS");
+                return Ok((
+                    desc,
+                    unsafe { blas::empty_instance_buffer(owner) }.ok(),
+                    info.ResultDataMaxSizeInBytes,
+                ));
+            }
             _ => Instances::Direct,
         },
     };
@@ -267,6 +295,25 @@ fn translate(
     };
     state.scene_commands.push(SceneCommand::Fixup(instances));
     Ok((desc, snapshot, info.ResultDataMaxSizeInBytes))
+}
+
+/// test100 left lists out of their batches with "instances at a foreign
+/// address or a GPU pointer array while BLASes are relocated (E_NOTIMPL)".
+/// Foreign direct arrays now go through the GPU address fixup and pointer
+/// arrays with relocations build an empty TLAS. TUXBOX_FOREIGN_INSTANCES=0
+/// restores the refusal.
+fn foreign_instances() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_FOREIGN_INSTANCES") != Some("0"))
+}
+
+fn foreign_note(what: &str) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "scene preparation: {what} ({n} so far; TUXBOX_FOREIGN_INSTANCES=0 off)"));
+    }
 }
 
 // The scene builder passes one ordinary 48-byte description to List4, along
