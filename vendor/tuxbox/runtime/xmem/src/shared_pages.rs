@@ -16,6 +16,10 @@ use windows_sys::Win32::System::Threading::GetCurrentProcess;
 pub(super) const PAGE: usize = 65536;
 
 pub(super) fn reserve(address: *const c_void, bytes: usize) -> *mut c_void {
+    if address.is_null() {
+        // 6ixlaunch: keep placeholders inside the console GPU window.
+        return unsafe { super::virtual_memory::host_alloc(address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, 0) };
+    }
     unsafe {
         VirtualAlloc2(
             GetCurrentProcess(),

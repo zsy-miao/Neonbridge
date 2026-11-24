@@ -28,7 +28,8 @@ pub(super) fn allocate_placement(bytes: usize, alignment: usize) -> *mut c_void 
         unsafe { SetLastError(windows_sys::Win32::Foundation::ERROR_NOT_ENOUGH_MEMORY) };
         return ptr::null_mut();
     };
-    let mut requirements = MEM_ADDRESS_REQUIREMENTS { Alignment: alignment, ..Default::default() };
+    let mut requirements = MEM_ADDRESS_REQUIREMENTS { Alignment: alignment,
+        LowestStartingAddress: WINDOW.0 as _, HighestEndingAddress: (WINDOW.1 - 1) as _ };
     let mut param = MEM_EXTENDED_PARAMETER {
         Anonymous1: MEM_EXTENDED_PARAMETER_0 { _bitfield: MemExtendedParameterAddressRequirements as u64 },
         Anonymous2: MEM_EXTENDED_PARAMETER_1 { Pointer: (&raw mut requirements).cast() },
@@ -37,6 +38,32 @@ pub(super) fn allocate_placement(bytes: usize, alignment: usize) -> *mut c_void 
         ptr::null(), extent, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE, &raw mut param, 1) };
     if !base.is_null() { bases.insert(base.addr()); }
     base
+}
+
+/// 6ixlaunch: the console GPU window is [2 GiB, limit) where the limit comes
+/// from D3D12ConfigureVirtualMemoryX (GTA VI: 4 entries -> 0x1f_e000_0000).
+/// Windows otherwise places title memory above 2 TiB, outside every window.
+pub(super) const WINDOW: (usize, usize) = (1 << 31, 0x1f_e000_0000);
+
+/// VirtualAlloc that keeps a new (null-address) reservation inside WINDOW.
+pub(super) unsafe fn host_alloc(address: *const c_void, bytes: usize, kind: u32, protect: u32, alignment: usize) -> *mut c_void {
+    use windows_sys::Win32::System::Memory::{
+        MEM_ADDRESS_REQUIREMENTS, MEM_EXTENDED_PARAMETER, MEM_EXTENDED_PARAMETER_0,
+        MEM_EXTENDED_PARAMETER_1, MemExtendedParameterAddressRequirements, VirtualAlloc2,
+    };
+    if !address.is_null() || kind & MEM_RESERVE == 0 {
+        return unsafe { VirtualAlloc(address, bytes, kind, protect) };
+    }
+    let mut requirements = MEM_ADDRESS_REQUIREMENTS {
+        LowestStartingAddress: WINDOW.0 as _, HighestEndingAddress: (WINDOW.1 - 1) as _, Alignment: alignment,
+    };
+    let mut param = MEM_EXTENDED_PARAMETER {
+        Anonymous1: MEM_EXTENDED_PARAMETER_0 { _bitfield: MemExtendedParameterAddressRequirements as u64 },
+        Anonymous2: MEM_EXTENDED_PARAMETER_1 { Pointer: (&raw mut requirements).cast() },
+    };
+    let base = unsafe { VirtualAlloc2(windows_sys::Win32::System::Threading::GetCurrentProcess(),
+        ptr::null(), bytes, kind, protect, &raw mut param, 1) };
+    if base.is_null() { unsafe { VirtualAlloc(address, bytes, kind, protect) } } else { base }
 }
 
 pub(super) unsafe fn free_placement(base: *mut c_void) {
@@ -60,7 +87,7 @@ pub(super) fn allocate_direct(bytes: usize) -> *mut c_void {
         unsafe { SetLastError(windows_sys::Win32::Foundation::ERROR_NOT_ENOUGH_MEMORY) };
         return ptr::null_mut();
     }
-    let base = unsafe { VirtualAlloc(ptr::null(), extent, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) };
+    let base = unsafe { host_alloc(ptr::null(), extent, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, 0) };
     if !base.is_null() {
         let tag = if super::options::TAG_DIRECT.load(std::sync::atomic::Ordering::Acquire) {
             // The query record contains the packed six-bit character values
@@ -276,7 +303,7 @@ unsafe fn virtual_alloc_inner(
             | (0x181, 0x2040_3000, PAGE_READWRITE)
             | (7, 0x2040_3000, 0x30004))
     {
-        return unsafe { VirtualAlloc(address, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) };
+        return unsafe { host_alloc(address, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, 0) };
     }
     if (profile, allocation_type, protect) == (0x283, 0x2040_1000, 0x42404) {
         return unsafe { VirtualAlloc(address, bytes, MEM_COMMIT, PAGE_READWRITE) };
@@ -307,7 +334,7 @@ unsafe fn virtual_alloc_inner(
         };
         if let Some((kind, protection)) = host {
             let watch = kind & MEM_RESERVE != 0 && super::options::auto_watch_available();
-            return unsafe { VirtualAlloc(address, bytes, if watch { kind | MEM_WRITE_WATCH } else { kind }, protection) };
+            return unsafe { host_alloc(address, bytes, if watch { kind | MEM_WRITE_WATCH } else { kind }, protection, 0) };
         }
     }
     let operation = allocation_type & !MEM_TOP_DOWN;
@@ -340,5 +367,5 @@ unsafe fn virtual_alloc_inner(
 
     // SAFETY: The caller supplies the address range. Windows validates the
     // reservation, rounds to host page boundaries, and sets the last error on failure.
-    unsafe { VirtualAlloc(address, bytes, allocation_type, protect) }
+    unsafe { host_alloc(address, bytes, allocation_type, protect, 0) }
 }

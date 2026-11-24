@@ -170,6 +170,8 @@ pub unsafe extern "system" fn configure_virtual_memory(record: *mut u32) -> HRES
             Err(existing) => (E_FAIL, existing),
         }
     };
+    crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+        "D3D12ConfigureVirtualMemoryX entries={entries} preserve={preserve:#x} limit={limit:#x} status={:#x}", status.0));
     let bytes = record.cast::<u8>();
     unsafe {
         bytes.add(16).cast::<u64>().write_unaligned(if limit == 0 { 0 } else { VM_START });

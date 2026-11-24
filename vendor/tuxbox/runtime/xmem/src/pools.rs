@@ -50,7 +50,7 @@ impl Pool {
         }
         if self.base == 0 {
             self.base =
-                unsafe { VirtualAlloc(ptr::null(), ARENA, MEM_RESERVE, PAGE_READWRITE) }.addr();
+                unsafe { super::virtual_memory::host_alloc(ptr::null(), ARENA, MEM_RESERVE, PAGE_READWRITE, 0) }.addr();
             if self.base == 0 {
                 return None;
             }
