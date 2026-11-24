@@ -94,9 +94,19 @@ pub(super) unsafe extern "system" fn scissors(list: &List, count: u32, rects: *c
     if !state.can_record_graphics(&list.native) {
         return;
     }
-    if count > D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE
-        || (count != 0 && rects.is_null())
-    {
+    // leonida 4ff9a77f (Jan Trencansky): more than the 16 rectangles a
+    // pipeline can have is not an error (WARP closes such a list); the first
+    // 16 are kept. TUXBOX_SCISSOR_CLAMP=0 refuses the list as before.
+    let limit = D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    let count = if count > limit && crate::env_toggle!("TUXBOX_SCISSOR_CLAMP") != Some("0") {
+        static CLAMPED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&CLAMPED, || format!(
+            "RSSetScissorRects with {count} rectangles keeps the first {limit} (leonida 4ff9a77f; TUXBOX_SCISSOR_CLAMP=0 refuses)"));
+        limit
+    } else {
+        count
+    };
+    if count > limit || (count != 0 && rects.is_null()) {
         { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
