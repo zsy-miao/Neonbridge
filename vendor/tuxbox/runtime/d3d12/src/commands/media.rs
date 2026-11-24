@@ -36,13 +36,24 @@ impl Recording {
     }
 }
 
-pub(super) static SLOTS: Slots<16> = {
-    let mut s = child_slots::<ID3D12GraphicsCommandList, ListData, 16>();
+pub(super) static SLOTS: Slots<34> = {
+    let mut s = child_slots::<ID3D12GraphicsCommandList, ListData, 34>();
     s[8] = crate::slot!(super::get_type);
     s[9] = crate::slot!(super::close);
     s[10] = crate::slot!(super::reset);
+    s[11] = crate::slot!(super::compute::copy_buffer);
+    // Slot 12 stays the NV12 plane split. It is not a general texture copy.
     s[12] = crate::slot!(copy);
+    s[13] = crate::slot!(super::standard::copy_whole_resource);
+    s[14] = crate::slot!(super::standard::copy_tiles);
     s[15] = crate::slot!(barriers);
+    s[16] = crate::slot!(super::queries::query::<true>);
+    s[17] = crate::slot!(super::queries::query::<false>);
+    s[18] = crate::slot!(super::queries::resolve);
+    s[19] = crate::slot!(super::standard::set_marker);
+    s[20] = crate::slot!(super::standard::begin_event);
+    s[21] = crate::slot!(super::standard::end_event);
+    s[27] = crate::slot!(super::memory_wait::wait_value64);
     s
 };
 
