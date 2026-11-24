@@ -21,6 +21,19 @@ pub(crate) unsafe fn signature<'a>(
     unsafe { unwrap(guest, device, &SIGNATURE) }
 }
 
+/// A signature the title asked for and we refuse; its indirect work is lost.
+/// Logged (first 8, then powers of two) with the first argument's type.
+fn refused(desc: &D3D12_COMMAND_SIGNATURE_DESC, why: &str) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        let first = unsafe { (*desc.pArgumentDescs).Type.0 };
+        crate::diagnostics::log_line(format_args!(
+            "command signature refused ({why}): {} arguments, first type {first}, stride {} ({n} so far)",
+            desc.NumArgumentDescs, desc.ByteStride));
+    }
+}
+
 pub(super) unsafe extern "system" fn create_signature(
     this: &Device,
     desc: *const D3D12_COMMAND_SIGNATURE_DESC,
@@ -42,6 +55,7 @@ pub(super) unsafe extern "system" fn create_signature(
         return E_INVALIDARG;
     }
     if desc.NumArgumentDescs != 1 {
+        refused(desc, "more than one argument");
         return E_NOTIMPL;
     }
     // Only Type is initialized for these single-action signatures.
@@ -51,7 +65,9 @@ pub(super) unsafe extern "system" fn create_signature(
         (D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED, _) => {
             (guest_kind, size_of::<D3D12_DRAW_INDEXED_ARGUMENTS>())
         }
-        (D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH, _) | (D3D12_INDIRECT_ARGUMENT_TYPE(105), 12) => (
+        // leonida c8247cdf: the console's dispatch type 105 is a DISPATCH at
+        // any stride (it was taken only at 12 bytes).
+        (D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH | D3D12_INDIRECT_ARGUMENT_TYPE(105), _) => (
             D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH,
             size_of::<D3D12_DISPATCH_ARGUMENTS>(),
         ),
@@ -60,7 +76,10 @@ pub(super) unsafe extern "system" fn create_signature(
         (D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS, _) => {
             (guest_kind, size_of::<D3D12_DISPATCH_RAYS_DESC>())
         }
-        _ => return E_NOTIMPL,
+        _ => {
+            refused(desc, "argument type not mapped");
+            return E_NOTIMPL;
+        }
     };
     if (desc.ByteStride as usize) < record_size {
         return E_INVALIDARG;
