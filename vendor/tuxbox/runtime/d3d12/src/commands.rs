@@ -52,6 +52,16 @@ fn dropped_for_pending() {
     }
 }
 
+/// Count draws and dispatches dropped for a root view that did not resolve.
+fn dropped_for_unresolved_root(mask: u64) {
+    static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dropped = DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if dropped <= 4 || dropped.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "dropped {dropped} draws/dispatches whose root view did not resolve (root indices {mask:#x}; TUXBOX_ROOT_STALE_CLEAR=sink binds the zeroed sink instead)"));
+    }
+}
+
 struct Recording {
     prefix: memory_wait::Prefix,
     timestamp_page: Option<(ID3D12QueryHeap, u32)>,
@@ -69,6 +79,10 @@ struct Recording {
     /// The bound pipeline is lazy and still being made: draws and
     /// dispatches are dropped until the list binds it again once it exists.
     pipeline_pending: bool,
+    /// Root views (bit = root index) whose title address did not resolve,
+    /// [graphics, compute]: draws/dispatches drop until they are bound again
+    /// (see compute::root_buffer).
+    unresolved_roots: [u64; 2],
     /// This recording's indirect execution budget (see indirect_clamp).
     clamp_budget: Option<ID3D12Resource>,
     media: Option<media::Recording>,
@@ -140,6 +154,10 @@ impl Recording {
             dropped_for_pending();
             return;
         }
+        if self.unresolved_roots[1] != 0 {
+            dropped_for_unresolved_root(self.unresolved_roots[1]);
+            return;
+        }
         if let Some(table) = self.bindings.reflected_table::<true>() {
             if let Err(error) = self.bindings.with_reflected_table::<true>(
                 table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(),
@@ -209,6 +227,10 @@ impl Recording {
         };
         if self.pipeline_pending {
             dropped_for_pending();
+            return;
+        }
+        if self.unresolved_roots[0] != 0 {
+            dropped_for_unresolved_root(self.unresolved_roots[0]);
             return;
         }
         if rasterizes {
@@ -645,6 +667,7 @@ unsafe extern "system" fn reset(
         }
         state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
         state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
+        state.unresolved_roots = [0; 2];
         state.clamp_budget = None;
         if let Some(targets) = &mut state.stencil_targets {
             targets.unbind();
@@ -2913,6 +2936,7 @@ pub(crate) unsafe fn wrap_command_list(
             trace_samples: Vec::new(),
             null_pipeline: false,
             pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
+            unresolved_roots: [0; 2],
             clamp_budget: None,
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),

@@ -17,6 +17,7 @@ pub(super) unsafe extern "system" fn root(list: &List, signature: *mut c_void) {
         Ok(root) => {
             let native = root.map(|r| &r.native);
             state.bindings.graphics_root(native, root.map(|r| &r.state));
+            state.unresolved_roots[0] = 0;
             unsafe { list.native.SetGraphicsRootSignature(native) };
         }
         Err(error) => state.error = error,

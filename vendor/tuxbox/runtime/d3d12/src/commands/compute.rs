@@ -19,6 +19,7 @@ pub(super) unsafe extern "system" fn bind_root(list: &List, signature: *mut c_vo
         Ok(root) => {
             let native = root.map(|r| &r.native);
             state.bindings.compute_root(native, root.map(|r| &r.state));
+            state.unresolved_roots[1] = 0;
             unsafe { list.native.SetComputeRootSignature(native) };
         }
         Err(error) => state.error = error,
@@ -57,10 +58,20 @@ pub(super) unsafe extern "system" fn constants<const COMPUTE: bool>(
 
 use super::compute_bindings::BufferView;
 
+/// root_address: the title address did not resolve (stale clear).
+const UNRESOLVED: u64 = u64::MAX;
+
 fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: fn(u64) -> BufferView) {
     let mut state = recording(list);
     if state.can_record_for::<COMPUTE>(&list.native) {
         let Some(mut address) = root_address(list, &mut state, guest) else { return };
+        let bit = 1u64.checked_shl(index).unwrap_or(0);
+        if address == UNRESOLVED {
+            state.unresolved_roots[COMPUTE as usize] |= bit;
+            address = 0;
+        } else {
+            state.unresolved_roots[COMPUTE as usize] &= !bit;
+        }
         if address == 0 && let Some(sink) = null_sink(list) {
             address = sink;
         }
@@ -149,18 +160,23 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     match result {
         Ok(va) => Some(va),
         // Xbox2Windows 109e7dc8 (MIT): an unresolvable bind left the previous
-        // root view bound, so the draw read a stale buffer. It is bound as
-        // null now (the zeroed sink) and the list goes on. TUXBOX_ROOT_STALE_CLEAR=0
-        // refuses the call again, keeping the previous binding.
+        // root view bound, so the draw read a stale buffer. ea4abef bound the
+        // zeroed sink and let the list go on; test104/105 then lost the device
+        // to a GPU page fault at VA 0, as a shader that reads a 64-bit address
+        // out of a zeroed constant buffer dereferences 0. Now the sink is bound
+        // and the list's draws/dispatches drop until that root view is bound
+        // again or the root signature changes. TUXBOX_ROOT_STALE_CLEAR=sink
+        // draws with the sink (ea4abef); =0 refuses the call, keeping the
+        // previous binding.
         Err(e) if crate::env_toggle!("TUXBOX_ROOT_STALE_CLEAR") != Some("0") => {
             static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if n <= 4 || n.is_power_of_two() {
                 crate::diagnostics::log_line(format_args!(
-                    "root view at title address {guest:#x} did not resolve ({:#010x}); bound as null instead of keeping the previous one (guest RVA {:#x}; {n} so far; TUXBOX_ROOT_STALE_CLEAR=0 off)",
+                    "root view at title address {guest:#x} did not resolve ({:#010x}); its draws/dispatches drop until it is bound again (guest RVA {:#x}; {n} so far; TUXBOX_ROOT_STALE_CLEAR=sink draws with zeros, =0 refuses)",
                     e.code().0, crate::survey::title_rva().unwrap_or(0)));
             }
-            Some(0)
+            Some(if crate::env_toggle!("TUXBOX_ROOT_STALE_CLEAR") == Some("sink") { 0 } else { UNRESOLVED })
         }
         Err(e) => { state.error = e.code(); None }
     }
