@@ -633,6 +633,28 @@ impl Pool {
 /// for the requested number of UINT64 entries.
 #[unsafe(export_name = "XMemAllocatePhysicalPages")]
 pub unsafe extern "system" fn allocate(flags: u64, count: *mut usize, tokens: *mut u64) -> i32 {
+    let requested = if count.is_null() { 0 } else { unsafe { count.read_unaligned() } };
+    let result = unsafe { allocate_inner(flags, count, tokens) };
+    if requests_logged() {
+        let got = if count.is_null() { 0 } else { unsafe { count.read_unaligned() } };
+        let first = if result != 0 && got != 0 && !tokens.is_null() { unsafe { tokens.read_unaligned() } } else { 0 };
+        crate::loader::log(&format!("page request: XMemAllocatePhysicalPages flags {flags:#x} pages {requested:#x} -> {} {got:#x} pages, first token {first:#x}; title RVA {:#x}",
+            if result != 0 { "ok" } else { "failed" }, crate::diagnostics::title_rva()));
+    }
+    result
+}
+
+/// TUXBOX_PAGE_REQUESTS=1: each physical-page allocation and mapping request
+/// with its outcome and title caller, 256 lines at most (idea from leonida
+/// 45c99d97 boot_trace, re-derived).
+fn requests_logged() -> bool {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("TUXBOX_PAGE_REQUESTS").is_some_and(|v| v == "1"));
+    static LINES: AtomicU32 = AtomicU32::new(0);
+    *ON && LINES.fetch_add(1, Ordering::Relaxed) < 256
+}
+
+unsafe fn allocate_inner(flags: u64, count: *mut usize, tokens: *mut u64) -> i32 {
     if count.is_null() {
         return failure(ERROR_INVALID_PARAMETER);
     }
@@ -766,6 +788,20 @@ pub unsafe extern "system" fn map(
     count: usize,
     tokens: *const u64,
 ) -> *mut c_void {
+    let result = unsafe { map_inner(address, count, tokens) };
+    if requests_logged() {
+        let first = if tokens.is_null() || count == 0 { 0 } else { unsafe { tokens.read_unaligned() } };
+        crate::loader::log(&format!("page request: XMemMapPhysicalPages at {address:p} pages {count:#x} first token {first:#x}{} -> {result:p}; title RVA {:#x}",
+            if tokens.is_null() { " (unmap)" } else { "" }, crate::diagnostics::title_rva()));
+    }
+    result
+}
+
+unsafe fn map_inner(
+    address: *mut c_void,
+    count: usize,
+    tokens: *const u64,
+) -> *mut c_void {
     let at = address as usize;
     if at == 0 {
         failure(ERROR_INVALID_PARAMETER);
@@ -817,6 +853,20 @@ pub unsafe extern "system" fn map(
 /// the mapped ranges. The caller must own and serialize access to each range.
 #[unsafe(export_name = "XMemMapPhysicalPagesScatter")]
 pub unsafe extern "system" fn map_scatter(
+    addresses: *const *mut c_void,
+    count: usize,
+    tokens: *const u64,
+) -> i32 {
+    let result = unsafe { map_scatter_inner(addresses, count, tokens) };
+    if requests_logged() {
+        let first = if addresses.is_null() || count == 0 { core::ptr::null_mut() } else { unsafe { addresses.read() } };
+        crate::loader::log(&format!("page request: XMemMapPhysicalPagesScatter pages {count:#x} first at {first:p} -> {}; title RVA {:#x}",
+            if result != 0 { "ok" } else { "failed" }, crate::diagnostics::title_rva()));
+    }
+    result
+}
+
+unsafe fn map_scatter_inner(
     addresses: *const *mut c_void,
     count: usize,
     tokens: *const u64,

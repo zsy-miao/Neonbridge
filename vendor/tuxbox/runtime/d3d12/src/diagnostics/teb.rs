@@ -24,6 +24,7 @@ pub(crate) fn run() {
         super::streams::start(&value);
     }
     super::memwatch::start();
+    super::exe_sha::start();
 }
 
 fn gs(offset: usize) -> usize {

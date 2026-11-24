@@ -101,6 +101,7 @@ unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
             }
             if write(&reason, context, unsafe { GetCurrentThreadId() }) {
                 detail(context, fault_address);
+                self::record(format_args!("crash record: unwound stack {}", unwind(context)));
                 if super::crash_detail::enabled() {
                     // The other threads at the fault (VIctory-style), and a small dump.
                     let lines = all_stacks();
@@ -144,6 +145,47 @@ fn minidump(info: &EXCEPTION_POINTERS) {
         MiniDumpWriteDump(windows::Win32::System::Threading::GetCurrentProcess(), GetCurrentProcessId(), HANDLE(file.as_raw_handle()), kind, Some(&exception), None, None)
     };
     record(format_args!("crash record: minidump {} {}", path.display(), if written.is_ok() { "written" } else { "failed" }));
+}
+
+/// The faulting thread's call chain from the images' own unwind tables
+/// (.pdata via RtlLookupFunctionEntry/RtlVirtualUnwind), as module+RVA, so
+/// stale return addresses left on the stack are not mistaken for frames
+/// (re-derived from palmetto 7eab981a; TUXBOX_CRASH_UNWIND=0 off).
+fn unwind(start: &CONTEXT) -> String {
+    use windows::Win32::System::Diagnostics::Debug::{RTL_VIRTUAL_UNWIND_HANDLER_TYPE, RtlLookupFunctionEntry, RtlVirtualUnwind};
+    if std::env::var_os("TUXBOX_CRASH_UNWIND").is_some_and(|v| v == "0") {
+        return "off".into();
+    }
+    let list = modules();
+    let mut c = Box::new(Aligned(*start));
+    let mut chain = Vec::new();
+    for _ in 0..24 {
+        let rip = c.0.Rip;
+        if rip == 0 {
+            break;
+        }
+        chain.push(label(&list, rip as usize));
+        let mut image = 0u64;
+        let entry = unsafe { RtlLookupFunctionEntry(rip, &mut image, None) };
+        if entry.is_null() {
+            // A leaf function (or code without unwind data): the return address is at rsp.
+            let Some(ret) = super::crash_detail::read::<u64>(c.0.Rsp as usize) else { break };
+            c.0.Rip = ret;
+            c.0.Rsp += 8;
+        } else {
+            // Unwinding reads the frame; stop rather than fault inside the filter.
+            if super::crash_detail::read::<u64>(c.0.Rsp as usize).is_none() {
+                break;
+            }
+            let mut data = core::ptr::null_mut();
+            let mut frame = 0u64;
+            unsafe { RtlVirtualUnwind(RTL_VIRTUAL_UNWIND_HANDLER_TYPE(0), image, rip, entry, &mut c.0, &mut data, &mut frame, None) };
+        }
+        if c.0.Rip == rip && chain.len() > 1 {
+            break;
+        }
+    }
+    chain.join(" < ")
 }
 
 /// A record of the calling thread, for fail-fast and panics.

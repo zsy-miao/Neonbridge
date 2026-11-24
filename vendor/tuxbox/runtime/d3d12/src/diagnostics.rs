@@ -591,6 +591,7 @@ mod streams;
 pub(crate) mod memwatch;
 pub(crate) mod rootsig;
 pub(crate) mod a8;
+mod exe_sha;
 pub(crate) mod null_causes;
 pub(crate) mod sampler;
 
