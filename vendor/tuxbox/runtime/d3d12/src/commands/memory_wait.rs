@@ -153,6 +153,24 @@ pub(super) struct Segment {
     address: u64,
 }
 
+/// Guest addresses GPU memory waits were recorded on (up to 4096, then the
+/// set restarts). A left-out list's CPU value write only raises these words.
+static WAIT_WORDS: std::sync::Mutex<Option<std::collections::HashSet<u64>>> = std::sync::Mutex::new(None);
+
+fn note_wait_word(address: u64) {
+    let mut words = WAIT_WORDS.lock().unwrap_or_else(|e| e.into_inner());
+    let words = words.get_or_insert_with(Default::default);
+    if words.len() >= 4096 {
+        words.clear();
+    }
+    words.insert(address);
+}
+
+/// Whether a GPU memory wait was recorded on `address`.
+pub(super) fn is_wait_word(address: u64) -> bool {
+    WAIT_WORDS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|w| w.contains(&address))
+}
+
 /// Guest addresses of waits that stalled 2 s (up to 16). Writes recorded or
 /// submitted later to the same 4 KiB page are logged, to tell a missing write
 /// from one queued behind the wait (rebox d69d0da).
@@ -228,6 +246,7 @@ unsafe fn wait_value(
             "GPU memory waits skipped (TUXBOX_MEMORY_WAITS=0); first at {address:#x}"));
         return;
     }
+    note_wait_word(address);
     let mut state = recording(list);
     if !state.ensure_open(&list.native) {
         return;

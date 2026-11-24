@@ -118,6 +118,12 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
         return Some(built);
     }
     promote(slot);
+    if steal_on() && let Some(job) = steal(slot) {
+        build_here(job);
+        if let Some(built) = slot.built.get() {
+            return Some(built);
+        }
+    }
     hurry(slot);
     let deadline = std::time::Instant::now() + limit;
     let (lock, done) = &DONE;
@@ -566,6 +572,48 @@ fn promote(slot: &Arc<Upgrade>) {
             crate::diagnostics::log_line(format_args!(
                 "background pipelines: a bound pipeline moved ahead of {at} queued ones ({n} so far; TUXBOX_PIPELINE_PRIORITY=0 off)"));
         }
+    }
+}
+
+/// test108: compute pipelines the title bound waited their full 3 s while
+/// queued behind workers held up by compiles waiting for memory, so their
+/// dispatches (and the progress writes the title's watchdog waits on) were
+/// lost. A pipeline the title waits on that no worker has started is taken
+/// from the queue and made on the title's thread. TUXBOX_COMPUTE_STEAL=0 off.
+fn steal_on() -> bool {
+    crate::env_toggle!("TUXBOX_COMPUTE_STEAL") != Some("0")
+}
+
+fn steal(slot: &Arc<Upgrade>) -> Option<Job> {
+    if slot.built.get().is_some() || slot.failed.load(Ordering::Relaxed) || slot.running.load(Ordering::Acquire) != 0 {
+        return None;
+    }
+    let mut g = JOBS.0.lock().unwrap_or_else(|e| e.into_inner());
+    let jobs = g.as_mut()?;
+    if let Some(at) = jobs.bound.iter().position(|j| Arc::ptr_eq(&j.slot, slot)) {
+        return jobs.bound.remove(at);
+    }
+    let at = jobs.created.iter().position(|j| Arc::ptr_eq(&j.slot, slot))?;
+    jobs.created.remove(at)
+}
+
+/// Builds a job on this thread as a worker would, keeping its priority.
+fn build_here(job: Job) {
+    use windows::Win32::System::Threading::*;
+    let started = std::time::Instant::now();
+    let priority = unsafe { GetThreadPriority(GetCurrentThread()) };
+    crate::big_stack::run(|| {
+        let was = WORKER.with(|w| w.replace(true));
+        build(job);
+        WORKER.with(|w| w.set(was));
+    });
+    let _ = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY(priority)) };
+    static STOLEN: AtomicU64 = AtomicU64::new(0);
+    let n = STOLEN.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "background pipelines: a queued pipeline the title waits on made on its thread in {:.1} ms ({n} so far; TUXBOX_COMPUTE_STEAL=0 off)",
+            started.elapsed().as_secs_f64() * 1e3));
     }
 }
 

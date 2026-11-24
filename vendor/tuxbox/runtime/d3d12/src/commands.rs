@@ -1832,11 +1832,20 @@ fn cpu_copy_after_with(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>, values:
                 // up to a second. These stores only raise the word now; a store
                 // of a smaller value is skipped and logged.
                 // TUXBOX_ORPHAN_WRITES_MAX=0 stores unconditionally again.
-                let raise_only = crate::env_toggle!("TUXBOX_ORPHAN_WRITES_MAX") != Some("0");
+                // test108: raising every word (a counter or index that legitimately
+                // goes back down kept its stale value) lost the device at VA 0, so
+                // only words a GPU memory wait was recorded on are raised;
+                // TUXBOX_ORPHAN_WRITES_MAX=all raises every word as 8e4981d did.
+                let mode = crate::env_toggle!("TUXBOX_ORPHAN_WRITES_MAX");
                 for (address, value, bytes) in values {
                     if !accessible(address as usize, bytes as usize, true) {
                         continue;
                     }
+                    let raise_only = match mode {
+                        Some("0") => false,
+                        Some("all") => true,
+                        _ => memory_wait::is_wait_word(address),
+                    };
                     // SAFETY: checked committed and writable just now.
                     let kept = unsafe {
                         match bytes {
@@ -1867,7 +1876,7 @@ fn cpu_copy_after_with(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>, values:
                         let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
                         if n <= 8 || n.is_power_of_two() {
                             crate::diagnostics::log_line(format_args!(
-                                "left-out list value write {address:#x} = {value:#x} skipped: the word already reads {newer:#x}, written later by another list ({n} so far; TUXBOX_ORPHAN_WRITES_MAX=0 off)"));
+                                "left-out list value write {address:#x} = {value:#x} skipped: the word already reads {newer:#x}, written later by another list ({n} so far; GPU wait words only, TUXBOX_ORPHAN_WRITES_MAX=0 off, =all every word)"));
                         }
                     }
                 }
