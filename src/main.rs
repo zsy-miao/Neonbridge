@@ -1,4 +1,4 @@
-//! 6ixlaunch: run a dumped Xbox Series (Scarlett / GDK) executable on
+//! 6Launch: run a dumped Xbox Series (Scarlett / GDK) executable on
 //! Windows through TuxBox's Rust console-library providers.
 //!
 //! The game's x64 code runs natively; the console DLLs it imports (d3d12_xs,
@@ -22,7 +22,7 @@ use std::{
     time::Instant,
 };
 
-const USAGE: &str = "usage: 6ixlaunch --game <dir> [--tuxbox <TuxBox checkout>] [--exe <name>] [--log <file>]
+const USAGE: &str = "usage: 6launch --game <dir> [--tuxbox <TuxBox checkout>] [--exe <name>] [--log <file>]
                       [--build-only | --stage-only | --build-shaders | --restore] [-- <game args>]
   --game       dumped package folder (holds MicrosoftGame.Config and the exe)
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
@@ -582,7 +582,7 @@ fn ntstatus(c: u32) -> &'static str {
 fn main() {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if let Err(e) = run(&args) {
-        eprintln!("6ixlaunch: {e}");
+        eprintln!("6launch: {e}");
         std::process::exit(1);
     }
 }

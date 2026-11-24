@@ -17,7 +17,7 @@ pub(super) const PAGE: usize = 65536;
 
 pub(super) fn reserve(address: *const c_void, bytes: usize) -> *mut c_void {
     if address.is_null() {
-        // 6ixlaunch: keep placeholders inside the console GPU window.
+        // 6Launch: keep placeholders inside the console GPU window.
         return unsafe { super::virtual_memory::host_alloc(address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, 0) };
     }
     unsafe {
@@ -190,7 +190,7 @@ pub(super) fn coalesce(base: usize, bytes: usize) -> Result<(), u32> {
     }
 }
 
-// 6ixlaunch: join adjacent placeholders exactly covering [base, base+bytes).
+// 6Launch: join adjacent placeholders exactly covering [base, base+bytes).
 pub(super) fn coalesce_range(base: usize, bytes: usize) -> Result<(), u32> {
     if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) } == 0 {
         Err(unsafe { GetLastError() })
@@ -199,7 +199,7 @@ pub(super) fn coalesce_range(base: usize, bytes: usize) -> Result<(), u32> {
     }
 }
 
-// 6ixlaunch: split the leading `bytes` off a placeholder.
+// 6Launch: split the leading `bytes` off a placeholder.
 pub(super) fn split(base: usize, bytes: usize) -> Result<(), u32> {
     if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) } == 0 {
         Err(unsafe { GetLastError() })

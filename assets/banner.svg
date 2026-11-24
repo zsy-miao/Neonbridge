@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="6ixlaunch: Xbox Series GDK executables, native on Windows">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="6Launch: Xbox Series GDK executables, native on Windows">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b0f1a"/>
@@ -27,7 +27,7 @@
     <path d="M58 122L122 58M80 58H122V100" fill="none" stroke="url(#accent)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 
-  <text x="380" y="168" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="104" font-weight="800" fill="#ffffff" letter-spacing="-2">6ix<tspan fill="url(#accent)">launch</tspan></text>
+  <text x="380" y="168" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="104" font-weight="800" fill="#ffffff" letter-spacing="-2">6<tspan fill="url(#accent)">Launch</tspan></text>
   <text x="384" y="222" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="30" fill="#aab3cf">Xbox Series GDK executables, native on Windows</text>
   <text x="384" y="262" font-family="Consolas, Menlo, monospace" font-size="20" fill="#6c7698">x64 runs natively · console DLLs → TuxBox Rust providers · D3D12</text>
 </svg>

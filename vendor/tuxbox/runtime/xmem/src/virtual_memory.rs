@@ -40,7 +40,7 @@ pub(super) fn allocate_placement(bytes: usize, alignment: usize) -> *mut c_void 
     base
 }
 
-/// 6ixlaunch: the console GPU window is [2 GiB, limit) where the limit comes
+/// 6Launch: the console GPU window is [2 GiB, limit) where the limit comes
 /// from D3D12ConfigureVirtualMemoryX (GTA VI: 4 entries -> 0x1f_e000_0000).
 /// Windows otherwise places title memory above 2 TiB, outside every window.
 pub(super) const WINDOW: (usize, usize) = (1 << 31, 0x1f_e000_0000);

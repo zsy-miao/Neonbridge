@@ -1,19 +1,19 @@
-# 6ixlaunch: run Xbox Series games on a Windows PC
+# 6Launch: run Xbox Series games on a Windows PC
 
-![6ixlaunch](assets/banner.svg)
+![6Launch](assets/banner.svg)
 
-**In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6ixlaunch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
+**In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6Launch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
 
 It's an early work in progress: the GTA VI Xbox build starts and draws frames, but the screen is still black, it currently crashes about 4 seconds in, and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
 ```
-6ixlaunch --game <dump dir> [--sandbox] [--debug | --cdb <commands file>] [--log <file>]
-6ixlaunch --game <dump dir> --restore
+6launch --game <dump dir> [--sandbox] [--debug | --cdb <commands file>] [--log <file>]
+6launch --game <dump dir> --restore
 ```
 
-Needs Visual Studio Build Tools (x64 C++), cargo, and the x86_64-pc-windows-msvc target. `--sandbox` needs Sandboxie-Plus. `--debug` needs cdb from the Windows SDK. Run `6ixlaunch --help` for every option.
+Needs Visual Studio Build Tools (x64 C++), cargo, and the x86_64-pc-windows-msvc target. `--sandbox` needs Sandboxie-Plus. `--debug` needs cdb from the Windows SDK. Run `6launch --help` for every option.
 
 ## Status
 
@@ -69,7 +69,7 @@ No game files, keys or binaries are in this repository. Bring your own copy of t
 
 ## Credits
 
-6ixlaunch stands on other people's work. Thank you to:
+6Launch stands on other people's work. Thank you to:
 
 - **[TuxBox](https://github.com/brcly/TuxBox)** by brcly: the console-DLL providers, D3D12 runtime and `xshader` translator, vendored under `vendor/tuxbox` (Apache-2.0), plus many later upstream fixes ported in.
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak: typed null descriptors, async pipeline building, argument clamps and per-frame pipeline budgets.

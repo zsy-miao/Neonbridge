@@ -6,7 +6,7 @@ license = "Apache-2.0"
 publish = false
 
 [[bin]]
-name = "6ixlaunch"
+name = "6launch"
 path = "src/main.rs"
 
 [workspace]
