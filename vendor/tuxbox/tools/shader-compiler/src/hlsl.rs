@@ -2917,9 +2917,13 @@ impl<'a> Emitter<'a> {
                         }
                     }
                 }
-                Enc::Sop1 if inline_samplers && ins.mnemonic == "s_mov_b64" && matches!(ins.src.first(), Some(Opnd::ConstInt(_))) => {
-                    if let (Some(d), Some(Opnd::ConstInt(v))) = (ins.dst.first().and_then(sg), ins.src.first()) {
-                        let value = *v as i64 as u64;
+                // Inline constants sign-extend; a literal counts only with bit 31 clear
+                // (runtime inline_sampler::constant_word agrees).
+                Enc::Sop1 if inline_samplers && ins.mnemonic == "s_mov_b64"
+                    && matches!(ins.src.first(), Some(Opnd::ConstInt(_)) | Some(Opnd::Literal(0..=0x7fff_ffff))) =>
+                {
+                    let literal = match ins.src.first() { Some(Opnd::ConstInt(v)) => Some(*v as u64), Some(Opnd::Literal(v)) => Some(u64::from(*v)), _ => None };
+                    if let (Some(d), Some(value)) = (ins.dst.first().and_then(sg), literal) {
                         for k in 0..2u16 {
                             sym.insert(d + k, Sym::InlineWord((value >> (32 * k)) as u32));
                             written.insert(d + k);
