@@ -82,7 +82,13 @@ pub(crate) unsafe extern "system" fn read_file(
     // overlapped read cannot be retried below, since it returns IO_PENDING and
     // reports the 998 at completion, so this is its only chance.
     if !buffer.is_null() && enabled() {
-        crate::lazy_commit::ensure(buffer as usize, bytes as usize);
+        let pages = crate::lazy_commit::ensure(buffer as usize, bytes as usize);
+        static FIRST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = if pages > 0 { FIRST.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 } else { 0 };
+        if n != 0 && (n <= 8 || n.is_power_of_two()) {
+            crate::loader::log(&format!(
+                "ReadFile into {buffer:p}+{bytes:#x}: committed {pages} lazy 64 KiB page(s) before the read ({n} reads so far)"));
+        }
     }
     let ok = unsafe { ReadFile(file, buffer, bytes, read, overlapped) };
     if ok != 0 || buffer.is_null() || !enabled() || unsafe { GetLastError() } != ERROR_NOACCESS {
@@ -104,6 +110,26 @@ pub(crate) unsafe extern "system" fn read_file(
     }
     unsafe { SetLastError(error) };
     again
+}
+
+/// Routes a title DLL's own ReadFile imports through `read_file`.
+/// Bink2Scarlett.dll imports ReadFile from api-ms-win-core-file-l1-1-0 and
+/// reads its movie stream into xmem memory; only the exe's import was hooked,
+/// so since lazy commit (49702da) its reads into title views no CPU had
+/// touched failed in the kernel (998), and the decoder ran on a stream with
+/// holes: the intro movies' block smear from test137 on.
+pub(crate) unsafe fn patch_module(module: *mut c_void) -> usize {
+    if module.is_null() || !enabled() {
+        return 0;
+    }
+    unsafe {
+        crate::loader::patch_module_imports(
+            module.cast(),
+            |d| d.starts_with("api-ms-win-core-file-") || d == "kernel32.dll" || d == "kernelbase.dll",
+            &[("ReadFile", read_file as *const () as usize)],
+            &[],
+        )
+    }
 }
 
 #[cfg(test)]

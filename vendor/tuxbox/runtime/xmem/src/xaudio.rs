@@ -389,6 +389,10 @@ pub(crate) unsafe fn install() {
     let bink: Vec<u16> = "bink2scarlett.dll".encode_utf16().chain([0]).collect();
     let bink_module = unsafe { GetModuleHandleW(bink.as_ptr()) };
     unsafe { patch_module(bink_module, "Bink2Scarlett.dll") };
+    let reads = unsafe { crate::read_commit::patch_module(bink_module) };
+    if reads > 0 {
+        log(&format!("read commit: {reads} ReadFile import(s) of Bink2Scarlett.dll commit lazy title pages first (TUXBOX_READ_COMMIT=0 off)"));
+    }
     let n = unsafe { crate::affinity::patch_module(bink_module) };
     if n > 0 {
         log(&format!("affinity: {n} import(s) of Bink2Scarlett.dll wrapped"));
