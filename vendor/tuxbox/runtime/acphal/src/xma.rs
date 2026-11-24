@@ -367,21 +367,26 @@ fn report_stats() {
 pub(crate) unsafe extern "system" fn submit(this: *mut c_void, command: u32, id: u64, frame: u32, data: *const c_void, notification: u32) -> i32 {
     // SAFETY: same arguments the inert slot took (the rest stay on the stack).
     let result = unsafe { crate::probe::method::<2>(this, command as usize, id as usize, frame as usize) };
+    let word = |at: usize| -> Option<u32> {
+        // SAFETY: the command's data starts with these u32 fields.
+        (!data.is_null()).then(|| unsafe { data.cast::<u32>().add(at).read_unaligned() })
+    };
+    crate::messages::command(command, id, &word);
     if !enabled() {
-        return result;
+        return if crate::messages::enabled() { 0 } else { result };
     }
     static SEEN: Mutex<u64> = Mutex::new(0);
     if command < 64 {
         let mut seen = lock(&SEEN);
         if *seen & 1 << command == 0 {
             *seen |= 1 << command;
-            crate::probe::log(format_args!("first coprocessor command {command} (data {data:p}, notification {notification:#x})"));
+            let words: Vec<String> = (0..4).map(|i| word(i).map_or("-".into(), |w| format!("{w:08x}"))).collect();
+            crate::probe::log(format_args!(
+                "first coprocessor command {command} (id {id:#x}, frame {frame:#x}, data {data:p} = {}, notification {notification:#x})",
+                words.join(" ")
+            ));
         }
     }
-    let word = |at: usize| -> Option<u32> {
-        // SAFETY: the command's data starts with these u32 fields.
-        (!data.is_null()).then(|| unsafe { data.cast::<u32>().add(at).read_unaligned() })
-    };
     let handled = {
         let c = contexts();
         match command {

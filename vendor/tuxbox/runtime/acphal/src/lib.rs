@@ -1,5 +1,6 @@
 //! Rust provider for the Xbox audio processor heap and AcpHal entry points Frosty imports.
 
+mod messages;
 mod probe;
 mod xma;
 
@@ -239,6 +240,11 @@ static HAL_VTABLE: [HalMethod; HAL_VTABLE_SLOTS] = {
     // Slot 2 is the coprocessor command submit; it still counts for the probe.
     // SAFETY: the title calls slot 2 with the submit signature; both are system ABI.
     v[2] = unsafe { core::mem::transmute::<SubmitMethod, HalMethod>(xma::submit as SubmitMethod) };
+    // Connection and message queue; each still counts for the probe.
+    v[0] = messages::connect as HalMethod;
+    v[1] = messages::disconnect as HalMethod;
+    v[3] = messages::pop_message as HalMethod;
+    v[4] = messages::message_count as HalMethod;
     v
 };
 static HAL_OBJECT: OnceLock<usize> = OnceLock::new();
