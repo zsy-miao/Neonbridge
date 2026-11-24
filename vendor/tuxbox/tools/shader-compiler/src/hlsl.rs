@@ -2070,6 +2070,15 @@ impl<'a> Emitter<'a> {
         states[0] = Some((entry, BTreeSet::new()));
         let mut work = vec![0usize];
         let mut budget = 20_000usize;
+        // TB_SPECULATE_DESCRIPTORS (rebox AnyPS5 0004, off by default): a descriptor
+        // word, heap offset or raw address known on only one incoming path is taken
+        // as the value on every path, like table pointers and descriptors below. The
+        // other arm is a lane mask, ballot or a path that never reaches the use;
+        // waterfall loops that select per-lane values are not told apart from it.
+        let speculate = std::env::var_os("TB_SPECULATE_DESCRIPTORS").is_some();
+        let optimistic = |v: &Sym| matches!(v, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_))
+            || speculate && matches!(v, Sym::InlineWord(_) | Sym::HeapOffset | Sym::HeapDescriptor(_)
+                | Sym::SamplerHeapOffset | Sym::SamplerOffset(_) | Sym::DirectRaw(_));
         while let Some(b) = work.pop() {
             if budget == 0 {
                 return Err("descriptor dataflow did not converge".into());
@@ -2109,7 +2118,7 @@ impl<'a> Emitter<'a> {
                                 },
                                 // Known on one path only. A descriptor stays (see below);
                                 // anything else is dropped.
-                                None if matches!(a, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_)) => {}
+                                None if optimistic(&a) => {}
                                 None => {
                                     osym.remove(&k);
                                 }
@@ -2123,7 +2132,7 @@ impl<'a> Emitter<'a> {
                         // path the result is unused. A later use as a descriptor would be
                         // invalid anyway if the register held something else.
                         for (k, v) in sym.iter() {
-                            if matches!(v, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_)) && !osym.contains_key(k) {
+                            if optimistic(v) && !osym.contains_key(k) {
                                 osym.insert(*k, *v);
                             }
                         }
