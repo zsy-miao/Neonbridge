@@ -418,9 +418,20 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
         return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
     }
     let _ = super::shader_cache::take_missed();
+    let _ = super::shader_cache::take_misses();
     let status = unsafe { make_compute(this, desc, extension_count, extensions, iid, out) };
     if status.is_err() {
         crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesRefused);
+        // leonida-ce 83bf1f60: no null record for the title to walk (see background::refused).
+        if !worker
+            && background::refused_placeholder_on()
+            && unsafe { check_output::<ID3D12PipelineState>(iid, out) }.is_ok()
+            && let Some(placeholder) = background::placeholder(this)
+        {
+            let state = PipelineData { key: key.map(Into::into), lazy: true, compute: true, ..Default::default() };
+            let _ = state.upgrade.set(background::refused("compute pipeline", status));
+            return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
+        }
     }
     let missed = super::shader_cache::take_missed();
     if status.is_err() || worker {

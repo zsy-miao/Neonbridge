@@ -73,6 +73,32 @@ pub(crate) fn never() -> Arc<Upgrade> {
     Arc::new(slot)
 }
 
+/// leonida-ce 83bf1f60 (IAmNotSiob, GPL-3): a pipeline the title failed to
+/// create left a null record in its definition tables, and a later walk over
+/// them faulted on it (their 120-140 s stop; our test120 write AV at 0).
+/// A refused create now hands the title the shared placeholder holding a
+/// never-built upgrade, so its binds drop their work and are logged with
+/// `why`. TUXBOX_REFUSED_PLACEHOLDER=0 returns the failure, as before.
+pub(crate) fn refused_placeholder_on() -> bool {
+    crate::env_toggle!("TUXBOX_REFUSED_PLACEHOLDER") != Some("0")
+}
+
+pub(crate) fn refused(kind: &str, status: windows::core::HRESULT) -> Arc<Upgrade> {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    let misses = super::super::shader_cache::take_misses();
+    let reasons = misses.iter().map(|(key, why)| format!("{key}: {why}")).collect::<Vec<_>>().join("; ");
+    let why = format!("{kind} create refused ({:#x}){}", status.0 as u32,
+        if reasons.is_empty() { String::new() } else { format!(": {reasons}") });
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "{why}; the title gets the placeholder ({n} so far; TUXBOX_REFUSED_PLACEHOLDER=0 returns the failure)"));
+    }
+    let slot = never();
+    let _ = slot.why.set(why);
+    slot
+}
+
 /// test116 counted 84 binds of untranslatable pipelines with nothing saying
 /// which shaders or why. Each distinct pipeline bound after its worker gave
 /// up is logged with the shader keys and refusal reasons, the first

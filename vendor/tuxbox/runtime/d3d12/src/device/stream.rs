@@ -755,6 +755,7 @@ pub(super) unsafe extern "system" fn create_pipeline(
         return unsafe { wrap_pageable(Ok(placeholder), &compute::PIPELINE, device, state, out) };
     }
     let _ = shader_cache::take_missed();
+    let _ = shader_cache::take_misses();
     let native = unsafe { create(device, desc, &mut state) };
     // A translation missed the wait budget: the title gets this pipeline now
     // and a worker makes the real one from a private copy of the stream.
@@ -772,8 +773,16 @@ pub(super) unsafe extern "system" fn create_pipeline(
         desc.SizeInBytes,
         native.as_ref().err().map(|e| e.code().0),
     );
-    if native.is_err() {
+    if let Err(error) = &native {
         crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesRefused);
+        if !worker
+            && background::refused_placeholder_on()
+            && let Some(placeholder) = background::placeholder(device)
+        {
+            state.lazy = true;
+            let _ = state.upgrade.set(background::refused("graphics pipeline", error.code()));
+            return unsafe { wrap_pageable(Ok(placeholder), &compute::PIPELINE, device, state, out) };
+        }
     }
     unsafe { wrap_pageable(native, &compute::PIPELINE, device, state, out) }
 }
