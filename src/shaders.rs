@@ -242,10 +242,23 @@ fn verified(path: &Path, expected: &str) -> Result<Vec<u8>, String> {
 enum ToolError { Exit(i32, String), Other(String) }
 
 fn run(cmd: &mut Command, timeout: Duration) -> Result<(), ToolError> {
+    run_until(cmd, timeout, || false)
+}
+
+/// `run`, also ending the tool early (as a timeout) once `give_up` says so.
+fn run_until(cmd: &mut Command, timeout: Duration, give_up: impl Fn() -> bool) -> Result<(), ToolError> {
     let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
         .map_err(|e| ToolError::Other(format!("{e}")))?;
     let start = std::time::Instant::now();
+    let mut polls = 0u32;
     loop {
+        polls += 1;
+        // Every 100 ms: the predicate reads the file system.
+        if polls % 10 == 0 && give_up() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ToolError::Other("timed out".into()));
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 if status.success() {
@@ -386,7 +399,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         if !allowed.contains(&target.as_str()) {
             return Err(format!("unsupported compiler profile {target:?}"));
         }
-        let dxc = |opt: &str, secs: u64| {
+        let dxc = |opt: &str, secs: u64, give_up: &dyn Fn() -> bool| {
             let mut dxc = Command::new(&tools.dxc);
             dxc.arg("-T").arg(&target).arg(opt);
             for d in &tools.defines {
@@ -395,7 +408,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             if target != "lib_6_3" {
                 dxc.args(["-E", "main"]);
             }
-            run(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(secs))
+            run_until(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(secs), give_up)
         };
         // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
         // unoptimised DXIL compiles in seconds and the driver optimises it again.
@@ -404,10 +417,23 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // 92 s), starving pipelines the title waited on. -O1 now gets
         // NEONBRIDGE_DXC_O1_SECS (10) before the -O0 retry, not 120.
         let o1_secs = std::env::var("NEONBRIDGE_DXC_O1_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0).unwrap_or(10);
-        let compiled = match dxc("-O1", o1_secs) {
+        // test130/131 died at the scene load (the title's own watchdog, game
+        // +0x23cf620 "GPU Loc Sig") with its render jobs blocked in pipeline
+        // binds on these replies: 14 of 229 compiles spent their 10 s on an
+        // -O1 pass that timed out and was discarded (140 of 315 s of dxc).
+        // Idle-machine timings: 727f287e -O1 8.8 s vs -O0 0.5 s; a64767c5
+        // -O1 65 s vs -O0 8.3 s. A request a title thread waits on (its
+        // urgent/ marker, d3d12_xs writes it) goes straight to -O0, and an -O1
+        // pass under way ends when the marker appears.
+        // NEONBRIDGE_DXC_URGENT_O0=0 keeps -O1 first for every request.
+        let urgent_o0 = std::env::var("NEONBRIDGE_DXC_URGENT_O0").as_deref() != Ok("0");
+        let marker = session.join("urgent").join(key);
+        let urgent = || urgent_o0 && marker.exists();
+        let first = if urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &urgent) };
+        let compiled = match first {
             Err(ToolError::Other(msg)) if msg == "timed out" => {
                 let _ = fs::remove_file(&output);
-                dxc("-O0", 120)
+                dxc("-O0", 120, &|| false)
             }
             other => other,
         };
