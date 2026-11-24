@@ -3,12 +3,12 @@
 //! The title drives the console XMA decoder by writing the 64-byte contexts in
 //! the SHAPE XMA array and calling IAcpHal methods. This module counts the
 //! IAcpHal calls per slot and polls the contexts every 5 ms for changes.
-//! The field names come from the publicly documented 360-era XMA context
-//! layout and may not match SHAPE exactly. Raw dwords are logged as well.
-//!   dword0: bit 20/21 input buffer 0/1 valid, bits 27..31 output write offset
-//!   dword1: bit 31 output buffer valid
-//!   dword2: bits 0..25 input read offset (bits)
-//!   dword10: bits 0..4 output read offset
+//! SHAPE context fields as (word, shift, bits), from the shared audio notes
+//! (facts only); raw words are logged as well:
+//!   (0,20,2) input valid, (0,22,5) output ring blocks, (0,27,5) output write block
+//!   (1,27,2) rate index, (1,29,1) stereo, (1,31,1) output valid
+//!   (2,0,26) input read offset in bits, (2,26,5)/(2,31,1) error code/flag
+//!   words 5/6 input buffer 0/1 address, word 7 output ring, (9,0,5) output read block
 use core::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -81,6 +81,7 @@ struct Window {
     read_moves: u32,
     write_moves: u32,
     out_read_moves: u32,
+    errors: u32,
     changed_words: [u32; WORDS],
     active: std::collections::BTreeSet<usize>,
 }
@@ -120,7 +121,8 @@ fn watch() {
             window.output_valid_on += u32::from(bit(old[1], 31) == 0 && bit(now[1], 31) == 1);
             window.read_moves += u32::from(old[2] & 0x3ff_ffff != now[2] & 0x3ff_ffff);
             window.write_moves += u32::from(old[0] >> 27 != now[0] >> 27);
-            window.out_read_moves += u32::from(old[10] & 0x1f != now[10] & 0x1f);
+            window.out_read_moves += u32::from(old[9] & 0x1f != now[9] & 0x1f);
+            window.errors += u32::from(bit(old[2], 31) == 0 && bit(now[2], 31) == 1);
             for w in 0..WORDS {
                 window.changed_words[w] += u32::from(old[w] != now[w]);
             }
@@ -137,13 +139,15 @@ fn watch() {
                 .collect();
             let sample = window.active.iter().next().map(|&i| {
                 let c = &previous[i];
-                format!("ctx {i}: in0 {} in1 {} out {} read {:#x} write {} out-read {}",
-                    (c[0] >> 20) & 1, (c[0] >> 21) & 1, c[1] >> 31, c[2] & 0x3ff_ffff, c[0] >> 27, c[10] & 0x1f)
+                const RATES: [u32; 4] = [24000, 32000, 44100, 48000];
+                format!("ctx {i}: in valid {:02b}, {} Hz {} ch, ring {} blocks write {} read {} (out valid {}), input read bit {:#x}, error {}/{}, in0 {:#x} in1 {:#x} ring {:#x}",
+                    (c[0] >> 20) & 3, RATES[((c[1] >> 27) & 3) as usize], 1 + ((c[1] >> 29) & 1), (c[0] >> 22) & 0x1f,
+                    c[0] >> 27, c[9] & 0x1f, c[1] >> 31, c[2] & 0x3ff_ffff, c[2] >> 31, (c[2] >> 26) & 0x1f, c[5], c[6], c[7])
             }).unwrap_or_else(|| "none".into());
             log(format_args!(
-                "XMA last {seconds:.1} s: {} of {count} contexts changed ({ever_active} non-zero), input valid set {} / cleared {}, output valid set {}, input read moved {}, output write moved {}, output read moved {}; dword changes {:?}; {sample}; IAcpHal calls {}",
+                "XMA last {seconds:.1} s: {} of {count} contexts changed ({ever_active} non-zero), input valid set {} / cleared {}, output valid set {}, input read moved {}, output write moved {}, output read moved {}, errors raised {}; dword changes {:?}; {sample}; IAcpHal calls {}",
                 window.active.len(), window.enables, window.disables, window.output_valid_on, window.read_moves,
-                window.write_moves, window.out_read_moves, window.changed_words,
+                window.write_moves, window.out_read_moves, window.errors, window.changed_words,
                 if calls.is_empty() { "none".into() } else { calls.join(" ") }));
             window = Window::default();
             started = Instant::now();
