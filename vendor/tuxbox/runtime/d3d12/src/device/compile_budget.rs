@@ -22,6 +22,15 @@
 //! is still held when it returns. It logs one line per compile of 256 KiB or
 //! more (and a running maximum per KiB of DXIL), so the estimate and the
 //! reserves can be derived from this machine. TUXBOX_COMPILE_MEASURE=0 off.
+//!
+//! Two ceilings bound the process itself (five-star-recomp 9a5bcc1, GPL-3.0,
+//! with credit): at most TUXBOX_MAX_DRIVER_COMPILES (4) waiting-kind compiles
+//! of 256 KiB of DXIL or more at once, and none starts while private bytes,
+//! the running ones' remaining estimates and its own would pass
+//! TUXBOX_COMPILE_CEILING_GB (28); one always may when no large compile runs.
+//! test140 had six threads in nvgpucomp64 with 19.8 GB private and 3971 MiB
+//! of commit free. Like the reserves, only compiles no title thread waits on
+//! are held (and only up to TUXBOX_COMPILE_BUDGET_WAIT_MS).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,11 +45,13 @@ const PAUSE_MS: u64 = 500;
 
 struct State {
     running: u32,
+    /// Running compiles of TINY_SHADER_BYTES or more.
+    large: u32,
     expected: u64,
     baseline: u64,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { running: 0, expected: 0, baseline: 0 });
+static STATE: Mutex<State> = Mutex::new(State { running: 0, large: 0, expected: 0, baseline: 0 });
 static WAITING: AtomicU64 = AtomicU64::new(0);
 static WAITED: AtomicU64 = AtomicU64::new(0);
 
@@ -69,7 +80,15 @@ fn available() -> (u64, u64) {
     (status.ullAvailPhys, status.ullAvailPageFile)
 }
 
-fn try_enter(estimate: u64, tiny: bool) -> bool {
+fn max_large() -> u32 {
+    crate::env_toggle!("TUXBOX_MAX_DRIVER_COMPILES").and_then(|v| v.trim().parse().ok()).unwrap_or(4)
+}
+
+fn ceiling() -> u64 {
+    crate::env_toggle!("TUXBOX_COMPILE_CEILING_GB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(28) << 30
+}
+
+fn try_enter(estimate: u64, tiny: bool, large: bool) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let private = crate::diagnostics::memory::private_bytes();
     if state.running == 0 {
@@ -82,19 +101,28 @@ fn try_enter(estimate: u64, tiny: bool) -> bool {
         if physical < PHYSICAL_RESERVE.saturating_add(need) || commit < COMMIT_RESERVE.saturating_add(need) {
             return false;
         }
+        if state.large != 0 {
+            let (most, ceiling) = (max_large(), ceiling());
+            if (most != 0 && state.large >= most) || (ceiling != 0 && private.saturating_add(need) > ceiling) {
+                return false;
+            }
+        }
     }
     state.running += 1;
+    state.large += u32::from(large);
     state.expected += estimate;
     true
 }
 
-/// A compile admitted by the budget; leaving it ends the compile.
-pub(super) struct Admitted(u64);
+/// A compile admitted by the budget (its estimate, and whether it is large);
+/// leaving it ends the compile.
+pub(super) struct Admitted(u64, bool);
 
 impl Drop for Admitted {
     fn drop(&mut self) {
         let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
         state.running = state.running.saturating_sub(1);
+        state.large = state.large.saturating_sub(u32::from(self.1));
         state.expected = state.expected.saturating_sub(self.0);
     }
 }
@@ -120,7 +148,8 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
     let gated = super::stream::background::prefetching() || crate::env_toggle!("TUXBOX_COMPILE_BUDGET") == Some("all");
     let tiny = shader_bytes < TINY_SHADER_BYTES || !gated;
     let mut waited = None;
-    while !try_enter(estimate, tiny || waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait())) {
+    let large = shader_bytes >= TINY_SHADER_BYTES;
+    while !try_enter(estimate, tiny || waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait()), large) {
         if waited.is_none() {
             WAITING.fetch_add(1, Ordering::Relaxed);
             waited = Some(std::time::Instant::now());
@@ -138,7 +167,7 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
                 WAITING.load(Ordering::Relaxed)));
         }
     }
-    Some(Admitted(estimate))
+    Some(Admitted(estimate, large))
 }
 
 static MEASURED: AtomicU64 = AtomicU64::new(0);
