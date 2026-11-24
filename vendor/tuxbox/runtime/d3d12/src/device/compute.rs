@@ -27,13 +27,25 @@ pub(crate) struct PipelineData {
     pub(crate) raster_table: Option<std::sync::Arc<ComputeTable>>,
     /// Filled by a background worker when this pipeline was created without
     /// its translation (see `stream::background`).
-    pub(crate) upgrade: Option<std::sync::Arc<super::stream::Upgrade>>,
+    pub(crate) upgrade: std::sync::OnceLock<std::sync::Arc<super::stream::Upgrade>>,
+    /// What identifies this pipeline across runs (see `pipeline_cache`), and
+    /// whether a command list has bound it yet.
+    pub(crate) key: Option<std::sync::Arc<str>>,
+    pub(crate) used: std::sync::atomic::AtomicBool,
 }
 
 /// The host pipeline and state to bind: a worker's rebuild once it exists.
 pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData) {
-    match p.state.upgrade.as_ref().and_then(|u| u.get()) {
-        Some(built) => (&built.native, &built.state),
+    if let Some(key) = &p.state.key
+        && !p.state.used.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        super::pipeline_cache::note_used(key);
+    }
+    match p.state.upgrade.get().and_then(|u| u.get()) {
+        Some(built) => {
+            let p = built.pipeline();
+            (&p.native, &p.state)
+        }
         None => (&p.native, &p.state),
     }
 }
@@ -150,9 +162,62 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x(
     if hr.is_err() { hr } else { E_NOTIMPL }
 }
 
+/// What identifies a guest compute pipeline across runs (see `pipeline_cache`).
+unsafe fn compute_key(this: &Device, desc: *const D3D12_COMPUTE_PIPELINE_STATE_DESC) -> Option<String> {
+    let desc = unsafe { desc.as_ref() }?;
+    if desc.CS.pShaderBytecode.is_null() || desc.CS.BytecodeLength == 0 || desc.CS.BytecodeLength > isize::MAX as usize {
+        return None;
+    }
+    let bytes = unsafe { slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
+    let guest = desc.pRootSignature.as_ref().map_or(core::ptr::null_mut(), Interface::as_raw);
+    let root = unsafe { root_proxy(guest, identity(this).as_raw()) }.ok()?;
+    let root = match root {
+        Some(root) => super::shader_cache::source_digest(root.state.payload())?,
+        None => "-".into(),
+    };
+    let shader = super::shader_cache::source_digest(bytes)?;
+    let canonical = format!("compute:{shader};{root};{};{}", desc.NodeMask, desc.Flags.0);
+    super::shader_cache::source_digest(canonical.as_bytes())
+}
+
 // Slot 62 takes a compute descriptor followed by an array of Xbox extensions.
 // Portable DXIL and a standard serialized root signature work with zero extensions.
 pub(super) unsafe extern "system" fn create_pipeline_x(
+    this: &Device,
+    desc: *const D3D12_COMPUTE_PIPELINE_STATE_DESC,
+    extension_count: u32,
+    extensions: *const c_void,
+    iid: *const GUID,
+    out: Out,
+) -> HRESULT {
+    use super::stream::background;
+    let worker = background::on_worker();
+    let key = if worker { None } else { unsafe { compute_key(this, desc) } };
+    // As for streams: a pipeline no earlier run bound waits for nothing.
+    let lazy = key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(false));
+    let _ = super::shader_cache::take_missed();
+    super::shader_cache::no_wait(lazy);
+    let status = unsafe { make_compute(this, desc, extension_count, extensions, iid, out) };
+    super::shader_cache::no_wait(false);
+    let missed = super::shader_cache::take_missed();
+    if status.is_err() || worker {
+        return status;
+    }
+    // SAFETY: success wrote a new pipeline proxy that the guest has not seen yet.
+    let Some(pipeline) = (unsafe { (*out).cast::<Pipeline>().as_mut() }) else {
+        return status;
+    };
+    pipeline.state.key = key.map(Into::into);
+    // A translation missed the wait budget: a worker makes the real pipeline.
+    if missed && let Some(desc) = unsafe { desc.as_ref() } {
+        let bytes = unsafe { slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
+        let work = background::Work::Compute(background::OwnedCompute::copy(desc, bytes));
+        let _ = pipeline.state.upgrade.set(background::queue((*identity(this)).clone(), work));
+    }
+    status
+}
+
+unsafe fn make_compute(
     this: &Device,
     desc: *const D3D12_COMPUTE_PIPELINE_STATE_DESC,
     extension_count: u32,
@@ -247,8 +312,7 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     // SAFETY: native creation consumes the descriptor synchronously. The owned
     // clone in the C layout must be released explicitly on success and failure.
     let create = |descriptor: &D3D12_COMPUTE_PIPELINE_STATE_DESC| unsafe {
-        this.native
-            .CreateComputePipelineState::<ID3D12PipelineState>(descriptor)
+        super::pipeline_cache::compute(&this.native, descriptor)
     };
     let mut native = create(&host);
     if translation.is_some() && reflected.is_none() && scene_root.is_none() && native.is_err() {
@@ -315,5 +379,6 @@ unsafe fn null_compute(
     unsafe { ManuallyDrop::drop(&mut host.pRootSignature) };
     if native.is_err() { return None; }
     substituted("compute");
+    super::stream::background::mark_nulled();
     Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData::default(), out) })
 }

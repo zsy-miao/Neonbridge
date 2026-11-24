@@ -13,13 +13,8 @@ const AMPLIFICATION_X: i32 = 23;
 const MESH_X: i32 = 24;
 const STENCIL_X: i32 = 26;
 
-mod background;
+pub(super) mod background;
 pub(crate) use background::Upgrade;
-
-thread_local! {
-    /// Set when `create` on this thread fell back to a null pipeline.
-    static NULLED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-}
 
 fn subobject<T>() -> (usize, usize) {
     let payload = size_of::<u32>().next_multiple_of(align_of::<T>());
@@ -64,6 +59,138 @@ unsafe fn equivalent_stencil(payload: *const u8, depth: &D3D12_DEPTH_STENCIL_DES
         enabled,
     ]);
     unsafe { payload.cast::<[u8; 18]>().read_unaligned() == expected }
+}
+
+/// A digest of everything a stream describes, stable across runs: shader and
+/// root signature contents in place of pointers, and each state structure by
+/// its fields (guest padding is uninitialized). `guest` reads Xbox tags and
+/// guest roots; otherwise the stream is a desktop one made by `create`, whose
+/// root pointer is left out (translated shaders already depend on it).
+unsafe fn canonical(guest: Option<&Device>, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<String> {
+    use core::fmt::Write;
+    fn field<T: core::fmt::Debug>(out: &mut String, payload: *const u8) {
+        let _ = write!(out, "{:?};", unsafe { &*payload.cast::<T>() });
+    }
+    fn bytes(out: &mut String, data: *const c_void, length: usize) -> Option<()> {
+        if length == 0 {
+            out.push_str("-;");
+            return Some(());
+        }
+        if data.is_null() || length > isize::MAX as usize {
+            return None;
+        }
+        let code = unsafe { slice::from_raw_parts(data.cast::<u8>(), length) };
+        let _ = write!(out, "{};", shader_cache::source_digest(code)?);
+        Some(())
+    }
+    fn name(out: &mut String, name: windows::core::PCSTR) {
+        if !name.is_null() {
+            out.push_str(&unsafe { core::ffi::CStr::from_ptr(name.0.cast()) }.to_string_lossy());
+        }
+        out.push(';');
+    }
+    let size = desc.SizeInBytes;
+    let input = desc.pPipelineStateSubobjectStream.cast::<u8>();
+    if input.is_null() || size == 0 || size > 8192 || !size.is_multiple_of(size_of::<usize>()) {
+        return None;
+    }
+    let mut out = String::new();
+    let mut at = 0;
+    while at < size {
+        let record = unsafe { input.add(at) };
+        let tag = unsafe { record.cast::<i32>().read() };
+        // Desktop AS and MS are one above the console tags.
+        let (offset, bytes_used) = match (guest.is_some(), tag) {
+            (false, 24 | 25) => subobject::<D3D12_SHADER_BYTECODE>(),
+            (false, AMPLIFICATION_X | STENCIL_X..) => return None,
+            _ => layout(tag)?,
+        };
+        if bytes_used > size - at {
+            return None;
+        }
+        let payload = unsafe { record.add(offset) };
+        let _ = write!(out, "{tag}:");
+        match tag {
+            0 => {
+                if let Some(device) = guest {
+                    let root = unsafe { compute::root_proxy(payload.cast::<*mut c_void>().read(), identity(device).as_raw()) }.ok()?;
+                    match root {
+                        Some(root) => {
+                            let blob = root.state.payload();
+                            bytes(&mut out, blob.as_ptr().cast(), blob.len())?;
+                        }
+                        None => out.push_str("-;"),
+                    }
+                }
+            }
+            1..=6 | 23..=25 => {
+                let shader = unsafe { &*payload.cast::<D3D12_SHADER_BYTECODE>() };
+                bytes(&mut out, shader.pShaderBytecode, shader.BytecodeLength)?;
+            }
+            7 => {
+                let so = unsafe { &*payload.cast::<D3D12_STREAM_OUTPUT_DESC>() };
+                if so.NumEntries > 4096 || so.NumStrides > 4096 { return None; }
+                for i in 0..so.NumEntries as usize {
+                    if so.pSODeclaration.is_null() { return None; }
+                    let e = unsafe { &*so.pSODeclaration.add(i) };
+                    name(&mut out, e.SemanticName);
+                    let _ = write!(out, "{},{},{},{},{};", e.Stream, e.SemanticIndex, e.StartComponent, e.ComponentCount, e.OutputSlot);
+                }
+                for i in 0..so.NumStrides as usize {
+                    if so.pBufferStrides.is_null() { return None; }
+                    let _ = write!(out, "{},", unsafe { so.pBufferStrides.add(i).read() });
+                }
+                let _ = write!(out, "{};", so.RasterizedStream);
+            }
+            8 => field::<D3D12_BLEND_DESC>(&mut out, payload),
+            9 | 13 | 14 | 16 | 18 | 20 => field::<u32>(&mut out, payload),
+            10 => field::<D3D12_RASTERIZER_DESC>(&mut out, payload),
+            11 => field::<D3D12_DEPTH_STENCIL_DESC>(&mut out, payload),
+            12 => {
+                let input = unsafe { &*payload.cast::<D3D12_INPUT_LAYOUT_DESC>() };
+                if input.NumElements > 4096 { return None; }
+                for i in 0..input.NumElements as usize {
+                    if input.pInputElementDescs.is_null() { return None; }
+                    let e = unsafe { &*input.pInputElementDescs.add(i) };
+                    name(&mut out, e.SemanticName);
+                    let _ = write!(out, "{},{},{},{},{},{};", e.SemanticIndex, e.Format.0, e.InputSlot, e.AlignedByteOffset, e.InputSlotClass.0, e.InstanceDataStepRate);
+                }
+            }
+            15 => field::<D3D12_RT_FORMAT_ARRAY>(&mut out, payload),
+            17 => field::<DXGI_SAMPLE_DESC>(&mut out, payload),
+            19 => {}
+            21 => field::<D3D12_DEPTH_STENCIL_DESC1>(&mut out, payload),
+            22 => {
+                let views = unsafe { &*payload.cast::<D3D12_VIEW_INSTANCING_DESC>() };
+                if views.ViewInstanceCount > 4096 { return None; }
+                for i in 0..views.ViewInstanceCount as usize {
+                    if views.pViewInstanceLocations.is_null() { return None; }
+                    let l = unsafe { views.pViewInstanceLocations.add(i).read() };
+                    let _ = write!(out, "{},{};", l.ViewportArrayIndex, l.RenderTargetArrayIndex);
+                }
+                let _ = write!(out, "{};", views.Flags.0);
+            }
+            STENCIL_X => {
+                // The console stencil record ends the stream (see `equivalent_stencil`).
+                let state = unsafe { payload.cast::<[u8; 18]>().read_unaligned() };
+                let _ = write!(out, "{state:?}");
+                break;
+            }
+            _ => return None,
+        }
+        at += bytes_used;
+    }
+    shader_cache::source_digest(out.as_bytes())
+}
+
+/// What identifies a guest stream across runs (see `pipeline_cache`).
+unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<String> {
+    unsafe { canonical(Some(device), desc) }
+}
+
+/// The pipeline library name of a desktop stream made by `create`.
+pub(super) unsafe fn native_name(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<String> {
+    unsafe { canonical(None, desc) }
 }
 
 unsafe fn create(
@@ -353,7 +480,7 @@ unsafe fn create(
     };
     // SAFETY: the stream storage, translated shaders, and guest-owned inputs
     // all stay alive throughout this synchronous call on the desktop Device2.
-    let initial = unsafe { host.CreatePipelineState(&native_desc) };
+    let initial = unsafe { super::pipeline_cache::stream(host, &native_desc) };
     let Err(error) = &initial else {
         if rectangles {
             static FIRST_RECTANGLE: std::sync::Once = std::sync::Once::new();
@@ -434,7 +561,7 @@ unsafe fn create(
             linked_rectangle = unsafe { rectangle::geometry(&*field, &pixel_bytecode())? };
             unsafe { geometry_record.write(rectangle::bytecode(&linked_rectangle)) };
         }
-        let retry = unsafe { host.CreatePipelineState(&native_desc) };
+        let retry = unsafe { super::pipeline_cache::stream(host, &native_desc) };
         match &retry {
             Ok(_) => {
                 static VERTEX: std::sync::Once = std::sync::Once::new();
@@ -492,7 +619,7 @@ unsafe fn null_pipeline(
     }
     let result = unsafe { host.CreatePipelineState::<ID3D12PipelineState>(desc) };
     if let Ok(pipeline) = &result {
-        NULLED.with(|n| n.set(true));
+        background::mark_nulled();
         crate::diagnostics::display::mark_null_pipeline(pipeline.as_raw());
         substituted(if compute { "compute stream" } else { "raster stream" });
     }
@@ -513,16 +640,28 @@ pub(super) unsafe extern "system" fn create_pipeline(
         return E_POINTER;
     };
     let mut state = compute::PipelineData::default();
+    let worker = background::on_worker();
+    if !worker {
+        state.key = unsafe { guest_key(device, desc) }.map(Into::into);
+    }
+    // A pipeline no earlier run bound goes straight to the workers: the
+    // title spends none of its wait budget on it (VIctory's lazy pipelines).
+    let lazy = state.key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(false));
     let _ = shader_cache::take_missed();
+    shader_cache::no_wait(lazy);
     let native = unsafe { create(device, desc, &mut state) };
+    shader_cache::no_wait(false);
     // A translation missed the wait budget: the title gets this pipeline now
     // and a worker makes the real one from a private copy of the stream.
     if shader_cache::take_missed()
         && native.is_ok()
-        && !background::on_worker()
+        && !worker
         && let Some(stream) = unsafe { background::OwnedStream::copy(desc) }
     {
-        state.upgrade = Some(background::queue((*identity(device)).clone(), stream));
+        let _ = state.upgrade.set(background::queue(
+            (*identity(device)).clone(),
+            background::Work::Stream(stream),
+        ));
     }
     crate::diagnostics::pipeline_stream(
         desc.SizeInBytes,

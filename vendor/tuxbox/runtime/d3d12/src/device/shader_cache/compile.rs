@@ -33,6 +33,21 @@ pub(crate) fn take_missed() -> bool {
     MISSED.with(|m| m.replace(false))
 }
 
+thread_local! {
+    static NO_WAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While set, requests on this thread submit their work but do not wait for
+/// it, as if the budget were spent (pipelines no earlier run used).
+pub(crate) fn no_wait(on: bool) {
+    NO_WAIT.with(|n| n.set(on));
+}
+
+/// This build's translation cache folder, once the worker has published it.
+pub(crate) fn runtime_dir() -> Option<&'static Path> {
+    compiler_cache(session()?).map(PathBuf::as_path)
+}
+
 /// This thread is a pipeline worker: its requests wait for the translator
 /// (up to the request timeout) instead of drawing on the title's budget.
 pub(crate) fn wait_unbounded() {
@@ -197,6 +212,10 @@ fn request(
     if let Err(err) = submit(&pending, &dir.join("requests"))
         && err.kind() != io::ErrorKind::AlreadyExists
     {
+        return None;
+    }
+    if NO_WAIT.with(|n| n.get()) && !UNBOUNDED.with(|u| u.get()) {
+        MISSED.with(|m| m.set(true));
         return None;
     }
     let start = Instant::now();

@@ -41,6 +41,7 @@ pub(crate) mod rectangle;
 pub(crate) mod shader_cache;
 mod state_object;
 pub(crate) mod stencil;
+mod pipeline_cache;
 mod stream;
 mod title_memory;
 mod views;

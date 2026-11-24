@@ -5,7 +5,7 @@
 //! and published it in the proxy's upgrade slot. Command lists read that slot
 //! whenever they bind the pipeline, so the render thread never waits on the
 //! translator or on the driver's compile.
-use super::super::compute::PipelineData;
+use super::super::compute::{Pipeline, create_pipeline_x};
 use super::super::Device;
 use super::{AMPLIFICATION_X, MESH_X, STENCIL_X, layout};
 use core::{ffi::c_void, mem::MaybeUninit, ptr, slice};
@@ -15,10 +15,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::{IUnknown, Interface, PCSTR};
 
-/// The host pipeline a worker made for a pipeline created without its translation.
-pub(crate) struct Built {
-    pub(crate) native: ID3D12PipelineState,
-    pub(crate) state: PipelineData,
+/// The pipeline a worker made for one created without its translation: an
+/// ordinary pipeline proxy of the same device, owned by the slot.
+pub(crate) struct Built(IUnknown);
+
+impl Built {
+    pub(crate) fn pipeline(&self) -> &Pipeline {
+        // SAFETY: made by create_pipeline or create_pipeline_x, retained by self.
+        unsafe { &*self.0.as_raw().cast::<Pipeline>() }
+    }
 }
 
 /// Written once by a worker, then only read by command lists.
@@ -42,7 +47,7 @@ impl Upgrade {
 /// A self-owned deep copy of a guest pipeline stream. Guest pointers are only
 /// valid during CreatePipelineState, so every referenced array, string and
 /// shader is copied, and the guest root signature is retained.
-pub(super) struct OwnedStream {
+pub(in crate::device) struct OwnedStream {
     storage: Vec<MaybeUninit<usize>>,
     size: usize,
     _bytes: Vec<Vec<u8>>,
@@ -77,7 +82,7 @@ unsafe fn copy_name(names: &mut Vec<CString>, name: PCSTR) -> Option<PCSTR> {
 impl OwnedStream {
     /// Copies a stream that `create` already validated; `None` for anything
     /// it cannot own (unknown or repeated subobjects).
-    pub(super) unsafe fn copy(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<Self> {
+    pub(in crate::device) unsafe fn copy(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<Self> {
         let size = desc.SizeInBytes;
         let input = desc.pPipelineStateSubobjectStream.cast::<u8>();
         if input.is_null() || size == 0 || size > 4096 || !size.is_multiple_of(size_of::<usize>()) {
@@ -180,10 +185,49 @@ impl OwnedStream {
     }
 }
 
+/// A self-owned copy of a slot 62 compute descriptor (no extensions).
+pub(in crate::device) struct OwnedCompute {
+    code: Vec<u8>,
+    root: Option<ID3D12RootSignature>,
+    node_mask: u32,
+    flags: D3D12_PIPELINE_STATE_FLAGS,
+}
+
+impl OwnedCompute {
+    pub(in crate::device) fn copy(desc: &D3D12_COMPUTE_PIPELINE_STATE_DESC, code: &[u8]) -> Self {
+        OwnedCompute {
+            code: code.to_vec(),
+            // Retains the guest root proxy.
+            root: (*desc.pRootSignature).clone(),
+            node_mask: desc.NodeMask,
+            flags: desc.Flags,
+        }
+    }
+
+    fn desc(&self) -> D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC {
+            // SAFETY: a borrowed copy; ManuallyDrop never releases it.
+            pRootSignature: core::mem::ManuallyDrop::new(unsafe { core::mem::transmute_copy(&self.root) }),
+            CS: D3D12_SHADER_BYTECODE {
+                pShaderBytecode: self.code.as_ptr().cast(),
+                BytecodeLength: self.code.len(),
+            },
+            NodeMask: self.node_mask,
+            Flags: self.flags,
+            ..Default::default()
+        }
+    }
+}
+
+pub(in crate::device) enum Work {
+    Stream(OwnedStream),
+    Compute(OwnedCompute),
+}
+
 struct Job {
     /// The guest device, retained until the worker is done with it.
     device: IUnknown,
-    stream: OwnedStream,
+    work: Work,
     slot: Arc<Upgrade>,
 }
 
@@ -196,18 +240,25 @@ static FAILED: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set when a pipeline created on this thread fell back to a null pipeline.
+    static NULLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Whether this thread is a pipeline worker (its builds are never deferred).
-pub(super) fn on_worker() -> bool {
+pub(in crate::device) fn on_worker() -> bool {
     WORKER.with(|w| w.get())
+}
+
+/// The pipeline being created on this thread got null shaders (see `fallback`).
+pub(in crate::device) fn mark_nulled() {
+    NULLED.with(|n| n.set(true));
 }
 
 /// Hands a pipeline to the workers; the returned slot fills once its host
 /// pipeline exists.
-pub(super) fn queue(device: IUnknown, stream: OwnedStream) -> Arc<Upgrade> {
+pub(in crate::device) fn queue(device: IUnknown, work: Work) -> Arc<Upgrade> {
     let slot = Arc::new(Upgrade::default());
-    let job = Job { device, stream, slot: slot.clone() };
+    let job = Job { device, work, slot: slot.clone() };
     static SENDER: OnceLock<Option<Mutex<std::sync::mpsc::Sender<Job>>>> = OnceLock::new();
     let sender = SENDER.get_or_init(|| {
         let (sender, receiver) = std::sync::mpsc::channel::<Job>();
@@ -252,14 +303,26 @@ fn build(mut job: Job) {
     if Arc::strong_count(&job.slot) > 1 {
         // SAFETY: a device proxy begins with its IUnknown identity, retained by the job.
         let device = unsafe { &*job.device.as_raw().cast::<Device>() };
-        let desc = job.stream.desc();
-        let mut state = PipelineData::default();
-        super::NULLED.with(|n| n.set(false));
-        let made = unsafe { super::create(device, &desc, &mut state) };
-        let nulled = super::NULLED.with(|n| n.replace(false));
+        let iid = ID3D12PipelineState::IID;
+        let mut out = ptr::null_mut();
+        NULLED.with(|n| n.set(false));
+        // The ordinary entry points: on this thread nothing is deferred and
+        // translator waits have no budget.
+        let status = match &mut job.work {
+            Work::Stream(stream) => {
+                let desc = stream.desc();
+                unsafe { super::create_pipeline(device, &desc, &iid, &mut out) }
+            }
+            Work::Compute(compute) => {
+                let desc = compute.desc();
+                unsafe { create_pipeline_x(device, &desc, 0, ptr::null(), &iid, &mut out) }
+            }
+        };
+        let nulled = NULLED.with(|n| n.replace(false));
+        let made = (status.is_ok() && !out.is_null()).then(|| unsafe { IUnknown::from_raw(out) });
         let counter = match made {
-            Ok(native) if !nulled => {
-                let _ = job.slot.built.set(Built { native, state });
+            Some(proxy) if !nulled => {
+                let _ = job.slot.built.set(Built(proxy));
                 &MADE
             }
             _ => &FAILED,
