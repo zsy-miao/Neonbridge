@@ -547,44 +547,67 @@ pub(crate) mod gpu_clock {
     use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
     use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
 
-    struct Item(ID3D12Fence, u64, Instant);
+    struct Item(ID3D12Fence, u64, Instant, usize);
     // SAFETY: D3D12 fences are free-threaded.
     unsafe impl Send for Item {}
     static SENDER: Mutex<Option<mpsc::Sender<Item>>> = Mutex::new(None);
-    static NS: AtomicU64 = AtomicU64::new(0);
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-    static SEEN: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+    // [0]: the present copy's signal; [1]: a signal queued just before the
+    // copy on the same queue (the guest work and waits ahead of it).
+    static NS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+    static COUNT: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+    static SEEN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
     pub(crate) fn track(fence: &ID3D12Fence, value: u64) {
+        track_at(0, fence, value);
+    }
+
+    /// The signal queued before the present copy (see `take_before_copy`).
+    pub(crate) fn track_before_copy(fence: &ID3D12Fence, value: u64) {
+        track_at(1, fence, value);
+    }
+
+    fn track_at(which: usize, fence: &ID3D12Fence, value: u64) {
         let mut sender = SENDER.lock().unwrap_or_else(|e| e.into_inner());
         if sender.is_none() {
             let (tx, rx) = mpsc::channel::<Item>();
             let spawned = std::thread::Builder::new().name("TuxBox gpu clock".into()).spawn(move || {
                 let Ok(event) = (unsafe { CreateEventW(None, false, false, None) }) else { return };
-                for Item(fence, value, start) in rx {
+                for Item(fence, value, start, which) in rx {
                     unsafe {
                         if fence.GetCompletedValue() < value {
                             if fence.SetEventOnCompletion(value, event).is_err() { continue; }
                             WaitForSingleObject(event, INFINITE);
                         }
                     }
-                    NS.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                    COUNT.fetch_add(1, Ordering::Relaxed);
+                    NS[which].fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    COUNT[which].fetch_add(1, Ordering::Relaxed);
                 }
             });
             if spawned.is_err() { return; }
             *sender = Some(tx);
         }
         if let Some(tx) = sender.as_ref() {
-            let _ = tx.send(Item(fence.clone(), value, Instant::now()));
+            let _ = tx.send(Item(fence.clone(), value, Instant::now(), which));
         }
     }
 
     /// Average ms per frame since the previous call, if any frame completed.
     pub(crate) fn take() -> Option<f64> {
-        let (ns, count) = (NS.load(Ordering::Relaxed), COUNT.load(Ordering::Relaxed));
-        let dns = ns - SEEN[0].swap(ns, Ordering::Relaxed);
-        let dcount = count - SEEN[1].swap(count, Ordering::Relaxed);
+        take_at(0)
+    }
+
+    /// Average ms from queueing to completion of the signal just before the
+    /// present copy: the share of `take` spent on guest work and waits ahead
+    /// of the copy. The rest is the copy into the swap chain's back buffer,
+    /// which waits for DXGI to hand that buffer back.
+    pub(crate) fn take_before_copy() -> Option<f64> {
+        take_at(1)
+    }
+
+    fn take_at(which: usize) -> Option<f64> {
+        let (ns, count) = (NS[which].load(Ordering::Relaxed), COUNT[which].load(Ordering::Relaxed));
+        let dns = ns - SEEN[2 * which].swap(ns, Ordering::Relaxed);
+        let dcount = count - SEEN[2 * which + 1].swap(count, Ordering::Relaxed);
         (dcount > 0).then(|| dns as f64 / 1e6 / dcount as f64)
     }
 }

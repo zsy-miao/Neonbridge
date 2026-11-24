@@ -367,6 +367,7 @@ impl SwapChain {
             let feed = feed::record(&frame.list, &buffer);
             frame.list.Close()?;
             frame.source = Some(source.clone());
+            before_copy_signal(queue);
             queue.ExecuteCommandLists(&[Some(ID3D12CommandList::clone(&frame.list))]);
             crate::dred::check(queue, "present copy");
             if let Err(error) = queue.Signal(&self.fence, self.next) {
@@ -449,6 +450,26 @@ impl Drop for Presentation {
                 std::mem::forget(chain);
             }
         }
+    }
+}
+
+/// A signal on the present queue just before the present copy, timed by
+/// gpu_clock: splits the frame's GPU latency into the guest work and waits
+/// queued ahead of the copy and the copy itself (which waits for DXGI to
+/// release the back buffer). Diagnostic only.
+fn before_copy_signal(queue: &ID3D12CommandQueue) {
+    static FENCE: Mutex<Option<(ID3D12Fence, u64)>> = Mutex::new(None);
+    let mut slot = FENCE.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_none() {
+        let mut device: Option<ID3D12Device> = None;
+        let _ = unsafe { queue.GetDevice(&mut device) };
+        let Some(fence) = device.and_then(|d| unsafe { d.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) }.ok()) else { return };
+        *slot = Some((fence, 0));
+    }
+    let Some((fence, value)) = slot.as_mut() else { return };
+    *value += 1;
+    if unsafe { queue.Signal(&*fence, *value) }.is_ok() {
+        crate::diagnostics::gpu_clock::track_before_copy(fence, *value);
     }
 }
 

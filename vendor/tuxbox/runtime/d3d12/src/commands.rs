@@ -2944,6 +2944,10 @@ unsafe fn present_planes(
                 let fps = if last == 0 { 0.0 } else { frames as f64 * 1000.0 / (now - last) as f64 };
                 let frame_ms = if fps > 0.0 { 1000.0 / fps } else { 0.0 };
                 let gpu = crate::diagnostics::gpu_clock::take().map_or("-".into(), |ms| format!("{ms:.1}"));
+                let gpu = match crate::diagnostics::gpu_clock::take_before_copy() {
+                    Some(ms) => format!("{gpu} ({ms:.1} before the present copy)"),
+                    None => gpu,
+                };
                 crate::diagnostics::log_line(format_args!(
                     "completed PresentX #{} ({fps:.1} fps; ms/frame: {})", index + 1, crate::diagnostics::cost::split(frames)));
                 // Separate line: the frame's GPU latency and every thread's CPU time.
