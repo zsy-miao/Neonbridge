@@ -74,6 +74,8 @@ struct Recording {
     placed_reads: Vec<Arc<Texture>>,
     placed_writes: Vec<Arc<Texture>>,
     bound_placed_targets: Vec<Arc<Texture>>,
+    /// when its recording began (render heap residency)
+    opened: std::time::Instant,
     resource_heap: Option<descriptors::ResourceHeap>,
     descriptor_arena: Option<Arc<device::descriptor_paging::Arena>>,
     indexed_arenas: Vec<Arc<device::descriptor_paging::Arena>>,
@@ -615,6 +617,7 @@ unsafe extern "system" fn reset(
         memory_wait::list_reset(list.native.as_raw() as usize);
         device::alloc_swap::recorded(list as *const List as usize, allocator, &used, unsafe { list.native.GetType() });
         state.phase = ListState::Open;
+        state.opened = std::time::Instant::now();
         state.resources = allocator.state.clone();
         state.timestamp_page = None;
         state.prefix = memory_wait::Prefix::default();
@@ -2118,6 +2121,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             }
             .ok_or(E_INVALIDARG)?;
             let state = recording(list);
+            placement::list_submitted(state.opened.elapsed());
             if !state.stalled_writes.is_empty() {
                 static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 if LOGGED.fetch_add(1, Ordering::Relaxed) < 32 {
@@ -2685,6 +2689,7 @@ pub(crate) unsafe fn wrap_command_list(
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),
             bound_placed_targets: Vec::new(),
+            opened: std::time::Instant::now(),
             resource_heap: None,
             descriptor_arena: None,
             indexed_arenas: Vec::new(),

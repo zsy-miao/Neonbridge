@@ -790,6 +790,13 @@ pub(super) struct RenderHeap {
     end: u64,
     /// holds a render target or depth image (`rank`)
     renderable: std::sync::atomic::AtomicBool,
+    bytes: u64,
+    /// the native device it was made on
+    device: usize,
+    /// `now_ms` of its last use (`touch`)
+    used: std::sync::atomic::AtomicU64,
+    /// evicted by `residency::evict_idle`; read without its lock as a hint
+    evicted: std::sync::atomic::AtomicBool,
     _live: crate::diagnostics::memory::Live,
 }
 
@@ -828,6 +835,7 @@ impl RenderHeaps {
             && heap.end > address
             && end <= heap.end
             && let Some(offset) = heap_offset(base, address, alignment) {
+            heap.touch();
             if renderable && !heap.renderable.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 rank(device, &heap.native, true, end - address);
             }
@@ -872,11 +880,173 @@ impl RenderHeaps {
         let native = native.ok_or(E_POINTER)?;
         rank(device, &native, renderable, desc.SizeInBytes);
         let heap = Arc::new(RenderHeap { native, end: stop, renderable: renderable.into(),
+            bytes: desc.SizeInBytes, device: device.as_raw() as usize,
+            used: residency::now_ms().into(), evicted: false.into(),
             _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes) });
         heaps.insert(start, Arc::downgrade(&heap));
         drop(heaps);
+        residency::adopt(&heap);
         note_shadowed(covered, desc.SizeInBytes);
         Ok((heap, address - start))
+    }
+}
+
+impl RenderHeap {
+    /// A use of an image in it: recorded now, made resident first if evicted.
+    pub(super) fn touch(&self) {
+        use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+        // A use within the last 100 ms already keeps it from the evictor,
+        // which only takes heaps unused for seconds: submissions touch every
+        // render view in their tables, so most touches are skipped here.
+        let now = residency::now_ms();
+        if now.saturating_sub(self.used.load(Relaxed)) >= 100 {
+            self.used.store(now, SeqCst);
+        }
+        if self.evicted.load(SeqCst) {
+            residency::make_resident(self);
+        }
+    }
+}
+
+/// Render heaps evicted while unused, made resident again at their next use.
+///
+/// test94 sat 730 MiB over the device-local budget with 2.6 GB of render
+/// heaps that nothing ever evicted. A render heap is used when:
+/// * a resource proxy of an image in it is unwrapped (every command taking a
+///   resource does that: copies, barriers, resolves, clears, presents);
+/// * an RTV or DSV of one is bound or cleared (`placement::touch_target`);
+/// * a submission's sampled descriptor ranges (the tables its draws and
+///   dispatches bind, or the whole heap where the tables are unknown) hold
+///   an SRV or UAV of one (`placement::submit`).
+///
+/// Once a second over budget, heaps unused for TUXBOX_SPAN_EVICT_S (10 s)
+/// are evicted. A touch makes an evicted heap resident before the command
+/// that uses it is recorded. An evictor marks a heap evicted and then reads
+/// its use again, and a toucher records its use and then reads the mark
+/// (both sequentially consistent), so one of them always sees the other.
+/// A list submitted more than half that time after it was opened (one run
+/// again without a new recording) holds evictions for that long, since its
+/// direct uses were recorded when it was. TUXBOX_RENDER_HEAP_EVICT=0 off.
+pub(super) mod residency {
+    use super::RenderHeap;
+    use std::sync::atomic::{AtomicU64, Ordering::{Relaxed, SeqCst}};
+    use std::sync::{Arc, Mutex, Weak};
+    use windows::Win32::Graphics::Direct3D12::*;
+    use windows::core::Interface;
+
+    /// Held while heaps are evicted or made resident.
+    static RESIDENCY: Mutex<()> = Mutex::new(());
+    static LIVE: Mutex<Vec<Weak<RenderHeap>>> = Mutex::new(Vec::new());
+    static HOLD_UNTIL: AtomicU64 = AtomicU64::new(0);
+    static EVICTED: AtomicU64 = AtomicU64::new(0);
+    static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
+    static RESTORED: AtomicU64 = AtomicU64::new(0);
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn now_ms() -> u64 {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1
+    }
+
+    fn enabled() -> bool {
+        crate::env_toggle!("TUXBOX_RENDER_HEAP_EVICT") != Some("0")
+    }
+
+    fn after_ms() -> u64 {
+        (crate::device::placement::evict_after() * 1000.0) as u64
+    }
+
+    pub(super) fn adopt(heap: &Arc<RenderHeap>) {
+        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        if live.len() >= 64 && live.len().is_power_of_two() {
+            live.retain(|w| w.strong_count() != 0);
+        }
+        live.push(Arc::downgrade(heap));
+    }
+
+    pub(super) fn make_resident(heap: &RenderHeap) {
+        let _held = RESIDENCY.lock().unwrap_or_else(|e| e.into_inner());
+        if !heap.evicted.load(SeqCst) {
+            return;
+        }
+        let mut device: Option<ID3D12Device> = None;
+        let made = unsafe { heap.native.GetDevice(&mut device) }.and_then(|()| {
+            let device = device.ok_or(windows::core::Error::from(windows::Win32::Foundation::E_POINTER))?;
+            unsafe { device.MakeResident(&[Some(heap.native.cast::<ID3D12Pageable>()?)]) }
+        });
+        match made {
+            Ok(()) => {
+                heap.evicted.store(false, SeqCst);
+                let n = RESTORED.fetch_add(1, Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "render heaps: an evicted heap ({} MiB) made resident again at its use ({n} so far)", heap.bytes >> 20));
+                }
+            }
+            Err(e) => crate::diagnostics::log_line(format_args!(
+                "render heaps: MakeResident of an evicted heap ({} MiB) failed {e}", heap.bytes >> 20)),
+        }
+    }
+
+    /// A list opened `age` ago is being submitted.
+    pub(crate) fn list_submitted(age: std::time::Duration) {
+        let after = after_ms();
+        if after != 0 && age.as_millis() as u64 > after / 2 {
+            HOLD_UNTIL.fetch_max(now_ms() + after, Relaxed);
+        }
+    }
+
+    /// Evicts this device's render heaps unused for TUXBOX_SPAN_EVICT_S.
+    pub(crate) fn evict_idle(device: &ID3D12Device) {
+        let after = after_ms();
+        if !enabled() || after == 0 || now_ms() < HOLD_UNTIL.load(Relaxed) {
+            return;
+        }
+        let _held = RESIDENCY.lock().unwrap_or_else(|e| e.into_inner());
+        let id = device.as_raw() as usize;
+        let mut chosen: Vec<Arc<RenderHeap>> = Vec::new();
+        {
+            let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+            live.retain(|w| w.strong_count() != 0);
+            for heap in live.iter().filter_map(Weak::upgrade) {
+                if heap.device != id || heap.evicted.load(SeqCst) {
+                    continue;
+                }
+                let used = heap.used.load(SeqCst);
+                if now_ms().saturating_sub(used) < after {
+                    continue;
+                }
+                heap.evicted.store(true, SeqCst);
+                if heap.used.load(SeqCst) != used {
+                    heap.evicted.store(false, SeqCst);
+                    continue;
+                }
+                chosen.push(heap);
+            }
+        }
+        if chosen.is_empty() {
+            return;
+        }
+        let list: Vec<Option<ID3D12Pageable>> = chosen.iter().map(|h| h.native.cast().ok()).collect();
+        let bytes: u64 = chosen.iter().map(|h| h.bytes).sum();
+        // Evict does not wait for the GPU: the video memory manager pages the
+        // heaps out once the work using them is done (they have been unused
+        // for `after`).
+        if let Err(e) = unsafe { device.Evict(&list) } {
+            for heap in &chosen {
+                heap.evicted.store(false, SeqCst);
+            }
+            crate::diagnostics::log_line(format_args!("render heaps: Evict of {} idle heaps failed {e}", chosen.len()));
+            return;
+        }
+        EVICTED.fetch_add(chosen.len() as u64, Relaxed);
+        let total = EVICTED_BYTES.fetch_add(bytes, Relaxed) + bytes;
+        let n = PASSES.fetch_add(1, Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "render heaps: evicted {} heaps ({} MiB) unused for {} s ({} heaps, {} MiB evicted so far, {} made resident again; TUXBOX_RENDER_HEAP_EVICT=0 off)",
+                chosen.len(), bytes >> 20, after / 1000, EVICTED.load(Relaxed), total >> 20, RESTORED.load(Relaxed)));
+        }
     }
 }
 

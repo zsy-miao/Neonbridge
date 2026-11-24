@@ -149,6 +149,10 @@ unsafe fn copy_host_range(device: &Device, count: u32, dst: D3D12_CPU_DESCRIPTOR
         let stride = unsafe { device.native.GetDescriptorHandleIncrementSize(kind) } as usize;
         device.state.placements.targets.copy(stride, std::iter::once((dst.ptr, count)), std::iter::once((src.ptr, count)));
     }
+    if kind == D3D12_DESCRIPTOR_HEAP_TYPE_RTV || kind == D3D12_DESCRIPTOR_HEAP_TYPE_DSV {
+        let stride = unsafe { device.native.GetDescriptorHandleIncrementSize(kind) } as usize;
+        device.state.placements.render_targets.copy(stride, std::iter::once((dst.ptr, count)), std::iter::once((src.ptr, count)));
+    }
     if kind == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
         let stride = unsafe { device.native.GetDescriptorHandleIncrementSize(kind) } as usize;
         let to = std::iter::once((translated.ptr, count));
@@ -157,6 +161,7 @@ unsafe fn copy_host_range(device: &Device, count: u32, dst: D3D12_CPU_DESCRIPTOR
         device.state.blas.views.copy(stride, to.clone(), source.clone());
         crate::diagnostics::display::copy_texture_views(translated.ptr, from.ptr, count, stride);
         super::view_formats::copy(translated.ptr, from.ptr, count as usize, stride);
+        device.state.placements.render_views.copy(stride, to.clone(), source.clone());
         device.state.placements.views.copy(stride, to, source);
     }
     unsafe { device.native.CopyDescriptorsSimple(count, translated, from, kind) };

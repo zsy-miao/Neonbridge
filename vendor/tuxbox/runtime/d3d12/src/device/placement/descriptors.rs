@@ -46,6 +46,17 @@ impl<T> Views<T> {
         self.store(handle, value.map(Arc::downgrade));
     }
 
+    /// Calls `f` with each live value whose handle lies in one of `ranges`.
+    pub(crate) fn each_in(&self, ranges: &[Range<usize>], mut f: impl FnMut(&Arc<T>)) {
+        let views = lock(&self.0);
+        if views.is_empty() { return; }
+        for range in ranges {
+            for (_, view) in views.range(range.clone()) {
+                if let Some(value) = view.upgrade() { f(&value); }
+            }
+        }
+    }
+
     pub(crate) fn preceding(&self, address: usize) -> Option<Arc<T>> {
         lock(&self.0).range(..=address).next_back()?.1.upgrade()
     }

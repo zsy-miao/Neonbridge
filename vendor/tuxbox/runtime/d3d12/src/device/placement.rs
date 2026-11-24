@@ -861,12 +861,35 @@ impl Texture {
 pub(super) struct Placements {
     pub(super) views: Arc<DescriptorMap<PlacedView>>,
     pub(super) targets: Arc<Views<Texture>>,
+    /// SRV / UAV handle -> render heap of its image (heap::residency)
+    pub(super) render_views: Arc<Views<super::heap::RenderHeap>>,
+    /// RTV / DSV handle -> render heap of its image
+    pub(super) render_targets: Arc<Views<super::heap::RenderHeap>>,
     memory: Arc<PlacementMemory>,
 }
 
 pub(crate) unsafe fn render_target(device: *mut c_void, handle: usize) -> Option<Arc<Texture>> {
     let device = unsafe { &*device.cast::<Device>() };
+    if let Some(heap) = device.state.placements.render_targets.get(handle) {
+        heap.touch();
+    }
     device.state.placements.targets.get(handle)
+}
+
+/// A bound or cleared DSV (or RTV) handle: its render heap is used.
+pub(crate) unsafe fn touch_target(device: *mut c_void, handle: usize) {
+    let device = unsafe { &*device.cast::<Device>() };
+    if let Some(heap) = device.state.placements.render_targets.get(handle) {
+        heap.touch();
+    }
+}
+
+pub(super) fn evict_after() -> f64 {
+    alias::evict_after()
+}
+
+pub(crate) fn list_submitted(age: std::time::Duration) {
+    super::heap::residency::list_submitted(age);
 }
 
 pub(crate) unsafe fn render_targets(
@@ -884,6 +907,9 @@ pub(crate) unsafe fn render_targets(
         } else {
             unsafe { (*handles.add(i)).ptr }
         };
+        if let Some(heap) = device.state.placements.render_targets.get(handle) {
+            heap.touch();
+        }
         if let Some(texture) = device.state.placements.targets.get(handle) {
             output.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
             output.push(texture);
@@ -1119,6 +1145,20 @@ pub(crate) unsafe fn submit(
 ) -> Result<()> {
     let device = unsafe { &*device.cast::<Device>() };
     let placements = &device.state.placements;
+    placements.render_views.each_in(heaps, |heap| heap.touch());
+    {
+        static PASS: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+        let now = std::time::Instant::now();
+        let due = {
+            let mut pass = PASS.lock().unwrap_or_else(|e| e.into_inner());
+            let due = pass.is_none_or(|at| now.duration_since(at).as_secs_f64() >= 1.0);
+            if due { *pass = Some(now); }
+            due
+        };
+        if due && alias::over_budget(&device.native) {
+            super::heap::residency::evict_idle(&device.native);
+        }
+    }
     placements.views.gather(heaps, textures, writes);
     unique(writes);
     textures

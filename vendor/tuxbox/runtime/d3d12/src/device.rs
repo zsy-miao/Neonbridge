@@ -100,6 +100,12 @@ impl ResourceState {
     pub(crate) fn unbacked_uav(&self) -> bool {
         self.translated().is_some_and(format::is_depth)
     }
+    fn render_heap(&self) -> Option<&std::sync::Arc<heap::RenderHeap>> {
+        match &self.backing {
+            Backing::Addressed(address, _) => address.render_heap(),
+            _ => None,
+        }
+    }
     pub(crate) fn buffer_window(&self) -> Option<(u64, u64)> {
         if let Backing::Addressed(address, desc) = &self.backing
             && address.buffer_offset != 0
@@ -524,7 +530,12 @@ pub(crate) unsafe fn resource_proxy<'a>(
     object: *mut c_void,
     device: *mut c_void,
 ) -> Option<&'a Resource> {
-    unsafe { unwrap(object, device, &RESOURCE) }
+    let proxy: Option<&Resource> = unsafe { unwrap(object, device, &RESOURCE) };
+    // Every command taking a resource unwraps it here (heap::residency).
+    if let Some(heap) = proxy.and_then(|p| p.state.render_heap()) {
+        heap.touch();
+    }
+    proxy
 }
 
 /// Borrows a native fence under the same ownership contract as [`resource`].

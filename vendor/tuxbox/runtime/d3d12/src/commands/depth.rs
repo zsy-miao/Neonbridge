@@ -29,6 +29,7 @@ pub(super) unsafe extern "system" fn clear(
         recording.error = E_INVALIDARG;
         return;
     }
+    unsafe { crate::device::placement::touch_target(parent(&list.parent), handle.ptr) };
     unsafe {
         (list.native.vtable().ClearDepthStencilView)(
             list.native.as_raw(),

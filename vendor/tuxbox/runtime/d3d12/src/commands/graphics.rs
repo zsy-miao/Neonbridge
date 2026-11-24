@@ -119,6 +119,9 @@ pub(super) unsafe extern "system" fn targets(
         return;
     }
     state.dsv_bound = !dsv.is_null();
+    if let Some(h) = unsafe { dsv.as_ref() } {
+        unsafe { crate::device::placement::touch_target(parent(&list.parent), h.ptr) };
+    }
     if crate::diagnostics::display::capture_draws() {
         state.trace_target = if count == 1 {
             crate::diagnostics::display::draw_target(unsafe { (*rtvs).ptr })
