@@ -408,11 +408,14 @@ impl Worker {
                                 let slot = STALLED_COUNT.fetch_add(1, Ordering::Relaxed) as usize;
                                 if slot < 16 { STALLED[slot].store(job.segment.address, Ordering::Relaxed); }
                                 writers::arm();
+                                static STALLS: AtomicU64 = AtomicU64::new(0);
+                                if slow::per_address(slow::Kind::Stalled, job.segment.address, &STALLS).is_some() {
                                 crate::diagnostics::log_line(format_args!(
                                     "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}",
                                     job.segment.address, job.segment.target, job.queue,
                                     writers::describe(job.segment.address, job.queue, started)
                                 ));
+                                }
                             }
                             // rebox 69005a5 releases after 2 s; TUXBOX_WAIT_RELEASE_MS
                             // overrides (the old 10 s was most of a frame budget per stall).
@@ -420,11 +423,12 @@ impl Worker {
                                 .and_then(|v| v.parse().ok()).unwrap_or(2000));
                             if waited >= release {
                                 static RELEASED: AtomicU64 = AtomicU64::new(0);
-                                let n = RELEASED.fetch_add(1, Ordering::Relaxed);
-                                crate::diagnostics::log_line(format_args!(
-                                    "GPU memory wait {:#x} >= {:#x} released by the watchdog after {:?} ({} so far)",
-                                    job.segment.address, job.segment.target, release, n + 1
-                                ));
+                                if slow::per_address(slow::Kind::Released, job.segment.address, &RELEASED).is_some() {
+                                    crate::diagnostics::log_line(format_args!(
+                                        "GPU memory wait {:#x} >= {:#x} released by the watchdog after {:?} ({} so far)",
+                                        job.segment.address, job.segment.target, release, RELEASED.load(Ordering::Relaxed)
+                                    ));
+                                }
                                 break;
                             }
                             std::thread::sleep(Duration::from_millis(1));
@@ -477,6 +481,36 @@ pub(super) mod slow {
         Duration::from_millis(crate::env_toggle!("TUXBOX_SLOW_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(50))
     }
 
+    /// Slow, stalled and released waits log at most this many times per
+    /// address and kind (rebox a8ee5d6), so stalls on different counters all
+    /// show and one hot address cannot flood the log. TUXBOX_WAIT_LOG_CAP=0
+    /// restores the old global thinning (first 8, then powers of two).
+    fn cap() -> u32 {
+        crate::env_toggle!("TUXBOX_WAIT_LOG_CAP").and_then(|v| v.parse().ok()).unwrap_or(4)
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub(crate) enum Kind { Slow, Stalled, Released }
+
+    fn admit(seen: &mut std::collections::HashMap<(Kind, u64), u32>, key: (Kind, u64), cap: u32) -> Option<u32> {
+        let n = seen.entry(key).or_insert(0);
+        (*n < cap).then(|| { *n += 1; *n })
+    }
+
+    /// Whether this wait at `address` logs: Some(its count for that address),
+    /// or with the cap off, the global thinning over `global`.
+    pub(crate) fn per_address(kind: Kind, address: u64, global: &AtomicU64) -> Option<u64> {
+        let cap = cap();
+        if cap == 0 {
+            return due(global);
+        }
+        static SEEN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(Kind, u64), u32>>> =
+            std::sync::LazyLock::new(Default::default);
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        global.fetch_add(1, Ordering::Relaxed);
+        admit(&mut seen, (kind, address), cap).map(u64::from)
+    }
+
     /// Log the first 8, then at powers of two.
     fn due(count: &AtomicU64) -> Option<u64> {
         let n = count.fetch_add(1, Ordering::Relaxed) + 1;
@@ -505,11 +539,23 @@ pub(super) mod slow {
             return;
         }
         static COUNT: AtomicU64 = AtomicU64::new(0);
-        if let Some(n) = due(&COUNT) {
+        if let Some(n) = per_address(Kind::Slow, address, &COUNT) {
             crate::diagnostics::log_line(format_args!(
-                "GPU memory wait {address:#x} >= {target:#x} on queue {queue:#x} met after {waited:?} ({n} slow waits)"
+                "GPU memory wait {address:#x} >= {target:#x} on queue {queue:#x} met after {waited:?} (slow wait {n} here, {} in all)",
+                COUNT.load(Ordering::Relaxed)
             ));
         }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn each_address_logs_up_to_the_cap() {
+        let mut seen = std::collections::HashMap::new();
+        let a: Vec<_> = (0..6).filter_map(|_| admit(&mut seen, (Kind::Slow, 0x1000), 4)).collect();
+        assert_eq!(a, [1, 2, 3, 4]);
+        // Another counter, or another kind at the same counter, still logs.
+        assert_eq!(admit(&mut seen, (Kind::Slow, 0x2000), 4), Some(1));
+        assert_eq!(admit(&mut seen, (Kind::Stalled, 0x1000), 4), Some(1));
     }
 
     #[cfg(test)]
