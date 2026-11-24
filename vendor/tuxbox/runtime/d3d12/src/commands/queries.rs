@@ -110,7 +110,13 @@ pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, arg
             unsafe { list.native.GetDevice(&mut device)? };
             let mut heap: Option<ID3D12QueryHeap> = None;
             unsafe { device.ok_or(E_INVALIDARG)?.CreateQueryHeap(&D3D12_QUERY_HEAP_DESC {
-                Type: D3D12_QUERY_HEAP_TYPE_TIMESTAMP, Count: SLOTS, NodeMask: 0,
+                Type: if unsafe { list.native.GetType() } == D3D12_COMMAND_LIST_TYPE_COPY {
+                    // A copy list ends timestamps only in a copy-queue heap.
+                    D3D12_QUERY_HEAP_TYPE_COPY_QUEUE_TIMESTAMP
+                } else {
+                    D3D12_QUERY_HEAP_TYPE_TIMESTAMP
+                },
+                Count: SLOTS, NodeMask: 0,
             }, &mut heap)? };
             let heap = heap.ok_or(E_INVALIDARG)?;
             let mut keep = state.resources.lock().unwrap_or_else(|e| e.into_inner());
