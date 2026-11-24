@@ -8268,7 +8268,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "image_atomic_smax" => Some("max"),
             _ => None,
         };
-        if atomic.is_some() || is_image_load(&ins.mnemonic) || matches!(ins.mnemonic.as_str(), "image_store" | "image_store_mip") {
+        if atomic.is_some() || is_image_load(&ins.mnemonic) || matches!(ins.mnemonic.as_str(), "image_store" | "image_store_mip" | "image_store_pck" | "image_store_mip_pck") {
             let with_mip = ins.mnemonic.starts_with("image_load_mip");
             let pck = ins.mnemonic.contains("_pck");
             let sgn = ins.mnemonic.ends_with("_sgn");
@@ -8315,7 +8315,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 _ => return Err(format!("image dim {dim} unsupported for load/store")),
             };
             let store = ins.mnemonic.starts_with("image_store");
-            if ins.mnemonic == "image_store_mip" {
+            if matches!(ins.mnemonic.as_str(), "image_store_mip" | "image_store_mip_pck") {
                 // Desktop UAV descriptors select one mip at view creation.
                 if a16 || !self.immediate_zero_before(idx, addr_reg(ncoord)) {
                     return Err("image_store_mip requires a statically zero relative mip".into());
@@ -8374,6 +8374,44 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 if ins.raw[0] & (1 << 13) != 0 { // GLC requests the old value in VDATA.
                     self.wv(&o, &format!("t{t}"))?;
                 }
+                return Ok(());
+            }
+            if store && pck {
+                // Packed RGBA8 stores (Xbox2Windows b898d318, ported): one VGPR per
+                // DMASK channel in ascending order, its low byte stored without
+                // saturation; channels the mask leaves out are written as zero.
+                if std::env::var("TUXBOX_PACKED_STORES").as_deref() == Ok("0") {
+                    return Err("image_store_pck off (TUXBOX_PACKED_STORES=0)".into());
+                }
+                if !is_uav {
+                    return Err("image_store_pck to a non-UAV table".into());
+                }
+                if d16 {
+                    return Err("D16 packed image store unsupported".into());
+                }
+                let mut bytes = vec![];
+                let mut n = 0u8;
+                for ch in 0..4 {
+                    if (ins.aux.mask >> ch) & 1 != 0 {
+                        let o = Opnd::Vgpr(vd + n);
+                        self.touch(&o);
+                        bytes.push(format!("({} & 0xffu)", r(&o)?));
+                        n += 1;
+                    } else {
+                        bytes.push("0u".into());
+                    }
+                }
+                let at = format!("uav{slot}[uint{ncoord}({})]", c.join(", "));
+                let value = if as_uint {
+                    // A scalar uint view of RGBA8 memory: the four bytes, x lowest.
+                    format!("({} | ({} << 8) | ({} << 16) | ({} << 24))", bytes[0], bytes[1], bytes[2], bytes[3])
+                } else if let Some(t) = ity {
+                    format!("{}({})", if t == 2 { "int4" } else { "uint4" }, bytes.join(", "))
+                } else {
+                    // A normalized view: the byte as its UNORM value.
+                    format!("(float4({}) / 255.0)", bytes.join(", "))
+                };
+                self.line(&format!("if (exec_lo & 1u) {at} = {value};"));
                 return Ok(());
             }
             if store && as_uint {
