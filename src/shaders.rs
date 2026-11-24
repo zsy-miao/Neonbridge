@@ -27,6 +27,20 @@ const XSHADER_UNSUPPORTED_HLSL: i32 = 65;
 pub struct Tools {
     pub xshader: PathBuf,
     pub dxc: PathBuf,
+    /// dxc `-D` defines; bind_cache fills them from the host wave range.
+    pub defines: Vec<String>,
+}
+
+/// `TB_NO_WAVESIZE_<n>` for each wave width outside the host's lane range, which
+/// d3d12_xs leaves as "min max" in `<cache_root>/wave_lanes.txt` at device
+/// creation. xshader's HLSL wraps `[WaveSize(n)]` in `#ifndef` on them, so a
+/// wave32-only GPU doesn't reject the pipeline. No file yet (first run on this
+/// machine) means no defines.
+fn wave_size_defines(cache_root: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(cache_root.join("wave_lanes.txt")) else { return Vec::new() };
+    let mut it = text.split_whitespace().map(str::parse::<u32>);
+    let (Some(Ok(min)), Some(Ok(max))) = (it.next(), it.next()) else { return Vec::new() };
+    [32, 64].into_iter().filter(|&n| n < min || n > max).map(|n| format!("TB_NO_WAVESIZE_{n}")).collect()
 }
 
 pub struct Worker {
@@ -260,14 +274,20 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
     let xshader = private.join("xshader.exe");
     fs::copy(&tools.xshader, &xshader).map_err(|e| format!("copy xshader: {e}"))?;
     let version = Command::new(&tools.dxc).arg("--version").output().map_err(|e| format!("dxc: {e}"))?.stdout;
+    let defines = wave_size_defines(cache_root);
     let mut fp = Sha256::new();
     fp.update(&version);
+    // The defines change the DXIL, so they're part of the cache key.
+    for d in &defines {
+        fp.update(b"-D");
+        fp.update(d.as_bytes());
+    }
     for t in [&xshader, &tools.dxc] {
         fp.update(sha256(&fs::read(t).map_err(|e| e.to_string())?).as_bytes());
     }
     let cache = cache_root.join("runtime").join(hex(&fp.finalize()));
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
-    Ok((Tools { xshader, dxc: tools.dxc.clone() }, cache))
+    Ok((Tools { xshader, dxc: tools.dxc.clone(), defines }, cache))
 }
 
 enum Outcome { Compiled, Cached, Unsupported(String), Failed(String) }
@@ -351,6 +371,9 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let dxc = |opt: &str, secs: u64| {
             let mut dxc = Command::new(&tools.dxc);
             dxc.arg("-T").arg(&target).arg(opt);
+            for d in &tools.defines {
+                dxc.arg("-D").arg(d);
+            }
             if target != "lib_6_3" {
                 dxc.args(["-E", "main"]);
             }

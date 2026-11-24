@@ -173,7 +173,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 let log_path = out.join("shader-worker.log");
                 let _ = fs::remove_file(&log_path);
                 let sink = std::sync::Mutex::new(fs::OpenOptions::new().create(true).append(true).open(&log_path)?);
-                match shaders::Worker::start(shaders::Tools { xshader, dxc }, cache_root, session.clone(),
+                match shaders::Worker::start(shaders::Tools { xshader, dxc, defines: Vec::new() }, cache_root, session.clone(),
                     move |line| { let _ = writeln!(sink.lock().unwrap(), "{line}"); }) {
                     Ok(w) => Some((w, name, session, log_path)),
                     Err(e) => { println!("[launch] shader worker not started: {e}"); None }
