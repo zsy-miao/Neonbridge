@@ -56,6 +56,16 @@ pub(super) fn reflected(
         }
     }
     // Translated heap-indexed compute shaders also need the index map.
+    if let (TableLayout::Reflected(table), Program::Compute(shader)) = (&layout, program)
+        && flags & 0x400 != 0
+        && heap_indexed(shader)
+        && table.index_map.is_none()
+    {
+        let samplers = parse_rts0(table.layout.payload()).ok().filter(|s| s.static_samplers.is_empty())
+            .and_then(|_| tuxbox_dxbc::inline_sampler::heap_compute(shader)).unwrap_or_default();
+        return extend_root_from(device, &table.layout, original, node, true, &samplers,
+            table.lengths.clone(), table.accessed_views.clone());
+    }
     if let (TableLayout::Original | TableLayout::Unsupported, Program::Compute(shader)) = (&layout, program)
         && flags & 0x400 != 0
         && heap_indexed(shader)
@@ -92,7 +102,6 @@ fn reflected_tables(
     };
     let mut scalar_index = None;
     let mut resolve_constants = None;
-    let mut corroborated_raster = false;
     let mut recovered_samplers = Vec::new();
     let bindings = match (program, signature.params.as_slice()) {
         (Program::Compute(shader), params) => {
@@ -144,7 +153,6 @@ fn reflected_tables(
                 Some((get(vertex, 1)?, get(pixel, 0)?))
             };
             let checked = ordinary.then(|| both_stages(true)).flatten();
-            corroborated_raster = checked.is_some();
             let Some((mut bindings, pixel_bindings)) = checked.or_else(|| both_stages(false)) else {
                 return Ok(TableLayout::Unsupported);
             };
@@ -239,10 +247,11 @@ fn reflected_tables(
                 let flags = if let Some(first) = matched.next() {
                     if matched.any(|r| r.Flags != first.Flags) { return Ok(TableLayout::Unsupported); }
                     first.Flags
-                } else if corroborated_raster || resolve_constants.is_some() || !recovered_samplers.is_empty() {
-                    // This table ABI omits some native resource classes in the stream root.
+                } else {
+                    // The guest root omits this resource class from the table (the shader's
+                    // FSSM binding records name it): volatile flags accept any descriptor.
                     D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE
-                } else { return Ok(TableLayout::Unsupported); };
+                };
                 ranges.push(D3D12_DESCRIPTOR_RANGE1 {
                     RangeType: ty,
                     NumDescriptors: 1,
@@ -342,7 +351,15 @@ fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32, sampler
 
 /// The guest root plus, optionally, the resource index map SRV and private static samplers.
 fn extend_root(device: &ID3D12Device, original: &RootSource, node: u32, index_map: bool, samplers: &[[u32; 13]]) -> Result<TableLayout> {
-    let bytes = original.serialized();
+    extend_root_from(device, original, original, node, index_map, samplers, Vec::new(), Vec::new())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extend_root_from(
+    device: &ID3D12Device, base: &RootSource, original: &RootSource, node: u32, index_map: bool,
+    samplers: &[[u32; 13]], lengths: Vec<u32>, accessed_views: Vec<(usize, std::ops::Range<u32>)>,
+) -> Result<TableLayout> {
+    let bytes = base.serialized();
     unsafe {
         let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
         D3D12CreateVersionedRootSignatureDeserializer(
@@ -387,8 +404,8 @@ fn extend_root(device: &ID3D12Device, original: &RootSource, node: u32, index_ma
             native,
             original: original.clone(),
             layout: RootSource::new(layout),
-            lengths: Vec::new(),
-            accessed_views: Vec::new(),
+            lengths,
+            accessed_views,
             index_map: index_map.then_some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
         })))
     }
