@@ -1,5 +1,6 @@
 //! Keep CPU-backed tiled Xbox textures coherent with their desktop images.
 pub(crate) mod alias;
+pub(crate) mod pages;
 mod descriptors;
 pub(crate) mod pool;
 mod publication;
@@ -117,6 +118,37 @@ fn a_range_covers_the_pages_it_touches() {
     assert_eq!(pages(&(0x30000..0x30000)), 3..=3);
 }
 
+/// The unmapped textures on pages that a texture going away covered and that
+/// no other live mapped texture newer than them covers, newest first (xcl
+/// title_textures.rs remove()).
+fn uncovered(images: &Images, gone: &Texture) -> Vec<Arc<Texture>> {
+    let range = gone.range();
+    let index = lock(&images.1);
+    let near = |r: &Range<u64>| {
+        let mut out: Vec<Arc<Texture>> = Vec::new();
+        for page in pages(r) {
+            for t in index.get(&page).into_iter().flatten().filter_map(Weak::upgrade) {
+                if !core::ptr::eq(Arc::as_ptr(&t), gone) && overlaps(&t.range(), r) && !out.iter().any(|o| Arc::ptr_eq(o, &t)) {
+                    out.push(t);
+                }
+            }
+        }
+        out
+    };
+    let mut candidates: Vec<Arc<Texture>> = near(&range).into_iter().filter(|t| t.on_pages && !pages::is_mapped(t)).collect();
+    candidates.sort_unstable_by_key(|t| std::cmp::Reverse(t.seq));
+    let mut chosen: Vec<Arc<Texture>> = Vec::new();
+    for c in candidates {
+        let covered = near(&c.range()).iter().any(|t| t.seq > c.seq
+            && (chosen.iter().any(|x| Arc::ptr_eq(x, t)) || (!t.on_pages || pages::is_mapped(t))));
+        if !covered {
+            chosen.push(c);
+        }
+    }
+    drop(index);
+    chosen
+}
+
 /// Indexes a new texture by page and marks the live older textures it
 /// overlaps superseded. Returns those textures: the caller drops them
 /// after releasing the image locks, since a last reference runs Drop,
@@ -155,7 +187,13 @@ pub(crate) struct Texture {
     /// Placed in a span heap shared with the textures over the same guest
     /// bytes (alias.rs), rather than a committed copy of its own.
     span: Option<alias::Placed>,
+    /// A reserved resource on the title's 64 KiB pages (pages.rs).
+    on_pages: bool,
+    /// Creation order, for remapping the newest covered texture (pages.rs).
+    seq: u64,
 }
+
+static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl Drop for Texture {
     fn drop(&mut self) {
@@ -165,6 +203,10 @@ impl Drop for Texture {
             Some(placed) => {
                 pool::forget(self.bytes);
                 alias::gone(placed);
+            }
+            None if self.on_pages => {
+                pool::forget(self.bytes);
+                pages::gone(self);
             }
             None => pool::release(&self.native, host_desc(&self.desc), self.bytes, readers),
         }
@@ -182,6 +224,18 @@ impl Drop for Texture {
                 entry.remove();
             }
         }
+        let uncovered = if self.on_pages && page_index() { uncovered(&images, self) } else { Vec::new() };
+        for older in &uncovered {
+            // xcl remove(): the newest covered older texture is mapped again
+            // and re-uploaded whole.
+            if pages::remap(older) {
+                lock(&older.contents).previous.iter_mut().for_each(Vec::clear);
+                if older.superseded.swap(false, Ordering::Relaxed) {
+                    pool::superseded(older.bytes, false);
+                }
+            }
+        }
+        drop(uncovered);
         if page_index() {
             let mut index = lock(&images.1);
             for page in pages(&self.range()) {
@@ -333,9 +387,21 @@ impl Texture {
         // waited on before the first upload overwrites it.
         // Span heaps first (alias.rs): the textures over the same guest bytes
         // share heap bytes, as on the console.
-        let (native, bytes, readers, span) = match alias::place(device, address, &host, size, clear) {
-            Some((native, bytes, placed)) => (native, bytes, Vec::new(), Some(placed)),
-            None => match pool::take(device, &host) {
+        let paged = pages::place(device, address, &host, size, clear);
+        let on_pages = paged.is_some();
+        // A texture that fails below gives its pages back.
+        struct Unplace(Option<usize>);
+        impl Drop for Unplace {
+            fn drop(&mut self) {
+                if let Some(raw) = self.0 {
+                    pages::forget(raw);
+                }
+            }
+        }
+        let mut unplace = Unplace(paged.as_ref().map(|(n, _)| windows::core::Interface::as_raw(n) as usize));
+        let (native, bytes, readers, span) = match paged.map(|(n, b)| (n, b, Vec::new(), None)).ok_or(()).or_else(|()| alias::place(device, address, &host, size, clear).map(|(n, b, p)| (n, b, Vec::new(), Some(p))).ok_or(())) {
+            Ok(found) => found,
+            Err(()) => match pool::take(device, &host) {
             Some((native, bytes, readers)) => (native, bytes, readers, None),
             None => {
                 let native = committed(device, D3D12_HEAP_TYPE_DEFAULT, &host, D3D12_RESOURCE_STATE_COMMON, clear)?;
@@ -409,7 +475,10 @@ impl Texture {
             bytes,
             superseded: Default::default(),
             span,
+            on_pages,
+            seq: SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }))
+        .inspect(|_| unplace.0 = None)
     }
 
     fn snapshot_mip(&self, mip: &Mip, output: &mut Vec<u8>) -> Result<bool> {
@@ -475,7 +544,7 @@ impl Texture {
     ) -> Result<usize> {
         // Another texture over the same span bytes wrote them since this one
         // did: wait for its readers and upload every level again.
-        let previous = self.span.as_ref().and_then(|placed| alias::claim(self, placed));
+        let previous = if self.on_pages { pages::claim(self) } else { self.span.as_ref().and_then(|placed| alias::claim(self, placed)) };
         let mut inherited = Vec::new();
         for other in previous.iter().flatten() {
             inherited.extend(lock(&other.contents).readers.iter().cloned());
@@ -667,6 +736,13 @@ impl Placements {
         });
         let older = if page_index() { index_pages(&self.memory.images, &texture) } else { Vec::new() };
         drop(images);
+        // xcl insert(): a texture on pages superseded by a placement over a
+        // different range is unmapped and its unshared pages go back to the pool.
+        for old in &older {
+            if old.on_pages && old.range() != texture.range() && old.superseded.load(Ordering::Relaxed) {
+                pages::unmap(old);
+            }
+        }
         drop(older);
         Ok(texture)
     }
@@ -725,6 +801,7 @@ pub(crate) unsafe fn submit(
         return execute();
     }
     unique(textures);
+    unsafe { pages::before_execute(queue) };
     alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref()))?;
     for writer in writes.iter() {
         if textures

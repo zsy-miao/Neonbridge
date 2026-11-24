@@ -175,6 +175,8 @@ impl Transfer {
         }
         let tick = self.tick()?;
         self.pending.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+        // Pages mapped since (pages.rs) before the upload writes them.
+        unsafe { super::pages::before_execute(&self.queue) };
         unsafe {
             self.queue.ExecuteCommandLists(&[Some(upload.list.clone())]);
             crate::dred::check(&self.queue, "placement upload");

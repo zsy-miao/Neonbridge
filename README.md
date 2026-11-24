@@ -41,7 +41,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## Credits
 
-GPL-3.0 code from these projects is used with credit; GPL-2.0-only projects (xcl, rebox) are re-implemented, not copied. Details of each contribution are in [docs/DETAILS.md](docs/DETAILS.md#credits).
+GPL-3.0 code from these projects is used with credit; GPL-2.0-only projects (xcl, rebox) are re-implemented, except xcl's placed-texture page pool, copied with credit in `placement/pages.rs`. Details of each contribution are in [docs/DETAILS.md](docs/DETAILS.md#credits).
 
 [TuxBox](https://github.com/brcly/TuxBox) (brcly, vendored under `vendor/tuxbox`) · [VIctory](https://github.com/Marvisak/VIctory) (Marvisak) · [xcl](https://github.com/ivall/xcl) (ivall) · [Xbox2Windows](https://github.com/R0Y00/Xbox2Windows) (R0Y00) · [xbox-emulator](https://github.com/omonkeyz/xbox-emulator) (omonkeyz) · [OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett) (californiaAlmonds) · [rebox](https://github.com/puffnfresh/rebox) (puffnfresh) · [palmetto](https://github.com/luizwidmer/palmetto) (luizwidmer) · [leonida-ce](https://github.com/IAmNotSiob/leonida-ce) (IAmNotSiob) · [KestrelX](https://github.com/Batushn/KestrelX) (Batushn) · [GTA6-BootTest](https://github.com/OnlyMoisties/GTA6-BootTest) (OnlyMoisties) · [Leonida](https://github.com/ubiquitarianism/leonida) (ubiquitarianism) · [Leonida](https://github.com/LeonidaReforge/Leonida) (LeonidaReforge) · Microsoft (GDK headers, dxc)
 
