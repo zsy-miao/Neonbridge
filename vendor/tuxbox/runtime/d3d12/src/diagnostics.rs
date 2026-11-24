@@ -106,8 +106,50 @@ impl RasterDraw {
     }
 }
 
+/// The host's wave lane range (D3D12_OPTIONS1 WaveLaneCountMin/Max), read at
+/// the first device creation.
+static WAVE_LANES: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+
+/// (min, max) wave lanes of the host adapter, once a device exists.
+#[allow(dead_code)]
+pub(crate) fn wave_lanes() -> Option<(u32, u32)> {
+    WAVE_LANES.get().copied()
+}
+
+/// The xshader defines that compile out [WaveSize(n)] for each width the host
+/// cannot run (TB_NO_WAVESIZE_<n>); a shader cache key must include them.
+#[allow(dead_code)]
+pub(crate) fn wave_size_defines() -> Vec<&'static str> {
+    let Some((min, max)) = wave_lanes() else { return Vec::new() };
+    [(32, "TB_NO_WAVESIZE_32"), (64, "TB_NO_WAVESIZE_64")]
+        .into_iter()
+        .filter(|&(n, _)| n < min || n > max)
+        .map(|(_, define)| define)
+        .collect()
+}
+
+fn note_wave_lanes(device: &ID3D12Device) {
+    let mut options = windows::Win32::Graphics::Direct3D12::D3D12_FEATURE_DATA_D3D12_OPTIONS1::default();
+    // SAFETY: the out structure matches the feature and outlives the call.
+    if unsafe { device.CheckFeatureSupport(windows::Win32::Graphics::Direct3D12::D3D12_FEATURE_D3D12_OPTIONS1, (&raw mut options).cast(), size_of_val(&options) as u32) }.is_err() {
+        return;
+    }
+    let lanes = (options.WaveLaneCountMin, options.WaveLaneCountMax);
+    if WAVE_LANES.set(lanes).is_err() {
+        return;
+    }
+    log_line(format_args!("host wave lanes {}..{}; xshader defines {:?}", lanes.0, lanes.1, wave_size_defines()));
+    // The launcher's shader worker compiles outside this process: leave the
+    // range beside its cache ("min max") for it to pick the defines.
+    let path = std::env::temp_dir().join("tuxbox_shader_cache").join("wave_lanes.txt");
+    let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+    let _ = std::fs::write(path, format!("{} {}
+", lanes.0, lanes.1));
+}
+
 pub(super) fn device_created(device: &ID3D12Device) {
     crate::survey::install();
+    note_wave_lanes(device);
     static FIRST_DEVICE: Once = Once::new();
     log_once(&FIRST_DEVICE, || {
         // SAFETY: The factory holds this native device reference through the call.
