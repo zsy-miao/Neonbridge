@@ -405,7 +405,11 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
     crate::commands::page_mapping::GPU_APERTURE.wait(address,bytes)?;
-    if let Some(entry) = device.state.texture_addresses.preceding(address as usize) {
+    if let Some(entry) = device.state.texture_addresses.preceding(address as usize)
+        // An import whose pages the title remapped since maps the old ones
+        // (heap.rs retire_imports_over): a new import replaces it below.
+        && !entry.buffer_heap.as_ref().is_some_and(|heap| heap.stale())
+    {
         let host = unsafe { entry.native.GetDesc() };
         if host.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
             && entry.offset(address).is_multiple_of(u64::from(stride))
@@ -464,8 +468,8 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     if !tight { host.Width = host.Width.checked_next_multiple_of(65536).ok_or(E_INVALIDARG)?; }
     // A range spanning several separately mapped guest views cannot be opened as
     // one heap; read it through a shadow copy instead.
-    match super::heap::import_buffer(device, page, &host, D3D12_RESOURCE_STATE_COMMON) {
-        Ok(native) => Ok(Some(TextureAddress::at(device, &native, page as usize, false, None))),
+    match super::heap::import_buffer_with_heap(device, page, &host, D3D12_RESOURCE_STATE_COMMON) {
+        Ok((native, heap)) => Ok(Some(TextureAddress::with_heap(device, &native, page as usize, false, None, None, None, 0, Some(heap)))),
         Err(e) if e.code() == E_INVALIDARG => shadow::view(device, address, bytes).map(Some),
         Err(e) => Err(e),
     }

@@ -15,6 +15,19 @@ const IMPORTED_HEAP: GUID = GUID::from_u128(0xc2a3c751_1d00_470c_8efd_5da145efd1
 pub(super) struct ImportedHeap {
     native: ID3D12Heap,
     _pin: ImportPin,
+    /// Pages under it were remapped (retire_imports_over): it maps the old ones.
+    stale: std::sync::atomic::AtomicBool,
+}
+
+impl ImportedHeap {
+    fn new(native: ID3D12Heap, pin: ImportPin) -> Self {
+        Self { native, _pin: pin, stale: Default::default() }
+    }
+
+    /// The title remapped pages under this heap since it was opened.
+    pub(super) fn stale(&self) -> bool {
+        self.stale.load(std::sync::atomic::Ordering::Acquire)
+    }
 }
 
 fn attach_import(resource: &ID3D12Resource, heap: &Arc<ImportedHeap>) -> windows::core::Result<()> {
@@ -337,7 +350,7 @@ pub(super) fn import_buffer_with_heap(
         let native = unsafe { host.OpenExistingHeapFromAddress(region.AllocationBase) }
             .inspect_err(|e| import_failure("OpenExistingHeapFromAddress", base, size, e))?;
         crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
-        Arc::new(ImportedHeap { native, _pin: pin })
+        Arc::new(ImportedHeap::new(native, pin))
     };
     let mut resource = None;
     unsafe { device.native.CreatePlacedResource(&heap.native, offset, &host_desc, state, None, &mut resource)? };
@@ -723,12 +736,23 @@ pub(crate) fn retire_imports_over(lo: u64, hi: u64) -> usize {
         return 0;
     }
     RETIRED.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let mut held: Vec<Arc<ImportedHeap>> = Vec::new();
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(map) = live.as_mut() else { return 0 };
     let before = map.len();
-    map.retain(|&(_, base, size), _| !(base < hi && lo < base.saturating_add(size)));
+    map.retain(|&(_, base, size), heap| {
+        let over = base < hi && lo < base.saturating_add(size);
+        if over && let Some(heap) = heap.upgrade() {
+            // Views by address skip it from now on (views.rs buffer_at). The
+            // upgrade is dropped after the lock: a last reference runs Drop.
+            heap.stale.store(true, std::sync::atomic::Ordering::Release);
+            held.push(heap);
+        }
+        !over
+    });
     let retired = before - map.len();
     drop(live);
+    drop(held);
     static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = TOTAL.fetch_add(retired as u64, std::sync::atomic::Ordering::Relaxed) + retired as u64;
     static LINES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -928,7 +952,7 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
         if e.code() == E_INVALIDARG { refuse(); }
     })?;
     crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
-    Ok(Arc::new(ImportedHeap { native, _pin: pin }))
+    Ok(Arc::new(ImportedHeap::new(native, pin)))
 }
 
 /// Commits the lazy title pages of a range before the driver imports it.
