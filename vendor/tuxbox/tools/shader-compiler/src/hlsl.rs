@@ -7880,7 +7880,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let ty = if cmp { "SamplerComparisonState" } else { "SamplerState" };
             // The runtime canonicalises every table key (tuxbox_dxbc::inline_sampler::
             // canonical_sampler): border colour fields count only with a border mode.
-            let w = tuxbox_dxbc::inline_sampler::canonical_sampler(w);
+            let w = [w[0], w[1], w[2], if w[0] & 0x124 == 0 { 0 } else { w[3] & 0xC000_0FFF }];
             let key = [w[0], w[1], w[2], w[3], u32::MAX, u32::MAX, u32::MAX, u32::MAX];
             let hash = key.iter().fold(2166136261u32, |h, &k| (h ^ k).wrapping_mul(16777619));
             self.line(&format!("{ty} {name} = SamplerDescriptorHeap[tb_desc_lookup({hash:#x}u, uint4({:#x}u, {:#x}u, {:#x}u, {:#x}u), uint4(0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu))];", w[0], w[1], w[2], w[3]));
