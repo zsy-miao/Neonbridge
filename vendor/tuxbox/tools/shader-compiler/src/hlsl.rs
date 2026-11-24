@@ -43,6 +43,7 @@ mod instance_cull_views;
 mod classify_materials;
 mod int16;
 mod norm16;
+mod rounding;
 mod indexed_lane;
 mod particle_sort;
 mod persistent;
@@ -3768,6 +3769,7 @@ impl<'a> Emitter<'a> {
 
     fn push_helpers(&self, h: &mut String) {
         h.push_str(CUBE_HELPERS);
+        h.push_str(rounding::HELPER);
         h.push_str(if self.single_wave32 { HALF_RNE_STRAIGHT_LINE } else { HALF_RNE });
         h.push_str(HALF_HELPERS);
         if self.insns.iter().any(|i| i.mnemonic.starts_with("v_cmp") && (i.mnemonic.ends_with("_f64") || i.mnemonic.ends_with("_f32") || i.mnemonic.ends_with("_f16"))) {
@@ -5881,7 +5883,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 "v_floor_f16" => format!("floor({a})"),
                 "v_ceil_f16" => format!("ceil({a})"),
                 "v_trunc_f16" => format!("trunc({a})"),
-                "v_rndne_f16" => format!("round({a})"),
+                "v_rndne_f16" => rounding::rndne(&a),
                 _ => format!("frac({a})"),
             };
             if m == "v_fract_f16" {
@@ -6531,7 +6533,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_fract_f32" => Some(format!("tb_fract({})", fa()?)),
             "v_trunc_f32" => Some(format!("trunc({})", fa()?)),
             "v_ceil_f32" => Some(format!("ceil({})", fa()?)),
-            "v_rndne_f32" => Some(format!("round({})", fa()?)),
+            "v_rndne_f32" => Some(rounding::rndne(&fa()?)),
             "v_floor_f32" => Some(format!("floor({})", fa()?)),
             "v_exp_f32" => Some(format!("exp2({})", fa()?)),
             "v_log_f32" => Some(format!("log2({})", fa()?)),
