@@ -32,6 +32,7 @@ const ERROR_MORE_DATA: u32 = 234;
 const REG_DWORD: u32 = 4;
 
 static MODE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x64);
+static ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn wide(p: *const u16) -> Option<String> {
     if p.is_null() {
@@ -112,13 +113,7 @@ pub(crate) unsafe fn install() {
         _ => 0x64,
     };
     MODE.store(mode, std::sync::atomic::Ordering::Relaxed);
-    let hooks: &[(&str, usize)] = &[
-        ("RegOpenKeyW", reg_open_key_w as *const () as usize),
-        ("RegOpenKeyExW", reg_open_key_ex_w as *const () as usize),
-        ("RegQueryValueExW", reg_query_value_ex_w as *const () as usize),
-        ("RegCloseKey", reg_close_key as *const () as usize),
-    ];
-    let registry = |d: &str| d == "advapi32.dll" || d.contains("registry") || d == "kernelbase.dll";
+    ACTIVE.store(true, std::sync::atomic::Ordering::Release);
     let mut total = 0;
     for name in ["", "XCurl.dll"] {
         let module = if name.is_empty() {
@@ -127,9 +122,22 @@ pub(crate) unsafe fn install() {
             let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
             unsafe { GetModuleHandleW(w.as_ptr()) }
         };
-        if !module.is_null() {
-            total += unsafe { patch_module_imports(module, registry, hooks, &[]) };
-        }
+        total += unsafe { patch_module(module) };
     }
     log(&format!("console mode: {total} registry import(s) patched; ConsoleMode = {mode:#x}"));
+}
+
+/// Answer ConsoleMode in one module's registry imports (also for late loads).
+pub(crate) unsafe fn patch_module(module: *mut c_void) -> usize {
+    if !ACTIVE.load(std::sync::atomic::Ordering::Acquire) || module.is_null() {
+        return 0;
+    }
+    let hooks: &[(&str, usize)] = &[
+        ("RegOpenKeyW", reg_open_key_w as *const () as usize),
+        ("RegOpenKeyExW", reg_open_key_ex_w as *const () as usize),
+        ("RegQueryValueExW", reg_query_value_ex_w as *const () as usize),
+        ("RegCloseKey", reg_close_key as *const () as usize),
+    ];
+    let registry = |d: &str| d == "advapi32.dll" || d.contains("registry") || d == "kernelbase.dll";
+    unsafe { patch_module_imports(module, registry, hooks, &[]) }
 }

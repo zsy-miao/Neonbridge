@@ -78,7 +78,50 @@ fn local_override(name: &str) -> Option<Vec<u16>> {
     })
 }
 
+thread_local! {
+    /// Set while a late-load patch runs, so loads it causes are not patched again.
+    static PATCHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A module the title loaded after start: when it is the title's own (it sits
+/// in the exe's folder, not a console library), block its network imports and
+/// answer ConsoleMode in its registry imports, as for the exe. Reentrant loads
+/// (from the patch itself, or nested LoadLibrary calls) are skipped.
+/// TUXBOX_LATE_PATCH=0 leaves late modules alone.
+fn late_patch(module: Hmod, name: &str) {
+    static OFF: OnceLock<bool> = OnceLock::new();
+    if module.is_null() || *OFF.get_or_init(|| std::env::var("TUXBOX_LATE_PATCH").is_ok_and(|v| v.trim() == "0")) {
+        return;
+    }
+    if PATCHING.with(|p| p.replace(true)) {
+        return;
+    }
+    let mut buf = [0u16; 1024];
+    let n = unsafe { GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    let path = &buf[..n];
+    let in_exe_dir = DIR.get().is_some_and(|dir| {
+        path.len() > dir.len()
+            && String::from_utf16_lossy(&path[..dir.len()]).eq_ignore_ascii_case(&String::from_utf16_lossy(dir))
+            && !path[dir.len()..].contains(&(b'\\' as u16))
+    });
+    let base = name.rsplit(['\\', '/']).next().unwrap_or(name).to_ascii_lowercase();
+    if in_exe_dir && !CONSOLE.contains(&base.as_str()) {
+        let n = unsafe { crate::net::patch_module(module, name) + crate::console_mode::patch_module(module) };
+        if n > 0 {
+            log(&format!("late load {name}: {n} import(s) patched (TUXBOX_LATE_PATCH=0 skips this)"));
+        }
+    }
+    PATCHING.with(|p| p.set(false));
+}
+
 fn load(name: String, flags: u32, original: impl FnOnce() -> Hmod) -> Hmod {
+    let h = load_inner(&name, flags, original);
+    late_patch(h, &name);
+    h
+}
+
+fn load_inner(name: &str, flags: u32, original: impl FnOnce() -> Hmod) -> Hmod {
+    let name = name.to_owned();
     if let Some(path) = local_override(&name) {
         // Drop search-path flags (e.g. LOAD_LIBRARY_SEARCH_SYSTEM32): the path is absolute.
         let h = unsafe { LoadLibraryExW(path.as_ptr(), ptr::null_mut(), flags & !0x0000_7F00) };

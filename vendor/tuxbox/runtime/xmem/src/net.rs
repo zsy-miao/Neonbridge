@@ -8,7 +8,7 @@
 //! through unchanged.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::loader::{log, patch_module_imports};
 
@@ -34,6 +34,8 @@ static GETADDRINFO: AtomicUsize = AtomicUsize::new(0);
 static GETADDRINFOW: AtomicUsize = AtomicUsize::new(0);
 static GETHOSTBYNAME: AtomicUsize = AtomicUsize::new(0);
 static GET_PROC_ADDRESS: AtomicUsize = AtomicUsize::new(0);
+/// Set once `install` blocked the network; late-loaded modules are patched too.
+static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn blocked(what: &str, host: &str) {
     static COUNT: AtomicU64 = AtomicU64::new(0);
@@ -256,7 +258,29 @@ pub(crate) unsafe fn install() {
         GETADDRINFOW.store(real("ws2_32.dll", b"GetAddrInfoW\0"), Ordering::Relaxed);
         GETHOSTBYNAME.store(real("ws2_32.dll", b"gethostbyname\0"), Ordering::Relaxed);
         GET_PROC_ADDRESS.store(GetProcAddress as *const () as usize, Ordering::Relaxed);
+        ACTIVE.store(true, Ordering::Release);
+        let mut total = 0;
+        let mut modules = vec![("exe", GetModuleHandleW(std::ptr::null()))];
+        for dll in ["libHttpClient.GDK.dll", "libHttpClient.dll", "XCurl.dll"] {
+            let w: Vec<u16> = dll.encode_utf16().chain([0]).collect();
+            let m = GetModuleHandleW(w.as_ptr());
+            if !m.is_null() {
+                modules.push((dll, m));
+            }
+        }
+        for (label, m) in modules {
+            total += patch_module(m, label);
+        }
+        log(&format!("network: offline, {total} import(s) blocked; TUXBOX_NETWORK=1 allows the title's network calls"));
+    }
+}
 
+/// Block one module's network imports (also for modules loaded after start).
+pub(crate) unsafe fn patch_module(m: *mut c_void, label: &str) -> usize {
+    if !ACTIVE.load(Ordering::Acquire) || m.is_null() {
+        return 0;
+    }
+    unsafe {
         let names: &[(&str, usize)] = &[
             ("connect", connect as *const () as usize),
             ("sendto", sendto as *const () as usize),
@@ -276,22 +300,12 @@ pub(crate) unsafe fn install() {
             (52, gethostbyname as *const () as usize),
         ];
         let net = |d: &str| d.starts_with("ws2_32") || d.starts_with("winhttp") || d.starts_with("wininet") || d.contains("libraryloader") || d == "kernel32.dll" || d == "kernelbase.dll";
-        let mut total = 0;
-        let mut modules = vec![("exe", GetModuleHandleW(std::ptr::null()))];
-        for dll in ["libHttpClient.GDK.dll", "libHttpClient.dll", "XCurl.dll"] {
-            let w: Vec<u16> = dll.encode_utf16().chain([0]).collect();
-            let m = GetModuleHandleW(w.as_ptr());
-            if !m.is_null() {
-                modules.push((dll, m));
-            }
-        }
-        for (label, m) in modules {
-            // Only network DLLs are matched, except GetProcAddress (libraryloader/kernel32).
-            let n = patch_module_imports(m, net, names, &[]);
-            let o = patch_module_imports(m, |d| d.starts_with("ws2_32"), &[], ordinals);
+        // Only network DLLs are matched, except GetProcAddress (libraryloader/kernel32).
+        let n = patch_module_imports(m, net, names, &[]);
+        let o = patch_module_imports(m, |d| d.starts_with("ws2_32"), &[], ordinals);
+        if n + o > 0 {
             log(&format!("network: {} import(s) of {label} blocked", n + o));
-            total += n + o;
         }
-        log(&format!("network: offline, {total} import(s) blocked; TUXBOX_NETWORK=1 allows the title's network calls"));
+        n + o
     }
 }
