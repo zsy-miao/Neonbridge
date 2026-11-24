@@ -396,7 +396,7 @@ pub(crate) fn engine_report() -> Option<String> {
 static ORIGINAL_ACTIVATE: AtomicUsize = AtomicUsize::new(0);
 static ORIGINAL_INITIALIZE: AtomicUsize = AtomicUsize::new(0);
 
-fn callers() -> String {
+pub(crate) fn callers() -> String {
     let mut frames = [std::ptr::null_mut(); 8];
     let n = unsafe { windows::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace(2, &mut frames, None) } as usize;
     let list = super::sampler::modules();

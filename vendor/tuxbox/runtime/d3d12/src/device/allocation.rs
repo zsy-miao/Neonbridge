@@ -67,6 +67,39 @@ pub(super) unsafe extern "system" fn custom_heap_properties(
     out
 }
 
+/// Size/alignment watch (TUXBOX_SIZE_WATCH=0 off): 160x90 textures, small
+/// format 24/26 textures and 0x4b0000-byte answers, with inputs, answer and callers.
+fn size_watch(slot: u32, descs: &[D3D12_RESOURCE_DESC], size: u64, alignment: u64) {
+    let wanted = descs.iter().any(|d| (d.Width == 160 && d.Height == 90)
+        || (matches!(d.Format.0, 24 | 26) && d.Width <= 320 && d.Height <= 180)) || size == 0x4b_0000;
+    if !wanted || std::env::var_os("TUXBOX_SIZE_WATCH").is_some_and(|v| v == "0") {
+        return;
+    }
+    static LINES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 64 {
+        return;
+    }
+    let inputs: Vec<String> = descs.iter().take(4).map(|d| format!("dim {} {}x{}x{} mips {} format {} layout {} flags {:#x} align-in {:#x}",
+        d.Dimension.0, d.Width, d.Height, d.DepthOrArraySize, d.MipLevels, d.Format.0, d.Layout.0, d.Flags.0, d.Alignment)).collect();
+    crate::diagnostics::log_line(format_args!("size query slot {slot}: [{}] -> size {size:#x} alignment {alignment:#x}; callers {}",
+        inputs.join("; "), crate::diagnostics::audio::callers()));
+}
+
+pub(super) unsafe extern "system" fn info_watched(
+    out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
+    device: &Device,
+    visible: u32,
+    count: u32,
+    descs: *const D3D12_RESOURCE_DESC,
+) -> *mut D3D12_RESOURCE_ALLOCATION_INFO {
+    let result = unsafe { info(out, device, visible, count, descs) };
+    if !out.is_null() && !descs.is_null() && count > 0 {
+        let answer = unsafe { *out };
+        size_watch(25, unsafe { slice::from_raw_parts(descs, count as usize) }, answer.SizeInBytes, answer.Alignment);
+    }
+    result
+}
+
 pub(super) unsafe extern "system" fn info(
     out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
     device: &Device,
@@ -177,6 +210,26 @@ pub(super) unsafe extern "system" fn info(
 
 // Device8 extends each description with a sampler-feedback mip region and may
 // return a placement offset, alignment and size for each individual resource.
+pub(super) unsafe extern "system" fn info2_watched(
+    out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
+    device: &Device,
+    visible: u32,
+    count: u32,
+    descs: *const D3D12_RESOURCE_DESC1,
+    details: *mut D3D12_RESOURCE_ALLOCATION_INFO1,
+) -> *mut D3D12_RESOURCE_ALLOCATION_INFO {
+    let result = unsafe { info2(out, device, visible, count, descs, details) };
+    if !out.is_null() && !descs.is_null() && count > 0 {
+        let answer = unsafe { *out };
+        let plain: Vec<D3D12_RESOURCE_DESC> = unsafe { slice::from_raw_parts(descs, count as usize) }.iter().map(|d| D3D12_RESOURCE_DESC {
+            Dimension: d.Dimension, Alignment: d.Alignment, Width: d.Width, Height: d.Height, DepthOrArraySize: d.DepthOrArraySize,
+            MipLevels: d.MipLevels, Format: d.Format, SampleDesc: d.SampleDesc, Layout: d.Layout, Flags: d.Flags,
+        }).collect();
+        size_watch(108, &plain, answer.SizeInBytes, answer.Alignment);
+    }
+    result
+}
+
 pub(super) unsafe extern "system" fn info2(
     out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
     device: &Device,

@@ -5,6 +5,7 @@ mod dcc;
 mod descriptor;
 mod library;
 mod tiling;
+mod watch;
 
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -460,10 +461,15 @@ unsafe extern "system" fn compute_texture_2d(desc: *const Texture2DDesc, out: *m
         return E_INVALIDARG;
     }
     library::initialize();
-    let plane = match texture_2d_plane(unsafe { &*desc }) {
+    let d = unsafe { &*desc };
+    let plane = match texture_2d_plane(d) {
         Ok(plane) => plane,
-        Err(hr) => return hr,
+        Err(hr) => {
+            watch::note("XGComputeTexture2DLayout", u64::from(d.width), d.height, d.format, d.mips, d.slices, d.misc_flags, hr, 0, 0);
+            return hr;
+        }
     };
+    watch::note("XGComputeTexture2DLayout", u64::from(d.width), d.height, d.format, d.mips, d.slices, d.misc_flags, S_OK, plane.size, plane.alignment);
     unsafe { write_texture_layout(out, plane, 3) };
     S_OK
 }
@@ -482,10 +488,12 @@ unsafe extern "system" fn create_texture_2d(
     }
     unsafe { out.write(ptr::null_mut()) };
     library::initialize();
-    let plane = match texture_2d_plane(unsafe { &*desc }) {
+    let d = unsafe { &*desc };
+    let plane = match texture_2d_plane(d) {
         Ok(plane) => plane,
         Err(hr) => return hr,
     };
+    watch::note("XGCreateTexture2DComputer", u64::from(d.width), d.height, d.format, d.mips, d.slices, d.misc_flags, S_OK, plane.size, plane.alignment);
     unsafe { allocate_computer(plane, 3, 0, descriptor::Image::Typed((*desc).format), out) }
 }
 
@@ -910,6 +918,11 @@ unsafe extern "system" fn element_offset(
 unsafe extern "system" fn create(desc: *const Desc, out: *mut *mut Computer) -> i32 {
     let _guard = library::Guard::acquire();
     let result = unsafe { create_inner(desc, out) };
+    if let Some(d) = unsafe { desc.as_ref() } {
+        let plane = (result >= 0).then(|| unsafe { out.read().as_ref() }).flatten().map(|c| (c.plane.size, c.plane.alignment));
+        let (size, alignment) = plane.unwrap_or((0, 0));
+        watch::note("XGCreateTextureComputer", d.width as u64, d.height as u32, d.format as u32, d.mips as u32, d.slices as u32, d.flags as u32, result, size, alignment);
+    }
     if result < 0
         && let Some(desc) = unsafe { desc.as_ref() }
     {

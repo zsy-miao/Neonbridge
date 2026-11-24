@@ -9,4 +9,4 @@ crate-type = ["staticlib"]
 
 [dependencies]
 tuxbox-xg-layout = { path = "../xg-layout" }
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_Debug"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader"] }
