@@ -1551,18 +1551,17 @@ impl<'a> Emitter<'a> {
             uses_heap_sampler: false,
             resource_heap_base: sampler_heap::resource_base(ex).or_else(|| heap_register(ex)),
             heap_words: 0,
-            private_samplers: ex.root_sig.as_ref().filter(|r| matches!(ex.stage, Stage::Compute | Stage::Pixel)
-                && ex.required_features.is_some_and(|flags| flags & (3 << 25) == 0
-                    || (ex.stage == Stage::Compute && flags & (1 << 25) != 0))
-                && r.static_samplers.iter().any(|s| s[11] == 32765))
+            private_samplers: ex.root_sig.as_ref().filter(|_| matches!(ex.stage, Stage::Compute | Stage::Pixel))
                 .and_then(|r| {
+                    // The runtime appends the literal sampler states as space-32765 static
+                    // samplers after any the guest root declares.
+                    let private: Vec<_> = r.static_samplers.iter().filter(|s| s[11] == 32765).copied().collect();
+                    if private.is_empty() { return None; }
                     let visibility = if ex.stage == Stage::Pixel { 5 } else { 0 };
-                    let recovered = if ex.required_features.is_some_and(|f| f & (3 << 25) != 0) {
-                        tuxbox_dxbc::inline_sampler::literal_sites(&ex.isa, visibility)?
-                    } else {
-                        tuxbox_dxbc::inline_sampler::sites(&ex.isa, visibility)?
-                    };
-                    (recovered.descriptors == r.static_samplers).then_some(recovered.sites)
+                    let full = tuxbox_dxbc::inline_sampler::sites(&ex.isa, visibility)
+                        .filter(|_| ex.required_features.is_some_and(|f| f & (3 << 25) == 0));
+                    full.into_iter().chain(tuxbox_dxbc::inline_sampler::literal_sites(&ex.isa, visibility))
+                        .find(|recovered| recovered.descriptors == private).map(|recovered| recovered.sites)
                 }).unwrap_or_default(),
             binding_spaces: BTreeMap::new(),
             mesh_bindings: None,

@@ -64,6 +64,20 @@ pub(super) fn reflected(
             .and_then(|_| tuxbox_dxbc::inline_sampler::heap_compute(shader)).unwrap_or_default();
         return heap_compute(device, original, node, &samplers);
     }
+    // Literal sampler states the guest root does not declare become private static
+    // samplers appended to it, so translated stages can sample with them.
+    if matches!(layout, TableLayout::Original | TableLayout::Unsupported)
+        && let Ok(signature) = parse_rts0(original.payload())
+        && !signature.static_samplers.iter().any(|s| s[11] == 32765)
+    {
+        let shader = match program {
+            Program::Compute(shader) => shader,
+            Program::Raster { pixel, .. } => pixel,
+        };
+        if let Some(samplers) = tuxbox_dxbc::inline_sampler::literal(shader) {
+            return extend_root(device, original, node, false, &samplers);
+        }
+    }
     Ok(layout)
 }
 
@@ -323,6 +337,11 @@ fn heap_indexed(shader: &[u8]) -> bool {
 /// translated compute shaders read as `t0, space32766` to turn guest heap
 /// indices into resident ones.
 fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32, samplers: &[[u32; 13]]) -> Result<TableLayout> {
+    extend_root(device, original, node, true, samplers)
+}
+
+/// The guest root plus, optionally, the resource index map SRV and private static samplers.
+fn extend_root(device: &ID3D12Device, original: &RootSource, node: u32, index_map: bool, samplers: &[[u32; 13]]) -> Result<TableLayout> {
     let bytes = original.serialized();
     unsafe {
         let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
@@ -337,7 +356,7 @@ fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32, sampler
             if source.pParameters.is_null() { return Err(E_INVALIDARG.into()); }
             std::slice::from_raw_parts(source.pParameters, source.NumParameters as usize).to_vec()
         };
-        parameters.push(D3D12_ROOT_PARAMETER1 {
+        if index_map { parameters.push(D3D12_ROOT_PARAMETER1 {
             ParameterType: D3D12_ROOT_PARAMETER_TYPE_SRV,
             ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
             Anonymous: D3D12_ROOT_PARAMETER1_0 {
@@ -345,12 +364,17 @@ fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32, sampler
                     ShaderRegister: 0, RegisterSpace: 32766, Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
                 },
             },
-        });
+        }); }
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         // Literal sampler states in the ISA, as private static samplers in space 32765.
-        let samplers: Vec<_> = samplers.iter().map(|s| static_sampler(s)).collect();
+        let mut samplers: Vec<_> = samplers.iter().map(|s| static_sampler(s)).collect();
         if !samplers.is_empty() {
+            if source.NumStaticSamplers != 0 {
+                if source.pStaticSamplers.is_null() { return Err(E_INVALIDARG.into()); }
+                let guest = std::slice::from_raw_parts(source.pStaticSamplers, source.NumStaticSamplers as usize);
+                samplers.splice(0..0, guest.iter().copied());
+            }
             desc.Anonymous.Desc_1_1.pStaticSamplers = samplers.as_ptr();
             desc.Anonymous.Desc_1_1.NumStaticSamplers = samplers.len() as u32;
         }
@@ -365,7 +389,7 @@ fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32, sampler
             layout: RootSource::new(layout),
             lengths: Vec::new(),
             accessed_views: Vec::new(),
-            index_map: Some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
+            index_map: index_map.then_some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
         })))
     }
 }

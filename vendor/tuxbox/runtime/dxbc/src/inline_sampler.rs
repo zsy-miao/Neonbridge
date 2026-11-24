@@ -365,17 +365,27 @@ pub fn private(shader: &[u8], stage: u32) -> Option<Vec<[u32; 13]>> {
 /// Private static samplers for the literal sampler states of a heap-indexed
 /// compute shader, whose other samplers come from the guest sampler heap.
 pub fn heap_compute(shader: &[u8]) -> Option<Vec<[u32; 13]>> {
+    literal(shader).filter(|_| stage(shader) == Some(5))
+}
+
+fn stage(shader: &[u8]) -> Option<u32> {
+    let d = Dxbc::parse(shader).ok()?;
+    let c = d.chunk(b"DXIL")?;
+    Some(word(shader.get(c.offset..c.offset + c.size)?, 0)? >> 16)
+}
+
+/// Private static samplers (space 32765) for the literal sampler states of a
+/// compute or pixel shader, in the order the translator assigns their registers.
+pub fn literal(shader: &[u8]) -> Option<Vec<[u32; 13]>> {
     let d = Dxbc::parse(shader).ok()?;
     let c = d.chunk(b"DXIL")?;
     let dxil = shader.get(c.offset..c.offset + c.size)?;
-    if word(dxil, 0)? >> 16 != 5 {
-        return None;
-    }
+    let visibility = match word(dxil, 0)? >> 16 { 5 => 0, 0 => 5, _ => return None };
     let programs = xdat::programs(dxil.get(24..)?).ok()?;
     let [program] = programs.as_slice() else {
         return None;
     };
-    let found = literal_sites(&fssm::decode(program).ok()?.isa, 0)?.descriptors;
+    let found = literal_sites(&fssm::decode(program).ok()?.isa, visibility)?.descriptors;
     (!found.is_empty()).then_some(found)
 }
 
