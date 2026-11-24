@@ -57,6 +57,9 @@ fn cpu_pieces_on() -> bool {
 /// Whether [address, address + bytes) is committed and readable.
 fn readable(address: u64, bytes: u64) -> bool {
     use windows::Win32::System::Memory::*;
+    // The CPU piece of a shadow is copied both ways; a range only the GPU
+    // wrote is still reserved in a lazy title view, so commit it first.
+    crate::device::commit_lazy(address as usize, bytes as usize);
     let end = address + bytes;
     let mut at = address;
     while at < end {

@@ -1148,6 +1148,11 @@ fn writable(at: usize, len: usize) -> bool {
         return true;
     }
     let Some(end) = at.checked_add(len) else { return false };
+    // A destination the CPU never touched is still reserved in a lazy title
+    // view (xmem lazy_commit.rs, 49702da): commit it, as the CPU's first touch
+    // would. test136 failed 512+ decompress/BCPack stores here (0x800703e6)
+    // and the title asserted at game+0x4033ca4; only ReadFile committed.
+    commit_title_range(at as *mut u8, len);
     let mut p = at;
     while p < end {
         let mut region = MEMORY_BASIC_INFORMATION::default();
