@@ -118,6 +118,10 @@ Neonbridge stands on other people's work. Thank you to:
 - **[xbox-emulator](https://github.com/omonkeyz/xbox-emulator)** by omonkeyz: fence handling on device removal.
 - **[OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett)** by californiaAlmonds: rendering fixes.
 - **[rebox](https://github.com/puffnfresh/rebox)** by puffnfresh: stalled GPU memory-wait diagnostics.
+- **[palmetto](https://github.com/luizwidmer/palmetto)** by luizwidmer: queue slot 35 as a clock calibration, and per-lane wave tests in `xshader`.
+- **[leonida-ce](https://github.com/IAmNotSiob/leonida-ce)** by IAmNotSiob: which extended list options and timestamp writes are safe to ignore or emulate.
+- **[KestrelX](https://github.com/Batushn/KestrelX)** by Batushn (MIT): compiling `[WaveSize]` out per wave width so kernels run on the host wave.
+- **[GTA6-BootTest](https://github.com/OnlyMoisties/GTA6-BootTest)** by OnlyMoisties: notes on what later screens need, such as blend state from the render-state block.
 - **[Leonida](https://github.com/ubiquitarianism/leonida)** by ubiquitarianism: shader-translation ports in `xshader`.
 - **[Leonida](https://github.com/LeonidaReforge/Leonida)** by LeonidaReforge: the retail boot chain that sized the device table.
 - ~~**[leonida-anyp5](https://github.com/m3ll0wSm0ke/leonida-anyp5)**: lowering lane reads and writes to subgroup shuffles in `xshader`.~~
