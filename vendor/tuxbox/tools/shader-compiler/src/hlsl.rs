@@ -576,6 +576,8 @@ struct Emitter<'a> {
     uav_uint: BTreeSet<u32>,
     /// Typed image slots carrying a two-word visibility value in a 64-bit atomic.
     wide_visibility_uavs: BTreeSet<u32>,
+    /// A buffer_atomic_*_x2 on a raw UAV (SM 6.6 64-bit raw atomics).
+    raw_int64_atomics: bool,
     /// Instruction where all 128 rasterizer threads vote in their logical wave.
     micropoly_vote: Option<usize>,
     view_cull: Option<instance_cull_views::ViewProgram>,
@@ -1737,7 +1739,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         profile,
         needs_barycentrics: em.needs_bary(),
         packed_dot_product: fspx_wave.is_some(),
-        typed_int64_atomics: !em.wide_visibility_uavs.is_empty() || em.packed.as_ref().is_some_and(|p| !p.wide_images.is_empty()),
+        typed_int64_atomics: em.raw_int64_atomics || !em.wide_visibility_uavs.is_empty() || em.packed.as_ref().is_some_and(|p| !p.wide_images.is_empty()),
         required_wave_size,
         portable_compute_group: portable_compute_group.or(light_grid.then(|| compute_group(ex))),
         ps_input_interp: std::mem::take(&mut em.ps_in_interp),
@@ -2073,6 +2075,7 @@ impl<'a> Emitter<'a> {
             multi_sets: Vec::new(),
             uav_uint: BTreeSet::new(),
             wide_visibility_uavs: BTreeSet::new(),
+            raw_int64_atomics: false,
             micropoly_vote: None,
             view_cull: None,
             required_wave_size: None,
@@ -7005,6 +7008,64 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     /// Resolve a raw buffer's byte address before any overlapping VGPR is overwritten.
     /// OFFEN and SOFFSET are byte offsets. IDXEN uses the runtime descriptor stride,
     /// which the PSV raw declaration does not encode.
+    /// buffer_atomic_*_x2 on a raw UAV (Xbox2Windows 98d2c3e8, MIT): the
+    /// VGPR pair, low word first, is one 64-bit operand of a single
+    /// Interlocked*64 at an 8-aligned address (SM 6.6 with Int64 shader ops);
+    /// cmpswap takes data v[n:n+1] and compare v[n+2:n+3]. Add and sub wrap
+    /// at 64 bits; smin/smax use int64_t. With GLC the old value returns in
+    /// the pair. TB_ATOMIC64=0 refuses the program as before.
+    fn buffer_atomic_x2(&mut self, ins: &Insn, receiver: &str, target: &str, raw: bool, glc: bool) -> Result<(), String> {
+        if std::env::var("TB_ATOMIC64").is_ok_and(|v| v.trim() == "0") {
+            return Err(format!("{} unsupported (TB_ATOMIC64=0)", ins.mnemonic));
+        }
+        if !raw || ins.aux.imm % 8 != 0 {
+            return Err(format!("{} needs a raw UAV and an 8-aligned offset", ins.mnemonic));
+        }
+        let Opnd::Vgpr(v) = ins.dst[0] else { return Err("expected an atomic VGPR pair".into()) };
+        let reg = |k: u8| v.checked_add(k).map(Opnd::Vgpr).ok_or_else(|| "atomic register pair overflow".to_string());
+        let pair = |em: &mut Self, k: u8| -> Result<String, String> {
+            let (lo, hi) = (reg(k)?, reg(k + 1)?);
+            em.touch(&lo);
+            em.touch(&hi);
+            Ok(format!("(uint64_t({}) | (uint64_t({}) << 32))", r(&lo)?, r(&hi)?))
+        };
+        let val = pair(self, 0)?;
+        let t = self.tmp;
+        self.tmp += 1;
+        self.raw_int64_atomics = true;
+        self.line(&format!("uint64_t t{t} = 0; if (exec_lo & 1u) {{"));
+        let op = ins.mnemonic.trim_start_matches("buffer_atomic_").trim_end_matches("_x2");
+        match op {
+            "cmpswap" => {
+                let compare = pair(self, 2)?;
+                self.line(&format!("{receiver}InterlockedCompareExchange64({target}, {compare}, {val}, t{t});"));
+            }
+            "inc" | "dec" => {
+                let next = if op == "inc" {
+                    format!("o{t} >= v{t} ? 0ull : o{t} + 1ull")
+                } else {
+                    format!("(o{t} == 0ull || o{t} > v{t}) ? v{t} : o{t} - 1ull")
+                };
+                self.line(&format!("uint64_t v{t} = {val}; uint64_t o{t}; [allow_uav_condition] do {{ o{t} = t{t}; {receiver}InterlockedCompareExchange64({target}, o{t}, {next}, t{t}); }} while (t{t} != o{t});"));
+            }
+            "smin" | "smax" => {
+                let func = if op == "smin" { "InterlockedMin64" } else { "InterlockedMax64" };
+                self.line(&format!("int64_t s{t}; {receiver}{func}({target}, int64_t({val}), s{t}); t{t} = uint64_t(s{t});"));
+            }
+            _ => {
+                let func = atomic64_function(op).ok_or_else(|| format!("buffer_atomic_{op}_x2 unsupported"))?;
+                let arg = if op == "sub" { format!("(0ull - {val})") } else { val };
+                self.line(&format!("{receiver}{func}({target}, {arg}, t{t});"));
+            }
+        }
+        self.line("}");
+        if glc {
+            self.wv(&reg(0)?, &format!("uint(t{t})"))?;
+            self.wv(&reg(1)?, &format!("uint(t{t} >> 32)"))?;
+        }
+        Ok(())
+    }
+
     fn raw_address(&mut self, ins: &Insn) -> Result<String, String> {
         if ins.aux.mask & 2 != 0 {
             return Err("raw buffer IDXEN needs the console descriptor stride".into());
@@ -7623,6 +7684,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 _ => return Err("unresolved atomic target".into()),
             };
             let vdata = ins.dst[0];
+            if ins.mnemonic.ends_with("_x2") {
+                return self.buffer_atomic_x2(ins, &receiver, &target, raw, glc);
+            }
             let val = r(&vdata)?;
             let t = self.tmp;
             self.tmp += 1;
@@ -9625,4 +9689,29 @@ fn compute_heap_base(ex: &ShaderExtract) -> Option<u8> {
         return None;
     }
     u8::try_from(loc & 0xff).ok()
+}
+
+/// The one-instruction 64-bit raw UAV atomic for a buffer_atomic_*_x2
+/// operation (sub adds the negated operand; fcmpswap/fmin/fmax have none).
+fn atomic64_function(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "add" | "sub" => "InterlockedAdd64",
+        "umin" => "InterlockedMin64",
+        "umax" => "InterlockedMax64",
+        "and" => "InterlockedAnd64",
+        "or" => "InterlockedOr64",
+        "xor" => "InterlockedXor64",
+        "swap" => "InterlockedExchange64",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn x2_atomics_map_to_64_bit_interlocked_functions() {
+    assert_eq!(atomic64_function("add"), Some("InterlockedAdd64"));
+    assert_eq!(atomic64_function("sub"), Some("InterlockedAdd64"));
+    assert_eq!(atomic64_function("swap"), Some("InterlockedExchange64"));
+    assert_eq!(atomic64_function("fmin"), None);
+    assert_eq!(atomic64_function("csub"), None);
 }
