@@ -1583,11 +1583,12 @@ unsafe fn present_planes(
     if result == S_OK {
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         static EARLY: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
-        if COUNT.load(Ordering::Relaxed) < EARLY.len() {
-            let index = COUNT.fetch_add(1, Ordering::Relaxed);
-            if let Some(site) = EARLY.get(index) {
-                crate::diagnostics::log_once(site, || format!("completed PresentX #{} token={} source={:p}",index+1,plane.token,unsafe { *plane.resources }));
-            }
+        let index = COUNT.fetch_add(1, Ordering::Relaxed);
+        if let Some(site) = EARLY.get(index) {
+            crate::diagnostics::log_once(site, || format!("completed PresentX #{} token={} source={:p}",index+1,plane.token,unsafe { *plane.resources }));
+        } else if (index + 1) % 300 == 0 {
+            // A heartbeat: the early lines alone made a running game look stalled.
+            crate::diagnostics::log_line(format_args!("completed PresentX #{}", index + 1));
         }
     }
     result

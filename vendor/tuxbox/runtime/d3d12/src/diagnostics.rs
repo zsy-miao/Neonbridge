@@ -10,6 +10,11 @@ use windows::Win32::Graphics::Direct3D12::{
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringA;
 use windows::core::PCSTR;
 
+/// One milestone line, every time it is called.
+pub(crate) fn log_line(detail: std::fmt::Arguments) {
+    log_once(&Once::new(), || detail.to_string());
+}
+
 pub(crate) fn log_once(site: &Once, detail: impl FnOnce() -> String) {
     site.call_once(|| {
         let target = std::env::var_os("TUXBOX_LOG");
