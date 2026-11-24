@@ -4644,6 +4644,11 @@ impl<'a> Emitter<'a> {
                     // A dynamic SOFFSET register indexes the buffer at run time: size the
                     // cbuffer declaration to the D3D12 maximum (64 KiB = 4096 vec4).
                     let dynamic = (ins.raw.get(1).copied().unwrap_or(0) >> 25) != 0x7d;
+                    // RDNA2 SMEM offsets are 21-bit signed (Xbox2Windows 83bb752d / ed7d09a4,
+                    // MIT): a negative static one reads before the buffer, so refuse it.
+                    if !dynamic && ins.aux.imm < 0 {
+                        return Err(format!("s_buffer_load at {:#x}: negative offset {}", ins.offset, ins.aux.imm));
+                    }
                     let end = if dynamic { 4096 * 4 } else { ins.aux.imm as u32 / 4 + n };
                     let mut out: Vec<(u32, Res)> = Vec::new();
                     // A scalar load reads whatever buffer the descriptor names. From the CBV
@@ -6748,6 +6753,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     }
                     let chosen = !self.chosen_samplers.is_empty() && ins.op == 2
                         && matches!(ins.src.first(), Some(Opnd::Sgpr(base)) if self.sampler_heap_base == Some(*base));
+                    if ins.aux.imm < 0 && chosen {
+                        return Err(format!("s_load at {:#x}: negative sampler offset {}", ins.offset, ins.aux.imm));
+                    }
                     if let Some(Opnd::Sgpr(dst)) = d.as_ref().filter(|_| chosen) {
                         for (k, value) in [ins.aux.imm as u32 / 16, 0, 0, 0].into_iter().enumerate() {
                             let dst = sreg_opnd(dst + k as u8);
@@ -6873,6 +6881,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         self.ws(&dst, &format!("t{t}_{k}"))?;
                     }
                     return Ok(());
+                }
+                if ins.aux.imm < 0 {
+                    return Err(format!("s_buffer_load at {:#x}: negative offset {}", ins.offset, ins.aux.imm));
                 }
                 let w0 = ins.aux.imm as u32 / 4;
                 for k in 0..n {
