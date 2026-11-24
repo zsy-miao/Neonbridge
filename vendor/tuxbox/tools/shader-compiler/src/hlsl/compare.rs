@@ -161,4 +161,44 @@ mod tests {
         assert!(wide.lines().any(|line| line.trim() == "s35 = 0u;"));
         assert!(wide.lines().any(|line| line.trim() == "s3 = 0u;"));
     }
+
+    // VOPC v_cmp_class_f16 vcc, v0, v1 (op 0x8f) and v_cmpx_class_f16 (op 0x9f).
+    const CMP_CLASS_F16: u32 = 0x7d1e_0300;
+    const CMPX_CLASS_F16: u32 = 0x7d3e_0300;
+
+    #[test]
+    fn class_f16_classifies_at_half_precision_and_cmpx_writes_exec() {
+        let cmp = translate_valu_probe(&[CMP_CLASS_F16], 2).unwrap();
+        assert!(cmp.contains("tb_cmp_class(") && cmp.contains("10u, 31u)"), "{cmp}");
+        let cmpx = translate_valu_probe(&[CMPX_CLASS_F16], 2).unwrap();
+        assert!(cmpx.contains("10u, 31u)"), "{cmpx}");
+        assert!(cmpx.lines().any(|l| l.trim_start().starts_with("exec_lo =")), "{cmpx}");
+    }
+
+    /// The emitted tb_cmp_class, transcribed, against the ISA's ten classes:
+    /// 0 signaling NaN, 1 quiet NaN, 2 -inf, 3 -normal, 4 -denormal, 5 -0,
+    /// 6 +0, 7 +denormal, 8 +normal, 9 +inf.
+    #[test]
+    fn every_class_bit_at_f16() {
+        fn tb_cmp_class(b: u32, mask: u32, fraction_bits: u32, exponent_mask: u32) -> bool {
+            let unit = 1u32 << fraction_bits;
+            let e = (b >> fraction_bits) & exponent_mask;
+            let m = b & (unit - 1);
+            let neg = b & ((exponent_mask + 1) << fraction_bits) != 0;
+            let c = if e == exponent_mask {
+                if m != 0 { u32::from(m & (unit >> 1) != 0) } else if neg { 2 } else { 9 }
+            } else if e == 0 {
+                if m == 0 { if neg { 5 } else { 6 } } else if neg { 4 } else { 7 }
+            } else if neg { 3 } else { 8 };
+            (mask >> c) & 1 != 0
+        }
+        // One f16 value per class; the high half holds junk the class must ignore.
+        let samples: [(u32, u32); 10] =
+            [(0x7c01, 0), (0x7e00, 1), (0xfc00, 2), (0xbc00, 3), (0x8001, 4), (0x8000, 5), (0x0000, 6), (0x03ff, 7), (0x7bff, 8), (0x7c00, 9)];
+        for (bits, class) in samples {
+            for bit in 0..10 {
+                assert_eq!(tb_cmp_class(0xabcd_0000 | bits, 1 << bit, 10, 31), bit == class, "{bits:#06x} bit {bit}");
+            }
+        }
+    }
 }

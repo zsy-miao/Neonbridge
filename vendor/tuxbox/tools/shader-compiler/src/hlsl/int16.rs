@@ -73,3 +73,68 @@ pub(super) fn expression(ins: &Insn) -> Result<Option<String>, String> {
         }
     }))
 }
+
+/// binary32 -> binary16 bits, round to nearest even, for constants folded at
+/// translation time (HLSL f32tof16's rounding is the driver's choice). A
+/// rounding carry out of the mantissa is added into the exponent, so
+/// 2 - 2^-12 gives 2.0 and the largest finite values round to infinity.
+pub(super) fn f16_rne_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let a = bits & 0x7fff_ffff;
+    if a > 0x7f80_0000 {
+        return sign | 0x7e00 | ((a >> 13) & 0x3ff) as u16;
+    }
+    if a >= 0x4780_0000 {
+        return sign | 0x7c00; // 65536 and up, infinity
+    }
+    if a >= 0x3880_0000 {
+        // Normal: rebias the exponent, then add the rounding increment.
+        let r = (a >> 13) - 0x1c000;
+        let rem = a & 0x1fff;
+        let up = rem > 0x1000 || (rem == 0x1000 && r & 1 != 0);
+        return sign | (r + u32::from(up)).min(0x7c00) as u16;
+    }
+    if a < 0x3300_0000 {
+        return sign; // below half the smallest subnormal
+    }
+    let e = a >> 23;
+    let mant = (a & 0x7f_ffff) | 0x80_0000;
+    let shift = 126 - e;
+    let q = mant >> shift;
+    let rem = mant & ((1 << shift) - 1);
+    let half = 1 << (shift - 1);
+    let up = rem > half || (rem == half && q & 1 != 0);
+    sign | (q + u32::from(up)) as u16
+}
+
+#[cfg(test)]
+mod half_rounding {
+    use super::f16_rne_bits;
+
+    #[test]
+    fn carry_reaches_the_exponent() {
+        assert_eq!(f16_rne_bits(2.0 - 2f32.powi(-12)), 0x4000);
+        assert_eq!(f16_rne_bits(1.0 - 2f32.powi(-12)), 0x3c00);
+        // The largest subnormal rounds up into the smallest normal.
+        assert_eq!(f16_rne_bits(f32::from_bits(0x387f_f000)), 0x0400);
+        assert_eq!(f16_rne_bits(65519.0), 0x7bff);
+        assert_eq!(f16_rne_bits(65520.0), 0x7c00);
+    }
+
+    #[test]
+    fn exact_ties_and_specials() {
+        assert_eq!(f16_rne_bits(1.0), 0x3c00);
+        assert_eq!(f16_rne_bits(-2.0), 0xc000);
+        assert_eq!(f16_rne_bits(0.5), 0x3800);
+        assert_eq!(f16_rne_bits(1.0 / (2.0 * std::f32::consts::PI)), 0x3118);
+        assert_eq!(f16_rne_bits(2f32.powi(-24)), 0x0001);
+        assert_eq!(f16_rne_bits(2f32.powi(-25)), 0x0000);
+        assert_eq!(f16_rne_bits(3.0 * 2f32.powi(-25)), 0x0002);
+        assert_eq!(f16_rne_bits(1.0 + 2f32.powi(-11)), 0x3c00);
+        assert_eq!(f16_rne_bits(1.0 + 3.0 * 2f32.powi(-11)), 0x3c02);
+        assert_eq!(f16_rne_bits(f32::INFINITY), 0x7c00);
+        assert_eq!(f16_rne_bits(-0.0), 0x8000);
+        assert_eq!(f16_rne_bits(f32::NAN) & 0x7e00, 0x7e00);
+    }
+}

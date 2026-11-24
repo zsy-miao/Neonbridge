@@ -5982,7 +5982,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let half = |operand: &Opnd, select| {
                 if let Opnd::ConstF32(value) = operand {
                     if select != 0 { return Err("high-half selection on inline float".into()); }
-                    return Ok(format!("f32tof16({value:?}f)"));
+                    // Folded with exact round-to-nearest-even; TB_HALF_CONST_DRIVER=1
+                    // leaves it to the driver's f32tof16 (old behaviour).
+                    if std::env::var_os("TB_HALF_CONST_DRIVER").is_some_and(|v| v == "1") {
+                        return Ok(format!("f32tof16({value:?}f)"));
+                    }
+                    return Ok(format!("{:#x}u", int16::f16_rne_bits(*value as f32)));
                 }
                 int16::half(operand, select)
             };
