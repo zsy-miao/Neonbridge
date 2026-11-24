@@ -406,6 +406,17 @@ fn callers() -> String {
 unsafe extern "system" fn activate(device: *mut c_void, iid: *const windows::core::GUID, context: u32, params: *const c_void, out: *mut *mut c_void) -> windows::core::HRESULT {
     type F = unsafe extern "system" fn(*mut c_void, *const windows::core::GUID, u32, *const c_void, *mut *mut c_void) -> windows::core::HRESULT;
     let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_ACTIVATE.load(Ordering::Relaxed))(device, iid, context, params, out) };
+    // ISpatialAudioClient: wrap its ActivateSpatialAudioStream to reach the render stream.
+    if hr.is_ok() && !iid.is_null() && !out.is_null()
+        && unsafe { *iid } == windows::core::GUID::from_u128(0xbbf8e066_aaaa_49be_9a4d_fd2a858ea27f)
+    {
+        let object = unsafe { *out };
+        if !object.is_null() && ORIGINAL_SPATIAL_ACTIVATE.load(Ordering::Relaxed) == 0 {
+            let table = unsafe { *object.cast::<*mut usize>() };
+            ORIGINAL_SPATIAL_ACTIVATE.store(unsafe { *table.add(10) }, Ordering::Relaxed);
+            let _ = unsafe { patch(table, 10, spatial_activate as *const () as usize) };
+        }
+    }
     let iid = if iid.is_null() { "null".into() } else { format!("{:?}", unsafe { *iid }) };
     super::log_line(format_args!("audio endpoint: IMMDevice::Activate {iid} -> {:#x}; callers {}", hr.0, callers()));
     hr
@@ -423,4 +434,107 @@ unsafe extern "system" fn initialize(client: *mut c_void, mode: i32, flags: u32,
         "audio endpoint: IAudioClient::Initialize {} flags {flags:#x} buffer {:.1} ms period {:.1} ms format {fmt} -> {:#x}; callers {}",
         if mode == 1 { "exclusive" } else { "shared" }, duration as f64 / 1e4, period as f64 / 1e4, hr.0, callers()));
     hr
+}
+
+// ---- Windows spatial audio (ISpatialAudioObjectRenderStream): the title's real output ----
+//
+// The title renders through spatial audio objects: every device period it must
+// call BeginUpdatingAudioObjects / EndUpdatingAudioObjects. A gap between Begin
+// calls longer than the period means a period went out silent (a cut-out).
+
+static ORIGINAL_SPATIAL_ACTIVATE: AtomicUsize = AtomicUsize::new(0);
+static ORIGINAL_BEGIN: AtomicUsize = AtomicUsize::new(0);
+static ORIGINAL_END: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Default)]
+struct Spatial {
+    started: Option<Instant>,
+    last_begin: Option<Instant>,
+    begins: u32,
+    frames: u32,
+    longest_gap_ms: f64,
+    late: u32,
+    hold_ms: f64,
+    longest_hold_ms: f64,
+    begin_at: Option<Instant>,
+    failed: u32,
+    threads: Vec<u32>,
+}
+
+static SPATIAL: Mutex<Option<Spatial>> = Mutex::new(None);
+
+unsafe extern "system" fn spatial_activate(client: *mut c_void, params: *const c_void, iid: *const windows::core::GUID, out: *mut *mut c_void) -> windows::core::HRESULT {
+    type F = unsafe extern "system" fn(*mut c_void, *const c_void, *const windows::core::GUID, *mut *mut c_void) -> windows::core::HRESULT;
+    let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_SPATIAL_ACTIVATE.load(Ordering::Relaxed))(client, params, iid, out) };
+    // PROPVARIANT (vt VT_BLOB = 0x41): blob size at +8, pointer at +16.
+    // SpatialAudioObjectRenderStreamActivationParams: ObjectFormat*, StaticObjectTypeMask, Min/MaxDynamicObjectCount, Category, EventHandle, NotifyObject.
+    let mut detail = String::new();
+    if !params.is_null() && unsafe { *params.cast::<u16>() } == 0x41 {
+        let blob = unsafe { *params.cast::<u8>().add(16).cast::<*const u8>() };
+        if !blob.is_null() {
+            let format = unsafe { *blob.cast::<*const u8>() };
+            let d = |p: *const u8, o: usize| unsafe { p.add(o).cast::<u32>().read_unaligned() };
+            let w = |p: *const u8, o: usize| unsafe { p.add(o).cast::<u16>().read_unaligned() };
+            let fmt = if format.is_null() { "null".into() } else { format!("tag {:#x} {} ch {} Hz {} bits", w(format, 0), w(format, 2), d(format, 4), w(format, 14)) };
+            detail = format!("format {fmt}, static mask {:#x}, dynamic objects {}..{}, category {}, event {}",
+                d(blob, 8), d(blob, 12), d(blob, 16), d(blob, 20), if unsafe { *blob.add(24).cast::<usize>() } != 0 { "yes" } else { "no" });
+        }
+    }
+    if hr.is_ok() && !out.is_null() && unsafe { !(*out).is_null() } && ORIGINAL_BEGIN.load(Ordering::Relaxed) == 0 {
+        let table = unsafe { *(*out).cast::<*mut usize>() };
+        ORIGINAL_BEGIN.store(unsafe { *table.add(8) }, Ordering::Relaxed);
+        ORIGINAL_END.store(unsafe { *table.add(9) }, Ordering::Relaxed);
+        let _ = unsafe { patch(table, 8, spatial_begin as *const () as usize) };
+        let _ = unsafe { patch(table, 9, spatial_end as *const () as usize) };
+    }
+    super::log_line(format_args!("audio endpoint: ActivateSpatialAudioStream {detail} -> {:#x}; callers {}", hr.0, callers()));
+    hr
+}
+
+unsafe extern "system" fn spatial_begin(stream: *mut c_void, available: *mut u32, frames: *mut u32) -> windows::core::HRESULT {
+    type F = unsafe extern "system" fn(*mut c_void, *mut u32, *mut u32) -> windows::core::HRESULT;
+    let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_BEGIN.load(Ordering::Relaxed))(stream, available, frames) };
+    let now = Instant::now();
+    let per = if hr.is_ok() && !frames.is_null() { unsafe { *frames } } else { 0 };
+    let mut guard = SPATIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let s = guard.get_or_insert_with(Spatial::default);
+    let started = *s.started.get_or_insert(now);
+    let period_ms = f64::from(per.max(1)) / 48.0;
+    if let Some(last) = s.last_begin.replace(now) {
+        let gap = now.duration_since(last).as_secs_f64() * 1e3;
+        s.longest_gap_ms = s.longest_gap_ms.max(gap);
+        s.late += u32::from(per != 0 && gap > period_ms * 1.5);
+    }
+    s.begins += 1;
+    s.frames = per;
+    s.failed += u32::from(hr.is_err());
+    s.begin_at = Some(now);
+    let thread = thread_id();
+    if !s.threads.contains(&thread) && s.threads.len() < 4 {
+        s.threads.push(thread);
+    }
+    let seconds = now.duration_since(started).as_secs_f64();
+    if seconds >= 10.0 {
+        super::log_line(format_args!(
+            "spatial audio last {seconds:.1} s: {} Begin ({:.0}/s, expected {:.0}/s for {} frames per period), {} late (gap over 1.5 periods), longest gap {:.1} ms, Begin..End held {:.2} ms mean / {:.1} ms max, {} failed; threads {:?}",
+            s.begins, f64::from(s.begins) / seconds, 1000.0 / period_ms, per, s.late, s.longest_gap_ms,
+            s.hold_ms / f64::from(s.begins.max(1)), s.longest_hold_ms, s.failed, s.threads));
+        *s = Spatial { started: Some(now), last_begin: Some(now), begin_at: Some(now), ..Default::default() };
+    }
+    hr
+}
+
+unsafe extern "system" fn spatial_end(stream: *mut c_void) -> windows::core::HRESULT {
+    type F = unsafe extern "system" fn(*mut c_void) -> windows::core::HRESULT;
+    {
+        let mut guard = SPATIAL.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = guard.as_mut()
+            && let Some(at) = s.begin_at.take()
+        {
+            let held = at.elapsed().as_secs_f64() * 1e3;
+            s.hold_ms += held;
+            s.longest_hold_ms = s.longest_hold_ms.max(held);
+        }
+    }
+    unsafe { std::mem::transmute::<usize, F>(ORIGINAL_END.load(Ordering::Relaxed))(stream) }
 }
