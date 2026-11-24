@@ -567,6 +567,90 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
         super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) }
 }
 
+type ImportKey = (usize, u64, u64);
+/// Live imports by (device, base, size), reused while something holds them.
+static LIVE: std::sync::Mutex<Option<std::collections::HashMap<ImportKey, std::sync::Weak<ImportedHeap>>>> = std::sync::Mutex::new(None);
+/// Ranges being opened now (one opener each; see `PagePools::import`).
+static OPENING: (std::sync::Mutex<Vec<ImportKey>>, std::sync::Condvar) = (std::sync::Mutex::new(Vec::new()), std::sync::Condvar::new());
+fn note_live(key: ImportKey, heap: &Arc<ImportedHeap>) {
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = live.get_or_insert_with(std::collections::HashMap::new);
+    if map.len() >= 1 << 16 {
+        map.retain(|_, h| h.strong_count() != 0);
+    }
+    map.insert(key, Arc::downgrade(heap));
+}
+
+/// True when [base, base + size) lies in one OS allocation, the only range
+/// OpenExistingHeapFromAddress1 accepts. test72 asked 192 times for 0x20000
+/// bytes at 0xbfc930000, whose allocation there is one 64 KiB page.
+fn one_allocation(base: u64, size: u64) -> bool {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    let end = base.saturating_add(size);
+    let mut at = base;
+    let mut allocation = None;
+    while at < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
+            return false;
+        }
+        let this = region.AllocationBase as u64;
+        if *allocation.get_or_insert(this) != this {
+            return false;
+        }
+        let next = region.BaseAddress as u64 + region.RegionSize as u64;
+        if next <= at { return false; }
+        at = next;
+    }
+    true
+}
+
+/// Opens title memory as a heap (the kernel call), joining split views first.
+fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
+    use windows::Win32::Foundation::E_INVALIDARG;
+    // A range the host refused is refused again for 5 s without asking:
+    // each retry cost an OpenExistingHeapFromAddress1 before the caller
+    // fell back to its shadow copy. The window lets a remapped range in.
+    static REFUSED: std::sync::Mutex<Vec<(u64, u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
+    let refuse = || {
+        let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+        if refused.len() < 4096 { refused.push((base, size, std::time::Instant::now())); }
+    };
+    {
+        let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+        refused.retain(|(.., at)| at.elapsed() < std::time::Duration::from_secs(5));
+        if refused.iter().any(|&(b, s, _)| b == base && s == size) {
+            return Err(E_INVALIDARG.into());
+        }
+    }
+    // The title maps one 64 KiB page per call, so a GPU range is many OS
+    // views and no heap spans it. xmem rejoins views of one section at
+    // consecutive offsets into one view on request. A range still split is
+    // refused without the kernel call (TUXBOX_IMPORT_PRECHECK=0 asks anyway).
+    let precheck = crate::env_toggle!("TUXBOX_IMPORT_PRECHECK") != Some("0");
+    let multi = size > u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
+    if precheck && multi && !one_allocation(base, size) && !(join_page_range(base, size) && one_allocation(base, size)) {
+        static SPLIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SPLIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "heap import: {size:#x} bytes at {base:#x} span several allocations, read through a shadow copy without asking the driver ({n} so far; TUXBOX_IMPORT_PRECHECK=0 asks)"));
+        }
+        refuse();
+        return Err(E_INVALIDARG.into());
+    }
+    let mut native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
+    if !precheck && let Err(e) = &native && e.code() == E_INVALIDARG && multi && join_page_range(base, size) {
+        native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
+    }
+    let native = native.inspect_err(|e| {
+        import_failure("OpenExistingHeapFromAddress1", base, size, e);
+        if e.code() == E_INVALIDARG { refuse(); }
+    })?;
+    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
+    Ok(Arc::new(ImportedHeap { native, _pin: pin }))
+}
+
 /// Asks xmem to make the title range one OS view (TuxBoxJoinPageRange);
 /// true when it now is. TUXBOX_JOIN_PAGES=0 never asks.
 fn join_page_range(base: u64, size: u64) -> bool {
@@ -1072,9 +1156,7 @@ impl PagePools {
     /// reused, so the title's memory there is the memory they map.
     /// TUXBOX_IMPORT_REUSE=0 opens every range again.
     fn import(&self, device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
-        use std::collections::HashMap;
-        use std::sync::{Mutex, Weak};
-        static LIVE: Mutex<Option<HashMap<(usize, u64, u64), Weak<ImportedHeap>>>> = Mutex::new(None);
+        use std::sync::Weak;
         static REUSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if crate::env_toggle!("TUXBOX_IMPORT_REUSE") == Some("0") {
             return self.import_uncached(device, base, size, pin);
@@ -1090,7 +1172,6 @@ impl PagePools {
         // test71 froze with five recording threads in the kernel opening heaps
         // at once. Only one thread opens a given range; the others wait for
         // it and take its heap. TUXBOX_IMPORT_SINGLE=0 lets each open its own.
-        static OPENING: (Mutex<Vec<(usize, u64, u64)>>, std::sync::Condvar) = (Mutex::new(Vec::new()), std::sync::Condvar::new());
         static WAITED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         static PEAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let single = crate::env_toggle!("TUXBOX_IMPORT_SINGLE") != Some("0");
@@ -1118,12 +1199,7 @@ impl PagePools {
         }
         let heap = self.import_uncached(device, base, size, pin);
         if let Ok(heap) = &heap {
-            let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-            let map = live.get_or_insert_with(HashMap::new);
-            if map.len() >= 1 << 16 {
-                map.retain(|_, h| h.strong_count() != 0);
-            }
-            map.insert(key, Arc::downgrade(heap));
+            note_live(key, heap);
         }
         if single {
             OPENING.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|k| *k != key);
@@ -1136,35 +1212,7 @@ impl PagePools {
         // A range the host refused is refused again for 5 s without asking:
         // each retry cost an OpenExistingHeapFromAddress1 before the caller
         // fell back to its shadow copy. The window lets a remapped range in.
-        static REFUSED: std::sync::Mutex<Vec<(u64, u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
-        let open = || -> windows::core::Result<Arc<ImportedHeap>> {
-            {
-                let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
-                refused.retain(|(.., at)| at.elapsed() < std::time::Duration::from_secs(5));
-                if refused.iter().any(|&(b, s, _)| b == base && s == size) {
-                    return Err(windows::Win32::Foundation::E_INVALIDARG.into());
-                }
-            }
-            let mut native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
-            // The title maps one 64 KiB page per call, so a GPU range is many OS
-            // views and no heap spans it. xmem rejoins views of one section at
-            // consecutive offsets into one view on request; then retry once.
-            if let Err(e) = &native && e.code() == windows::Win32::Foundation::E_INVALIDARG
-                && size > u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT) && join_page_range(base, size)
-            {
-                native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
-            }
-            let native = native
-                .inspect_err(|e| {
-                    import_failure("OpenExistingHeapFromAddress1", base, size, e);
-                    if e.code() == windows::Win32::Foundation::E_INVALIDARG {
-                        let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
-                        if refused.len() < 4096 { refused.push((base, size, std::time::Instant::now())); }
-                    }
-                })?;
-            crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
-            Ok(Arc::new(ImportedHeap { native, _pin: pin }))
-        };
+        let open = || open_heap(device, base, size, pin);
         if size == u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT) {
             let mut pools = self.0.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(pool) = pools.values_mut().find(|pool| pool.start <= base && base + size <= pool.end) {
