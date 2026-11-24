@@ -476,7 +476,10 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
             // reserved buffer whose 64 KiB tiles map onto each page's own heap
             // aliases them without a copy; the device copy is the fallback
             // (its refresh and write-back cost ~1.3 GB per submission).
-            if crate::env_toggle!("TUXBOX_TILED_ALIAS") != Some("0") {
+            // Off by default: test18 removed the device (DXGI_ERROR_INVALID_CALL)
+            // on the first UpdateTileMappings onto pages opened from an address,
+            // and the copy fallback cannot run on a removed device.
+            if crate::env_toggle!("TUXBOX_TILED_ALIAS") == Some("1") {
                 let tile_base = address & !0xffff;
                 let tile_delta = address - tile_base;
                 match desc.Width.checked_add(tile_delta).ok_or_else(|| E_INVALIDARG.into())
