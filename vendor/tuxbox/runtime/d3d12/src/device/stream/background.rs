@@ -82,8 +82,12 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     let deferred = slot.deferred.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some((device, work)) = deferred {
         let job = Job { device, work, slot: slot.clone() };
-        match small(&job) {
-            true => inline(job),
+        match small(&job) && first_use::admit() {
+            true => {
+                let started = std::time::Instant::now();
+                inline(job);
+                first_use::spend(started.elapsed());
+            }
             false => send(job, true),
         }
         if let Some(built) = slot.built.get() {
@@ -116,6 +120,62 @@ fn small(job: &Job) -> bool {
     static LIMIT: OnceLock<usize> = OnceLock::new();
     let limit = *LIMIT.get_or_init(|| std::env::var("TUXBOX_SMALL_COMPUTE_BYTES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(16384));
     !on_worker() && matches!(&job.work, Work::Compute(c) if !c.code.is_empty() && c.code.len() <= limit)
+}
+
+/// five-star-recomp ab94e3c (GPL-3.0, FirstUseBudget.cs): the time the
+/// title's threads spend making pipelines at their first bind is shared, a
+/// bucket that refills a quarter second each second up to one second. A
+/// loading frame meeting hundreds of new pipelines at 0.25-0.5 s each ran
+/// past the title's hang watchdog. A first bind with the bucket empty, or
+/// while a compile waits for memory in the compile budget, goes to the
+/// workers. TUXBOX_FIRST_USE_BUDGET=0 off.
+mod first_use {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    const REFILL_PER_SECOND: f64 = 0.25;
+    const CAPACITY: f64 = 1.0;
+
+    /// (seconds left, when last refilled)
+    static BUCKET: Mutex<Option<(f64, Instant)>> = Mutex::new(None);
+    static OVER: AtomicU64 = AtomicU64::new(0);
+
+    fn enabled() -> bool {
+        crate::env_toggle!("TUXBOX_FIRST_USE_BUDGET") != Some("0")
+    }
+
+    fn refill(bucket: &mut Option<(f64, Instant)>) -> &mut (f64, Instant) {
+        let now = Instant::now();
+        let (left, at) = bucket.get_or_insert((CAPACITY, now));
+        *left = (*left + now.duration_since(*at).as_secs_f64() * REFILL_PER_SECOND).min(CAPACITY);
+        *at = now;
+        bucket.as_mut().unwrap()
+    }
+
+    pub(super) fn admit() -> bool {
+        if !enabled() {
+            return true;
+        }
+        let left = refill(&mut BUCKET.lock().unwrap_or_else(|e| e.into_inner())).0;
+        let memory = crate::device::compile_budget::waiting();
+        if left > 0.0 && !memory {
+            return true;
+        }
+        let n = OVER.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "background pipelines: a small compute pipeline's first bind went to the workers ({}; {n} so far; TUXBOX_FIRST_USE_BUDGET=0 off)",
+                if memory { "a compile waits for memory" } else { "first-use budget spent" }));
+        }
+        false
+    }
+
+    pub(super) fn spend(took: Duration) {
+        if enabled() {
+            refill(&mut BUCKET.lock().unwrap_or_else(|e| e.into_inner())).0 -= took.as_secs_f64();
+        }
+    }
 }
 
 fn inline(mut job: Job) {

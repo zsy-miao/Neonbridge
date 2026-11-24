@@ -89,6 +89,11 @@ impl Drop for Admitted {
     }
 }
 
+/// Whether a compile is waiting for memory now.
+pub(super) fn waiting() -> bool {
+    WAITING.load(Ordering::Relaxed) != 0
+}
+
 /// Waits until a compile of `shader_bytes` of DXIL may start.
 pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
     if !enabled() {
