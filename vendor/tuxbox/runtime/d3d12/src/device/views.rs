@@ -1253,3 +1253,100 @@ pub(super) unsafe extern "system" fn sampler_x(
     };
     unsafe { sampler(device, &host, handle) };
 }
+
+/// Device slot 71: CreateUnorderedAccessView over a GPU address (GTA VI
+/// game+0x511f261 builds a buffer description with UAV flags 0x20004, then
+/// this view description with the address at +40 and a counter address at
+/// +48). Before, the slot was unmapped and answered S_OK, so the descriptor
+/// was never written. test114/115 lost the device with a page fault at
+/// GPU VA 0. Buffer views import the title buffer (or a written-back copy),
+/// anything else binds a null view, logged. TUXBOX_ADDRESS_UAV=0 leaves the
+/// descriptor unwritten as before.
+#[repr(C)]
+pub(super) struct AddressUav {
+    view: D3D12_UNORDERED_ACCESS_VIEW_DESC,
+    address: u64,
+    counter: u64,
+}
+const _: () = assert!(std::mem::offset_of!(AddressUav, address) == 40);
+
+pub(super) unsafe extern "system" fn address_uav(
+    device: &Device,
+    resource_desc: &D3D12_RESOURCE_DESC,
+    desc: &AddressUav,
+    mut handle: D3D12_CPU_DESCRIPTOR_HANDLE,
+) {
+    if crate::env_toggle!("TUXBOX_ADDRESS_UAV") == Some("0") {
+        return;
+    }
+    let _write = super::descriptor_paging::Write::new(&device.state.descriptor_arenas, &mut handle);
+    check_destination(handle);
+    let mut view = desc.view;
+    crate::diagnostics::display::texture_view(handle.ptr, None, None);
+    super::view_formats::write(handle.ptr, super::view_formats::uav_code(Some(&view)));
+    device.state.blas.views.store(handle.ptr, None);
+    device.state.placements.views.set(handle.ptr, None, true);
+    if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
+    let null = |why: &str, view: &D3D12_UNORDERED_ACCESS_VIEW_DESC| {
+        static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "address UAV at {:#x} ({} bytes, format {}, dimension {}, counter {:#x}): {why}; bound a null view ({n} so far; TUXBOX_ADDRESS_UAV=0 leaves it unwritten)",
+                desc.address, resource_desc.Width, view.Format.0, view.ViewDimension.0, desc.counter));
+        }
+        device.state.imported_views.store(handle.ptr, None);
+        let mut null = *view;
+        if null.ViewDimension != D3D12_UAV_DIMENSION_BUFFER {
+            null = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: view.Format, ViewDimension: D3D12_UAV_DIMENSION_BUFFER, ..Default::default() };
+        }
+        null.Anonymous.Buffer.CounterOffsetInBytes = 0;
+        unsafe { device.native.CreateUnorderedAccessView(None, None, Some(&null), handle) };
+    };
+    if resource_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || view.ViewDimension != D3D12_UAV_DIMENSION_BUFFER {
+        return null("not a buffer view (texture address UAVs are not supported yet)", &view);
+    }
+    if desc.address == 0 {
+        return null("address 0", &view);
+    }
+    let buffer = unsafe { view.Anonymous.Buffer };
+    if desc.counter != 0 || buffer.CounterOffsetInBytes != 0 {
+        return null("UAV counters are not supported here", &view);
+    }
+    let raw = buffer.Flags == D3D12_BUFFER_UAV_FLAG_RAW;
+    let Some(element) = (if raw { Some(4) } else { element_stride(view.Format.0, buffer.StructureByteStride) }) else {
+        return null("unsupported format", &view);
+    };
+    let element = u64::from(element);
+    if buffer.FirstElement.checked_add(u64::from(buffer.NumElements)).and_then(|end| end.checked_mul(element))
+        .is_none_or(|end| end > resource_desc.Width)
+    {
+        return null("elements outside the buffer", &view);
+    }
+    if crate::commands::page_mapping::GPU_APERTURE.wait(desc.address, 1).is_err() {
+        return null("GPU mapping still pending", &view);
+    }
+    let width = resource_desc.Width.max(1);
+    let entry = match buffer_at(device, desc.address, width, element as u32, false) {
+        Ok(Some(entry)) if entry.offset(desc.address).is_multiple_of(element) => {
+            unsafe { view.Anonymous.Buffer.FirstElement += entry.offset(desc.address) / element };
+            entry
+        }
+        // No host buffer, or one the view cannot start in on a whole
+        // element: a written-back copy that starts at the guest VA.
+        _ => match shadow::writable_view(device, desc.address, width) {
+            Ok(copy) => {
+                view_fell_back("address UAV", desc.address, width, windows::Win32::Foundation::S_OK, true);
+                copy
+            }
+            Err(e) => return null(&format!("no host buffer or copy ({:?})", e.code()), &view),
+        },
+    };
+    shadow::mark_written(device, entry.native.as_raw());
+    unsafe { device.native.CreateUnorderedAccessView(Some(&entry.native), None, Some(&view), handle) };
+    device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || format!(
+        "address UAV served (device slot 71): {:#x}, {} bytes, format {} (TUXBOX_ADDRESS_UAV=0 off)",
+        desc.address, resource_desc.Width, view.Format.0));
+}
