@@ -340,9 +340,13 @@ mod writers {
     #[derive(Default)]
     struct Table {
         /// 8-byte word -> (host list, value).
-        writes: HashMap<u64, (usize, u64)>,
+        writes: HashMap<u64, (usize, u64, Instant)>,
         /// host list -> (queue, when).
         submits: HashMap<usize, (usize, Instant)>,
+        /// host list -> the queue's progress fence value after its last submission.
+        done_at: HashMap<usize, (usize, u64)>,
+        /// queue -> (progress fence, last value signalled).
+        progress: HashMap<usize, (windows::Win32::Graphics::Direct3D12::ID3D12Fence, u64)>,
         /// host list -> its current recording's word writes (first 16).
         list_writes: HashMap<usize, Vec<(u64, u64)>>,
     }
@@ -396,7 +400,7 @@ mod writers {
         if t.writes.len() >= 1 << 14 {
             t.writes.clear();
         }
-        t.writes.insert(address & !7, (list, value));
+        t.writes.insert(address & !7, (list, value, Instant::now()));
         if order_on() {
             if t.list_writes.len() >= 1 << 12 {
                 t.list_writes.clear();
@@ -433,12 +437,72 @@ mod writers {
         }
     }
 
+    /// test74: 70 waits stalled 2 s although the list writing their value was
+    /// submitted milliseconds after the wait began. After a submission the
+    /// queue signals a progress fence; a wait whose recorded writer (a list
+    /// writing a value that satisfies it) has passed that fence is released
+    /// then, logged with the value the word reads. TUXBOX_WAIT_WRITER_RELEASE=0
+    /// waits for the 2 s watchdog as before.
+    pub(super) fn writer_release_on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| on() && crate::env_toggle!("TUXBOX_WAIT_WRITER_RELEASE") != Some("0"))
+    }
+
+    /// Signals the queue's progress fence after a submission of `lists`.
+    pub(super) fn progress(queue: &windows::Win32::Graphics::Direct3D12::ID3D12CommandQueue, lists: &[*mut core::ffi::c_void]) {
+        use windows::Win32::Graphics::Direct3D12::*;
+        use windows::core::Interface;
+        if !writer_release_on() || lists.is_empty() {
+            return;
+        }
+        let key = queue.as_raw() as usize;
+        let mut t = table();
+        if !t.progress.contains_key(&key) {
+            let mut device: Option<ID3D12Device> = None;
+            let Some(device) = unsafe { queue.GetDevice(&mut device) }.ok().and(device) else { return };
+            let Ok(fence) = (unsafe { device.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) }) else { return };
+            t.progress.insert(key, (fence, 0));
+        }
+        let Some((fence, value)) = t.progress.get_mut(&key) else { return };
+        *value += 1;
+        let value = *value;
+        if unsafe { queue.Signal(&*fence, value) }.is_err() {
+            return;
+        }
+        if t.done_at.len() >= 1 << 14 {
+            t.done_at.clear();
+        }
+        for &list in lists {
+            t.done_at.insert(list as usize, (key, value));
+        }
+    }
+
+    /// The value the recorded writer of `address` wrote, once that writer's
+    /// last submission has completed on the GPU.
+    pub(super) fn writer_done(address: u64, since: Instant, target: u64, comparison: u32) -> Option<u64> {
+        let t = table();
+        let &(list, value, recorded) = t.writes.get(&(address & !7))?;
+        if !super::compare(value, target, comparison) {
+            return None;
+        }
+        // Submitted since it recorded this write, not an earlier recording.
+        if t.submits.get(&list).is_none_or(|&(_, at)| at < recorded) {
+            return None;
+        }
+        // The value check keeps an earlier frame's write (a lower value)
+        // from releasing this wait; `since` only bounds the log wording.
+        let _ = since;
+        let &(queue, done) = t.done_at.get(&list)?;
+        let (fence, _) = t.progress.get(&queue)?;
+        (unsafe { fence.GetCompletedValue() } >= done).then_some(value)
+    }
+
     pub(super) fn describe(address: u64, waiting_queue: usize, since: Instant) -> String {
         if !on() {
             return String::new();
         }
         let t = table();
-        let Some(&(list, value)) = t.writes.get(&(address & !7)) else {
+        let Some(&(list, value, _)) = t.writes.get(&(address & !7)) else {
             return "; no recorded list writes it".into();
         };
         match t.submits.get(&list) {
@@ -481,6 +545,23 @@ impl Worker {
                                 job.device.GetDeviceRemovedReason()?;
                             }
                             let waited = started.elapsed();
+                            if writers::writer_release_on() && waited >= Duration::from_millis(4)
+                                && let Some(value) = writers::writer_done(job.segment.address, started, job.segment.target, job.segment.comparison)
+                            {
+                                static EARLY: AtomicU64 = AtomicU64::new(0);
+                                let n = EARLY.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n <= 8 || n.is_power_of_two() {
+                                    let now = if job.segment.word.wide {
+                                        unsafe { AtomicU64::from_ptr(job.segment.word.mapped as *mut u64).load(Ordering::Acquire) }
+                                    } else {
+                                        u64::from(unsafe { std::sync::atomic::AtomicU32::from_ptr(job.segment.word.mapped as *mut u32).load(Ordering::Acquire) })
+                                    };
+                                    crate::diagnostics::log_line(format_args!(
+                                        "GPU memory wait {:#x} >= {:#x} on queue {:#x} released after {} ms: the list writing {value:#x} there completed, yet the word reads {now:#x} ({n} so far; TUXBOX_WAIT_WRITER_RELEASE=0 waits)",
+                                        job.segment.address, job.segment.target, job.queue, waited.as_millis()));
+                                }
+                                break;
+                            }
                             if !warned && waited >= Duration::from_secs(2) {
                                 warned = true;
                                 let slot = STALLED_COUNT.fetch_add(1, Ordering::Relaxed) as usize;
@@ -692,6 +773,7 @@ pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits)
                 )
             };
             crate::dred::check(&queue.native, "guest command lists");
+            writers::progress(&queue.native, lists);
         }
     };
     writers::submitted(queue.native.as_raw() as usize, host);
