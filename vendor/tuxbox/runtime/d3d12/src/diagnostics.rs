@@ -590,6 +590,7 @@ mod breaks;
 mod streams;
 pub(crate) mod memwatch;
 pub(crate) mod rootsig;
+pub(crate) mod a8;
 pub(crate) mod null_causes;
 pub(crate) mod sampler;
 

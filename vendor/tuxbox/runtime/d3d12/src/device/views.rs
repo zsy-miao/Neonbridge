@@ -642,6 +642,7 @@ pub(super) unsafe extern "system" fn srv(
     } else { desc };
     let translated;
     let substitute = proxy.and_then(|p| p.state.translated());
+    let original_view = unsafe { desc.as_ref() }.copied();
     let desc = match unsafe { desc.as_ref() } {
         Some(view) if super::format::view_format(substitute.is_some(), view.Format) != view.Format => {
             translated = D3D12_SHADER_RESOURCE_VIEW_DESC {
@@ -654,6 +655,7 @@ pub(super) unsafe extern "system" fn srv(
         }
         _ => desc,
     };
+    crate::diagnostics::a8::srv(original_view.as_ref(), resource, unsafe { desc.as_ref() }.map_or(0, |view| view.Format.0 as u32));
     crate::diagnostics::display::texture_view(handle.ptr, resource, unsafe { desc.as_ref() }.map(|view| view.Format.0));
     super::view_formats::write(handle.ptr, super::view_formats::srv_code(unsafe { desc.as_ref() }));
     let texture = proxy.and_then(|resource| resource.state.placed());
