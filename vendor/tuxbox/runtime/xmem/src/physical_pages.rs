@@ -44,6 +44,9 @@ struct Pool {
     // mapped inside one take storage at their VA offset in the root's
     // section, so a VA-contiguous range is one view the host GPU can import.
     roots: BTreeMap<usize, Root>,
+    /// Pages whose unmap (to no page) failed with error 87: still mapped
+    /// here, unmapped again before each later batch (copy_mappings.rs).
+    stuck: BTreeMap<usize, u64>,
 }
 
 struct Root {
@@ -642,6 +645,9 @@ impl Pool {
             self.join_neighbours(address, tokens.len() * PAGE);
             return Ok(());
         }
+        // A page whose unmap was deferred (copy_mappings.rs) is freed only
+        // once that unmap succeeds.
+        self.retry_stuck();
         self.validate_unmapped(tokens)?;
         let mut info = MEMORY_BASIC_INFORMATION::default();
         let mut cursor = address;

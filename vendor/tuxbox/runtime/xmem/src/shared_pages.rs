@@ -262,6 +262,7 @@ fn fallback_note(what: std::fmt::Arguments) {
 pub(super) fn unmap(address: usize) -> Result<(), u32> {
     let first = unmap_once(address);
     if first != Err(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER)
+        || NO_RETRY.with(|n| n.get())
         || std::env::var("TUXBOX_XMEM_UNMAP_RETRY").is_ok_and(|v| v.trim() == "0")
     {
         return first;
@@ -281,6 +282,18 @@ pub(super) fn unmap(address: usize) -> Result<(), u32> {
             "xmem: unmapping view {address:#x} failed with error 87 at {step:?}; retried for {} ms: {} ({n} so far; TUXBOX_XMEM_UNMAP_RETRY=0 off)",
             started.elapsed().as_millis(), match result { Ok(()) => "unmapped".to_string(), Err(e) => format!("still error {e}") }));
     }
+    result
+}
+
+thread_local! {
+    static NO_RETRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with unmaps failing at once (no sleeping retry).
+pub(super) fn without_retry<T>(f: impl FnOnce() -> T) -> T {
+    let before = NO_RETRY.with(|n| n.replace(true));
+    let result = f();
+    NO_RETRY.with(|n| n.set(before));
     result
 }
 

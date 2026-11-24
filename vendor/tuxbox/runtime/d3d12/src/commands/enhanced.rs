@@ -272,6 +272,20 @@ fn fit_host(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
     };
     let before = snapshot(item);
     fix_range(&mut item.Subresources, desc);
+    // test83: every barrier the probe found the host Close rejecting moved a
+    // depth-stencil texture (R32G8X24, ALLOW_DEPTH_STENCIL) in or out of
+    // DIRECT_QUEUE_GENERIC_READ. On such textures it becomes
+    // DEPTH_STENCIL_READ, on both sides, which allows the same shader and
+    // copy reads. TUXBOX_DS_GENERIC_READ=1 keeps it.
+    if desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 != 0
+        && crate::env_toggle!("TUXBOX_DS_GENERIC_READ") != Some("1")
+    {
+        for layout in [&mut item.LayoutBefore, &mut item.LayoutAfter] {
+            if *layout == D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_GENERIC_READ {
+                *layout = D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_READ;
+            }
+        }
+    }
     fix_layout_flags(&mut item.LayoutBefore, desc.Flags);
     fix_layout_flags(&mut item.LayoutAfter, desc.Flags);
     let allowed = flag_access(desc.Flags);
@@ -380,6 +394,9 @@ fn broken(k: &Kept, compute: bool) -> String {
                 out.push(format!("{half}: layout {l} does not allow access {:#x}", a & !allowed));
             }
             if l > 29 || (12..=17).contains(&l) { out.push(format!("{half}: layout {l} invalid on graphics and compute lists")); }
+            if l == D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_GENERIC_READ.0 && k.resource.2 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 != 0 {
+                out.push(format!("{half}: DIRECT_QUEUE_GENERIC_READ on a depth-stencil texture (host Close rejects it, test83)"));
+            }
             if compute && (l == 2 || l == 4 || l == 5 || (18..=23).contains(&l)) { out.push(format!("{half}: layout {l} invalid on a compute list")); }
         }
     }

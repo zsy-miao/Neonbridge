@@ -44,6 +44,14 @@ unsafe fn array<'a, T>(pointer: *const T, count: u32) -> Result<&'a [T], u32> {
     Ok(unsafe { slice::from_raw_parts(pointer, count as usize) })
 }
 
+/// TUXBOX_XMEM_DEFER_UNMAP=0 refuses a batch whose unmap fails with 87.
+fn defer_unmaps() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_XMEM_DEFER_UNMAP").map_or(true, |v| v.trim() != "0"))
+}
+static DEFERRED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static UNSTUCK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Clone, Copy)]
 struct Change {
     at: usize,
@@ -58,7 +66,24 @@ impl Pool {
             return Ok(());
         }
         if previous.is_some() {
-            self.unmap_shared_page(at)?;
+            match self.unmap_shared_page(at) {
+                Err(ERROR_INVALID_PARAMETER) if token.is_none() && defer_unmaps() => {
+                    // test83: 512 batches were refused on these (retrying for
+                    // 31 ms never helped). The page stays mapped and is
+                    // unmapped again before later batches; a later map at
+                    // this address still has to unmap it first.
+                    self.stuck.insert(at, previous.unwrap());
+                    let n = DEFERRED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n <= 8 || n.is_power_of_two() {
+                        crate::loader::log(&format!(
+                            "page mappings: unmapping page {at:#x} failed error 87 (last failed OS step {:?}): deferred, the page stays mapped until an unmap succeeds ({} stuck now, {n} so far; TUXBOX_XMEM_DEFER_UNMAP=0 refuses the batch)",
+                            crate::shared_pages::take_os_error(), self.stuck.len()));
+                    }
+                    return Ok(());
+                }
+                result => result?,
+            }
+            self.stuck.remove(&at);
         }
         if let Some(token) = token {
             let map = |pool: &mut Pool, token| match pool.map_shared_page(at, token)? {
@@ -75,7 +100,31 @@ impl Pool {
         Ok(())
     }
 
+    /// Unmaps deferred pages again (no sleeping retry); keeps those that fail.
+    pub(super) fn retry_stuck(&mut self) {
+        if self.stuck.is_empty() {
+            return;
+        }
+        let stuck: Vec<(usize, u64)> = self.stuck.iter().map(|(&a, &t)| (a, t)).collect();
+        let mut freed = 0;
+        for (at, token) in stuck {
+            if self.mappings.get(&at) != Some(&token) {
+                self.stuck.remove(&at);
+                continue;
+            }
+            if crate::shared_pages::without_retry(|| self.unmap_shared_page(at)).is_ok() {
+                self.stuck.remove(&at);
+                freed += 1;
+            }
+        }
+        if freed != 0 {
+            let n = UNSTUCK.fetch_add(freed, std::sync::atomic::Ordering::Relaxed) + freed;
+            crate::loader::log(&format!("page mappings: {freed} deferred unmaps succeeded now, {} still stuck ({n} so far)", self.stuck.len()));
+        }
+    }
+
     fn update_aliases(&mut self, updates: &[Change]) -> Result<(), u32> {
+        self.retry_stuck();
         self.gpu_aliases
             .try_reserve(updates.len())
             .map_err(|_| ERROR_NOT_ENOUGH_MEMORY)?;
