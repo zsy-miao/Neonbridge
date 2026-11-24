@@ -458,6 +458,43 @@ impl Read {
         None
     }
 
+    /// A BC1 or BC7 BCPack request decoded (Xbox2Windows 3795037e,
+    /// 90e84561; bcpack.rs), after zlib when the request has both. The
+    /// stream is atomic: never served as chunks of a longer stream. None:
+    /// another mode, TUXBOX_BCPACK_DECODE=0, or a source or stream that did
+    /// not read, inflate or decode exactly; the caller fills grey.
+    fn bcpack_decoded(&self, mode: u8) -> Option<Vec<u8>> {
+        use std::sync::atomic::AtomicU64;
+        static DECODED: AtomicU64 = AtomicU64::new(0);
+        static REFUSED: AtomicU64 = AtomicU64::new(0);
+        if !crate::bcpack::enabled() || !crate::bcpack::decodes(mode) {
+            return None;
+        }
+        let mut input = Vec::new();
+        input.try_reserve_exact(self.size).ok()?;
+        let read = self.read_source(input.spare_capacity_mut().as_mut_ptr().cast::<u8>());
+        let result = read.ok().and_then(|()| {
+            // The read above initialized every reported input byte.
+            unsafe { input.set_len(self.size) };
+            let packed = if self.options & ZLIB != 0 {
+                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&input, chunked_limit(self.capacity)).ok()?
+            } else {
+                input
+            };
+            let mut output = Vec::new();
+            output.try_reserve_exact(self.capacity).ok()?;
+            output.resize(self.capacity, 0u8);
+            crate::bcpack::decode(&packed, mode, &mut output).then_some(output)
+        });
+        let (counter, what) = if result.is_some() { (&DECODED, "decoded") } else { (&REFUSED, "refused by the decoder (grey blocks instead)") };
+        let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            log(format_args!("BCPack BC{mode}{} request #{n} {what}: {} source bytes, {} destination bytes (TUXBOX_BCPACK_DECODE=0 fills grey)",
+                if self.options & ZLIB != 0 { " after zlib" } else { "" }, self.size, self.capacity));
+        }
+        result
+    }
+
     /// Write the request's output to its destination.
     fn store(&self, bytes: &[u8]) -> Result<(), HRESULT> {
         let bytes = &bytes[..bytes.len().min(self.capacity)];
@@ -475,11 +512,14 @@ impl Read {
             return Ok(());
         }
         let bcpack = bcpack_mode(self.options);
+        if bcpack != 0 && let Some(decoded) = self.bcpack_decoded(bcpack) {
+            return self.store(&decoded);
+        }
         if bcpack != 0 {
-            // No BCPack decoder yet: the destination gets solid blocks of the
-            // mode's format, so the texture shows flat grey instead of stale
-            // memory and the title's request succeeds (TUXBOX_BCPACK=refuse
-            // fails it instead).
+            // BC2-BC6 (no decoder) or a stream the decoder refused: the
+            // destination gets solid blocks of the mode's format, so the
+            // texture shows flat grey instead of stale memory and the
+            // title's request succeeds (TUXBOX_BCPACK=refuse fails it).
             let block = bcpack_block(bcpack).ok_or(HRESULT::from_win32(ERROR_INVALID_DATA.0))?;
             let mut fill = Vec::new();
             fill.try_reserve_exact(self.capacity).map_err(|_| E_OUTOFMEMORY)?;

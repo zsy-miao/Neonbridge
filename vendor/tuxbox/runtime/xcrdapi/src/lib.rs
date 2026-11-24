@@ -1,6 +1,7 @@
 //! Xbox file-to-memory DirectStorage using Windows file handles and RFC 1950 streams.
 #![allow(non_snake_case)]
 mod abi;
+mod bcpack;
 mod queue;
 
 use abi::*;
