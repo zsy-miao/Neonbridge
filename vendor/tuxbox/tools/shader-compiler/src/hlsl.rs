@@ -1211,6 +1211,10 @@ fn vop1_f64_on() -> bool {
     std::env::var("TB_VOP1_F64").map_or(true, |v| v.trim() != "0")
 }
 
+fn partial_wave() -> bool {
+    std::env::var("TB_PARTIAL_WAVE").map_or(true, |v| v.trim() != "0")
+}
+
 fn typed_half4() -> bool {
     std::env::var("TB_TYPED_HALF4").map_or(true, |v| v.trim() != "0")
 }
@@ -1800,7 +1804,16 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
     if let Some(width) = required_wave_size {
         wave_sum::check_control_flow(&mut em.insns, width)?;
         let [x, y, z] = compute_group(ex);
-        if ex.stage != Stage::Compute || !x.checked_mul(y).and_then(|n| n.checked_mul(z)).is_some_and(|n| n % width == 0) {
+        let threads = x.checked_mul(y).and_then(|n| n.checked_mul(z));
+        // test120: six world-path compute shaders with 32-thread groups (4x4x2,
+        // 32x1x1) use wave64 operations. Their group is one wave whose upper
+        // lanes never exist: exec, ballots and lane counts of the high half are
+        // zero on the console, and the host runs the same lanes as one wave of
+        // 32 (or a wave64 with 32 active lanes). A group no larger than one
+        // wave is a single partial wave and translates; TB_PARTIAL_WAVE=0
+        // refuses it as before.
+        let partial = partial_wave() && threads.is_some_and(|n| n > 0 && n < width);
+        if ex.stage != Stage::Compute || !(partial || threads.is_some_and(|n| n % width == 0)) {
             return Err(format!("wave operation requires complete {width}-lane compute waves"));
         }
     }
