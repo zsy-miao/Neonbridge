@@ -644,8 +644,19 @@ pub(super) unsafe extern "system" fn address_srv(
         })
     };
     let placed = if desc.address != 0 && existing.is_none() && imported.is_none() {
-        Some(device.state.placements.texture(&device.native, desc.address, resource_desc,
-            D3D12_RESOURCE_STATE_COMMON, None)
+        let made = device.state.placements.texture(&device.native, desc.address, resource_desc, D3D12_RESOURCE_STATE_COMMON, None);
+        // Out of memory or refused: bind a null view (reads zero), logged,
+        // instead of failing fast (test38: 1024x1024 format 71, 0x8007000E).
+        if let Err(e) = &made && cbv_fallback() {
+            view_fell_back("address-only texture SRV", desc.address, resource_desc.Width, e.code(), false);
+            device.state.imported_views.store(handle.ptr, None);
+            device.state.blas.views.store(handle.ptr, None);
+            device.state.placements.views.set(handle.ptr, None, false);
+            super::view_formats::write(handle.ptr, 0);
+            unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
+            return;
+        }
+        Some(made
             .unwrap_or_else(|e| fail_call(format_args!("address-only texture SRV at {:#x}, {}x{} format={} layout={:#x} dimension={} slices={} mips={} samples={}/{} alignment={:#x} flags={:#x} view={}: {:?}", desc.address, resource_desc.Width, resource_desc.Height, resource_desc.Format.0, resource_desc.Layout.0, resource_desc.Dimension.0, resource_desc.DepthOrArraySize, resource_desc.MipLevels, resource_desc.SampleDesc.Count, resource_desc.SampleDesc.Quality, resource_desc.Alignment, resource_desc.Flags.0, view.ViewDimension.0, e.code()))))
     } else {
         None
