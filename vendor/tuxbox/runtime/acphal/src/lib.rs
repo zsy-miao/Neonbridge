@@ -1,6 +1,7 @@
 //! Rust provider for the Xbox audio processor heap and AcpHal entry points Frosty imports.
 
 mod probe;
+mod xma;
 
 use core::{ffi::c_void, mem::size_of, ptr};
 use std::sync::{Mutex, OnceLock};
@@ -24,6 +25,14 @@ struct ApuHeap {
 }
 
 static APU_HEAP: Mutex<Option<ApuHeap>> = Mutex::new(None);
+
+/// Host address of `bytes` at APU address `apu`, when all of it is in the heap.
+pub(crate) fn heap_host(apu: u32, bytes: usize) -> Option<usize> {
+    let heap = APU_HEAP.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let heap = heap.as_ref()?;
+    let end = (apu as usize).checked_add(bytes)?;
+    (end <= heap.size).then(|| heap.base + apu as usize)
+}
 
 fn apu_allocate(size: usize, alignment: usize) -> Option<(usize, u32)> {
     if size == 0 || !alignment.is_power_of_two() {
@@ -208,6 +217,7 @@ pub unsafe extern "system" fn acp_hal_allocate_shape_contexts(contexts: *mut u8)
         );
     }
     probe::contexts_allocated(array, xma as usize);
+    xma::contexts_allocated(array, xma as usize);
     S_OK
 }
 
@@ -223,8 +233,14 @@ struct HalObject {
 macro_rules! hal_methods {
     ($($n:literal),*) => { [$(probe::method::<$n> as HalMethod),*] };
 }
-static HAL_VTABLE: [HalMethod; HAL_VTABLE_SLOTS] =
-    hal_methods!(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31);
+type SubmitMethod = unsafe extern "system" fn(*mut c_void, u32, u64, u32, *const c_void, u32) -> i32;
+static HAL_VTABLE: [HalMethod; HAL_VTABLE_SLOTS] = {
+    let mut v = hal_methods!(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31);
+    // Slot 2 is the coprocessor command submit; it still counts for the probe.
+    // SAFETY: the title calls slot 2 with the submit signature; both are system ABI.
+    v[2] = unsafe { core::mem::transmute::<SubmitMethod, HalMethod>(xma::submit as SubmitMethod) };
+    v
+};
 static HAL_OBJECT: OnceLock<usize> = OnceLock::new();
 
 /// Return a process-lifetime inert IAcpHal object; SHAPE DSP is not implemented.
@@ -253,6 +269,7 @@ pub unsafe extern "system" fn acp_hal_create(object_out: *mut *mut c_void) -> i3
 /// no DSP device state to release, so successful cleanup is a no-op.
 #[unsafe(export_name = "AcpHalReleaseShapeContexts")]
 pub extern "system" fn acp_hal_release_shape_contexts() -> i32 {
+    xma::contexts_released();
     S_OK
 }
 

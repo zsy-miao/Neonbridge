@@ -1,0 +1,10 @@
+tuxbox-acphal links the `xma` crate (XMA2 / WMA Pro decoder, a Rust port of
+FFmpeg's libavcodec/wmaprodec.c) from https://github.com/omonkeyz/xbox-emulator,
+crates/compat/xma, at revision 27122f7dfcceb9a899555362ee0dde2d530e033c.
+
+That crate is licensed under the GNU Lesser General Public License, version 2.1
+or later (LGPL-2.1-or-later). It is used unmodified; its full source is
+available at the URL and revision above, and a copy of the LGPL is at
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html. You may replace it
+with a modified version by changing the `xma` dependency in Cargo.toml and
+rebuilding.
