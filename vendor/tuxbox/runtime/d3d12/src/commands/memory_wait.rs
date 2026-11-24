@@ -110,14 +110,52 @@ impl Word {
     }
 
     fn reached(&self, value: u64, comparison: u32) -> bool {
-        // X64 aligned 64-bit load. The COM resource and its CPU mapping stay alive
-        // until all queued waits release their segment.
-        let now = if self.wide {
-            unsafe { AtomicU64::from_ptr(self.mapped as *mut u64).load(Ordering::Acquire) }
-        } else {
-            u64::from(unsafe { std::sync::atomic::AtomicU32::from_ptr(self.mapped as *mut u32).load(Ordering::Acquire) })
-        };
-        compare(now, value, comparison)
+        // An unreadable word counts as met: the title released the memory
+        // under the wait, so nothing will write it (five-star c933e88).
+        self.load().is_none_or(|now| compare(now, value, comparison))
+    }
+
+    /// The word now, or None if its page is gone. The COM resource and its CPU
+    /// mapping stay alive until all queued waits release their segment, but
+    /// the CPU address of an imported heap is the title's own memory, which
+    /// the title can unmap (five-star-recomp c933e88, GPL-3.0: their watcher
+    /// faulted on a page the story load unmapped; the same class as test133's
+    /// released-page copy, 09a97d4). The read goes through ReadProcessMemory,
+    /// which fails instead of faulting; an aligned 4- or 8-byte copy is one
+    /// load. A reserved page of a lazy title view (xmem lazy_commit.rs) was
+    /// never written and reads as zero. TUXBOX_WAIT_SAFE_READ=0 loads directly.
+    fn load(&self) -> Option<u64> {
+        if crate::env_toggle!("TUXBOX_WAIT_SAFE_READ") == Some("0") {
+            return Some(if self.wide {
+                unsafe { AtomicU64::from_ptr(self.mapped as *mut u64).load(Ordering::Acquire) }
+            } else {
+                u64::from(unsafe { std::sync::atomic::AtomicU32::from_ptr(self.mapped as *mut u32).load(Ordering::Acquire) })
+            });
+        }
+        use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+        use windows::Win32::System::Memory::{MEM_MAPPED, MEM_RESERVE, MEMORY_BASIC_INFORMATION, VirtualQuery};
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        let mut word = 0u64;
+        let bytes = word_bytes(self.wide);
+        let mut read = 0;
+        let ok = unsafe { ReadProcessMemory(GetCurrentProcess(), self.mapped as *const _, (&raw mut word).cast(), bytes, Some(&mut read)) };
+        if ok.is_ok() && read == bytes {
+            std::sync::atomic::fence(Ordering::Acquire);
+            return Some(word);
+        }
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        let found = unsafe { VirtualQuery(Some(self.mapped as *const _), &mut region, size_of_val(&region)) } != 0;
+        if found && region.State == MEM_RESERVE && region.Type == MEM_MAPPED {
+            return Some(0);
+        }
+        static GONE: AtomicU64 = AtomicU64::new(0);
+        let n = GONE.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "GPU memory wait word at CPU {:#x} is unreadable (state {:#x}): counted as met ({n} so far; TUXBOX_WAIT_SAFE_READ=0 loads directly)",
+                self.mapped, if found { region.State.0 } else { 0 }));
+        }
+        None
     }
 }
 
@@ -650,11 +688,7 @@ impl Worker {
                                 static EARLY: AtomicU64 = AtomicU64::new(0);
                                 let n = EARLY.fetch_add(1, Ordering::Relaxed) + 1;
                                 if n <= 8 || n.is_power_of_two() {
-                                    let now = if job.segment.word.wide {
-                                        unsafe { AtomicU64::from_ptr(job.segment.word.mapped as *mut u64).load(Ordering::Acquire) }
-                                    } else {
-                                        u64::from(unsafe { std::sync::atomic::AtomicU32::from_ptr(job.segment.word.mapped as *mut u32).load(Ordering::Acquire) })
-                                    };
+                                    let now = job.segment.word.load().unwrap_or(u64::MAX);
                                     crate::diagnostics::log_line(format_args!(
                                         "GPU memory wait {:#x} >= {:#x} on queue {:#x} released after {} ms: the list writing {value:#x} there completed, yet the word reads {now:#x}{} ({n} so far; TUXBOX_WAIT_WRITER_RELEASE=0 waits)",
                                         job.segment.address, job.segment.target, job.queue, waited.as_millis(),
