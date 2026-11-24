@@ -121,7 +121,7 @@ These are in the vendored TuxBox provider.
   - Ranges under `TUXBOX_WATCH_GAP_MB` (64; 0 off) apart share one write-watch scan.
   - Dropping a placed texture no longer deadlocks on the page index when an overlapping texture goes with it.
 - **xmem:**
-  - Title views of physical pages are committed on first CPU touch, one 64 KiB page at a time, instead of at map time. Kernel-side readers (ReadFile, DirectStorage reads, heap imports from title memory) commit their range first through the `TuxBoxCommitRange` export, and temporary read views zero-fill pages nobody committed (`TUXBOX_LAZY_COMMIT=0` commits at map time).
+  - Title views of physical pages are committed on first CPU touch, one 64 KiB page at a time, instead of at map time. Kernel-side readers (ReadFile, DirectStorage reads, heap imports from title memory) commit their range first through the `TuxBoxCommitRange` export, and temporary read views zero-fill pages nobody committed (`TUXBOX_LAZY_COMMIT=0` commits at map time). The GPU page-pool registration and the device-memory image key accept reserved pages of a read-write view (the pool only names a range for video memory), and placed-buffer imports commit their range before checking it; both refused lazy views with E_INVALIDARG, which the title asserted on.
   - Unmapping a page inside a multi-page or unrecorded view splits or rebuilds it (`TUXBOX_XMEM_UNMAP_FALLBACK=0`).
   - An unmap failing with error 87 is retried later instead of refusing its batch (`TUXBOX_XMEM_DEFER_UNMAP=0`); the short sleep-retry is off (`TUXBOX_XMEM_UNMAP_RETRY=1`).
   - The CLZERO fill loop leaves its last compare's full EFlags (`TUXBOX_CLZERO_FLAGS=0` clears CF only).
