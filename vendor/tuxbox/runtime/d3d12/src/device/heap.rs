@@ -1087,14 +1087,49 @@ impl PagePools {
             }
             return Ok(heap);
         }
-        let heap = self.import_uncached(device, base, size, pin)?;
-        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-        let map = live.get_or_insert_with(HashMap::new);
-        if map.len() >= 1 << 16 {
-            map.retain(|_, h| h.strong_count() != 0);
+        // test71 froze with five recording threads in the kernel opening heaps
+        // at once. Only one thread opens a given range; the others wait for
+        // it and take its heap. TUXBOX_IMPORT_SINGLE=0 lets each open its own.
+        static OPENING: (Mutex<Vec<(usize, u64, u64)>>, std::sync::Condvar) = (Mutex::new(Vec::new()), std::sync::Condvar::new());
+        static WAITED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static PEAK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let single = crate::env_toggle!("TUXBOX_IMPORT_SINGLE") != Some("0");
+        if single {
+            let mut opening = OPENING.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut waited = false;
+            while opening.contains(&key) {
+                waited = true;
+                opening = OPENING.1.wait(opening).unwrap_or_else(|e| e.into_inner());
+            }
+            if waited {
+                let n = WAITED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!("heap import: a thread waited for another's open of the same {size:#x}-byte range at {base:#x} ({n} so far; TUXBOX_IMPORT_SINGLE=0 off)"));
+                }
+                if let Some(heap) = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)).and_then(Weak::upgrade) {
+                    return Ok(heap);
+                }
+            }
+            opening.push(key);
+            let now = opening.len();
+            if now > PEAK.fetch_max(now, std::sync::atomic::Ordering::Relaxed) && now >= 3 {
+                crate::diagnostics::log_line(format_args!("heap import: {now} different ranges being opened at once (new peak)"));
+            }
         }
-        map.insert(key, Arc::downgrade(&heap));
-        Ok(heap)
+        let heap = self.import_uncached(device, base, size, pin);
+        if let Ok(heap) = &heap {
+            let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+            let map = live.get_or_insert_with(HashMap::new);
+            if map.len() >= 1 << 16 {
+                map.retain(|_, h| h.strong_count() != 0);
+            }
+            map.insert(key, Arc::downgrade(heap));
+        }
+        if single {
+            OPENING.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|k| *k != key);
+            OPENING.1.notify_all();
+        }
+        heap
     }
 
     fn import_uncached(&self, device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
