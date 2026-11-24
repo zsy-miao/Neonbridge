@@ -349,7 +349,9 @@ fn inline(mut job: Job) {
 /// had); TUXBOX_PIPELINE_PRIORITY=normal does the same here.
 fn worker_priority() {
     use windows::Win32::System::Threading::*;
-    let priority = if crate::env_toggle!("TUXBOX_PIPELINE_PRIORITY") == Some("normal") {
+    let priority = if PREFETCHER.with(|p| p.get()) {
+        THREAD_PRIORITY_IDLE
+    } else if crate::env_toggle!("TUXBOX_PIPELINE_PRIORITY") == Some("normal") {
         THREAD_PRIORITY_NORMAL
     } else {
         THREAD_PRIORITY_BELOW_NORMAL
@@ -695,6 +697,8 @@ static FAILED: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// A prefetch worker: idle priority, prefetches only.
+    static PREFETCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set when a pipeline created on this thread fell back to a null pipeline.
     static NULLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set while a dedicated worker builds a job nothing has bound yet.
@@ -838,13 +842,14 @@ fn build_here(job: Job, limit: std::time::Duration) {
     }
 }
 
-/// The next job, and whether it is a prefetch (created, not yet bound).
-fn next_job() -> (Job, bool) {
+/// The next job, and whether it is a prefetch (created, not yet bound). A
+/// prefetch worker takes only prefetches.
+fn next_job(prefetch_only: bool) -> (Job, bool) {
     let (lock, ready) = &JOBS;
     let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         let jobs = g.get_or_insert_with(Default::default);
-        if let Some(job) = jobs.bound.pop_front() {
+        if !prefetch_only && let Some(job) = jobs.bound.pop_front() {
             return (job, false);
         }
         if let Some(job) = jobs.created.pop_front() {
@@ -868,22 +873,39 @@ fn send(job: Job, bound: bool) {
             Some(v) => v.trim().parse::<usize>().ok().filter(|&n| n > 0).map_or(2, |n| n.min(16)),
             None => 2,
         };
-        crate::diagnostics::log_line(format_args!("pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto)"));
+        // test139: the title creates some 84,000 pipelines at load and the
+        // cutscene after it binds about 1,200 of them; the ones earlier runs
+        // bound are queued as prefetches at creation (pipeline_cache), but two
+        // workers were still compiling them in the driver when the cutscene
+        // started, and every frame waited. Idle-priority prefetch workers
+        // build them on the cores the title leaves free during its loading
+        // screens; a bound job never waits behind them (they take only
+        // prefetches) and one the title then waits on is raised by `hurry`.
+        // TUXBOX_PREFETCH_WORKERS=N sets the count (default a quarter of the
+        // cores, up to 4; 0 off).
+        let prefetchers = crate::env_toggle!("TUXBOX_PREFETCH_WORKERS")
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(0, |n| (n.get() / 4).min(4)))
+            .min(16);
+        crate::diagnostics::log_line(format_args!(
+            "pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto), prefetch workers {prefetchers} (TUXBOX_PREFETCH_WORKERS=N)"));
         let mut any = false;
-        for i in 0..workers {
+        for i in 0..workers + prefetchers {
+            let prefetch_only = i >= workers;
             let spawned = std::thread::Builder::new()
-                .name(format!("tuxbox-pipelines-{i}"))
+                .name(if prefetch_only { format!("tuxbox-prefetch-{}", i - workers) } else { format!("tuxbox-pipelines-{i}") })
                 .stack_size(crate::big_stack::STACK_BYTES)
                 .spawn(move || {
                     WORKER.with(|w| w.set(true));
                     crate::big_stack::mark_big();
                     crate::device::shader_cache::wait_unbounded();
                     // Below the title's own loading and recording threads.
+                    PREFETCHER.with(|p| p.set(prefetch_only));
                     worker_priority();
                     // Ready workers wait only briefly on the translator.
                     crate::device::shader_cache::patience(handoff_wait());
                     loop {
-                        let (job, prefetch) = next_job();
+                        let (job, prefetch) = next_job(prefetch_only);
                         PREFETCH.with(|p| p.set(prefetch));
                         HANDING.with(|h| h.set(handoff_wait().map(|_| prefetch)));
                         let _ = crate::device::shader_cache::take_missed();
@@ -892,7 +914,7 @@ fn send(job: Job, bound: bool) {
                         PREFETCH.with(|p| p.set(false));
                     }
                 });
-            any |= spawned.is_ok();
+            any |= spawned.is_ok() && !prefetch_only;
         }
         any
     });
@@ -910,7 +932,8 @@ fn send(job: Job, bound: bool) {
         jobs.created.push_back(job);
     }
     drop(g);
-    ready.notify_one();
+    // Prefetch workers skip bound jobs: wake every worker so one that takes it wakes.
+    ready.notify_all();
 }
 
 /// OpenScarlett-OCE f8f5b79/e301ed9's tiered pools (the idea, re-derived;

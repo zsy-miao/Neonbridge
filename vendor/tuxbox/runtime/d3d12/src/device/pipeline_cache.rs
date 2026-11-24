@@ -13,6 +13,17 @@
 //!    once a list exists, a pipeline that no run bound spends none of the
 //!    title's translator wait budget and goes straight to the workers.
 //!
+//! test139: both files lived in the translator build's folder, so every
+//! rebuild started with an empty list and library: the 84,186 pipelines the
+//! title created were all lazy, and the cutscene's first binds compiled about
+//! 1,200 of them in the driver on two workers while every frame waited. The
+//! list's keys describe the guest pipeline, and library entries are named by
+//! the full host description (translated DXIL included) and checked by the
+//! driver, so neither depends on the build: both now live beside the build
+//! folders (`runtime/`), shared by every build. The first shared list is the
+//! union of the builds' lists. TUXBOX_PIPELINE_CACHE_SHARED=0 keeps them per
+//! build; a library over TUXBOX_PIPELINE_LIBRARY_MB (256; the blob stays in memory) starts afresh.
+//!
 //! All library calls are serialised: the interface does not promise that
 //! stores, loads and serialising may overlap. A saver thread writes both
 //! files every 20 s when they changed.
@@ -49,12 +60,36 @@ static LOADED: AtomicU64 = AtomicU64::new(0);
 static STORED: AtomicU64 = AtomicU64::new(0);
 
 fn folder() -> Option<&'static Path> {
-    super::shader_cache::runtime_dir()
+    let build = super::shader_cache::runtime_dir()?;
+    if crate::env_toggle!("TUXBOX_PIPELINE_CACHE_SHARED") == Some("0") {
+        return Some(build);
+    }
+    build.parent().or(Some(build))
+}
+
+/// The union of the per-build lists earlier builds saved (the first shared list).
+fn build_lists(shared: &Path) -> HashSet<String> {
+    let mut keys = HashSet::new();
+    for entry in std::fs::read_dir(shared).into_iter().flatten().flatten() {
+        if let Ok(text) = std::fs::read_to_string(entry.path().join(USED_FILE)) {
+            keys.extend(text.lines().filter(|l| !l.is_empty()).map(str::to_owned));
+        }
+    }
+    keys
 }
 
 fn open(host: &ID3D12Device, dir: &Path) -> Option<Library> {
     let device = host.cast::<ID3D12Device1>().ok()?;
-    let blob = std::fs::read(dir.join(LIBRARY_FILE)).unwrap_or_default();
+    let cap = crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_MB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(256);
+    let path = dir.join(LIBRARY_FILE);
+    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+    let blob = if cap != 0 && size > cap << 20 {
+        crate::diagnostics::log_line(format_args!(
+            "pipeline library: {} MiB is over TUXBOX_PIPELINE_LIBRARY_MB={cap}; starting afresh", size >> 20));
+        Vec::new()
+    } else {
+        std::fs::read(&path).unwrap_or_default()
+    };
     let opened = unsafe { device.CreatePipelineLibrary::<ID3D12PipelineLibrary1>(&blob) };
     let (library, blob) = match opened {
         Ok(library) => (library, blob),
@@ -177,10 +212,16 @@ fn used() -> Option<&'static Mutex<Used>> {
     }
     let dir = folder()?;
     Some(USED.get_or_init(|| {
+        let shared = super::shader_cache::runtime_dir().is_some_and(|build| build != dir);
         let before = std::fs::read_to_string(dir.join(USED_FILE))
             .ok()
-            .map(|text| text.lines().map(str::to_owned).collect::<HashSet<_>>())
+            .map(|text| text.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect::<HashSet<_>>())
+            .or_else(|| shared.then(|| build_lists(dir)))
             .filter(|keys| !keys.is_empty());
+        let known = before.as_ref().map_or(0, HashSet::len);
+        crate::diagnostics::log_line(format_args!(
+            "pipeline precache: {known} pipelines earlier runs bound are built as the title creates them ({}; TUXBOX_PIPELINE_CACHE_SHARED=0 per build)",
+            if shared { "list shared by every build" } else { "this build's list" }));
         saver();
         Mutex::new(Used { before, new: Vec::new() })
     }))
