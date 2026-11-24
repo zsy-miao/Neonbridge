@@ -339,6 +339,10 @@ float tb_med3(float a, float b, float c) { if (tb_isnan(a) || tb_isnan(b) || tb_
 uint tb_div_fixup(float q, float den, float num) { uint a = asuint(q), b = asuint(den), c = asuint(num); if ((b & 0x7f800000u) == 0u) b &= 0x80000000u; if ((c & 0x7f800000u) == 0u) c &= 0x80000000u; uint s = (b ^ c) & 0x80000000u, mb = b & 0x7fffffffu, mc = c & 0x7fffffffu; if (mc > 0x7f800000u) return c; if (mb > 0x7f800000u) return b; if ((mb == 0u && mc == 0u) || (mb == 0x7f800000u && mc == 0x7f800000u)) return 0xffc00000u; if (mc == 0u || mb == 0x7f800000u) return s; if (mb == 0u || mc == 0x7f800000u) return s | 0x7f800000u; if ((int)(mc >> 23) - (int)(mb >> 23) <= -151) return s; if ((a & 0x7fffffffu) > 0x7f800000u) return s | 0x7f800000u; return s | (a & 0x7fffffffu); }
 // x * 65535 rounded once to nearest even: the double product is exact (24 + 16 bits).
 uint tb_unorm16(float x) { precise double p = (double)saturate(x) * 65535.0; uint q = (uint)p; precise double rem = p - (double)q; return q + ((rem > 0.5 || (rem == 0.5 && (q & 1u) != 0u)) ? 1u : 0u); }
+// V_CVT_F32_F64 in integers (no HLSL double): round to nearest even, f32 subnormals
+// kept, NaN quieted with its top payload bits. Exact values (Xbox2Windows d6624c0e's
+// slice) come out unchanged.
+uint tb_cvt_f32_f64(uint lo, uint hi) { uint s = hi & 0x80000000u, e = (hi >> 20) & 0x7ffu, fh = hi & 0xfffffu; if (e == 0x7ffu) return ((fh | lo) != 0u) ? (s | 0x7fc00000u | (fh << 3) | (lo >> 29)) : (s | 0x7f800000u); if (e == 0u) return s; int x = (int)e - 896; if (x >= 255) return s | 0x7f800000u; uint m = 0x800000u | (fh << 3) | (lo >> 29), rem = lo & 0x1fffffffu, bits, rnd, sticky; if (x > 0) { bits = ((uint)x << 23) | (m & 0x7fffffu); rnd = (rem >> 28) & 1u; sticky = rem & 0x0fffffffu; } else { uint sh = (uint)(1 - x); if (sh > 24u) return s; uint lost = m & ((1u << sh) - 1u); bits = m >> sh; rnd = (lost >> (sh - 1u)) & 1u; sticky = (lost & ((1u << (sh - 1u)) - 1u)) | rem; } if (rnd != 0u && (sticky != 0u || (bits & 1u) != 0u)) bits += 1u; return s | bits; }
 float tb_ldexp(float x, int n) { n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
 "#;
 
@@ -7160,6 +7164,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         };
         if let Some(e) = fexpr {
             let e = self.fres(ins, e);
+            return self.wv(&d, &e);
+        }
+        // Binary64 to binary32, rounded to nearest even in integers. Xbox2Windows d6624c0e
+        // (PR #1660, MIT, JB2WIN) lowers the exact static pairs; this covers any pair.
+        // TB_CVT_F32_F64=0 refuses it as before.
+        if m == "v_cvt_f32_f64" && std::env::var("TB_CVT_F32_F64").map_or(true, |v| v.trim() != "0") {
+            let bits = self.cvt_f32_f64(ins)?;
+            let e = if ins.enc == Enc::Vop3 && (ins.aux.imm != 0 || ins.aux.imm2 != 0) {
+                self.fres(ins, format!("asfloat({bits})"))
+            } else { bits };
             return self.wv(&d, &e);
         }
         let mask = if self.packed.as_ref().is_some_and(|p| p.lane_masks.contains(&self.cur_idx)) {

@@ -61,6 +61,13 @@ impl Emitter<'_> {
         Ok((r(operand)?, self.pair_high(operand)?))
     }
 
+    /// V_CVT_F32_F64's result bits; abs and neg act on the binary64 sign.
+    pub(super) fn cvt_f32_f64(&mut self, ins: &Insn) -> Result<String, String> {
+        let (low, high) = self.compare_pair(&ins.src[0], "f64")?;
+        let high = sign_modifiers(high, 0x8000_0000, ins.aux.mask, 0);
+        Ok(format!("tb_cvt_f32_f64({low}, {high})"))
+    }
+
     pub(super) fn compare_float(&mut self, ins: &Insn, mask: u8) -> Result<String, String> {
         let (sign, infinity, min_normal, input_mode) = if ins.mnemonic.ends_with("_f64") {
             (0x8000_0000, 0x7ff0_0000, 0x0010_0000, 0x40)
