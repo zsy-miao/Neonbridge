@@ -216,15 +216,55 @@ impl Section {
     }
 }
 
+/// test77: unmapping pool pages back to placeholders failed with error 87
+/// (ERROR_INVALID_PARAMETER) on views of one to four pages, so the title's
+/// CopyPageMappingsBatchX batches that unmapped them were refused. When the
+/// unmap step or the placeholder coalesce returns 87, these fall back
+/// (TUXBOX_XMEM_UNMAP_FALLBACK=0 keeps the error), logged.
+fn fallback_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_XMEM_UNMAP_FALLBACK").map_or(true, |v| v.trim() != "0"))
+}
+
+fn fallback_note(what: std::fmt::Arguments) {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::loader::log(&format!("{what} ({n} so far; TUXBOX_XMEM_UNMAP_FALLBACK=0 fails)"));
+    }
+}
+
 pub(super) fn unmap(address: usize) -> Result<(), u32> {
     let view = MEMORY_MAPPED_VIEW_ADDRESS {
         Value: address as _,
     };
-    if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, MEM_PRESERVE_PLACEHOLDER) } == 0 {
-        Err(unsafe { GetLastError() })
-    } else {
-        Ok(())
+    if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, MEM_PRESERVE_PLACEHOLDER) } != 0 {
+        return Ok(());
     }
+    let error = unsafe { GetLastError() };
+    if error != windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER || !fallback_on() {
+        return Err(error);
+    }
+    // A view not created over a placeholder cannot keep one: unmap it outright
+    // and reserve a placeholder of its size at the same address.
+    let info = region(address)?;
+    if info.AllocationBase.addr() != address || info.Type != windows_sys::Win32::System::Memory::MEM_MAPPED {
+        return Err(error);
+    }
+    let bytes = info.RegionSize;
+    if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, 0) } == 0 {
+        return Err(unsafe { GetLastError() });
+    }
+    let placeholder = unsafe {
+        VirtualAlloc2(GetCurrentProcess(), address as _, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, ptr::null_mut(), 0)
+    };
+    if placeholder.is_null() {
+        let e = unsafe { GetLastError() };
+        fallback_note(format_args!("xmem: view {address:#x} (+{bytes:#x}) unmapped without its placeholder, which could not be reserved again: error {e}"));
+        return Err(e);
+    }
+    fallback_note(format_args!("xmem: view {address:#x} (+{bytes:#x}) kept no placeholder on unmap (error 87): unmapped and reserved a placeholder there"));
+    Ok(())
 }
 
 pub(super) fn region(address: usize) -> Result<MEMORY_BASIC_INFORMATION, u32> {
@@ -267,7 +307,15 @@ pub(super) fn coalesce(base: usize, bytes: usize) -> Result<(), u32> {
         return Ok(());
     }
     if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) } == 0 {
-        Err(unsafe { GetLastError() })
+        let error = unsafe { GetLastError() };
+        // Placeholders from two reservations (a re-reserved join) or around a
+        // still-mapped view cannot coalesce; split placeholders stay reserved
+        // and map as before, so this is not a failure.
+        if error == windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER && fallback_on() {
+            fallback_note(format_args!("xmem: placeholders at {base:#x} (+{bytes:#x}) left split: coalesce gave error 87"));
+            return Ok(());
+        }
+        Err(error)
     } else {
         Ok(())
     }

@@ -119,10 +119,12 @@ impl Transfer {
         Ok(self.next)
     }
 
+    /// `own`: the submitting queue's reader fence, when a submission refreshes.
     pub(super) fn refresh(
         &mut self,
         device: &ID3D12Device,
         textures: &[Arc<Texture>],
+        own: Option<&ID3D12Fence>,
     ) -> Result<()> {
         if let Some(error) = self.failed {
             return Err(error.into());
@@ -198,8 +200,16 @@ impl Transfer {
         for mips in changes.chunk_by(|a, b| Arc::ptr_eq(&a.texture, &b.texture)) {
             // A guest may use a different queue on each submission. Order
             // replacement writes after every outstanding reader of this texture.
+            // test77: queues stalled 2 s behind an upload whose copy queue
+            // waited on another queue's reader, itself waiting on the title's
+            // GPU memory wait. The title orders other queues' reads before its
+            // CPU writes itself, so a submission's upload waits only for its
+            // own queue's readers (TUXBOX_PLACED_CROSS_WAITS=1: all).
             let contents = lock(&mips[0].texture.contents);
             for (fence, value) in &contents.readers {
+                if own.is_some_and(|own| own != fence) && !super::cross_waits() {
+                    continue;
+                }
                 if unsafe { fence.GetCompletedValue() } < *value {
                     unsafe {
                         self.queue.Wait(fence, *value)?;

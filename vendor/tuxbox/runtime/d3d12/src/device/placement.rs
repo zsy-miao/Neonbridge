@@ -952,7 +952,7 @@ impl PlacementMemory {
                     && unsafe { write.published.GetCompletedValue() } < write.tick
             })
         });
-        submissions.transfer.refresh(device, &textures)
+        submissions.transfer.refresh(device, &textures, None)
     }
 }
 
@@ -1164,7 +1164,7 @@ pub(crate) unsafe fn submit(
     }
 
     let transfer = &mut submission.transfer;
-    transfer.refresh(&device.native, &refresh)?;
+    transfer.refresh(&device.native, &refresh, Some(reader))?;
     let required = textures
         .iter()
         .map(|t| lock(&t.contents).uploaded)

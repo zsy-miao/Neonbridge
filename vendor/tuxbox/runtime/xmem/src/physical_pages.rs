@@ -438,8 +438,40 @@ impl Pool {
         Ok(true)
     }
 
+    /// test77: unmaps of pages inside an OS view of two or more pages that
+    /// `views` did not record failed with error 87 (UnmapViewOfFile2 at a
+    /// page that is not a view base). Such a view, when its pages are mapped
+    /// here as one section run, is recorded, so the page is split out of it
+    /// like any joined view. TUXBOX_XMEM_UNMAP_FALLBACK=0 leaves it.
+    fn adopt_view(&mut self, at: usize) -> bool {
+        if std::env::var("TUXBOX_XMEM_UNMAP_FALLBACK").is_ok_and(|v| v.trim() == "0") { return false; }
+        let Ok(info) = shared_pages::region(at) else { return false };
+        if info.Type != windows_sys::Win32::System::Memory::MEM_MAPPED { return false; }
+        let lo = info.AllocationBase.addr();
+        let Ok(whole) = shared_pages::region(lo) else { return false };
+        let hi = lo + whole.RegionSize;
+        if !lo.is_multiple_of(PAGE) || !hi.is_multiple_of(PAGE) || hi - lo <= PAGE || at < lo || at >= hi
+            || self.views.range(lo..hi).next().is_some()
+            || self.views.range(..lo).next_back().is_some_and(|(_, &end)| end > lo) { return false; }
+        let Some(first) = self.mappings.get(&lo).and_then(|t| self.pages.get(t)) else { return false };
+        let (section, offset) = (first.section.clone(), first.offset);
+        let run = (lo..hi).step_by(PAGE).all(|a| self.mappings.get(&a).and_then(|t| self.pages.get(t))
+            .is_some_and(|p| Arc::ptr_eq(&p.section, &section) && p.offset == offset + (a - lo) as u64 && !p.mapped));
+        if !run { return false; }
+        self.views.insert(lo, hi);
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::loader::log(&format!("xmem: page {at:#x} lies in an unrecorded {} KiB view at {lo:#x}: recorded, so the page is split out of it ({n} so far; TUXBOX_XMEM_UNMAP_FALLBACK=0 off)", (hi - lo) >> 10));
+        }
+        true
+    }
+
     fn unmap_shared_page(&mut self, at: usize) -> Result<(), u32> {
         if self.unmap_view_range(at, PAGE)? { return Ok(()); }
+        if self.adopt_view(at) {
+            if self.unmap_view_range(at, PAGE)? { return Ok(()); }
+        }
         let (base, extent) = self.aperture(at).ok_or(ERROR_INVALID_ADDRESS)?;
         let token = *self.mappings.get(&at).ok_or(ERROR_INVALID_ADDRESS)?;
         shared_pages::unmap(at)?;
