@@ -348,12 +348,24 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         if !allowed.contains(&target.as_str()) {
             return Err(format!("unsupported compiler profile {target:?}"));
         }
-        let mut dxc = Command::new(&tools.dxc);
-        dxc.arg("-T").arg(&target).arg("-O1");
-        if target != "lib_6_3" {
-            dxc.args(["-E", "main"]);
-        }
-        match run(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(600)) {
+        let dxc = |opt: &str, secs: u64| {
+            let mut dxc = Command::new(&tools.dxc);
+            dxc.arg("-T").arg(&target).arg(opt);
+            if target != "lib_6_3" {
+                dxc.args(["-E", "main"]);
+            }
+            run(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(secs))
+        };
+        // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
+        // unoptimised DXIL compiles in seconds and the driver optimises it again.
+        let compiled = match dxc("-O1", 120) {
+            Err(ToolError::Other(msg)) if msg == "timed out" => {
+                let _ = fs::remove_file(&output);
+                dxc("-O0", 120)
+            }
+            other => other,
+        };
+        match compiled {
             Ok(()) => {}
             Err(ToolError::Exit(c, msg)) => return Err(format!("dxc failed ({c}): {msg}")),
             Err(ToolError::Other(msg)) => return Err(format!("dxc: {msg}")),
