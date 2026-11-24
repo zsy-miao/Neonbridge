@@ -5243,6 +5243,33 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let d = d.ok_or("no dst")?;
                 let a = r(&s[0])?;
                 match m {
+                    // five-star-recomp a245f29 (GPL-3.0), re-stated for the per-invocation
+                    // model, where exec_lo's bit 0 is this lane's EXEC bit: a constant
+                    // moved into one EXEC half (s_mov_b32 exec_lo, 0xffff0000 in a wave64
+                    // prefix scan) set exec_lo to the raw constant, so every lane read
+                    // its bit 0 (all off here), and a constant into exec_hi changed no
+                    // lane. Now a lane in the written half takes its own bit of the
+                    // constant and the other half's lanes keep theirs. TB_EXEC_HALF_CONST=0
+                    // writes the raw constant as before.
+                    "s_mov_b32"
+                        if !self.resolve_wave32
+                            && matches!(d, Opnd::ExecLo | Opnd::ExecHi)
+                            && matches!(s[0], Opnd::ConstInt(_) | Opnd::Literal(_))
+                            && std::env::var("TB_EXEC_HALF_CONST").map_or(true, |v| v.trim() != "0") =>
+                    {
+                        self.touch(&Opnd::ExecLo);
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint t{t} = WaveGetLaneIndex() & 63u;"));
+                        if d == Opnd::ExecLo {
+                            self.line(&format!("if (t{t} < 32u) exec_lo = (({a}) >> t{t}) & 1u;"));
+                        } else {
+                            self.line(&format!("if (t{t} >= 32u) exec_lo = (({a}) >> (t{t} - 32u)) & 1u;"));
+                            self.touch(&d);
+                            self.line(&format!("exec_hi = {a};"));
+                        }
+                        Ok(())
+                    }
                     "s_mov_b32" => self.ws(&d, &a),
                     ray_resolve::READ_LANE => {
                         let lane = r(&s[1])?;
