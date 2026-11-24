@@ -234,6 +234,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
+            WM_CLOSE => {
+                // Says who ended a run that stops with ACCESS_LOST: a person
+                // (close button, Alt+F4) rather than the title or the host.
+                crate::diagnostics::log_line(format_args!("output window: close requested (close button or Alt+F4)"));
+                DefWindowProcW(hwnd, msg, w, l)
+            }
             WM_DESTROY => {
                 PostQuitMessage(0);
                 LRESULT(0)
