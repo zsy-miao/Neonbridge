@@ -108,7 +108,8 @@ pub(super) enum Argument {
 
 impl From<&GuestPipeline> for Pipeline {
     fn from(p: &GuestPipeline) -> Self {
-        Self::Regular(p.native.clone(), p.state.scene_root.clone(), p.state.reflected.clone(), p.state.raster_table.clone())
+        let (native, data) = crate::device::compute::current(p);
+        Self::Regular(native.clone(), data.scene_root.clone(), data.reflected.clone(), data.raster_table.clone())
     }
 }
 
@@ -116,7 +117,7 @@ impl Bindings {
     pub(super) fn new(initial: Option<&GuestPipeline>) -> Self {
         Self {
             pipeline: initial.map(Pipeline::from),
-            draw_trace: initial.and_then(|p| p.state.draw_trace.clone()),
+            draw_trace: initial.and_then(|p| crate::device::compute::current(p).1.draw_trace.clone()),
             ..Default::default()
         }
     }

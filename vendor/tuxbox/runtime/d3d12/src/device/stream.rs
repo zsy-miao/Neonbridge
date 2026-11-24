@@ -13,6 +13,14 @@ const AMPLIFICATION_X: i32 = 23;
 const MESH_X: i32 = 24;
 const STENCIL_X: i32 = 26;
 
+mod background;
+pub(crate) use background::Upgrade;
+
+thread_local! {
+    /// Set when `create` on this thread fell back to a null pipeline.
+    static NULLED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
 fn subobject<T>() -> (usize, usize) {
     let payload = size_of::<u32>().next_multiple_of(align_of::<T>());
     (
@@ -484,6 +492,7 @@ unsafe fn null_pipeline(
     }
     let result = unsafe { host.CreatePipelineState::<ID3D12PipelineState>(desc) };
     if let Ok(pipeline) = &result {
+        NULLED.with(|n| n.set(true));
         crate::diagnostics::display::mark_null_pipeline(pipeline.as_raw());
         substituted(if compute { "compute stream" } else { "raster stream" });
     }
@@ -504,7 +513,17 @@ pub(super) unsafe extern "system" fn create_pipeline(
         return E_POINTER;
     };
     let mut state = compute::PipelineData::default();
+    let _ = shader_cache::take_missed();
     let native = unsafe { create(device, desc, &mut state) };
+    // A translation missed the wait budget: the title gets this pipeline now
+    // and a worker makes the real one from a private copy of the stream.
+    if shader_cache::take_missed()
+        && native.is_ok()
+        && !background::on_worker()
+        && let Some(stream) = unsafe { background::OwnedStream::copy(desc) }
+    {
+        state.upgrade = Some(background::queue((*identity(device)).clone(), stream));
+    }
     crate::diagnostics::pipeline_stream(
         desc.SizeInBytes,
         native.as_ref().err().map(|e| e.code().0),

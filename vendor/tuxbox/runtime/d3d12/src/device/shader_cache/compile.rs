@@ -21,6 +21,24 @@ pub(crate) fn frame_presented() {
     WAIT_BUDGET_MS.store(FRAME_BUDGET_MS, Ordering::Relaxed);
 }
 
+thread_local! {
+    /// Set when a request on this thread gave up because the budget was spent.
+    static MISSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Pipeline workers wait for the translator without spending the budget.
+    static UNBOUNDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a request on this thread missed the wait budget since the last call.
+pub(crate) fn take_missed() -> bool {
+    MISSED.with(|m| m.replace(false))
+}
+
+/// This thread is a pipeline worker: its requests wait for the translator
+/// (up to the request timeout) instead of drawing on the title's budget.
+pub(crate) fn wait_unbounded() {
+    UNBOUNDED.with(|u| u.set(true));
+}
+
 fn session() -> Option<&'static PathBuf> {
     static SESSION: OnceLock<Option<PathBuf>> = OnceLock::new();
     SESSION
@@ -189,12 +207,13 @@ fn request(
         if failed.exists() || start.elapsed() >= Duration::from_secs(90) {
             return None;
         }
-        if WAIT_BUDGET_MS.fetch_sub(25, Ordering::Relaxed) <= 0 {
+        if !UNBOUNDED.with(|u| u.get()) && WAIT_BUDGET_MS.fetch_sub(25, Ordering::Relaxed) <= 0 {
+            MISSED.with(|m| m.set(true));
             static DROPPED: AtomicUsize = AtomicUsize::new(0);
             let dropped = DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
             if dropped.is_power_of_two() {
                 crate::diagnostics::log_once(&std::sync::Once::new(), || {
-                    format!("shader wait budget spent: {dropped} pipelines created without their translation")
+                    format!("shader wait budget spent: {dropped} pipelines handed to the background builders")
                 });
             }
             return None;

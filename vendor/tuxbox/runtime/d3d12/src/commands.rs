@@ -390,7 +390,7 @@ unsafe extern "system" fn reset(
         (native.vtable().Reset)(
             native.as_raw(),
             allocator.native.as_raw(),
-            initial.map_or(ptr::null_mut(), |p| p.native.as_raw()),
+            initial.map_or(ptr::null_mut(), |p| device::compute::current(p).0.as_raw()),
         )
     };
     if hr.is_ok() {
@@ -403,7 +403,7 @@ unsafe extern "system" fn reset(
         if state.media.is_some() {
             state.media = Some(media::Recording::new(allocator));
         }
-        state.stencil_slot = initial.and_then(|p| p.state.stencil_slot);
+        state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
         if let Some(targets) = &mut state.stencil_targets {
             targets.unbind();
         }
@@ -1599,7 +1599,7 @@ pub(crate) unsafe fn wrap_command_list(
             resources: allocator.state.clone(),
             scene_commands: Vec::new(),
             bindings: compute_bindings::Bindings::new(initial),
-            stencil_slot: initial.and_then(|p| p.state.stencil_slot),
+            stencil_slot: initial.and_then(|p| device::compute::current(p).1.stencil_slot),
             stencil_targets: None,
             dsv_bound: false,
             display_bound: false,

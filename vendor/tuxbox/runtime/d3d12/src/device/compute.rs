@@ -25,6 +25,17 @@ pub(crate) struct PipelineData {
     pub(crate) scene_root: Option<SceneRoot>,
     pub(crate) reflected: Option<std::sync::Arc<ComputeTable>>,
     pub(crate) raster_table: Option<std::sync::Arc<ComputeTable>>,
+    /// Filled by a background worker when this pipeline was created without
+    /// its translation (see `stream::background`).
+    pub(crate) upgrade: Option<std::sync::Arc<super::stream::Upgrade>>,
+}
+
+/// The host pipeline and state to bind: a worker's rebuild once it exists.
+pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData) {
+    match p.state.upgrade.as_ref().and_then(|u| u.get()) {
+        Some(built) => (&built.native, &built.state),
+        None => (&p.native, &p.state),
+    }
 }
 
 const _: () = assert!(

@@ -846,7 +846,7 @@ unsafe extern "system" fn create_list_x(
             desc.node_mask,
             desc.kind,
             &allocator.native,
-            initial.map(|p| &p.native),
+            initial.map(|p| compute::current(p).0),
         )
     } {
         Ok(list) => list,
