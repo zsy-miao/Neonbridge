@@ -374,6 +374,21 @@ impl Read {
     }
 }
 
+fn run_read(shared: &Shared, entry: &Entry) -> Result<(), HRESULT> {
+    let Entry::Read(req) = entry else { return Ok(()) };
+    {
+        let mut stats = storage_stats();
+        let p = &mut stats.priorities[shared.priority];
+        p.pending += 1;
+        p.requests = p.requests.saturating_add(1);
+        p.source_bytes = p.source_bytes.saturating_add(req.size as u64);
+        p.destination_bytes = p.destination_bytes.saturating_add(req.capacity as u64);
+    }
+    let result = req.execute();
+    storage_stats().priorities[shared.priority].pending -= 1;
+    result
+}
+
 fn signal_error(shared: &Shared, entry: &Entry, hr: HRESULT) {
     let mut state = lock(&shared.state);
     state.error_count = state.error_count.saturating_add(1);
@@ -409,7 +424,33 @@ fn signal_error(shared: &Shared, entry: &Entry, hr: HRESULT) {
     let _ = unsafe { SetEvent(HANDLE(shared.error_event.as_raw_handle())) };
 }
 
+/// Reads run this many at a time per queue (TUXBOX_STORAGE_PARALLEL, default
+/// 4; 1 = one by one). Status, signal and event entries still wait for every
+/// read before them, which is all DirectStorage orders.
+fn parallel_reads() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::env::var("TUXBOX_STORAGE_PARALLEL").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(4).clamp(1, 16))
+}
+
+/// The queue's priority (-1 low .. 2 real-time) as its worker's thread
+/// priority, so the title's urgent loads win the CPU (TUXBOX_STORAGE_PRIORITY=0
+/// leaves every worker at normal).
+fn set_worker_priority(priority: usize) {
+    use windows::Win32::System::Threading::*;
+    if std::env::var("TUXBOX_STORAGE_PRIORITY").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let level = match priority {
+        0 => THREAD_PRIORITY_BELOW_NORMAL,
+        1 => THREAD_PRIORITY_NORMAL,
+        2 => THREAD_PRIORITY_ABOVE_NORMAL,
+        _ => THREAD_PRIORITY_HIGHEST,
+    };
+    let _ = unsafe { SetThreadPriority(GetCurrentThread(), level) };
+}
+
 fn consume(shared: &Shared) {
+    set_worker_priority(shared.priority);
     let mut last_error = S_OK;
     loop {
         let mut state = lock(&shared.state);
@@ -424,7 +465,39 @@ fn consume(shared: &Shared) {
         };
         state.ready -= 1;
         state.processing = true;
+        // Consecutive ready reads after this one join it.
+        let mut batch = Vec::new();
+        if matches!(entry, Entry::Read(_)) {
+            while batch.len() + 1 < parallel_reads() && state.ready > 0 && matches!(state.entries.front(), Some(Entry::Read(_))) {
+                batch.push(state.entries.pop_front().unwrap());
+                state.ready -= 1;
+            }
+        }
         drop(state);
+        if !batch.is_empty() {
+            batch.insert(0, entry);
+            let results: Vec<Result<(), HRESULT>> = std::thread::scope(|scope| {
+                let handles: Vec<_> = batch[1..].iter().map(|e| scope.spawn(move || run_read(shared, e))).collect();
+                let mut results = vec![run_read(shared, &batch[0])];
+                results.extend(handles.into_iter().map(|h| h.join().unwrap_or(Err(E_FAIL))));
+                results
+            });
+            for (entry, result) in batch.iter().zip(results) {
+                if let Err(hr) = result {
+                    if last_error.is_ok() {
+                        last_error = hr;
+                    }
+                    {
+                        let mut stats = storage_stats();
+                        stats.errors = stats.errors.saturating_add(1);
+                    }
+                    signal_error(shared, entry, hr);
+                }
+            }
+            lock(&shared.state).processing = false;
+            shared.changed.notify_all();
+            continue;
+        }
         let result = match &entry {
             Entry::Read(req) => {
                 {
