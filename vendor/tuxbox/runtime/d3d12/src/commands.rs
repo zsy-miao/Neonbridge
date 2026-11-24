@@ -540,7 +540,8 @@ unsafe extern "system" fn reset(
     let host_reset = |host: &ID3D12CommandAllocator| unsafe {
         (native.vtable().Reset)(native.as_raw(), host.as_raw(), pipeline)
     };
-    let mut hr = host_reset(&allocator.native);
+    let mut used = device::alloc_swap::current(allocator);
+    let mut hr = host_reset(&used);
     if hr == E_INVALIDARG && state.error.is_err() {
         // A host Close that failed (an invalid call was recorded) leaves the
         // list unresettable forever; the title asserts on the Reset. Swap in
@@ -564,17 +565,23 @@ unsafe extern "system" fn reset(
         for extra in device::overflow_allocators(allocator) {
             hr = host_reset(&extra);
             if hr != E_INVALIDARG {
+                used = extra;
                 break;
             }
         }
         if hr == E_INVALIDARG {
             hr = match device::add_overflow_allocator(allocator, unsafe { native.GetType() }) {
-                Ok(extra) => host_reset(&extra),
+                Ok(extra) => {
+                    let status = host_reset(&extra);
+                    used = extra;
+                    status
+                }
                 Err(error) => error.code(),
             };
         }
     }
     if hr.is_ok() {
+        device::alloc_swap::recorded(list as *const List as usize, allocator, &used, unsafe { list.native.GetType() });
         state.phase = ListState::Open;
         state.resources = allocator.state.clone();
         state.timestamp_page = None;
@@ -627,7 +634,7 @@ unsafe fn rebuild_native(list: &List, allocator: &device::Allocator, pipeline: *
     let device = device.ok_or(E_FAIL)?;
     let kind = unsafe { old.GetType() };
     let pso = unsafe { ID3D12PipelineState::from_raw_borrowed(&pipeline) };
-    let fresh: ID3D12GraphicsCommandList = match unsafe { device.CreateCommandList(0, kind, &allocator.native, pso) } {
+    let fresh: ID3D12GraphicsCommandList = match unsafe { device.CreateCommandList(0, kind, &device::alloc_swap::current(allocator), pso) } {
         Ok(fresh) => fresh,
         Err(_) => {
             let extra = device::add_overflow_allocator(allocator, kind)?;
@@ -1963,6 +1970,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     let mut list_index = 0;
     let trace_samples = std::cell::RefCell::new(Vec::new());
     let cpu_copies = std::cell::RefCell::new(Vec::new());
+    let swap_lists = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
@@ -2022,6 +2030,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             shader_views.extend(state.sampled_heaps.iter().cloned());
             trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
             cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
+            swap_lists.borrow_mut().push(list as *const List as usize);
             Ok(list.native.as_raw())
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
@@ -2091,6 +2100,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             .map_err(|error| error.code())
         },
     );
+    if result.is_ok() {
+        device::alloc_swap::submitted(&queue.native, &swap_lists.borrow());
+    }
     if let Err(error) = result {
         drop_batch(queue, error);
     } else if let Some((token, flags)) = frame {

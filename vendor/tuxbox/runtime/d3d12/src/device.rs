@@ -14,6 +14,7 @@ use crate::commands::{wrap_command_list, wrap_command_queue};
 use crate::proxy::{Proxy, Slot, Slots, allocate, check_output, child_slots, object_slots, unwrap};
 
 mod allocation;
+pub(crate) mod alloc_swap;
 mod fallback;
 pub(crate) mod blas;
 pub(crate) mod compute;
@@ -196,8 +197,15 @@ pub(crate) fn add_overflow_allocator(guest: &Allocator, kind: D3D12_COMMAND_LIST
 }
 
 unsafe extern "system" fn reset_allocator(this: &Allocator) -> HRESULT {
-    let host = &this.native;
     let mut sources = this.state.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(status) = alloc_swap::reset(this) {
+        if status.is_ok() {
+            sources.clear();
+        }
+        return status;
+    }
+    let current = alloc_swap::current(this);
+    let host = &current;
     let status = unsafe { (host.vtable().Reset)(host.as_raw()) };
     if status.is_ok() {
         sources.clear();
