@@ -627,7 +627,7 @@ fn list_containers() -> Vec<String> {
 
 fn list_blobs(container: &str) -> Vec<(String, u64)> {
     let mut blobs: Vec<(String, u64)> = std::fs::read_dir(container_dir(container).join("blobs")).into_iter().flatten().flatten()
-        .filter(|e| !e.file_name().to_string_lossy().ends_with(".partial"))
+        .filter(|e| !is_staging(&e.file_name().to_string_lossy()))
         .filter_map(|e| Some((decode(&e.file_name().to_string_lossy()), e.metadata().ok().filter(|m| m.is_file())?.len())))
         .collect();
     blobs.sort();
@@ -876,6 +876,8 @@ pub(super) extern "system" fn save_close_update(_: &Object, update: usize) {
 /// XGameSaveSubmitBlobWrite(update, blobName, data, byteCount) (slot 25).
 pub(super) unsafe extern "system" fn save_blob_write(_: &Object, update: usize, name: *const i8, data: *const u8, bytes: usize) -> i32 {
     let Some(name) = (unsafe { text(name) }).filter(|n| !n.is_empty()) else { return INVALID };
+    // The staging suffix is reserved: a blob named like one would be hidden.
+    if atomic_saves() && is_staging(&encode(&name)) { return INVALID; }
     if data.is_null() && bytes != 0 { return POINTER; }
     let copy = if bytes == 0 { Vec::new() } else { unsafe { core::slice::from_raw_parts(data, bytes) }.to_vec() };
     match UPDATES.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&update) {
@@ -935,9 +937,158 @@ fn space_check(pending: &Update, blobs: &std::path::Path) -> Option<i32> {
     (ok != 0 && incoming + (64 << 10) > free).then_some(OUT_OF_LOCAL_STORAGE)
 }
 
-/// Apply a pending update: each blob is written beside its target and renamed
-/// over it, so a crash mid-save keeps the previous blob.
+/// Apply a pending update. Atomic (default): every write is staged first in a
+/// file of its own, then deletes and renames are published together under the
+/// cross-process save lock, each rename retried on sharing errors, so a crash
+/// or a second process never sees half an update; a container or blob folder
+/// redirected through a reparse point is refused. TUXBOX_GAMESAVE_ATOMIC=0 keeps
+/// the per-blob rename (Xbox2Windows e1416e9e..a43e9f8f, re-derived).
 fn submit(update: usize) -> i32 {
+    if atomic_saves() { submit_atomic(update) } else { submit_direct(update) }
+}
+
+fn atomic_saves() -> bool {
+    std::env::var("TUXBOX_GAMESAVE_ATOMIC").map_or(true, |v| v.trim() != "0")
+}
+
+/// Staging files carry `.partial` (matched case-insensitively) and are never
+/// listed as blobs.
+fn is_staging(file: &str) -> bool {
+    file.to_ascii_lowercase().contains(".partial")
+}
+
+/// HRESULT_FROM_WIN32(ERROR_BUSY): the save lock is held elsewhere.
+const SAVE_BUSY: i32 = 0x8007_00AAu32 as i32;
+
+fn redirected(path: &std::path::Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_attributes() & 0x400 != 0)
+}
+
+/// Exclusive LockFileEx on `<save root>/.lock`, released when the file closes.
+/// Any failure that is not a grant (lock or sharing violation, IO_PENDING, or
+/// anything else) is busy, retried briefly before giving up.
+fn lock_saves() -> Result<std::fs::File, i32> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
+    let path = std::path::Path::new(&save_root()).join(".lock");
+    let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)
+        .map_err(|_| SAVE_BUSY)?;
+    for _ in 0..100 {
+        let mut overlapped: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { core::mem::zeroed() };
+        let granted = unsafe {
+            LockFileEx(file.as_raw_handle() as _, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &mut overlapped)
+        };
+        if granted != 0 {
+            return Ok(file);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(SAVE_BUSY)
+}
+
+/// Rename over the target, retried while Windows reports a sharing, lock or
+/// access error (a scanner or reader holding the file).
+fn rename_retry(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let mut attempt = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if matches!(e.raw_os_error(), Some(5 | 32 | 33)) && attempt < 20 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10 * attempt));
+            }
+            other => return other,
+        }
+    }
+}
+
+fn submit_atomic(update: usize) -> i32 {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    // UPDATES stays held to the end, serialising every publish in this process.
+    let updates = UPDATES.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(pending) = updates.get(&update) else { return INVALID };
+    let dir = container_dir(&pending.container);
+    let blobs = dir.join("blobs");
+    if redirected(&dir) || redirected(&blobs) {
+        super::report(format_args!("game save: container {:?} is redirected; refused", pending.container));
+        return INVALID;
+    }
+    if let Some(status) = space_check(pending, &blobs) {
+        super::report(format_args!("game save: container {:?} refused: {status:#x}", pending.container));
+        return status;
+    }
+    if let Err(error) = std::fs::create_dir_all(&blobs) {
+        super::report(format_args!("game save: saving container {:?} failed: {error}", pending.container));
+        return INVALID;
+    }
+    let stage = |target: &std::path::Path, data: &[u8]| -> std::io::Result<std::path::PathBuf> {
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let staged = target.with_file_name(format!("{name}.partial-{}-{}", std::process::id(), SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+        let mut file = std::fs::File::create(&staged)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        Ok(staged)
+    };
+    // 1. Stage every write (and the display name) before anything is published.
+    let mut staged: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    let mut targets: Vec<(std::path::PathBuf, &[u8])> = pending.writes.iter()
+        .map(|(name, data)| (blobs.join(encode(name)), data.as_slice())).collect();
+    if let Some(display) = &pending.display {
+        targets.push((dir.join("display"), display.as_bytes()));
+    }
+    for (target, data) in targets {
+        match stage(&target, data) {
+            Ok(file) => staged.push((file, target)),
+            Err(error) => {
+                for (file, _) in &staged { let _ = std::fs::remove_file(file); }
+                super::report(format_args!("game save: staging container {:?} failed: {error}", pending.container));
+                return INVALID;
+            }
+        }
+    }
+    // 2. Publish deletes and renames together under the cross-process lock.
+    let lock = match lock_saves() {
+        Ok(lock) => lock,
+        Err(status) => {
+            for (file, _) in &staged { let _ = std::fs::remove_file(file); }
+            super::report(format_args!("game save: container {:?} busy (save lock held)", pending.container));
+            return status;
+        }
+    };
+    let result = (|| -> std::io::Result<()> {
+        for name in &pending.deletes {
+            match std::fs::remove_file(blobs.join(encode(name))) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+        for (file, target) in &staged {
+            rename_retry(file, target)?;
+        }
+        Ok(())
+    })();
+    drop(lock);
+    for (file, _) in &staged {
+        let _ = std::fs::remove_file(file); // left over only after a failed rename
+    }
+    match result {
+        Ok(()) => {
+            super::report(format_args!("game save: saved container {:?} ({} blobs written, {} deleted)",
+                pending.container, pending.writes.len(), pending.deletes.len()));
+            OK
+        }
+        Err(error) => {
+            super::report(format_args!("game save: publishing container {:?} failed: {error}", pending.container));
+            INVALID
+        }
+    }
+}
+
+/// The per-blob path (TUXBOX_GAMESAVE_ATOMIC=0): each blob is written beside its
+/// target and renamed over it, so a crash mid-save keeps the previous blob.
+fn submit_direct(update: usize) -> i32 {
     let updates = UPDATES.lock().unwrap_or_else(|e| e.into_inner());
     let Some(pending) = updates.get(&update) else { return INVALID };
     let dir = container_dir(&pending.container);
@@ -983,6 +1134,9 @@ pub(super) extern "system" fn save_submit(_: &Object, update: usize) -> i32 {
 }
 /// XGameSaveSubmitUpdateAsync(update, async) (slot 28).
 pub(super) unsafe extern "system" fn save_submit_async(_: &Object, update: usize, block: *mut c_void) -> i32 {
+    // The async block is checked before anything is committed, so a refused
+    // block never leaves a published update without a completion.
+    if atomic_saves() && block.is_null() { return INVALID; }
     let status = submit(update);
     unsafe { complete(block, status, 0, Payload::Empty) }
 }
