@@ -130,8 +130,39 @@ pub(crate) fn submitted(queue: &ID3D12CommandQueue, lists: &[usize]) {
     }
 }
 
+thread_local! {
+    /// Readable regions found this pass: test104's watch spent 36-235 ms of CPU
+    /// a frame in VirtualQuery, one per word read. Cleared every pass.
+    static REGIONS: std::cell::RefCell<Vec<(u64, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn read<T: Copy>(at: u64) -> Option<T> {
-    crate::commands::accessible(at as usize, size_of::<T>(), false).then(|| unsafe { (at as *const T).read_unaligned() })
+    let len = size_of::<T>() as u64;
+    let known = REGIONS.with(|r| r.borrow().iter().any(|&(start, end)| at >= start && at + len <= end));
+    if !known {
+        use windows::Win32::System::Memory::*;
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if at == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+            return None;
+        }
+        let readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+        let (start, end) = (region.BaseAddress as u64, region.BaseAddress as u64 + region.RegionSize as u64);
+        if region.State != MEM_COMMIT || (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)).0 != 0 || (region.Protect & readable).0 == 0 || at + len > end {
+            return None;
+        }
+        REGIONS.with(|r| {
+            let mut r = r.borrow_mut();
+            if r.len() >= 64 { r.remove(0); }
+            r.push((start, end));
+        });
+    }
+    Some(unsafe { (at as *const T).read_unaligned() })
+}
+
+/// Pass period: TUXBOX_TRANSIENT_WATCH_MS (50; it was a 5 ms spin).
+fn period() -> std::time::Duration {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    std::time::Duration::from_millis(*MS.get_or_init(|| crate::env_toggle!("TUXBOX_TRANSIENT_WATCH_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(50).max(1)))
 }
 
 fn globals() -> Option<(u64, u64, u32, u32)> {
@@ -159,7 +190,8 @@ fn run() {
     let (mut recycles, mut violations) = (0u64, 0u64);
     let mut summary = std::time::Instant::now();
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(period());
+        REGIONS.with(|r| r.borrow_mut().clear());
         let Some((pool, table, count, size)) = globals() else { continue };
         if pool == 0 || table == 0 || count == 0 || size == 0 || count > 1 << 20 || size & 0xff != 0 {
             continue;

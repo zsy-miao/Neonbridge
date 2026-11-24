@@ -50,6 +50,9 @@ fn occluded_status() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_OCCLUDED_STATUS").map_or(true, |v| v.trim() != "0"))
 }
 
+/// A lit source sample asks for a window sample at the next present.
+static LIT_WINDOW_DUE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn window_reports() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TUXBOX_WINDOW_REPORTS").map_or(true, |v| v.trim() != "0"))
@@ -353,15 +356,12 @@ impl SwapChain {
             record_copy(&frame.list, source, &buffer);
             let sample = (sampler::due() || crate::diagnostics::ctl::screenshot_pending()).then(|| sampler::record(&frame.list, source, D3D12_RESOURCE_STATE_COMMON)).flatten();
             // What reaches the window: the swap chain's own back buffer after
-            // the copy, beside the first source samples and at presents 1, 60
-            // and 600 (test102: lit source samples, black window).
-            static WINDOW_SAMPLES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let shown = window_reports() && (matches!(self.next, 1 | 60 | 600)
-                || (sample.is_some() && WINDOW_SAMPLES.load(std::sync::atomic::Ordering::Relaxed) < 12));
-            let window_sample = shown.then(|| {
-                WINDOW_SAMPLES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                sampler::record(&frame.list, &buffer, D3D12_RESOURCE_STATE_PRESENT)
-            }).flatten();
+            // the copy, at presents 1 and 60, at the presents after the first 5
+            // lit source samples, and every 600 presents (test104's window
+            // samples all came before the source lit up).
+            let shown = window_reports() && (matches!(self.next, 1 | 60) || self.next % 600 == 0
+                || LIT_WINDOW_DUE.swap(false, std::sync::atomic::Ordering::Relaxed));
+            let window_sample = shown.then(|| sampler::record(&frame.list, &buffer, D3D12_RESOURCE_STATE_PRESENT)).flatten();
             let feed = feed::record(&frame.list, &buffer);
             frame.list.Close()?;
             frame.source = Some(source.clone());
@@ -378,7 +378,11 @@ impl SwapChain {
             crate::diagnostics::gpu_clock::track(&self.fence, self.next);
             if let Some(sample) = sample {
                 wait_for(&self.fence, self.next)?;
-                sample.report("present");
+                let lit = sample.report("present");
+                static LIT_SOURCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                if lit > 0.01 && LIT_SOURCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 5 {
+                    LIT_WINDOW_DUE.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
             let present_number = self.next;
             self.next = next_value;
@@ -596,11 +600,12 @@ pub(crate) mod sampler {
 
     impl Sample {
         /// Called after the GPU has finished this frame's commands.
-        pub(crate) fn report(&self, name: &str) {
+        /// Logs the summary; returns the share of lit pixels.
+        pub(crate) fn report(&self, name: &str) -> f64 {
             let f = self.layout.Footprint;
             let mut mapped = std::ptr::null_mut();
             if unsafe { self.buffer.Map(0, None, Some(&mut mapped)) }.is_err() || mapped.is_null() {
-                return;
+                return 0.0;
             }
             let (w, h, pitch) = (f.Width as usize, f.Height as usize, f.RowPitch as usize);
             let data = unsafe { std::slice::from_raw_parts(mapped.cast::<u8>(), pitch * h) };
@@ -627,6 +632,7 @@ pub(crate) mod sampler {
                 let summary = crate::diagnostics::display::summary();
                 crate::diagnostics::log_once(&std::sync::Once::new(), || summary);
             }
+            lit as f64 / n as f64
         }
     }
 }
