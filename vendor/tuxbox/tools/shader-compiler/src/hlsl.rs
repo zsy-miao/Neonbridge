@@ -650,11 +650,21 @@ fn lower_lane_spills(insns: &mut [Insn], wave32: bool) -> Result<(), String> {
             _ => None,
         })
         .collect();
+    // A lane chosen at run time is a real cross-lane access, not a spill: every
+    // lane op on that VGPR stays a wave operation (see `Emitter::lane_access`).
+    let lane_vgpr = |i: &Insn| if i.op == READLANE { i.src.first() } else { i.dst.first() }.cloned();
+    let dynamic: BTreeSet<u8> = insns.iter().filter(|i| is_lane(i))
+        .filter(|i| !matches!(i.src.get(1), Some(Opnd::ConstInt(l)) if (0..64).contains(l)))
+        .filter_map(|i| match lane_vgpr(i) { Some(Opnd::Vgpr(v)) => Some(v), _ => None })
+        .collect();
     for ins in insns.iter_mut() {
         if !is_lane(ins) {
             continue;
         }
         let at = ins.offset;
+        if matches!(lane_vgpr(ins), Some(Opnd::Vgpr(v)) if dynamic.contains(&v)) {
+            continue;
+        }
         if wave32 && ins.op == READLANE {
             if let ([Opnd::Vgpr(d) | Opnd::Sgpr(d)], [Opnd::Vgpr(v), lane, ..]) =
                 (ins.dst.as_slice(), ins.src.as_slice())
@@ -3060,6 +3070,31 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         Ok(())
     }
 
+    /// `v_readlane_b32 sD, vS, lane` / `v_writelane_b32 vD, sS, lane` with a lane
+    /// chosen at run time (after leonida-anyp5's rdna2spirv, GPL-3.0): a subgroup
+    /// shuffle. Lanes wrap at the guest wave width (S1[5:0] in wave64, S1[4:0] in
+    /// wave32). On a host subgroup narrower than the guest wave the lane wraps at
+    /// the host width instead, so cross-half reads are approximate there.
+    /// v_writelane ignores EXEC, as on hardware.
+    fn lane_access(&mut self, ins: &Insn) -> Result<(), String> {
+        let guest = if self.resolve_wave32 { "31u" } else { "63u" };
+        let lane = format!("(({}) & {guest} & (WaveGetLaneCount() - 1u))", r(ins.src.get(1).ok_or("lane op without a lane")?)?);
+        if ins.op == 0x360 {
+            let d = match ins.dst.first() {
+                Some(Opnd::Vgpr(n)) | Some(Opnd::Sgpr(n)) => Opnd::Sgpr(*n),
+                other => return Err(format!("v_readlane at {:#x}: unexpected destination {other:?}", ins.offset)),
+            };
+            let value = r(ins.src.first().ok_or("v_readlane without a source")?)?;
+            self.ws(&d, &format!("WaveReadLaneAt({value}, {lane})"))
+        } else {
+            let d = ins.dst.first().cloned().ok_or("v_writelane without a destination")?;
+            self.touch(&d);
+            let value = r(ins.src.first().ok_or("v_writelane without a source")?)?;
+            self.line(&format!("if (WaveGetLaneIndex() == {lane}) {} = {value};", name(&d)?));
+            Ok(())
+        }
+    }
+
     /// Condition under which a SOPP branch opcode is taken (None = not a branch).
     fn branch_cond(op: u32) -> Option<&'static str> {
         Some(match op {
@@ -5362,6 +5397,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.wv(&d, &format!("t{t}value"))?;
             self.line("}");
             return Ok(());
+        }
+        if ins.enc == Enc::Vop3 && (ins.op == 0x360 || ins.op == 0x361) {
+            return self.lane_access(ins);
         }
         if m == "v_readfirstlane_b32" {
             let value = r(&s[0])?;

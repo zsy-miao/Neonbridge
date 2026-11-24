@@ -330,6 +330,12 @@ impl Worker {
                             }
                             if matches!(outcome, Outcome::Unsupported(_) | Outcome::Failed(_)) {
                                 let _ = fs::write(session.join(format!("{key}.failed")), b"");
+                                // Keep refused programs as a corpus for translator work offline.
+                                if ext == "dxbc" && let Some(root) = cache.parent() {
+                                    let refused = root.join("refused");
+                                    let _ = fs::create_dir_all(&refused);
+                                    let _ = fs::copy(&path, refused.join(format!("{key}.dxbc")));
+                                }
                             }
                             remove_request(&path);
                             busy.lock().unwrap().remove(&name);

@@ -93,6 +93,17 @@ fn translate(
 fn run() -> Result<(), Error> {
     let mut args = env::args_os().skip(1);
     let source = args.next().ok_or("expected a cooked shader path")?;
+    if source == "--disasm" {
+        // Translator development: list the program's instructions.
+        let path = args.next().ok_or("--disasm requires a cooked shader path")?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.to_string_lossy()))?;
+        let ex = tuxbox_xshader::extract(&bytes)?;
+        println!("stage {:?} features {:?} root {:#?}", ex.stage, ex.required_features, ex.root_sig);
+        for i in tuxbox_xshader::rdna2::disassemble(&ex.isa) {
+            println!("{:#06x} {:<28} {:?} <- {:?} imm={} {:08x?}", i.offset, i.mnemonic, i.dst, i.src, i.aux.imm, i.raw);
+        }
+        return Ok(());
+    }
     if source == "--list-emitters" {
         if args.next().is_some() {
             return Err("--list-emitters takes no arguments".into());
