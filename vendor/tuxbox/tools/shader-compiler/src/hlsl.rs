@@ -2208,11 +2208,12 @@ impl<'a> Emitter<'a> {
         states[0] = Some((entry, BTreeSet::new()));
         let mut work = vec![0usize];
         let mut budget = 20_000usize;
-        // TB_SPECULATE_DESCRIPTORS (rebox AnyPS5 0004, off by default): a descriptor
-        // word, heap offset or raw address known on only one incoming path is taken
-        // as the value on every path, like table pointers and descriptors below. The
-        // other arm is a lane mask, ballot or a path that never reaches the use;
-        // waterfall loops that select per-lane values are not told apart from it.
+        // TB_SPECULATE_DESCRIPTORS (off by default, unverified): a descriptor word,
+        // heap offset or raw address known on only one incoming path is taken as the
+        // value on every path, the same optimistic meet this pass already applies to
+        // table pointers and descriptors below. It assumes the other arm is a lane
+        // mask, ballot or a path that never reaches the use; waterfall loops that
+        // select per-lane values are not told apart from it, so it can be wrong.
         let speculate = std::env::var_os("TB_SPECULATE_DESCRIPTORS").is_some();
         let optimistic = |v: &Sym| matches!(v, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_))
             || speculate && matches!(v, Sym::InlineWord(_) | Sym::HeapOffset | Sym::HeapDescriptor(_)
@@ -3854,11 +3855,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     /// `v_readlane_b32 sD, vS, lane` / `v_writelane_b32 vD, sS, lane` with a lane
-    /// chosen at run time (after leonida-anyp5's rdna2spirv, GPL-3.0): a subgroup
-    /// shuffle. Lanes wrap at the guest wave width (S1[5:0] in wave64, S1[4:0] in
-    /// wave32). On a host subgroup narrower than the guest wave the lane wraps at
-    /// the host width instead, so cross-half reads are approximate there.
-    /// v_writelane ignores EXEC, as on hardware.
+    /// chosen at run time, per the AMD RDNA2 ISA reference (VOP3 V_READLANE_B32 /
+    /// V_WRITELANE_B32: the lane select is S1[5:0] in wave64 and S1[4:0] in wave32,
+    /// and both ignore EXEC). An HLSL wave is the subgroup, so the read is
+    /// WaveReadLaneAt and the write is the one lane whose index matches. On a host
+    /// subgroup narrower than the guest wave the lane wraps at the host width
+    /// instead, so cross-half reads are approximate there.
     fn lane_access(&mut self, ins: &Insn) -> Result<(), String> {
         let guest = if self.resolve_wave32 { "31u" } else { "63u" };
         let lane = format!("(({}) & {guest} & (WaveGetLaneCount() - 1u))", r(ins.src.get(1).ok_or("lane op without a lane")?)?);
@@ -4590,11 +4592,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     1 if br.is_some() => Some("true".to_string()),
                     // s_sleep (0x0e) and s_setprio (0x0f) are scheduling hints.
                     0 | 1 | 0x0a | 0x0c | 0x0e | 0x0f | 0x1f | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 => None,
-                    // Hints and debug/trace ops with no effect on results: s_wakeup,
-                    // s_setkill, s_sethalt 0, s_trap, s_icache_inv, s_inc/decperflevel,
-                    // s_ttracedata, s_cbranch_cdbg* (never taken without a debugger),
-                    // 0x22 and 0x28 (AnyPS5 treats both as no-ops).
+                    // Hints and debug/trace ops with no effect on results (opcode
+                    // numbers from the AMD RDNA2 ISA reference / LLVM's GFX10 SOPP
+                    // table): s_wakeup, s_setkill, s_sethalt 0, s_trap, s_icache_inv,
+                    // s_inc/decperflevel, s_ttracedata (0x16), s_cbranch_cdbg* (never
+                    // taken without a debugger), s_wait_idle (0x22: nothing is
+                    // outstanding in a translated shader) and s_ttracedata_imm (0x28,
+                    // as VIctory 79fb722 also corrected).
                     0x03 | 0x0b | 0x12..=0x1a | 0x22 | 0x28 => None,
+                    // 0x26 is unassigned on GFX10; some tools numbered s_ttracedata_imm
+                    // there (VIctory 79fb722). Treated as the same trace no-op unless
+                    // TB_SOPP_STRICT=1, which refuses it.
+                    0x26 if std::env::var_os("TB_SOPP_STRICT").is_none_or(|v| v != "1") => None,
                     0x0d if ins.aux.imm & 1 == 0 => None,
                     _ => return Err("unsupported SOPP".into()),
                 };
