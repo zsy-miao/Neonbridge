@@ -407,6 +407,8 @@ struct Emitter<'a> {
     /// Words per element in `TBHeapWords` (structured heap buffers); 0 = unused.
     heap_words: u32,
     private_samplers: BTreeMap<usize, u32>,
+    /// Instructions reading a lane mask as wave data (see `lane_mask_reads`).
+    lane_masks: BTreeSet<usize>,
     binding_spaces: BTreeMap<(u32, u32), u32>,
     mesh_bindings: Option<mesh_bindings::MeshBindings>,
     compute_derivatives: bool,
@@ -804,7 +806,7 @@ fn lower_local_pc_transfers(insns: &mut [Insn]) -> Result<(), String> {
 // range, restore EXEC, broadcast the atomic result and add a per-lane prefix.
 // The two register allocations differ. Match the complete regions before changing
 // a saved EXEC mask from its usual per-invocation predicate into wave-uniform data.
-fn mark_wave_allocations(insns: &mut [Insn]) -> Result<bool, String> {
+fn mark_wave_allocations(insns: &mut [Insn]) -> Result<(bool, bool), String> {
     const REGIONS: [&[u32]; 2] = [
         &[
         0xd7650007, 0x000100c1, 0xbe8e147e, 0xbe8c047e, 0xd7660007, 0x00020ec1,
@@ -821,13 +823,17 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<bool, String> {
     ];
     const COUNT: usize = 18;
     let mut found = false;
+    let mut general = false;
     for i in 0..insns.len() {
         if insns[i].mnemonic != "s_ff1_i32_b64" || insns[i].src != [Opnd::ExecLo] { continue; }
-        let region = i.checked_sub(1).and_then(|first| insns.get(first..first + COUNT))
-            .ok_or("incomplete wave allocation sequence")?;
-        if !REGIONS.iter().any(|words| region.iter().flat_map(|op| op.raw.iter()).eq(words.iter())) {
-            return Err(format!("unverified EXEC election at {:#x}", insns[i].offset));
-        }
+        let region = i.checked_sub(1).and_then(|first| insns.get(first..first + COUNT));
+        // Other elections use the general lowering: wave ballots for lane masks.
+        let Some(region) = region.filter(|region|
+            REGIONS.iter().any(|words| region.iter().flat_map(|op| op.raw.iter()).eq(words.iter())))
+        else {
+            general = true;
+            continue;
+        };
         let first = region[0].offset;
         let end = region[COUNT - 1].offset + 4;
         for branch in insns.iter().filter(|b| b.enc == Enc::Sopp && Emitter::branch_cond(b.op).is_some()) {
@@ -841,7 +847,39 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<bool, String> {
         insns[i + 15].mnemonic = "tb_allocation_prefix_hi".into();
         found = true;
     }
-    Ok(found)
+    Ok((found, general))
+}
+
+/// Instructions whose 64-bit SGPR source is a lane mask (EXEC, VCC, a compare result
+/// or a saved EXEC). The per-invocation model holds only this lane's bit there, so
+/// counting the mask's bits needs a wave ballot.
+fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
+    let mut masks = BTreeSet::<u8>::new();
+    let mut reads = BTreeSet::new();
+    let is_mask = |masks: &BTreeSet<u8>, o: &Opnd| match o {
+        Opnd::ExecLo | Opnd::VccLo => true,
+        Opnd::Sgpr(n) => masks.contains(n),
+        _ => false,
+    };
+    for (i, ins) in insns.iter().enumerate() {
+        let m = ins.mnemonic.as_str();
+        match (m, ins.src.first()) {
+            ("s_bcnt1_i32_b64", Some(o)) if is_mask(&masks, o) => { reads.insert(i); }
+            ("v_mbcnt_lo_u32_b32", Some(o)) if is_mask(&masks, o) => { reads.insert(i); }
+            ("v_mbcnt_hi_u32_b32", Some(Opnd::VccHi | Opnd::ExecHi)) => { reads.insert(i); }
+            ("v_mbcnt_hi_u32_b32", Some(Opnd::Sgpr(n))) if *n > 0 && masks.contains(&(n - 1)) => { reads.insert(i); }
+            _ => {}
+        }
+        let [Opnd::Sgpr(d)] = ins.dst[..] else { continue; };
+        let wide = m.ends_with("_b64") || m.starts_with("v_cmp");
+        masks.retain(|&n| !(n == d || (wide && n == d + 1) || n + 1 == d));
+        let mask = m.starts_with("v_cmp")
+            || m.ends_with("_saveexec_b64")
+            || (matches!(m, "s_mov_b64" | "s_and_b64" | "s_or_b64" | "s_andn2_b64" | "s_xor_b64")
+                && ins.src.iter().any(|o| is_mask(&masks, o)));
+        if mask { masks.insert(d); }
+    }
+    reads
 }
 
 /// The user SGPR that carries the resource descriptor heap of a shader that
@@ -983,7 +1021,10 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
     let fspx_wave = fspx_wave::width(ex, &insns);
     let wave_cull = fspx_wave.is_some() || hair_multisample || wave_cull::recognize(ex);
     let page_waves = page_waves::recognize(ex);
-    let allocation_wave64 = !wave_cull && !page_waves && mark_wave_allocations(&mut insns)?;
+    let (allocation_wave64, general_elections) = if !wave_cull && !page_waves {
+        mark_wave_allocations(&mut insns)?
+    } else { (false, false) };
+    let lane_masks = if general_elections { lane_mask_reads(&insns) } else { BTreeSet::new() };
     let reflection = reflection_compact::prepare(ex, &mut insns);
     let group_extrema = group_extrema::prepare(ex, &mut insns);
     let required_wave_size = if wave_cull {
@@ -1006,6 +1047,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         || indexed_lane::prepare(compute_group(ex), &mut insns)));
     if !wave_cull && !page_waves { lower_lane_spills(&mut insns, resolve_wave32)?; }
     let mut em = Emitter::new(ex, insns);
+    em.lane_masks = lane_masks;
     em.page_waves = page_waves;
     em.wave_cull = wave_cull;
     em.fspx_wave = fspx_wave;
@@ -1062,7 +1104,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         em.tbuf_uint.extend(list_slots);
     }
     let light_grid = allocation_wave64 && light_grid::prepare(&mut em)?;
-    let requires_ballot = (allocation_wave64 && !light_grid) || em.packed.as_ref().is_some_and(|p| !p.ballots.is_empty());
+    let requires_ballot = (allocation_wave64 && !light_grid) || general_elections || em.packed.as_ref().is_some_and(|p| !p.ballots.is_empty());
     if (requires_ballot && scan_width.or(required_wave_size) == Some(32))
         || matches!((scan_width, required_wave_size), (Some(a), Some(b)) if a != b) {
         return Err("conflicting wave widths for ballot and reduction".into());
@@ -1563,6 +1605,7 @@ impl<'a> Emitter<'a> {
                     full.into_iter().chain(tuxbox_dxbc::inline_sampler::literal_sites(&ex.isa, visibility))
                         .find(|recovered| recovered.descriptors == private).map(|recovered| recovered.sites)
                 }).unwrap_or_default(),
+            lane_masks: BTreeSet::new(),
             binding_spaces: BTreeMap::new(),
             mesh_bindings: None,
             compute_derivatives: false,
@@ -4147,6 +4190,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     }
                     "s_cmov_b32" => self.ws(&d, &format!("((scc != 0u) ? {a} : {})", name(&d)?)),
                     "s_brev_b32" => self.ws(&d, &format!("reversebits({a})")),
+                    "s_bcnt1_i32_b64" if self.lane_masks.contains(&self.cur_idx) => {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint4 t{t} = WaveActiveBallot(({a} & 1u) != 0u);"));
+                        self.ws(&d, &format!("(countbits(t{t}.x) + countbits(t{t}.y))"))?;
+                        self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
+                        Ok(())
+                    }
                     "s_bcnt1_i32_b64" => {
                         self.touch(&hi(&s[0]));
                         // Population count of a 64-bit value — typically the number of active
@@ -5678,6 +5729,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     return self.wv(&d, &format!("{} + ({count})", r(&s[1])?));
                 }
                 let lane = if m == "v_mbcnt_lo_u32_b32" { "WaveGetLaneIndex()" } else { "max(32u, WaveGetLaneIndex()) - 32u" };
+                let a = if self.lane_masks.contains(&self.cur_idx) {
+                    let (base, word) = match &s[0] {
+                        Opnd::Sgpr(n) if m == "v_mbcnt_hi_u32_b32" => (r(&Opnd::Sgpr(n - 1))?, "y"),
+                        Opnd::VccHi => (r(&Opnd::VccLo)?, "y"),
+                        Opnd::ExecHi => (r(&Opnd::ExecLo)?, "y"),
+                        _ => (a, "x"),
+                    };
+                    format!("WaveActiveBallot(({base} & 1u) != 0u).{word}")
+                } else { a };
                 let t = self.tmp;
                 self.tmp += 1;
                 self.line("#if __SHADER_TARGET_MAJOR >= 6");
