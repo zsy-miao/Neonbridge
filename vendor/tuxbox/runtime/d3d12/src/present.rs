@@ -1,6 +1,7 @@
 //! Present one RGBA8, BGRA8 (either sRGB or not), RGB10A2 or RGBA16F guest
 //! texture through a triple-buffered DXGI swap chain.
 
+mod overlay;
 mod window;
 use window::OutputWindow;
 
@@ -76,6 +77,7 @@ impl Presentation {
         };
         let status = chain.present(queue, source, &desc)?;
         if status == S_OK {
+            overlay::frame();
             crate::diagnostics::presented(desc.Width, desc.Height);
         }
         Ok(status)
@@ -136,6 +138,7 @@ impl SwapChain {
         desc: &D3D12_RESOURCE_DESC,
     ) -> Result<Self> {
         let window = OutputWindow::acquire(desc.Width as u32, desc.Height)?;
+        overlay::attach(window.hwnd());
         // SAFETY: DXGI copies the descriptor and retains the queue. The output
         // outlives the swap chain and its submitted frames.
         unsafe {
