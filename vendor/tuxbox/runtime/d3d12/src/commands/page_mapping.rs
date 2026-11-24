@@ -61,6 +61,13 @@ impl Mappings {
             .checked_add(u64::from(pages) * PAGE)
             .ok_or(E_INVALIDARG)?;
         for batch in unsafe { slice::from_raw_parts(batches, count as usize) } {
+            // An empty batch maps nothing: its destination and stale ranges
+            // pointer are not read (xmem ignores them too), so it is skipped
+            // instead of refusing the whole call. TUXBOX_PAGE_MAPPING_STRICT=1
+            // refuses it as before.
+            if batch.count == 0 && !strict() {
+                continue;
+            }
             if batch.destination == 0
                 || !batch.destination.is_multiple_of(PAGE)
                 || (batch.count == 0) != batch.ranges.is_null()
@@ -211,6 +218,10 @@ fn only_device_loss_latches_by_default() {
         assert!(!latches(E_INVALIDARG));
         assert!(latches(DXGI_ERROR_DEVICE_REMOVED));
     }
+}
+
+fn strict() -> bool {
+    crate::env_toggle!("TUXBOX_PAGE_MAPPING_STRICT") == Some("1")
 }
 
 fn pinned_remap() -> bool {
