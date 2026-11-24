@@ -161,12 +161,50 @@ unsafe fn wrap_pageable<N: Interface, S>(
 pub(crate) type MediaResources = std::sync::Arc<std::sync::Mutex<Vec<ID3D12Pageable>>>;
 pub(crate) type Allocator = Proxy<ID3D12CommandAllocator, MediaResources>;
 
+/// Xbox lets several lists record from one allocator at once; desktop D3D12
+/// refuses the second list's Reset with E_INVALIDARG (the title asserts on it).
+/// Extra host allocators per guest allocator take those lists and are reset
+/// together with it.
+struct Overflow(usize, ID3D12CommandAllocator);
+// SAFETY: D3D12 allocators are free-threaded objects; the guest serialises
+// their use exactly as it does for the primary allocator.
+unsafe impl Send for Overflow {}
+static OVERFLOW: std::sync::Mutex<Vec<Overflow>> = std::sync::Mutex::new(Vec::new());
+
+/// Host allocators already added for `guest` beyond its primary one.
+pub(crate) fn overflow_allocators(guest: &Allocator) -> Vec<ID3D12CommandAllocator> {
+    let key = guest as *const Allocator as usize;
+    let table = OVERFLOW.lock().unwrap_or_else(|e| e.into_inner());
+    table.iter().filter(|o| o.0 == key).map(|o| o.1.clone()).collect()
+}
+
+/// A new host allocator of `kind` for `guest`, kept until the process ends.
+pub(crate) fn add_overflow_allocator(guest: &Allocator, kind: D3D12_COMMAND_LIST_TYPE) -> windows::core::Result<ID3D12CommandAllocator> {
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { guest.native.GetDevice(&mut device)? };
+    let allocator: ID3D12CommandAllocator = unsafe { device.ok_or(windows::Win32::Foundation::E_FAIL)?.CreateCommandAllocator(kind)? };
+    let key = guest as *const Allocator as usize;
+    let mut table = OVERFLOW.lock().unwrap_or_else(|e| e.into_inner());
+    table.push(Overflow(key, allocator.clone()));
+    let count = table.iter().filter(|o| o.0 == key).count();
+    drop(table);
+    crate::diagnostics::log_line(format_args!(
+        "allocator {key:#x} shared by recording lists: added host allocator #{count}"
+    ));
+    Ok(allocator)
+}
+
 unsafe extern "system" fn reset_allocator(this: &Allocator) -> HRESULT {
     let host = &this.native;
     let mut sources = this.state.lock().unwrap_or_else(|e| e.into_inner());
     let status = unsafe { (host.vtable().Reset)(host.as_raw()) };
     if status.is_ok() {
         sources.clear();
+        // An overflow allocator still bound to an open list refuses; it is
+        // reset on a later guest reset instead.
+        for extra in overflow_allocators(this) {
+            let _ = unsafe { extra.Reset() };
+        }
     }
     status
 }

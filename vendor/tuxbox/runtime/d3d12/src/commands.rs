@@ -411,13 +411,26 @@ unsafe extern "system" fn reset(
         return E_FAIL;
     }
     let native = &list.native;
-    let hr = unsafe {
-        (native.vtable().Reset)(
-            native.as_raw(),
-            allocator.native.as_raw(),
-            initial.map_or(ptr::null_mut(), |p| device::compute::current(p).0.as_raw()),
-        )
+    let pipeline = initial.map_or(ptr::null_mut(), |p| device::compute::current(p).0.as_raw());
+    let host_reset = |host: &ID3D12CommandAllocator| unsafe {
+        (native.vtable().Reset)(native.as_raw(), host.as_raw(), pipeline)
     };
+    let mut hr = host_reset(&allocator.native);
+    if hr == E_INVALIDARG {
+        // The allocator is bound to another recording list (legal on Xbox).
+        for extra in device::overflow_allocators(allocator) {
+            hr = host_reset(&extra);
+            if hr != E_INVALIDARG {
+                break;
+            }
+        }
+        if hr == E_INVALIDARG {
+            hr = match device::add_overflow_allocator(allocator, unsafe { native.GetType() }) {
+                Ok(extra) => host_reset(&extra),
+                Err(error) => error.code(),
+            };
+        }
+    }
     if hr.is_ok() {
         state.phase = ListState::Open;
         state.resources = allocator.state.clone();
