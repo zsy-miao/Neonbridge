@@ -343,6 +343,20 @@ fn inline(mut job: Job) {
     }
 }
 
+/// Workers run below normal priority (VIctory 4302e2b), raised by hurry() while
+/// the title waits on their build. five-star-recomp 0566186 went back to normal
+/// priority for its compile threads (reverting its 24cd32d, which we never
+/// had); TUXBOX_PIPELINE_PRIORITY=normal does the same here.
+fn worker_priority() {
+    use windows::Win32::System::Threading::*;
+    let priority = if crate::env_toggle!("TUXBOX_PIPELINE_PRIORITY") == Some("normal") {
+        THREAD_PRIORITY_NORMAL
+    } else {
+        THREAD_PRIORITY_BELOW_NORMAL
+    };
+    let _ = unsafe { SetThreadPriority(GetCurrentThread(), priority) };
+}
+
 /// xcl's idea (re-derived): a pipeline the title is waiting on that a worker
 /// is already building gets that worker raised to normal priority; the
 /// worker drops back after the build. TUXBOX_PIPELINE_HURRY=0 off.
@@ -854,10 +868,7 @@ fn send(job: Job, bound: bool) {
                     crate::big_stack::mark_big();
                     crate::device::shader_cache::wait_unbounded();
                     // Below the title's own loading and recording threads.
-                    unsafe {
-                        use windows::Win32::System::Threading::*;
-                        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-                    }
+                    worker_priority();
                     loop {
                         let (job, prefetch) = next_job();
                         PREFETCH.with(|p| p.set(prefetch));
@@ -915,10 +926,7 @@ fn build(mut job: Job) {
         };
         job.slot.running.store(0, Ordering::Release);
         // Back below the title after any hurry().
-        unsafe {
-            use windows::Win32::System::Threading::*;
-            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-        }
+        worker_priority();
         let nulled = NULLED.with(|n| n.replace(false));
         let made = (status.is_ok() && !out.is_null()).then(|| unsafe { IUnknown::from_raw(out) });
         let counter = match made {
