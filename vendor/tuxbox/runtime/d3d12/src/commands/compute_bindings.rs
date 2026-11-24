@@ -427,6 +427,7 @@ impl Bindings {
         use crate::diagnostics::display;
         if !display::trace_views() { return String::new(); }
         let mut views = Vec::new();
+        let mut buffers = Vec::new();
         let mut describe = |slot: u32, offsets: &std::ops::Range<u32>| {
             let Some(heap) = heap else { return; };
             let Some(base) = self.graphics_tables.get(&slot) else { return; };
@@ -440,7 +441,8 @@ impl Bindings {
                 None => base.native,
             };
             if let Some(cpu) = heap.table(native.ptr, offsets) {
-                views.extend(display::texture_views(cpu, heap.table_stride()).into_iter().map(|view| (slot, view)));
+                views.extend(display::texture_views(cpu.clone(), heap.table_stride()).into_iter().map(|view| (slot, view)));
+                buffers.extend(display::buffer_views(cpu, heap.table_stride()).into_iter().map(|view| (slot, view)));
             }
         };
         if let Some(table) = self.reflected_table::<false>() {
@@ -452,7 +454,11 @@ impl Bindings {
                 describe(*slot, offsets);
             }
         }
-        format!(" display={display} texture views {views:?}")
+        if buffers.is_empty() {
+            format!(" display={display} texture views {views:?}")
+        } else {
+            format!(" display={display} texture views {views:?} buffer views {buffers:?}")
+        }
     }
 
     pub(super) fn sample_tables<const COMPUTE: bool>(

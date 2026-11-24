@@ -360,6 +360,7 @@ pub(crate) mod display {
         use windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         use windows::core::Interface;
         if !trace_views() { return; }
+        BUFFER_VIEWS.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
         let mut map = TEXTURE_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(resource) = resource {
             let desc = unsafe { resource.GetDesc() };
@@ -374,11 +375,38 @@ pub(crate) mod display {
     pub(crate) fn copy_texture_views(dst: usize, src: usize, count: u32, stride: usize) {
         if !trace_views() { return; }
         let mut map = TEXTURE_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut buffers = BUFFER_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
         for index in 0..count as usize {
             let offset = index * stride;
             if let Some(view) = map.get(&(src + offset)).copied() { map.insert(dst + offset, view); }
             else { map.remove(&(dst + offset)); }
+            if let Some(view) = buffers.get(&(src + offset)).copied() { buffers.insert(dst + offset, view); }
+            else { buffers.remove(&(dst + offset)); }
         }
+    }
+
+    /// A buffer view by the address range it covers (VIctory d74558c,
+    /// re-derived: drop traces named buffer UAVs "None"). `title` says
+    /// whether the address is the title's or, when unknown, the host's.
+    #[derive(Clone, Copy)]
+    pub(crate) struct BufferView { pub(crate) kind: &'static str, pub(crate) address: u64, pub(crate) bytes: u64, pub(crate) title: bool }
+    impl std::fmt::Debug for BufferView {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{} buffer {}{:#x}..{:#x} ({} bytes)", self.kind, if self.title { "" } else { "host " },
+                self.address, self.address.saturating_add(self.bytes), self.bytes)
+        }
+    }
+    static BUFFER_VIEWS: LazyLock<Mutex<HashMap<usize, BufferView>>> = LazyLock::new(Default::default);
+
+    /// TUXBOX_TRACE_BUFFER_VIEWS=0: traces list texture views only, as before.
+    pub(crate) fn buffer_view(handle: usize, view: BufferView) {
+        if !trace_views() || std::env::var_os("TUXBOX_TRACE_BUFFER_VIEWS").as_deref() == Some(std::ffi::OsStr::new("0")) { return; }
+        BUFFER_VIEWS.lock().unwrap_or_else(|e| e.into_inner()).insert(handle, view);
+    }
+
+    pub(crate) fn buffer_views(range: std::ops::Range<usize>, stride: usize) -> Vec<BufferView> {
+        let map = BUFFER_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+        range.step_by(stride).take(64).filter_map(|handle| map.get(&handle).copied()).collect()
     }
 
     pub(crate) fn texture_views(range: std::ops::Range<usize>, stride: usize) -> Vec<TextureView> {

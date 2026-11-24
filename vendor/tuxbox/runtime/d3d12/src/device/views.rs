@@ -618,6 +618,24 @@ pub(super) unsafe extern "system" fn uav(
     let placed = proxy.and_then(|p| p.state.placed());
     let window = proxy.and_then(|p| p.state.buffer_window());
     let counter_window = unsafe { super::resource_proxy(counter, owner) }.and_then(|p| p.state.buffer_window());
+    // The guest's own view, before any placement rebasing.
+    if crate::diagnostics::display::trace_views()
+        && let Some(view) = unsafe { desc.as_ref() }.filter(|v| v.ViewDimension == D3D12_UAV_DIMENSION_BUFFER)
+    {
+        let b = unsafe { view.Anonymous.Buffer };
+        let stride = if b.Flags == D3D12_BUFFER_UAV_FLAG_RAW { Some(4) } else { element_stride(view.Format.0, b.StructureByteStride) };
+        let title = proxy.and_then(|p| match &p.state.backing {
+            super::Backing::Addressed(address, _) => Some(address.base as u64),
+            _ => None,
+        });
+        let host = || unsafe { super::resource(object, owner) }.map(|r| unsafe { r.GetGPUVirtualAddress() });
+        if let (Some(stride), Some(base)) = (stride, title.or_else(host)) {
+            let stride = u64::from(stride);
+            crate::diagnostics::display::buffer_view(handle.ptr, crate::diagnostics::display::BufferView {
+                kind: "uav", address: base + b.FirstElement * stride, bytes: u64::from(b.NumElements) * stride, title: title.is_some(),
+            });
+        }
+    }
     let mut adjusted;
     let mut uav_alias = None;
     let mut byte_view = None;
