@@ -455,6 +455,39 @@ fn restore(game: &Path) -> Result<(), Box<dyn Error>> {
 
 /// Start the exe from its folder (optionally under cdb and/or in Sandboxie);
 /// stdout+stderr go to the console and the log.
+/// Puts the game in a job that Windows ends when the launcher exits (closing the
+/// console window or a crash no longer leaves the title running). TUXBOX_COMMIT_CAP_GB
+/// caps its committed memory (unset: no cap). NEONBRIDGE_JOB=0 turns this off.
+/// The job handle is never closed: it lives as long as the launcher.
+fn kill_on_close(child: &std::process::Child) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::JobObjects::*;
+    if std::env::var("NEONBRIDGE_JOB").as_deref() == Ok("0") {
+        return;
+    }
+    let cap = std::env::var("TUXBOX_COMMIT_CAP_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|&g| g > 0);
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            println!("[launch] job: CreateJobObject failed; the game is not tied to the launcher");
+            return;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Some(gb) = cap {
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+            info.ProcessMemoryLimit = (gb << 30) as usize;
+        }
+        let ok = SetInformationJobObject(job, JobObjectExtendedLimitInformation, (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(), size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32) != 0
+            && AssignProcessToJobObject(job, child.as_raw_handle() as _) != 0;
+        if ok {
+            println!("[launch] job: the game ends with the launcher{} (NEONBRIDGE_JOB=0 turns this off)", cap.map(|g| format!("; commit capped at {g} GiB")).unwrap_or_default());
+        } else {
+            println!("[launch] job: could not assign the game to a job ({}); it is not tied to the launcher", std::io::Error::last_os_error());
+        }
+    }
+}
+
 fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, trace_throws: bool, sandbox: bool, env: &[(String, String)], timeout: Option<f64>) -> Result<(), Box<dyn Error>> {
     let log = log.unwrap_or_else(|| {
         let base = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/logs");
@@ -542,6 +575,7 @@ q
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    kill_on_close(&child);
     splash::watch(exe);
     let tee = |r: Box<dyn std::io::Read + Send>, mut f: fs::File| {
         std::thread::spawn(move || {
