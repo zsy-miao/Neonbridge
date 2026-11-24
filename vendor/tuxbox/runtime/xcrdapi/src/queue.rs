@@ -109,6 +109,24 @@ enum Entry {
     Signal(ID3D12Fence, u64),
     Event(OwnedHandle),
     Invalid(HRESULT, u32),
+    /// A read request refused at enqueue, with what the title asked for.
+    Refused(HRESULT, Box<Refused>),
+}
+
+/// xcl's idea (re-derived from 66660bd/2e17d3d): a read refused at enqueue
+/// keeps its request so the error record names its offset, size and tag, and
+/// CancelRequestsWithTag cancels it like any read: a cancelled refused
+/// request is not a failure. TUXBOX_XCRD_REFUSED_RECORD=0 records only the
+/// error as before.
+struct Refused {
+    options: u64,
+    dest: usize,
+    capacity: u32,
+    source: usize,
+    offset: u64,
+    size: u32,
+    tag: u64,
+    cancelled: bool,
 }
 
 enum Source {
@@ -651,6 +669,15 @@ fn signal_error(shared: &Shared, entry: &Entry, hr: HRESULT) {
                 }
             }
             Entry::Invalid(_, kind) => r.kind = *kind,
+            Entry::Refused(_, req) => {
+                r.options = req.options;
+                r.destination = req.dest;
+                r.destination_size = req.capacity;
+                r.source = req.source;
+                r.offset = req.offset;
+                r.size = req.size;
+                r.tag = req.tag;
+            }
             Entry::Status(..) => r.kind = 1,
             Entry::Event(_) => r.kind = 3,
             Entry::Signal(fence, value) => {
@@ -769,6 +796,8 @@ fn consume(shared: &Shared) {
                 unsafe { fence.Signal(*value) }.map_err(|e| e.code())
             }
             Entry::Invalid(hr, _) => Err(*hr),
+            Entry::Refused(_, r) if r.cancelled => Ok(()),
+            Entry::Refused(hr, _) => Err(*hr),
             Entry::Event(event) => {
                 unsafe { SetEvent(HANDLE(event.as_raw_handle())) }.map_err(|e| e.code())
             }
@@ -892,7 +921,15 @@ impl IQueue_Impl for Queue_Impl {
     unsafe fn EnqueueRequest(&self, req: *const Request) {
         self.enqueue(
             unsafe { capture(self.source_type, req) }
-                .map_or_else(|e| Entry::Invalid(e, 0), Entry::Read),
+                .map_or_else(|e| match unsafe { req.as_ref() } {
+                    Some(r) if std::env::var("TUXBOX_XCRD_REFUSED_RECORD").map_or(true, |v| v.trim() != "0") => {
+                        Entry::Refused(e, Box::new(Refused {
+                            options: r.options, dest: r.destination as usize, capacity: r.destination_size,
+                            source: r.source as usize, offset: r.offset, size: r.size, tag: r.tag, cancelled: false,
+                        }))
+                    }
+                    _ => Entry::Invalid(e, 0),
+                }, Entry::Read),
         );
     }
     unsafe fn EnqueueStatus(&self, array: *mut c_void, index: u32) {
@@ -917,10 +954,10 @@ impl IQueue_Impl for Queue_Impl {
     }
     unsafe fn CancelRequestsWithTag(&self, mask: u64, value: u64) {
         for entry in &mut lock(&self.shared.state).entries {
-            if let Entry::Read(r) = entry
-                && (r.tag & mask) == value
-            {
-                r.cancelled = true;
+            match entry {
+                Entry::Read(r) if (r.tag & mask) == value => r.cancelled = true,
+                Entry::Refused(_, r) if (r.tag & mask) == value => r.cancelled = true,
+                _ => {}
             }
         }
     }
