@@ -41,9 +41,23 @@ pub(super) fn reflected(
     node: u32,
 ) -> Result<TableLayout> {
     let layout = reflected_tables(device, original, program, node)?;
+    let flags = parse_rts0(original.payload()).map_or(0, |s| s.flags);
+    // Bindless raster pipelines: translated stages read ResourceDescriptorHeap through
+    // the index map, or only SamplerDescriptorHeap, which needs the guest root alone.
+    if let (TableLayout::Unsupported, Program::Raster { vertex, pixel }) = (&layout, program)
+        && flags & 0xc00 != 0
+    {
+        let (v, p) = (features(vertex), features(pixel));
+        if flags & 0x400 != 0 && (v | p) & (1 << 25) != 0 {
+            return heap_compute(device, original, node, &[]);
+        }
+        if (v | p) & (1 << 26) != 0 {
+            return Ok(TableLayout::Original);
+        }
+    }
     // Translated heap-indexed compute shaders also need the index map.
     if let (TableLayout::Original | TableLayout::Unsupported, Program::Compute(shader)) = (&layout, program)
-        && parse_rts0(original.payload()).is_ok_and(|s| s.flags & 0x400 != 0)
+        && flags & 0x400 != 0
         && heap_indexed(shader)
     {
         let samplers = parse_rts0(original.payload()).ok().filter(|s| s.static_samplers.is_empty())
@@ -291,13 +305,18 @@ fn static_sampler(s: &[u32; 13]) -> D3D12_STATIC_SAMPLER_DESC {
     }
 }
 
-/// The shader indexes ResourceDescriptorHeap (SFI0 bit 25).
-fn heap_indexed(shader: &[u8]) -> bool {
-    let Ok(d) = tuxbox_dxbc::Dxbc::parse(shader) else { return false };
+/// SFI0 required feature flags.
+fn features(shader: &[u8]) -> u64 {
+    let Ok(d) = tuxbox_dxbc::Dxbc::parse(shader) else { return 0 };
     d.chunk(b"SFI0")
         .and_then(|c| shader.get(c.offset..c.offset + c.size))
         .and_then(|b| b.first_chunk::<8>())
-        .is_some_and(|b| u64::from_le_bytes(*b) & (1 << 25) != 0)
+        .map_or(0, |b| u64::from_le_bytes(*b))
+}
+
+/// The shader indexes ResourceDescriptorHeap (SFI0 bit 25).
+fn heap_indexed(shader: &[u8]) -> bool {
+    features(shader) & (1 << 25) != 0
 }
 
 /// The guest signature plus a root SRV holding the resource index map, which

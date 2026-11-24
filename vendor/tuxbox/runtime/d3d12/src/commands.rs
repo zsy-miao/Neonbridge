@@ -170,7 +170,7 @@ impl Recording {
         };
         if let Some(table) = self.bindings.reflected_table::<false>() {
             if self.stencil_slot.is_some() { self.error = E_NOTIMPL; return; }
-            if let Some(binding) = table.index_map {
+            if let Some(binding) = table.index_map.filter(|b| b.scalar_mask != 0) {
                 // These PSOs have one descriptor table followed by one root
                 // constants parameter. The native ISA selects its scalar
                 // buffer with a word (and optional mask) from that parameter.
