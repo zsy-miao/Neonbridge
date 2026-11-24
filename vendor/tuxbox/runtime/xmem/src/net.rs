@@ -215,14 +215,21 @@ fn by_name(dll: &str, name: &str) -> Option<usize> {
 unsafe extern "system" fn get_proc_address(module: H, name: *const u8) -> *const c_void {
     let real: unsafe extern "system" fn(H, *const u8) -> *const c_void = unsafe { std::mem::transmute(GET_PROC_ADDRESS.load(Ordering::Relaxed)) };
     let found = unsafe { real(module, name) };
-    // Ordinal lookups have the name pointer below 0x10000.
-    if found.is_null() || (name as usize) < 0x10000 {
+    if found.is_null() {
         return found;
     }
     let mut buf = [0u16; 512];
     let n = unsafe { GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
     let path = String::from_utf16_lossy(&buf[..n]).to_ascii_lowercase();
     let dll = path.rsplit(['\\', '/']).next().unwrap_or_default();
+    // Ordinal lookups have the name pointer below 0x10000.
+    if (name as usize) < 0x10000 {
+        if let Some(wrapped) = crate::xaudio::lookup_ordinal(dll, name as usize) {
+            log(&format!("xaudio2: GetProcAddress {dll}!#{} -> wrapped", name as usize));
+            return wrapped as *const c_void;
+        }
+        return found;
+    }
     if let Some(wrapped) = crate::xaudio::lookup(dll, &ansi(name)) {
         log(&format!("xaudio2: GetProcAddress {dll}!{} -> wrapped", ansi(name)));
         return wrapped as *const c_void;

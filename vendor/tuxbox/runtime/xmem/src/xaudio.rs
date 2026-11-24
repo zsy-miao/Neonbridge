@@ -208,6 +208,44 @@ unsafe extern "system" fn create_master(
     hr
 }
 
+/// Wraps CreateMasteringVoice before any title engine exists: a private
+/// engine from the real XAudio2Create gives the engine vtable, which every
+/// engine shares. test51 never reached our wrap: the exe imports no
+/// XAudio2Create (0 wrapped) and neither engine's mastering voice went
+/// through it, so both mastered at the device's 192 kHz. Runs on its own
+/// thread, after the loader lock, with COM joined (MTA).
+/// TUXBOX_XAUDIO_EARLY=0 skips it.
+pub(crate) fn hook_vtable_early() {
+    if !enabled() || std::env::var("TUXBOX_XAUDIO_EARLY").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("TuxBox XAudio2 hook".into()).spawn(|| unsafe {
+        let co = CoInitializeEx(std::ptr::null(), 0);
+        let real = real(&REAL_CREATE, b"XAudio2Create\0");
+        if real == 0 {
+            log("xaudio2: early hook found no XAudio2Create in xaudio2_9.dll");
+            return;
+        }
+        let mut engine: H = std::ptr::null_mut();
+        let hr = std::mem::transmute::<usize, Create>(real)(&mut engine, 0, 0);
+        if hr < 0 || engine.is_null() {
+            log(&format!("xaudio2: early hook XAudio2Create = {hr:#x}; CreateMasteringVoice not wrapped yet"));
+            return;
+        }
+        hook_engine(&mut engine);
+        let wrapped = (*(*engine.cast::<*const usize>()).add(MASTER_SLOT)) == create_master as *const () as usize;
+        let release: unsafe extern "system" fn(H) -> u32 = std::mem::transmute(*(*engine.cast::<*const usize>()).add(2));
+        release(engine);
+        log(&format!("xaudio2: engine vtable CreateMasteringVoice {} at startup (CoInitializeEx {co:#x}; TUXBOX_XAUDIO_EARLY=0 skips)",
+            if wrapped { "wrapped" } else { "NOT wrapped" }));
+    });
+}
+
+/// GetProcAddress by ordinal (net.rs): #1 is XAudio2Create.
+pub(crate) fn lookup_ordinal(dll: &str, ordinal: usize) -> Option<usize> {
+    (dll.starts_with("xaudio2_9") && ordinal == CREATE_ORDINAL as usize).then_some(create as *const () as usize)
+}
+
 /// GetProcAddress hook (net.rs): our wrappers for xaudio2_9's create exports.
 pub(crate) fn lookup(dll: &str, name: &str) -> Option<usize> {
     if !dll.starts_with("xaudio2_9") {
@@ -256,4 +294,5 @@ pub(crate) unsafe fn install() {
         ])
     };
     log(&format!("xaudio2: {patched} XAudio2Create import(s) wrapped{}", if enabled() { "" } else { " (TUXBOX_XAUDIO_FIX=0: arguments pass through)" }));
+    hook_vtable_early();
 }
