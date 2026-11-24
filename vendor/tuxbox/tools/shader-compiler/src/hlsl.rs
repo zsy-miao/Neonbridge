@@ -8671,7 +8671,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 0 => format!("{tex}.SampleCmp({smp}, {cvec}, {z}{})", tail(&offset, &None)?),
                 4 if !a16 && self.immediate_zero_before(idx, addr_reg(base + ncoord)) => format!("{tex}.SampleCmpLevelZero({smp}, {cvec}, {z}{})", tail(&offset, &None)?),
                 7 => format!("{tex}.SampleCmpLevelZero({smp}, {cvec}, {z}{})", tail(&offset, &None)?),
-                _ => return Err("depth-compare sample with explicit LOD/bias/gradient unsupported in SM5".into()),
+                // SM5 has no SampleCmpLevel/Bias/Grad: approximate with LOD 0
+                // (exact for single-mip depth, too sharp otherwise) instead of
+                // refusing the shader (Xbox2Windows 7f3b070f, MIT).
+                // TB_CMP_LEVEL_STRICT=1 refuses as before.
+                _ if std::env::var("TB_CMP_LEVEL_STRICT").is_ok_and(|v| v.trim() == "1") =>
+                    return Err("depth-compare sample with explicit LOD/bias/gradient unsupported in SM5".into()),
+                _ => {
+                    self.line(&format!("// APPROX-CMP-LEVEL: depth-compare sample modifier {modi} emitted as LOD 0"));
+                    format!("{tex}.SampleCmpLevelZero({smp}, {cvec}, {z}{})", tail(&offset, &None)?)
+                }
             }
         } else {
             match modi {
