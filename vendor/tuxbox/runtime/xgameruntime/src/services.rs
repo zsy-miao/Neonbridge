@@ -35,11 +35,13 @@ fn is_user(handle: *mut c_void) -> bool {
 // Asynchronous operations started by these services. XAsyncBlock layout:
 // queue handle, context, completion callback, then internal storage.
 
-#[derive(Clone, Copy)]
 enum Payload {
     Empty,
     User,
     SaveProvider,
+    Quota,
+    Blobs(Vec<(String, Vec<u8>)>),
+    Folder(String),
 }
 
 struct Operation {
@@ -476,7 +478,7 @@ pub(super) unsafe extern "system" fn save_initialize(
 ) -> i32 {
     if out.is_null() { return POINTER; }
     if !is_user(user) { return INVALID; }
-    super::report(format_args!("game save provider at {}", save_root()));
+    super::report(format_args!("game save: provider at {}", save_root()));
     unsafe { out.write(&raw const SAVE_PROVIDER) };
     OK
 }
@@ -485,7 +487,7 @@ pub(super) unsafe extern "system" fn save_initialize_async(
     _: &Object, user: *mut c_void, _scid: *const u8, _sync_on_demand: bool, block: *mut c_void,
 ) -> i32 {
     if !is_user(user) { return INVALID; }
-    super::report(format_args!("game save provider (async) at {}", save_root()));
+    super::report(format_args!("game save: provider (async) at {}", save_root()));
     unsafe { complete(block, OK, 0, Payload::SaveProvider) }
 }
 /// XGameSaveInitializeProviderResult(async, provider*).
@@ -502,18 +504,453 @@ pub(super) unsafe extern "system" fn save_initialize_result(_: &Object, block: *
 }
 pub(super) extern "system" fn save_close_provider(_: &Object, _provider: *const u8) {}
 
-/// XGameSaveGetContainerInfo(provider, name, context, callback) (slot 13) and
-/// XGameSaveEnumerateContainerInfo(provider, context, callback) (slot 14):
-/// a fresh profile has no containers, so no callback runs.
-pub(super) unsafe extern "system" fn save_container_info(
-    _: &Object, _provider: *const u8, name: *const i8, _context: *mut c_void, _callback: *mut c_void,
-) -> i32 {
-    let name = if name.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned() };
-    super::report(format_args!("game save container info for {name:?}: none saved"));
+// Containers live under the provider folder, one directory per container:
+// `<percent-encoded name>\display` (the display name) and `blobs\<encoded
+// blob name>`. A container exists once an update has been submitted for it.
+// Slots follow the XGameSave.h declaration order; 4-6, 10, 13-14, 16-18, 20
+// and 23-27 match the title's own wrappers (evidence runtime-wrappers.csv).
+
+const BUFFER_TOO_SMALL: i32 = 0x8083_0007u32 as i32;
+const BLOB_NOT_FOUND: i32 = 0x8083_0008u32 as i32;
+const SAVE_QUOTA: i64 = 256 << 20;
+
+#[repr(C)]
+pub(super) struct ContainerInfo {
+    name: *const i8,
+    display: *const i8,
+    blobs: u32,
+    total: u64,
+    modified: i64,
+    needs_sync: bool,
+}
+#[repr(C)]
+pub(super) struct BlobInfo {
+    name: *const i8,
+    size: u32,
+}
+#[repr(C)]
+pub(super) struct Blob {
+    info: BlobInfo,
+    data: *mut u8,
+}
+type ContainerCallback = unsafe extern "system" fn(*const ContainerInfo, *mut c_void) -> bool;
+type BlobCallback = unsafe extern "system" fn(*const BlobInfo, *mut c_void) -> bool;
+
+struct Update {
+    container: String,
+    display: Option<String>,
+    writes: Vec<(String, Vec<u8>)>,
+    deletes: Vec<String>,
+}
+
+/// Open container handles (handle -> container name) and pending updates.
+static CONTAINERS: LazyLock<Mutex<HashMap<usize, String>>> = LazyLock::new(Default::default);
+static UPDATES: LazyLock<Mutex<HashMap<usize, Update>>> = LazyLock::new(Default::default);
+
+fn new_handle() -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0x5341_5645_0010);
+    NEXT.fetch_add(0x10, std::sync::atomic::Ordering::Relaxed)
+}
+
+unsafe fn text(pointer: *const i8) -> Option<String> {
+    if pointer.is_null() { return None; }
+    Some(unsafe { std::ffi::CStr::from_ptr(pointer) }.to_string_lossy().into_owned())
+}
+
+/// A NUL-terminated copy that lives for the process: names handed to title
+/// callbacks and blob results must outlive the call.
+fn intern(text: &str) -> *const i8 {
+    static NAMES: LazyLock<Mutex<HashMap<String, usize>>> = LazyLock::new(Default::default);
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(&pointer) = names.get(text) {
+        return pointer as *const i8;
+    }
+    let pointer = std::ffi::CString::new(text.replace('\0', "")).unwrap_or_default().into_raw();
+    names.insert(text.to_owned(), pointer as usize);
+    pointer
+}
+
+fn encode(name: &str) -> String {
+    let mut out = String::new();
+    for (index, byte) in name.bytes().enumerate() {
+        let plain = byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' || (byte == b'.' && index != 0);
+        if plain { out.push(byte as char) } else { out.push_str(&format!("%{byte:02X}")) }
+    }
+    out
+}
+
+fn decode(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = (bytes[i] == b'%' && i + 2 < bytes.len())
+            .then(|| std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+            .flatten();
+        match hex {
+            Some(byte) => { out.push(byte); i += 3; }
+            None => { out.push(bytes[i]); i += 1; }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn container_dir(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(save_root()).join(encode(name))
+}
+
+fn list_containers() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(save_root()).into_iter().flatten().flatten()
+        .filter(|e| e.path().join("blobs").is_dir())
+        .map(|e| decode(&e.file_name().to_string_lossy()))
+        .collect();
+    names.sort();
+    names
+}
+
+fn list_blobs(container: &str) -> Vec<(String, u64)> {
+    let mut blobs: Vec<(String, u64)> = std::fs::read_dir(container_dir(container).join("blobs")).into_iter().flatten().flatten()
+        .filter(|e| !e.file_name().to_string_lossy().ends_with(".partial"))
+        .filter_map(|e| Some((decode(&e.file_name().to_string_lossy()), e.metadata().ok().filter(|m| m.is_file())?.len())))
+        .collect();
+    blobs.sort();
+    blobs
+}
+
+/// Report one stored container to the title; false stops an enumeration.
+unsafe fn emit_container(name: &str, context: *mut c_void, callback: Option<ContainerCallback>) -> bool {
+    let dir = container_dir(name);
+    let blobs = list_blobs(name);
+    let display = std::fs::read_to_string(dir.join("display")).unwrap_or_default();
+    let modified = std::fs::metadata(dir.join("blobs")).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+    let info = ContainerInfo {
+        name: intern(name),
+        display: intern(&display),
+        blobs: blobs.len() as u32,
+        total: blobs.iter().map(|b| b.1).sum(),
+        modified,
+        needs_sync: false,
+    };
+    match callback {
+        Some(callback) => unsafe { callback(&info, context) },
+        None => true,
+    }
+}
+
+/// XGameSaveGetRemainingQuota(provider, quota*) (slot 7).
+pub(super) unsafe extern "system" fn save_quota(_: &Object, _provider: *const u8, out: *mut i64) -> i32 {
+    if out.is_null() { return POINTER; }
+    unsafe { out.write(SAVE_QUOTA) };
     OK
 }
-pub(super) unsafe extern "system" fn save_enumerate_containers(
-    _: &Object, _provider: *const u8, _context: *mut c_void, _callback: *mut c_void,
+/// XGameSaveGetRemainingQuotaAsync(provider, async) (slot 8).
+pub(super) unsafe extern "system" fn save_quota_async(_: &Object, _provider: *const u8, block: *mut c_void) -> i32 {
+    unsafe { complete(block, OK, 0, Payload::Quota) }
+}
+/// XGameSaveGetRemainingQuotaResult(async, quota*) (slot 9).
+pub(super) unsafe extern "system" fn save_quota_result(_: &Object, block: *mut c_void, out: *mut i64) -> i32 {
+    if out.is_null() { return POINTER; }
+    match take(block) {
+        Ok(Payload::Quota) => { unsafe { out.write(SAVE_QUOTA) }; OK }
+        Ok(_) => INVALID,
+        Err(status) => status,
+    }
+}
+
+fn delete_container(name: &str) -> i32 {
+    match std::fs::remove_dir_all(container_dir(name)) {
+        Ok(()) => OK,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => OK,
+        Err(error) => {
+            super::report(format_args!("game save: deleting container {name:?} failed: {error}"));
+            INVALID
+        }
+    }
+}
+/// XGameSaveDeleteContainer(provider, name) (slot 10).
+pub(super) unsafe extern "system" fn save_delete(_: &Object, _provider: *const u8, name: *const i8) -> i32 {
+    let Some(name) = (unsafe { text(name) }) else { return POINTER };
+    super::report(format_args!("game save: delete container {name:?}"));
+    delete_container(&name)
+}
+/// XGameSaveDeleteContainerAsync(provider, name, async) (slot 11).
+pub(super) unsafe extern "system" fn save_delete_async(_: &Object, _provider: *const u8, name: *const i8, block: *mut c_void) -> i32 {
+    let Some(name) = (unsafe { text(name) }) else { return POINTER };
+    super::report(format_args!("game save: delete container {name:?} (async)"));
+    let status = delete_container(&name);
+    unsafe { complete(block, status, 0, Payload::Empty) }
+}
+/// XGameSaveDeleteContainerResult / XGameSaveSubmitUpdateResult(async) (slots 12, 29).
+pub(super) unsafe extern "system" fn save_empty_result(_: &Object, block: *mut c_void) -> i32 {
+    match take(block) {
+        Ok(_) => OK,
+        Err(status) => status,
+    }
+}
+
+/// XGameSaveGetContainerInfo(provider, name, context, callback) (slot 13):
+/// the callback runs once when the container exists.
+pub(super) unsafe extern "system" fn save_container_info(
+    _: &Object, _provider: *const u8, name: *const i8, context: *mut c_void, callback: Option<ContainerCallback>,
 ) -> i32 {
+    let Some(name) = (unsafe { text(name) }) else { return POINTER };
+    if container_dir(&name).join("blobs").is_dir() {
+        super::report(format_args!("game save: container info for {name:?}: found"));
+        unsafe { emit_container(&name, context, callback) };
+    } else {
+        super::report(format_args!("game save: container info for {name:?}: none saved"));
+    }
+    OK
+}
+/// XGameSaveEnumerateContainerInfo(provider, context, callback) (slot 14).
+pub(super) unsafe extern "system" fn save_enumerate_containers(
+    _: &Object, _provider: *const u8, context: *mut c_void, callback: Option<ContainerCallback>,
+) -> i32 {
+    for name in list_containers() {
+        if !unsafe { emit_container(&name, context, callback) } { break; }
+    }
+    OK
+}
+/// XGameSaveEnumerateContainerInfoByName(provider, prefix, context, callback) (slot 15).
+pub(super) unsafe extern "system" fn save_enumerate_containers_by_name(
+    _: &Object, _provider: *const u8, prefix: *const i8, context: *mut c_void, callback: Option<ContainerCallback>,
+) -> i32 {
+    let prefix = unsafe { text(prefix) }.unwrap_or_default();
+    for name in list_containers().into_iter().filter(|n| n.starts_with(&prefix)) {
+        if !unsafe { emit_container(&name, context, callback) } { break; }
+    }
+    OK
+}
+
+/// XGameSaveCreateContainer(provider, name, container*) (slot 16). Nothing is
+/// written until an update is submitted.
+pub(super) unsafe extern "system" fn save_create_container(_: &Object, _provider: *const u8, name: *const i8, out: *mut usize) -> i32 {
+    if out.is_null() { return POINTER; }
+    let Some(name) = (unsafe { text(name) }).filter(|n| !n.is_empty()) else { return INVALID };
+    let handle = new_handle();
+    super::report(format_args!("game save: open container {name:?}"));
+    CONTAINERS.lock().unwrap_or_else(|e| e.into_inner()).insert(handle, name);
+    unsafe { out.write(handle) };
+    OK
+}
+/// XGameSaveCloseContainer(container) (slot 17).
+pub(super) extern "system" fn save_close_container(_: &Object, container: usize) {
+    CONTAINERS.lock().unwrap_or_else(|e| e.into_inner()).remove(&container);
+}
+
+fn container_name(container: usize) -> Option<String> {
+    CONTAINERS.lock().unwrap_or_else(|e| e.into_inner()).get(&container).cloned()
+}
+
+unsafe fn emit_blobs(container: usize, prefix: &str, context: *mut c_void, callback: Option<BlobCallback>) -> i32 {
+    let Some(name) = container_name(container) else { return INVALID };
+    let Some(callback) = callback else { return OK };
+    for (blob, size) in list_blobs(&name).into_iter().filter(|b| b.0.starts_with(prefix)) {
+        let info = BlobInfo { name: intern(&blob), size: size as u32 };
+        if !unsafe { callback(&info, context) } { break; }
+    }
+    OK
+}
+/// XGameSaveEnumerateBlobInfo(container, context, callback) (slot 18).
+pub(super) unsafe extern "system" fn save_enumerate_blobs(_: &Object, container: usize, context: *mut c_void, callback: Option<BlobCallback>) -> i32 {
+    unsafe { emit_blobs(container, "", context, callback) }
+}
+/// XGameSaveEnumerateBlobInfoByName(container, prefix, context, callback) (slot 19).
+pub(super) unsafe extern "system" fn save_enumerate_blobs_by_name(
+    _: &Object, container: usize, prefix: *const i8, context: *mut c_void, callback: Option<BlobCallback>,
+) -> i32 {
+    let prefix = unsafe { text(prefix) }.unwrap_or_default();
+    unsafe { emit_blobs(container, &prefix, context, callback) }
+}
+
+/// Read the named blobs (every blob when `names` is None).
+fn read_blobs(container: &str, names: Option<Vec<String>>) -> Result<Vec<(String, Vec<u8>)>, i32> {
+    let names = names.unwrap_or_else(|| list_blobs(container).into_iter().map(|b| b.0).collect());
+    let dir = container_dir(container).join("blobs");
+    names.into_iter().map(|name| {
+        match std::fs::read(dir.join(encode(&name))) {
+            Ok(data) => Ok((name, data)),
+            Err(_) => {
+                super::report(format_args!("game save: blob {name:?} not found in {container:?}"));
+                Err(BLOB_NOT_FOUND)
+            }
+        }
+    }).collect()
+}
+
+fn blobs_size(blobs: &[(String, Vec<u8>)]) -> usize {
+    blobs.len() * size_of::<Blob>() + blobs.iter().map(|b| b.1.len()).sum::<usize>()
+}
+
+/// Lay the blobs out in the title's buffer: the XGameSaveBlob array, then the
+/// data. Names are process-lifetime strings outside the buffer.
+unsafe fn fill_blobs(blobs: &[(String, Vec<u8>)], size: usize, out: *mut Blob, count: *mut u32) -> i32 {
+    if out.is_null() || count.is_null() { return POINTER; }
+    if size < blobs_size(blobs) { return BUFFER_TOO_SMALL; }
+    let mut data = unsafe { out.add(blobs.len()) }.cast::<u8>();
+    for (index, (name, bytes)) in blobs.iter().enumerate() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), data, bytes.len());
+            out.add(index).write(Blob { info: BlobInfo { name: intern(name), size: bytes.len() as u32 }, data });
+            data = data.add(bytes.len());
+        }
+    }
+    unsafe { count.write(blobs.len() as u32) };
+    OK
+}
+
+/// XGameSaveReadBlobData(container, blobNames, countOfBlobs*, blobsSize, blobData) (slot 20).
+/// Null names read every blob of the container.
+pub(super) unsafe extern "system" fn save_read_blobs(
+    _: &Object, container: usize, names: *const *const i8, count: *mut u32, size: usize, out: *mut Blob,
+) -> i32 {
+    if count.is_null() { return POINTER; }
+    let Some(name) = container_name(container) else { return INVALID };
+    let names = if names.is_null() { None } else {
+        Some((0..unsafe { count.read() } as usize).filter_map(|i| unsafe { text(names.add(i).read()) }).collect())
+    };
+    match read_blobs(&name, names) {
+        Ok(blobs) => {
+            let status = unsafe { fill_blobs(&blobs, size, out, count) };
+            super::report(format_args!("game save: read {} blobs ({} bytes) from {name:?}: {status:#x}",
+                blobs.len(), blobs.iter().map(|b| b.1.len()).sum::<usize>()));
+            status
+        }
+        Err(status) => status,
+    }
+}
+/// XGameSaveReadBlobDataAsync(container, blobNames, countOfBlobs, async) (slot 21).
+pub(super) unsafe extern "system" fn save_read_blobs_async(
+    _: &Object, container: usize, names: *const *const i8, count: u32, block: *mut c_void,
+) -> i32 {
+    let Some(name) = container_name(container) else { return INVALID };
+    let names = if names.is_null() { None } else {
+        Some((0..count as usize).filter_map(|i| unsafe { text(names.add(i).read()) }).collect())
+    };
+    match read_blobs(&name, names) {
+        Ok(blobs) => unsafe { complete(block, OK, blobs_size(&blobs), Payload::Blobs(blobs)) },
+        Err(status) => unsafe { complete(block, status, 0, Payload::Empty) },
+    }
+}
+/// XGameSaveReadBlobDataResult(async, blobsSize, blobData, countOfBlobs*) (slot 22).
+pub(super) unsafe extern "system" fn save_read_blobs_result(_: &Object, block: *mut c_void, size: usize, out: *mut Blob, count: *mut u32) -> i32 {
+    match take(block) {
+        Ok(Payload::Blobs(blobs)) => unsafe { fill_blobs(&blobs, size, out, count) },
+        Ok(_) => INVALID,
+        Err(status) => status,
+    }
+}
+
+/// XGameSaveCreateUpdate(container, displayName, update*) (slot 23).
+pub(super) unsafe extern "system" fn save_create_update(_: &Object, container: usize, display: *const i8, out: *mut usize) -> i32 {
+    if out.is_null() { return POINTER; }
+    let Some(name) = container_name(container) else { return INVALID };
+    let handle = new_handle();
+    UPDATES.lock().unwrap_or_else(|e| e.into_inner())
+        .insert(handle, Update { container: name, display: unsafe { text(display) }, writes: Vec::new(), deletes: Vec::new() });
+    unsafe { out.write(handle) };
+    OK
+}
+/// XGameSaveCloseUpdate(update) (slot 24).
+pub(super) extern "system" fn save_close_update(_: &Object, update: usize) {
+    UPDATES.lock().unwrap_or_else(|e| e.into_inner()).remove(&update);
+}
+/// XGameSaveSubmitBlobWrite(update, blobName, data, byteCount) (slot 25).
+pub(super) unsafe extern "system" fn save_blob_write(_: &Object, update: usize, name: *const i8, data: *const u8, bytes: usize) -> i32 {
+    let Some(name) = (unsafe { text(name) }).filter(|n| !n.is_empty()) else { return INVALID };
+    if data.is_null() && bytes != 0 { return POINTER; }
+    let copy = if bytes == 0 { Vec::new() } else { unsafe { core::slice::from_raw_parts(data, bytes) }.to_vec() };
+    match UPDATES.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&update) {
+        Some(pending) => { pending.writes.push((name, copy)); OK }
+        None => INVALID,
+    }
+}
+/// XGameSaveSubmitBlobDelete(update, blobName) (slot 26).
+pub(super) unsafe extern "system" fn save_blob_delete(_: &Object, update: usize, name: *const i8) -> i32 {
+    let Some(name) = (unsafe { text(name) }) else { return POINTER };
+    match UPDATES.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&update) {
+        Some(pending) => { pending.deletes.push(name); OK }
+        None => INVALID,
+    }
+}
+
+/// Apply a pending update: each blob is written beside its target and renamed
+/// over it, so a crash mid-save keeps the previous blob.
+fn submit(update: usize) -> i32 {
+    let updates = UPDATES.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(pending) = updates.get(&update) else { return INVALID };
+    let dir = container_dir(&pending.container);
+    let blobs = dir.join("blobs");
+    let result = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(&blobs)?;
+        for name in &pending.deletes {
+            match std::fs::remove_file(blobs.join(encode(name))) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+        for (name, data) in &pending.writes {
+            let target = blobs.join(encode(name));
+            let partial = blobs.join(format!("{}.partial", encode(name)));
+            std::fs::write(&partial, data)?;
+            std::fs::rename(&partial, &target)?;
+        }
+        if let Some(display) = &pending.display {
+            std::fs::write(dir.join("display"), display)?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            super::report(format_args!("game save: saved container {:?} ({} blobs written, {} deleted)",
+                pending.container, pending.writes.len(), pending.deletes.len()));
+            OK
+        }
+        Err(error) => {
+            super::report(format_args!("game save: saving container {:?} failed: {error}", pending.container));
+            INVALID
+        }
+    }
+}
+/// XGameSaveSubmitUpdate(update) (slot 27).
+pub(super) extern "system" fn save_submit(_: &Object, update: usize) -> i32 {
+    submit(update)
+}
+/// XGameSaveSubmitUpdateAsync(update, async) (slot 28).
+pub(super) unsafe extern "system" fn save_submit_async(_: &Object, update: usize, block: *mut c_void) -> i32 {
+    let status = submit(update);
+    unsafe { complete(block, status, 0, Payload::Empty) }
+}
+
+/// XGameSaveFilesGetFolderWithUiAsync(user, configurationId, async) (slot 30):
+/// a plain folder beside the containers, with no sign-in UI offline.
+pub(super) unsafe extern "system" fn save_files_folder_async(_: &Object, user: *mut c_void, _scid: *const i8, block: *mut c_void) -> i32 {
+    if !is_user(user) { return INVALID; }
+    let path = format!("{}SaveFiles", storage_path());
+    let _ = std::fs::create_dir_all(&path);
+    super::report(format_args!("game save: files folder at {path}"));
+    unsafe { complete(block, OK, path.len() + 1, Payload::Folder(path)) }
+}
+/// XGameSaveFilesGetFolderWithUiResult(async, folderSize, folderResult) (slot 31).
+pub(super) unsafe extern "system" fn save_files_folder_result(_: &Object, block: *mut c_void, size: usize, out: *mut u8) -> i32 {
+    if out.is_null() { return POINTER; }
+    match take(block) {
+        Ok(Payload::Folder(path)) => {
+            if size < path.len() + 1 { return INSUFFICIENT_BUFFER; }
+            unsafe {
+                core::ptr::copy_nonoverlapping(path.as_ptr(), out, path.len());
+                out.add(path.len()).write(0);
+            }
+            OK
+        }
+        Ok(_) => INVALID,
+        Err(status) => status,
+    }
+}
+/// XGameSaveFilesGetRemainingQuota(user, configurationId, quota*) (slot 32).
+pub(super) unsafe extern "system" fn save_files_quota(_: &Object, _user: *mut c_void, _scid: *const i8, out: *mut i64) -> i32 {
+    if out.is_null() { return POINTER; }
+    unsafe { out.write(SAVE_QUOTA) };
     OK
 }
