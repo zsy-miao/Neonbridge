@@ -1,4 +1,4 @@
-// Copied from TuxBox 242121b (brcly, Apache-2.0).
+// Copied from TuxBox 242121b (brcly, Apache-2.0); updated to 7b815f2.
 //! Raw MUBUF IDXEN is a byte offset.
 //!
 //! Captured batch-cull loads scale the index to bytes, then add a field
@@ -11,7 +11,7 @@ use crate::{ShaderExtract, Stage};
 
 fn compute_extract(words: &[u32]) -> ShaderExtract {
     let isa: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    ShaderExtract {
+    ShaderExtract { flat_inputs: Vec::new(), flat_outputs: Vec::new(),
         stage: Stage::Compute,
         shader_model: (6, 0),
         required_features: None,
@@ -43,6 +43,11 @@ fn address(words: [u32; 2]) -> String {
     let ex = compute_extract(&words);
     let insns = disassemble(&ex.isa);
     let mut em = Emitter::new(&ex, insns.clone());
+    if insns[0].aux.mask & 2 != 0 {
+        // This address-only fixture does not construct a descriptor.
+        // The full descriptor proof is covered separately by raw_width.
+        em.raw_byte_index.insert(insns[0].offset);
+    }
     em.raw_address(&insns[0]).unwrap();
     em.body
 }
@@ -62,7 +67,7 @@ fn indexed_and_offset_raw_load_uses_consecutive_vgprs() {
     // IDXEN|OFFEN. v2 is the index and v3 is the byte offset.
     let body = address([0xe030_3008, 0x8002_0402]);
     assert!(
-        body.contains("uint raw_addr0 = (v2) + (v3) + 0x0u + 8u;"),
+        body.contains("uint raw_addr0 = (v2 + v3) + 0x0u + 8u;"),
         "{body}"
     );
 }

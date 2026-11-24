@@ -35,17 +35,47 @@ fn translate(
     use tuxbox_xshader::{hlsl, meta};
 
     let translated = if let Some(path) = consumer {
-        let pixel = extract(&read(path)?)?;
-        if !matches!(shader.stage, Stage::Vertex | Stage::Geometry) || pixel.stage != Stage::Pixel {
+        let bytes = read(path)?;
+        if !matches!(shader.stage, Stage::Vertex | Stage::Geometry) {
             return Err("expected a vertex or geometry producer and a pixel consumer".into());
         }
-        let pixel = hlsl::translate(&pixel).map_err(Error::Unsupported)?;
-        let order = pixel_order
-            .map(read)
-            .transpose()?
-            .map(|dxil| meta::pixel_input_order(&dxil))
-            .unwrap_or_default();
-        hlsl::translate_ordered(shader, Some(&pixel.ps_input_interp), &order)
+        let actual = pixel_order.map(read).transpose()?;
+        // A portable original consumer has no native ISA to translate. Read
+        // its interpolation directly; retain native consumer handling otherwise.
+        let portable = tuxbox_xshader::psv::portable_pixel_interp(&bytes);
+        let is_portable = portable.is_some();
+        let mut producer = shader.clone();
+        let interp = if let Some(modifiers) = portable {
+            if actual.as_deref().is_some_and(|code| code != bytes.as_slice()) {
+                return Err(Error::Unsupported("portable pixel consumer differs from its bound bytecode".into()));
+            }
+            hlsl::InputInterp(modifiers)
+        } else {
+            let pixel = extract(&bytes)?;
+            if pixel.stage != Stage::Pixel {
+                return Err("expected a pixel consumer".into());
+            }
+            // Console interpolants are raw dwords, so a title may write an element
+            // as float and read it as uint (or the reverse). Desktop drivers reject
+            // the pair (vkd3d: "signature element ... not compatible"). Give each
+            // producer output the consumer's component type; exports keep the bits.
+            for output in producer.output_sig.iter_mut().filter(|o| o.sysval == 0) {
+                let input = pixel.input_sig.iter().find(|i| {
+                    i.sysval == 0 && i.index == output.index && i.name.eq_ignore_ascii_case(&output.name)
+                });
+                // 1 = uint, 2 = sint; 0, 3 (float) and 6 (float16) all emit as float.
+                let integer = |t: u32| matches!(t, 1 | 2);
+                match input.map(|i| i.comp_type) {
+                    Some(t) if integer(t) => output.comp_type = t,
+                    Some(_) if integer(output.comp_type) => output.comp_type = 3,
+                    _ => {}
+                }
+            }
+            hlsl::translate(&pixel).map_err(Error::Unsupported)?.ps_input_interp
+        };
+        let order = actual.as_deref().map(meta::pixel_input_order)
+            .unwrap_or_else(|| if is_portable { meta::pixel_input_order(&bytes) } else { Vec::new() });
+        hlsl::translate_ordered(&producer, Some(&interp), &order)
     } else if let Some(target) = stencil_target {
         hlsl::translate_stencil_target(shader, target)
     } else {

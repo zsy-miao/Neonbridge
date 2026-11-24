@@ -9,7 +9,7 @@ pub mod hlsl;
 #[cfg(feature = "legacy-hlsl")]
 pub mod meta;
 mod native_compute;
-mod psv;
+pub mod psv;
 pub use tuxbox_dxbc::rdna2;
 pub mod ray;
 use tuxbox_dxbc::rootsig;
@@ -85,6 +85,9 @@ pub struct ShaderExtract {
     pub bitcode_stripped: bool,
     pub fspx_config: Option<[u32; 7]>,
     pub ps09_pixel_inputs: Option<u32>,
+    /// Signature registers declared constant over a primitive.
+    pub flat_inputs: Vec<u32>,
+    pub flat_outputs: Vec<u32>,
     pub psv_threads: Option<[u32; 3]>,
     pub input_sig: Vec<SigElement>,
     pub output_sig: Vec<SigElement>,
@@ -222,6 +225,7 @@ pub fn extract(bytes: &[u8]) -> Result<ShaderExtract, String> {
         Vec::new()
     };
     let root = part(b"RTS0");
+    let (flat_inputs, flat_outputs) = validation.and_then(hlsl::flat_registers).unwrap_or_default();
     Ok(ShaderExtract {
         stage: code.stage,
         shader_model: code.sm,
@@ -237,6 +241,8 @@ pub fn extract(bytes: &[u8]) -> Result<ShaderExtract, String> {
         bitcode_stripped: code.bitcode_stripped,
         fspx_config: code.fspx_config,
         ps09_pixel_inputs,
+        flat_inputs,
+        flat_outputs,
         psv_threads: threads,
         has_input_sig: inputs.is_some(),
         has_output_sig: outputs.is_some(),

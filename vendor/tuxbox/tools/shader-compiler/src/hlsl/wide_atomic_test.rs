@@ -3,7 +3,7 @@ use crate::{ShaderExtract, Stage, rdna2::disassemble};
 
 fn compute_extract(words: &[u32]) -> ShaderExtract {
     let isa: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-    ShaderExtract {
+    ShaderExtract { flat_inputs: Vec::new(), flat_outputs: Vec::new(),
         stage: Stage::Compute,
         shader_model: (6, 0),
         required_features: None,

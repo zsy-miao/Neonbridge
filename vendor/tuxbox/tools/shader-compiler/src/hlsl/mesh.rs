@@ -2,7 +2,7 @@
 //! invocation per vertex/primitive, then asks the geometry engine to allocate
 //! export space. A desktop workgroup can service several such logical lanes.
 use super::{
-    disassemble, distinct_regs, mesh_bindings, mesh_exports, r, semantic, sig_type, Emitter,
+    disassemble, distinct_regs, mesh_bindings, mesh_exports, params, r, semantic, sig_type, Emitter, Param,
     InputInterp, Translated,
 };
 use crate::{
@@ -59,6 +59,9 @@ pub(super) fn translate(
         return Err("mesh primitive attribute exports do not match PSG1".into());
     }
     body.truncate(exports.start);
+    if body.iter().any(|op| op.mnemonic == "v_writelane_b32") {
+        super::lower_lane_spills(&mut body, false, false)?;
+    }
     let group_shift = if info.vertices == 128 { 7 } else { 8 };
     validate_launch(&body, group_shift, exports.lane_index)?;
     let root = ex.root_sig.as_ref().ok_or("mesh root signature missing")?;
@@ -76,29 +79,51 @@ pub(super) fn translate(
         }
         None
     };
+    let mut own_reads = waterfall_reads(&body);
+    let mut chosen_samplers = BTreeSet::new();
+    if let Some(base) = super::mesh_sampler_heap_base(ex) {
+        for (reads, image) in sampler_waterfalls(&body, base) {
+            own_reads.extend(reads);
+            chosen_samplers.insert(image);
+        }
+    }
     // Every invocation of a 128-vertex shader evaluates exactly once. Votes
     // can rendezvous across both logical waves at forward branch boundaries.
     let wave_control = info.vertices == 128
-        && body
+        && (body
             .iter()
-            .any(|op| matches!(op.mnemonic.as_str(), "s_cbranch_vccz" | "s_cbranch_vccnz"));
-    validate_lane_ops(&body, wave_control)?;
+            .any(|op| matches!(op.mnemonic.as_str(), "s_cbranch_vccz" | "s_cbranch_vccnz"))
+            || validate_lane_ops(&body, &own_reads, false).is_err_and(|e| e.starts_with("mesh broadcast")));
+    validate_lane_ops(&body, &own_reads, wave_control)?;
     let mut em = Emitter::new(ex, body);
+    em.chosen_samplers = chosen_samplers;
+    for op in em.insns.iter().flat_map(|ins| ins.dst.iter().chain(&ins.src)) {
+        if let Opnd::Temp(n @ super::LANE_TEMP_BASE..) = op {
+            em.regs.insert(format!("tb_s{n}"));
+        }
+    }
     em.wave_cull = wave_control;
+    em.own_lane_reads = own_reads;
+    em.loop_ranges = loops(&em.insns);
     em.hoist_wave_exchanges = wave_control;
     // Class 5 is the resource-heap base. It is not one of the table, raw, or
     // constant SGPRs `MeshLayout` already accepts.
     let heap = super::mesh_heap_base(ex);
+    let samplers = super::mesh_sampler_heap_base(ex);
     let live = em.live_in();
     // The decoder exposes an unused third operand (s0) on two-input VOP3 instructions.
     if let Some(reg) = live.iter().find(|reg| {
-        if matches!(reg.as_str(), "s0" | "s3" | "v5") {
+        // The launch state fills v0..v8; a higher register is simply not set yet.
+        let unset = reg.strip_prefix('v').and_then(|n| n.parse::<u16>().ok()).is_some_and(|n| n > 8);
+        // User data ends at s39; any later register only holds what the program put there.
+        let unset = unset || reg.strip_prefix('s').and_then(|n| n.parse::<u16>().ok()).is_some_and(|n| n >= 40);
+        if unset || matches!(reg.as_str(), "s0" | "s3" | "v5") {
             return false;
         }
         match &bindings {
             Some(mesh) => {
                 let sgpr = reg.strip_prefix('s').and_then(|n| n.parse::<u8>().ok());
-                !sgpr.is_some_and(|sgpr| mesh.takes_sgpr(sgpr) || heap == Some(sgpr))
+                !sgpr.is_some_and(|sgpr| mesh.takes_sgpr(sgpr) || heap == Some(sgpr) || samplers == Some(sgpr))
             }
             None => !matches!(reg.as_str(), "s25" | "s26"),
         }
@@ -110,6 +135,13 @@ pub(super) fn translate(
             && live.iter().any(|reg| reg == &format!("s{sgpr}"))
     }) {
         em.resource_heap_base = Some(sgpr);
+        em.compute_heap = true;
+    }
+    if let Some(sgpr) = samplers.filter(|sgpr| {
+        bindings.as_ref().is_some_and(|mesh| !mesh.takes_sgpr(*sgpr))
+            && live.iter().any(|reg| reg == &format!("s{sgpr}"))
+    }) {
+        em.sampler_heap_base = Some(sgpr);
         em.compute_heap = true;
     }
     em.mesh_bindings = bindings;
@@ -141,8 +173,8 @@ pub(super) fn translate(
         "uint checkedConn = any(result.indices >= {verts}) ? 0x80000000u : conn;"
     ));
     em.line("result.dropPrimitive = (checkedConn >> 31) != 0;");
-    let vertex_regs = distinct_regs(ex.output_sig.iter().filter(|e| e.sysval == 0));
-    let prim_regs = distinct_regs(ex.primitive_sig.iter().filter(|e| e.sysval == 0));
+    let vertex_regs = params::outputs(ex, &ex.output_sig);
+    let prim_regs: Vec<_> = distinct_regs(ex.primitive_sig.iter().filter(|e| e.sysval == 0)).into_iter().map(Param::Full).collect();
     // NGG reserves at least PARAM0 for per-vertex outputs. In a position-only
     // program there is no vertex PARAM instruction; its first primitive is PARAM1.
     let first_primitive = 32 + vertex_regs.len().max(1) as i64;
@@ -170,14 +202,23 @@ pub(super) fn translate(
         &vertex_regs,
         32,
     )?;
+    // A dropped primitive is also degenerate, so its cull flag can go where the outputs
+    // would exceed the 32 KiB a mesh shader may write.
+    let elements = ex.output_sig.len() + ex.primitive_sig.len() + 1;
+    let cull = elements * 16 * usize::from(info.vertices.max(128)) <= 32768;
+    let primitives = cull || !ex.primitive_sig.is_empty();
     let mut h = em.resource_decls()?;
     if wave_control {
         h.push_str(&super::page_waves::declarations([128, 1, 1], false));
     }
     em.push_helpers(&mut h);
-    signature(&mut h, "Vertex", &ex.output_sig, interpolation)?;
-    signature(&mut h, "Primitive", &ex.primitive_sig, None)?;
-    h.push_str("struct MeshLane { uint2 counts; Vertex vertex; Primitive primitive; uint3 indices; bool dropPrimitive; };\n");
+    signature(&mut h, "Vertex", &ex.output_sig, &ex.flat_outputs, interpolation)?;
+    signature(&mut h, "Primitive", &ex.primitive_sig, &[], None)?;
+    if !cull {
+        h = h.replace("    bool cull : SV_CullPrimitive;\n", "");
+    }
+    writeln!(h, "struct MeshLane {{ uint2 counts; Vertex vertex; {}uint3 indices; bool dropPrimitive; }};",
+        if primitives { "Primitive primitive; " } else { "" }).unwrap();
     h.push_str("MeshLane evaluate(uint lane, uint group) {\n");
     if wave_control {
         h.push_str("    uint tb_wave_tid = lane;\n");
@@ -203,6 +244,7 @@ pub(super) fn translate(
         }
     }
     h.push_str(&em.heap_handle_decls());
+    em.heap_sampler_locals(&mut h);
     h.push_str(&em.body);
     h.push_str("    return result;\n}\n");
     h.push_str(
@@ -213,16 +255,15 @@ groupshared uint2 counts;
 void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
 "#,
     );
-    writeln!(
+    write!(
         h,
-        "          out vertices Vertex vertices[{}], out indices uint3 triangles[128],",
-        info.vertices
+        "          out vertices Vertex vertices[{}], out indices uint3 triangles[128]{}) {{\n",
+        info.vertices,
+        if primitives { ",\n\n          out primitives Primitive attributes[128]" } else { "" }
     )
     .unwrap();
     h.push_str(
-        r#"
-          out primitives Primitive attributes[128]) {
-    MeshLane first = evaluate(lane, group.x);
+        r#"    MeshLane first = evaluate(lane, group.x);
     if (lane == 0) counts = first.counts;
     GroupMemoryBarrierWithGroupSync();
     uint2 sizes = counts;
@@ -239,8 +280,7 @@ void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
     SetMeshOutputCounts(sizes.x, sizes.y);
     if (lane < sizes.y) {
         triangles[lane] = first.dropPrimitive ? uint3(0,0,0) : first.indices;
-        first.primitive.cull = first.dropPrimitive;
-        attributes[lane] = first.primitive;
+        //PRIMITIVE
     }
     if (lane < sizes.x) vertices[lane] = first.vertex;
 "#,
@@ -248,6 +288,14 @@ void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
     if info.vertices > 128 {
         h.push_str("    if (lane + 128 < sizes.x) vertices[lane + 128] = evaluate(lane + 128, group.x).vertex;\n");
     }
+    let mut store = String::new();
+    if cull {
+        store.push_str("first.primitive.cull = first.dropPrimitive;\n        ");
+    }
+    if primitives {
+        store.push_str("attributes[lane] = first.primitive;");
+    }
+    h = h.replace("//PRIMITIVE", &store);
     h.push_str("}\n");
     Ok(Translated {
         hlsl: h,
@@ -338,7 +386,21 @@ fn validate_launch(body: &[Insn], group_shift: i64, lane_index: Opnd) -> Result<
 
 /// The logical 64-lane wave is split across desktop invocations. A first-lane
 /// broadcast can be scalarized only when its source is already uniform.
-fn validate_lane_ops(body: &[Insn], wave_control: bool) -> Result<(), String> {
+fn validate_lane_ops(body: &[Insn], own: &BTreeSet<usize>, wave_control: bool) -> Result<(), String> {
+    // Flat loads read the constant tables that follow the code.
+    let program_counter = body.iter().any(|op| op.mnemonic == "s_getpc_b64");
+    if wave_control {
+        // A rendezvous inside a loop could run a different number of times per wave. A lane
+        // leaves a loop by its own condition, so only value exchanges are a problem.
+        for &(head, back) in &loops(body) {
+            if let Some((_, op)) = body[head..=back].iter().enumerate().map(|(i, op)| (head + i, op)).find(|(i, op)| {
+                matches!(op.mnemonic.as_str(), "v_readlane_b32" | "s_ff1_i32_b64" | "s_bcnt1_i32_b64")
+                    || (op.mnemonic == "v_readfirstlane_b32" && !own.contains(i))
+            }) {
+                return Err(format!("mesh wave exchange {} at {:#x} inside a loop", op.mnemonic, op.offset));
+            }
+        }
+    }
     let mut uniform = BTreeSet::from([5u8]); // the packed dispatch group identifier
     for (index, ins) in body.iter().enumerate() {
         let m = ins.mnemonic.as_str();
@@ -352,6 +414,7 @@ fn validate_lane_ops(body: &[Insn], wave_control: bool) -> Result<(), String> {
         };
         if !wave_control
             && m == "v_readfirstlane_b32"
+            && !own.contains(&index)
             && !ins.src.first().is_some_and(uniform_source)
             && !uniform_reciprocal(body, index)
         {
@@ -360,7 +423,9 @@ fn validate_lane_ops(body: &[Insn], wave_control: bool) -> Result<(), String> {
                 ins.offset
             ));
         }
-        if matches!(ins.enc, Enc::Ds | Enc::Exp | Enc::Flat | Enc::Mimg)
+        if matches!(ins.enc, Enc::Ds | Enc::Exp)
+            || (ins.enc == Enc::Flat && !(m.starts_with("flat_load_dword") && program_counter))
+            || (ins.enc == Enc::Mimg && !image_read(m))
             || (ins.enc == Enc::Mtbuf && ins.op >= 4)
             || (ins.enc == Enc::Mubuf && !m.starts_with("buffer_load"))
             || (ins.enc == Enc::Vop1 && m.contains("lane") && m != "v_readfirstlane_b32")
@@ -376,15 +441,10 @@ fn validate_lane_ops(body: &[Insn], wave_control: bool) -> Result<(), String> {
                         | "s_cbranch_scc0"
                         | "s_cbranch_scc1"
                         | "s_cbranch_execz"
+                        | "s_cbranch_execnz"
                 )
                 && !(wave_control && matches!(m, "s_cbranch_vccz" | "s_cbranch_vccnz")))
             || (matches!(ins.enc, Enc::Vop2 | Enc::Vop3) && m.contains("lane"))
-            || ins.aux.sdwa.is_some_and(|mode| {
-                !matches!(
-                    (m, mode & !0xff),
-                    ("v_cvt_f32_u32", 0x0005_0600) | ("v_and_b32", 0x0604_0600)
-                )
-            })
             || ins.src.iter().any(|op| matches!(op, Opnd::Raw(_)))
         {
             return Err(format!(
@@ -421,6 +481,112 @@ fn validate_lane_ops(body: &[Insn], wave_control: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Instruction ranges of the program's loops, from the head to the backward branch.
+fn loops(body: &[Insn]) -> Vec<(usize, usize)> {
+    body.iter()
+        .enumerate()
+        .filter(|(_, op)| op.enc == Enc::Sopp && Emitter::branch_cond(op.op).is_some() && op.aux.imm < 0)
+        .filter_map(|(back, op)| {
+            let target = (op.offset + 4).checked_add_signed(op.aux.imm as isize * 4)?;
+            Some((body.iter().position(|op| op.offset == target)?, back))
+        })
+        .collect()
+}
+
+/// First-lane reads that only select which lanes run the rest of an iteration:
+/// `s = readfirstlane(v); cmpx_eq(s, v); ...; exec = andn2_wrexec(left); loop while exec`.
+/// A lane runs the rest only when `s` is its own `v`, so it can read its own.
+fn waterfall_reads(body: &[Insn]) -> BTreeSet<usize> {
+    let mut found = BTreeSet::new();
+    for (head, back) in loops(body) {
+        let closes = body[back].mnemonic == "s_cbranch_execnz"
+            && back > head && body[back - 1].mnemonic == "s_andn2_wrexec_b64";
+        if !closes {
+            continue;
+        }
+        for i in head..back {
+            let read = &body[i];
+            let ([s @ Opnd::Sgpr(_)], [v @ Opnd::Vgpr(_)]) = (read.dst.as_slice(), read.src.as_slice()) else { continue };
+            if read.mnemonic != "v_readfirstlane_b32" {
+                continue;
+            }
+            // Only waits, scalar loads and further reads may come before the comparison.
+            let compare = body[i + 1..back].iter().find(|op| {
+                !(op.mnemonic == "v_readfirstlane_b32" || op.mnemonic == "v_nop"
+                    || op.enc == Enc::Sopp && Emitter::branch_cond(op.op).is_none())
+                    && (op.mnemonic.starts_with("v_cmpx") || op.enc != Enc::Smem || op.src.contains(s))
+            });
+            if compare.is_some_and(|op| op.mnemonic == "v_cmpx_eq_u32" && op.aux.sdwa.is_none() && op.src.len() >= 2
+                && (op.src[..2] == [*s, *v] || op.src[..2] == [*v, *s])) {
+                found.insert(i);
+            }
+        }
+    }
+    found
+}
+
+/// Loops that sample with a sampler picked per lane among sampler-heap entries:
+/// four first-lane reads of the descriptor words, two 64-bit comparisons joined into EXEC,
+/// the sample, and a loop over the lanes left. Returns the reads and the sample.
+fn sampler_waterfalls(body: &[Insn], base: u8) -> Vec<([usize; 4], usize)> {
+    use Opnd::{ExecLo, Sgpr as S, Vgpr as V};
+    let entry = |at: usize, s: u8| {
+        body[..at].iter().rev()
+            .find(|op| op.dst.iter().any(|d| matches!(d, S(n) if *n <= s && s < n + match op.enc {
+                Enc::Smem => 1u8 << (op.op & 7),
+                _ if op.mnemonic.ends_with("_b64") => 2,
+                _ => 1,
+            })))
+            .is_some_and(|op| op.mnemonic == "s_load_dwordx4" && op.src.first() == Some(&S(base)) && op.aux.imm % 16 == 0)
+    };
+    loops(body).into_iter().filter_map(|(head, back)| {
+        let code = body.get(head..back)?;
+        let kind = |op: &Insn, name: &str| op.mnemonic == name && op.aux.sdwa.is_none();
+        let (S(k), V(n)) = (*code.first()?.dst.first()?, *code[0].src.first()?) else { return None };
+        let k8 = k;
+        for i in 0..4 {
+            let op = code.get(i)?;
+            if !kind(op, "v_readfirstlane_b32") || op.dst != [S(k8 + i as u8)] || op.src != [V(n + i as u8)] {
+                return None;
+            }
+            // Every value the lane may hold is a word of a sampler-heap entry.
+            let mut defs = body[..head].iter().enumerate().rev().filter(|(_, d)| d.dst.contains(&V(n + i as u8)));
+            let (at, first) = defs.next()?;
+            let source = |at: usize, d: &Insn| kind(d, "v_mov_b32") && matches!(d.src.as_slice(), [S(s)] if entry(at, *s));
+            if !source(at, first) {
+                return None;
+            }
+        }
+        let rest: Vec<(usize, &Insn)> = code.iter().enumerate().skip(4)
+            .filter(|(_, op)| !(op.enc == Enc::Smem || op.mnemonic == "v_nop"
+                || op.enc == Enc::Sopp && Emitter::branch_cond(op.op).is_none()))
+            .collect();
+        let [(_, low), (_, high), (_, both), (_, save), tail @ ..] = rest.as_slice() else { return None };
+        let pair = |op: &Insn, i: u8| kind(op, "v_cmp_eq_u64") && op.src.get(..2) == Some(&[S(k8 + i), V(n + i)]);
+        let masks = [*low.dst.first()?, *high.dst.first()?];
+        if !pair(low, 0) || !pair(high, 2) || both.mnemonic != "s_and_b64" || both.src != masks
+            || save.mnemonic != "s_and_saveexec_b64" || save.src != both.dst {
+            return None;
+        }
+        let (image, left) = match tail {
+            [image, (_, left)] => (image, left),
+            _ => return None,
+        };
+        if !image.1.mnemonic.starts_with("image_sample") || image.1.src.last() != Some(&S(k8))
+            || left.mnemonic != "s_xor_b64" || left.dst != [ExecLo] || body[back].mnemonic != "s_cbranch_execnz" {
+            return None;
+        }
+        Some(([head, head + 1, head + 2, head + 3], head + image.0))
+    }).collect()
+}
+
+/// Image reads with an explicit level: no implicit derivatives, no writes.
+fn image_read(mnemonic: &str) -> bool {
+    matches!(mnemonic, "image_load" | "image_load_mip" | "image_get_resinfo")
+        || (mnemonic.starts_with("image_sample") || mnemonic.starts_with("image_gather4"))
+            && (mnemonic.contains("_lz") || mnemonic.ends_with("_l") || mnemonic.ends_with("_l_o"))
+}
+
 fn wave_mask_operands(ins: &Insn) -> bool {
     if ins
         .src
@@ -440,6 +606,8 @@ fn wave_mask_operands(ins: &Insn) -> bool {
         return matches!(
             ins.mnemonic.as_str(),
             "s_cselect_b64" | "s_mov_b64" | "s_and_b64" | "s_andn2_b64" | "v_cndmask_b32"
+                | "s_or_b64" | "s_xor_b64" | "s_orn2_b64" | "s_nand_b64" | "s_nor_b64" | "s_xnor_b64"
+                | "s_not_b64" | "s_and_saveexec_b64" | "s_or_saveexec_b64" | "s_andn2_saveexec_b64"
         );
     }
     ins.mnemonic != "s_mov_b32" || ins.dst != [Opnd::ExecLo]
@@ -496,11 +664,12 @@ fn signature(
     h: &mut String,
     name: &str,
     elements: &[SigElement],
+    flat: &[u32],
     interp: Option<&InputInterp>,
 ) -> Result<(), String> {
     writeln!(h, "struct {name} {{").unwrap();
     for (i, e) in elements.iter().enumerate() {
-        if !matches!(e.comp_type, 1..=3)
+        if !(matches!(e.comp_type, 1..=3) || e.comp_type == 6 && name == "Vertex")
             || !(matches!(e.sysval, 0 | 1) || name == "Vertex" && e.sysval == 2)
             || e.mask == 0
             || e.mask > 15
@@ -514,7 +683,7 @@ fn signature(
         let sem = semantic(e);
         let modifier = interp
             .and_then(|mods| mods.get(&sem))
-            .unwrap_or(if e.comp_type == 3 {
+            .unwrap_or(if e.comp_type == 3 || e.comp_type == 6 && !flat.contains(&e.register) {
                 ""
             } else {
                 "nointerpolation"
@@ -533,43 +702,49 @@ fn write_exports(
     field: &str,
     elements: &[SigElement],
     exports: &[Insn],
-    registers: &[u32],
+    registers: &[Param],
     first_param: i64,
 ) -> Result<(), String> {
     for (i, e) in elements.iter().enumerate() {
+        let param = registers.iter().position(|p| p.registers().contains(&e.register)).filter(|_| e.sysval == 0);
         let target = match e.sysval {
             1 => 12,
             2 => 13,
-            _ => {
-                first_param
-                    + registers
-                        .iter()
-                        .position(|r| *r == e.register)
-                        .ok_or("unmapped mesh parameter")? as i64
-            }
+            _ => first_param + param.ok_or("unmapped mesh parameter")? as i64,
         };
-        let export = exports
-            .iter()
-            .find(|ins| ins.aux.imm == target)
-            .ok_or_else(|| {
-                format!(
-                    "missing mesh export for {}{} (target {target})",
-                    e.name, e.index
-                )
-            })?;
-        if export.aux.imm2 & 1 != 0 || (e.mask & !export.aux.mask) != 0 {
-            return Err(format!("unsupported packed or masked mesh export {target}"));
+        let Some(export) = exports.iter().find(|ins| ins.aux.imm == target) else {
+            // The program leaves the output unset; its value is undefined.
+            let last = first_param + registers.len() as i64;
+            if e.sysval == 0 && field == "vertex" && exports.iter().all(|ins| ins.aux.imm < last) {
+                continue;
+            }
+            return Err(format!(
+                "missing mesh export for {}{} (target {target})",
+                e.name, e.index
+            ));
+        };
+        if export.aux.imm2 & 1 != 0 {
+            return Err(format!("unsupported packed mesh export {target}"));
         }
         let mut values = Vec::new();
         for ch in 0..4 {
             if e.mask & (1 << ch) == 0 {
                 continue;
             }
-            let op = export.src.get(ch).ok_or("missing mesh export operand")?;
+            // A channel the program never exports has no defined value.
+            let (ch, high) = match param {
+                Some(p) => registers[p].channel(e.register, ch).ok_or("unmapped mesh parameter")?,
+                None => (ch, None),
+            };
+            let op = if export.aux.mask & (1 << ch) == 0 { &Opnd::ConstInt(0) } else { export.src.get(ch).ok_or("missing mesh export operand")? };
             em.touch(op);
             let value = r(op)?;
+            if let Some(high) = high {
+                values.push(format!("f16tof32(({value} >> {}) & 0xffffu)", if high { 16 } else { 0 }));
+                continue;
+            }
             values.push(match e.comp_type {
-                3 => format!("asfloat({value})"),
+                3 | 6 => format!("asfloat({value})"),
                 2 => format!("asint({value})"),
                 _ => value,
             });
@@ -597,7 +772,7 @@ fn fssm_rows(rows: &[[u32; 5]]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-fn heap_extract(rows: &[[u32; 5]], flags: u32, isa: &[u8]) -> crate::ShaderExtract {
+pub(super) fn heap_extract(rows: &[[u32; 5]], flags: u32, isa: &[u8]) -> crate::ShaderExtract {
     crate::ShaderExtract {
         stage: crate::Stage::Mesh,
         shader_model: (6, 5),
@@ -612,6 +787,8 @@ fn heap_extract(rows: &[[u32; 5]], flags: u32, isa: &[u8]) -> crate::ShaderExtra
         fspx_config: None,
         ps09_pixel_inputs: None,
         psv_threads: None,
+        flat_inputs: Vec::new(),
+        flat_outputs: Vec::new(),
         input_sig: Vec::new(),
         output_sig: Vec::new(),
         primitive_sig: Vec::new(),
@@ -731,7 +908,7 @@ mod tests {
                 .iter()
                 .flat_map(|w| w.to_le_bytes())
                 .collect::<Vec<_>>();
-            validate_lane_ops(&disassemble(&bytes), false)
+            { let body = disassemble(&bytes); validate_lane_ops(&body, &waterfall_reads(&body), false) }
         };
         // Entry v5 holds the same packed group identifier in every lane.
         assert!(validate(&[0x7e000505]).is_ok());

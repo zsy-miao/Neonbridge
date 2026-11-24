@@ -108,6 +108,90 @@ pub fn parse_psv0(body: &[u8]) -> Result<Vec<PsvResource>, String> {
         .collect()
 }
 
+/// Recover interpolation for portable pixel bytecode, not native Xbox ISA.
+/// Layout: Microsoft DXC, DxilPipelineStateValidation.h, PSVSignatureElement0.
+/// Cross-check physical rows against ISG1/ISGN instead of guessing qualifiers.
+pub fn portable_pixel_interp(code: &[u8]) -> Option<Vec<(String, String)>> {
+    use tuxbox_dxbc::{Dxbc, parse_signature_part};
+    let container = Dxbc::parse(code).ok()?;
+    let part = |tag| {
+        let p = container.chunk(tag)?;
+        code.get(p.offset..p.offset.checked_add(p.size)?)
+    };
+    let dxil = part(b"DXIL")?;
+    let version = word(dxil, 0)?;
+    if version >> 16 != 0 || version & 0xf0 != 0x60 || dxil.get(8..12)? != b"DXIL"
+        || (word(dxil, 4)? as usize).checked_mul(4)? != dxil.len() { return None; }
+    let start = 8usize.checked_add(word(dxil, 16)? as usize)?;
+    let end = start.checked_add(word(dxil, 20)? as usize)?;
+    if start < 24 || !dxil.get(start..end)?.starts_with(b"BC\xc0\xde") { return None; }
+    let tag = if part(b"ISG1").is_some() { b"ISG1" } else { b"ISGN" };
+    let input = parse_signature_part(tag, part(tag)?).ok()?;
+    let (runtime, mut data) = sections(part(b"PSV0")?)?;
+    if runtime.len() < 36 || runtime[24] != 0 { return None; }
+    let count = word(data, 0)? as usize;
+    data = data.get(4..)?;
+    if count != 0 {
+        let stride = word(data, 0)? as usize;
+        if stride < 16 { return None; }
+        data = data.get(4usize.checked_add(count.checked_mul(stride)?)? ..)?;
+    }
+    let strings_size = word(data, 0)? as usize;
+    if strings_size % 4 != 0 { return None; }
+    let (strings, rest) = data.get(4..)?.split_at_checked(strings_size)?;
+    let index_count = word(rest, 0)? as usize;
+    let (indexes, rest) = rest.get(4..)?.split_at_checked(index_count.checked_mul(4)?)?;
+    let elements = usize::from(runtime[28]);
+    let total_elements = elements + usize::from(runtime[29]) + usize::from(runtime[30]);
+    if total_elements == 0 { return input.is_empty().then(Vec::new); }
+    let stride = word(rest, 0)? as usize;
+    if stride < 16 { return None; }
+    let records = rest.get(4..)?.get(..total_elements.checked_mul(stride)?)?;
+    let mut found = std::collections::BTreeSet::new();
+    let mut result = Vec::new();
+    for row in records.chunks_exact(stride).take(elements) {
+        let rows = usize::from(row[8]);
+        let cols = row[10] & 15;
+        let col = (row[10] >> 4) & 3;
+        if rows == 0 || cols == 0 || cols + col > 4 { return None; }
+        // Unallocated system values are not interpolated by the producer.
+        if row[10] & 0x40 == 0 {
+            if row[11] == 0 { return None; }
+            continue;
+        }
+        let mask = (((1u16 << cols) - 1) << col) as u8;
+        let name = strings.get(word(row, 0)? as usize..)?;
+        let name = std::str::from_utf8(name.get(..name.iter().position(|&c| c == 0)?)?).ok()?;
+        let index = word(row, 4)? as usize;
+        for n in 0..rows {
+            let reg = u32::from(row[9]).checked_add(n as u32)?;
+            // System-generated names may be omitted from the PSV string table.
+            let matches: Vec<_> = input.iter().enumerate().filter(|(_, e)| {
+                e.register == reg && e.mask == mask && if row[11] == 0 {
+                    e.sysval == 0 && e.name.eq_ignore_ascii_case(name)
+                } else { e.sysval != 0 }
+            }).collect();
+            let [(i, e)] = matches.as_slice() else { return None };
+            if row[11] == 0 && e.index != word(indexes, index.checked_add(n)?.checked_mul(4)?)? { return None; }
+            if !found.insert(*i) { return None; }
+            if e.sysval == 1 { continue; } // SV_Position has its own producer declaration.
+            let mode = match row[13] {
+                1 => "nointerpolation",
+                2 => "linear",
+                3 => "centroid",
+                4 => "noperspective",
+                5 => "noperspective centroid",
+                6 => "sample",
+                7 => "noperspective sample",
+                0 if e.sysval != 0 => continue,
+                _ => return None,
+            };
+            result.push((format!("{}{}", e.name, e.index), mode.to_owned()));
+        }
+    }
+    input.iter().enumerate().all(|(i, e)| (e.sysval != 0 && e.register == u32::MAX) || found.contains(&i)).then_some(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

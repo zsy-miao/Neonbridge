@@ -4,13 +4,14 @@ use super::{compute_group, Enc, Insn, Opnd, ShaderExtract, Stage};
 
 pub(super) const READ_LANE: &str = "tb_resolve_readlane";
 
+pub(super) fn applies(ex: &ShaderExtract) -> bool {
+    ex.stage == Stage::Compute
+        && ex.entry.as_deref().is_some_and(|name| name.starts_with("CS_RaytracingResolve_"))
+        && compute_group(ex) == [32, 1, 1]
+}
+
 pub(super) fn wave32(ex: &ShaderExtract, insns: &[Insn]) -> Result<bool, String> {
-    if ex.stage != Stage::Compute
-        || !ex
-            .entry
-            .as_deref()
-            .is_some_and(|name| name.starts_with("CS_RaytracingResolve_"))
-        || compute_group(ex) != [32, 1, 1]
+    if !applies(ex)
         || !insns.iter().any(|op| {
             op.mnemonic.starts_with("v_cmp_") && matches!(op.dst[..], [Opnd::Sgpr(n)] if n & 1 != 0)
         })

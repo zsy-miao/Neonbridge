@@ -260,7 +260,7 @@ pub fn corroborated_descriptor(
 }
 
 /// The same descriptor as [`corroborated_descriptor`], when `root` leaves its
-/// table slot empty and does not already declare that register.
+/// table slot empty.
 pub fn uncovered_descriptor(
     program: &[u8],
     resources: &[[u32; 4]],
@@ -277,12 +277,19 @@ pub fn uncovered_descriptor(
         root.params.get(table as usize).map(|param| &param.kind),
         Some(crate::rootsig::RootParamKind::Table(_))
     ) || table_covers_slot(root, table, slot)
-        || root_declares(root, kind, register, space)
     {
         return None;
     }
+    // An embedded root numbers its ranges independently of the shader. A number it gave to
+    // another slot is replaced with one of our own.
+    if root_declares(root, kind, register, space) {
+        return Some((kind, slot, UNCOVERED_SPACE + table));
+    }
     Some((kind, register, space))
 }
+
+/// Spaces of slots whose own register an embedded root already uses, one per table.
+const UNCOVERED_SPACE: u32 = 32_700;
 
 /// FSSM descriptor slots missing from an embedded root. Each returned binding
 /// is one range to append: the slot is uncovered and the register is free.
@@ -390,6 +397,8 @@ fn descriptor_class(
     register: u32,
     resources: &[[u32; 4]],
 ) -> Option<(u32, u32)> {
+    let location = if stage <= 1 && matches!(class, 0x300 | 0x302 | 0x303)
+        && (location >> 8) & 0xff == 9 { 0x800 | (location & 0xff) } else { location };
     Some(match (class, location) {
         (0x300, 0x408 | 0x10508) if stage == 5 => (0, 3),
         (0x300 | 0x303, 0x404 | 0x10504) if stage == 5 => {
@@ -781,7 +790,7 @@ mod tests {
         let taken = root(vec![RootRange {
             range_type: 2, num: 1, base_register: 28, space: 1, offset_in_table: 16,
         }]);
-        assert_eq!(uncovered_descriptor(&image, &resources, 5, 5, 0x320, &taken), None);
+        assert_eq!(uncovered_descriptor(&image, &resources, 5, 5, 0x320, &taken), Some((2, 25, 32_701)));
     }
 
     #[test]
@@ -795,6 +804,14 @@ mod tests {
         assert_eq!(corroborated_descriptor(&sampler, &[[1, 0, 3, 3]], 5, 5, 0), None);
         let image = program(&[[3, 0xc8, 1, 28, 0x105]], &[[0x302, 0xc8, 28, 0, 0x10504]]);
         assert_eq!(corroborated_descriptor(&image, &[[2, 1, 28, 28]], 5, 5, 0x324), None);
+    }
+
+    #[test]
+    fn raster_descriptor_in_s9_table_is_recognized() {
+        let (kind, psv) = descriptor_class(0x300, 0x908, 0, 0, 5, &[]).unwrap();
+        assert_eq!((kind, psv), (0, 3));
+        let (kind, psv) = descriptor_class(0x302, 0x904, 0, 1, 8, &[]).unwrap();
+        assert_eq!((kind, psv), (2, 2));
     }
 
     #[test]

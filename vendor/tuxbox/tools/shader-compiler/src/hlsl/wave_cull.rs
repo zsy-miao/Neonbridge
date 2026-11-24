@@ -172,6 +172,25 @@ pub(super) fn prepare_insn(em: &mut Emitter<'_>, idx: usize, i: &Insn) -> Result
 
 pub(super) fn emit(em: &mut Emitter<'_>, idx: usize, i: &Insn, target: Option<usize>) -> Result<bool,String> {
     let op = i.mnemonic.as_str();
+    if em.own_lane_reads.contains(&idx) {
+        em.ws(&i.dst[0], &r(&i.src[0])?)?;
+        return Ok(true);
+    }
+    // A lane that a loop's mask branches leave behind only has its own EXEC bit to follow.
+    if em.ex.stage == Stage::Mesh && em.in_loop(idx) {
+        let test = match op {
+            "s_cbranch_execz" => "(exec_lo & 1u) == 0u",
+            "s_cbranch_vccz" => "(vcc_lo & 1u) == 0u",
+            "s_cbranch_vccnz" => "(vcc_lo & 1u) != 0u",
+            _ => "",
+        };
+        if !test.is_empty() {
+            if let Some(t) = target {
+                em.line(&format!("if ({test}) j{t} = true;"));
+            }
+            return Ok(true);
+        }
+    }
     if !em.hoist_wave_exchanges && i.enc == super::Enc::Sopp && (6..=9).contains(&i.op) {
         if let Some(t) = target {
             em.line(&format!("if ({}) j{t} = true;", branch_condition(em, i, "")));

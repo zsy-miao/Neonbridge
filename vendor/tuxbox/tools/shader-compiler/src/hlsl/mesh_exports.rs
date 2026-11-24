@@ -172,7 +172,7 @@ fn allocation(seq: &mut Sequence<'_>) -> Result<(Opnd, Opnd, Opnd, [Opnd; 3]), S
     Ok((vertices, primitives, invalid, temps))
 }
 
-fn allocation_128(seq: &mut Sequence<'_>) -> Result<(Opnd, Opnd, Opnd, [Opnd; 3]), String> {
+fn allocation_128(seq: &mut Sequence<'_>) -> Result<(Opnd, Opnd, Opnd, [Opnd; 3], Opnd), String> {
     let vertices = seq.count()?;
     let limit = seq.imm("s_movk_i32", 128)?;
     let [limit @ (S(6) | S(14..))] = limit.dst[..] else {
@@ -207,13 +207,19 @@ fn allocation_128(seq: &mut Sequence<'_>) -> Result<(Opnd, Opnd, Opnd, [Opnd; 3]
     let vert = seq.assign("v_cndmask_b32", &[vertices, I(1), invalid])?;
     let prim = seq.assign("v_cndmask_b32", &[primitives, I(1), invalid])?;
     let temps = [bad, vert, prim];
-    if vert == prim || !temps.iter().all(|op| matches!(op, V(1..))) {
+    if vert == prim || !temps.iter().all(|op| matches!(op, V(_))) {
         return Err("unsupported temporary registers in mesh allocation".into());
     }
     seq.write(S(4), "s_xor_b64", &[invalid, I(-1)])?;
     seq.write(S(6), "v_readfirstlane_b32", &[vert])?;
     seq.write(S(7), "v_readfirstlane_b32", &[prim])?;
-    seq.write(VccLo, "v_cmpx_eq_u32", &[I(0), V(0)])?;
+    let first = seq.next("v_cmpx_eq_u32")?;
+    let [I(0), lane @ V(_)] = first.src[..] else {
+        return Err(format!("unsupported operands for mesh v_cmpx_eq_u32 at {:#x}", first.offset));
+    };
+    if first.dst != [VccLo] || temps.contains(&lane) {
+        return Err("unsupported temporary registers in mesh allocation".into());
+    }
     let restore = seq.branch("s_cbranch_execz")?;
     seq.write(S(7), "s_lshl_b32", &[S(7), I(12)])?;
     seq.write(VccLo, "s_andn2_b64", &[ExecLo, invalid])?;
@@ -236,7 +242,7 @@ fn allocation_128(seq: &mut Sequence<'_>) -> Result<(Opnd, Opnd, Opnd, [Opnd; 3]
     seq.imm("s_waitcnt", -241)?;
     seq.write(ExecLo, "s_mov_b64", &[S(0)])?;
     seq.imm("s_barrier", 0)?;
-    Ok((vertices, primitives, invalid, temps))
+    Ok((vertices, primitives, invalid, temps, lane))
 }
 
 pub(super) fn recognize(
@@ -262,12 +268,12 @@ pub(super) fn recognize(
         code: insns,
         at: start,
     };
-    let (vertices, primitives, invalid, temps) = if compact {
+    let (vertices, primitives, invalid, temps, lane_index) = if compact {
         allocation_128(&mut seq)?
     } else {
-        allocation(&mut seq)?
+        let (vertices, primitives, invalid, temps) = allocation(&mut seq)?;
+        (vertices, primitives, invalid, temps, V(1))
     };
-    let lane_index = V(if compact { 0 } else { 1 });
     seq.write(VccLo, "v_cmp_gt_u32", &[primitives, lane_index])?;
     if compact {
         seq.write(S(0), "s_and_b64", &[VccLo, S(4)])?;
@@ -308,7 +314,7 @@ pub(super) fn recognize(
     seq.write(S(0), "s_or_b64", &[S(0), S(2)])?;
     let guarded = seq.assign("v_cndmask_b32", &[packed, Literal(0x80000000), S(0)])?;
     if !(if compact {
-        matches!(guarded, V(1..))
+        matches!(guarded, V(_)) && guarded != lane_index
     } else {
         guarded == V(0)
     }) {
@@ -345,32 +351,56 @@ pub(super) fn recognize(
     let end_vertices = seq.branch("s_cbranch_execz")?;
     let mut vertex_exports = Vec::new();
     let mut targets = 0u64;
-    let mut zero_lane_register = false;
+    // Registers the program sets for later exports. The emitter reads the values directly.
+    let mut moved = std::collections::BTreeMap::new();
     while let Some(op) = seq.code.get(seq.at) {
-        if compact
-            && !zero_lane_register
-            && targets & (1 << 12) != 0
-            && op.mnemonic == "v_mov_b32"
-            && op.enc == Enc::Vop1
-            && op.dst == [lane_index]
-        {
-            seq.write(lane_index, "v_mov_b32", &[I(0)])?;
-            zero_lane_register = true;
+        if op.mnemonic == "v_mov_b32" && op.enc == Enc::Vop1 && op.aux.sdwa.is_none() {
+            let ([dst @ V(n)], [source]) = (&op.dst[..], &op.src[..]) else {
+                return Err(format!("unsupported operands for mesh {} at {:#x}", op.mnemonic, op.offset));
+            };
+            let value = match source {
+                V(m) => moved.get(m).copied().unwrap_or(*source),
+                I(_) | Literal(_) | Opnd::ConstF32(_) => *source,
+                _ => return Err(format!("unsupported operands for mesh {} at {:#x}", op.mnemonic, op.offset)),
+            };
+            let _ = dst;
+            moved.insert(*n, value);
+            seq.at += 1;
+            continue;
+        }
+        if is_wait(op) {
+            seq.at += 1;
             continue;
         }
         if op.enc != Enc::Exp {
             break;
         }
-        let export = seq.next("exp")?;
+        let mut export = seq.next("exp")?.clone();
+        for source in &mut export.src {
+            if let V(n) = source {
+                if let Some(value) = moved.get(n) {
+                    *source = *value;
+                }
+            }
+        }
+        // A register the sequence itself overwrites holds no output: the value is undefined.
+        for source in &mut export.src {
+            if matches!(source, V(_)) && *source != guarded && !preserved(source) {
+                *source = I(0);
+            }
+        }
+        let export = &export;
         let target = export.aux.imm;
         let valid_target = match target {
+            // The last position export carries DONE.
             12 => {
-                export.aux.mask == 15 && export.aux.imm2 == if clip_mask.is_some() { 0 } else { 2 }
+                let last = clip_mask.is_none() || targets & (1 << 13) != 0;
+                export.aux.mask == 15 && export.aux.imm2 == if last { 2 } else { 0 }
             }
             13 => {
+                let last = targets & (1 << 12) != 0;
                 clip_mask.is_some_and(|mask| mask & !export.aux.mask == 0)
-                    && targets & (1 << 12) != 0
-                    && export.aux.imm2 == 2
+                    && export.aux.imm2 == if last { 2 } else { 0 }
             }
             32..64 => export.aux.imm2 == 0,
             _ => false,
@@ -378,7 +408,7 @@ pub(super) fn recognize(
         if !valid_target
             || export.aux.mask == 0
             || !export.src.iter().enumerate().all(|(channel, reg)| {
-                export.aux.mask & (1 << channel) == 0 || *reg == guarded || preserved(reg)
+                export.aux.mask & (1 << channel) == 0 || *reg == guarded || !matches!(reg, V(_)) || preserved(reg)
             })
             || targets & (1 << target) != 0
             || primitive.is_some_and(|export| target == export.aux.imm)
@@ -389,15 +419,7 @@ pub(super) fn recognize(
             ));
         }
         targets |= 1 << target;
-        let mut export = export.clone();
-        if zero_lane_register {
-            for source in &mut export.src {
-                if *source == lane_index {
-                    *source = I(0);
-                }
-            }
-        }
-        vertex_exports.push(export);
+        vertex_exports.push(export.clone());
     }
     seq.arrive(end_vertices)?;
     seq.imm("s_endpgm", 0)?;
