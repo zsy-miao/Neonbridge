@@ -315,7 +315,7 @@ pub fn private(shader: &[u8], stage: u32) -> Option<Vec<[u32; 13]>> {
     let dxil = chunk(b"DXIL")?;
     if !matches!(stage, 0 | 5)
         || word(dxil, 0)? >> 16 != stage
-        || u64::from_le_bytes(chunk(b"SFI0")?.try_into().ok()?) & (3 << 25) != 0
+        || (stage != 5 && u64::from_le_bytes(chunk(b"SFI0")?.try_into().ok()?) & (3 << 25) != 0)
     {
         return None;
     }
