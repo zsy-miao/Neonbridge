@@ -115,7 +115,7 @@ impl Registration {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "system" fn gi_register_device(
+pub(crate) unsafe extern "system" fn gi_register_device(
     _: &Object,
     device: *const Object,
     kinds: u32,
@@ -183,7 +183,7 @@ unsafe extern "system" fn gi_register_device(
 }
 
 #[unsafe(no_mangle)]
-extern "system" fn gi_stop(_: &Object, token: u64) {
+pub(crate) extern "system" fn gi_stop(_: &Object, token: u64) {
     if let Some(reg) = lock(&REGISTRATIONS).get(&token) {
         lock(&reg.state).stopped = true;
         reg.changed.notify_all();
@@ -191,7 +191,7 @@ extern "system" fn gi_stop(_: &Object, token: u64) {
 }
 
 #[unsafe(no_mangle)]
-extern "system" fn gi_unregister(_: &Object, token: u64, timeout: u64) -> bool {
+pub(crate) extern "system" fn gi_unregister(_: &Object, token: u64, timeout: u64) -> bool {
     let Some(reg) = lock(&REGISTRATIONS).get(&token).cloned() else {
         return false;
     };

@@ -1,4 +1,5 @@
 //! GameInput v0 polling and ordered snapshots. The SDK supplies the typed COM tables.
+mod abi;
 mod callbacks;
 mod sample;
 
@@ -22,12 +23,6 @@ const INPUT_IID: GUID = GUID::from_u128(0x11be2a7e_4254_445a_9c09_ffc40f006918);
 const DEVICE_IID: GUID = GUID::from_u128(0x31dd86fb_4c1b_408a_868f_439b3cd47125);
 const READING_IID: GUID = GUID::from_u128(0x2156947a_e1fa_4de0_a30b_d812931dbd8d);
 
-// These immutable objects are the vtables defined by the matching C SDK.
-unsafe extern "C" {
-    static gi_input_table: u8;
-    static gi_device_table: u8;
-    static gi_reading_table: u8;
-}
 
 #[repr(C)]
 struct Object {
@@ -192,7 +187,7 @@ impl Pool {
         Self {
             devices: std::array::from_fn(|slot| {
                 Arc::new(Object {
-                    table: unsafe { &gi_device_table },
+                    table: abi::DEVICE.first(),
                     value: Value::Device {
                         slot,
                         status: AtomicU32::new(0),
@@ -314,7 +309,7 @@ impl Pool {
             }
             self.number += 1;
             let reading = Arc::new(Object {
-                table: unsafe { &gi_reading_table },
+                table: abi::READING.first(),
                 value: Value::Reading(Reading {
                     device: self.devices[slot].clone(),
                     kind,
@@ -386,7 +381,7 @@ unsafe extern "system" fn gi_query(
 
 static MANAGER: LazyLock<Arc<Object>> = LazyLock::new(|| {
     Arc::new(Object {
-        table: unsafe { &gi_input_table },
+        table: abi::INPUT.first(),
         value: Value::Input(Mutex::new(Box::new(Pool::new()))),
     })
 });

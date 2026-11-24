@@ -47,9 +47,9 @@ Leading theory: the title reads its client or monitor size, or the window style,
 - eb1617d:
   - a `tuxbox\` folder beside neonbridge.exe holding every provider DLL is used prebuilt: no cargo or MSVC needed;
   - `neonbridge --package-release <dir>` builds a release;
-  - tools/package-release.ps1 builds into target\package and runs it.
+  - `cargo package-release` (alias in .cargo/config.toml) builds into target\package and runs it.
 - Zip: target\package\dist\neonbridge-0.1.0-win-x64.zip, built from 091353a.
-- Its README.txt still said borderless was the default. The text is fixed in src/main.rs (RELEASE_README, commit after eb1617d). Re-run `tools\package-release.ps1` before publishing so the zip carries the fix.
+- Its README.txt still said borderless was the default. The text is fixed in src/main.rs (RELEASE_README, commit after eb1617d). Re-run `cargo package-release` before publishing so the zip carries the fix.
 - dxcompiler.dll and dxil.dll ship because they are on the Windows SDK redist list (Redist\D3D, classic apps). dxc.exe is not on that list and is not shipped: the shader worker needs the SDK or a DXC release, set through DXC.
 - Not tested on a clean PC.
 
