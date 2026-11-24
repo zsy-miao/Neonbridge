@@ -40,7 +40,7 @@ struct Pool {
     // Only split apertures with live views are retained. An empty original
     // reservation is coalesced and may be released directly by the guest.
     apertures: BTreeMap<usize, (usize, usize)>,
-    // 6Launch: title placeholder reservations (base -> root). Fresh pages
+    // Neonbridge: title placeholder reservations (base -> root). Fresh pages
     // mapped inside one take storage at their VA offset in the root's
     // section, so a VA-contiguous range is one view the host GPU can import.
     roots: BTreeMap<usize, Root>,
@@ -52,7 +52,7 @@ struct Root {
     bound: HashMap<u64, u64>,
 }
 
-/// 6Launch: record a title placeholder reservation (XMemVirtualAlloc profile 7).
+/// Neonbridge: record a title placeholder reservation (XMemVirtualAlloc profile 7).
 pub(crate) fn register_root(base: usize, bytes: usize) {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     pool.roots.retain(|&b, r| b + r.bytes <= base || base + bytes <= b);
@@ -72,7 +72,7 @@ fn available_memory() -> Result<u64, u32> {
     if unsafe { GlobalMemoryStatusEx(&mut info) } == 0 {
         return Err(unsafe { GetLastError() });
     }
-    // 6Launch: page tokens are SEC_RESERVE pagefile sections, committed only
+    // Neonbridge: page tokens are SEC_RESERVE pagefile sections, committed only
     // when a page is first mapped, so a batch is bounded by the commit limit
     // (RAM + pagefile), not by what is free right now. GTA VI asks for 6.5 GB
     // at once on a 16 GB PC; a later commit failure is reported by the map.
@@ -285,7 +285,7 @@ impl Pool {
         self.roots.values().any(|r| Arc::ptr_eq(&r.section, section))
     }
 
-    // 6Launch: native D3D12 imports a CPU range as a heap only when it is a
+    // Neonbridge: native D3D12 imports a CPU range as a heap only when it is a
     // single mapped view. Rejoin neighbouring views that continue the same
     // section at matching offsets, as the console's contiguous GPU ranges do.
     fn merge_views(&mut self, mut start: usize) {

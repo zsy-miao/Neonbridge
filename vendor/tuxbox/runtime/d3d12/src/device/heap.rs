@@ -737,7 +737,7 @@ pub(super) unsafe extern "system" fn committed_layout(
     unsafe { wrap_pageable(Ok(native), &RESOURCE, device, super::ResourceState::from(backing), out) }
 }
 
-/// 6Launch: report a refused CPU-memory heap import with the region's VirtualQuery view
+/// Neonbridge: report a refused CPU-memory heap import with the region's VirtualQuery view
 /// (the host requires committed, private, read-write pages covering whole allocations).
 fn import_failure(call: &str, base: u64, size: u64, error: &windows::core::Error) {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
