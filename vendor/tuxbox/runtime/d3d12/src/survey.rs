@@ -25,15 +25,30 @@ pub(crate) fn enabled() -> bool {
 }
 
 /// Install the assert handler once, when the title creates its first device.
+/// It is installed on every launch: outside survey mode it steps over only the
+/// known-benign asserts in [`BENIGN`] (upstream TuxBox 8017bf5).
 pub(crate) fn install() {
     static INSTALL: Once = Once::new();
-    if !enabled() {
-        return;
-    }
     INSTALL.call_once(|| {
         let handle = unsafe { AddVectoredExceptionHandler(1, Some(handler)) };
-        log(format!("survey mode active (assert handler installed: {})", !handle.is_null()));
+        if enabled() {
+            log(format!("survey mode active (assert handler installed: {})", !handle.is_null()));
+        }
     });
+}
+
+/// Title asserts whose continue path is correct, with the bytes that must sit
+/// at the RVA. The tile-heap mapper breaks when a map request is shorter than
+/// a flagged page run (8 KiB against 16 KiB) and then maps min(run, remaining),
+/// which is the request.
+const BENIGN: &[(usize, &[u8])] = &[(0x4ffd879, &[0xcc, 0x48, 0x8b, 0x1f, 0xe9, 0xf0, 0xfd, 0xff, 0xff])];
+
+fn benign(start: usize, end: usize, at: usize) -> bool {
+    BENIGN.iter().any(|&(rva, bytes)| {
+        at == start + rva && at + bytes.len() <= end
+            // SAFETY: the range lies within the mapped title image.
+            && unsafe { core::slice::from_raw_parts(at as *const u8, bytes.len()) } == bytes
+    })
 }
 
 fn log(line: String) {
@@ -75,7 +90,7 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
         return CONTINUE_SEARCH;
     };
     if record_.ExceptionCode == EXCEPTION_ACCESS_VIOLATION {
-        describe_fault(context);
+        if enabled() { describe_fault(context); }
         return CONTINUE_SEARCH;
     }
     if record_.ExceptionCode != EXCEPTION_BREAKPOINT {
@@ -96,6 +111,18 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     } else {
         return CONTINUE_SEARCH;
     };
+    if !enabled() {
+        if !benign(start, end, at) {
+            // Undo the step: this break is not ours to resume.
+            if at == rip { context.Rip -= 1; }
+            return CONTINUE_SEARCH;
+        }
+        let hits = record(&ASSERTS, at - start);
+        if hits.is_power_of_two() {
+            log(format!("stepped over benign title assert RVA {:#x} (hit {hits})", at - start));
+        }
+        return CONTINUE_EXECUTION;
+    }
     let hits = record(&ASSERTS, at - start);
     if hits.is_power_of_two() {
         log(format!("survey: stepped over title assert RVA {:#x} (hit {hits})", at - start));
