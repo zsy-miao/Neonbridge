@@ -179,6 +179,7 @@ pub(crate) unsafe fn install() {
         crate::paths::install();
         crate::xaudio::install();
         crate::affinity::install();
+        crate::bink::install();
         crate::write_watch::install();
         crate::net::install();
         crate::window::install();
