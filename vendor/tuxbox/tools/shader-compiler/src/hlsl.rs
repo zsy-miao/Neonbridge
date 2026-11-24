@@ -3043,6 +3043,19 @@ impl<'a> Emitter<'a> {
                                 continue;
                             }
                         }
+                        // A sampler picked at run time from the directly indexed compute
+                        // sampler heap (FSSM class 6 base; per-material index << 4).
+                        if self.compute_heap && self.sampler_heap_base == Some(table) && n == 4 && ins.aux.imm == 0
+                            && soff < 106 && written.contains(&soff)
+                        {
+                            for k in 0..4 {
+                                sym.remove(&(d + k));
+                                written.insert(d + k);
+                            }
+                            sym.insert(d, Sym::HeapSamplerAt);
+                            self.res.insert(idx, vec![Res::SamplerHeapLoad(soff)]);
+                            continue;
+                        }
                         // The guest sampler heap pointer is a user SGPR the shader never writes.
                         if sym.get(&soff) == Some(&Sym::SamplerHeapOffset) && n == 4 && ins.aux.imm == 0
                             && sym.get(&b).is_none() && !written.contains(&b)
@@ -4241,7 +4254,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     9 => Some("(exec_lo & 1u) != 0u".into()),
                     // A non-final s_endpgm ends the program on this path: jump to the end label.
                     1 if br.is_some() => Some("true".to_string()),
-                    0 | 1 | 0x0a | 0x0c | 0x1f | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 => None,
+                    // s_sleep (0x0e) and s_setprio (0x0f) are scheduling hints.
+                    0 | 1 | 0x0a | 0x0c | 0x0e | 0x0f | 0x1f | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 => None,
                     _ => return Err("unsupported SOPP".into()),
                 };
                 if let (Some(c), Some(t)) = (cond, br) {
