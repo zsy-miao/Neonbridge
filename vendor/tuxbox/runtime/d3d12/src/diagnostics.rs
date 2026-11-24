@@ -455,3 +455,37 @@ mod tests {
         assert_eq!(seen.sight("b"), Sighting::Repeat);
     }
 }
+
+/// Where frame time goes on our side, for the 10 s heartbeat: nanoseconds per
+/// bucket since the last heartbeat. Record covers every command-list call
+/// (Close and first-use pipeline waits included); the others are subsets or
+/// separate threads, so the buckets do not sum.
+pub(crate) mod cost {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
+
+    #[derive(Clone, Copy)]
+    pub(crate) enum Bucket { Record, Close, Submit, Present, PipelineWait, MemoryWait }
+    const NAMES: [&str; 6] = ["record", "close", "submit", "present", "pipeline wait", "GPU memory wait (worker)"];
+    static NS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+    static SEEN: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+
+    pub(crate) struct Timer(Bucket, Instant);
+    impl Drop for Timer {
+        fn drop(&mut self) {
+            NS[self.0 as usize].fetch_add(self.1.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+    }
+    pub(crate) fn timer(bucket: Bucket) -> Timer { Timer(bucket, Instant::now()) }
+    pub(crate) fn add(bucket: Bucket, ns: u64) { NS[bucket as usize].fetch_add(ns, Ordering::Relaxed); }
+
+    /// "record 3.1, close 0.4, ..." in ms per frame since the previous call.
+    pub(crate) fn split(frames: usize) -> String {
+        let frames = frames.max(1) as f64;
+        (0..6).map(|i| {
+            let now = NS[i].load(Ordering::Relaxed);
+            let delta = now - SEEN[i].swap(now, Ordering::Relaxed);
+            format!("{} {:.2}", NAMES[i], delta as f64 / 1e6 / frames)
+        }).collect::<Vec<_>>().join(", ")
+    }
+}

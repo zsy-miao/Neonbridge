@@ -11,7 +11,7 @@
 use std::sync::{LazyLock, Mutex, Once};
 use windows::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, EXCEPTION_BREAKPOINT, HMODULE};
 use windows::Win32::System::Diagnostics::Debug::{
-    AddVectoredExceptionHandler, EXCEPTION_POINTERS, RtlCaptureStackBackTrace, RtlPcToFileHeader,
+    AddVectoredExceptionHandler, EXCEPTION_POINTERS, RtlCaptureStackBackTrace,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
@@ -131,15 +131,22 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
 }
 
 /// Return address of the first title frame on this thread, as an RVA.
+/// The title image bounds are cached, so a frame is classified by a range
+/// check instead of a loader lookup per frame.
 pub(crate) fn title_rva() -> Option<usize> {
-    let mut frames = [core::ptr::null_mut(); 32];
-    let count = unsafe { RtlCaptureStackBackTrace(0, &mut frames, None) } as usize;
-    let (start, _) = title_image()?;
-    frames[..count].iter().find_map(|&pc| {
-        let mut base = core::ptr::null_mut();
-        unsafe { RtlPcToFileHeader(pc, &mut base) };
-        (base as usize == start).then(|| pc as usize - start)
-    })
+    let (start, end) = title_image()?;
+    let mut frames = [core::ptr::null_mut(); 16];
+    let count = unsafe { RtlCaptureStackBackTrace(1, &mut frames, None) } as usize;
+    frames[..count].iter().map(|&pc| pc as usize).find(|pc| (start..end).contains(pc)).map(|pc| pc - start)
+}
+
+/// A cheap caller stamp for the list ring: the title RVA from a short walk
+/// (8 frames covers slot thunk -> handler -> ensure_open), 0 if none.
+pub(crate) fn title_pc() -> usize {
+    let Some((start, end)) = title_image() else { return 0 };
+    let mut frames = [core::ptr::null_mut(); 8];
+    let count = unsafe { RtlCaptureStackBackTrace(1, &mut frames, None) } as usize;
+    frames[..count].iter().map(|&pc| pc as usize).find(|pc| (start..end).contains(pc)).map_or(0, |pc| pc - start)
 }
 
 /// Log a call to an unmapped vtable slot (once per slot and caller).

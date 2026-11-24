@@ -240,6 +240,8 @@ impl Worker {
                             }
                             std::thread::sleep(Duration::from_millis(1));
                         }
+                        crate::diagnostics::cost::add(
+                            crate::diagnostics::cost::Bucket::MemoryWait, started.elapsed().as_nanos() as u64);
                         unsafe { job.fence.Signal(2)?; }
                         static FIRST: std::sync::Once = std::sync::Once::new();
                         crate::diagnostics::log_once(&FIRST, || format!(

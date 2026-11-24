@@ -296,10 +296,12 @@ fn fit_host(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
 
 type Scratch = (D3D12_COMMAND_LIST_TYPE, ID3D12CommandAllocator, ID3D12GraphicsCommandList7);
 
-/// TUXBOX_LIST_RING=1: record each barrier of a group alone on a scratch list
+/// TUXBOX_BARRIER_PROBE=1: record each barrier of a group alone on a scratch list
 /// and Close it, then log the first 16 the host rejects with all fields.
 fn probe(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
-    if !ring_enabled() { return; }
+    // Its own switch now: a scratch Close per barrier cost frame rate under
+    // TUXBOX_LIST_RING (test6).
+    if crate::env_toggle!("TUXBOX_BARRIER_PROBE") != Some("1") { return; }
     use std::cell::RefCell;
     thread_local! {
         static SCRATCH: RefCell<Vec<Scratch>> = const { RefCell::new(Vec::new()) };

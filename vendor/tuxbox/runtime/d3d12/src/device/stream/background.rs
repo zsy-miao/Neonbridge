@@ -69,6 +69,7 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     if let Some((device, work)) = deferred {
         send(Job { device, work, slot: slot.clone() });
     }
+    let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::PipelineWait);
     let (lock, done) = &DONE;
     let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
     while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) {

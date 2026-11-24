@@ -373,7 +373,7 @@ impl Recording {
         }
         if ring_enabled() {
             if self.ring.len() >= 32 { self.ring.pop_front(); }
-            self.ring.push_back(crate::survey::title_rva().unwrap_or(0));
+            self.ring.push_back(crate::survey::title_pc());
         }
         match &self.phase {
             ListState::Fresh(allocator, initial) => {
@@ -436,11 +436,20 @@ const _: () =
     assert!(mem::offset_of!(List, state) + mem::offset_of!(ListData, write_cursor) == 0x18);
 const _: () = assert!(mem::offset_of!(List, state) + mem::offset_of!(ListData, packet_end) == 0x30);
 
-fn recording(list: &List) -> MutexGuard<'_, Recording> {
-    list.state
-        .recording
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+/// The list's recording state, held for one call; the hold time feeds the
+/// heartbeat's "record" cost.
+struct Held<'a>(MutexGuard<'a, Recording>, #[allow(dead_code)] crate::diagnostics::cost::Timer);
+impl core::ops::Deref for Held<'_> {
+    type Target = Recording;
+    fn deref(&self) -> &Recording { &self.0 }
+}
+impl core::ops::DerefMut for Held<'_> {
+    fn deref_mut(&mut self) -> &mut Recording { &mut self.0 }
+}
+
+fn recording(list: &List) -> Held<'_> {
+    let timer = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Record);
+    Held(list.state.recording.lock().unwrap_or_else(|poison| poison.into_inner()), timer)
 }
 
 // FD3D12CommandListFence::Signal reads the type at queue+0x10 before
@@ -645,6 +654,7 @@ fn retire(old: ID3D12GraphicsCommandList) {
 }
 
 unsafe extern "system" fn close(list: &List) -> HRESULT {
+    let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Close);
     let mut state = recording(list);
     state.forgive();
     match state.phase {
@@ -1691,6 +1701,7 @@ unsafe extern "system" fn execute(queue: &Queue, count: u32, lists: *const *mut 
 }
 
 unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, frame: Option<(u64,u32)>) {
+    let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Submit);
     let mut submitted = queue
         .state
         .submission
@@ -1992,7 +2003,10 @@ unsafe fn present_planes(
             crate::diagnostics::log_once(&PARTIAL, || "present: source rect, destination, color space or options ignored".to_owned());
         }
     }
-    let result = queue.state.presentation.present(&queue.native, source);
+    let result = {
+        let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Present);
+        queue.state.presentation.present(&queue.native, source)
+    };
     // Frame pacing must advance even if the host present failed; the title
     // otherwise waits forever for this token's flip.
     unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
@@ -2015,7 +2029,8 @@ unsafe fn present_planes(
             if now >= last + 10_000 && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
                 let frames = (index + 1).saturating_sub(LAST_INDEX.swap(index + 1, Ordering::Relaxed));
                 let fps = if last == 0 { 0.0 } else { frames as f64 * 1000.0 / (now - last) as f64 };
-                crate::diagnostics::log_line(format_args!("completed PresentX #{} ({fps:.1} fps)", index + 1));
+                crate::diagnostics::log_line(format_args!(
+                    "completed PresentX #{} ({fps:.1} fps; ms/frame: {})", index + 1, crate::diagnostics::cost::split(frames)));
             }
         }
     }
