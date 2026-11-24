@@ -61,6 +61,13 @@ impl Emitter<'_> {
         Ok((r(operand)?, self.pair_high(operand)?))
     }
 
+    /// A binary64 source as `uint2(low, high)`, abs and neg applied to the sign.
+    pub(super) fn f64_source(&mut self, ins: &Insn, i: usize) -> Result<String, String> {
+        let (low, high) = self.compare_pair(&ins.src[i], "f64")?;
+        let high = sign_modifiers(high, 0x8000_0000, ins.aux.mask, i as u8);
+        Ok(format!("uint2({low}, {high})"))
+    }
+
     /// V_CVT_F32_F64's result bits; abs and neg act on the binary64 sign.
     pub(super) fn cvt_f32_f64(&mut self, ins: &Insn) -> Result<String, String> {
         let (low, high) = self.compare_pair(&ins.src[0], "f64")?;

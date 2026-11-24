@@ -343,6 +343,23 @@ uint tb_unorm16(float x) { precise double p = (double)saturate(x) * 65535.0; uin
 // kept, NaN quieted with its top payload bits. Exact values (Xbox2Windows d6624c0e's
 // slice) come out unchanged.
 uint tb_cvt_f32_f64(uint lo, uint hi) { uint s = hi & 0x80000000u, e = (hi >> 20) & 0x7ffu, fh = hi & 0xfffffu; if (e == 0x7ffu) return ((fh | lo) != 0u) ? (s | 0x7fc00000u | (fh << 3) | (lo >> 29)) : (s | 0x7f800000u); if (e == 0u) return s; int x = (int)e - 896; if (x >= 255) return s | 0x7f800000u; uint m = 0x800000u | (fh << 3) | (lo >> 29), rem = lo & 0x1fffffffu, bits, rnd, sticky; if (x > 0) { bits = ((uint)x << 23) | (m & 0x7fffffu); rnd = (rem >> 28) & 1u; sticky = rem & 0x0fffffffu; } else { uint sh = (uint)(1 - x); if (sh > 24u) return s; uint lost = m & ((1u << sh) - 1u); bits = m >> sh; rnd = (lost >> (sh - 1u)) & 1u; sticky = (lost & ((1u << (sh - 1u)) - 1u)) | rem; } if (rnd != 0u && (sticky != 0u || (bits & 1u) != 0u)) bits += 1u; return s | bits; }
+// VOP1 f64 rounding and frexp (decoded per Xbox2Windows 1ca92d57): integer bit
+// work plus exact double adds; NaN and infinity pass through (fract: NaN).
+uint2 tb_shl64(uint2 v, uint s) { if (s == 0u) return v; if (s >= 32u) return uint2(0u, v.x << (s - 32u)); return uint2(v.x << s, (v.y << s) | (v.x >> (32u - s))); }
+double tb_d64(uint2 x) { return asdouble(x.x, x.y); }
+uint2 tb_u64(double d) { uint lo, hi; asuint(d, lo, hi); return uint2(lo, hi); }
+bool tb_nonfinite64(uint2 x) { return ((x.y >> 20) & 0x7ffu) == 0x7ffu; }
+uint2 tb_trunc64(uint2 x) { int e = (int)((x.y >> 20) & 0x7ffu) - 1023; if (e >= 52) return x; if (e < 0) return uint2(0u, x.y & 0x80000000u); uint f = (uint)(52 - e); if (f >= 32u) return uint2(0u, x.y & ~((1u << (f - 32u)) - 1u)); return uint2(x.x & ~((1u << f) - 1u), x.y); }
+uint2 tb_floor64(uint2 x) { uint2 t = tb_trunc64(x); if (!tb_nonfinite64(x) && (x.y & 0x80000000u) != 0u && any(t != x)) return tb_u64(tb_d64(t) - 1.0); return t; }
+uint2 tb_ceil64(uint2 x) { uint2 t = tb_trunc64(x); if (!tb_nonfinite64(x) && (x.y & 0x80000000u) == 0u && any(t != x)) return tb_u64(tb_d64(t) + 1.0); return t; }
+bool tb_odd64(uint2 t) { int e = (int)((t.y >> 20) & 0x7ffu) - 1023; if (e < 0 || e > 52) return false; uint b = (uint)(52 - e); if (b == 52u) return true; return ((b >= 32u ? (t.y >> (b - 32u)) : (t.x >> b)) & 1u) != 0u; }
+uint2 tb_rndne64(uint2 x) { if (tb_nonfinite64(x)) return x; uint2 t = tb_trunc64(x); precise double d = tb_d64(x) - tb_d64(t); double a = abs(d); if (a > 0.5 || (a == 0.5 && tb_odd64(t))) return tb_u64(tb_d64(t) + (d < 0.0 ? -1.0 : 1.0)); return t; }
+uint2 tb_fract64(uint2 x) { if (tb_nonfinite64(x)) return ((x.y & 0xfffffu) | x.x) != 0u ? x : uint2(0u, 0x7ff80000u); precise double r = tb_d64(x) - tb_d64(tb_floor64(x)); return tb_u64(min(r, asdouble(0xffffffffu, 0x3fefffffu))); }
+int tb_frexp_exp32(uint x) { uint e = (x >> 23) & 0xffu, m = x & 0x7fffffu; if (e == 0xffu || (e == 0u && m == 0u)) return 0; if (e == 0u) return (int)firstbithigh(m) - 148; return (int)e - 126; }
+uint tb_frexp_mant32(uint x) { uint e = (x >> 23) & 0xffu, m = x & 0x7fffffu; if (e == 0xffu || (e == 0u && m == 0u)) return x; if (e == 0u) m = (m << (23u - firstbithigh(m))) & 0x7fffffu; return (x & 0x80000000u) | (126u << 23) | m; }
+int tb_top64(uint2 m) { return m.y != 0u ? 32 + (int)firstbithigh(m.y) : (int)firstbithigh(m.x); }
+int tb_frexp_exp64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return 0; if (e == 0u) return tb_top64(m) - 1073; return (int)e - 1022; }
+uint2 tb_frexp_mant64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return x; if (e == 0u) { m = tb_shl64(m, (uint)(52 - tb_top64(m))); m.y &= 0xfffffu; } return uint2(m.x, (x.y & 0x80000000u) | (1022u << 20) | m.y); }
 float tb_ldexp(float x, int n) { n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
 "#;
 
@@ -1187,6 +1204,12 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<(bool, bool), String> {
 /// Instructions whose 64-bit SGPR source is a lane mask (EXEC, VCC, a compare result
 /// or a saved EXEC). The per-invocation model holds only this lane's bit there, so
 /// counting the mask's bits needs a wave ballot.
+/// The f64 VOP1 rounding/frexp lowerings and the v_pipeflush/v_clrexcp no-ops
+/// (TB_VOP1_F64=0 refuses them as before).
+fn vop1_f64_on() -> bool {
+    std::env::var("TB_VOP1_F64").map_or(true, |v| v.trim() != "0")
+}
+
 fn mask_high_shadow() -> bool {
     std::env::var("TB_MASK_HIGH_SHADOW").map_or(true, |v| v.trim() != "0")
 }
@@ -6259,6 +6282,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     fn emit_vec(&mut self, ins: &Insn) -> Result<(), String> {
+        // Xbox2Windows 1ca92d57 (MIT, Vlad Bondarenko) decodes these operand-free
+        // VOP1 forms; they change nothing a translated shader sees.
+        if matches!(ins.mnemonic.as_str(), "v_pipeflush" | "v_clrexcp") && vop1_f64_on() {
+            return Ok(());
+        }
         let mut m = ins.mnemonic.clone();
         let s = &ins.src;
         let d = ins.dst.first().cloned().ok_or("no dst")?;
@@ -7164,6 +7192,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_cvt_f32_ubyte3" => Some(format!("(float)(({a} >> 24) & 0xffu)")),
             "v_cvt_f32_f16" => Some(format!("f16tof32({a})")),
             "v_fract_f32" => Some(format!("tb_fract({})", fa()?)),
+            "v_frexp_mant_f32" if vop1_f64_on() => Some(format!("asfloat(tb_frexp_mant32(asuint({})))", fa()?)),
             "v_trunc_f32" => Some(format!("trunc({})", fa()?)),
             "v_ceil_f32" => Some(format!("ceil({})", fa()?)),
             "v_rndne_f32" => Some(rounding::rndne(&fa()?)),
@@ -7198,6 +7227,24 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // Binary64 to binary32, rounded to nearest even in integers. Xbox2Windows d6624c0e
         // (PR #1660, MIT, JB2WIN) lowers the exact static pairs; this covers any pair.
         // TB_CVT_F32_F64=0 refuses it as before.
+        if vop1_f64_on() && matches!(m.as_str(), "v_trunc_f64" | "v_ceil_f64" | "v_rndne_f64" | "v_floor_f64"
+            | "v_fract_f64" | "v_frexp_mant_f64" | "v_frexp_exp_i32_f64")
+        {
+            if ins.enc == Enc::Vop3 && (ins.aux.imm != 0 || ins.aux.imm2 != 0) {
+                return Err(format!("{m} with clamp or output modifier"));
+            }
+            let x = self.f64_source(ins, 0)?;
+            let helper = &m["v_".len()..m.len() - "_f64".len()];
+            if m == "v_frexp_exp_i32_f64" {
+                return self.wv(&d, &format!("asuint(tb_frexp_exp64({x}))"));
+            }
+            let Opnd::Vgpr(n) = d else { return Err(format!("{m}: destination is not a VGPR pair")) };
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("uint2 t{t} = tb_{helper}64({x});"));
+            self.wv(&d, &format!("t{t}.x"))?;
+            return self.wv(&Opnd::Vgpr(n + 1), &format!("t{t}.y"));
+        }
         if m == "v_cvt_f32_f64" && std::env::var("TB_CVT_F32_F64").map_or(true, |v| v.trim() != "0") {
             let bits = self.cvt_f32_f64(ins)?;
             let e = if ins.enc == Enc::Vop3 && (ins.aux.imm != 0 || ins.aux.imm2 != 0) {
@@ -7213,6 +7260,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         } else if vop3 { c.clone() } else { "vcc_lo".to_string() };
         let e = match m.as_str() {
             "v_mov_b32" => a,
+            // The exponent ignores the sign, so abs and neg change nothing.
+            "v_frexp_exp_i32_f32" if vop1_f64_on() => format!("asuint(tb_frexp_exp32({a}))"),
             "v_cndmask_b32" => {
                 // E64 permits float sign modifiers on both data sources. Apply them
                 // to the bits so signed zero and NaN payloads survive the selection.
