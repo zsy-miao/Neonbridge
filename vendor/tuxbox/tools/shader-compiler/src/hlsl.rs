@@ -1134,7 +1134,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
     if matches!(ex.stage, Stage::Vertex | Stage::Geometry) {
         em.out_interp = feeds_ps.cloned().unwrap_or_default();
     }
-    em.vreg_array = em.insns.iter().any(|i| i.mnemonic.starts_with("v_movrel"));
+    em.vreg_array = em.insns.iter().any(|i| i.mnemonic.starts_with("v_movrel") || i.mnemonic == "v_swaprel_b32");
     // Lane-spill slots beyond the tracked range are function-scope temporaries.
     for ins in &em.insns {
         for o in ins.dst.iter().chain(ins.src.iter()) {
@@ -5523,7 +5523,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             return self.wv(&d, &format!(
                 "(t{t}w == 0u ? 0u : ((t{t}o + t{t}w >= 32u) ? asuint(asint({a}) >> t{t}o) : asuint(asint(({a}) << (32u - t{t}o - t{t}w)) >> (32u - t{t}w))))"));
         }
-        if matches!(m.as_str(), "v_movrels_b32" | "v_movreld_b32" | "v_movrelsd_b32") {
+        if matches!(m.as_str(), "v_movrels_b32" | "v_movreld_b32" | "v_movrelsd_b32" | "v_movrelsd_2_b32" | "v_swaprel_b32") {
             // Register-relative moves: the source and/or destination VGPR number is offset by
             // M0 at run time (local arrays kept in registers). Lowered to a chain over every
             // VGPR the program uses.
@@ -5535,10 +5535,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             let t = self.tmp;
             self.tmp += 1;
-            let src = if m == "v_movreld_b32" { format!("tb_v[{sn}]") } else { format!("tb_v[({sn}u + m0) & 255u]") };
+            // The _2 and swap forms take the source offset from M0[9:0] and the
+            // destination offset from M0[25:16].
+            let split = matches!(m.as_str(), "v_movrelsd_2_b32" | "v_swaprel_b32");
+            let (soff, doff) = if split { ("(m0 & 0x3ffu)", "((m0 >> 16) & 0x3ffu)") } else { ("m0", "m0") };
+            let src = if m == "v_movreld_b32" { format!("tb_v[{sn}]") } else { format!("tb_v[({sn}u + {soff}) & 255u]") };
             self.line(&format!("uint t{t} = {src};"));
-            let dst = if m == "v_movrels_b32" { format!("tb_v[{dn}]") } else { format!("tb_v[({dn}u + m0) & 255u]") };
-            self.line(&format!("if (exec_lo & 1u) {dst} = t{t};"));
+            let dst = if m == "v_movrels_b32" { format!("tb_v[{dn}]") } else { format!("tb_v[({dn}u + {doff}) & 255u]") };
+            if m == "v_swaprel_b32" {
+                self.line(&format!("if (exec_lo & 1u) {{ {src} = {dst}; {dst} = t{t}; }}"));
+            } else {
+                self.line(&format!("if (exec_lo & 1u) {dst} = t{t};"));
+            }
             return Ok(());
         }
         if matches!(m.as_str(), "v_fma_mix_f32" | "v_fma_mixlo_f16" | "v_fma_mixhi_f16") {
@@ -5896,9 +5904,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_mul_f32" => Some(format!("{} * {}", fa()?, fb()?)),
             "v_min_f32" => Some(format!("tb_fmin({}, {})", fa()?, fb()?)),
             "v_max_f32" => Some(format!("tb_fmax({}, {})", fa()?, fb()?)),
+            "v_mac_f32" | "v_fmac_f32" if legacy => Some(format!("tb_mull({}, {}) + asfloat({dn})", fa()?, fb()?)),
             "v_mac_f32" | "v_fmac_f32" => Some(format!("{} * {} + asfloat({dn})", fa()?, fb()?)),
             "v_madmk_f32" | "v_fmamk_f32" => Some(format!("{} * {k} + {}", fa()?, fb()?)),
             "v_madak_f32" | "v_fmaak_f32" => Some(format!("{} * {} + {k}", fa()?, fb()?)),
+            "v_fma_f32" if legacy => Some(format!("tb_mull({}, {}) + {}", fa()?, fb()?, fc()?)),
             "v_mad_f32" if legacy => Some(format!("tb_mull({}, {}) + {}", fa()?, fb()?, fc()?)),
             "v_mad_f32" | "v_fma_f32" => Some(format!("{} * {} + {}", fa()?, fb()?, fc()?)),
             "v_min3_f32" => Some(format!("tb_fmin(tb_fmin({}, {}), {})", fa()?, fb()?, fc()?)),
@@ -5955,6 +5965,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_xor_b32" => format!("({a} ^ {b})"),
             "v_xnor_b32" => format!("(~({a} ^ {b}))"),
             "v_not_b32" => format!("(~{a})"),
+            // Each signed 16-bit half saturated to an unsigned byte; D[31:16] = 0.
+            "v_sat_pk_u8_i16" => format!("((uint(clamp(asint({a} << 16) >> 16, 0, 255))) | (uint(clamp(asint({a}) >> 16, 0, 255)) << 8))"),
             "v_bfrev_b32" => format!("reversebits({a})"),
             // Find-first-bit: -1 when no bit is set (HLSL intrinsics agree for zero input).
             "v_ffbl_b32" => format!("firstbitlow({a})"),
