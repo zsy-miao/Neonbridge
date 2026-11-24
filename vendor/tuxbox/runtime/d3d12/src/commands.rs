@@ -1424,6 +1424,24 @@ unsafe fn copy_location<'a>(
     Some((host, resource.state.placed()))
 }
 
+/// The trailing flags of the console's copies (CopyTextureRegionX, CopyResourceX)
+/// have no desktop counterpart; five-star-recomp 53f89d5 (GPL-3.0) drops them
+/// and copies. A nonzero value is logged once per call and the copy recorded;
+/// TUXBOX_COPY_FLAGS_STRICT=1 refuses the list as before.
+fn copy_flags_dropped(call: &str, flags: u32) -> bool {
+    if crate::env_toggle!("TUXBOX_COPY_FLAGS_STRICT") == Some("1") {
+        return false;
+    }
+    static SEEN: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() < 32 && !seen.iter().any(|(c, f)| c == call && *f == flags) {
+        seen.push((call.to_owned(), flags));
+        crate::diagnostics::log_line(format_args!(
+            "{call} flags {flags:#x} dropped, copy recorded (five-star 53f89d5; TUXBOX_COPY_FLAGS_STRICT=1 refuses the list)"));
+    }
+    true
+}
+
 unsafe extern "system" fn copy_texture(
     list: &List,
     dst: *const CopyLocation,
@@ -1438,7 +1456,7 @@ unsafe extern "system" fn copy_texture(
     if !state.can_record(&list.native) {
         return;
     }
-    if flags != 0 {
+    if flags != 0 && !copy_flags_dropped("CopyTextureRegionX", flags) {
         crate::diagnostics::recording_error(format_args!("CopyTextureRegion flags {flags:#x}"));
         { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
@@ -1483,7 +1501,7 @@ unsafe extern "system" fn copy_resource(
     if !state.can_record(&list.native) {
         return;
     }
-    if options != 0 {
+    if options != 0 && !copy_flags_dropped("CopyResourceX", options) {
         crate::diagnostics::recording_error(format_args!(
             "slot 84 CopyResource options {options:#x}"
         ));
