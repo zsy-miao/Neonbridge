@@ -6,6 +6,7 @@ mod console_cpu;
 mod console_mode;
 mod diagnostics;
 mod heap;
+mod lazy_commit;
 mod history;
 mod loader;
 mod net;

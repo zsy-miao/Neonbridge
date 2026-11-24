@@ -81,7 +81,9 @@ pub(crate) unsafe extern "system" fn read_file(
     if ok != 0 || buffer.is_null() || !enabled() || unsafe { GetLastError() } != ERROR_NOACCESS {
         return ok;
     }
-    let changed = unsafe { prepare(buffer as usize, bytes as usize) };
+    // Lazy title views (lazy_commit.rs) are reserved mapped pages: commit them too.
+    let lazy = crate::lazy_commit::ensure(buffer as usize, bytes as usize) * 0x1_0000;
+    let changed = lazy + unsafe { prepare(buffer as usize, bytes as usize) };
     // A split's gap closes within microseconds; let it finish.
     std::thread::yield_now();
     let again = unsafe { ReadFile(file, buffer, bytes, read, overlapped) };

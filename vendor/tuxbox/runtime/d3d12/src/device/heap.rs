@@ -322,6 +322,8 @@ pub(super) fn import_buffer_with_heap(
     let heap = if let Ok(sized) = device.native.cast::<ID3D12Device13>() {
         device.state.page_pools.import(&sized, base, size, pin)?
     } else {
+        // Committed first: a part-committed view splits into several regions.
+        commit_title_range(base, size);
         let mut region = MEMORY_BASIC_INFORMATION::default();
         if unsafe { VirtualQuery(Some(base as _), &mut region, size_of_val(&region)) } == 0
             || region.AllocationBase as u64 != base || region.RegionSize as u64 != size {
@@ -792,6 +794,8 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     // views and no heap spans it. xmem rejoins views of one section at
     // consecutive offsets into one view on request. A range still split is
     // refused without the kernel call (TUXBOX_IMPORT_PRECHECK=0 asks anyway).
+    // Committed first: the precheck and the driver need committed pages.
+    commit_title_range(base, size);
     let precheck = crate::env_toggle!("TUXBOX_IMPORT_PRECHECK") != Some("0");
     let multi = size > u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
     if precheck && multi && !one_allocation(base, size) && !(join_page_range(base, size) && one_allocation(base, size)) {
@@ -814,6 +818,22 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     })?;
     crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
     Ok(Arc::new(ImportedHeap { native, _pin: pin }))
+}
+
+/// Commits the pages of a title range xmem mapped without commit (xmem
+/// lazy_commit.rs, from xcl 38b05b7) before the driver imports it: a kernel
+/// import of reserved pages fails instead of faulting them in.
+fn commit_title_range(base: u64, size: u64) {
+    type Commit = unsafe extern "system" fn(usize, usize) -> usize;
+    static COMMIT: std::sync::OnceLock<Option<Commit>> = std::sync::OnceLock::new();
+    let commit = COMMIT.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxCommitRange")).map(|f| core::mem::transmute::<_, Commit>(f))
+    });
+    if let Some(commit) = commit {
+        unsafe { commit(base as usize, size as usize) };
+    }
 }
 
 /// Asks xmem to make the title range one OS view (TuxBoxJoinPageRange);

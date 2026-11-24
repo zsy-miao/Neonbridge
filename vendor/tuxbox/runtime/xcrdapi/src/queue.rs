@@ -329,6 +329,23 @@ struct Overlapped {
 
 type PageCopy = unsafe extern "system" fn(*const u64, usize, usize, *mut u8, usize) -> i32;
 
+/// xmem's TuxBoxCommitRange: commits title pages mapped without commit (xmem
+/// lazy_commit.rs, from xcl 38b05b7) before ReadFile writes them from the
+/// kernel, which fails on reserved pages instead of faulting them in.
+fn commit_title_range(address: *mut u8, bytes: usize) {
+    type Commit = unsafe extern "system" fn(usize, usize) -> usize;
+    static COMMIT: OnceLock<Option<Commit>> = OnceLock::new();
+    let commit = COMMIT.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, b"TuxBoxCommitRange\0".as_ptr()) };
+        (!f.is_null()).then(|| core::mem::transmute::<*const c_void, Commit>(f))
+    });
+    if let Some(commit) = commit {
+        unsafe { commit(address as usize, bytes) };
+    }
+}
+
 /// xmem's TuxBoxReadPhysicalPages / TuxBoxWritePhysicalPages.
 fn xmem_pages(write: bool) -> Option<PageCopy> {
     static FUNCTIONS: OnceLock<[Option<PageCopy>; 2]> = OnceLock::new();
@@ -401,6 +418,7 @@ impl Read {
                     stats.pending_reads += 1;
                     stats.total_reads = stats.total_reads.saturating_add(1);
                 }
+                commit_title_range(target, self.size);
                 let success = unsafe {
                     ReadFile(
                         file.file.as_raw_handle(),

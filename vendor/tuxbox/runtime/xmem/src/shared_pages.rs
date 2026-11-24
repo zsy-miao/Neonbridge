@@ -156,6 +156,12 @@ impl Section {
         if view.Value.is_null() {
             return Err(os_error("map_range:138"));
         }
+        // xcl 38b05b7: an unguarded view commits on first use (lazy_commit.rs);
+        // a guard needs committed pages to protect.
+        if crate::lazy_commit::enabled() && !is_guarded(address) {
+            crate::lazy_commit::note_view(address, bytes);
+            return Ok(());
+        }
         if unsafe { VirtualAlloc(view.Value, bytes, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
             let err = os_error("map_range:141");
             unmap(address)?;
@@ -206,9 +212,13 @@ impl Section {
         if view.Value.is_null() {
             return Err(os_error("read_part:188"));
         }
-        // Only pages with section data are read here (uncommitted ones fault).
+        // A section page never committed (lazy_commit.rs) holds zeros.
         unsafe {
-            ptr::copy_nonoverlapping(view.Value.cast::<u8>().add(within), dest, bytes);
+            if committed(view.Value) {
+                ptr::copy_nonoverlapping(view.Value.cast::<u8>().add(within), dest, bytes);
+            } else {
+                ptr::write_bytes(dest, 0, bytes);
+            }
             UnmapViewOfFile(view);
         }
         Ok(())
@@ -228,11 +238,25 @@ impl Section {
             return Err(os_error("read_into:209"));
         }
         unsafe {
-            ptr::copy_nonoverlapping(view.Value.cast(), dest, PAGE);
+            if committed(view.Value) {
+                ptr::copy_nonoverlapping(view.Value.cast(), dest, PAGE);
+            } else {
+                ptr::write_bytes(dest, 0, PAGE);
+            }
             UnmapViewOfFile(view);
         }
         Ok(())
     }
+}
+
+/// Whether the section page behind a temporary view is committed: with lazy
+/// views (lazy_commit.rs) a page marked as holding data may never have been
+/// touched, and reading it through a view nobody committed would fault.
+fn committed(view: *mut c_void) -> bool {
+    let mut info = MEMORY_BASIC_INFORMATION::default();
+    let found = unsafe { windows_sys::Win32::System::Memory::VirtualQuery(view, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) };
+    found != 0
+        && info.State == MEM_COMMIT
 }
 
 /// test77: unmapping pool pages back to placeholders failed with error 87

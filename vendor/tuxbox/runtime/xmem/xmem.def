@@ -39,6 +39,7 @@ EXPORTS
     TuxBoxCopyPageMappings PRIVATE
     TuxBoxValidatePinnedPageMappings PRIVATE
     TuxBoxJoinPageRange PRIVATE
+    TuxBoxCommitRange PRIVATE
     TuxBoxUncloakWindows PRIVATE
     TuxBoxTakeWriteWatch PRIVATE
     TuxBoxBinkState PRIVATE
