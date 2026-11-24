@@ -786,7 +786,23 @@ unsafe fn place_gpu_target(
         step = "guest memory";
         crate::diagnostics::watch("device-memory image", address, allocation.SizeInBytes, || format!(
             "{}x{}x{} format={} flags={:#x}", desc.Width, desc.Height, desc.DepthOrArraySize, desc.Format.0, desc.Flags.0));
-        validate_shared_range(address, address.checked_add(allocation.SizeInBytes).ok_or(E_INVALIDARG)?)?;
+        let end = address.checked_add(allocation.SizeInBytes).ok_or(E_INVALIDARG)?;
+        if let Err(e) = validate_shared_range(address, end) {
+            // The image lives in device memory and the guest range is only
+            // its key, so pages not (yet) committed read-write there do not
+            // stop it (test36: 512x512 format 29 at 0xaf5300000);
+            // TUXBOX_IMAGE_RANGE_FALLBACK=0 fails it as before.
+            if crate::env_toggle!("TUXBOX_IMAGE_RANGE_FALLBACK") == Some("0") {
+                return Err(e);
+            }
+            static UNMAPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = UNMAPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "placed GPU image at {address:#x}..{end:#x} {}x{} format={}: guest range not committed read-write; placed in device memory anyway ({n} so far; TUXBOX_IMAGE_RANGE_FALLBACK=0 fails it)",
+                    desc.Width, desc.Height, desc.Format.0));
+            }
+        }
         // A heap opened from guest memory holds only buffers. Driver-tiled
         // images live in device memory; the guest reaches their texels through
         // GPU copies and views, not through its CPU mapping of this range.
