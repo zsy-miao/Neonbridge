@@ -308,6 +308,9 @@ fn hang_report(presents: u64, seconds: u64) {
     for line in lines {
         record(format_args!("hang: {line}"));
     }
+    for line in crate::device::fence_hang_lines() {
+        record(format_args!("hang: {line}"));
+    }
 }
 
 /// Every thread's stack now, one line each (for `neonbridge ctl stack`).

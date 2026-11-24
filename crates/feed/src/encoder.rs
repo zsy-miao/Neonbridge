@@ -148,7 +148,7 @@ impl Encoder {
                     break f;
                 }
                 if Instant::now() > until {
-                    return Err("no frames from the game yet".into());
+                    return Err(format!("no frames from the game yet ({} published to the shared memory so far)", crate::frames::published()));
                 }
                 std::thread::sleep(Duration::from_millis(100));
             };

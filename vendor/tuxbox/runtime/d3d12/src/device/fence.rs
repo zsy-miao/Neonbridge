@@ -121,6 +121,25 @@ fn address(this: &Fence) -> Result<*const u64> {
     Ok(result)
 }
 
+/// For the hang report (test107b: the title's GPU watchdog waited until it
+/// exited with code 1): every fence whose completed value a title thread can
+/// poll at its CPU address (cell, cell value, host completed value), then
+/// the event waits still pending (fence, value, age, registering title RVA).
+pub(crate) fn hang_lines() -> Vec<String> {
+    let mut lines = Vec::new();
+    {
+        let state = MONITOR.lock().unwrap_or_else(|e| e.into_inner());
+        for word in state.watches.iter().filter_map(|w| w.word.upgrade()) {
+            let completed = unsafe { word.native.GetCompletedValue() };
+            lines.push(format!(
+                "fence {:p}: CPU cell {:p} = {}, host completed {completed}",
+                word.native.as_raw(), word.value.as_ptr(), word.value.load(Ordering::Acquire)));
+        }
+    }
+    lines.extend(stalls::pending_lines());
+    lines
+}
+
 unsafe extern "system" fn cpu_address(this: &Fence) -> *const u64 {
     address(this).unwrap_or_else(|e| {
         crate::proxy::fail_call(format_args!("fence completion address: {:?}", e.code()))
@@ -141,8 +160,9 @@ unsafe extern "system" fn on_completion(this: &Fence, value: u64, event: HANDLE)
     unsafe { (host.vtable().SetEventOnCompletion)(host.as_raw(), value, event) }
 }
 
-/// Survey mode: report fence event registrations that stay incomplete, so a
-/// title thread blocked on one can be traced to the fence and value it needs.
+/// Report fence event registrations that stay incomplete 10 s, so a title
+/// thread blocked on one can be traced to the fence and value it needs. On in
+/// survey mode and by default (TUXBOX_FENCE_STALLS=0 off outside survey).
 mod stalls {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -153,7 +173,7 @@ mod stalls {
     static PENDING: Mutex<Vec<Pending>> = Mutex::new(Vec::new());
 
     pub(super) fn register(fence: &ID3D12Fence, value: u64) {
-        if !crate::survey::enabled() { return; }
+        if !crate::survey::enabled() && crate::env_toggle!("TUXBOX_FENCE_STALLS") == Some("0") { return; }
         static START: std::sync::Once = std::sync::Once::new();
         START.call_once(|| { let _ = std::thread::Builder::new().name("TuxBox fence stalls".into()).spawn(scan); });
         let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
@@ -161,6 +181,13 @@ mod stalls {
             let rva = crate::survey::title_rva().unwrap_or(0);
             pending.push(Pending { fence: fence.clone(), value, since: Instant::now(), rva, reported: false });
         }
+    }
+
+    pub(super) fn pending_lines() -> Vec<String> {
+        let pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+        pending.iter().filter(|p| unsafe { p.fence.GetCompletedValue() } < p.value).take(32).map(|p| format!(
+            "fence {:p} event wait for value {} pending {:.1} s (completed {}), registered from title RVA {:#x}",
+            p.fence.as_raw(), p.value, p.since.elapsed().as_secs_f64(), unsafe { p.fence.GetCompletedValue() }, p.rva)).collect()
     }
 
     fn scan() {

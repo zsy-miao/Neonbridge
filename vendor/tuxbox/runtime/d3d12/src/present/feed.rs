@@ -112,8 +112,21 @@ pub(super) fn record(list: &ID3D12GraphicsCommandList, buffer: &ID3D12Resource) 
     }
     let shared = shared()?;
     let now = tick();
-    if now.saturating_sub(shared.u64(8).load(Ordering::Acquire)) > 5000 {
+    // test107b: a --feed-only feed in another process had a viewer, but no frame
+    // reached it. Say whether the game ever sees the viewer tick.
+    static SEEN: AtomicBool = AtomicBool::new(false);
+    static CHECKS: AtomicU64 = AtomicU64::new(0);
+    let viewer = shared.u64(8).load(Ordering::Acquire);
+    let checks = CHECKS.fetch_add(1, Ordering::Relaxed) + 1;
+    if now.saturating_sub(viewer) > 5000 {
+        if !SEEN.load(Ordering::Relaxed) && matches!(checks, 600 | 6000 | 60000) {
+            crate::diagnostics::log_line(format_args!(
+                "game feed: no viewer after {checks} presents (viewer tick {viewer}, now {now})"));
+        }
         return None;
+    }
+    if !SEEN.swap(true, Ordering::Relaxed) {
+        crate::diagnostics::log_line(format_args!("game feed: a viewer is watching (tick {} ms old); capturing", now.saturating_sub(viewer)));
     }
     let fps = match shared.u32(16).load(Ordering::Relaxed) { 0 => 30, n => n.clamp(1, 60) };
     let mut guard = TAP.lock().unwrap_or_else(|e| e.into_inner());
@@ -274,8 +287,10 @@ fn publish(pending: &Pending) {
     seq.fetch_add(1, Ordering::AcqRel); // even: complete
     shared.u32(24).store(slot as u32, Ordering::Release);
     let frames = shared.u64(32).fetch_add(1, Ordering::AcqRel) + 1;
-    if frames == 1 {
+    // The counter outlives this game when a --feed-only feed holds the mapping.
+    static OURS: AtomicU64 = AtomicU64::new(0);
+    if OURS.fetch_add(1, Ordering::Relaxed) == 0 {
         crate::diagnostics::log_line(format_args!(
-            "game feed: first frame {w}x{h} format {format} sent as {ow}x{oh} (step {step})"));
+            "game feed: first frame {w}x{h} format {format} sent as {ow}x{oh} (step {step}, frame {frames} of the mapping)"));
     }
 }
