@@ -3224,6 +3224,14 @@ impl<'a> Emitter<'a> {
                         written.insert(d);
                     }
                 }
+                Enc::Smem if matches!(ins.op, 36 | 37) => {
+                    // s_memtime / s_memrealtime write a 64-bit counter to an SGPR pair.
+                    let d = ins.dst.first().and_then(sg).ok_or("s_memtime: bad dst")?;
+                    for k in 0..2u16 {
+                        sym.remove(&(d + k));
+                        written.insert(d + k);
+                    }
+                }
                 Enc::Smem if ins.op <= 4 && ins.src.first().and_then(sg).map(|b| sym.get(&b) == Some(&Sym::Code)).unwrap_or(false) => {
                     // Read from an embedded constant table.
                     let n = 1u32 << ins.op;
@@ -3670,6 +3678,7 @@ impl<'a> Emitter<'a> {
             }
             // Multi-register destinations: SMEM, buffer and image loads, 64-bit scalar ops.
             let extra = match ins.enc {
+                Enc::Smem if matches!(ins.op, 36 | 37) => 1,
                 Enc::Smem => (1u32 << (ins.op & 7)) - 1,
                 Enc::Mimg => u32::from(image_data_registers(ins)).saturating_sub(1),
                 Enc::Mtbuf if ins.op < 4 => ins.op,
@@ -5079,6 +5088,20 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             Enc::Smem if self.packed.is_some() => self.emit_packed_load(idx, ins),
             Enc::Smem => {
+                if matches!(ins.op, 36 | 37) {
+                    // s_memtime / s_memrealtime: HLSL has no clock, so the counter reads
+                    // 0 (the same value however the read is reached), logged;
+                    // TB_MEMTIME_STRICT=1 refuses the shader instead (VIctory 3dd467c).
+                    let what = format!("{} at {:#x}", ins.mnemonic, ins.offset);
+                    if std::env::var("TB_MEMTIME_STRICT").is_ok_and(|v| v.trim() == "1") {
+                        return Err(format!("{what}: no shader clock"));
+                    }
+                    let Some(Opnd::Sgpr(base)) = d else { return Err(format!("{what}: bad destination")) };
+                    self.line(&format!("// ({what}: no shader clock, reads 0)"));
+                    self.ws(&Opnd::Sgpr(base), "0u")?;
+                    self.ws(&Opnd::Sgpr(base.checked_add(1).ok_or("s_memtime pair overflows")?), "0u")?;
+                    return Ok(());
+                }
                 if ins.op <= 4 {
                     if let Some(Res::SamplerHeapLoad(offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
                         let value = ssrc_name(u32::from(offset))?;
