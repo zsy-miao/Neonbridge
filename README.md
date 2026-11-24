@@ -29,7 +29,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and about 20 GB of free commit (RAM plus page file).
-- **Can I watch it from my phone?** Yes. With `NEONBRIDGE_FEED=1` the launcher streams the game's picture to a password-protected page on this PC (port 8788) and on your Tailscale network. The first run prints a Tailscale sign-in link to approve the PC once. `neonbridge --feed-only` keeps the page up between games, showing a waiting screen until one starts. Keep the PC's monitor awake while you watch: with every display asleep, Windows slows the game to about 10 fps.
+- **Can I watch it from my phone?** Yes. With `NEONBRIDGE_FEED=1` the launcher streams the game's picture to a password-protected page on this PC (port 8788) and on your Tailscale network. The first run prints a Tailscale sign-in link to approve the PC once. `neonbridge --feed-only` keeps the page up between games, showing a waiting screen until one starts. The launcher keeps the PC's displays on while the game runs, since with every display asleep Windows slows the game to about 10 fps.
 - **Does it go online?** No. The game's crash handler would upload details of your PC, so it's blocked (`TUXBOX_NETWORK=1` lifts it).
 
 ## Roadmap
