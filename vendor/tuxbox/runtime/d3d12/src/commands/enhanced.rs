@@ -308,7 +308,6 @@ fn fit_host(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
     }
 }
 
-type Scratch = (D3D12_COMMAND_LIST_TYPE, ID3D12CommandAllocator, ID3D12GraphicsCommandList7);
 
 /// One recorded host barrier, kept for the Close failure dump.
 #[derive(Clone, Copy)]
@@ -444,24 +443,9 @@ fn probe(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
     let auto = AUTO_PROBE.load(Ordering::Relaxed) > 0
         && AUTO_PROBE.fetch_sub(1, Ordering::Relaxed) > 0;
     if !auto && crate::env_toggle!("TUXBOX_BARRIER_PROBE") != Some("1") { return; }
-    use std::cell::RefCell;
-    thread_local! {
-        static SCRATCH: RefCell<Vec<Scratch>> = const { RefCell::new(Vec::new()) };
-    }
     static FAILED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if FAILED.load(Ordering::Relaxed) >= 16 { return; }
     let kind = unsafe { native.GetType() };
-    let Some((allocator, scratch)) = SCRATCH.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((_, a, l)) = cache.iter().find(|(k, ..)| *k == kind) { return Some((a.clone(), l.clone())); }
-        let mut device: Option<ID3D12Device4> = None;
-        unsafe { native.GetDevice(&mut device) }.ok()?;
-        let device = device?;
-        let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(kind) }.ok()?;
-        let list: ID3D12GraphicsCommandList7 = unsafe { device.CreateCommandList1(0, kind, D3D12_COMMAND_LIST_FLAG_NONE) }.ok()?;
-        cache.push((kind, allocator.clone(), list.clone()));
-        Some((allocator, list))
-    }) else { return };
     for i in 0..group.NumBarriers as usize {
         let single = unsafe {
             match group.Type {
@@ -470,14 +454,10 @@ fn probe(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
                 _ => D3D12_BARRIER_GROUP { NumBarriers: 1, Anonymous: D3D12_BARRIER_GROUP_0 { pTextureBarriers: group.Anonymous.pTextureBarriers.add(i) }, ..*group },
             }
         };
-        let result = unsafe {
-            if allocator.Reset().is_err() || scratch.Reset(&allocator, None).is_err() { return; }
-            scratch.Barrier(&[single]);
-            scratch.Close()
-        };
+        let Some(result) = try_close(native, &|l| unsafe { l.Barrier(&[single]) }) else { return };
         let Err(error) = result else { continue };
         let learned = if group.Type == D3D12_BARRIER_TYPE_TEXTURE {
-            unsafe { bisect(&allocator, &scratch, &*single.Anonymous.pTextureBarriers) }
+            unsafe { bisect(native, &*single.Anonymous.pTextureBarriers) }
         } else { String::new() };
         if FAILED.fetch_add(1, Ordering::Relaxed) >= 16 { return; }
         let text = unsafe {
@@ -565,7 +545,23 @@ fn learn_key(b: &D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) -> LearnKey 
 static LEARNED: std::sync::Mutex<Vec<(LearnKey, usize)>> = std::sync::Mutex::new(Vec::new());
 static ANY_LEARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-unsafe fn bisect(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCommandList7, failed: &D3D12_TEXTURE_BARRIER) -> String {
+/// test87: the probe reused one scratch list per thread, and after a failed
+/// Close neither it nor its allocator would reset, so every later try on
+/// that thread "failed" (or did not run) whatever it recorded. Each try now
+/// gets a fresh allocator and list. None: they could not be made.
+fn try_close(native: &ID3D12GraphicsCommandList7, record: &dyn Fn(&ID3D12GraphicsCommandList7)) -> Option<Result<(), windows::core::Error>> {
+    let kind = unsafe { native.GetType() };
+    let mut device: Option<ID3D12Device4> = None;
+    unsafe { native.GetDevice(&mut device) }.ok()?;
+    let device = device?;
+    let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(kind) }.ok()?;
+    let list: ID3D12GraphicsCommandList7 = unsafe { device.CreateCommandList1(0, kind, D3D12_COMMAND_LIST_FLAG_NONE) }.ok()?;
+    unsafe { list.Reset(&allocator, None) }.ok()?;
+    record(&list);
+    Some(unsafe { list.Close() })
+}
+
+unsafe fn bisect(native: &ID3D12GraphicsCommandList7, failed: &D3D12_TEXTURE_BARRIER) -> String {
     let desc = unsafe { failed.pResource.as_ref().map(|r| r.GetDesc()).unwrap_or_default() };
     let mut passed = Vec::new();
     for v in 0..VARIANTS.len() {
@@ -574,14 +570,10 @@ unsafe fn bisect(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCom
         variant(&mut b, v);
         let group = D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_TEXTURE, NumBarriers: 1,
             Anonymous: D3D12_BARRIER_GROUP_0 { pTextureBarriers: &b } };
-        let ok = unsafe {
-            if allocator.Reset().is_err() || scratch.Reset(allocator, None).is_err() { break; }
-            scratch.Barrier(&[group]);
-            scratch.Close().is_ok()
-        };
-        if ok { passed.push(v); }
+        let Some(result) = try_close(native, &|l| unsafe { l.Barrier(&[group]) }) else { break };
+        if result.is_ok() { passed.push(v); }
     }
-    let resource_note = if passed.is_empty() { unsafe { probe_resource(allocator, scratch, failed) } } else { String::new() };
+    let resource_note = if passed.is_empty() { unsafe { probe_resource(native, failed) } } else { String::new() };
     let learn = passed.first().copied().or_else(|| skip_on().then_some(SKIP));
     if let Some(first) = learn
         && crate::env_toggle!("TUXBOX_BARRIER_LEARN") != Some("0")
@@ -610,16 +602,12 @@ unsafe fn bisect(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCom
 /// test86: a barrier no variant fixed. Is it the resource? Tries a legacy
 /// transition and a global barrier on the scratch list and says how the
 /// resource was made.
-unsafe fn probe_resource(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCommandList7, failed: &D3D12_TEXTURE_BARRIER) -> String {
+unsafe fn probe_resource(native: &ID3D12GraphicsCommandList7, failed: &D3D12_TEXTURE_BARRIER) -> String {
     let Some(resource) = failed.pResource.as_ref() else { return "; no resource".into() };
-    let close = |record: &dyn Fn()| -> &'static str {
-        unsafe {
-            if allocator.Reset().is_err() || scratch.Reset(allocator, None).is_err() { return "not run"; }
-            record();
-            if scratch.Close().is_ok() { "passes" } else { "fails" }
-        }
+    let close = |record: &dyn Fn(&ID3D12GraphicsCommandList7)| -> &'static str {
+        match try_close(native, record) { None => "not run", Some(Ok(())) => "passes", Some(Err(_)) => "fails" }
     };
-    let legacy = close(&|| unsafe {
+    let legacy = close(&|scratch| unsafe {
         let mut barrier = D3D12_RESOURCE_BARRIER {
             Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
             Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
@@ -634,7 +622,7 @@ unsafe fn probe_resource(allocator: &ID3D12CommandAllocator, scratch: &ID3D12Gra
         ptr::from_mut(&mut (*barrier.Anonymous.Transition).pResource).cast::<*mut c_void>().write(resource.as_raw());
         scratch.ResourceBarrier(&[barrier]);
     });
-    let global = close(&|| unsafe {
+    let global = close(&|scratch| unsafe {
         let g = D3D12_GLOBAL_BARRIER { SyncBefore: D3D12_BARRIER_SYNC_ALL, SyncAfter: D3D12_BARRIER_SYNC_ALL,
             AccessBefore: D3D12_BARRIER_ACCESS_COMMON, AccessAfter: D3D12_BARRIER_ACCESS_COMMON };
         scratch.Barrier(&[D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_GLOBAL, NumBarriers: 1,
@@ -650,7 +638,7 @@ unsafe fn probe_resource(allocator: &ID3D12CommandAllocator, scratch: &ID3D12Gra
         let mut a: Option<ID3D12Device> = None;
         let mut b: Option<ID3D12Device> = None;
         let _ = unsafe { resource.GetDevice(&mut a) };
-        let _ = unsafe { scratch.GetDevice(&mut b) };
+        let _ = unsafe { native.GetDevice(&mut b) };
         if a.is_some() && a == b { "same device" } else { "another or no device" }
     };
     format!("; resource {:#x}: legacy DEPTH_READ->PIXEL_SHADER_RESOURCE transition {legacy}, a global barrier {global}, {heap}, {device}", resource.as_raw() as usize)
