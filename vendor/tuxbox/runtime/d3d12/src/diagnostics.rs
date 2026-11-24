@@ -583,6 +583,7 @@ pub(crate) mod gpu_clock {
 /// GetThreadTimes deltas between heartbeats: says whether a title thread is
 /// CPU-bound or the frame is spent waiting.
 pub(crate) mod audio;
+pub(crate) mod capture;
 pub(crate) mod crash;
 pub(crate) mod ctl;
 mod crash_detail;

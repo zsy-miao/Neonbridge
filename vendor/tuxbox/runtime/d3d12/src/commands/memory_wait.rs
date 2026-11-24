@@ -287,8 +287,10 @@ unsafe fn wait_value(
             // Split the list here: the work before the wait runs ahead of it (split).
             let segment = Arc::new(Segment { prefix: None, word, target, comparison, address });
             if unsafe { super::split::split(list, &mut state, segment)? } {
+                capture_wait(list, "split the list", address, target);
                 return Ok(());
             }
+            capture_wait(list, "skipped: the list cannot split", address, target);
             static UNSPLIT: AtomicU64 = AtomicU64::new(0);
             let n = UNSPLIT.fetch_add(1, Ordering::Relaxed);
             if n < 4 || (n + 1).is_power_of_two() {
@@ -302,6 +304,7 @@ unsafe fn wait_value(
             // Waits are honoured only at a native list boundary. Failing here
             // rejected the whole list (black frames); dropping the wait keeps
             // the rendering and only loosens ordering with the signalling queue.
+            capture_wait(list, "skipped: after rendering commands", address, target);
             static SKIPPED: AtomicU64 = AtomicU64::new(0);
             let n = SKIPPED.fetch_add(1, Ordering::Relaxed);
             if n < 4 || (n + 1).is_power_of_two() {
@@ -312,6 +315,7 @@ unsafe fn wait_value(
             }
             return Ok(());
         }
+        capture_wait(list, "at the list boundary", address, target);
         state
             .prefix
             .segments
@@ -856,6 +860,13 @@ mod split_tests {
         assert_eq!(runs, [0..1, 1..3, 3..5]);
         // Two waiting lists in a row: nothing runs between their waits.
         assert_eq!(split_before(3, 3), (3..3, 3));
+    }
+}
+
+fn capture_wait(list: &List, outcome: &str, address: u64, target: u64) {
+    if crate::diagnostics::capture::active() {
+        crate::diagnostics::capture::note("memory wait", list as *const List as usize, outcome,
+            format_args!("{address:#x} >= {target:#x}"));
     }
 }
 

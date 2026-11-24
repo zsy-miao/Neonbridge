@@ -51,6 +51,9 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
                 (native, data, pending) = crate::device::compute::current(host);
             }
             state.pipeline_pending = pending;
+            if crate::diagnostics::capture::active() {
+                state.capture_pipeline = data.key.clone();
+            }
             state.stencil_slot = data.stencil_slot;
             state.null_pipeline = crate::diagnostics::display::is_null_pipeline(native.as_raw());
             state.bindings.pipeline = Some(host.into());

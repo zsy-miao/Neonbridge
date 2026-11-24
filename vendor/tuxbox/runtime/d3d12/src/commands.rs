@@ -80,6 +80,8 @@ struct Recording {
     /// The bound pipeline is lazy and still being made: draws and
     /// dispatches are dropped until the list binds it again once it exists.
     pipeline_pending: bool,
+    /// The bound pipeline's key while a frame is captured (diagnostics capture).
+    capture_pipeline: Option<Arc<str>>,
     /// Root views (bit = root index) whose title address did not resolve,
     /// [graphics, compute]: draws/dispatches drop until they are bound again
     /// (see compute::root_buffer).
@@ -150,7 +152,46 @@ impl Recording {
         Ok(())
     }
 
+    /// What became of a draw or dispatch that did not run (capture).
+    fn capture_outcome(&self, ran: bool, before: HRESULT, compute: bool) -> String {
+        if ran {
+            "ran".into()
+        } else if self.error != before {
+            format!("refused {:#010x} at {}:{}", self.error.0, self.error_at.0, self.error_at.1)
+        } else if self.pipeline_pending {
+            "dropped: pipeline still being made".into()
+        } else if self.unresolved_roots[usize::from(compute)] != 0 {
+            format!("dropped: unresolved root view (mask {:#x})", self.unresolved_roots[usize::from(compute)])
+        } else {
+            "dropped: unresolved descriptor table or bindings".into()
+        }
+    }
+
     fn compute_dispatch(&mut self, list: &List, dispatch: impl FnOnce()) {
+        if !crate::diagnostics::capture::active() {
+            return self.compute_dispatch_inner(list, dispatch);
+        }
+        let ran = std::cell::Cell::new(false);
+        let before = self.error;
+        self.compute_dispatch_inner(list, || { ran.set(true); dispatch() });
+        let outcome = self.capture_outcome(ran.get(), before, true);
+        crate::diagnostics::capture::call("dispatch", list as *const List as usize, &outcome,
+            self.capture_pipeline.as_deref(), self.null_pipeline);
+    }
+
+    fn draw(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
+        if !crate::diagnostics::capture::active() {
+            return self.draw_inner(list, rasterizes, draw);
+        }
+        let ran = std::cell::Cell::new(false);
+        let before = self.error;
+        self.draw_inner(list, rasterizes, || { ran.set(true); draw() });
+        let outcome = self.capture_outcome(ran.get(), before, false);
+        crate::diagnostics::capture::call(if rasterizes { "draw" } else { "draw (no raster)" },
+            list as *const List as usize, &outcome, self.capture_pipeline.as_deref(), self.null_pipeline);
+    }
+
+    fn compute_dispatch_inner(&mut self, list: &List, dispatch: impl FnOnce()) {
         crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchCalls);
         let dispatch = move || {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchesRecorded);
@@ -225,7 +266,7 @@ impl Recording {
         }
     }
 
-    fn draw(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
+    fn draw_inner(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
         crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawCalls);
         let draw = move || {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawsRecorded);
@@ -682,6 +723,8 @@ unsafe extern "system" fn reset(
         }
         state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
         state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
+        state.capture_pipeline = initial.and_then(|p| device::compute::current(p).1.key.clone())
+            .filter(|_| crate::diagnostics::capture::active());
         state.unresolved_roots = [0; 2];
         state.clamp_budget = None;
         if let Some(targets) = &mut state.stencil_targets {
@@ -2343,6 +2386,12 @@ unsafe extern "system" fn execute(queue: &Queue, count: u32, lists: *const *mut 
 
 unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, frame: Option<(u64,u32)>) {
     let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Submit);
+    if crate::diagnostics::capture::active() {
+        let guest = if count == 0 || lists.is_null() { &[][..] } else { unsafe { slice::from_raw_parts(lists, count as usize) } };
+        let kind = unsafe { queue.native.GetDesc().Type.0 };
+        crate::diagnostics::capture::note("submit", queue as *const Queue as usize, "submitted",
+            format_args!("queue type {kind}, lists {guest:?}"));
+    }
     let mut submitted = queue
         .state
         .submission
@@ -2865,6 +2914,7 @@ unsafe fn present_planes(
     // otherwise waits forever for this token's flip.
     unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
     crate::device::shader_cache::frame_presented();
+    crate::diagnostics::capture::presented();
     crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::Presents);
     if result == S_OK {
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -2987,6 +3037,7 @@ pub(crate) unsafe fn wrap_command_list(
             trace_samples: Vec::new(),
             null_pipeline: false,
             pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
+            capture_pipeline: None,
             unresolved_roots: [0; 2],
             clamp_budget: None,
             placed_reads: Vec::new(),

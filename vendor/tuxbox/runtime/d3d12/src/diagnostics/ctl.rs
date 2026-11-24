@@ -125,12 +125,13 @@ fn handle(line: &str) -> String {
             format!("{} unset\n", args[0])
         }
         "stop" => stop(),
+        "capture" => super::capture::arm_next(args.first().and_then(|v| v.parse().ok()).unwrap_or(1)),
         _ => help(),
     }
 }
 
 fn help() -> String {
-    "commands: status | log [N] [filter] | stack | press BUTTONS [ms] | hold BUTTONS | release | screenshot FILE | get [NAME] | set NAME VALUE | unset NAME | stop\n\
+    "commands: status | log [N] [filter] | stack | press BUTTONS [ms] | hold BUTTONS | release | screenshot FILE | get [NAME] | set NAME VALUE | unset NAME | capture [FRAMES] | stop\n\
      buttons: A B X Y Menu View Up Down Left Right LB RB LS RS (join with +)\n".into()
 }
 
