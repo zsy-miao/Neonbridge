@@ -35,3 +35,4 @@ EXPORTS
     TuxBoxCopyPageMappings PRIVATE
     TuxBoxValidatePinnedPageMappings PRIVATE
     TuxBoxJoinPageRange PRIVATE
+    TuxBoxTakeWriteWatch PRIVATE

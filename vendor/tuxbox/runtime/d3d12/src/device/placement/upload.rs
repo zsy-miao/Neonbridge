@@ -28,6 +28,8 @@ pub(super) struct Transfer {
     pub(super) failed: Option<HRESULT>,
     pending: VecDeque<(u64, Upload)>,
     scratch: Vec<u8>,
+    watch: super::watch::Watch,
+    refreshes: u64,
 }
 
 impl Transfer {
@@ -43,6 +45,8 @@ impl Transfer {
             failed: None,
             pending: VecDeque::new(),
             scratch: Vec::new(),
+            watch: Default::default(),
+            refreshes: 0,
         })
     }
 
@@ -68,8 +72,20 @@ impl Transfer {
             self.pending.pop_front();
         }
         let mut changes = Vec::new();
+        let watch = super::watch::enabled().then(|| {
+            self.watch.refresh(textures.iter().map(|t| t.watched_range()).collect());
+            &self.watch
+        });
+        let (mut skipped, mut mips) = (0, 0);
         for texture in textures {
-            texture.changed(&mut changes, &mut self.scratch)?;
+            skipped += texture.changed(&mut changes, &mut self.scratch, watch)?;
+            mips += texture.mips.len();
+        }
+        self.refreshes += 1;
+        if matches!(self.refreshes, 1 | 100 | 1000 | 10000 | 100000) {
+            crate::diagnostics::log_line(format_args!(
+                "placed textures refresh #{}: {skipped} of {mips} mips skipped by write watch (unwritten), {} changed{}",
+                self.refreshes, changes.len(), if watch.is_none() { "; no write watch (TUXBOX_PLACED_WATCH=0 or xmem without TuxBoxTakeWriteWatch)" } else { "" }));
         }
         if changes.is_empty() {
             return Ok(());

@@ -192,8 +192,9 @@ pub unsafe extern "system" fn get_write_watch(
         // The console returns ERROR_CANTOPEN (1003) without modifying outputs.
         return 1003;
     }
-    // The console forwards all six arguments to the host when not suspended.
-    unsafe { GetWriteWatch(flags, base, bytes, addresses, count, granularity) }
+    // The console forwards all six arguments to the host when not suspended;
+    // the list is shared with the d3d12 runtime (write_watch.rs).
+    unsafe { super::write_watch::title_get(flags, base, bytes, addresses, count, granularity) }
 }
 
 /// Query ordinary CPU image and private mappings whose backing is distinguishable

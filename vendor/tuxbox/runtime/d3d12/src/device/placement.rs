@@ -2,6 +2,7 @@
 mod descriptors;
 mod publication;
 mod upload;
+mod watch;
 mod writeback;
 pub(crate) use descriptors::{DescriptorMap, DescriptorRange, HeapViews, PlacedView, Views};
 pub(crate) use publication::QueueAccess;
@@ -354,9 +355,18 @@ impl Texture {
         self: &Arc<Self>,
         changes: &mut Vec<upload::Change>,
         scratch: &mut Vec<u8>,
-    ) -> Result<()> {
+        watch: Option<&watch::Watch>,
+    ) -> Result<usize> {
         let mut contents = lock(&self.contents);
+        let mut skipped = 0;
         for (level, mip) in self.mips.iter().enumerate() {
+            // No CPU write since the last compare: the snapshot would match.
+            if !contents.previous[level].is_empty()
+                && watch.is_some_and(|w| w.unchanged(self.address + mip.source.start..self.address + mip.source.end))
+            {
+                skipped += 1;
+                continue;
+            }
             if !self.snapshot_mip(mip, scratch)? {
                 contents.previous[level].clear();
                 continue;
@@ -369,7 +379,13 @@ impl Texture {
                 });
             }
         }
-        Ok(())
+        Ok(skipped)
+    }
+
+    fn watched_range(&self) -> Range<u64> {
+        let start = self.mips.iter().map(|m| m.source.start).min().unwrap_or(0);
+        let end = self.mips.iter().map(|m| m.source.end).max().unwrap_or(0);
+        self.address + start..self.address + end
     }
 }
 
