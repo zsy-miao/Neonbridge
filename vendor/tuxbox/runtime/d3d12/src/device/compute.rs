@@ -175,8 +175,10 @@ const _: () = assert!(
         + core::mem::offset_of!(PipelineData, packets)
         == 0x10
 );
-pub(super) static PIPELINE: Slots<12> = {
-    let mut slots = child_slots::<ID3D12PipelineState, PipelineData, 12>();
+// GetInformationX is slot 11. Two methods follow it (TuxBox aeed457): a
+// shorter table would read off the end, so those calls fail closed.
+pub(super) static PIPELINE: Slots<14> = {
+    let mut slots = child_slots::<ID3D12PipelineState, PipelineData, 14>();
     slots[11] = crate::slot!(scratch_info);
     slots
 };

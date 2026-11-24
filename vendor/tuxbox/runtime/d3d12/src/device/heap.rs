@@ -32,8 +32,11 @@ unsafe extern "system" fn get_desc(heap: &Heap, out: *mut D3D12_HEAP_DESC) -> *m
     unsafe { out.write(heap.state) };
     out
 }
-static HEAP: Slots<9> = {
-    let mut table = child_slots::<ID3D12Heap, D3D12_HEAP_DESC, 9>();
+// GetDesc is slot 8. A protected-session query and a GPU address follow it
+// (TuxBox aeed457): a shorter table would read off the end, so those calls
+// fail closed.
+static HEAP: Slots<11> = {
+    let mut table = child_slots::<ID3D12Heap, D3D12_HEAP_DESC, 11>();
     table[8] = crate::slot!(get_desc);
     table
 };
@@ -392,7 +395,7 @@ pub(super) unsafe extern "system" fn place_virtual(
     if let Err(error) = GPU_APERTURE.wait(address, 1) { return error.code(); }
     let state = super::host_state(initial, desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER);
     if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && clear.is_null() {
-        let native = import_buffer(device, address, desc, state);
+        let native = import_or_back(device, address, desc, state);
         return unsafe {
             wrap_pageable(native, &RESOURCE, device,
                 super::ResourceState::from(super::Backing::ConsoleLayout(desc.Layout, desc.Flags)), out)
@@ -582,6 +585,20 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
             return unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
                 super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) };
         }
+        Err(error) if backstop_on() => {
+            let native = match import_or_back(device, address, desc, D3D12_RESOURCE_STATE_COMMON) {
+                Ok(native) => native,
+                Err(fallback) => {
+                    crate::diagnostics::recording_error(format_args!(
+                        "placed buffer at {address:#x} bytes={} native offset={delta:#x}: import {:?} stand-in {:?}",
+                        desc.Width, error.code(), fallback.code()));
+                    return fallback.code();
+                }
+            };
+            let buffer = super::views::TextureAddress::at(device, &native, 0, false, None);
+            return unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
+                super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) };
+        }
         Err(error) => {
             crate::diagnostics::recording_error(format_args!(
                 "placed buffer import at {address:#x} bytes={} native offset={delta:#x}: {:?}", desc.Width, error.code()
@@ -594,6 +611,61 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
     );
     unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
         super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) }
+}
+
+/// TUXBOX_PLACED_BACKSTOP=0: a failed placed-buffer import fails the create
+/// again instead of committing reserved guest pages or using a device buffer.
+fn backstop_on() -> bool {
+    crate::env_toggle!("TUXBOX_PLACED_BACKSTOP") != Some("0")
+}
+
+fn commit_guest_pages(start: u64, bytes: u64) -> bool {
+    use windows::Win32::System::Memory::{MEM_COMMIT, PAGE_READWRITE, VirtualAlloc};
+    if bytes == 0 || bytes > 1 << 30 || start.checked_add(bytes).is_none() {
+        return false;
+    }
+    // Commit only this view. The surrounding reservation stays a reservation.
+    !unsafe { VirtualAlloc(Some(start as _), bytes as usize, MEM_COMMIT, PAGE_READWRITE) }.is_null()
+}
+
+fn stand_in_buffer(device: &Device, desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES)
+    -> windows::core::Result<ID3D12Resource> {
+    let host = D3D12_RESOURCE_DESC { Flags: D3D12_RESOURCE_FLAGS(desc.Flags.0 & !0x2_0000), ..*desc };
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
+    let mut native = None;
+    unsafe { device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &host, state, None, &mut native)? };
+    native.ok_or(E_POINTER.into())
+}
+
+/// A placed buffer over guest memory that will not import (a reserved, not
+/// committed range): commit those pages and import again, else a device
+/// buffer stands in. Copied from TuxBox aeed457 (brcly, Apache-2.0).
+fn import_or_back(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES)
+    -> windows::core::Result<ID3D12Resource> {
+    match import_buffer(device, address, desc, state) {
+        Ok(native) => Ok(native),
+        Err(error) if backstop_on() => {
+            let info = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) };
+            let bytes = if info.SizeInBytes == u64::MAX { desc.Width } else { info.SizeInBytes };
+            let base = address & !0xffff;
+            let end = address.saturating_add(bytes).saturating_add(0xffff) & !0xffff;
+            if commit_guest_pages(base, end.saturating_sub(base))
+                && let Ok(native) = import_buffer(device, address, desc, state)
+            {
+                static COMMITTED: std::sync::Once = std::sync::Once::new();
+                crate::diagnostics::log_once(&COMMITTED, || format!(
+                    "placed buffer at {address:#x} bytes={} committed reserved guest pages (TUXBOX_PLACED_BACKSTOP=0 off)", desc.Width));
+                return Ok(native);
+            }
+            let native = stand_in_buffer(device, desc, state)?;
+            static DEVICE: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&DEVICE, || format!(
+                "placed buffer at {address:#x} bytes={} is not importable guest memory ({:?}); using a device buffer (TUXBOX_PLACED_BACKSTOP=0 off)",
+                desc.Width, error.code()));
+            Ok(native)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 type ImportKey = (usize, u64, u64);

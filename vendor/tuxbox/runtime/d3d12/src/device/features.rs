@@ -27,13 +27,15 @@ fn options(device: &Device) -> Result<[u32; 16], HRESULT> {
         D3D12_FEATURE_DATA_D3D12_OPTIONS::default(),
     )?;
     // The Xbox driver writes the address width at +36 and heap tier at +60.
-    // Keep the unverified flags between them disabled. Tiled resource mappings
-    // and ROVs are also unavailable through this guest device.
+    // Keep the unverified flags between them disabled. The tiled-resource
+    // tier is the field at +12: reserved resources are made now (TuxBox
+    // aeed457; TUXBOX_RESERVED=0 reports 0 again). ROVs stay off.
+    let tiled = if super::reserved::on() { host.TiledResourcesTier.0.clamp(0, 4) as u32 } else { 0 };
     Ok([
         u32::from(host.DoublePrecisionFloatShaderOps.as_bool()),
         u32::from(host.OutputMergerLogicOp.as_bool()),
         0,
-        0,
+        tiled,
         host.ResourceBindingTier.0.clamp(0, 3) as u32,
         u32::from(host.PSSpecifiedStencilRefSupported.as_bool()),
         u32::from(host.TypedUAVLoadAdditionalFormats.as_bool()),
@@ -138,8 +140,12 @@ unsafe fn translate(
                     ..Default::default()
                 };
                 let result = host_query(device, feature, record)?;
-                let unavailable =
-                    D3D12_FORMAT_SUPPORT2_TILED | D3D12_FORMAT_SUPPORT2_SAMPLER_FEEDBACK;
+                // Sampler-feedback views are not made here; tiled resources are (aeed457).
+                let unavailable = if super::reserved::on() {
+                    D3D12_FORMAT_SUPPORT2_SAMPLER_FEEDBACK
+                } else {
+                    D3D12_FORMAT_SUPPORT2_TILED | D3D12_FORMAT_SUPPORT2_SAMPLER_FEEDBACK
+                };
                 [
                     result.Support1.0 as u32,
                     (result.Support2.0 & !unavailable.0) as u32,
@@ -177,9 +183,13 @@ unsafe fn translate(
             };
             let result = host_query(device, feature, record)?;
             // The packaged driver offers one quality level for supported counts
-            // through 8x, subject to its tiled-resource flag. Tile mapping is absent here.
+            // through 8x. The tiled-resource flag is the only extra bit accepted
+            // while reserved resources are on (TuxBox aeed457).
+            let tiled = D3D12_MULTISAMPLE_QUALITY_LEVELS_FLAG_TILED_RESOURCE.0 as u32;
             let levels = u32::from(
-                matches!(count, 1 | 2 | 4 | 8) && flags == 0 && result.NumQualityLevels != 0,
+                matches!(count, 1 | 2 | 4 | 8)
+                    && (flags == 0 || (flags == tiled && super::reserved::on()))
+                    && result.NumQualityLevels != 0,
             );
             unsafe { words.add(3).write_unaligned(levels) };
         }
