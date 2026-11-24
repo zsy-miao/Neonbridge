@@ -93,6 +93,15 @@ struct ProcessMemoryCounters {
     private: usize,
 }
 
+/// The process's private commit.
+pub(crate) fn private_bytes() -> u64 {
+    let mut counters = ProcessMemoryCounters { cb: size_of::<ProcessMemoryCounters>() as u32, ..Default::default() };
+    if unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } == 0 {
+        return 0;
+    }
+    counters.private as u64
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn K32GetProcessMemoryInfo(process: isize, counters: *mut ProcessMemoryCounters, cb: u32) -> i32;

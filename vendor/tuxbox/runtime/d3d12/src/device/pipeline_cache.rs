@@ -84,12 +84,17 @@ fn with_library<R>(host: &ID3D12Device, f: impl FnOnce(&mut Library) -> R) -> Op
 
 fn load_or_make(
     host: &ID3D12Device,
+    shader_bytes: u64,
     name: Option<String>,
     load: impl FnOnce(&ID3D12PipelineLibrary1, &HSTRING) -> Result<ID3D12PipelineState>,
     make: impl FnOnce() -> Result<ID3D12PipelineState>,
 ) -> Result<ID3D12PipelineState> {
     // Drivers that compile inside the call can recurse deeply (Proton).
-    let make = || crate::big_stack::run(make);
+    // five-star afdd699: the driver compile waits for the memory it may take.
+    let make = || {
+        let _admitted = super::compile_budget::enter(shader_bytes);
+        crate::big_stack::run(make)
+    };
     let Some(name) = name.map(|n| HSTRING::from(n.as_str())) else {
         return make();
     };
@@ -117,6 +122,7 @@ pub(super) unsafe fn stream(
     let name = unsafe { super::stream::native_name(desc) };
     load_or_make(
         host,
+        unsafe { super::stream::shader_bytes(desc) },
         name,
         |library, name| unsafe { library.LoadPipeline(name, desc) },
         || unsafe { host.CreatePipelineState(desc) },
@@ -131,6 +137,7 @@ pub(super) unsafe fn compute(
     let name = compute_name(desc);
     load_or_make(
         host,
+        desc.CS.BytecodeLength as u64,
         name,
         |library, name| unsafe { library.LoadComputePipeline(name, desc) },
         || unsafe { host.CreateComputePipelineState(desc) },

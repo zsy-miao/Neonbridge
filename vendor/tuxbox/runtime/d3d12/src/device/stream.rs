@@ -189,6 +189,33 @@ unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) ->
 }
 
 /// The pipeline library name of a desktop stream made by `create`.
+/// The DXIL bytes of a desktop stream's shaders (for the compile budget).
+pub(super) unsafe fn shader_bytes(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> u64 {
+    let (input, size) = (desc.pPipelineStateSubobjectStream.cast::<u8>().cast_const(), desc.SizeInBytes);
+    if input.is_null() {
+        return 0;
+    }
+    let (mut at, mut total) = (0, 0u64);
+    while at < size {
+        let record = unsafe { input.add(at) };
+        let tag = unsafe { record.cast::<i32>().read() };
+        let Some((offset, used)) = (match tag {
+            24 | 25 => Some(subobject::<D3D12_SHADER_BYTECODE>()),
+            AMPLIFICATION_X | STENCIL_X.. => None,
+            _ => layout(tag),
+        }) else { break };
+        if used > size - at {
+            break;
+        }
+        if matches!(tag, 1..=6 | 23..=25) {
+            let shader = unsafe { &*record.add(offset).cast::<D3D12_SHADER_BYTECODE>() };
+            total += shader.BytecodeLength as u64;
+        }
+        at += used;
+    }
+    total
+}
+
 pub(super) unsafe fn native_name(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<String> {
     unsafe { canonical(None, desc) }
 }
