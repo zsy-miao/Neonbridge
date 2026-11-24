@@ -6689,9 +6689,26 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 return Err("unsupported heap typed buffer addressing or modifiers".into());
             }
             let float = match ins.aux.imm2 {
-                24 | 50 | 56 => true,
-                60 => false,
-                f => return Err(format!("unsupported typed buffer format {f}")),
+                // The host view (the title's own DXGI format) converts. One-dword
+                // formats only: 32 float, 16_16 unorm/snorm/float, the packed
+                // 10_11_11 / 11_11_10 / 10_10_10_2 families, 2_10_10_10, 8_8_8_8.
+                22 | 23 | 24 | 29 | 50 | 56 => true,
+                20 | 27 | 60 => false,
+                // UINT and SINT of the packed families read integers.
+                f @ 30..=49 => !matches!(if f >= 44 { f - 44 } else { (f - 30) % 7 }, 4 | 5),
+                f if std::env::var_os("TB_TYPED_STRICT").is_some_and(|v| v == "1") => {
+                    return Err(format!("unsupported typed buffer format {f}"));
+                }
+                // Other formats read (0, 0, 0, 1) instead of refusing the shader
+                // (TB_TYPED_STRICT=1 refuses).
+                _ => {
+                    let Opnd::Vgpr(base) = ins.dst[0] else { return Err("invalid MTBUF destination".into()); };
+                    for k in 0..=ins.op as u8 {
+                        let dst = base.checked_add(k).ok_or("MTBUF destination overflows")?;
+                        self.wv(&Opnd::Vgpr(dst), if k == 3 { "asuint(1.0f)" } else { "0u" })?;
+                    }
+                    return Ok(());
+                }
             };
             let Opnd::Vgpr(base) = ins.dst[0] else { return Err("invalid MTBUF destination".into()); };
             // Every supported format is one dword, so a byte offset selects element offset / 4.
