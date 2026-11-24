@@ -31,6 +31,7 @@ mod ray_dispatch;
 mod raytracing;
 pub(crate) mod serialized_blas;
 mod split;
+mod tiles;
 mod standard;
 mod stencil;
 mod table_drop;
@@ -2962,6 +2963,9 @@ unsafe fn present_planes(
 
 static QUEUE_SLOTS: Slots<64> = {
     let mut slots = child_slots::<ID3D12CommandQueue, QueueState, 64>();
+    // Tile mapping sits before the marker methods, so both queue generations share it.
+    slots[8] = crate::slot!(tiles::update);
+    slots[9] = crate::slot!(tiles::copy);
     slots[10] = crate::slot!(execute);
     slots[14] = crate::slot!(queue_fence::<false>);
     slots[15] = crate::slot!(queue_fence::<true>);
@@ -2978,6 +2982,9 @@ static QUEUE_SLOTS: Slots<64> = {
 
 static DEVICE11_QUEUE_SLOTS: Slots<64> = {
     let mut slots = child_slots::<ID3D12CommandQueue, QueueState, 64>();
+    // Tile mapping sits before the marker methods, so both queue generations share it.
+    slots[8] = crate::slot!(tiles::update);
+    slots[9] = crate::slot!(tiles::copy);
     slots[10] = crate::slot!(execute);
     slots[16] = crate::slot!(queue_fence::<false>);
     slots[17] = crate::slot!(queue_fence::<true>);

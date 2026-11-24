@@ -38,6 +38,35 @@ static HEAP: Slots<9> = {
     table
 };
 
+/// The native heap of a guest heap proxy (TuxBox aeed457, tile mappings).
+pub(super) unsafe fn memory_heap<'a>(
+    object: *mut c_void,
+    owner: *mut c_void,
+) -> Option<&'a ID3D12Heap> {
+    // SAFETY: unwrap checks the heap vtable and the owning device.
+    unsafe { unwrap::<ID3D12Heap, D3D12_HEAP_DESC>(object, owner, &HEAP).map(|heap| &heap.native) }
+}
+
+/// A guest resource, heap, descriptor heap or query heap as a native
+/// pageable (TuxBox aeed457, MakeResident/Evict).
+pub(super) unsafe fn pageable(object: *mut c_void, owner: *mut c_void) -> Option<ID3D12Pageable> {
+    // SAFETY: each unwrap checks the vtable and the owning device. These four
+    // objects are pageable, and the cast keeps a reference for the caller.
+    unsafe {
+        if let Some(resource) = super::resource(object, owner) {
+            resource.cast().ok()
+        } else if let Some(heap) = unwrap::<ID3D12Heap, D3D12_HEAP_DESC>(object, owner, &HEAP) {
+            heap.native.cast().ok()
+        } else if let Some(heap) = super::descriptor_heap(object, owner) {
+            heap.native.cast().ok()
+        } else if let Some(heap) = super::queries::native(object, owner) {
+            heap.cast().ok()
+        } else {
+            None
+        }
+    }
+}
+
 pub(super) unsafe extern "system" fn create(
     device: &Device,
     desc: *const D3D12_HEAP_DESC,
