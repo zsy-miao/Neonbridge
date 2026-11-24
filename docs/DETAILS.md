@@ -12,8 +12,9 @@ What the Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own 
 - **Input:** the title reads the virtual pad, and an automatic A press gets it past the player-selection prompt.
 - **Saves:** XGameSave containers are stored under `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`, and the game loads its "Player" save on the next launch.
 - **Offline and contained:** the game's network calls fail as "no network", its `D:` drive is a local folder, and it runs in a job that ends with the launcher.
-- **Audio:** sound plays, but it cuts in and out. The game mixes its own audio into Windows spatial audio. A fine system timer, which other projects needed for GTA VI's mixer, is now on, and a probe is tracing the rest.
-- **Longest run:** 344 s, ending on a fail-fast exit (`0xc0000602`). Runs into the menus have also hit a fail-fast exit, which the new crash record will name.
+- **Audio:** sound plays but comes in 3 s bursts. The game's Opus stream is fed at about 15% of real time; the console DSP (`chad`) no longer refuses commands, which is the likely cause, and the next run will confirm it.
+- **Menus:** dialogs, text entry, speech and relaunch requests are answered, so the menus no longer wait on missing console UI. After the settings screen the game starts loading the level; a memory-join fix for that point is in and not yet run.
+- **Longest run:** 344 s, ending on a fail-fast exit (`0xc0000602`). Crash records now name the import or function a crash went through.
 
 ## Runtime fixes
 
@@ -63,7 +64,29 @@ These are in the vendored TuxBox provider:
   - Buffer binds keep their imported memory alive, so recording dropped from about 156 ms to under 2 ms per frame.
   - The title maps memory one 64 KiB page at a time. Neighbouring pages are now joined into one view on demand, so large buffers import zero-copy instead of being copied in and out every submission.
   - Buffers are written back only after the GPU actually wrote them.
-- **Launch:** a neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off). The game window is kept on one monitor at 16:9, and the game ends when the launcher does (`NEONBRIDGE_JOB=0`).
+  - Per-frame constant buffers at new addresses reuse earlier imports and device copies instead of opening the title's memory again (`TUXBOX_SHADOW_IMPORT_CACHE=0`, `TUXBOX_SHADOW_COPY_REUSE=0`).
+  - Page joins that cross two OS reservations are re-reserved as one block (`TUXBOX_JOIN_RERESERVE=0`).
+- **GPU memory sizes:** allocation-info slots 25 and 108 answer the console's footprint for every texture and buffer, so GTA's 2.2 GB GPU pool doesn't fill early with PC sizes (the 87 s stop other projects hit). Committed textures' addresses are backed by real zeroed memory (`TUXBOX_BACK_IMAGES=0`).
+- **Robustness:**
+  - Draws whose descriptor table doesn't fit are dropped and counted instead of failing the list.
+  - Unbacked vertex streams and bad address views bind empty; null vertex-buffer arrays unbind explicitly.
+  - Allocators reset or released at a reused address start clean; recordings still in use survive a reset.
+  - Reads past the end of a file fail cleanly (`TUXBOX_EOF_PARTIAL=1`).
+- **Menus and runtime (`xgameruntime`):**
+  - XGameUi: message dialogs answer their default button, text entry answers `TUXBOX_TEXT_ENTRY` or the default text, other dialogs cancel.
+  - XAccessibility: a silent speech synthesizer (`TUXBOX_SPEECH=refuse`), captions and high contrast off.
+  - `XLaunchNewGame` asks the launcher to relaunch (`TUXBOX_RELAUNCH=0`); a terminated task queue wakes its waiting dispatch.
+  - Saves check the 256 MB quota and buffer sizes and return the console's error codes.
+- **Audio:**
+  - The title asks for a 1 ms (or finer) timer (`TUXBOX_FINE_TIMER=0`).
+  - `chad` (XDsp) completes every command, with silence for transforms it can't compute (`TUXBOX_CHAD_STRICT=1`).
+  - AcpHal answers connect, message queue and XMA submit, with an XMA decoder (LGPL `xma` crate, notice in `vendor/tuxbox/runtime/acphal/NOTICE`; `TUXBOX_XMA=0`).
+- **Window and keys:** Alt and F10 no longer open the modal window menu that made the game abort (`TUXBOX_KEY_MENU=1`).
+- **Shader translator:** many more instructions and fixes, among them `v_permlane16`, `v_mad_i64_i32`, `s_memtime`, `s_bitcmp*_b64`, `image_sample_o`, `image_load_pck`, signed atomics, packed inline constants, round-half-even, -0/+0 ordering in min/max, sample-frequency shading and more typed-buffer formats. PlayStation-project sources were removed and re-derived from the AMD RDNA2 ISA.
+- **Launch:**
+  - A neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off). The game window is kept on one monitor at 16:9, and the game ends when the launcher does (`NEONBRIDGE_JOB=0`).
+  - Started without `--game`, the launcher opens a picker for the game folder or exe.
+  - It warns when free Windows commit is under 20 GB (`TUXBOX_MIN_COMMIT_GB`), relaunches when the game asks, and names any missing DLL after a loader error.
 
 ## Diagnostics
 
@@ -80,15 +103,19 @@ These are in the vendored TuxBox provider:
 - **Hot threads:** the heartbeat samples where the busiest threads spend their time and names the functions.
 - **Audio probe:** logs the audio endpoints the title opens (spatial audio stream format, buffer and period gaps).
 - **Shader bisect:** `TUXBOX_FALLBACK=flat`, `TUXBOX_NULL_SHADERS` and `TUXBOX_NULL_BISECT` swap out individual shaders to find a bad one.
+- **Game CLI:** `neonbridge ctl status | log [N] [filter] | stack | press A+Down [ms] | hold | release | screenshot FILE | get | set | unset | stop` controls a running game over a local pipe (`TUXBOX_CTL=0` turns it off; no network).
+- **Crash file:** crash records and hang stacks also go to `%LOCALAPPDATA%\6ixpack\logs\crash_<pid>.log`, even when the game was started without the launcher. They name the import or export a crash went through, the instruction bytes and what the faulting address is.
+- **Breakpoints:** `TUXBOX_BREAK_RVAS=rva,...` logs registers and 8 stack words each time the title passes those addresses.
+- **More logs:** null bindings counted by cause, GPU memory waits that stall (capped per address), waits on unsignalled fences, the wait/write order after a timeout, texture size queries (`TUXBOX_SIZE_WATCH`), and Opus, XDsp and XMA audio counters.
 
 ## Open issues
 
-- **Menu crash:** a longer run into the menus ends on a fail-fast exit. Other projects needed a text-entry dialog and the rest of the UI runtime, relaunch support, console-order shutdown and enough Windows commit to get through GTA VI's menus; those are being added.
-- **Audio:** cuts in and out. The fine timer is in. Next, the probe on the game's spatial audio stream shows where the gaps come from.
-- **Frame rate:** about 16 fps. The busiest thread spends most of a frame re-importing title memory.
+- **Audio:** plays in 3 s bursts. The `chad` fix is the likely cure and needs a run.
+- **Frame rate:** about 15-16 fps. Import caching for per-frame buffers is in and needs a run; placed-resource imports still re-open memory.
+- **After settings:** the level-loading memory fix needs a run. Other projects' next known stops are a stream-buffer overflow at about 98 s and a bad free at about 124 s.
 - **BCPack textures:** shown as grey blocks until a decoder is written (about 14% of textures).
 - **Later screens:** blend patches from derived pipelines are logged but not applied yet.
-- **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders. A full prewarm (`TUXBOX_PREWARM`, on by default) waits on these.
+- **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
 
 ## Credits

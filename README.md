@@ -12,9 +12,10 @@
 
 ```
 neonbridge --game <dump dir> [--debug] [--log <file>] [--timeout S]
+neonbridge ctl status | screenshot shot.bmp | press A | stop
 ```
 
-Build with `cargo build --release` (needs Visual Studio Build Tools x64 C++ and the x86_64-pc-windows-msvc target). `--debug` needs cdb from the Windows SDK. Run `neonbridge --help` for every option, and see [docs/DETAILS.md](docs/DETAILS.md) for every fix and switch.
+Build with `cargo build --release` (needs Visual Studio Build Tools x64 C++ and the x86_64-pc-windows-msvc target). `--debug` needs cdb from the Windows SDK. Without `--game` it opens a picker. `neonbridge ctl` controls a running game from another terminal. Run `neonbridge --help` for every option, and see [docs/DETAILS.md](docs/DETAILS.md) for every fix and switch.
 
 ## Controls
 
