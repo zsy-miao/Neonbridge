@@ -321,10 +321,18 @@ unsafe fn make_compute(
     };
     // Literal samplers the translation looks up in tb_desc_table: reserve
     // their host samplers and add the table's root SRV.
+    // A stage that reads typed buffer formats gets the view_formats root SRV.
     let reflected = match (&translation, root) {
-        (Some(code), Some(root)) if scene_root.is_none() && super::desc_table::declared(code) => {
-            this.state.desc_table.literals(&this.native, &tuxbox_dxbc::inline_sampler::literal_words(bytes));
-            match super::compute_table::with_desc_table(&this.native, reflected.as_ref(), &root.state, desc.NodeMask) {
+        (Some(code), Some(root)) if scene_root.is_none()
+            && (super::desc_table::declared(code) || super::view_formats::declared(code)) =>
+        {
+            let samplers = super::desc_table::declared(code);
+            if samplers {
+                this.state.desc_table.literals(&this.native, &tuxbox_dxbc::inline_sampler::literal_words(bytes));
+            }
+            match super::compute_table::with_runtime_tables(
+                &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code),
+            ) {
                 Ok(table) => Some(table),
                 Err(error) => return error.code(),
             }

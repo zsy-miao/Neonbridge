@@ -46,6 +46,7 @@ pub(super) unsafe extern "system" fn cbv(
 ) {
     let _write = super::descriptor_paging::Write::new(&device.state.descriptor_arenas, &mut handle);
     crate::diagnostics::display::texture_view(handle.ptr, None, None);
+    super::view_formats::write(handle.ptr, 0);
     check_destination(handle);
     device.state.placements.views.set(handle.ptr, None, false);
     device.state.blas.views.store(handle.ptr, None);
@@ -262,6 +263,15 @@ pub(crate) unsafe fn flush_desc_table(owner: &windows::core::IUnknown, queue: &I
 pub(crate) unsafe fn desc_table_address(owner: &windows::core::IUnknown) -> windows::core::Result<u64> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     device.state.desc_table.address(&device.native)
+}
+
+/// The typed view format table of the shader-visible heap at `start` and its
+/// GPU address, for a draw being recorded (view_formats).
+pub(crate) unsafe fn view_formats_address(
+    owner: &windows::core::IUnknown, start: usize, count: u32, stride: usize,
+) -> windows::core::Result<(ID3D12Resource, u64)> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    super::view_formats::address(&device.native, start, count, stride)
 }
 
 /// A command or view may write `resource` (a raw native resource).
@@ -562,6 +572,7 @@ pub(super) unsafe extern "system" fn address_srv(
     device.state.placements.views.set(handle.ptr, placed.as_ref(), false);
     let native = existing.as_ref().map(|e| &e.native).or_else(|| placed.as_ref().map(|p| &p.native)).or_else(|| imported.as_ref().map(|e| &e.native));
     crate::diagnostics::display::texture_view(handle.ptr, native, Some(view.Format.0));
+    super::view_formats::write(handle.ptr, super::view_formats::srv_code(Some(&view)));
     if let Some((mode, offset, stride)) = byte_view {
         mode.create_srv(device, native.expect("buffer import retained"), view, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("byte-offset SRV at {:#x} offset={offset} stride={stride}: {:?}", desc.address, e.code())));
@@ -644,6 +655,7 @@ pub(super) unsafe extern "system" fn srv(
         _ => desc,
     };
     crate::diagnostics::display::texture_view(handle.ptr, resource, unsafe { desc.as_ref() }.map(|view| view.Format.0));
+    super::view_formats::write(handle.ptr, super::view_formats::srv_code(unsafe { desc.as_ref() }));
     let texture = proxy.and_then(|resource| resource.state.placed());
     let scene = device.state.blas.scene_view(proxy, unsafe { desc.as_ref() });
     device.state.blas.views.store(handle.ptr, scene);
@@ -668,6 +680,7 @@ pub(super) unsafe extern "system" fn uav(
 ) {
     let _write = super::descriptor_paging::Write::new(&device.state.descriptor_arenas, &mut handle);
     crate::diagnostics::display::texture_view(handle.ptr, None, None);
+    super::view_formats::write(handle.ptr, super::view_formats::uav_code(unsafe { desc.as_ref() }));
     let owner = identity(device).as_raw();
     let proxy = unsafe { super::resource_proxy(object, owner) };
     let placed = proxy.and_then(|p| p.state.placed());

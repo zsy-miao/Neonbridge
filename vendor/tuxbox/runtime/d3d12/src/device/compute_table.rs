@@ -16,6 +16,9 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding xshader's literal sampler lookup
     /// table (t1, space32766; see desc_table).
     pub(crate) desc_table: Option<u32>,
+    /// Root slot of the root SRV holding typed view formats per heap slot
+    /// (t2, space32766; see view_formats).
+    pub(crate) view_formats: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -320,6 +323,7 @@ fn reflected_tables(
             accessed_views,
             index_map,
             desc_table: None,
+            view_formats: None,
         })))
     }
 }
@@ -417,19 +421,35 @@ fn extend_root_from(
             accessed_views,
             index_map: index_map.then_some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
             desc_table: None,
+            view_formats: None,
         })))
     }
 }
 
 /// `table`'s root, or the guest root for a pipeline without one, plus a root
-/// SRV at t1, space32766 for translated stages that declare tb_desc_table.
-/// Existing parameters keep their slots.
-pub(super) fn with_desc_table(
+/// SRV at t1, space32766 for translated stages that declare tb_desc_table
+/// (`desc`) and one at t2, space32766 for those that declare tb_view_formats
+/// (`formats`). Existing parameters keep their slots.
+pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
+    desc: bool, formats: bool,
 ) -> Result<Arc<ComputeTable>> {
-    if let Some(table) = table.filter(|t| t.desc_table.is_some()) {
+    let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
+    let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
+    if let Some(table) = table.filter(|_| !add_desc && !add_formats) {
         return Ok(table.clone());
     }
+    let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
+        ParameterType: D3D12_ROOT_PARAMETER_TYPE_SRV,
+        ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+        Anonymous: D3D12_ROOT_PARAMETER1_0 {
+            Descriptor: D3D12_ROOT_DESCRIPTOR1 {
+                ShaderRegister: register,
+                RegisterSpace: space,
+                Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
+            },
+        },
+    };
     let bytes = table.map_or(guest, |t| &t.layout).serialized();
     unsafe {
         let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
@@ -444,17 +464,14 @@ pub(super) fn with_desc_table(
             if source.pParameters.is_null() { return Err(E_INVALIDARG.into()); }
             std::slice::from_raw_parts(source.pParameters, source.NumParameters as usize).to_vec()
         };
-        parameters.push(D3D12_ROOT_PARAMETER1 {
-            ParameterType: D3D12_ROOT_PARAMETER_TYPE_SRV,
-            ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
-            Anonymous: D3D12_ROOT_PARAMETER1_0 {
-                Descriptor: D3D12_ROOT_DESCRIPTOR1 {
-                    ShaderRegister: super::desc_table::REGISTER,
-                    RegisterSpace: super::desc_table::SPACE,
-                    Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
-                },
-            },
-        });
+        let desc_slot = if add_desc {
+            parameters.push(root_srv(super::desc_table::REGISTER, super::desc_table::SPACE));
+            Some(parameters.len() as u32 - 1)
+        } else { table.and_then(|t| t.desc_table) };
+        let formats_slot = if add_formats {
+            parameters.push(root_srv(super::view_formats::REGISTER, super::view_formats::SPACE));
+            Some(parameters.len() as u32 - 1)
+        } else { table.and_then(|t| t.view_formats) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let mut blob = None;
@@ -469,7 +486,8 @@ pub(super) fn with_desc_table(
             lengths: table.map(|t| t.lengths.clone()).unwrap_or_default(),
             accessed_views: table.map(|t| t.accessed_views.clone()).unwrap_or_default(),
             index_map: table.and_then(|t| t.index_map),
-            desc_table: Some(source.NumParameters),
+            desc_table: desc_slot,
+            view_formats: formats_slot,
         }))
     }
 }
@@ -571,6 +589,7 @@ fn append_corroborated_ranges(
             accessed_views,
             index_map: None,
             desc_table: None,
+            view_formats: None,
         })))
     }
 }

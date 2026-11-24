@@ -156,6 +156,7 @@ unsafe fn copy_host_range(device: &Device, count: u32, dst: D3D12_CPU_DESCRIPTOR
         device.state.imported_views.copy(stride, to.clone(), source.clone());
         device.state.blas.views.copy(stride, to.clone(), source.clone());
         crate::diagnostics::display::copy_texture_views(translated.ptr, from.ptr, count, stride);
+        super::view_formats::copy(translated.ptr, from.ptr, count as usize, stride);
         device.state.placements.views.copy(stride, to, source);
     }
     unsafe { device.native.CopyDescriptorsSimple(count, translated, from, kind) };

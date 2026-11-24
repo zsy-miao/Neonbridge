@@ -431,10 +431,18 @@ unsafe fn create(
         .filter(|&(_, index)| super::desc_table::declared(&stages[index]))
         .map(|(code, _)| code)
         .collect();
-    if let (false, Some(root), Some(field)) = (declaring.is_empty(), guest_root, root_record) {
+    // A stage that reads typed buffer formats gets the view_formats root SRV.
+    let reads_formats = original.iter().enumerate()
+        .filter(|(i, _)| *i != 5)
+        .filter_map(|(_, stage)| match *stage { Some((_, Some(index))) => Some(index), _ => None })
+        .any(|index| super::view_formats::declared(&stages[index]));
+    if let (true, Some(root), Some(field)) = (!declaring.is_empty() || reads_formats, guest_root, root_record) {
         let words: Vec<_> = declaring.iter().flat_map(|code| tuxbox_dxbc::inline_sampler::literal_words(code)).collect();
-        device.state.desc_table.literals(&device.native, &words);
-        let table = super::compute_table::with_desc_table(&device.native, pipeline.raster_table.as_ref(), root, node_mask)?;
+        if !words.is_empty() {
+            device.state.desc_table.literals(&device.native, &words);
+        }
+        let table = super::compute_table::with_runtime_tables(
+            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats)?;
         unsafe { field.write(table.native.as_raw()) };
         binding_root = Some(table.layout.payload().to_vec());
         pipeline.raster_table = Some(table);

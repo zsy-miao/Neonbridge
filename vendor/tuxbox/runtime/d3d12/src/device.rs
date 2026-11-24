@@ -25,6 +25,7 @@ mod mesh_table;
 pub(crate) mod depth;
 mod descriptor_copy;
 pub(crate) mod desc_table;
+pub(crate) mod view_formats;
 pub(crate) mod descriptor_paging;
 mod dxgi;
 mod features;
@@ -49,7 +50,7 @@ pub(crate) mod pipeline_cache;
 mod stream;
 mod title_memory;
 mod views;
-pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, refresh_shadows, note_shadow_write, flush_desc_table, desc_table_address, write_back_shadows};
+pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, refresh_shadows, note_shadow_write, flush_desc_table, desc_table_address, view_formats_address, write_back_shadows};
 
 type Device = Proxy<ID3D12Device, dxgi::DxgiDevice>;
 pub(crate) enum Backing {
@@ -416,6 +417,7 @@ pub(crate) struct DescriptorHeapState {
     _imported_views: Option<placement::DescriptorRange<views::DescriptorBacking>>,
     _scene_views: Option<placement::DescriptorRange<blas::SceneView>>,
     _samplers: Option<desc_table::HeapGuard>,
+    _view_formats: Option<view_formats::HeapGuard>,
 }
 type DescriptorHeap = Proxy<ID3D12DescriptorHeap, DescriptorHeapState>;
 
@@ -591,6 +593,18 @@ unsafe extern "system" fn create_heap(
     let samplers = (desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER).then(|| this.state.desc_table.sampler_heap(
         &this.native, cpu_start, desc.NumDescriptors, desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
     ));
+    // Typed view codes of a released heap's handles (and its table) go with it.
+    let view_formats = (desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV).then(|| {
+        let stride = unsafe { this.native.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
+        let native_start = unsafe { native.GetCPUDescriptorHandleForHeapStart() }.ptr;
+        let native_count = unsafe { native.GetDesc() }.NumDescriptors as usize;
+        let mut ranges = vec![native_start..native_start + native_count * stride];
+        if let Some(arena) = &arena {
+            let staging = arena.cpu(arena.base()).ptr;
+            ranges.push(staging..staging + desc.NumDescriptors as usize * stride);
+        }
+        view_formats::HeapGuard::new(ranges)
+    });
     let state = DescriptorHeapState {
         desc: *desc,
         cpu_start,
@@ -608,6 +622,7 @@ unsafe extern "system" fn create_heap(
             D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
         ),
         _samplers: samplers,
+        _view_formats: view_formats,
     };
     unsafe { wrap_pageable(Ok(native), &HEAP, this, state, out) }
 }

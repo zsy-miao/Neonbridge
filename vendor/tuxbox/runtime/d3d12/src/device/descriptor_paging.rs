@@ -222,6 +222,7 @@ impl Arena {
         self.placed.copy_to(stride, to.ptr, from.ptr, 1);
         self.scenes.copy_to(stride, to.ptr, from.ptr, 1);
         crate::diagnostics::display::copy_texture_views(to.ptr, from.ptr, 1, stride);
+        super::view_formats::copy(to.ptr, from.ptr, 1, stride);
         unsafe { self.device.CopyDescriptorsSimple(1, to, from, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) };
     }
 
@@ -235,6 +236,7 @@ impl Arena {
         self.placed.copy_to(self.stride, to.ptr, from.ptr, count);
         self.scenes.copy_to(self.stride, to.ptr, from.ptr, count);
         crate::diagnostics::display::copy_texture_views(to.ptr, from.ptr, count, self.stride);
+        super::view_formats::copy(to.ptr, from.ptr, count as usize, self.stride);
         unsafe {
             self.device.CopyDescriptorsSimple(
                 count,
@@ -382,6 +384,7 @@ impl Arena {
                     self.placed.copy_to(self.stride, destination.ptr, 0, 1);
                     self.scenes.copy_to(self.stride, destination.ptr, 0, 1);
                     crate::diagnostics::display::texture_view(destination.ptr, None, None);
+                    super::view_formats::write(destination.ptr, 0);
                     kind.write(&self.device, destination);
                 } else {
                     // A stale record (its source was rewritten or freed) used to
@@ -415,6 +418,7 @@ impl Arena {
                     self.placed.copy_to(self.stride, destination.ptr, 0, 1);
                     self.scenes.copy_to(self.stride, destination.ptr, 0, 1);
                     crate::diagnostics::display::texture_view(destination.ptr, None, None);
+                    super::view_formats::write(destination.ptr, 0);
                     kind.write(&self.device, destination);
                     tables.resident_records.remove(&slot);
                     continue;
