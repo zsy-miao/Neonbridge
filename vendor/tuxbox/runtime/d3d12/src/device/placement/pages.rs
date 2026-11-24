@@ -755,16 +755,27 @@ fn system_pools(device: &ID3D12Device) -> bool {
 /// for spans. A pool's tiles handed to a new texture are made resident by
 /// that texture's first submission.
 ///
-/// Off unless TUXBOX_PAGES_EVICT=1: a submission names only the textures it
-/// tracks, not those a shader reaches through the descriptor heap, and a
-/// pool holds tiles of many textures, so an evicted pool can still be
-/// sampled (a GPU page fault). test59 removed the device (nvlddmkm event
-/// 153) after 104 pool evictions.
+/// A submission names only the textures it tracks, not those a shader
+/// reaches through the descriptor heap, and a pool holds tiles of many
+/// textures, so an evicted pool could still be sampled (a GPU page fault).
+/// So idle pools are demoted instead: their residency priority drops to the
+/// minimum, video memory moves them out first when over budget and pages
+/// them back in when used, and a touched pool gets normal priority again.
+/// Without it test60 ran device local at 11290 of 7188 MiB. TUXBOX_PAGES_EVICT=1
+/// evicts instead (test59 lost its device after 104 evictions);
+/// TUXBOX_PAGES_DEMOTE=0 leaves every pool alone.
 pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'a Texture>) -> windows::core::Result<()> {
     let after = super::alias::evict_after();
-    if !enabled() || after <= 0.0 || crate::env_toggle!("TUXBOX_PAGES_EVICT") != Some("1") {
+    let evicting = crate::env_toggle!("TUXBOX_PAGES_EVICT") == Some("1");
+    if !enabled() || after <= 0.0 || (!evicting && crate::env_toggle!("TUXBOX_PAGES_DEMOTE") == Some("0")) {
         return Ok(());
     }
+    let priority = |pools: &[usize], pages: &Pages, value: D3D12_RESIDENCY_PRIORITY| -> windows::core::Result<()> {
+        let device1 = device.cast::<ID3D12Device1>()?;
+        let list: Vec<Option<ID3D12Pageable>> = pools.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
+        let values = vec![value; list.len()];
+        unsafe { device1.SetResidencyPriority(list.len() as u32, list.as_ptr(), values.as_ptr()) }
+    };
     let now = std::time::Instant::now();
     let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
     let Some(Some(pages)) = g.get_mut(&(device.as_raw() as usize)) else { return Ok(()) };
@@ -797,8 +808,9 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
             return 0;
         }
         let list: Vec<Option<ID3D12Pageable>> = cold.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
-        if let Err(e) = unsafe { device.Evict(&list) } {
-            crate::diagnostics::log_line(format_args!("placed textures: Evict of {} page pools failed {e}", cold.len()));
+        let done = if evicting { unsafe { device.Evict(&list) } } else { priority(&cold, pages, D3D12_RESIDENCY_PRIORITY_MINIMUM) };
+        if let Err(e) = done {
+            crate::diagnostics::log_line(format_args!("placed textures: {} of {} page pools failed {e}", if evicting { "Evict" } else { "demoting" }, cold.len()));
             return 0;
         }
         for &h in &cold {
@@ -806,14 +818,19 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
         }
         let n = POOL_EVICTIONS.fetch_add(cold.len() as u64, Relaxed);
         if n < 8 || (n + cold.len() as u64).ilog2() != (n + 1).ilog2() {
-            crate::diagnostics::log_line(format_args!("placed textures: evicted {} page pools ({} MiB) unused for {idle:.0} s (TUXBOX_SPAN_EVICT_S)",
-                cold.len(), cold.len() * POOL_PAGES as usize * PAGE >> 20));
+            crate::diagnostics::log_line(format_args!("placed textures: {} {} page pools ({} MiB) unused for {idle:.0} s (TUXBOX_SPAN_EVICT_S, TUXBOX_PAGES_DEMOTE)",
+                if evicting { "evicted" } else { "demoted" }, cold.len(), cold.len() * POOL_PAGES as usize * PAGE >> 20));
         }
         cold.len()
     };
     if !resident.is_empty() {
         let list: Vec<Option<ID3D12Pageable>> = resident.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
-        let mut made = unsafe { device.MakeResident(&list) };
+        if !evicting {
+            if let Err(e) = priority(&resident, pages, D3D12_RESIDENCY_PRIORITY_NORMAL) {
+                crate::diagnostics::log_line(format_args!("placed textures: restoring the priority of {} page pools failed {e}", resident.len()));
+            }
+        }
+        let mut made = if evicting { unsafe { device.MakeResident(&list) } } else { Ok(()) };
         if made.is_err() {
             evict(pages, &keep, 1.0, Some(resident.len()));
             made = unsafe { device.MakeResident(&list) };

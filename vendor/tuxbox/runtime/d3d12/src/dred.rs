@@ -20,10 +20,21 @@ pub(crate) fn configure() {
     if !enabled() {
         return;
     }
+    // test60: D3D12GetDebugInterface refused the settings interface; the
+    // runtime also hands it out through D3D12GetInterface.
     let mut settings: Option<ID3D12DeviceRemovedExtendedDataSettings> = None;
-    if unsafe { D3D12GetDebugInterface(&mut settings) }.is_ok()
-        && let Some(settings) = settings
-    {
+    let debug = unsafe { D3D12GetDebugInterface(&mut settings) };
+    if settings.is_none() {
+        let mut other: Option<ID3D12DeviceRemovedExtendedDataSettings> = None;
+        let got = unsafe { D3D12GetInterface(&CLSID_D3D12DeviceRemovedExtendedData, &mut other) };
+        if other.is_none() {
+            log(&format!("settings interface unavailable (D3D12GetDebugInterface {:?}, D3D12GetInterface {:?})",
+                debug.err().map(|e| e.code()), got.err().map(|e| e.code())));
+            return;
+        }
+        settings = other;
+    }
+    if let Some(settings) = settings {
         unsafe {
             settings.SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
             settings.SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
