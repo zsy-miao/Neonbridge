@@ -1223,7 +1223,81 @@ pub fn translate_linked(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>) -> R
 pub fn translate_ordered(
     ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_order: &[String],
 ) -> Result<Translated, String> {
-    translate_outputs(ex, feeds_ps, output_order, None)
+    if let Some(ps) = feeds_ps {
+        log_link(ex, ps);
+    }
+    let out = translate_outputs(ex, feeds_ps, output_order, None);
+    if let Err(why) = &out {
+        dump_untranslated(ex, why);
+    }
+    out
+}
+
+/// TB_DUMP_UNTRANSLATED=<dir>: a compute program with no translation is written
+/// to <dir>/cs_<isa hash>.txt (the error, preamble, PSV threads, features, root
+/// signature, resources, FSSM user-data rows and the ISA words) plus the raw
+/// program as .isa, once per program, for offline analysis (palmetto c2113e42).
+fn dump_untranslated(ex: &ShaderExtract, why: &str) {
+    use std::fmt::Write as _;
+    if ex.stage != Stage::Compute {
+        return;
+    }
+    let Some(dir) = std::env::var_os("TB_DUMP_UNTRANSLATED").filter(|d| !d.is_empty()) else { return };
+    let hash = ex.isa.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+    let dir = std::path::PathBuf::from(dir);
+    let path = dir.join(format!("cs_{hash:016x}.txt"));
+    if path.exists() || std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let mut t = String::new();
+    let _ = writeln!(t, "error: {why}");
+    let _ = writeln!(t, "entry: {:?}  model: {:?}  features: {:?}", ex.entry, ex.shader_model, ex.required_features);
+    let _ = writeln!(t, "preamble: {:08x?}  psv threads: {:?}", ex.isa_preamble, ex.psv_threads);
+    let _ = writeln!(t, "root signature: {:#?}", ex.root_sig);
+    let _ = writeln!(t, "resources: {:#?}", ex.resources);
+    if let Some(rows) = tuxbox_dxbc::compute_table::user_data_records(&ex.fssm) {
+        let _ = writeln!(t, "user data (class, offset, register, width, location):");
+        for row in rows {
+            let _ = writeln!(t, "  {row:08x?}");
+        }
+    }
+    let _ = writeln!(t, "isa ({} bytes, data {} bytes):", ex.isa.len(), ex.isa_data.len());
+    for (n, chunk) in ex.isa.chunks(32).enumerate() {
+        let words: Vec<String> = chunk.chunks(4).map(|w| {
+            let mut b = [0u8; 4];
+            b[..w.len()].copy_from_slice(w);
+            format!("{:08x}", u32::from_le_bytes(b))
+        }).collect();
+        let _ = writeln!(t, "  {:05x}: {}", n * 32, words.join(" "));
+    }
+    let _ = std::fs::write(path.with_extension("isa"), &ex.isa);
+    if std::fs::write(&path, t).is_ok() {
+        eprintln!("xshader: untranslated compute program dumped to {}", path.display());
+    }
+}
+
+/// TB_LOG_LINK=1: when a VS/GS is translated for a pixel shader, log every
+/// interpolant that does not link: a PS input the stage does not write, and a
+/// stage output the PS does not read, with its register and mask (rebox 560e3ec,
+/// re-derived). Matching is by semantic name and index.
+fn log_link(ex: &ShaderExtract, ps: &InputInterp) {
+    if !matches!(ex.stage, Stage::Vertex | Stage::Geometry)
+        || !std::env::var("TB_LOG_LINK").is_ok_and(|v| v.trim() == "1")
+    {
+        return;
+    }
+    let outs: Vec<String> = ex.output_sig.iter().map(semantic).collect();
+    for (sem, mode) in &ps.0 {
+        if !outs.iter().any(|o| o.eq_ignore_ascii_case(sem)) {
+            eprintln!("xshader link: PS reads {sem} ({mode}) but the {:?} stage writes no such output", ex.stage);
+        }
+    }
+    for e in &ex.output_sig {
+        let sem = semantic(e);
+        if e.sysval == 0 && ps.get(&sem).is_none() {
+            eprintln!("xshader link: {:?} output {sem} (register {}, mask {:#x}) is not read by the PS", ex.stage, e.register, e.mask);
+        }
+    }
 }
 
 /// Redirect the pixel stencil reference to an unused integer render target.
@@ -8619,7 +8693,37 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 comp.push(if (en >> i) & 1 != 0 { f(&ins.src[i])? } else { "0.0".into() });
             }
         }
-        let v4 = format!("float4({})", comp.join(", "));
+        let mut v4 = format!("float4({})", comp.join(", "));
+        // TB_DEBUG_PS_CUT (rebox e809dbe, re-derived): on pixel MRT exports with packed
+        // halves, `halves` writes the four halves as plain binary16 (no pknorm guess,
+        // no pack-epilogue values) and `words` writes the two packed dwords' bits into
+        // .xy, so a capture shows where the colour goes wrong before or at the pack.
+        if is_ps && compr && target < 8 {
+            if let Ok(mode) = std::env::var("TB_DEBUG_PS_CUT") {
+                let (a, b) = (r(&ins.src[0])?, r(&ins.src[1])?);
+                let cut = match mode.trim() {
+                    "halves" => Some(format!("float4(f16tof32({a} & 0xffffu), f16tof32({a} >> 16), f16tof32({b} & 0xffffu), f16tof32({b} >> 16))")),
+                    "words" => Some(format!("float4(asfloat({a}), asfloat({b}), 0.0, 1.0)")),
+                    _ => None,
+                };
+                if let Some(cut) = cut {
+                    self.line(&format!("// (TB_DEBUG_PS_CUT={}: MRT {target} export replaced)", mode.trim()));
+                    let ei = self.ex.output_sig.iter().enumerate().filter(|(_, e)| e.sysval == 64)
+                        .nth(target as usize).map(|(i, _)| i)
+                        .ok_or_else(|| format!("MRT export {target} has no SV_Target output element"))?;
+                    let (ty, n) = sig_type(&self.ex.output_sig[ei]);
+                    let val = match self.ex.output_sig[ei].comp_type {
+                        1 | 2 => format!("asuint({cut})"),
+                        _ => cut,
+                    };
+                    self.line(&format!("if (exec_lo & 1u) o.o{ei} = ({ty})({val}.{});", &"xyzw"[..n]));
+                    v4 = String::new();
+                }
+            }
+        }
+        if v4.is_empty() {
+            return Ok(());
+        }
         // The exported registers as raw 32-bit values, when they are available unpacked.
         let raw: Option<Vec<String>> = if compr {
             self.epilog_exp.get(&self.cur_idx).copied().map(|(a, b)| {
