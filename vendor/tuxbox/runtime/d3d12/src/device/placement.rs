@@ -1,5 +1,6 @@
 //! Keep CPU-backed tiled Xbox textures coherent with their desktop images.
 mod descriptors;
+pub(crate) mod pool;
 mod publication;
 mod upload;
 mod watch;
@@ -57,7 +58,13 @@ fn committed(
         )?;
     }
     let bytes = unsafe { device.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) }.SizeInBytes;
-    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedTexture, if bytes == u64::MAX { 0 } else { bytes });
+    use crate::diagnostics::memory::Category;
+    let category = match kind {
+        D3D12_HEAP_TYPE_UPLOAD => Category::PlacedUpload,
+        D3D12_HEAP_TYPE_READBACK => Category::PlacedReadback,
+        _ => Category::PlacedTexture,
+    };
+    crate::diagnostics::memory::note(category, if bytes == u64::MAX { 0 } else { bytes });
     native.ok_or_else(|| E_POINTER.into())
 }
 
@@ -97,11 +104,15 @@ pub(crate) struct Texture {
     mips: Vec<Mip>,
     contents: Mutex<Contents>,
     images: Weak<Images>,
+    /// The native copy's allocation size, for the live count and the pool.
+    bytes: u64,
 }
 
 impl Drop for Texture {
     fn drop(&mut self) {
         crate::exports::profiling::mapping_released();
+        let readers = std::mem::take(&mut self.contents.get_mut().unwrap_or_else(|e| e.into_inner()).readers);
+        pool::release(&self.native, host_desc(&self.desc), self.bytes, readers);
         let Some(images) = self.images.upgrade() else {
             return;
         };
@@ -195,6 +206,19 @@ pub(super) fn color_plane(desc: &D3D12_RESOURCE_DESC) -> Result<Plane> {
     Plane::compute(&layout).or_else(|_| Plane::compute_64k_color(&layout)).map_err(|status| HRESULT(status).into())
 }
 
+/// The desktop description of a placed texture's committed copy. A
+/// simultaneous-access texture implicitly promotes on first use and decays
+/// to COMMON after ExecuteCommandLists, including copy-queue uploads.
+fn host_desc(desc: &D3D12_RESOURCE_DESC) -> D3D12_RESOURCE_DESC {
+    D3D12_RESOURCE_DESC {
+        Alignment: 0,
+        Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
+        Flags: D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
+            | (desc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+        ..*desc
+    }
+}
+
 impl Texture {
     /// Guest address of a subresource's texels. On the console Map returns this
     /// memory directly; the uploader publishes CPU writes before GPU reads.
@@ -234,22 +258,19 @@ impl Texture {
         crate::diagnostics::watch("placed texture", address, size, || format!(
             "{}x{}x{} format={} layout={:#x} flags={:#x} mips={}", desc.Width, desc.Height,
             desc.DepthOrArraySize, desc.Format.0, desc.Layout.0, desc.Flags.0, desc.MipLevels));
-        // A simultaneous-access texture implicitly promotes on first use and
-        // decays to COMMON after ExecuteCommandLists, including copy-queue uploads.
-        let host = D3D12_RESOURCE_DESC {
-            Alignment: 0,
-            Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
-            Flags: D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
-                | (desc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
-            ..*desc
+        let host = host_desc(desc);
+        // A copy a dropped placement left with this description is reused
+        // (test48: 38k committed copies in two minutes); its old readers are
+        // waited on before the first upload overwrites it.
+        let (native, bytes, readers) = match pool::take(device, &host) {
+            Some(reused) => reused,
+            None => {
+                let native = committed(device, D3D12_HEAP_TYPE_DEFAULT, &host, D3D12_RESOURCE_STATE_COMMON, clear)?;
+                let bytes = unsafe { device.GetResourceAllocationInfo(0, std::slice::from_ref(&host)) }.SizeInBytes;
+                (native, if bytes == u64::MAX { 0 } else { bytes }, Vec::new())
+            }
         };
-        let native = committed(
-            device,
-            D3D12_HEAP_TYPE_DEFAULT,
-            &host,
-            D3D12_RESOURCE_STATE_COMMON,
-            clear,
-        )?;
+        pool::created(bytes);
         let mut mips = Vec::with_capacity(count as usize);
         for index in 0..count {
             let (slice, level, element_bytes, source) = if let Some(p) = &plane {
@@ -299,6 +320,7 @@ impl Texture {
         }
         let contents = Mutex::new(Contents {
             previous: vec![Vec::new(); mips.len()],
+            readers,
             ..Default::default()
         });
         Ok(Arc::new(Self {
@@ -310,6 +332,7 @@ impl Texture {
             mips,
             contents,
             images: Arc::downgrade(images),
+            bytes,
         }))
     }
 
