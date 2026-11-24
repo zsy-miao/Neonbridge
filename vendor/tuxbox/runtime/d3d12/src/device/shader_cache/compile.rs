@@ -44,6 +44,16 @@ thread_local! {
     static DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// Why this thread's last request returned no translation.
     static REASON: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+    /// The key of this thread's request in progress, and the (key, reason)
+    /// of each request that returned no translation since `take_misses`.
+    static KEY: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    static MISSES: std::cell::RefCell<Vec<(String, &'static str)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The (shader key, reason) of each request on this thread that returned no
+/// translation since the last call (a background pipeline's build).
+pub(crate) fn take_misses() -> Vec<(String, &'static str)> {
+    MISSES.with(|m| std::mem::take(&mut *m.borrow_mut()))
 }
 
 /// Worker threads a title thread is waiting on (by thread id): their pending
@@ -75,6 +85,13 @@ pub(crate) fn take_reason() -> &'static str {
 
 fn reason(why: &'static str) {
     REASON.with(|r| r.set(why));
+    let key = KEY.with(|k| k.borrow().clone());
+    MISSES.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() < 8 {
+            m.push((key, why));
+        }
+    });
 }
 
 /// Whether this thread's translator waits draw on the frame budget: false on
@@ -245,6 +262,7 @@ fn request(
     submit: impl FnOnce(&Path, &Path) -> io::Result<()>,
 ) -> Option<Vec<u8>> {
     let dir = session()?;
+    KEY.with(|k| key.clone_into(&mut k.borrow_mut()));
     let result = dir.join(format!("{key}.cso"));
     if let Some(bytes) = read_portable_file(&result, stage) {
         return Some(bytes);

@@ -62,6 +62,7 @@ pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, boo
         None => {
             if p.state.lazy && super::stream::background::failed(slot) {
                 crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BindsUntranslatable);
+                super::stream::background::failed_bind(slot);
             }
             (&p.native, &p.state, p.state.lazy)
         }

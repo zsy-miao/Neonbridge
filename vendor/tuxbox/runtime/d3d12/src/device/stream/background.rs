@@ -42,6 +42,9 @@ pub(crate) struct Upgrade {
     failed: std::sync::atomic::AtomicBool,
     /// The thread id of the worker building it, 0 when none is.
     running: std::sync::atomic::AtomicU32,
+    /// Why its worker could not make it: the shader keys that got no
+    /// translation and the reasons (see `failed_bind`).
+    why: OnceLock<String>,
 }
 
 // SAFETY: D3D12 objects are free-threaded. The built state is published once
@@ -68,6 +71,36 @@ static DONE: (Mutex<()>, std::sync::Condvar) = (Mutex::new(()), std::sync::Condv
 pub(crate) fn never() -> Arc<Upgrade> {
     let slot = Upgrade { failed: std::sync::atomic::AtomicBool::new(true), ..Default::default() };
     Arc::new(slot)
+}
+
+/// test116 counted 84 binds of untranslatable pipelines with nothing saying
+/// which shaders or why. Each distinct pipeline bound after its worker gave
+/// up is logged with the shader keys and refusal reasons, the first
+/// TUXBOX_UNTRANSLATABLE_BINDS (32; 0 off), then every power-of-two bind.
+pub(crate) fn failed_bind(slot: &Upgrade) {
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| crate::env_toggle!("TUXBOX_UNTRANSLATABLE_BINDS").and_then(|v| v.trim().parse().ok()).unwrap_or(32));
+    if limit == 0 {
+        return;
+    }
+    static SEEN: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    static BINDS: AtomicU64 = AtomicU64::new(0);
+    let binds = BINDS.fetch_add(1, Ordering::Relaxed) + 1;
+    let id = slot as *const Upgrade as usize;
+    let first = {
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let new = seen.len() < limit && !seen.contains(&id);
+        if new {
+            seen.push(id);
+        }
+        new.then_some(seen.len())
+    };
+    if first.is_some() || binds.is_power_of_two() {
+        let why = slot.why.get().map_or("never handed to a worker", String::as_str);
+        crate::diagnostics::log_line(format_args!(
+            "untranslatable pipeline bound{}: {why} ({binds} such binds so far; TUXBOX_UNTRANSLATABLE_BINDS=0 off)",
+            first.map_or(String::new(), |n| format!(" (#{n})"))));
+    }
 }
 
 /// Its worker could not make it: it stays the placeholder.
@@ -704,6 +737,7 @@ fn build(mut job: Job) {
         let iid = ID3D12PipelineState::IID;
         let mut out = ptr::null_mut();
         NULLED.with(|n| n.set(false));
+        let _ = crate::device::shader_cache::take_misses();
         job.slot.running.store(unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }, Ordering::Release);
         // The ordinary entry points: on this thread nothing is deferred and
         // translator waits have no budget.
@@ -741,6 +775,15 @@ fn build(mut job: Job) {
             }
             _ => {
                 crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesUntranslatable);
+                let misses = crate::device::shader_cache::take_misses();
+                let kind = match &job.work { Work::Stream(_) => "stream", Work::Compute(_) => "compute" };
+                let why = if misses.is_empty() {
+                    format!("{kind}: no shader request failed; create returned {:#x}{}", status.0 as u32, if nulled { " (null shaders)" } else { "" })
+                } else {
+                    let list: Vec<String> = misses.iter().map(|(k, w)| format!("{} ({w})", if k.is_empty() { "?" } else { k.as_str() })).collect();
+                    format!("{kind}: {}", list.join("; "))
+                };
+                let _ = job.slot.why.set(why);
                 job.slot.failed.store(true, Ordering::Relaxed);
                 &FAILED
             }
