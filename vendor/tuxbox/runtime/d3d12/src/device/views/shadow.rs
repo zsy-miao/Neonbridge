@@ -132,8 +132,37 @@ fn buffer(width: u64) -> D3D12_RESOURCE_DESC {
 /// Dead entries (their view dropped) are kept for revival up to this many in all.
 const KEPT: usize = 8192;
 
+/// Dead copies kept for revival hold device memory: past this many MiB of
+/// them (TUXBOX_SHADOW_DEAD_MB, default 256; checked every 64th prune) they
+/// are all dropped, like past KEPT entries. Each check also records live and
+/// dead bytes for the memory stats line.
+fn dead_cap() -> u64 {
+    static CAP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_DEAD_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(256) << 20)
+}
+
+pub(crate) static LIVE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static DEAD_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// (live, dead) copy bytes.
+fn copy_bytes(entries: &HashMap<(u64, u64, bool), Entry>) -> (u64, u64) {
+    entries.values().fold((0, 0), |(live, dead), e| {
+        let bytes = e.pieces.iter().map(|p| p.3).sum::<u64>();
+        if e.view.strong_count() > 0 { (live + bytes, dead) } else { (live, dead + bytes) }
+    })
+}
+
 fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap<(u64, u64), ID3D12Resource>>) {
-    if entries.len() > KEPT {
+    use std::sync::atomic::Ordering::Relaxed;
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut over = false;
+    if CALLS.fetch_add(1, Relaxed).is_multiple_of(64) {
+        let (live, dead) = copy_bytes(entries);
+        LIVE_BYTES.store(live, Relaxed);
+        DEAD_BYTES.store(dead, Relaxed);
+        over = dead > dead_cap();
+    }
+    if entries.len() > KEPT || over {
         entries.retain(|_, e| e.view.strong_count() > 0);
         // A cached import pins its pages against remaps; keep only those a
         // remaining shadow still holds, so the cache pins nothing extra.
@@ -200,6 +229,7 @@ fn import_source(device: &Device, page: u64, width: u64) -> Result<ID3D12Resourc
     }
     let source = crate::device::heap::import_buffer(device, page, &buffer(width), D3D12_RESOURCE_STATE_COMMON)?;
     IMPORTS.fetch_add(1, Relaxed);
+    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowImport, width);
     if cache {
         let mut sources = lock(&shadows.sources);
         sources.insert((page, width), source.clone());
@@ -276,6 +306,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         }
         None => {
             COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowCopy, size);
             new_copy(device, size, writable)?
         }
     };

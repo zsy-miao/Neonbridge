@@ -120,6 +120,12 @@ pub(super) unsafe extern "system" fn cbv(
     };
 }
 
+/// (live, dead kept) shadow copy bytes at the last check.
+pub(crate) fn shadow_bytes() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (shadow::LIVE_BYTES.load(Relaxed), shadow::DEAD_BYTES.load(Relaxed))
+}
+
 /// Releases dead shadow copies and unheld imports (see shadow::release_dead).
 pub(crate) fn release_dead_shadows(device: &Device) -> usize {
     shadow::release_dead(&device.state.shadows)

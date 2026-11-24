@@ -594,6 +594,7 @@ pub(crate) mod a8;
 mod exe_sha;
 pub(crate) mod null_causes;
 pub(crate) mod sampler;
+pub(crate) mod memory;
 
 pub(crate) mod threads {
     use std::collections::HashMap;

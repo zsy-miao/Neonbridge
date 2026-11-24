@@ -1285,6 +1285,7 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
         Ok(state) => state,
         Err(err) => return err.code(),
     };
+    crate::diagnostics::memory::start(unsafe { native.GetAdapterLuid() });
     unsafe { allocate(&DEVICE, interfaces, native, None, state, out) }
 }
 
@@ -1306,6 +1307,9 @@ mod traced {
         clear: *const D3D12_CLEAR_VALUE, iid: *const GUID, out: Out,
     ) -> HRESULT {
         let status = unsafe { create_resource::<EXTENDED>(device, properties, flags, desc, initial, clear, iid, out) };
+        if status.is_ok() && let Some(d) = unsafe { desc.as_ref() } {
+            crate::diagnostics::memory::note(crate::diagnostics::memory::Category::CommittedResource, d.Width * u64::from(d.Height) * u64::from(d.DepthOrArraySize));
+        }
         report(if EXTENDED { 76 } else { 27 }, status, initial.0, desc)
     }
 
@@ -1339,7 +1343,9 @@ mod traced {
         clear: *const D3D12_CLEAR_VALUE, iid: *const GUID, out: Out,
     ) -> HRESULT {
         let place = || unsafe { heap::place_virtual_layout(device, address, desc, layout, clear, iid, out) };
-        report(133, retry_out_of_memory(device, 133, place), layout.0, desc)
+        let status = retry_out_of_memory(device, 133, place);
+        if status.is_ok() { crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedLayout, 0); }
+        report(133, status, layout.0, desc)
     }
 
     /// Out of memory (test39: slot 133 1024x1024 format 98, then the title's
@@ -1366,6 +1372,11 @@ mod traced {
 /// Committed read-write memory inside the console GPU window [2 GiB,
 /// 0x1f_e000_0000) (xmem's WINDOW), where title addresses resolve for the
 /// GPU; 0 on failure.
+/// (live, dead kept) shadow copy bytes, for the memory stats line.
+pub(crate) fn shadow_bytes() -> (u64, u64) {
+    views::shadow_bytes()
+}
+
 pub(crate) fn title_window_alloc(bytes: usize) -> usize {
     use windows::Win32::System::Memory::*;
     use windows::Win32::System::Threading::GetCurrentProcess;
