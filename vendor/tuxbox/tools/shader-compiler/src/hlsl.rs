@@ -1232,6 +1232,51 @@ fn vop1_f64_on() -> bool {
     std::env::var("TB_VOP1_F64").map_or(true, |v| v.trim() != "0")
 }
 
+/// Saturating float-to-int conversions (TB_CVT_SATURATE=0 uses the plain HLSL casts).
+fn cvt_saturate() -> bool {
+    std::env::var("TB_CVT_SATURATE").map_or(true, |v| v.trim() != "0")
+}
+
+/// Plain returns that dxc turns into selects.
+/// NaN is tested on the bits: the float compares may be folded under fast math.
+const CVT_SATURATE: &str = r#"
+uint tb_cvt_u32(float x) {
+    uint bits = asuint(x);
+    if ((bits & 0x7fffffffu) > 0x7f800000u || (bits >> 31) != 0u) return 0u;
+    return bits >= 0x4f800000u ? 0xffffffffu : (uint)x;
+}
+uint tb_cvt_i32(float x) {
+    uint bits = asuint(x);
+    if ((bits & 0x7fffffffu) > 0x7f800000u) return 0u;
+    if ((bits & 0x7fffffffu) >= 0x4f000000u) return (bits >> 31) != 0u ? 0x80000000u : 0x7fffffffu;
+    return asuint((int)x);
+}
+"#;
+
+/// A transcription of CVT_SATURATE against Rust's `as`, which saturates and maps NaN to 0
+/// exactly as RDNA2's V_CVT_U32_F32 / V_CVT_I32_F32 do.
+#[cfg(test)]
+#[test]
+fn cvt_saturate_matches_the_isa() {
+    fn u32_of(x: f32) -> u32 {
+        let bits = x.to_bits();
+        if (bits & 0x7fff_ffff) > 0x7f80_0000 || bits >> 31 != 0 { return 0; }
+        if bits >= 0x4f80_0000 { u32::MAX } else { x as u32 }
+    }
+    fn i32_of(x: f32) -> u32 {
+        let bits = x.to_bits();
+        if (bits & 0x7fff_ffff) > 0x7f80_0000 { return 0; }
+        if (bits & 0x7fff_ffff) >= 0x4f00_0000 { return if bits >> 31 != 0 { 0x8000_0000 } else { 0x7fff_ffff }; }
+        x as i32 as u32
+    }
+    let samples = [0.0f32, -0.0, 0.5, -0.5, 1.0, -1.0, 2147483520.0, 2147483648.0, -2147483648.0, -2147483904.0,
+        4294967040.0, 4294967296.0, 1e30, -1e30, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, -f32::NAN, f32::MIN_POSITIVE];
+    for x in samples.into_iter().chain((0..4096u32).map(|i| f32::from_bits(i.wrapping_mul(0x0010_0001)))) {
+        assert_eq!(u32_of(x), x as u32, "u32 {x:e}");
+        assert_eq!(i32_of(x), x as i32 as u32, "i32 {x:e}");
+    }
+}
+
 fn partial_wave() -> bool {
     std::env::var("TB_PARTIAL_WAVE").map_or(true, |v| v.trim() != "0")
 }
@@ -4410,6 +4455,9 @@ impl<'a> Emitter<'a> {
         h.push_str(HALF_HELPERS);
         if self.insns.iter().any(|i| i.mnemonic.starts_with("v_cmp") && (i.mnemonic.ends_with("_f64") || i.mnemonic.ends_with("_f32") || i.mnemonic.ends_with("_f16"))) {
             h.push_str(compare::FLOAT_HELPERS);
+        }
+        if cvt_saturate() && self.insns.iter().any(|i| matches!(i.mnemonic.as_str(), "v_cvt_u32_f32" | "v_cvt_i32_f32" | "v_cvt_flr_i32_f32" | "v_cvt_rpi_i32_f32")) {
+            h.push_str(CVT_SATURATE);
         }
         if self.insns.iter().any(|i| norm16::uses(&i.mnemonic)) {
             h.push_str(norm16::HELPER);
@@ -7703,6 +7751,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_alignbit_b32" => format!(
                 "((({c}) & 31u) == 0u ? {b} : (({b} >> (({c}) & 31u)) | ({a} << (32u - (({c}) & 31u)))))"
             ),
+            // RDNA2 saturates: out-of-range inputs clamp to the integer range and NaN gives 0
+            // (HLSL casts leave both undefined). After X2W 0c560c21 and the ray path's helpers.
+            "v_cvt_u32_f32" if cvt_saturate() => format!("tb_cvt_u32({})", fa()?),
+            "v_cvt_i32_f32" if cvt_saturate() => format!("tb_cvt_i32({})", fa()?),
+            "v_cvt_flr_i32_f32" if cvt_saturate() => format!("tb_cvt_i32(floor({}))", fa()?),
+            "v_cvt_rpi_i32_f32" if cvt_saturate() => format!("tb_cvt_i32(floor({} + 0.5))", fa()?),
             "v_cvt_u32_f32" => format!("(uint)max({}, 0.0)", fa()?),
             "v_cvt_i32_f32" => format!("asuint((int){})", fa()?),
             "v_cvt_flr_i32_f32" => format!("asuint((int)floor({}))", fa()?),
