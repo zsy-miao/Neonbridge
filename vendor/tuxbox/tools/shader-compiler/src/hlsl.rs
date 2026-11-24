@@ -1113,8 +1113,25 @@ fn lower_local_pc_transfers(insns: &mut [Insn]) -> Result<(), String> {
         .map(|i| i.offset as i64 + 4 + 4 * i.aux.imm)
         .collect();
     let mut local = Vec::new();
-    for (i, seq) in insns.windows(3).enumerate() {
-        let [pc, add, jump] = seq else { unreachable!() };
+    // The 64-bit form carries into the high half (`s_addc_u32 s[n+1], s[n+1], 0`)
+    // between the add and the jump; the carry cannot change a target inside the
+    // program. TB_SETPC_ADDC=0 only accepts the three-instruction form.
+    let addc_ok = std::env::var("TB_SETPC_ADDC").map_or(true, |v| v.trim() != "0");
+    for i in 0..insns.len().saturating_sub(2) {
+        let (pc, add) = (&insns[i], &insns[i + 1]);
+        let high = match pc.dst.first() {
+            Some(Opnd::Sgpr(n)) => n.checked_add(1).map(Opnd::Sgpr),
+            _ => None,
+        };
+        let carry = addc_ok
+            && i + 3 < insns.len()
+            && insns[i + 2].mnemonic == "s_addc_u32"
+            && high.is_some()
+            && insns[i + 2].dst.first() == high.as_ref()
+            && insns[i + 2].src.first() == high.as_ref()
+            && insns[i + 2].src.get(1) == Some(&Opnd::ConstInt(0));
+        let j = if carry { i + 3 } else { i + 2 };
+        let jump = &insns[j];
         if !matches!(jump.mnemonic.as_str(), "s_setpc_b64" | "s_swappc_b64")
             || pc.mnemonic != "s_getpc_b64"
             || add.mnemonic != "s_add_u32"
@@ -1137,13 +1154,13 @@ fn lower_local_pc_transfers(insns: &mut [Insn]) -> Result<(), String> {
             ));
         }
         entries.insert(target);
-        local.push((i, target));
+        local.push((i, j, target));
     }
-    for (i, target) in local {
-        if entries.contains(&(insns[i + 1].offset as i64)) || entries.contains(&(insns[i + 2].offset as i64)) {
+    for (i, j, target) in local {
+        if insns[i + 1..=j].iter().any(|x| entries.contains(&(x.offset as i64))) {
             return Err("branch enters a local PC-transfer sequence after GETPC".into());
         }
-        let jump = &mut insns[i + 2];
+        let jump = &mut insns[j];
         jump.enc = Enc::Sopp;
         jump.op = 2;
         jump.aux.imm = (target - jump.offset as i64 - 4) / 4;
