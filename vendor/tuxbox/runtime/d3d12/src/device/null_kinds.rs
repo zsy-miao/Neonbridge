@@ -78,7 +78,10 @@ impl NullKind {
             NullKind::SrvRaw => srv(DXGI_FORMAT_R32_TYPELESS, D3D12_SRV_DIMENSION_BUFFER, Some(one(0, D3D12_BUFFER_SRV_FLAG_RAW))),
             NullKind::SrvStructured => srv(DXGI_FORMAT_UNKNOWN, D3D12_SRV_DIMENSION_BUFFER, Some(one(4, D3D12_BUFFER_SRV_FLAG_NONE))),
             NullKind::SrvAccel => srv(DXGI_FORMAT_UNKNOWN, D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE, None),
-            NullKind::UavTexture(d) => uav(DXGI_FORMAT_R8G8B8A8_UNORM, d, None),
+            NullKind::UavTexture(d) => {
+                let desc = uav_texture_desc(d);
+                unsafe { device.CreateUnorderedAccessView(None, None, Some(&desc), at) };
+            }
             NullKind::UavTyped => uav(DXGI_FORMAT_R32_UINT, D3D12_UAV_DIMENSION_BUFFER, Some(one_uav(0, D3D12_BUFFER_UAV_FLAG_NONE))),
             NullKind::UavRaw => uav(DXGI_FORMAT_R32_TYPELESS, D3D12_UAV_DIMENSION_BUFFER, Some(one_uav(0, D3D12_BUFFER_UAV_FLAG_RAW))),
             NullKind::UavStructured => uav(DXGI_FORMAT_UNKNOWN, D3D12_UAV_DIMENSION_BUFFER, Some(one_uav(4, D3D12_BUFFER_UAV_FLAG_NONE))),
@@ -87,6 +90,33 @@ impl NullKind {
             },
         }
     }
+}
+
+/// TUXBOX_NULL_UAV_EXTENT=0: null texture UAVs leave array size and 3D
+/// depth at zero, as before.
+fn full_extent() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("TUXBOX_NULL_UAV_EXTENT").is_ok_and(|v| v.trim() == "0"))
+}
+
+/// A null texture UAV of the shader's dimension (1D, 1D/2D arrays of one
+/// slice, 3D with WSize -1 = every depth slice); MSAA, cube and unknown
+/// kinds come here already mapped to 2D or a 2D array (VIctory cbb50b8).
+fn uav_texture_desc(dimension: D3D12_UAV_DIMENSION) -> D3D12_UNORDERED_ACCESS_VIEW_DESC {
+    let mut desc = D3D12_UNORDERED_ACCESS_VIEW_DESC {
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        ViewDimension: dimension,
+        ..Default::default()
+    };
+    if full_extent() {
+        match dimension {
+            D3D12_UAV_DIMENSION_TEXTURE1DARRAY => desc.Anonymous.Texture1DArray.ArraySize = 1,
+            D3D12_UAV_DIMENSION_TEXTURE2DARRAY => desc.Anonymous.Texture2DArray.ArraySize = 1,
+            D3D12_UAV_DIMENSION_TEXTURE3D => desc.Anonymous.Texture3D.WSize = u32::MAX,
+            _ => {}
+        }
+    }
+    desc
 }
 
 /// Per root parameter, the null kind of each table slot (later entries win).
@@ -267,5 +297,35 @@ pub(crate) fn fill(device: &ID3D12Device, heap: &ID3D12DescriptorHeap, count: u3
         let to = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + done as usize * stride };
         unsafe { device.CopyDescriptorsSimple(step, to, from, kind) };
         done += step;
+    }
+}
+
+#[cfg(test)]
+mod uav_dimensions {
+    use super::*;
+
+    /// Every DXIL texture kind reaches the null UAV with the shader's
+    /// dimension, and the arrays and 3D views cover a whole slice / depth.
+    #[test]
+    fn null_texture_uavs_keep_the_shader_dimension() {
+        let expect = [
+            (1, D3D12_UAV_DIMENSION_TEXTURE1D),
+            (2, D3D12_UAV_DIMENSION_TEXTURE2D),
+            (3, D3D12_UAV_DIMENSION_TEXTURE2D), // MSAA
+            (4, D3D12_UAV_DIMENSION_TEXTURE3D),
+            (5, D3D12_UAV_DIMENSION_TEXTURE2DARRAY), // cube
+            (6, D3D12_UAV_DIMENSION_TEXTURE1DARRAY),
+            (7, D3D12_UAV_DIMENSION_TEXTURE2DARRAY),
+            (8, D3D12_UAV_DIMENSION_TEXTURE2D), // MSAA array
+            (9, D3D12_UAV_DIMENSION_TEXTURE2DARRAY),
+            (0, D3D12_UAV_DIMENSION_TEXTURE2D),
+        ];
+        for (kind, dimension) in expect {
+            assert_eq!(classify(6, kind).map(|c| c.1), Some(NullKind::UavTexture(dimension)), "kind {kind}");
+        }
+        let desc = uav_texture_desc(D3D12_UAV_DIMENSION_TEXTURE3D);
+        assert_eq!(unsafe { desc.Anonymous.Texture3D.WSize }, u32::MAX);
+        assert_eq!(unsafe { uav_texture_desc(D3D12_UAV_DIMENSION_TEXTURE2DARRAY).Anonymous.Texture2DArray.ArraySize }, 1);
+        assert_eq!(unsafe { uav_texture_desc(D3D12_UAV_DIMENSION_TEXTURE1DARRAY).Anonymous.Texture1DArray.ArraySize }, 1);
     }
 }

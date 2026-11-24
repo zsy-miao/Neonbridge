@@ -193,13 +193,36 @@ pub(super) fn note_used(key: &str) {
     }
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) {
-    let pending = path.with_extension(format!("{}.tmp", std::process::id()));
-    if std::fs::write(&pending, bytes)
-        .and_then(|()| std::fs::rename(&pending, path))
-        .is_err()
-    {
+/// Publishes `bytes` at `path` through a staging file of its own (process
+/// and a per-process counter, so two writers never share one), removed when
+/// writing or publishing fails (VIctory 7d73e2b).
+fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pending = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
+    let published = std::fs::write(&pending, bytes).and_then(|()| std::fs::rename(&pending, path));
+    if published.is_err() {
         let _ = std::fs::remove_file(&pending);
+    }
+    published.is_ok()
+}
+
+#[cfg(test)]
+mod staging_tests {
+    /// A publication that fails (the destination is a directory) leaves no
+    /// staging file behind; one that succeeds leaves only the result.
+    #[test]
+    fn failed_publication_removes_its_staging_file() {
+        let dir = std::env::temp_dir().join(format!("tuxbox-pipeline-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("taken.bin")).unwrap();
+        assert!(!super::write_atomic(&dir.join("taken.bin"), b"blob"));
+        assert!(super::write_atomic(&dir.join("fresh.bin"), b"blob"));
+        let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, ["fresh.bin", "taken.bin"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

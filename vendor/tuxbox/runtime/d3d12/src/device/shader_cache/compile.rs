@@ -137,16 +137,24 @@ fn cached_refusal(cache: &Path, key: &str) -> bool {
 
 pub(super) fn on_demand(shader: &[u8], source: &str, stage: Stage) -> Option<Vec<u8>> {
     request(source, stage, |pending, requests| {
-        fs::write(pending, shader)?;
-        fs::rename(pending, requests.join(format!("{source}.dxbc")))
+        let published = fs::write(pending, shader).and_then(|()| fs::rename(pending, requests.join(format!("{source}.dxbc"))));
+        if published.is_err() {
+            // A failed publication leaves no staging file (VIctory 7d73e2b).
+            let _ = fs::remove_file(pending);
+        }
+        published
     })
 }
 
 pub(crate) fn stencil(shader: &[u8], source: &str, slot: u32) -> Option<Vec<u8>> {
     let key = format!("{source}_rt{slot}");
     request(&key, Stage::Pixel, |pending, requests| {
-        fs::write(pending, shader)?;
-        fs::rename(pending, requests.join(format!("{key}.stencil")))
+        let published = fs::write(pending, shader).and_then(|()| fs::rename(pending, requests.join(format!("{key}.stencil"))));
+        if published.is_err() {
+            // A failed publication leaves no staging file (VIctory 7d73e2b).
+            let _ = fs::remove_file(pending);
+        }
+        published
     })
 }
 

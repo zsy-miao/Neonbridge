@@ -151,6 +151,7 @@ pub(super) fn on_stalled_page(address: u64) -> bool {
 /// A recorded write to a stalled page: logged now, and kept on the list so
 /// its submission is logged too.
 pub(super) fn note_write(list: &List, state: &mut super::Recording, what: &str, address: u64, value: u64) {
+    writers::recorded(address, value, list.native.as_raw() as usize);
     if !on_stalled_page(address) { return; }
     static LOGGED: AtomicU64 = AtomicU64::new(0);
     if LOGGED.fetch_add(1, Ordering::Relaxed) < 32 {
@@ -244,7 +245,80 @@ pub(super) unsafe extern "system" fn wait_value64(
     }
 }
 
+/// Who last wrote a GPU wait word (rebox 956a736): the host list that
+/// recorded a marker write or fill at its guest address, and the queue and time that list was last
+/// submitted. A timed-out wait logs them (TUXBOX_WAIT_WRITERS=0 skips the
+/// bookkeeping).
+mod writers {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+
+    fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| !std::env::var("TUXBOX_WAIT_WRITERS").is_ok_and(|v| v.trim() == "0"))
+    }
+
+    #[derive(Default)]
+    struct Table {
+        /// 8-byte word -> (host list, value).
+        writes: HashMap<u64, (usize, u64)>,
+        /// host list -> (queue, when).
+        submits: HashMap<usize, (usize, Instant)>,
+    }
+
+    fn table() -> std::sync::MutexGuard<'static, Table> {
+        static TABLE: OnceLock<Mutex<Table>> = OnceLock::new();
+        TABLE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(super) fn recorded(address: u64, value: u64, list: usize) {
+        if !on() {
+            return;
+        }
+        let mut t = table();
+        if t.writes.len() >= 1 << 14 {
+            t.writes.clear();
+        }
+        t.writes.insert(address & !7, (list, value));
+    }
+
+    pub(super) fn submitted(queue: usize, lists: &[*mut core::ffi::c_void]) {
+        if !on() {
+            return;
+        }
+        let now = Instant::now();
+        let mut t = table();
+        if t.submits.len() >= 1 << 14 {
+            t.submits.clear();
+        }
+        for &list in lists {
+            t.submits.insert(list as usize, (queue, now));
+        }
+    }
+
+    pub(super) fn describe(address: u64, waiting_queue: usize, since: Instant) -> String {
+        if !on() {
+            return String::new();
+        }
+        let t = table();
+        let Some(&(list, value)) = t.writes.get(&(address & !7)) else {
+            return "; no recorded list writes it".into();
+        };
+        match t.submits.get(&list) {
+            Some(&(queue, at)) => format!(
+                "; list {list:#x} writing {value:#x} was last submitted {}{queue:#x} {} ms {} the wait",
+                if queue == waiting_queue { "on the same queue " } else { "on queue " },
+                if at <= since { (since - at).as_millis() } else { (at - since).as_millis() },
+                if at <= since { "before" } else { "after" },
+            ),
+            None => format!("; list {list:#x} writing {value:#x} was recorded but never submitted"),
+        }
+    }
+}
+
 struct Job {
+    queue: usize,
     fence: ID3D12Fence,
     segment: Arc<Segment>,
     device: ID3D12Device,
@@ -276,7 +350,9 @@ impl Worker {
                                 let slot = STALLED_COUNT.fetch_add(1, Ordering::Relaxed) as usize;
                                 if slot < 16 { STALLED[slot].store(job.segment.address, Ordering::Relaxed); }
                                 crate::diagnostics::log_line(format_args!(
-                                    "GPU memory wait {:#x} >= {:#x} stalled 2 s", job.segment.address, job.segment.target
+                                    "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}",
+                                    job.segment.address, job.segment.target, job.queue,
+                                    writers::describe(job.segment.address, job.queue, started)
                                 ));
                             }
                             // rebox 69005a5 releases after 2 s; TUXBOX_WAIT_RELEASE_MS
@@ -325,6 +401,35 @@ impl Worker {
 
 pub(super) type Splits = Vec<(usize, Arc<Segment>)>;
 
+/// The lists submitted before the wait of list `index` (from `start`), and
+/// where the rest begins: the batch splits before each waiting list, not
+/// once per batch.
+fn split_before(start: usize, index: usize) -> (core::ops::Range<usize>, usize) {
+    (start..index.max(start), index.max(start))
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::split_before;
+
+    /// Lists 0..5 with waits at the start of lists 1 and 3: 0 runs, wait,
+    /// 1..3 run (2 writes the word 3 waits on), wait, then 3..5.
+    #[test]
+    fn a_batch_splits_before_each_waiting_list() {
+        let mut start = 0;
+        let mut runs = Vec::new();
+        for index in [1, 3] {
+            let (before, next) = split_before(start, index);
+            runs.push(before);
+            start = next;
+        }
+        runs.push(start..5);
+        assert_eq!(runs, [0..1, 1..3, 3..5]);
+        // Two waiting lists in a row: nothing runs between their waits.
+        assert_eq!(split_before(3, 3), (3..3, 3));
+    }
+}
+
 pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits) -> Result<()> {
     let run = |lists: &[*mut c_void]| {
         if !lists.is_empty() {
@@ -338,10 +443,14 @@ pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits)
             crate::dred::check(&queue.native, "guest command lists");
         }
     };
+    writers::submitted(queue.native.as_raw() as usize, host);
     let mut start = 0;
     for (index, segment) in splits {
-        run(&host[start..index]);
-        start = index;
+        // Every list before the waiting one runs first (rebox 7f08cf4): a wait
+        // on a word an earlier list of the same batch writes must not hold it.
+        let (before, next) = split_before(start, index);
+        run(&host[before]);
+        start = next;
         let mut device: Option<ID3D12Device> = None;
         unsafe {
             queue.native.GetDevice(&mut device)?;
@@ -366,6 +475,7 @@ pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits)
         worker
             .0
             .send(Job {
+                queue: queue.native.as_raw() as usize,
                 fence: fence.clone(),
                 segment,
                 device,

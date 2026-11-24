@@ -1083,7 +1083,43 @@ pub(crate) const DEVICE_INTERFACES: &[GUID] = &[
     ID3D12Device9::IID,
     ID3D12Device10::IID,
     ID3D12Device11::IID,
+    ID3D12Device12::IID,
 ];
+
+/// TUXBOX_DEVICE12=0: the device stops at ID3D12Device11, as before.
+fn answers_device12() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("TUXBOX_DEVICE12").is_ok_and(|v| v.trim() == "0"))
+}
+
+#[cfg(test)]
+mod device_levels {
+    use super::*;
+
+    /// Every level the title may hold the device by (GTA VI: Device11), by
+    /// its console IID where it differs (Device8), in order (VIctory 717f322).
+    #[test]
+    fn the_device_answers_every_level() {
+        let console: [u128; 10] = [
+            0x189819f1_1db6_4b57_be54_1821339b85f7,
+            0x77acce80_638e_4e65_8895_c1f23386863e,
+            0x30baa41e_b15b_475c_a0bb_1af5c5b64328,
+            0x81dadc15_2bad_4392_93c5_101345c4aa98,
+            0xe865df17_a9ee_46f9_a463_3098315aa2e5,
+            0x8b4f173b_2fea_4b80_8f58_4307191ab95d,
+            0xc70b221b_40e4_4a17_89af_025a0727a6dc,
+            0x5c014b53_68a1_4b9b_8bd1_dd6046b9358b,
+            0x728f1fa2_ea11_4a9f_9b52_9b42a484d5c9,
+            0x5405c344_d457_444e_b4dd_2366e45aee39,
+        ];
+        for (level, iid) in console.iter().enumerate() {
+            assert_eq!(DEVICE_INTERFACES[level], GUID::from_u128(*iid), "level {level}");
+        }
+        assert!(DEVICE_INTERFACES.contains(&ID3D12Device10::IID));
+        assert!(DEVICE_INTERFACES.contains(&ID3D12Device11::IID));
+        assert!(DEVICE_INTERFACES.contains(&ID3D12Device12::IID));
+    }
+}
 
 /// # Safety
 /// `adapter` must be null or a borrowed DXGI adapter. The caller must supply
@@ -1128,8 +1164,10 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
     crate::dred::watch(&native);
     // SAFETY: the caller holds the selected adapter through factory return.
     let pipeline_device = native.cast::<ID3D12Device2>().ok();
-    let interfaces: &'static [GUID] = if native.cast::<ID3D12Device11>().is_ok() {
+    let interfaces: &'static [GUID] = if answers_device12() && native.cast::<ID3D12Device12>().is_ok() {
         DEVICE_INTERFACES
+    } else if native.cast::<ID3D12Device11>().is_ok() {
+        &DEVICE_INTERFACES[..12]
     } else if native.cast::<ID3D12Device10>().is_ok() {
         &DEVICE_INTERFACES[..11]
     } else if native.cast::<ID3D12Device9>().is_ok() {
