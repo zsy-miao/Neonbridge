@@ -164,7 +164,7 @@ pub(crate) fn debug_device(adapter: Option<&windows::core::IUnknown>) -> Option<
     use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_12_0;
     static TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let path = std::env::var("TUXBOX_D3D12_SDK").ok()?;
-    if TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    if SELECTED.load(std::sync::atomic::Ordering::Acquire) || TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
     log(&format!("debug layer: D3D12Core.dll already loaded before the factory: {}", loaded_core()));
@@ -174,12 +174,7 @@ pub(crate) fn debug_device(adapter: Option<&windows::core::IUnknown>) -> Option<
         let config = config.ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
         let dir = std::ffi::CString::new(path.clone()).map_err(|_| windows::Win32::Foundation::E_INVALIDARG)?;
         // The factory must ask for the SDK version the directory's D3D12Core.dll exports.
-        let version = match std::env::var("TUXBOX_D3D12_SDK_VERSION").ok().and_then(|v| v.trim().parse().ok()) {
-            Some(v) => v,
-            None => std::fs::read(std::path::Path::new(&path).join("D3D12Core.dll")).ok()
-                .and_then(|image| pe_export_u32(&image, b"D3D12SDKVersion"))
-                .ok_or(windows::Win32::Foundation::E_NOINTERFACE)?,
-        };
+        let version = sdk_version(&path).ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
         log(&format!("debug layer SDK version {version}"));
         let factory: ID3D12DeviceFactory = config.CreateDeviceFactory(version, windows::core::PCSTR(dir.as_ptr().cast()))?;
         let debug: ID3D12Debug = factory.GetConfigurationInterface(&CLSID_D3D12Debug)?;
@@ -198,6 +193,59 @@ pub(crate) fn debug_device(adapter: Option<&windows::core::IUnknown>) -> Option<
     log(&format!("debug layer device from {path}: {:?}{}", created.as_ref().map(|_| ()),
         if created.is_err() { "; making the normal device instead" } else { "" }));
     Some(created)
+}
+
+static SELECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// test89: the system D3D12Core.dll was already loaded when the factory asked
+/// for the SDK's, and CreateDevice failed 0x887A002D. The title exe has no
+/// D3D12SDKVersion/D3D12SDKPath exports (it is the dumped console exe), so the
+/// SDK is chosen with ID3D12SDKConfiguration::SetSDKVersion, which works only
+/// before D3D12Core loads and only with Windows Developer Mode on. On success the
+/// normal D3D12CreateDevice makes the debug device. Call first in device creation.
+pub(crate) fn select_sdk() {
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    let Ok(path) = std::env::var("TUXBOX_D3D12_SDK") else { return };
+    ONCE.call_once(|| {
+        let core = loaded_core();
+        let early = unsafe { GetModuleHandleW(windows::core::w!("D3D12Core.dll")) }.is_err();
+        let result = (|| unsafe {
+            if !early { return Err(windows::core::Error::new(windows::Win32::Foundation::E_ILLEGAL_METHOD_CALL, "D3D12Core already loaded")); }
+            let version = sdk_version(&path).ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
+            let mut config: Option<ID3D12SDKConfiguration> = None;
+            D3D12GetInterface(&CLSID_D3D12SDKConfiguration, &mut config)?;
+            let config = config.ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
+            let mut dir = path.trim_end_matches(['\\', '/']).to_string();
+            dir.push('\\');
+            let dir = std::ffi::CString::new(dir).map_err(|_| windows::Win32::Foundation::E_INVALIDARG)?;
+            config.SetSDKVersion(version, windows::core::PCSTR(dir.as_ptr().cast()))?;
+            let mut debug: Option<ID3D12Debug> = None;
+            D3D12GetDebugInterface(&mut debug)?;
+            debug.ok_or(windows::Win32::Foundation::E_NOINTERFACE)?.EnableDebugLayer();
+            Ok(())
+        })();
+        log(&format!("debug layer: SetSDKVersion from {path} (D3D12Core loaded before: {core}): {:?}{}",
+            result.as_ref().map(|_| ()),
+            if result.is_err() { "; trying the device factory instead (SetSDKVersion needs Developer Mode and no D3D12 call before it)" } else { "" }));
+        if result.is_ok() { SELECTED.store(true, std::sync::atomic::Ordering::Release); }
+    });
+}
+
+/// After SetSDKVersion: capture the debug layer's messages on the device.
+pub(crate) fn capture_messages(device: &ID3D12Device) {
+    if !SELECTED.load(std::sync::atomic::Ordering::Acquire) { return; }
+    let result = device.cast::<ID3D12InfoQueue1>().and_then(|queue| {
+        let mut cookie = 0;
+        unsafe { queue.RegisterMessageCallback(Some(on_message), D3D12_MESSAGE_CALLBACK_FLAG_NONE, std::ptr::null_mut(), &mut cookie) }
+    });
+    log(&format!("debug layer: device made through the SDK; message capture {:?}", result.map(|_| ())));
+}
+
+fn sdk_version(path: &str) -> Option<u32> {
+    std::env::var("TUXBOX_D3D12_SDK_VERSION").ok().and_then(|v| v.trim().parse().ok()).or_else(|| {
+        std::fs::read(std::path::Path::new(path).join("D3D12Core.dll")).ok().and_then(|image| pe_export_u32(&image, b"D3D12SDKVersion"))
+    })
 }
 
 /// Which D3D12Core.dll the process holds, if any.

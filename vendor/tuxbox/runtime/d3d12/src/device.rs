@@ -1218,6 +1218,7 @@ mod device_levels {
 /// `adapter` must be null or a borrowed DXGI adapter. The caller must supply
 /// a cleared, writable output pointer for the new guest device reference.
 pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> HRESULT {
+    crate::dred::select_sdk();
     crate::dred::configure();
     crate::diagnostics::crash::install();
     crate::diagnostics::ctl::install();
@@ -1258,6 +1259,7 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
     };
     crate::diagnostics::device_created(&native);
     crate::dred::watch(&native);
+    crate::dred::capture_messages(&native);
     // SAFETY: the caller holds the selected adapter through factory return.
     let pipeline_device = native.cast::<ID3D12Device2>().ok();
     let interfaces: &'static [GUID] = if answers_device12() && native.cast::<ID3D12Device12>().is_ok() {
