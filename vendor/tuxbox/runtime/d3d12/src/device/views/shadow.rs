@@ -104,14 +104,14 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     let pieces = match crate::device::heap::import_buffer(device, page, &buffer(width), D3D12_RESOURCE_STATE_COMMON) {
         Ok(source) => vec![(source, address - page, 0, bytes)],
         // The range spans separately mapped title pages that no single heap can
-        // open; copy each 64 KiB page through its own import.
+        // open; split it in halves on 64 KiB boundaries until each part opens,
+        // so contiguous pages share one import and one copy (page by page
+        // gave ~79 copies per shadow on every submission).
         Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG => {
             let mut pieces = Vec::new();
-            for at in (page..address + bytes).step_by(65536) {
-                let source = crate::device::heap::import_buffer(device, at, &buffer(65536), D3D12_RESOURCE_STATE_COMMON)?;
-                let (start, end) = (address.max(at), (address + bytes).min(at + 65536));
-                pieces.push((source, start - at, start - address, end - start));
-            }
+            let end = (address + bytes).next_multiple_of(65536);
+            split_import(device, address, bytes, page, (page + width / 2).next_multiple_of(65536).min(end), &mut pieces)?;
+            split_import(device, address, bytes, (page + width / 2).next_multiple_of(65536).min(end), end, &mut pieces)?;
             pieces
         }
         Err(e) => return Err(e),
@@ -135,6 +135,36 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("shadowed buffer view at {address:#x}, {bytes} bytes"));
     Ok(view)
+}
+
+/// Imports title pages [from, to) (64 KiB aligned) as few buffers as will
+/// open, appending the pieces of the shadow `address..address + bytes`.
+fn split_import(
+    device: &Device,
+    address: u64,
+    bytes: u64,
+    from: u64,
+    to: u64,
+    pieces: &mut Vec<(ID3D12Resource, u64, u64, u64)>,
+) -> Result<()> {
+    if from >= to {
+        return Ok(());
+    }
+    match crate::device::heap::import_buffer(device, from, &buffer(to - from), D3D12_RESOURCE_STATE_COMMON) {
+        Ok(source) => {
+            let (start, end) = (address.max(from), (address + bytes).min(to));
+            if start < end {
+                pieces.push((source, start - from, start - address, end - start));
+            }
+            Ok(())
+        }
+        Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG && to - from > 65536 => {
+            let middle = (from + (to - from) / 2).next_multiple_of(65536);
+            split_import(device, address, bytes, from, middle, pieces)?;
+            split_import(device, address, bytes, middle, to, pieces)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Copy every live shadow from title memory ahead of this queue's work.
@@ -174,11 +204,12 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 }
             }
         }
-        static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        static LOGGED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+        let n = LOGGED[usize::from(back)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if n < 4 || (n + 1).is_power_of_two() {
+            let total: u64 = copies.iter().map(|c| c.3).sum();
             crate::diagnostics::log_line(format_args!(
-                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {} copies",
+                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {} copies, {total} bytes",
                 if back { "write-back" } else { "refresh" }, n + 1, copies.len()));
         }
     }
