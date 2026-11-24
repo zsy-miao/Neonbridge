@@ -88,6 +88,10 @@ struct Recording {
     /// The bound pipeline is lazy and still being made: draws and
     /// dispatches are dropped until the list binds it again once it exists.
     pipeline_pending: bool,
+    /// A dispatch of this recording did not run (dropped or refused): the
+    /// buffers it would have written, indirect arguments and counts among
+    /// them, hold what they held before (see `indirect_guard`).
+    skipped_compute: bool,
     /// The bound pipeline's key while a frame is captured (diagnostics capture).
     capture_pipeline: Option<Arc<str>>,
     /// Root views (bit = root index) whose title address did not resolve,
@@ -176,12 +180,15 @@ impl Recording {
     }
 
     fn compute_dispatch(&mut self, list: &List, dispatch: impl FnOnce()) {
-        if !crate::diagnostics::capture::active() {
-            return self.compute_dispatch_inner(list, dispatch);
-        }
         let ran = std::cell::Cell::new(false);
         let before = self.error;
         self.compute_dispatch_inner(list, || { ran.set(true); dispatch() });
+        if !ran.get() {
+            self.skipped_compute = true;
+        }
+        if !crate::diagnostics::capture::active() {
+            return;
+        }
         let outcome = self.capture_outcome(ran.get(), before, true);
         crate::diagnostics::capture::call("dispatch", list as *const List as usize, &outcome,
             self.capture_pipeline.as_deref(), self.null_pipeline);
@@ -731,6 +738,7 @@ unsafe extern "system" fn reset(
         }
         state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
         state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
+        state.skipped_compute = false;
         state.capture_pipeline = initial.and_then(|p| device::compute::current(p).1.key.clone())
             .filter(|_| crate::diagnostics::capture::active());
         state.unresolved_roots = [0; 2];
@@ -1581,6 +1589,7 @@ unsafe extern "system" fn execute_indirect(
     if !state.can_record(&list.native) {
         return;
     }
+    let Some(max_count) = indirect_guard(&state, max_count) else { return };
     let owner = parent(&list.parent);
     // Each object is borrowed from a live guest reference for this call.
     let (Some(signature), Some(arguments)) = (
@@ -1664,6 +1673,32 @@ unsafe extern "system" fn execute_indirect(
         let rasterizes = max_count != 0 && signature.state.kind != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
         state.draw(list, rasterizes, execute);
     }
+}
+
+/// Ported from ivall/xcl bind.rs `indirect_guard` (0223c29, cc73c11;
+/// GPL-2.0-only, via ZigZagBoi1/ScarlettPort): after a dispatch of the same
+/// recording did not run, an ExecuteIndirect's arguments and count are
+/// whatever the buffer held before, not what that dispatch would have
+/// written; stale counts ran huge draws and dispatches. Such a call runs
+/// nothing (None). MaxCommandCount is capped at TUXBOX_INDIRECT_MAX (65536).
+/// TUXBOX_INDIRECT_GUARD=0 off.
+fn indirect_guard(state: &Recording, max_count: u32) -> Option<u32> {
+    static ON: OnceLock<bool> = OnceLock::new();
+    static MAX: OnceLock<u32> = OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_GUARD") != Some("0")) {
+        return Some(max_count);
+    }
+    if state.skipped_compute {
+        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "ExecuteIndirect run empty: a dispatch earlier in its list did not run, so its arguments are stale ({n} so far; TUXBOX_INDIRECT_GUARD=0 off)"));
+        }
+        return None;
+    }
+    let cap = *MAX.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(65536));
+    Some(max_count.min(cap))
 }
 
 /// A buffer of our own whose COMMON -> INDIRECT_ARGUMENT transition goes before
@@ -3175,6 +3210,7 @@ pub(crate) unsafe fn wrap_command_list(
             trace_samples: Vec::new(),
             null_pipeline: false,
             pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
+            skipped_compute: false,
             capture_pipeline: None,
             unresolved_roots: [0; 2],
             clamp_budget: None,
