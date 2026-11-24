@@ -693,6 +693,14 @@ q
     wait_for_image(exe);
     splash::close();
     println!("[launch] exited with {status}{} after {:.1}s", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default(), t.elapsed().as_secs_f64());
+    // A loader failure names only its status: name the DLL behind it.
+    if let Some(c) = status.code().map(|c| c as u32)
+        && matches!(c, 0xc0000135 | 0xc0000139 | 0xc000007b | 0xc0000142)
+    {
+        for line in import_problems(game, exe) {
+            println!("[launch] loader: {line}");
+        }
+    }
     if debug.is_some() {
         // Sandboxie redirects the debugger's log write into the box; fetch it back.
         if !cdb_log.is_file() && sandbox {
@@ -925,6 +933,73 @@ fn boxed_path(p: &Path) -> Option<PathBuf> {
     Some(Path::new(r"C:\Sandbox").join(user).join(bx).join(r"user\current").join(rel))
 }
 
+/// Names of the DLLs a PE file imports (its import directory).
+fn pe_imports(p: &Path) -> Option<Vec<String>> {
+    let b = fs::read(p).ok()?;
+    let u16_at = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]));
+    let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
+    let pe = u32_at(0x3c)? as usize;
+    if b.get(pe..pe + 4)? != b"PE\0\0" {
+        return None;
+    }
+    let sections = u16_at(pe + 6)? as usize;
+    let optional = pe + 24;
+    let optional_size = u16_at(pe + 20)? as usize;
+    // PE32+ data directory 1 (imports) is at optional + 120.
+    let import_rva = u32_at(optional + 120)?;
+    let table = optional + optional_size;
+    let offset = |rva: u32| -> Option<usize> {
+        (0..sections).find_map(|i| {
+            let s = table + i * 40;
+            let (va, size, raw) = (u32_at(s + 12)?, u32_at(s + 8)?.max(u32_at(s + 16)?), u32_at(s + 20)?);
+            (rva >= va && rva < va + size).then(|| (rva - va + raw) as usize)
+        })
+    };
+    let mut names = Vec::new();
+    let mut d = offset(import_rva)?;
+    while let Some(name_rva) = u32_at(d + 12).filter(|&n| n != 0) {
+        let o = offset(name_rva)?;
+        let end = b[o..].iter().position(|&c| c == 0)?;
+        names.push(String::from_utf8_lossy(&b[o..o + end]).into_owned());
+        d += 20;
+    }
+    Some(names)
+}
+
+/// After a loader status: each import of the exe that is missing, or present
+/// but not a valid x64 PE, in the game folder and System32 (API sets skipped).
+fn import_problems(game: &Path, exe: &Path) -> Vec<String> {
+    let Some(names) = pe_imports(exe) else { return vec![format!("could not read the import table of {}", exe.display())] };
+    let system = Path::new(&std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join("System32");
+    let mut out = Vec::new();
+    for name in names {
+        let lower = name.to_ascii_lowercase();
+        if lower.starts_with("api-ms-") || lower.starts_with("ext-ms-") {
+            continue;
+        }
+        let local = game.join(&name);
+        let found = [local.clone(), exe.with_file_name(&name), system.join(&name)].into_iter().find(|p| p.is_file());
+        match found {
+            None => out.push(format!("{name} is imported by {} but is in neither the game folder nor System32", exe.display())),
+            Some(p) if pe_imports(&p).is_none() || !is_x64_dll(&p) => out.push(format!("{} is not a valid x64 DLL", p.display())),
+            Some(_) => {}
+        }
+    }
+    if out.is_empty() {
+        out.push("every DLL the exe imports is present and x64; the failing one is a dependency of those, or an entry point it lacks".into());
+    }
+    out
+}
+
+fn is_x64_dll(p: &Path) -> bool {
+    let Ok(b) = fs::read(p).map(|b| b[..b.len().min(4096)].to_vec()) else { return false };
+    if b.len() < 0x40 || &b[..2] != b"MZ" {
+        return false;
+    }
+    let pe = u32::from_le_bytes(b[0x3c..0x40].try_into().unwrap()) as usize;
+    b.len() >= pe + 6 && &b[pe..pe + 4] == b"PE\0\0" && u16::from_le_bytes([b[pe + 4], b[pe + 5]]) == 0x8664
+}
+
 fn ntstatus(c: u32) -> &'static str {
     match c {
         0xc0000005 => ", access violation",
@@ -946,5 +1021,28 @@ fn main() {
     if let Err(e) = result {
         eprintln!("neonbridge: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod loader_names {
+    use super::*;
+
+    #[test]
+    fn reads_a_system_dll_s_imports() {
+        let k = Path::new(&std::env::var("SystemRoot").unwrap()).join(r"System32\kernel32.dll");
+        let names = pe_imports(&k).expect("kernel32 import table");
+        assert!(!names.is_empty());
+        assert!(is_x64_dll(&k));
+    }
+
+    #[test]
+    fn a_broken_dll_is_named() {
+        let dir = std::env::temp_dir().join("neonbridge_loader_names");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("broken.dll"), b"MZ not a PE").unwrap();
+        assert!(pe_imports(&dir.join("broken.dll")).is_none());
+        assert!(!is_x64_dll(&dir.join("broken.dll")));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
