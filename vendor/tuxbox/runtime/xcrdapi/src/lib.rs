@@ -173,7 +173,7 @@ impl IFactory_Impl for Factory_Impl {
                 S_OK
             }
             Err(error) => {
-                if std::env::var_os("TUXBOX_LOG").is_some() {
+                if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
                     eprintln!("TuxBox xcrdapi: OpenFile {} failed: {error}", path.display());
                 }
                 HRESULT::from_win32(error.raw_os_error().unwrap_or(1) as u32)

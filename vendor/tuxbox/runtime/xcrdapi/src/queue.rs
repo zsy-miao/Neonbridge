@@ -105,7 +105,7 @@ struct Read {
 }
 
 fn log(message: std::fmt::Arguments) {
-    if std::env::var_os("TUXBOX_LOG").is_some() {
+    if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
         eprintln!("TuxBox xcrdapi: {message}");
     }
 }

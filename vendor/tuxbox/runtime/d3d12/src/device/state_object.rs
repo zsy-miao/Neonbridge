@@ -218,7 +218,7 @@ pub(super) unsafe extern "system" fn deserialize(
             // A researcher can replay the same host collection in a separate
             // process using the title's actual global root. Normal launches
             // do not write any diagnostic files.
-            if let Some(dir) = std::env::var_os("TUXBOX_CAPTURE_RAY_ROOTS")
+            if let Some(dir) = std::env::var_os("TUXBOX_CAPTURE_RAY_ROOTS").filter(|d| !d.is_empty())
                 && !hash.is_empty()
             {
                 let path = std::path::Path::new(&dir).join(format!("{hash}.dxbc"));

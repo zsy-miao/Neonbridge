@@ -83,7 +83,7 @@ fn mount(path: &str) -> io::Result<()> {
 }
 
 pub(super) fn attach() {
-    let Ok(path) = std::env::var("TUXBOX_WINE_TITLE_TEMP") else {
+    let Some(path) = std::env::var("TUXBOX_WINE_TITLE_TEMP").ok().filter(|p| !p.is_empty()) else {
         return;
     };
     let ntdll = unsafe { GetModuleHandleW(w!("ntdll.dll")) };

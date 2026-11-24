@@ -927,7 +927,7 @@ fn log_rejected_desc(result: i32, desc: &Desc) {
     let stderr = target.as_deref() == Some(OsStr::new("stderr"));
     if !(stderr
         || target.as_deref() == Some(OsStr::new("1"))
-        || std::env::var_os("TUXBOX_XG_TRACE").is_some())
+        || std::env::var_os("TUXBOX_XG_TRACE").is_some_and(|v| !v.is_empty()))
         || FAILURES_LOGGED.fetch_add(1, Ordering::Relaxed) >= 128
     {
         return;

@@ -2215,7 +2215,7 @@ impl<'a> Emitter<'a> {
         // table pointers and descriptors below. It assumes the other arm is a lane
         // mask, ballot or a path that never reaches the use; waterfall loops that
         // select per-lane values are not told apart from it, so it can be wrong.
-        let speculate = std::env::var_os("TB_SPECULATE_DESCRIPTORS").is_some();
+        let speculate = std::env::var_os("TB_SPECULATE_DESCRIPTORS").is_some_and(|v| !v.is_empty());
         let optimistic = |v: &Sym| matches!(v, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_))
             || speculate && matches!(v, Sym::InlineWord(_) | Sym::HeapOffset | Sym::HeapDescriptor(_)
                 | Sym::SamplerHeapOffset | Sym::SamplerOffset(_) | Sym::DirectRaw(_));
@@ -2226,7 +2226,7 @@ impl<'a> Emitter<'a> {
             budget -= 1;
             let (mut sym, mut written) = states[b].clone().unwrap();
             if let Err(e) = self.res_block(&program, &mut sym, &mut written, ranges[b].clone()) {
-                if std::env::var_os("TB_DFDEBUG").is_some() {
+                if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) {
                     eprintln!("block {b} analysis error: {e}");
                 }
                 // Unknown effect: forget everything and treat every SGPR as written. Keep

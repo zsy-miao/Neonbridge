@@ -741,7 +741,7 @@ pub(super) unsafe extern "system" fn create_pipeline(
 fn raster_root_diagnostic(payload: &[u8], reason: &str) {
     use std::collections::HashSet;
     use std::sync::{LazyLock, Mutex};
-    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("TUXBOX_TRACE_RASTER_ROOTS").is_some());
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("TUXBOX_TRACE_RASTER_ROOTS").is_some_and(|v| !v.is_empty()));
     static SEEN: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
     if !*ON { return; }
     let summary = match tuxbox_dxbc::rootsig::parse_rts0(payload) {
