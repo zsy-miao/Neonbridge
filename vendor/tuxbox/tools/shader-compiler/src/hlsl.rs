@@ -2783,7 +2783,10 @@ impl<'a> Emitter<'a> {
                     };
                     if (ins.raw.get(1).copied().unwrap_or(0) >> 25) != 0x7d {
                         let soff = (ins.raw[1] >> 25) as u16;
-                        if self.resource_heap_base == Some(table) && matches!(n, 4 | 8) && ins.aux.imm == 0 && sym.get(&soff) == Some(&Sym::HeapOffset) {
+                        // Any dynamic byte offset on the resource heap pointer selects a
+                        // 32-byte descriptor, whatever arithmetic produced it.
+                        if self.resource_heap_base == Some(table) && matches!(n, 4 | 8) && ins.aux.imm == 0
+                            && !matches!(sym.get(&soff), Some(Sym::SamplerHeapOffset | Sym::SamplerOffset(_))) {
                             for k in 0..n as u16 {
                                 sym.remove(&(d + k));
                                 written.insert(d + k);
