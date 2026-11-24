@@ -305,6 +305,97 @@ pub(crate) struct Texture {
     on_pages: bool,
     /// Creation order, for remapping the newest covered texture (pages.rs).
     seq: u64,
+    /// Milliseconds since `epoch()` when a submission last used it.
+    last_used: AtomicU64,
+    /// Unmapped by `unmap_idle`; mapped again at its next use.
+    idle_unmapped: std::sync::atomic::AtomicBool,
+}
+
+use std::sync::atomic::AtomicU64;
+
+fn epoch() -> std::time::Instant {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *EPOCH.get_or_init(std::time::Instant::now)
+}
+
+fn now_ms() -> u64 {
+    epoch().elapsed().as_millis() as u64
+}
+
+/// test74 ran 8356 MiB of device-local memory against a 7188 MiB budget,
+/// 3852 MiB of it in page pools held by mapped textures. While over budget,
+/// at most once a second, textures on pages that no submission used for
+/// TUXBOX_PAGES_IDLE_S (5) are unmapped, oldest first, until the overage is
+/// covered (at most 512 a sweep); their pages go back to the pools, and a
+/// pool left empty is evicted as before. Such a texture is mapped again and
+/// re-uploaded whole at its next use. 0 never unmaps.
+fn unmap_idle(images: &Images) {
+    static IDLE_S: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let idle = *IDLE_S.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_IDLE_S").and_then(|v| v.trim().parse().ok()).unwrap_or(5));
+    if idle == 0 || !page_index() {
+        return;
+    }
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = now_ms();
+    let last = LAST.load(Ordering::Relaxed);
+    if now < last + 1000 || LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+        return;
+    }
+    let over = crate::diagnostics::memory::local_over();
+    if over == 0 {
+        return;
+    }
+    let cutoff = now.saturating_sub(idle * 1000);
+    // Upgrade under the lock, filter after it: a filtered-out texture whose
+    // last reference this was runs Drop, which takes the image locks.
+    let all: Vec<Arc<Texture>> = lock(&images.0).values().flatten().filter_map(|alias| alias.texture.upgrade()).collect();
+    let mut cold: Vec<Arc<Texture>> = all.into_iter()
+        .filter(|t| t.on_pages && !t.idle_unmapped.load(Ordering::Relaxed) && !t.superseded.load(Ordering::Relaxed)
+            && t.last_used.load(Ordering::Relaxed) <= cutoff)
+        .collect();
+    cold.sort_unstable_by_key(|t| t.last_used.load(Ordering::Relaxed));
+    let (mut freed, mut count) = (0u64, 0u64);
+    for texture in cold.iter().take(512) {
+        if freed >= over {
+            break;
+        }
+        if pages::unmap(texture) {
+            texture.idle_unmapped.store(true, Ordering::Relaxed);
+            lock(&texture.contents).previous.iter_mut().for_each(|p| *p = None);
+            freed += texture.bytes;
+            count += 1;
+        }
+    }
+    drop(cold);
+    crate::diagnostics::memory::local_freed(freed);
+    static TOTAL: AtomicU64 = AtomicU64::new(0);
+    let n = TOTAL.fetch_add(count, Ordering::Relaxed) + count;
+    if count != 0 {
+        static LINES: AtomicU64 = AtomicU64::new(0);
+        let line = LINES.fetch_add(1, Ordering::Relaxed) + 1;
+        if line <= 8 || line.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "placed textures: device-local over budget by {} MiB: unmapped {count} textures idle {idle} s or more (about {} MiB; {n} so far; TUXBOX_PAGES_IDLE_S=0 off)",
+                over >> 20, freed >> 20));
+        }
+    }
+}
+
+/// Maps idle-unmapped textures of a submission again before it runs.
+fn remap_used(textures: &[Arc<Texture>]) {
+    let now = now_ms();
+    static REMAPPED: AtomicU64 = AtomicU64::new(0);
+    for texture in textures.iter().filter(|t| t.on_pages) {
+        texture.last_used.store(now, Ordering::Relaxed);
+        if texture.idle_unmapped.swap(false, Ordering::Relaxed) && pages::remap(texture) {
+            lock(&texture.contents).previous.iter_mut().for_each(|p| *p = None);
+            let n = REMAPPED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "placed textures: an idle-unmapped {}x{} texture mapped again for a submission ({n} so far)", texture.desc.Width, texture.desc.Height));
+            }
+        }
+    }
 }
 
 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -591,6 +682,8 @@ impl Texture {
             span,
             on_pages,
             seq: SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            last_used: AtomicU64::new(now_ms()),
+            idle_unmapped: Default::default(),
         }))
         .inspect(|_| unplace.0 = None)
     }
@@ -972,6 +1065,8 @@ pub(crate) unsafe fn submit(
         return execute();
     }
     unique(textures);
+    remap_used(textures);
+    unmap_idle(&placements.memory.images);
     unsafe { pages::before_execute(queue) };
     alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref()))?;
     pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t))?;

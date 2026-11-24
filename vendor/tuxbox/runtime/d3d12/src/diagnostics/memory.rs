@@ -59,6 +59,20 @@ impl Drop for Live {
     }
 }
 
+/// Device-local (usage, budget) at the last stats reading, and bytes freed
+/// since by idle unmaps (placement.rs `unmap_idle`), which read this.
+static LOCAL: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+
+/// Device-local bytes over budget at the last reading, less what was freed since.
+pub(crate) fn local_over() -> u64 {
+    let (usage, budget, freed) = (LOCAL[0].load(Relaxed), LOCAL[1].load(Relaxed), LOCAL[2].load(Relaxed));
+    usage.saturating_sub(budget).saturating_sub(freed)
+}
+
+pub(crate) fn local_freed(bytes: u64) {
+    LOCAL[2].fetch_add(bytes, Relaxed);
+}
+
 fn interval_ms() -> u64 {
     crate::env_toggle!("TUXBOX_MEM_STATS_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(10_000)
 }
@@ -132,6 +146,9 @@ pub(crate) fn start(luid: LUID) {
                         .map_or((0, 0), |()| (info.Budget, info.CurrentUsage))
                 };
                 let (local, non_local) = (query(DXGI_MEMORY_SEGMENT_GROUP_LOCAL), query(DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL));
+                LOCAL[0].store(local.1, Relaxed);
+                LOCAL[1].store(local.0, Relaxed);
+                LOCAL[2].store(0, Relaxed);
                 let mut counters = ProcessMemoryCounters { cb: size_of::<ProcessMemoryCounters>() as u32, ..Default::default() };
                 unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
                 let mut status = windows::Win32::System::SystemInformation::MEMORYSTATUSEX {
