@@ -70,10 +70,29 @@ unsafe fn report(device: &ID3D12Device) {
     if let Ok(crumbs) = unsafe { data.GetAutoBreadcrumbsOutput() } {
         let mut node = crumbs.pHeadAutoBreadcrumbNode;
         let mut count = 0;
-        while !node.is_null() && count < 64 {
+        let mut incomplete = 0;
+        // test61 printed no ops: every list's breadcrumbs had completed, or
+        // none were kept. Count them, and show the tails of the last lists.
+        let mut tails: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        while !node.is_null() && count < 4096 {
             let n = unsafe { &*node };
             let done = if n.pLastBreadcrumbValue.is_null() { 0 } else { unsafe { *n.pLastBreadcrumbValue } };
+            if n.BreadcrumbCount != 0 && !n.pCommandHistory.is_null() {
+                let ops = unsafe { std::slice::from_raw_parts(n.pCommandHistory, n.BreadcrumbCount as usize) };
+                let tail: Vec<String> = ops[ops.len().saturating_sub(6)..].iter().map(|op| op.0.to_string()).collect();
+                tails.push_back(format!("list {:?} queue {:?}: {done}/{} done, last ops [{}]",
+                    name(n.pCommandListDebugNameA), name(n.pCommandQueueDebugNameA), n.BreadcrumbCount, tail.join(" ")));
+                if tails.len() > 3 {
+                    tails.pop_front();
+                }
+            }
             if done < n.BreadcrumbCount {
+                incomplete += 1;
+                if incomplete > 16 {
+                    node = n.pNext;
+                    count += 1;
+                    continue;
+                }
                 let ops = unsafe { std::slice::from_raw_parts(n.pCommandHistory, n.BreadcrumbCount as usize) };
                 let from = (done as usize).saturating_sub(4);
                 let to = (done as usize + 4).min(ops.len());
@@ -86,6 +105,14 @@ unsafe fn report(device: &ID3D12Device) {
             node = n.pNext;
             count += 1;
         }
+        log(&format!("breadcrumbs: {count} command lists, {incomplete} not completed (op numbers are D3D12_AUTO_BREADCRUMB_OP)"));
+        if incomplete == 0 {
+            for line in tails {
+                log(&line);
+            }
+        }
+    } else {
+        log("no breadcrumb output");
     }
     if let Ok(fault) = unsafe { data.GetPageFaultAllocationOutput() } {
         log(&format!("page fault at GPU VA {:#x}", fault.PageFaultVA));

@@ -1969,8 +1969,13 @@ unsafe extern "system" fn execute_frame(
     // suppresses a hardware buffer switch and bit 1 chains indirect buffers.
     // The desktop queue owns its packet storage and takes the ordered list
     // array in one submission. The frame token labels that submission.
-    if queue.state.kind != D3D12_COMMAND_LIST_TYPE_DIRECT || flags & !3 != 0 {
-        crate::diagnostics::recording_error(format_args!("extended command-list submission flags {flags:#x}"));
+    // test61: a compute queue's submission with flags 0x3 was dropped here,
+    // and the work after it read what that batch should have written (a GPU
+    // page fault at VA 0). Every queue type takes the batch like a direct
+    // one; TUXBOX_SLOT35_DIRECT_ONLY=1 drops the others again.
+    let direct_only = crate::env_toggle!("TUXBOX_SLOT35_DIRECT_ONLY") == Some("1");
+    if (direct_only && queue.state.kind != D3D12_COMMAND_LIST_TYPE_DIRECT) || flags & !3 != 0 {
+        crate::diagnostics::recording_error(format_args!("extended command-list submission flags {flags:#x} on queue type {}", queue.state.kind.0));
         // Drop this batch only: latching the queue error dropped every
         // later submission too.
         drop_batch(queue, E_NOTIMPL);

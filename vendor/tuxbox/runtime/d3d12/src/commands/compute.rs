@@ -60,11 +60,62 @@ use super::compute_bindings::BufferView;
 fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: fn(u64) -> BufferView) {
     let mut state = recording(list);
     if state.can_record_for::<COMPUTE>(&list.native) {
-        let Some(address) = root_address(list, &mut state, guest) else { return };
+        let Some(mut address) = root_address(list, &mut state, guest) else { return };
+        if address == 0 && let Some(sink) = null_sink(list) {
+            address = sink;
+        }
         let view = view(address);
         unsafe { view.apply::<COMPUTE>(&list.native, index) };
         state.bindings.buffer::<COMPUTE>(index, view);
     }
+}
+
+/// test61 lost its device to a GPU page fault at VA 0x0 (DRED): a root view
+/// bound as null (title address 0 or uncommitted) is still read by its
+/// shader, and on this driver that faults. Such views get the address of a
+/// 64 KiB zeroed buffer of their device instead: reads see zeros, writes
+/// land there. TUXBOX_NULL_ROOT_SINK=0 binds 0 again.
+fn null_sink(list: &List) -> Option<u64> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use windows::Win32::Graphics::Direct3D12::*;
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
+    struct Sink(ID3D12Resource);
+    // SAFETY: D3D12 resources are free-threaded; it is never mutated.
+    unsafe impl Send for Sink {}
+    static SINKS: Mutex<Option<HashMap<usize, Sink>>> = Mutex::new(None);
+    if crate::env_toggle!("TUXBOX_NULL_ROOT_SINK") == Some("0") {
+        return None;
+    }
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { list.native.GetDevice(&mut device) }.ok()?;
+    let device = device?;
+    let device = &device;
+    let mut sinks = SINKS.lock().unwrap_or_else(|e| e.into_inner());
+    let sinks = sinks.get_or_insert_with(HashMap::new);
+    let key = windows::core::Interface::as_raw(device) as usize;
+    if let Some(sink) = sinks.get(&key) {
+        return Some(unsafe { sink.0.GetGPUVirtualAddress() });
+    }
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() };
+    let desc = D3D12_RESOURCE_DESC {
+        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+        Width: 0x10000,
+        Height: 1,
+        DepthOrArraySize: 1,
+        MipLevels: 1,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        Flags: D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+        ..Default::default()
+    };
+    let mut buffer: Option<ID3D12Resource> = None;
+    unsafe { device.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut buffer) }.ok()?;
+    let buffer = buffer?;
+    let va = unsafe { buffer.GetGPUVirtualAddress() };
+    crate::diagnostics::log_line(format_args!("null root views bound to a 64 KiB zeroed buffer at {va:#x} instead of GPU VA 0 (TUXBOX_NULL_ROOT_SINK=0 binds 0)"));
+    sinks.insert(key, Sink(buffer));
+    Some(va)
 }
 
 /// A root view's shader reads past the bound address (a CBV up to 64 KiB, an
