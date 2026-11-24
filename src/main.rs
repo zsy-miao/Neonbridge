@@ -9,6 +9,7 @@
 //! any game file they replace is moved to `<game>/_6ixpack_orig/` first and
 //! `--restore` puts it back.
 
+mod awake;
 mod ctl;
 mod picker;
 mod replay;
@@ -838,6 +839,8 @@ q
     } else {
         Vec::new()
     };
+    // The displays stay on for the run: with them off, DWM paces presents at ~10 Hz (src/awake.rs).
+    let _awake = awake::hold();
     let t = Instant::now();
     let mut child = Command::new(&argv[0])
         .current_dir(game)
