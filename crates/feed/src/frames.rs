@@ -93,6 +93,24 @@ pub(crate) fn latest(after: u64) -> Option<Frame> {
     None
 }
 
+/// What the waiting screen says: "live" while frames arrive, "paused" when
+/// they stopped within the last minute, else "none" (no game presenting).
+pub(crate) fn game() -> &'static str {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<(u64, Option<Instant>)> = Mutex::new((0, None));
+    let now = published();
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if now != last.0 {
+        *last = (now, Some(Instant::now()));
+    }
+    match last.1.map(|t| t.elapsed()) {
+        Some(d) if d < Duration::from_secs(3) => "live",
+        Some(d) if d < Duration::from_secs(60) => "paused",
+        _ => "none",
+    }
+}
+
 pub(crate) fn published() -> u64 {
     view().map_or(0, |v| v.u64(32).load(Ordering::Acquire))
 }

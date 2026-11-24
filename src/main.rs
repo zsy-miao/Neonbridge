@@ -53,6 +53,8 @@ Game feed (NEONBRIDGE_FEED=1): watch the game in a browser on 127.0.0.1:8788 and
   Tailscale (tools/tsproxy.exe, else tools/cloudflared.exe), behind a site password set
   on this PC; needs ffmpeg. NEONBRIDGE_FEED_PORT, _HOST (Tailscale name, neonbridge),
   _LINK (tailscale|cloudflared|none), _FPS (30), _WIDTH (1280), _KBPS (4000).
+  --feed-only  keep the feed page and its link up without a game; games started with
+               NEONBRIDGE_FEED=1 meanwhile show on it (the page waits for them).
 Building needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target;
 a release with a prebuilt tuxbox folder needs neither.";
 
@@ -111,6 +113,15 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             }
             Some("--timeout") => timeout = Some(val("--timeout")?.to_string_lossy().parse::<f64>().map_err(|e| format!("--timeout: {e}"))?),
             Some("--summary") => return print_summary(Path::new(&val("--summary")?)),
+            // The feed page and its link without a game: games started later with
+            // NEONBRIDGE_FEED=1 publish their frames to it.
+            Some("--feed-only") => {
+                neonbridge_feed::start(neonbridge_feed::Settings::from_env());
+                println!("[launch] --feed-only: the feed stays up until this window is closed (Ctrl+C); start games with NEONBRIDGE_FEED=1");
+                loop {
+                    std::thread::park();
+                }
+            }
             Some("--package-release") => {
                 let dir = PathBuf::from(val("--package-release")?);
                 return package_release(tuxbox.unwrap_or_else(baked_tuxbox), &dir);

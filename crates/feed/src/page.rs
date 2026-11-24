@@ -45,13 +45,29 @@ video,img{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:conta
  background:linear-gradient(transparent,rgba(0,0,0,.75));transition:opacity .3s}
 .bar.hide{opacity:0}.st{flex:1;color:#b9bfcc;font-variant-numeric:tabular-nums}
 button{font:inherit;font-weight:600;padding:8px 12px;border:1px solid #2c303b;border-radius:9px;background:rgba(17,19,26,.85);color:#e8eaf0;cursor:pointer}
+.wait{position:fixed;inset:0;z-index:2;display:grid;place-content:center;justify-items:center;gap:14px;background:#0b0b14;transition:opacity .4s}
+.wait.off{opacity:0;pointer-events:none}
+.wait b{font-size:22px;letter-spacing:.32em;color:#ff2e97;text-shadow:0 0 14px rgba(255,46,151,.55),2px 0 0 rgba(0,229,255,.35)}
+.wait p{margin:0;color:#c8c8dc}.wait small{color:#7d8394;font-variant-numeric:tabular-nums}
+.track{width:200px;height:4px;border-radius:2px;background:#201e30;overflow:hidden;position:relative}
+.track i{position:absolute;top:0;bottom:0;left:-70px;width:70px;background:linear-gradient(90deg,#ff2e97,#00e5ff);animation:glint 1.8s ease-in-out infinite}
+@keyframes glint{to{left:200px}}
+@media (prefers-reduced-motion:reduce){.track i{animation:none;left:65px}}
 </style></head><body>
+<div class="wait" id="wait" role="status" aria-live="polite"><b>NEONBRIDGE</b><div class="track"><i></i></div>
+<p>Waiting for the game&hellip;</p><small id="ws">Checking&hellip;</small></div>
 <div class="screen" id="screen"><video id="vid" muted playsinline autoplay></video><img id="shot" alt="Game feed" hidden></div>
 <div class="bar" id="bar"><span class="st" id="st">Connecting...</span><button id="pip">PiP</button><button id="fs">Full screen</button></div>
 <script>
 const $=id=>document.getElementById(id),V=$('vid');
 const MSC=window.ManagedMediaSource||window.MediaSource;let MS=null,SB=null,CODEC=null,pend=[],fails=0,gen=0,ab=null;
 function say(t){$('st').textContent=t}
+function waiting(on){$('wait').classList.toggle('off',!on)}
+const GAME={live:'The game is presenting, connecting\u2026',paused:'The game stopped presenting',none:'No game running'};
+async function poll(){if(!$('wait').classList.contains('off'))try{const r=await fetch('status',{cache:'no-store'});
+ if(r.status===401){location.reload();return}const j=await r.json();$('ws').textContent=GAME[j.game]||'Feed is up'}catch(_){$('ws').textContent='Feed not reachable, retrying'}
+ setTimeout(poll,2500)}
+V.addEventListener('playing',()=>waiting(false));V.addEventListener('waiting',()=>{if(V.readyState<2)waiting(true)});
 function push(){if(!SB||SB.updating||!pend.length)return;const n=pend.reduce((a,c)=>a+c.length,0),u=new Uint8Array(n);let o=0;
  for(const c of pend){u.set(c,o);o+=c.length}pend=[];try{SB.appendBuffer(u)}catch(e){pend.unshift(u);if(V.currentTime>3)try{SB.remove(0,V.currentTime-2)}catch(_){}}}
 async function source(codec){if(MS&&SB&&CODEC===codec&&MS.readyState==='open')return;
@@ -61,16 +77,18 @@ async function source(codec){if(MS&&SB&&CODEC===codec&&MS.readyState==='open')re
  SB.addEventListener('updateend',()=>{const b=V.buffered;if(b.length){const e=b.end(b.length-1),s=b.start(b.length-1),lag=e-V.currentTime;
   if(lag>15||V.currentTime<s)V.currentTime=Math.max(s,e-1);else V.playbackRate=lag>3?1.25:lag>1.5?1.1:1;
   if(V.paused)V.play().catch(()=>{});if(!SB.updating&&V.currentTime-b.start(0)>20){SB.remove(0,V.currentTime-8);return}}push()})}
-async function video(my){let got=0;
+async function video(my){let got=0,idle=0;
  try{ab=new AbortController();const r=await fetch('live.mp4?r='+Date.now(),{signal:ab.signal});
-  if(r.status===401){location.reload();return}if(!r.ok){say((await r.json().catch(()=>({}))).error||'No video yet');throw 0}
+  if(r.status===401){location.reload();return}if(r.status===503){idle=1;say('Waiting for the game');throw 0}
+  if(!r.ok){say((await r.json().catch(()=>({}))).error||'No video yet');throw 0}
   await source(r.headers.get('X-Codec'));say('Live');const rd=r.body.getReader();
   for(;;){const{done,value}=await rd.read();if(done||my!==gen)break;got=1;fails=0;pend.push(value);push()}}catch(e){}
- if(my===gen&&!got)fails++;if(my===gen){say('Reconnecting...');setTimeout(()=>{if(my===gen)stream()},2000)}}
+ if(my===gen&&!got&&!idle)fails++;if(my===gen){waiting(true);if(!idle)say('Reconnecting...');setTimeout(()=>{if(my===gen)stream()},idle?3000:2000)}}
 function stream(){gen++;if(ab)ab.abort();
  if(MSC&&fails<5){V.hidden=false;$('shot').hidden=true;video(gen)}
  else{V.hidden=true;$('shot').hidden=false;$('shot').src='live.mjpg?r='+Date.now();say('Live (MJPEG)');$('pip').hidden=true}}
-$('shot').onerror=()=>{say('Reconnecting...');setTimeout(()=>{$('shot').src='live.mjpg?r='+Date.now()},3000)};
+$('shot').onload=()=>waiting(false);
+$('shot').onerror=()=>{waiting(true);say('Reconnecting...');setTimeout(()=>{$('shot').src='live.mjpg?r='+Date.now()},3000)};
 $('fs').onclick=()=>{const el=$('screen'),d=document;
  if(d.fullscreenElement||d.webkitFullscreenElement){(d.exitFullscreen||d.webkitExitFullscreen).call(d);return}
  const rq=el.requestFullscreen||el.webkitRequestFullscreen;if(rq){rq.call(el);return}
@@ -80,5 +98,5 @@ $('pip').onclick=()=>{if(document.pictureInPictureElement)document.exitPictureIn
 let idle;function wake(){$('bar').classList.remove('hide');clearTimeout(idle);idle=setTimeout(()=>$('bar').classList.add('hide'),3000)}
 addEventListener('pointermove',wake);addEventListener('touchstart',wake);wake();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&V.paused&&!V.hidden)V.play().catch(()=>{})});
-stream();
+stream();poll();
 </script></body></html>"##;

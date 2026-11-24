@@ -102,6 +102,8 @@ pub fn start(settings: Settings) {
                 say(format!("serving http://127.0.0.1:{} (set the password there first, on this PC)", settings.port));
                 tunnel::start(&settings);
             }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => say(format!(
+                "127.0.0.1:{} is already in use: another feed (neonbridge --feed-only?) serves it, and this game's frames reach it", settings.port)),
             Err(e) => say(format!("could not listen on 127.0.0.1:{} ({e}); no feed this run", settings.port)),
         }
     });

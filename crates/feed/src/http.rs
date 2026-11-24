@@ -145,7 +145,11 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
     match route.as_str() {
         "/" => reply(&mut stream, 200, "text/html; charset=utf-8", crate::page::PAGE.as_bytes(), &[]),
         "/status" => {
-            let body = format!("{{\"frames\":{},\"viewers\":{}}}", crate::frames::published(), crate::encoder::viewers());
+            // A waiting page polls this: it counts as watching, so a game that
+            // starts meanwhile begins capturing.
+            crate::frames::heartbeat();
+            let body = format!("{{\"frames\":{},\"viewers\":{},\"game\":\"{}\"}}",
+                crate::frames::published(), crate::encoder::viewers(), crate::frames::game());
             reply(&mut stream, 200, "application/json", body.as_bytes(), &[])
         }
         "/live.mp4" => stream_mp4(&mut stream),
