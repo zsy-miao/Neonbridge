@@ -23,6 +23,67 @@ struct Shared {
     capacity: usize,
     priority: usize,
     error_event: OwnedHandle,
+    /// Inflated chunked zlib streams of this queue's file reads.
+    streams: Streams,
+}
+
+/// Chunked zlib streams (Xbox2Windows 738bfc48, 50f56203, 5ad75b5c; MIT,
+/// re-derived): a title reads one zlib stream through several requests with
+/// the same file and compressed size, each request's offset stepped by its
+/// destination size. The first request inflates the whole stream and writes
+/// its first destination's worth; the others take their slice.
+/// - The cache belongs to the queue, holds the file it read (a live source)
+///   and keeps the last 16 streams. Memory sources always decode alone.
+/// - A request with no zlib header at its own offset looks back up to 16
+///   destination steps for the stream's start, since batched requests run in
+///   parallel and its first piece may not have run yet.
+/// - TUXBOX_ZLIB_CHUNKS=0 fails a stream that outgrows its destination, as
+///   before.
+type Streams = Mutex<VecDeque<Stream>>;
+
+struct Stream {
+    file: Arc<File>,
+    base: u64,
+    compressed: usize,
+    data: Vec<u8>,
+}
+
+const CACHED_STREAMS: usize = 16;
+const LOOK_BACK: u64 = 16;
+
+fn zlib_chunks() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_ZLIB_CHUNKS").map_or(true, |v| v.trim() != "0"))
+}
+
+fn has_zlib_header(bytes: &[u8]) -> bool {
+    let [cmf, flg, ..] = *bytes else { return false };
+    cmf & 0x0f == 8 && cmf >> 4 <= 7 && (u32::from(cmf) * 256 + u32::from(flg)) % 31 == 0
+}
+
+/// The `capacity` bytes of a stream inflated from `base` that a request at
+/// `offset` reads, with every bound checked (no wrap near u64::MAX).
+fn slice_at(data: &[u8], base: u64, offset: u64, capacity: usize) -> Option<&[u8]> {
+    let delta = offset.checked_sub(base).filter(|&d| d > 0)?;
+    if capacity == 0 || !delta.is_multiple_of(capacity as u64) {
+        return None;
+    }
+    let start = usize::try_from(delta).ok()?;
+    data.get(start..start.checked_add(capacity)?)
+}
+
+/// The inflate limit for a stream that outgrew its destination.
+fn chunked_limit(capacity: usize) -> usize {
+    capacity.saturating_mul(8).saturating_add(0x4_0000).clamp(0x8_0000, 64 << 20)
+}
+
+fn remember(streams: &Streams, stream: Stream) {
+    let mut streams = lock(streams);
+    streams.retain(|s| !(Arc::ptr_eq(&s.file, &stream.file) && s.base == stream.base && s.compressed == stream.compressed));
+    if streams.len() >= CACHED_STREAMS {
+        streams.pop_front();
+    }
+    streams.push_back(stream);
 }
 
 struct State {
@@ -343,6 +404,52 @@ impl Read {
         }
     }
 
+    /// `self.size` bytes of `file` at `offset`, or None.
+    fn read_at(file: &FileRead, offset: u64, size: usize) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(size).ok()?;
+        let mut ov = Overlapped { offset, ..Default::default() };
+        let mut got = 0;
+        let ok = unsafe { ReadFile(file.file.as_raw_handle(), bytes.as_mut_ptr(), size as u32, &mut got, &mut ov) };
+        if ok == 0 || got as usize != size {
+            return None;
+        }
+        // ReadFile initialized `size` bytes.
+        unsafe { bytes.set_len(size) };
+        Some(bytes)
+    }
+
+    /// A piece of a chunked stream: from the queue's cache, else inflated
+    /// from the stream's start up to LOOK_BACK destinations back.
+    fn chunk_piece(&self, streams: &Streams) -> Option<Vec<u8>> {
+        let Source::File(file, offset) = &self.source else { return None };
+        let offset = *offset;
+        {
+            let streams = lock(streams);
+            for s in streams.iter().rev() {
+                if Arc::ptr_eq(&s.file, &file.file) && s.compressed == self.size
+                    && let Some(piece) = slice_at(&s.data, s.base, offset, self.capacity)
+                {
+                    return Some(piece.to_vec());
+                }
+            }
+        }
+        for step in 1..=LOOK_BACK {
+            let Some(base) = (self.capacity as u64).checked_mul(step).and_then(|back| offset.checked_sub(back)) else { break };
+            let Some(input) = Self::read_at(file, base, self.size) else { continue };
+            if !has_zlib_header(&input) {
+                continue;
+            }
+            let Ok(data) = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&input, chunked_limit(self.capacity)) else { continue };
+            let piece = slice_at(&data, base, offset, self.capacity).map(<[u8]>::to_vec);
+            remember(streams, Stream { file: file.file.clone(), base, compressed: self.size, data });
+            if piece.is_some() {
+                return piece;
+            }
+        }
+        None
+    }
+
     /// Write the request's output to its destination.
     fn store(&self, bytes: &[u8]) -> Result<(), HRESULT> {
         let bytes = &bytes[..bytes.len().min(self.capacity)];
@@ -355,7 +462,7 @@ impl Read {
         }
     }
 
-    fn execute(&self) -> Result<(), HRESULT> {
+    fn execute(&self, streams: &Streams) -> Result<(), HRESULT> {
         if self.cancelled {
             return Ok(());
         }
@@ -410,12 +517,39 @@ impl Read {
         if self.options & ZLIB == 0 {
             return self.store(input);
         }
+        let file_source = matches!(self.source, Source::File(..));
+        if zlib_chunks() && file_source && !has_zlib_header(input) {
+            // Not a stream start: a later piece of a chunked stream?
+            if let Some(piece) = self.chunk_piece(streams) {
+                static PIECES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = PIECES.fetch_add(1, Ordering::Relaxed) + 1;
+                if n.is_power_of_two() {
+                    log(format_args!("chunked zlib stream piece #{n} ({} bytes) served from the queue's stream", piece.len()));
+                }
+                return self.store(&piece);
+            }
+        }
         {
             let mut stats = storage_stats();
             stats.pending_decodes += 1;
             stats.total_decodes = stats.total_decodes.saturating_add(1);
         }
-        let output = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, self.capacity);
+        let mut output = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, self.capacity);
+        if zlib_chunks() && file_source
+            && let Err(e) = &output
+            && e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput
+            && let Ok(whole) = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, chunked_limit(self.capacity))
+            && let Source::File(file, offset) = &self.source
+        {
+            // The stream outgrew this destination: its first piece goes here,
+            // the rest serves the requests stepped after it.
+            once("zlib chunks", format_args!(
+                "zlib stream of {} bytes outgrew its {}-byte destination: served as chunks (TUXBOX_ZLIB_CHUNKS=0 fails it)",
+                whole.len(), self.capacity));
+            let first = whole[..self.capacity.min(whole.len())].to_vec();
+            remember(streams, Stream { file: file.file.clone(), base: *offset, compressed: self.size, data: whole });
+            output = Ok(first);
+        }
         {
             let mut stats = storage_stats();
             stats.pending_decodes -= 1;
@@ -438,7 +572,7 @@ fn run_read(shared: &Shared, entry: &Entry) -> Result<(), HRESULT> {
         p.source_bytes = p.source_bytes.saturating_add(req.size as u64);
         p.destination_bytes = p.destination_bytes.saturating_add(req.capacity as u64);
     }
-    let result = req.execute();
+    let result = req.execute(&shared.streams);
     storage_stats().priorities[shared.priority].pending -= 1;
     result
 }
@@ -562,7 +696,7 @@ fn consume(shared: &Shared) {
                     p.source_bytes = p.source_bytes.saturating_add(req.size as u64);
                     p.destination_bytes = p.destination_bytes.saturating_add(req.capacity as u64);
                 }
-                let result = req.execute();
+                let result = req.execute(&shared.streams);
                 storage_stats().priorities[shared.priority].pending -= 1;
                 result
             }
@@ -624,6 +758,7 @@ pub(super) unsafe fn create(desc: &QueueDesc, manual: bool) -> Result<IQueue2, H
         capacity: desc.capacity as usize,
         priority: (desc.priority + 1) as usize,
         error_event: unsafe { OwnedHandle::from_raw_handle(handle.0) },
+        streams: Mutex::new(VecDeque::new()),
     });
     let run = Arc::clone(&shared);
     let worker = thread::Builder::new()
@@ -824,6 +959,20 @@ impl IQueue2_Impl for Queue_Impl {
             });
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_chunk_slice_is_bounded_and_stepped_by_its_destination() {
+    let data = vec![7u8; 0x40000];
+    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x10000, 0x10000).map(<[u8]>::len), Some(0x10000));
+    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x30000, 0x10000).map(<[u8]>::len), Some(0x10000));
+    assert!(slice_at(&data, 0x1000, 0x1000 + 0x40000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, 0x1000 + 0x8000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, 0x1000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, u64::MAX - 0xffff, 0x10000).is_none());
+    assert!(has_zlib_header(&[0x78, 0x9c]));
+    assert!(!has_zlib_header(&[0x78, 0x9d]));
 }
 
 #[cfg(test)]
