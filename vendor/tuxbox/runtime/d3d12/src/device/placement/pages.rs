@@ -113,6 +113,152 @@ struct Target {
     levels: u32,
 }
 
+/// Per-heap free-tile allocator for `Pages`. Copied from ivall/xcl 3bc7143
+/// (raylitebull, GPL-2.0-only), "keep vram::Pages tile mappings contiguous per
+/// heap": free tiles are kept per pool heap (sorted descending so `.pop()` yields
+/// ascending contiguous tiles), and a texture takes its tiles from one heap when
+/// one fits it, so streaming churn across many 64 MiB pools no longer scatters a
+/// texture over dozens of heaps (dozens of UpdateTileMappings calls each).
+/// Adapted: heaps evicted while empty (`trim_empty`) are taken from last, and
+/// TUXBOX_PAGES_CONTIGUOUS=0 takes tile by tile from the fullest heap instead,
+/// as the packing order before did.
+#[derive(Default)]
+struct TilePool {
+    /// Free tile indices for each pool heap (descending when `!dirty_sort[h]`).
+    free_by_heap: Vec<Vec<u32>>,
+    /// Whether `free_by_heap[h]` must be sorted descending before popping.
+    dirty_sort: Vec<bool>,
+    /// Total free tiles currently available across all heaps.
+    free_total: usize,
+    /// Tiles given back, reusable after `COOL`.
+    cooling: std::collections::VecDeque<(Tile, std::time::Instant)>,
+}
+
+impl TilePool {
+    fn add_heap(&mut self, pool_pages: u32) -> u32 {
+        let h = self.free_by_heap.len() as u32;
+        self.free_by_heap.push((0..pool_pages).rev().collect());
+        self.dirty_sort.push(false);
+        self.free_total += pool_pages as usize;
+        h
+    }
+
+    fn push_cooling(&mut self, tile: Tile, now: std::time::Instant) {
+        self.cooling.push_back((tile, now));
+    }
+
+    /// Move every cooled tile (`>= COOL`) into its pool heap's free list so best-fit allocation
+    /// sees all ready tiles at once.
+    fn drain_cooling(&mut self, now: std::time::Instant) {
+        while self.cooling.front().is_some_and(|&(_, at)| now.duration_since(at) >= COOL) {
+            let Some((tile, _)) = self.cooling.pop_front() else { break };
+            self.return_tiles(&[tile]);
+        }
+    }
+
+    fn return_tiles(&mut self, tiles: &[Tile]) {
+        for &(h, t) in tiles {
+            let idx = h as usize;
+            if idx < self.free_by_heap.len() {
+                self.free_by_heap[idx].push(t);
+                self.dirty_sort[idx] = true;
+                self.free_total += 1;
+            }
+        }
+    }
+
+    /// Pick the pool heap to take up to `rem` tiles from, warm heaps first (`cold[h]`: evicted
+    /// while empty, used only when no warm heap has a free tile):
+    /// 1. `preferred` if it fits all `rem` tiles (keeps partial-overlap placements on 1 heap),
+    /// 2. otherwise best-fit heap with `len >= rem` (fits the whole texture in 1 heap without
+    ///    splitting fuller pools),
+    /// 3. otherwise the heap with the most free tiles (minimizing distinct heaps touched).
+    /// `contiguous == false`: the heap with the fewest free tiles (the old packing order).
+    fn pick_heap(&self, rem: usize, preferred: Option<u32>, cold: &[bool], contiguous: bool) -> Option<usize> {
+        if self.free_total == 0 {
+            return None;
+        }
+        let is_cold = |h: usize| cold.get(h).copied().unwrap_or(false);
+        for want_cold in [false, true] {
+            let candidates = || self.free_by_heap.iter().enumerate().filter(move |&(h, t)| !t.is_empty() && is_cold(h) == want_cold);
+            if !contiguous {
+                if let Some((h, _)) = candidates().min_by_key(|&(h, t)| (t.len(), h)) {
+                    return Some(h);
+                }
+                continue;
+            }
+            if let Some(p) = preferred.map(|h| h as usize).filter(|&h| h < self.free_by_heap.len() && is_cold(h) == want_cold)
+                && self.free_by_heap[p].len() >= rem
+            {
+                return Some(p);
+            }
+            let mut best_fit: Option<(usize, usize)> = None;
+            let mut largest: Option<(usize, usize)> = None;
+            for (h, tiles) in candidates() {
+                let len = tiles.len();
+                if len >= rem {
+                    if best_fit.is_none_or(|(_, blen)| len < blen) {
+                        best_fit = Some((h, len));
+                    }
+                } else if largest.is_none_or(|(lh, llen)| len > llen || (len == llen && preferred == Some(h as u32) && preferred != Some(lh as u32))) {
+                    largest = Some((h, len));
+                }
+            }
+            if let Some((h, _)) = best_fit.or(largest) {
+                return Some(h);
+            }
+        }
+        None
+    }
+
+    /// Allocate `count` tiles, preferring a single heap and ascending contiguous offsets.
+    /// `make_heap` allocates a new backing pool heap of `pool_pages` tiles when no heap has a
+    /// free tile. On failure, any tiles already taken are returned untouched.
+    fn take_batch(
+        &mut self,
+        count: usize,
+        preferred: Option<u32>,
+        cold: &[bool],
+        now: std::time::Instant,
+        pool_pages: u32,
+        contiguous: bool,
+        mut make_heap: impl FnMut() -> Option<u32>,
+    ) -> Option<Vec<Tile>> {
+        if count == 0 {
+            return Some(Vec::new());
+        }
+        self.drain_cooling(now);
+        let mut out = Vec::with_capacity(count);
+        while out.len() < count {
+            let rem = count - out.len();
+            let h = match self.pick_heap(rem, preferred, cold, contiguous) {
+                Some(h) => h,
+                None => {
+                    let Some(new_h) = make_heap() else {
+                        self.return_tiles(&out);
+                        return None;
+                    };
+                    let added = self.add_heap(pool_pages);
+                    debug_assert_eq!(added, new_h);
+                    added as usize
+                }
+            };
+            if self.dirty_sort[h] {
+                self.free_by_heap[h].sort_unstable_by(|a, b| b.cmp(a));
+                self.dirty_sort[h] = false;
+            }
+            let free = &mut self.free_by_heap[h];
+            let take = if contiguous { rem.min(free.len()) } else { 1 };
+            for _ in 0..take {
+                let t = free.pop().unwrap();
+                out.push((h as u32, t));
+            }
+            self.free_total -= take;
+        }
+        Some(out)
+    }
+}
+
 /// The title's pages of video memory for tiled textures (see the module's comment).
 struct Pages {
     queue: ID3D12CommandQueue,
@@ -120,9 +266,8 @@ struct Pages {
     fence: ID3D12Fence,
     value: u64,
     pools: Vec<ID3D12Heap>,
-    free: Vec<Tile>,
-    /// tiles given back, reusable after `COOL`
-    cooling: std::collections::VecDeque<(Tile, std::time::Instant)>,
+    /// free and cooling tiles, per pool heap (xcl 3bc7143)
+    pool: TilePool,
     /// title page address → its video memory
     pages: std::collections::HashMap<usize, Page>,
     /// extra / sub-64 KiB tiles keyed by `(va, tile_index)` so repeated placements at the same
@@ -171,8 +316,7 @@ impl Pages {
             fence,
             value: 0,
             pools: Vec::new(),
-            free: Vec::new(),
-            cooling: std::collections::VecDeque::new(),
+            pool: TilePool::default(),
             pages: std::collections::HashMap::new(),
             extra_pages: std::collections::HashMap::new(),
             idle: std::collections::VecDeque::new(),
@@ -206,15 +350,8 @@ impl Pages {
         if !pack && !trim {
             return;
         }
-        while self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) {
-            if let Some((t, _)) = self.cooling.pop_front() {
-                self.free.push(t);
-            }
-        }
-        let mut free = vec![0u32; self.pools.len()];
-        for t in &self.free {
-            free[t.0 as usize] += 1;
-        }
+        self.pool.drain_cooling(std::time::Instant::now());
+        let free: Vec<u32> = (0..self.pools.len()).map(|h| self.pool.free_by_heap.get(h).map_or(0, |f| f.len() as u32)).collect();
         let empty: Vec<usize> = if trim { (0..self.pools.len()).filter(|&h| free[h] >= POOL_PAGES).collect() } else { Vec::new() };
         let resident: Vec<usize> = empty.iter().copied().filter(|&h| !self.pool_empty[h]).collect();
         let kept = usize::from(empty.len() == resident.len());
@@ -234,11 +371,9 @@ impl Pages {
                 Err(e) => crate::diagnostics::log_line(format_args!("placed textures: Evict of {} empty page pools failed {e}", cold.len())),
             }
         }
-        // Evicted pools' tiles are taken last; packing takes the fullest
-        // pools' tiles first (the end of the list).
-        let pool_empty = &self.pool_empty;
+        // Evicted pools' tiles are taken last, and a texture's tiles come from
+        // the best-fitting heap (TilePool::pick_heap, xcl 3bc7143).
         if pack {
-            self.free.sort_unstable_by_key(|t| (!pool_empty[t.0 as usize], std::cmp::Reverse(free[t.0 as usize]), t.0, std::cmp::Reverse(t.1)));
             static PACKS: AtomicU64 = AtomicU64::new(0);
             let n = PACKS.fetch_add(1, Relaxed) + 1;
             if n.is_power_of_two() && n >= 16 {
@@ -246,38 +381,43 @@ impl Pages {
                 let half_free = free.iter().filter(|&&f| f >= POOL_PAGES / 2).count();
                 crate::diagnostics::log_line(format_args!(
                     "placed textures: packing pass {n}: {} pools, {all_free} with no tile in use, {half_free} at least half free, {} tiles free (TUXBOX_PAGES_PACK=0 off)",
-                    self.pools.len(), self.free.len()));
+                    self.pools.len(), self.pool.free_total));
             }
-        } else {
-            self.free.sort_by_key(|t| !pool_empty[t.0 as usize]);
         }
     }
 
     /// Pages no resource used for `IDLE` go back to the pools.
     fn sweep(&mut self, now: std::time::Instant) {
-        sweep_idle(&mut self.idle, &mut self.pages, &mut self.extra_pages, &mut self.cooling, now);
+        sweep_idle(&mut self.idle, &mut self.pages, &mut self.extra_pages, &mut self.pool.cooling, now);
     }
 
-    unsafe fn take_tile(&mut self, dev: &ID3D12Device, system_ok: bool) -> Option<Tile> {
-        let reused = match self.free.pop() {
-            Some(t) => Some(t),
-            None if self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) => self.cooling.pop_front().map(|(t, _)| t),
-            None => None,
-        };
-        if let Some(t) = reused {
-            // A pool evicted while empty is made resident before its first tile is used again.
-            if self.pool_empty[t.0 as usize] {
-                let list = [self.pools[t.0 as usize].cast::<ID3D12Pageable>().ok()];
-                if let Err(e) = dev.MakeResident(&list) {
-                    crate::diagnostics::log_line(format_args!("placed textures: MakeResident of an empty page pool failed {e}"));
-                    self.free.push(t);
-                    return None;
-                }
-                self.pool_empty[t.0 as usize] = false;
-                EMPTY_RESIDENT.fetch_add(1, Relaxed);
+    /// `count` tiles for one texture, from one heap when one fits (xcl 3bc7143). A pool
+    /// evicted while empty is made resident before its tiles are used again.
+    unsafe fn take_batch(&mut self, dev: &ID3D12Device, count: usize, preferred: Option<u32>, system_ok: bool, now: std::time::Instant) -> Option<Vec<Tile>> {
+        let contiguous = crate::env_toggle!("TUXBOX_PAGES_CONTIGUOUS") != Some("0");
+        let cold = self.pool_empty.clone();
+        let mut pool = std::mem::take(&mut self.pool);
+        let tiles = pool.take_batch(count, preferred, &cold, now, POOL_PAGES, contiguous, || unsafe { self.new_pool(dev, system_ok) });
+        self.pool = pool;
+        let tiles = tiles?;
+        let mut heaps: Vec<u32> = tiles.iter().map(|t| t.0).filter(|&h| self.pool_empty[h as usize]).collect();
+        heaps.sort_unstable();
+        heaps.dedup();
+        for h in heaps {
+            let list = [self.pools[h as usize].cast::<ID3D12Pageable>().ok()];
+            if let Err(e) = dev.MakeResident(&list) {
+                crate::diagnostics::log_line(format_args!("placed textures: MakeResident of an empty page pool failed {e}"));
+                self.pool.return_tiles(&tiles);
+                return None;
             }
-            return Some(t);
+            self.pool_empty[h as usize] = false;
+            EMPTY_RESIDENT.fetch_add(1, Relaxed);
         }
+        Some(tiles)
+    }
+
+    /// A new 64 MiB pool heap (its index); the caller adds its tiles to the pool.
+    unsafe fn new_pool(&mut self, dev: &ID3D12Device, system_ok: bool) -> Option<u32> {
         let system = system_ok && system_pools(dev);
         let desc = D3D12_HEAP_DESC {
             SizeInBytes: POOL_PAGES as u64 * PAGE as u64,
@@ -305,9 +445,7 @@ impl Pages {
         if system {
             SYSTEM_POOLS.fetch_add(1, Relaxed);
         }
-        let h = self.pools.len() as u32 - 1;
-        self.free.extend((1..POOL_PAGES).rev().map(|t| (h, t)));
-        Some((h, 0))
+        Some(self.pools.len() as u32 - 1)
     }
 
     /// Map the tiles of `res` from subresource `first` on (`tiles[i]`: the
@@ -319,12 +457,18 @@ impl Pages {
         heaps.sort_unstable();
         heaps.dedup();
         for h in heaps {
-            let ranges = heap_ranges(h, tiles);
+            // xcl 3bc7143: a trailing skipped run is left out, so the call walks
+            // only up to the heap's last tile.
+            let ranges = heap_ranges_trimmed(h, tiles);
+            if ranges.is_empty() {
+                continue;
+            }
+            let num_tiles: u32 = ranges.iter().map(|r| r.2).sum();
             let flags: Vec<D3D12_TILE_RANGE_FLAGS> = ranges.iter().map(|r| if r.0 { D3D12_TILE_RANGE_FLAG_NONE } else { D3D12_TILE_RANGE_FLAG_SKIP }).collect();
             let offsets: Vec<u32> = ranges.iter().map(|r| r.1).collect();
             let counts: Vec<u32> = ranges.iter().map(|r| r.2).collect();
             let coord = D3D12_TILED_RESOURCE_COORDINATE { Subresource: first, ..Default::default() };
-            let region = D3D12_TILE_REGION_SIZE { NumTiles: tiles.len() as u32, UseBox: false.into(), ..Default::default() };
+            let region = D3D12_TILE_REGION_SIZE { NumTiles: num_tiles, UseBox: false.into(), ..Default::default() };
             self.queue.UpdateTileMappings(
                 res,
                 1,
@@ -378,7 +522,7 @@ impl Pages {
                 if p.users == 0 {
                     if immediate_cool {
                         if let Some(p) = self.pages.remove(&a) {
-                            self.cooling.push_back((p.tile, now));
+                            self.pool.push_cooling(p.tile, now);
                         }
                     } else {
                         p.idle_since = Some(now);
@@ -393,7 +537,7 @@ impl Pages {
                 if p.users == 0 {
                     if immediate_cool {
                         if let Some(p) = self.extra_pages.remove(&k) {
-                            self.cooling.push_back((p.tile, now));
+                            self.pool.push_cooling(p.tile, now);
                         }
                     } else {
                         p.idle_since = Some(now);
@@ -409,49 +553,57 @@ impl Pages {
         let (first, own) = (total > 0).then(|| owned_pages(va, console_bytes, total as usize)).flatten()?;
         let now = std::time::Instant::now();
         self.sweep(now);
+        // xcl 3bc7143: count the missing tiles first and take them as one batch,
+        // from the heap of a page already shared when it fits them.
+        let mut missing = 0usize;
+        let mut preferred: Option<u32> = None;
+        for i in skip as usize..total as usize {
+            let existing = if i < own { self.pages.get(&(first + i * PAGE)).map(|p| p.tile.0) } else { self.extra_pages.get(&(va, i)).map(|p| p.tile.0) };
+            match existing {
+                Some(h) if preferred.is_none() => preferred = Some(h),
+                Some(_) => {}
+                None => missing += 1,
+            }
+        }
+        let mut fresh = self.take_batch(dev, missing, preferred, system_ok, now)?.into_iter();
         let mut tiles = Vec::with_capacity(total as usize);
         let mut used = Vec::with_capacity(own);
         let mut used_extra = Vec::new();
         for i in skip as usize..total as usize {
             let tile = if i < own {
                 let a = first + i * PAGE;
-                let tile = match self.pages.get_mut(&a) {
+                let t = match self.pages.get_mut(&a) {
                     Some(p) => {
                         p.users += 1;
                         p.idle_since = None;
-                        Some(p.tile)
+                        p.tile
                     }
-                    None => self.take_tile(dev, system_ok).inspect(|&t| {
+                    None => {
+                        let t = fresh.next().expect("one fresh tile per missing page");
                         self.pages.insert(a, Page { tile: t, users: 1, idle_since: None });
-                    }),
+                        t
+                    }
                 };
-                if tile.is_some() {
-                    used.push(a);
-                }
-                tile
+                used.push(a);
+                t
             } else {
                 let k = (va, i);
-                let tile = match self.extra_pages.get_mut(&k) {
+                let t = match self.extra_pages.get_mut(&k) {
                     Some(p) => {
                         p.users += 1;
                         p.idle_since = None;
-                        Some(p.tile)
+                        p.tile
                     }
-                    None => self.take_tile(dev, system_ok).inspect(|&t| {
+                    None => {
+                        let t = fresh.next().expect("one fresh tile per missing page");
                         self.extra_pages.insert(k, Page { tile: t, users: 1, idle_since: None });
-                    }),
+                        t
+                    }
                 };
-                if tile.is_some() {
-                    used_extra.push(k);
-                }
-                tile
+                used_extra.push(k);
+                t
             };
-            let Some(t) = tile else { break };
-            tiles.push(t);
-        }
-        if tiles.len() < (total - skip) as usize {
-            self.release_tiles(used, used_extra, now, true);
-            return None;
+            tiles.push(tile);
         }
         self.map(res, &tiles, levels);
         let mut heaps: Vec<u32> = tiles.iter().map(|t| t.0).collect();
@@ -473,6 +625,16 @@ fn heap_ranges(heap: u32, tiles: &[Tile]) -> Vec<(bool, u32, u32)> {
             Some(r) if !mine && !r.0 => r.2 += 1,
             _ => out.push((mine, if mine { t } else { 0 }, 1)),
         }
+    }
+    out
+}
+
+/// Like `heap_ranges`, with any trailing `SKIP` range trimmed so `UpdateTileMappings` only walks
+/// up to the last tile belonging to `heap` (xcl 3bc7143).
+fn heap_ranges_trimmed(heap: u32, tiles: &[Tile]) -> Vec<(bool, u32, u32)> {
+    let mut out = heap_ranges(heap, tiles);
+    while out.last().is_some_and(|r| !r.0) {
+        out.pop();
     }
     out
 }
@@ -1094,6 +1256,61 @@ mod tests {
         assert_eq!(heap_ranges(1, &tiles), [(false, 0, 2), (true, 0, 2), (false, 0, 3)]);
         // shared pages out of order: runs break where the tiles do
         assert_eq!(heap_ranges(0, &[(0, 3), (0, 1), (0, 2)]), [(true, 3, 1), (true, 1, 2)]);
+        assert_eq!(heap_ranges_trimmed(1, &tiles), [(false, 0, 2), (true, 0, 2)]);
+    }
+
+    /// xcl 3bc7143's test: streaming churn across 100 pool heaps. Cooling tiles returned in
+    /// interleaved cross-heap order are regrouped per heap and sorted into contiguous ascending
+    /// runs, so new textures stay inside 1 pool heap (1 UpdateTileMappings call, 1 range).
+    /// Added: a cold (evicted-empty) heap is used only when no warm heap has a tile.
+    #[test]
+    fn tile_pool_keeps_churned_allocations_in_single_heap_and_contiguous() {
+        let t0 = Instant::now();
+        let mut pool = TilePool::default();
+        let heaps_made = std::cell::Cell::new(0u32);
+        let make = || {
+            let h = heaps_made.get();
+            heaps_made.set(h + 1);
+            Some(h)
+        };
+        const P: u32 = 64;
+        let mut live: Vec<Vec<Tile>> = Vec::new();
+        for _ in 0..100 {
+            live.push(pool.take_batch(P as usize, None, &[], t0, P, true, make).unwrap());
+        }
+        assert_eq!(heaps_made.get(), 100);
+        assert_eq!(pool.free_total, 0);
+        for tile_idx in 0..32usize {
+            for h in 0..100usize {
+                pool.push_cooling(live[h][tile_idx], t0);
+            }
+        }
+        let t1 = t0 + COOL + Duration::from_millis(1);
+        for _ in 0..100 {
+            let alloc = pool.take_batch(32, None, &[], t1, P, true, make).unwrap();
+            let h0 = alloc[0].0;
+            assert!(alloc.iter().all(|&(h, _)| h == h0), "texture scattered across multiple heaps");
+            assert_eq!(heap_ranges_trimmed(h0, &alloc), [(true, 0, 32)]);
+        }
+        assert_eq!(heaps_made.get(), 100, "must reuse cooled tiles without making new heaps");
+        for t in 10..18u32 {
+            pool.push_cooling((7, t), t1);
+            pool.push_cooling((3, t), t1);
+        }
+        let t2 = t1 + COOL + Duration::from_millis(1);
+        let pref = pool.take_batch(8, Some(7), &[], t2, P, true, make).unwrap();
+        assert!(pref.iter().all(|&(h, _)| h == 7), "preferred heap should be chosen");
+        assert_eq!(heap_ranges_trimmed(7, &pref), [(true, 10, 8)]);
+        // heap 3 is cold: with a warm heap free it is skipped
+        pool.push_cooling((5, 40), t2);
+        let mut cold = vec![false; 100];
+        cold[3] = true;
+        let t3 = t2 + COOL + Duration::from_millis(1);
+        assert_eq!(pool.take_batch(1, None, &cold, t3, P, true, make).unwrap(), [(5, 40)]);
+        // rollback when no heap can be made
+        assert_eq!(pool.free_total, 8);
+        assert!(pool.take_batch(16, None, &cold, t3, P, true, || None).is_none());
+        assert_eq!(pool.free_total, 8, "OOM rollback must return all popped tiles");
     }
 
     /// Idle pages go back after `IDLE`, and a sweep looks at the queue of idle pages alone: one
