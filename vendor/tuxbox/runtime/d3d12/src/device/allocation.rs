@@ -67,11 +67,36 @@ pub(super) unsafe extern "system" fn custom_heap_properties(
     out
 }
 
+/// TUXBOX_TRACE_ALLOCATION_BYTES: up to 16 more answer sizes for the size
+/// watch, decimal, 0x hex or `invalid` (u64::MAX, a failed answer). TuxBox
+/// be20365 (Valdi320, Apache-2.0), folded into the watch below.
+fn traced_sizes() -> &'static [u64] {
+    static SIZES: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+    SIZES.get_or_init(|| {
+        let Ok(value) = std::env::var("TUXBOX_TRACE_ALLOCATION_BYTES") else { return Vec::new() };
+        let mut sizes = Vec::new();
+        for item in value.split(',').map(str::trim) {
+            let bytes = match item.strip_prefix("0x") {
+                Some(hex) => u64::from_str_radix(hex, 16).ok(),
+                None if item == "invalid" => Some(u64::MAX),
+                None => item.parse().ok(),
+            };
+            match bytes {
+                Some(b) if !sizes.contains(&b) && sizes.len() < 16 => sizes.push(b),
+                Some(_) => {}
+                None => return Vec::new(),
+            }
+        }
+        sizes
+    })
+}
+
 /// Size/alignment watch (TUXBOX_SIZE_WATCH=0 off): 160x90 textures, small
 /// format 24/26 textures and 0x4b0000-byte answers, with inputs, answer and callers.
 fn size_watch(slot: u32, descs: &[D3D12_RESOURCE_DESC], size: u64, alignment: u64) {
     let wanted = descs.iter().any(|d| (d.Width == 160 && d.Height == 90)
-        || (matches!(d.Format.0, 24 | 26) && d.Width <= 320 && d.Height <= 180)) || size == 0x4b_0000;
+        || (matches!(d.Format.0, 24 | 26) && d.Width <= 320 && d.Height <= 180)) || size == 0x4b_0000
+        || traced_sizes().contains(&size);
     if !wanted || std::env::var_os("TUXBOX_SIZE_WATCH").is_some_and(|v| v == "0") {
         return;
     }
