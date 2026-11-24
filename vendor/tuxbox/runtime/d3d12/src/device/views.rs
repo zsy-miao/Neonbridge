@@ -163,7 +163,12 @@ impl TextureAddress {
         let host = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) }.SizeInBytes;
         let console = super::allocation::console_footprint(std::slice::from_ref(desc)).map_or(0, |i| i.SizeInBytes);
         let size = backed_size(host, console);
-        let base = if back_images() {
+        let writeback = back_images() && super::committed_writeback::enabled();
+        let base = if writeback {
+            // No access until the CPU touches it: the fault reads the GPU's
+            // contents back (committed_writeback).
+            unsafe { VirtualAlloc(None, size as usize, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS) }.addr()
+        } else if back_images() {
             unsafe { VirtualAlloc(None, size as usize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) }.addr()
         } else {
             unsafe { VirtualAlloc(None, size as usize, MEM_RESERVE, PAGE_NOACCESS) }.addr()
@@ -171,7 +176,12 @@ impl TextureAddress {
         static FIRST: std::sync::Once = std::sync::Once::new();
         crate::diagnostics::log_once(&FIRST, || format!(
             "image GPU address {base:#x} ({size} bytes) for a committed {}x{} texture is {} (TUXBOX_BACK_IMAGES)",
-            desc.Width, desc.Height, if back_images() { "backed by zeroed readable memory" } else { "reserved, no access" }));
+            desc.Width, desc.Height, if writeback { "written back on CPU access" } else if back_images() { "backed by zeroed readable memory" } else { "reserved, no access" }));
+        if writeback && base != 0
+            && let Ok(host) = windows::core::Interface::cast::<ID3D12Device>(&device.native)
+        {
+            super::committed_writeback::register(&host, native, desc, base, size as usize);
+        }
         Self::at(device, native, base, true, None)
     }
 
@@ -197,7 +207,10 @@ impl Drop for TextureAddress {
         use windows::Win32::System::Memory::{VirtualFree, MEM_RELEASE};
         if self.base != 0 {
             self.registry.remove_if(self.base, self);
-            if self.owns_address { let _ = unsafe { VirtualFree(self.base as _, 0, MEM_RELEASE) }; }
+            if self.owns_address {
+                super::committed_writeback::unregister(self.base);
+                let _ = unsafe { VirtualFree(self.base as _, 0, MEM_RELEASE) };
+            }
         }
     }
 }

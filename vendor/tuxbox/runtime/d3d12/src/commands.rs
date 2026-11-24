@@ -2083,6 +2083,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             let _site = crate::diagnostics::cost::site();
                             memory_wait::submit(queue, host, splits)?;
                         }
+                        device::committed_writeback::submitted(&queue.native);
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
                             device::write_back_shadows(owner, &queue.native)?;

@@ -18,6 +18,7 @@ pub(crate) mod alloc_swap;
 mod fallback;
 pub(crate) mod blas;
 pub(crate) mod compute;
+pub(crate) mod committed_writeback;
 mod compute_scene;
 mod compute_table;
 mod mesh_table;
@@ -387,6 +388,15 @@ unsafe extern "system" fn gpu_address(this: &Resource) -> u64 {
         let device = unsafe { &*owner.as_raw().cast::<Device>() };
         if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER {
             let address = unsafe { this.native.GetGPUVirtualAddress() } as usize;
+            // Its host GPU address is not CPU memory; see whether the title
+            // ever reads one (palmetto e604c28a follow-up).
+            static HOST_VA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = HOST_VA.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 32 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "committed buffer {:p} ({} bytes) hands the title its host GPU address {address:#x}, not CPU memory ({n} such buffers)",
+                    this.native.as_raw(), desc.Width));
+            }
             views::TextureAddress::at(device, &this.native, address, false, None)
         } else {
             views::TextureAddress::register(device, &this.native, &desc)

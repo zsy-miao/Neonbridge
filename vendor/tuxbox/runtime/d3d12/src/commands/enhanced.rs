@@ -542,6 +542,7 @@ unsafe fn record(
                     }
                     fit_host(&mut item, &desc);
                     fix_texture(&mut item, compute, simultaneous);
+                    device::committed_writeback::note_layout(&resource.native, item.LayoutAfter);
                     barriers.push(item);
                 }
                 texture_group(native, &barriers);
