@@ -48,8 +48,14 @@ fn event() -> Result<HANDLE> {
 fn refresh(word: &Word) -> u64 {
     let value = unsafe { word.native.GetCompletedValue() };
     // MONITORX waiters can wake on a write of the existing value as well.
+    // The cell only rises (palmetto 77d2f6bb); u64::MAX (device removed)
+    // stays at the top. TUXBOX_FENCE_CELL_MAX=0 stores as read.
     if word.value.load(Ordering::Relaxed) != value {
-        word.value.store(value, Ordering::Release);
+        if crate::env_toggle!("TUXBOX_FENCE_CELL_MAX") == Some("0") {
+            word.value.store(value, Ordering::Release);
+        } else {
+            word.value.fetch_max(value, Ordering::AcqRel);
+        }
     }
     value
 }
@@ -122,7 +128,11 @@ unsafe extern "system" fn cpu_address(this: &Fence) -> *const u64 {
 }
 
 unsafe extern "system" fn completed(this: &Fence) -> u64 {
-    unsafe { this.native.GetCompletedValue() }
+    // The title's cell moves with what it reads here.
+    match this.state.get() {
+        Some(word) => refresh(word),
+        None => unsafe { this.native.GetCompletedValue() },
+    }
 }
 
 unsafe extern "system" fn on_completion(this: &Fence, value: u64, event: HANDLE) -> HRESULT {

@@ -495,12 +495,16 @@ impl Read {
         result
     }
 
-    /// Write the request's output to its destination.
+    /// Write the request's output to its destination. A destination that is not
+    /// committed and writable fails the request like a failed read.
     fn store(&self, bytes: &[u8]) -> Result<(), HRESULT> {
         let bytes = &bytes[..bytes.len().min(self.capacity)];
         match &self.dest_pages {
             Some(pages) => page_copy(true, pages, bytes.as_ptr().cast_mut(), bytes.len()),
             None => {
+                if !writable(self.dest as usize, bytes.len()) {
+                    return Err(HRESULT::from_win32(windows::Win32::Foundation::ERROR_NOACCESS.0));
+                }
                 unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.dest as *mut u8, bytes.len()) };
                 Ok(())
             }
@@ -1035,4 +1039,35 @@ mod eof_tests {
         assert!(!within_file(8192, 1, 4096)); // past EOF
         assert!(!within_file(u64::MAX, 2, u64::MAX));
     }
+}
+
+/// rebox's idea (re-derived from f61bbc8): the title maps and unmaps tile-pool
+/// pages while requests run, and an inflate into a page just unmapped
+/// crashed it. Every region of [at, at + len) must be committed and writable.
+/// TUXBOX_XCRD_CHECK_DEST=0 skips the check.
+fn writable(at: usize, len: usize) -> bool {
+    use windows::Win32::System::Memory::*;
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("TUXBOX_XCRD_CHECK_DEST").is_ok_and(|v| v.trim() == "0")) || len == 0 {
+        return true;
+    }
+    let Some(end) = at.checked_add(len) else { return false };
+    let mut p = at;
+    while p < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(p as *const _), &mut region, core::mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0
+            || region.State != MEM_COMMIT
+            || (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)).0 != 0
+            || (region.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)).0 == 0
+        {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                log(format_args!("request destination {at:#x} ({len:#x} bytes) is not committed and writable at {p:#x}: the request fails ({n} so far; TUXBOX_XCRD_CHECK_DEST=0 writes anyway)"));
+            }
+            return false;
+        }
+        p = region.BaseAddress as usize + region.RegionSize;
+    }
+    true
 }

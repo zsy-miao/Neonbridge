@@ -105,9 +105,19 @@ fn swap_format(format: DXGI_FORMAT) -> Option<DXGI_FORMAT> {
         DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_R8G8B8A8_UNORM_SRGB => DXGI_FORMAT_R8G8B8A8_UNORM,
         DXGI_FORMAT_B8G8R8A8_UNORM | DXGI_FORMAT_B8G8R8A8_UNORM_SRGB => DXGI_FORMAT_B8G8R8A8_UNORM,
         DXGI_FORMAT_R10G10B10A2_UNORM => DXGI_FORMAT_R10G10B10A2_UNORM,
+        // Xbox2Windows 99624a8d: typeless 8-bit and 10:10:10:2 surfaces have
+        // one reading and copy into the UNORM back buffer of their family.
+        // TUXBOX_PRESENT_TYPELESS=0 refuses them again.
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_TYPELESS if typeless() => DXGI_FORMAT_R8G8B8A8_UNORM,
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_TYPELESS if typeless() => DXGI_FORMAT_B8G8R8A8_UNORM,
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R10G10B10A2_TYPELESS if typeless() => DXGI_FORMAT_R10G10B10A2_UNORM,
         DXGI_FORMAT_R16G16B16A16_FLOAT => DXGI_FORMAT_R16G16B16A16_FLOAT,
         _ => return None,
     })
+}
+
+fn typeless() -> bool {
+    crate::env_toggle!("TUXBOX_PRESENT_TYPELESS") != Some("0")
 }
 
 #[derive(Default)]

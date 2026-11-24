@@ -2038,6 +2038,19 @@ unsafe extern "system" fn execute_frame(
                 }
                 .is_some()
         });
+    if !first_is_list && forced != Some("pair") {
+        // palmetto 22555b24 dropped its clock-calibration reading: slot 35 is
+        // the console's submit. Writing ticks over an array we could not read
+        // as lists overwrote the title's pointers; it is now left alone.
+        static UNKNOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = UNKNOWN.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "queue slot 35: a1={count:#x} a2={lists:p} holds no list of ours; batch dropped, nothing written ({n} so far; TUXBOX_QSLOT35=pair writes clock ticks)"));
+        }
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BatchesDropped);
+        return;
+    }
     if !first_is_list {
         if accessible(lists as usize, 16, true) {
             let mut ticks = 0i64;
