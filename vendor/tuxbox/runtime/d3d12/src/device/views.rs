@@ -170,6 +170,14 @@ pub(crate) enum DescriptorBacking {
     Placed { _texture: std::sync::Arc<super::placement::Texture> },
 }
 
+/// The host CPU descriptor behind a title CPU handle. On Device11 every
+/// CBV/SRV/UAV heap, CPU-only ones included, is an arena in title memory,
+/// so a raw title handle is not a host descriptor (leonida #416).
+pub(crate) unsafe fn host_cpu_descriptor(device: *mut c_void, cpu: D3D12_CPU_DESCRIPTOR_HANDLE) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+    let device = unsafe { &*device.cast::<Device>() };
+    device.state.descriptor_arenas.copy_source(cpu)
+}
+
 pub(crate) unsafe fn clear_buffer_alias(
     device: *mut c_void, cpu: usize, resource: &super::Resource,
 ) -> windows::core::Result<Option<ID3D12Resource>> {

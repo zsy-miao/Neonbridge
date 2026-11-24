@@ -83,11 +83,11 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
             if arena.contains(cpu.ptr as u64) {
                 arena.cpu(cpu.ptr)
             } else {
-                cpu
+                unsafe { crate::device::host_cpu_descriptor(parent(&list.parent), cpu) }
             },
         )
     } else {
-        (gpu, cpu)
+        (gpu, unsafe { crate::device::host_cpu_descriptor(parent(&list.parent), cpu) })
     };
     if let Err(error) = recording.prepare_copy(resource.state.placed(), None) {
         recording.error = error;

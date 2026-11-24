@@ -213,9 +213,30 @@ impl Worker {
                 for job in jobs {
                     let result = (|| -> Result<()> {
                         unsafe { job.fence.SetEventOnCompletion(1, HANDLE::default())? };
+                        // A word nobody writes stalled the queue for good, with
+                        // every later fence on it, and logged nothing. Log the
+                        // stall and release the queue after a watchdog period.
+                        let started = std::time::Instant::now();
+                        let mut warned = false;
                         while !job.segment.word.reached(job.segment.target) {
                             unsafe {
                                 job.device.GetDeviceRemovedReason()?;
+                            }
+                            let waited = started.elapsed();
+                            if !warned && waited >= Duration::from_secs(2) {
+                                warned = true;
+                                crate::diagnostics::log_line(format_args!(
+                                    "GPU memory wait for target {:#x} stalled 2 s", job.segment.target
+                                ));
+                            }
+                            if waited >= Duration::from_secs(10) {
+                                static RELEASED: AtomicU64 = AtomicU64::new(0);
+                                let n = RELEASED.fetch_add(1, Ordering::Relaxed);
+                                crate::diagnostics::log_line(format_args!(
+                                    "GPU memory wait for target {:#x} released by the watchdog after 10 s ({} so far)",
+                                    job.segment.target, n + 1
+                                ));
+                                break;
                             }
                             std::thread::sleep(Duration::from_millis(1));
                         }
