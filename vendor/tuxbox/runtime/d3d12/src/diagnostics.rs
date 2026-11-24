@@ -586,7 +586,7 @@ pub(crate) mod crash;
 pub(crate) mod ctl;
 mod crash_detail;
 pub(crate) mod teb;
-mod breaks;
+pub(crate) mod breaks;
 mod streams;
 pub(crate) mod memwatch;
 pub(crate) mod rootsig;

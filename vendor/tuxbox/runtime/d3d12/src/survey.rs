@@ -111,6 +111,11 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     } else {
         return CONTINUE_SEARCH;
     };
+    if crate::diagnostics::breaks::stop_int3(at - start, context) {
+        // Reported; left to fault as it would without a handler.
+        if at == rip { context.Rip -= 1; }
+        return CONTINUE_SEARCH;
+    }
     if !enabled() {
         if !benign(start, end, at) {
             // Undo the step: this break is not ours to resume.
