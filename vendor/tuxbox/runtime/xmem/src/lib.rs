@@ -307,6 +307,23 @@ pub unsafe extern "system" fn working_set_statistics(selector: u32, out: *mut [u
     let used = (committed as u64).min(memory.ullTotalPhys);
     let headroom = memory.ullAvailPhys.min(memory.ullAvailPageFile);
     let budget = used.saturating_add(headroom.saturating_sub(physical_pages::relinquished())).min(memory.ullTotalPhys);
+    // leonida 6c1d9395 (idea): the title sizes its pools and streaming from
+    // this budget. TUXBOX_TITLE_MEMORY_MB caps it (unset: host headroom only).
+    let budget = match std::env::var("TUXBOX_TITLE_MEMORY_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(mb) if mb > 0 => budget.min(mb << 20).max(used),
+        _ => budget,
+    };
+    {
+        // What the title is told, the first time and whenever it falls by a GiB.
+        static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+        let last = LAST.load(std::sync::atomic::Ordering::Relaxed);
+        if last == u64::MAX || budget.saturating_add(1 << 30) <= last {
+            LAST.store(budget, std::sync::atomic::Ordering::Relaxed);
+            crate::loader::log(&format!(
+                "working set statistics: budget {} MiB, used {} MiB (host free physical {} MiB, free commit {} MiB; TUXBOX_TITLE_MEMORY_MB caps)",
+                budget >> 20, used >> 20, memory.ullAvailPhys >> 20, memory.ullAvailPageFile >> 20));
+        }
+    }
     let mut result = [0; 15];
     result[0] = budget;
     result[1] = used;
