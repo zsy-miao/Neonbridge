@@ -596,10 +596,12 @@ fn run_summary(text: &str, code: Option<i32>) -> String {
     let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
     format!(
         "[launch] summary: exit={exit} presents={presents} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \
-refused-calls={} graphics-only-drops={} barrier-rewrites={} cannot-record={} unbalanced-closes={} first-fatal={}",
+refused-calls={} graphics-only-drops={} barrier-rewrites={} slot131-cache-barriers={} null-root-views={} cannot-record={} unbalanced-closes={} first-fatal={}",
         lits.len(), lits.last().unwrap_or(&"-"), count("host list Close failed"), count("rebuilt host list"),
         count("dropped a command-list batch"), count("unresolved inline descriptor"), count("PresentX failed"),
-        count("dropped one refused recording call"), count("dropped a graphics-only call"), count("recorded as"),
+        count("dropped one refused recording call"), count("dropped a graphics-only call"),
+        count("recorded as") - count("list slot 131 recorded as cache barrier"),
+        count("list slot 131 recorded as cache barrier"), count("root view at uncommitted title address"),
         count("command list cannot record"), count("closing a list with"),
         fatal.map(|l| format!("{:?}", l.trim())).unwrap_or_else(|| "none".into())
     )
