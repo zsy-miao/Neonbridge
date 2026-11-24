@@ -230,7 +230,7 @@ impl Pool {
         // The title's primary pad: the keyboard-merged pad, else the first XInput pad.
         let primary = desktop_slot.or_else(|| self.pads.iter().position(Option::is_some).map(|i| i + 2));
         let real = match primary {
-            Some(slot) if slot >= 2 => self.pads[slot - 2].map_or(0, |pad| pad.buttons),
+            Some(slot) => self.pads.get(slot.wrapping_sub(2)).copied().flatten().map_or(0, |pad| pad.buttons),
             _ => 0,
         };
         let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now, real);
