@@ -1,7 +1,7 @@
 // Consecutive per-lane VGPR writes all observe the same EXEC bit. Keep them in
 // one predicated region. Resource, control-flow and mask-changing statements
 // always close the region before they execute.
-fn assignment(line: &str) -> Option<&str> {
+fn assignment(line: &str, helpers: bool) -> Option<&str> {
     let assignment = line.strip_prefix("    if (exec_lo & 1u) ")?;
     let (dest, expr) = assignment.strip_suffix(';')?.split_once(" = ")?;
     let reg = dest.strip_prefix('v')?;
@@ -55,6 +55,12 @@ fn assignment(line: &str) -> Option<&str> {
         {
             continue;
         }
+        // tb_fmin/tb_fmax/tb_min/tb_max are the header's pure float helpers (signed-zero and
+        // NaN rules only). They and the intrinsics below were 675 of the 2382 writes left
+        // ungrouped in a64767c5. TB_EXEC_GROUP_HELPERS=0 leaves them out.
+        if helpers && matches!(token, "tb_fmin" | "tb_fmax" | "tb_min" | "tb_max" | "exp2" | "log2" | "countbits") {
+            continue;
+        }
         let Some(tail) = token
             .strip_prefix("tb_s")
             .or_else(|| token.strip_prefix(['t', 'v', 's']))
@@ -76,8 +82,9 @@ pub(super) fn group(body: &str) -> String {
     use std::fmt::Write;
     let mut output = String::with_capacity(body.len());
     let mut open = false;
+    let helpers = std::env::var("TB_EXEC_GROUP_HELPERS").map_or(true, |v| v.trim() != "0");
     for line in body.lines() {
-        if let Some(write) = assignment(line) {
+        if let Some(write) = assignment(line, helpers) {
             if !open {
                 output.push_str("    if (exec_lo & 1u) {\n");
                 open = true;
