@@ -133,7 +133,7 @@ fn console_item(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_ALLOCATION_
 
 /// The batch's console footprint, each item at its alignment, or None if
 /// any item has no console size.
-fn console_footprint(descs: &[D3D12_RESOURCE_DESC]) -> Option<D3D12_RESOURCE_ALLOCATION_INFO> {
+pub(super) fn console_footprint(descs: &[D3D12_RESOURCE_DESC]) -> Option<D3D12_RESOURCE_ALLOCATION_INFO> {
     let mut bytes = 0u64;
     let mut alignment = 256u64;
     for desc in descs {

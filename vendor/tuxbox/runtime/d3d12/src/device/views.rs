@@ -102,6 +102,37 @@ pub(super) fn shadow_buffer(device: &Device, address: u64, bytes: u64)
     Ok((view.native.clone(), view))
 }
 
+/// The title dereferences console image GPU addresses on the CPU (palmetto
+/// e604c28a: unified memory). A committed texture's address is backed by
+/// zeroed read/write memory covering both the host and the console size, so
+/// those reads see memory, not a fault. The GPU does not write these pages:
+/// GPU-written contents stay in the native texture.
+/// TUXBOX_BACK_IMAGES=0 reserves the range with no access, as before.
+fn back_images() -> bool {
+    crate::env_toggle!("TUXBOX_BACK_IMAGES") != Some("0")
+}
+
+/// Whether `address` lies in the backing of a committed image's address
+/// (TUXBOX_BACK_IMAGES): those pages are not title memory to import.
+fn backed_image(device: &Device, address: u64, allocation: usize) -> bool {
+    device.state.texture_addresses.preceding(address as usize)
+        .is_some_and(|entry| entry.owns_address && entry.base == allocation)
+}
+
+fn backed_size(host: u64, console: u64) -> u64 {
+    let size = if host == u64::MAX { console } else { host.max(console) };
+    size.max(1).next_multiple_of(0x1_0000)
+}
+
+#[cfg(test)]
+#[test]
+fn a_backed_image_covers_the_larger_footprint_in_whole_64k_units() {
+    assert_eq!(backed_size(0x2_0000, 0x1_8000), 0x2_0000);
+    assert_eq!(backed_size(0x1_0000, 0x2_4000), 0x3_0000);
+    assert_eq!(backed_size(u64::MAX, 0x1000), 0x1_0000);
+    assert_eq!(backed_size(0, 0), 0x1_0000);
+}
+
 pub(crate) struct TextureAddress {
     pub(super) base: usize,
     pub(super) buffer_offset: u64,
@@ -128,9 +159,19 @@ impl TextureAddress {
     }
 
     pub(super) fn register(device: &Device, native: &ID3D12Resource, desc: &D3D12_RESOURCE_DESC) -> std::sync::Arc<Self> {
-        use windows::Win32::System::Memory::{VirtualAlloc, MEM_RESERVE, PAGE_NOACCESS};
-        let size = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) }.SizeInBytes;
-        let base = unsafe { VirtualAlloc(None, size as usize, MEM_RESERVE, PAGE_NOACCESS) }.addr();
+        use windows::Win32::System::Memory::{VirtualAlloc, MEM_COMMIT, MEM_RESERVE, PAGE_NOACCESS, PAGE_READWRITE};
+        let host = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) }.SizeInBytes;
+        let console = super::allocation::console_footprint(std::slice::from_ref(desc)).map_or(0, |i| i.SizeInBytes);
+        let size = backed_size(host, console);
+        let base = if back_images() {
+            unsafe { VirtualAlloc(None, size as usize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) }.addr()
+        } else {
+            unsafe { VirtualAlloc(None, size as usize, MEM_RESERVE, PAGE_NOACCESS) }.addr()
+        };
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!(
+            "image GPU address {base:#x} ({size} bytes) for a committed {}x{} texture is {} (TUXBOX_BACK_IMAGES)",
+            desc.Width, desc.Height, if back_images() { "backed by zeroed readable memory" } else { "reserved, no access" }));
         Self::at(device, native, base, true, None)
     }
 
@@ -253,7 +294,8 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     let nearest = address & !0xffff;
     let tight = !(address - nearest).is_multiple_of(u64::from(stride));
     let mut region = MEMORY_BASIC_INFORMATION::default();
-    if unsafe { VirtualQuery(Some(address as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
+    if unsafe { VirtualQuery(Some(address as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT
+        || backed_image(device, address, region.AllocationBase.addr()) {
         return if required { Err(E_INVALIDARG.into()) } else { Ok(None) };
     }
     let mut host = D3D12_RESOURCE_DESC {
