@@ -359,7 +359,8 @@ fn all_stacks() -> Vec<String> {
         let _ = unsafe { CloseHandle(handle) };
         let Some(words) = words else { continue };
         let name = super::threads::name_of(tid);
-        out.push(format!("thread {name}({tid}): {}", stack_text(&list, context.0.Rip as usize, &stack[..words])));
+        let wait = waits::describe(&context.0);
+        out.push(format!("thread {name}({tid}){wait}: {}", stack_text(&list, context.0.Rip as usize, &stack[..words])));
     }
     out
 }
@@ -386,4 +387,98 @@ unsafe fn capture(handle: HANDLE, context: &mut CONTEXT, stack: &mut [usize]) ->
     }
     unsafe { ResumeThread(handle) };
     ok.then_some(words)
+}
+
+/// Names the wait a thread sits in and the objects it waits on, from its RIP and
+/// argument registers: inside an ntdll wait stub the first argument is in R10
+/// (the stub moves RCX there before `syscall`), the second in RDX. Object types
+/// come from NtQueryObject(ObjectTypeInformation); an Event also shows its
+/// signalled state. Idea from palmetto 122075ee (Widmer, GPL-3.0), whose
+/// LEONIDA_WAIT_SAMPLE names waits the same way. Part of the hang stacks
+/// (TUXBOX_CRASH_RECORD=0 off); TUXBOX_HANG_WAITS=0 leaves the wait out.
+mod waits {
+    use std::sync::OnceLock;
+    use windows::Win32::System::Diagnostics::Debug::CONTEXT;
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows::core::{PCSTR, w};
+
+    type QueryObject = unsafe extern "system" fn(isize, u32, *mut u8, u32, *mut u32) -> i32;
+    type QueryEvent = unsafe extern "system" fn(isize, u32, *mut u8, u32, *mut u32) -> i32;
+
+    struct Ntdll {
+        single: usize,
+        multiple: usize,
+        query_object: Option<QueryObject>,
+        query_event: Option<QueryEvent>,
+    }
+
+    fn ntdll() -> &'static Ntdll {
+        static N: OnceLock<Ntdll> = OnceLock::new();
+        N.get_or_init(|| unsafe {
+            let Ok(module) = GetModuleHandleW(w!("ntdll.dll")) else {
+                return Ntdll { single: 0, multiple: 0, query_object: None, query_event: None };
+            };
+            let at = |name: &[u8]| GetProcAddress(module, PCSTR(name.as_ptr())).map_or(0, |f| f as usize);
+            Ntdll {
+                single: at(b"NtWaitForSingleObject\0"),
+                multiple: at(b"NtWaitForMultipleObjects\0"),
+                query_object: GetProcAddress(module, PCSTR(b"NtQueryObject\0".as_ptr())).map(|f| std::mem::transmute(f)),
+                query_event: GetProcAddress(module, PCSTR(b"NtQueryEvent\0".as_ptr())).map(|f| std::mem::transmute(f)),
+            }
+        })
+    }
+
+    fn object(handle: isize) -> String {
+        let n = ntdll();
+        let Some(query) = n.query_object else { return format!("{handle:#x}") };
+        // PUBLIC_OBJECT_TYPE_INFORMATION: UNICODE_STRING TypeName, then the name's characters.
+        let mut buf = [0u64; 128];
+        let mut len = 0u32;
+        let status = unsafe { query(handle, 2, buf.as_mut_ptr().cast(), size_of_val(&buf) as u32, &mut len) };
+        if status < 0 {
+            return format!("{handle:#x} (type unknown, status {status:#x})");
+        }
+        let bytes = (buf[0] & 0xffff) as usize;
+        let chars = buf[1] as *const u16;
+        let base = buf.as_ptr() as usize;
+        let inside = (chars as usize) >= base && (chars as usize) + bytes <= base + size_of_val(&buf);
+        let kind = if inside { String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(chars, bytes / 2) }) } else { "?".into() };
+        let mut out = format!("{handle:#x} {kind}");
+        if kind == "Event" && let Some(event) = n.query_event {
+            // EVENT_BASIC_INFORMATION: EventType (0 notification, 1 synchronization), EventState.
+            let mut info = [0i32; 2];
+            if unsafe { event(handle, 0, info.as_mut_ptr().cast(), 8, &mut len) } >= 0 {
+                out.push_str(&format!(" {}{}", if info[0] == 0 { "manual" } else { "auto" }, if info[1] != 0 { " set" } else { " unset" }));
+            }
+        }
+        out
+    }
+
+    pub(super) fn describe(c: &CONTEXT) -> String {
+        if crate::env_toggle!("TUXBOX_HANG_WAITS") == Some("0") {
+            return String::new();
+        }
+        let n = ntdll();
+        let rip = c.Rip as usize;
+        let near = |stub: usize| stub != 0 && rip >= stub && rip < stub + 0x40;
+        if near(n.single) {
+            return format!(" [NtWaitForSingleObject {}]", object(c.R10 as isize));
+        }
+        if near(n.multiple) {
+            let count = (c.R10 as usize).min(64);
+            let array = c.Rdx as *const isize;
+            let mut info = windows::Win32::System::Memory::MEMORY_BASIC_INFORMATION::default();
+            let readable = !array.is_null()
+                && unsafe { windows::Win32::System::Memory::VirtualQuery(Some(array.cast()), &mut info, size_of_val(&info)) } != 0
+                && info.State == windows::Win32::System::Memory::MEM_COMMIT
+                && (array as usize) + count * 8 <= info.BaseAddress as usize + info.RegionSize;
+            if !readable {
+                return format!(" [NtWaitForMultipleObjects {count} objects]");
+            }
+            let handles = unsafe { std::slice::from_raw_parts(array, count) };
+            let names: Vec<String> = handles.iter().map(|&h| object(h)).collect();
+            return format!(" [NtWaitForMultipleObjects {}: {}]", if c.R8 == 0 { "all" } else { "any" }, names.join(", "));
+        }
+        String::new()
+    }
 }
