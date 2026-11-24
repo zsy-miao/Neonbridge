@@ -44,35 +44,101 @@ pub struct Stats {
     pub failed: AtomicUsize,
     /// Archived requests translated before the title started.
     pub prewarmed: AtomicUsize,
-    /// Prewarm refusals and failures by reason (numbers folded to `N`).
+    /// Prewarm refusals and failures by reason (registers, program counters
+    /// and numbers masked, as TuxBox's triage_scarlett_shaders.py does).
     pub reasons: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+    /// The same, grouped by the construct named before " at N" (or the first ':').
+    pub constructs: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+}
+
+/// One line per refusal: "[op @ 0x1a0]" variant tags dropped, registers to
+/// `sN`/`vN`/`tN`, other numbers to `N`, so the same gap in different shaders
+/// shares one row.
+fn mask_reason(msg: &str) -> String {
+    let line = msg.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(no message)");
+    // Drop " [mnemonic @ 0xADDR]".
+    let mut untagged = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find('[') {
+        let tail = &rest[at + 1..];
+        let tag = tail.find(']').map(|end| &tail[..end]).filter(|t| {
+            t.split_once(" @ 0x").is_some_and(|(op, addr)| !op.is_empty()
+                && op.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+                && !addr.is_empty() && addr.bytes().all(|b| b.is_ascii_hexdigit()))
+        });
+        match tag {
+            Some(t) => { untagged.push_str(rest[..at].trim_end()); rest = &tail[t.len() + 1..]; }
+            None => { untagged.push_str(&rest[..=at]); rest = tail; }
+        }
+    }
+    untagged.push_str(rest);
+    let b = untagged.as_bytes();
+    let mut out = String::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        let boundary = i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+        let next = b.get(i + 1).copied();
+        if boundary && matches!(c, b's' | b'v' | b't')
+            && (next.is_some_and(|n| n.is_ascii_digit())
+                || (next == Some(b'[') && b.get(i + 2).is_some_and(u8::is_ascii_digit)))
+        {
+            let mut j = i + 1;
+            if b[j] == b'[' {
+                while j < b.len() && b[j] != b']' { j += 1; }
+                j = (j + 1).min(b.len());
+            } else {
+                while j < b.len() && (b[j].is_ascii_digit() || b[j] == b':') { j += 1; }
+            }
+            if !b.get(j).is_some_and(|n| n.is_ascii_alphanumeric() || *n == b'_') {
+                out.push(c as char);
+                out.push('N');
+                i = j;
+                continue;
+            }
+        }
+        if c.is_ascii_digit() {
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_hexdigit() || b[i] == b'x') { i += 1; }
+            out.push('N');
+            continue;
+        }
+        let ch = untagged[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    if out.is_empty() { "(no message)".to_owned() } else { out }
+}
+
+/// Coarse group: the construct named before " at N", else before the first ':'.
+fn construct(reason: &str) -> &str {
+    reason.split_once(" at N").map_or_else(|| reason.split(':').next().unwrap_or(reason), |(head, _)| head)
+}
+
+fn ranked(map: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>, n: usize) -> Vec<(String, usize)> {
+    let mut v: Vec<_> = map.lock().unwrap().iter().map(|(r, c)| (r.clone(), *c)).collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.truncate(n);
+    v
 }
 
 impl Stats {
     fn note(&self, kind: &str, msg: &str) {
-        let line = msg.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(no message)");
-        let mut reason = String::with_capacity(line.len());
-        let mut chars = line.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c.is_ascii_digit() {
-                while chars.peek().is_some_and(|c| c.is_ascii_hexdigit() || *c == 'x') {
-                    chars.next();
-                }
-                reason.push('N');
-            } else {
-                reason.push(c);
-            }
-        }
-        let reason: String = format!("{kind}: {reason}").chars().take(160).collect();
+        let masked = mask_reason(msg);
+        let group: String = format!("{kind}: {}", construct(&masked)).chars().take(120).collect();
+        let reason: String = format!("{kind}: {masked}").chars().take(160).collect();
         *self.reasons.lock().unwrap().entry(reason).or_default() += 1;
+        *self.constructs.lock().unwrap().entry(group).or_default() += 1;
     }
 
     /// The most common reasons, most frequent first.
     pub fn top_reasons(&self, n: usize) -> Vec<(String, usize)> {
-        let mut v: Vec<_> = self.reasons.lock().unwrap().iter().map(|(r, c)| (r.clone(), *c)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        v.truncate(n);
-        v
+        ranked(&self.reasons, n)
+    }
+
+    /// The most common constructs, most frequent first.
+    pub fn top_constructs(&self, n: usize) -> Vec<(String, usize)> {
+        ranked(&self.constructs, n)
     }
 }
 
