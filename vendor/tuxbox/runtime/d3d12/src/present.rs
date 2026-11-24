@@ -233,6 +233,7 @@ impl SwapChain {
                 return Err(error);
             }
             frame.retire = self.next;
+            crate::diagnostics::gpu_clock::track(&self.fence, self.next);
             if let Some(sample) = sample {
                 wait_for(&self.fence, self.next)?;
                 sample.report("present");

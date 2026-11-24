@@ -694,6 +694,9 @@ fn run_summary(text: &str, code: Option<i32>) -> String {
     };
     let fps = if split.is_empty() { fps } else { format!("{fps} ms/frame={split}") };
     let fps = if top.is_empty() { fps } else { format!("{fps} top-record=[{top}]") };
+    // "frame time X ms: gpu latency Y ms (...); cpu ms/frame: ..." from the heartbeat.
+    let frame = text.lines().rev().find_map(|l| l.split_once("frame time ").filter(|(_, r)| r.contains("gpu latency")).map(|(_, r)| r.trim().to_owned()));
+    let fps = match frame { Some(f) => format!("{fps} frame=[{f}]"), None => fps };
     let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
     format!(
         "[launch] summary: exit={exit} presents={presents} fps={fps} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \

@@ -498,6 +498,120 @@ mod tests {
     }
 }
 
+/// GPU latency per presented frame: from the present's fence signal to the GPU
+/// completing it, timed on one waiter thread. Close to the frame time means the
+/// GPU (all work queued before the present) is the bottleneck.
+pub(crate) mod gpu_clock {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, mpsc};
+    use std::time::Instant;
+    use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
+    use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
+
+    struct Item(ID3D12Fence, u64, Instant);
+    // SAFETY: D3D12 fences are free-threaded.
+    unsafe impl Send for Item {}
+    static SENDER: Mutex<Option<mpsc::Sender<Item>>> = Mutex::new(None);
+    static NS: AtomicU64 = AtomicU64::new(0);
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    static SEEN: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+    pub(crate) fn track(fence: &ID3D12Fence, value: u64) {
+        let mut sender = SENDER.lock().unwrap_or_else(|e| e.into_inner());
+        if sender.is_none() {
+            let (tx, rx) = mpsc::channel::<Item>();
+            let spawned = std::thread::Builder::new().name("TuxBox gpu clock".into()).spawn(move || {
+                let Ok(event) = (unsafe { CreateEventW(None, false, false, None) }) else { return };
+                for Item(fence, value, start) in rx {
+                    unsafe {
+                        if fence.GetCompletedValue() < value {
+                            if fence.SetEventOnCompletion(value, event).is_err() { continue; }
+                            WaitForSingleObject(event, INFINITE);
+                        }
+                    }
+                    NS.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    COUNT.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+            if spawned.is_err() { return; }
+            *sender = Some(tx);
+        }
+        if let Some(tx) = sender.as_ref() {
+            let _ = tx.send(Item(fence.clone(), value, Instant::now()));
+        }
+    }
+
+    /// Average ms per frame since the previous call, if any frame completed.
+    pub(crate) fn take() -> Option<f64> {
+        let (ns, count) = (NS.load(Ordering::Relaxed), COUNT.load(Ordering::Relaxed));
+        let dns = ns - SEEN[0].swap(ns, Ordering::Relaxed);
+        let dcount = count - SEEN[1].swap(count, Ordering::Relaxed);
+        (dcount > 0).then(|| dns as f64 / 1e6 / dcount as f64)
+    }
+}
+
+/// CPU time per frame of every thread in the process (title and ours), from
+/// GetThreadTimes deltas between heartbeats: says whether a title thread is
+/// CPU-bound or the frame is spent waiting.
+pub(crate) mod threads {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, LocalFree, HLOCAL};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows::Win32::System::Threading::{
+        GetCurrentProcessId, GetThreadDescription, GetThreadTimes, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
+    };
+
+    static PREV: Mutex<Option<HashMap<u32, u64>>> = Mutex::new(None);
+
+    fn ticks(t: FILETIME) -> u64 { (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime) }
+
+    /// "total 410.2, busy threads >50%: 3; top: Render(1234) 190.1, ..." in CPU ms per frame.
+    pub(crate) fn split(frames: f64, frame_ms: f64) -> String {
+        let mut now: HashMap<u32, u64> = HashMap::new();
+        let mut names: HashMap<u32, String> = HashMap::new();
+        unsafe {
+            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return "-".into() };
+            let pid = GetCurrentProcessId();
+            let mut entry = THREADENTRY32 { dwSize: size_of::<THREADENTRY32>() as u32, ..Default::default() };
+            let mut more = Thread32First(snap, &mut entry).is_ok();
+            while more {
+                if entry.th32OwnerProcessID == pid
+                    && let Ok(thread) = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, entry.th32ThreadID)
+                {
+                    let (mut c, mut e, mut k, mut u) = Default::default();
+                    if GetThreadTimes(thread, &mut c, &mut e, &mut k, &mut u).is_ok() {
+                        now.insert(entry.th32ThreadID, ticks(k) + ticks(u));
+                        if let Ok(desc) = GetThreadDescription(thread) {
+                            let name = desc.to_string().unwrap_or_default();
+                            let _ = LocalFree(Some(HLOCAL(desc.0.cast())));
+                            if !name.is_empty() { names.insert(entry.th32ThreadID, name); }
+                        }
+                    }
+                    let _ = CloseHandle(thread);
+                }
+                more = Thread32Next(snap, &mut entry).is_ok();
+            }
+            let _ = CloseHandle(snap);
+        }
+        let mut prev = PREV.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(old) = prev.replace(now.clone()) else { return "first sample".into() };
+        // 100 ns ticks -> ms per frame.
+        let mut rows: Vec<(f64, u32)> = now.iter()
+            .map(|(tid, t)| ((t - old.get(tid).copied().unwrap_or(0).min(*t)) as f64 / 1e4 / frames, *tid))
+            .collect();
+        rows.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        let total: f64 = rows.iter().map(|r| r.0).sum();
+        let busy = rows.iter().filter(|r| r.0 > frame_ms * 0.5).count();
+        let top = rows.iter().take(6).map(|(ms, tid)| {
+            format!("{}({tid}) {ms:.1}", names.get(tid).map_or("?", String::as_str))
+        }).collect::<Vec<_>>().join(", ");
+        format!("total {total:.1}, threads over half a frame: {busy}; top: {top}")
+    }
+}
+
 /// Where frame time goes on our side, for the 10 s heartbeat: nanoseconds per
 /// bucket since the last heartbeat. Record covers every command-list call
 /// (Close and first-use pipeline waits included); the others are subsets or

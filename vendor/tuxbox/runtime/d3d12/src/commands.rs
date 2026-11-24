@@ -2095,8 +2095,14 @@ unsafe fn present_planes(
             if now >= last + 10_000 && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
                 let frames = (index + 1).saturating_sub(LAST_INDEX.swap(index + 1, Ordering::Relaxed));
                 let fps = if last == 0 { 0.0 } else { frames as f64 * 1000.0 / (now - last) as f64 };
+                let frame_ms = if fps > 0.0 { 1000.0 / fps } else { 0.0 };
+                let gpu = crate::diagnostics::gpu_clock::take().map_or("-".into(), |ms| format!("{ms:.1}"));
                 crate::diagnostics::log_line(format_args!(
                     "completed PresentX #{} ({fps:.1} fps; ms/frame: {})", index + 1, crate::diagnostics::cost::split(frames)));
+                // Separate line: the frame's GPU latency and every thread's CPU time.
+                crate::diagnostics::log_line(format_args!(
+                    "frame time {frame_ms:.1} ms: gpu latency {gpu} ms (present signal to GPU done); cpu ms/frame: {}",
+                    crate::diagnostics::threads::split(frames.max(1) as f64, frame_ms)));
             }
         }
     }
