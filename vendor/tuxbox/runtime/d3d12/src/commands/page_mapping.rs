@@ -41,7 +41,7 @@ struct Mappings {
 impl Mappings {
     unsafe fn read(count: u32, batches: *const Batch, source: u64, pages: u32) -> Result<Self> {
         if count == 0 || batches.is_null() || !source.is_multiple_of(PAGE) {
-            return Err(E_INVALIDARG.into());
+            return Err(invalid("no batches, or an unaligned pool"));
         }
         let module = unsafe { GetModuleHandleW(w!("xmem.dll"))? };
         let apply: Apply = unsafe {
@@ -65,7 +65,7 @@ impl Mappings {
                 || !batch.destination.is_multiple_of(PAGE)
                 || (batch.count == 0) != batch.ranges.is_null()
             {
-                return Err(E_INVALIDARG.into());
+                return Err(invalid("null or unaligned destination, or a range count without ranges"));
             }
             let ranges = if batch.count == 0 {
                 &[]
@@ -86,14 +86,14 @@ impl Mappings {
                     1 if range.source < pages && source != 0 => (),
                     2 => (),
                     3 => continue,
-                    _ => return Err(E_INVALIDARG.into()),
+                    _ => return Err(invalid("range kind unknown, or its pages outside the registered pool")),
                 }
                 end = end
                     .checked_add(u64::from(range.count) * PAGE)
                     .ok_or(E_INVALIDARG)?;
             }
             if batch.destination < pool_end && source < end {
-                return Err(E_INVALIDARG.into());
+                return Err(invalid("destination overlaps the registered pool"));
             }
             if end > batch.destination {
                 spans.push(batch.destination..end);
@@ -180,6 +180,36 @@ impl Mappings {
             )
         }
         .ok()
+    }
+}
+
+/// Whether a page-mapping failure poisons the queue. Latching it made every
+/// later CopyPageMappingsBatchX and submission return the first failure
+/// (test38: 0x80070057 on every batch). Now only device loss latches and a
+/// bad batch fails alone; TUXBOX_PAGE_MAPPING_LATCH=1 latches every failure.
+fn latches(code: HRESULT) -> bool {
+    use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_DEVICE_HUNG, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET};
+    crate::env_toggle!("TUXBOX_PAGE_MAPPING_LATCH") == Some("1")
+        || matches!(code, DXGI_ERROR_DEVICE_REMOVED | DXGI_ERROR_DEVICE_HUNG | DXGI_ERROR_DEVICE_RESET)
+}
+
+/// E_INVALIDARG with the reason logged (first eight, then powers of two).
+fn invalid(reason: &str) -> windows::core::Error {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if remap_logged(n) {
+        crate::diagnostics::log_line(format_args!("CopyPageMappingsBatchX refused: {reason} ({n} so far)"));
+    }
+    E_INVALIDARG.into()
+}
+
+#[cfg(test)]
+#[test]
+fn only_device_loss_latches_by_default() {
+    use windows::Win32::Graphics::Dxgi::DXGI_ERROR_DEVICE_REMOVED;
+    if crate::env_toggle!("TUXBOX_PAGE_MAPPING_LATCH").is_none() {
+        assert!(!latches(E_INVALIDARG));
+        assert!(latches(DXGI_ERROR_DEVICE_REMOVED));
     }
 }
 
@@ -330,6 +360,11 @@ impl Worker {
             .spawn(move || {
                 for job in jobs {
                     let fence = &job.pending.fence;
+                    let latch = |code: HRESULT| {
+                        if latches(code) {
+                            error.store(code.0, Ordering::Release);
+                        }
+                    };
                     let result = unsafe { fence.SetEventOnCompletion(1, HANDLE::default()) }
                         .and_then(|()| {
                             if unsafe { fence.GetCompletedValue() } == u64::MAX {
@@ -340,7 +375,7 @@ impl Worker {
                         });
                     if let Err(e) = result {
                         job.pending.result.store(e.code().0, Ordering::Release);
-                        error.store(e.code().0, Ordering::Release);
+                        latch(e.code());
                         crate::diagnostics::recording_error(format_args!(
                             "GPU page mapping failed: {:?}",
                             e.code()
@@ -424,7 +459,9 @@ pub(super) unsafe extern "system" fn copy(
             "CopyPageMappingsBatchX failed {:?}, batches={count} pool={source:#x} pages={pages} flags={flags:#x}",
             e.code()
         ));
-        reject(queue, e.code());
+        if latches(e.code()) {
+            reject(queue, e.code());
+        }
         e.code()
     } else {
         static FIRST: std::sync::Once = std::sync::Once::new();
