@@ -309,6 +309,32 @@ unsafe fn census(desc: &D3D12_PIPELINE_STATE_STREAM_DESC, key: Option<&str>, tex
     }
 }
 
+/// Whether a stream has a graphics stage (vertex, pixel, domain, hull,
+/// geometry, amplification or mesh shader), not only a compute shader.
+pub(super) unsafe fn is_graphics(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> bool {
+    let (input, size) = (desc.pPipelineStateSubobjectStream.cast::<u8>().cast_const(), desc.SizeInBytes);
+    if input.is_null() {
+        return false;
+    }
+    let mut at = 0;
+    while at < size {
+        let tag = unsafe { input.add(at).cast::<i32>().read() };
+        if matches!(tag, 1..=5 | 23..=25) {
+            return true;
+        }
+        let Some((_, used)) = (match tag {
+            24 | 25 => Some(subobject::<D3D12_SHADER_BYTECODE>()),
+            AMPLIFICATION_X | STENCIL_X.. => None,
+            _ => layout(tag),
+        }) else { break };
+        if used == 0 || used > size - at {
+            break;
+        }
+        at += used;
+    }
+    false
+}
+
 /// The DXBC digests of a stream's shaders (diagnostics capture).
 pub(super) unsafe fn shader_digests(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Vec<String> {
     let (input, size) = (desc.pPipelineStateSubobjectStream.cast::<u8>().cast_const(), desc.SizeInBytes);

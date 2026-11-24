@@ -139,8 +139,12 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
         return Some(built);
     }
     let deferred = slot.deferred.lock().unwrap_or_else(|e| e.into_inner()).take();
-    if let Some((device, work)) = deferred {
-        let job = Job { device, work, slot: slot.clone() };
+    if let Some((device, mut work)) = deferred {
+        let graphics = match &mut work {
+            Work::Stream(stream) => unsafe { super::is_graphics(&stream.desc()) },
+            Work::Compute(_) => false,
+        };
+        let job = Job { device, work, graphics, slot: slot.clone() };
         match small(&job) && first_use::admit() {
             true => {
                 let started = std::time::Instant::now();
@@ -685,6 +689,8 @@ struct Job {
     /// The guest device, retained until the worker is done with it.
     device: IUnknown,
     work: Work,
+    /// A graphics pipeline: prefetched ahead of compute ones (see `next_job`).
+    graphics: bool,
     slot: Arc<Upgrade>,
 }
 
@@ -737,9 +743,13 @@ pub(in crate::device) fn eager_on_title() -> bool {
 
 /// Hands a pipeline to the workers; the returned slot fills once its host
 /// pipeline exists.
-pub(in crate::device) fn queue(device: IUnknown, work: Work) -> Arc<Upgrade> {
+pub(in crate::device) fn queue(device: IUnknown, mut work: Work) -> Arc<Upgrade> {
     let slot = Arc::new(Upgrade::default());
-    send(Job { device, work, slot: slot.clone() }, false);
+    let graphics = match &mut work {
+        Work::Stream(stream) => unsafe { super::is_graphics(&stream.desc()) },
+        Work::Compute(_) => false,
+    };
+    send(Job { device, work, graphics, slot: slot.clone() }, false);
     slot
 }
 
@@ -852,7 +862,15 @@ fn next_job(prefetch_only: bool) -> (Job, bool) {
         if !prefetch_only && let Some(job) = jobs.bound.pop_front() {
             return (job, false);
         }
-        if let Some(job) = jobs.created.pop_front() {
+        // XCL pso_async.rs (f14d3ff, GPL-2.0-only, via ZigZagBoi1/ScarlettPort):
+        // after the builds a title waits on, graphics before compute. test140's
+        // last 10 s recorded 2 of 2291 draws and 398 of 2537 dispatches.
+        // Looks at the first 512 queued; TUXBOX_GRAPHICS_FIRST=0 keeps
+        // creation order.
+        let first = if crate::env_toggle!("TUXBOX_GRAPHICS_FIRST") != Some("0") {
+            jobs.created.iter().take(512).position(|j| j.graphics).unwrap_or(0)
+        } else { 0 };
+        if let Some(job) = jobs.created.remove(first) {
             return (job, true);
         }
         g = ready.wait(g).unwrap_or_else(|e| e.into_inner());
