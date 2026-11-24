@@ -96,9 +96,14 @@ fn buffer(width: u64) -> D3D12_RESOURCE_DESC {
 /// Dead entries (their view dropped) are kept for revival up to this many in all.
 const KEPT: usize = 8192;
 
-fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>) {
+fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap<(u64, u64), ID3D12Resource>>) {
     if entries.len() > KEPT {
         entries.retain(|_, e| e.view.strong_count() > 0);
+        // A cached import pins its pages against remaps; keep only those a
+        // remaining shadow still holds, so the cache pins nothing extra.
+        let held: std::collections::HashSet<usize> = entries.values()
+            .flat_map(|e| e.pieces.iter().map(|p| p.0.as_raw() as usize)).collect();
+        lock(sources).retain(|_, source| held.contains(&(source.as_raw() as usize)));
     }
 }
 
@@ -144,9 +149,6 @@ fn import_source(device: &Device, page: u64, width: u64) -> Result<ID3D12Resourc
     IMPORTS.fetch_add(1, Relaxed);
     if cache {
         let mut sources = lock(&shadows.sources);
-        if sources.len() >= KEPT {
-            sources.clear();
-        }
         sources.insert((page, width), source.clone());
     }
     Ok(source)
@@ -220,7 +222,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // Not registered by address: CBVs, UAVs and command arguments at this VA
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
-    prune(&mut entries);
+    prune(&mut entries, &shadows.sources);
     entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -317,7 +319,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     let mut copies = Vec::new();
     {
         let mut entries = lock(&shadows.entries);
-        prune(&mut entries);
+        prune(&mut entries, &shadows.sources);
         let skip = !back && skip_unchanged();
         let (mut live, mut skipped) = (0u64, 0u64);
         let all = write_back_all();
