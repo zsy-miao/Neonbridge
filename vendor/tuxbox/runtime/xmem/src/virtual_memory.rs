@@ -115,15 +115,89 @@ pub(super) fn allocate_direct(bytes: usize) -> *mut c_void {
         return ptr::null_mut();
     }
     let base = unsafe { host_alloc(ptr::null(), extent, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, 0) };
-    if !base.is_null() {
-        let tag = if super::options::TAG_DIRECT.load(std::sync::atomic::Ordering::Acquire) {
-            // The query record contains the packed six-bit character values
-            // followed by the decoded four bytes in display order.
-            let fourcc = 0x586d5641;
-            (super::make_tag(fourcc) >> 40) | (u64::from(fourcc.swap_bytes()) << 32)
-        } else { 0 };
-        allocations.insert(base.addr(), DirectAllocation { extent, tag });
+    remember_direct(&mut allocations, base, extent);
+    base
+}
+
+fn direct_tag() -> u64 {
+    if !super::options::TAG_DIRECT.load(std::sync::atomic::Ordering::Acquire) {
+        return 0;
     }
+    // The query record contains the packed six-bit character values
+    // followed by the decoded four bytes in display order.
+    let fourcc = 0x586d5641;
+    (super::make_tag(fourcc) >> 40) | (u64::from(fourcc.swap_bytes()) << 32)
+}
+
+fn remember_direct(allocations: &mut HashMap<usize, DirectAllocation>, base: *mut c_void, extent: usize) {
+    if !base.is_null() {
+        allocations.insert(base.addr(), DirectAllocation { extent, tag: direct_tag() });
+    }
+}
+
+/// Commit ordinary host pages for a graphics or physical `XMemAllocDefault`.
+/// Graphics requests use at least 64 KiB pages. A 128 KiB alignment request
+/// uses a 2 MiB alignment. `below_4gb` keeps the block under the 4 GiB line.
+/// Copied from TuxBox aeed457 (brcly, Apache-2.0); aligned blocks above 4 GiB
+/// stay in our title window (host_alloc).
+pub(super) fn allocate_device_pages(bytes: usize, attributes: u64) -> *mut c_void {
+    let kind = ((attributes >> 29) & 15) as u32;
+    let page_code = ((attributes >> 14) & 3) as u32;
+    let align_code = ((attributes >> 24) & 31) as u32;
+    let below_4gb = attributes & (1 << 33) != 0;
+    let graphics = matches!(kind, 1..=6 | 10..=12);
+    let physical = matches!(kind, 7..=9);
+    if (!graphics && !physical) || page_code > 2 {
+        unsafe { SetLastError(ERROR_INVALID_PARAMETER) };
+        return ptr::null_mut();
+    }
+    let mut page = match page_code {
+        2 => 2 << 20,
+        1 => 64 << 10,
+        _ => 4 << 10,
+    };
+    if graphics && page < (64 << 10) || physical && page_code != 2 {
+        page = 64 << 10;
+    }
+    let mut alignment = if align_code == 0 { page } else { 1usize << align_code.min(31) };
+    if align_code == 0x11 {
+        alignment = 2 << 20;
+    }
+    alignment = alignment.max(page).max(0x10000);
+    let Some(extent) = bytes.checked_next_multiple_of(alignment) else {
+        unsafe { SetLastError(windows_sys::Win32::Foundation::ERROR_NOT_ENOUGH_MEMORY) };
+        return ptr::null_mut();
+    };
+    if !below_4gb && alignment <= 0x10000 {
+        return allocate_direct(extent);
+    }
+    let mut allocations = DIRECT.lock().unwrap_or_else(|e| e.into_inner());
+    if allocations.try_reserve(1).is_err() {
+        unsafe { SetLastError(windows_sys::Win32::Foundation::ERROR_NOT_ENOUGH_MEMORY) };
+        return ptr::null_mut();
+    }
+    let base = if below_4gb {
+        use windows_sys::Win32::System::Memory::{
+            MEM_ADDRESS_REQUIREMENTS, MEM_EXTENDED_PARAMETER, MEM_EXTENDED_PARAMETER_0,
+            MEM_EXTENDED_PARAMETER_1, MemExtendedParameterAddressRequirements, VirtualAlloc2,
+        };
+        let mut requirements = MEM_ADDRESS_REQUIREMENTS {
+            LowestStartingAddress: ptr::null_mut(),
+            HighestEndingAddress: 0xFFFF_FFFF as *mut c_void,
+            Alignment: alignment,
+        };
+        let mut param = MEM_EXTENDED_PARAMETER {
+            Anonymous1: MEM_EXTENDED_PARAMETER_0 { _bitfield: MemExtendedParameterAddressRequirements as u64 },
+            Anonymous2: MEM_EXTENDED_PARAMETER_1 { Pointer: (&raw mut requirements).cast() },
+        };
+        unsafe {
+            VirtualAlloc2(windows_sys::Win32::System::Threading::GetCurrentProcess(), ptr::null(), extent,
+                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE, &raw mut param, 1)
+        }
+    } else {
+        unsafe { host_alloc(ptr::null(), extent, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, alignment) }
+    };
+    remember_direct(&mut allocations, base, extent);
     base
 }
 
@@ -222,6 +296,21 @@ pub unsafe extern "system" fn get_write_watch(
     // The console forwards all six arguments to the host when not suspended;
     // the list is shared with the d3d12 runtime (write_watch.rs).
     unsafe { super::write_watch::title_get(flags, base, bytes, addresses, count, granularity) }
+}
+
+/// Clear write-watch records for a region. A suspended watch returns
+/// `ERROR_CANTOPEN` (1003) and does not call the host. Copied from TuxBox
+/// aeed457 (brcly, Apache-2.0); the export was missing.
+///
+/// # Safety
+/// `base` and `bytes` must describe a write-watch allocation the caller owns,
+/// the same contract as the host reset.
+#[unsafe(export_name = "XMemResetWriteWatch")]
+pub unsafe extern "system" fn reset_write_watch(base: *const c_void, bytes: usize) -> u32 {
+    if WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner()).suspended {
+        return 1003;
+    }
+    unsafe { windows_sys::Win32::System::Memory::ResetWriteWatch(base, bytes) }
 }
 
 /// Query ordinary CPU image and private mappings whose backing is distinguishable

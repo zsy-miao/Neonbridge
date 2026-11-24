@@ -14,24 +14,28 @@ EXPORTS
     XMemGetPartitionHandleAndId @12
     XMemGetPhysicalMemoryLayout @13
     XMemGetTitleHeap @14
-    XMemGetWin32HeapStatistics @15
-    XMemGetWorkingSetStatistics @16
-    XMemGetWriteWatch @17
-    XMemHistoryData @18 DATA
-    XMemIsToolsMemAvailable @19
-    XMemMakeTag @20
-    XMemMapPhysicalPages @21
-    XMemMapPhysicalPagesScatter @22
-    XMemPreallocateFreeSpace @23
-    XMemResumeWriteWatch @24
-    XMemSetAllocationHooks @25
-    XMemSetAllocationHysteresis @26
-    XMemSetOption @27
-    XMemSetWin32HeapTrackingHooks @28
-    XMemSetWinHttpHooks=tuxbox_xhttp.XbSetWinHttpHooks @29
-    XMemTransferMemory @30
-    XMemVirtualAlloc @31
-    XMemVirtualQuery @32
+    XMemGetWin32HeapName @15
+    XMemGetWin32HeapStatistics @16
+    XMemGetWorkingSetStatistics @17
+    XMemGetWriteWatch @18
+    XMemHistoryData @19 DATA
+    XMemIsToolsMemAvailable @20
+    XMemMakeTag @21
+    XMemMapPhysicalPages @22
+    XMemMapPhysicalPagesScatter @23
+    XMemPreallocateFreeSpace @24
+    XMemRegisterGraphicsMemoryConfiguration @25
+    XMemResetWriteWatch @26
+    XMemResumeWriteWatch @27
+    XMemSetAllocationHooks @28
+    XMemSetAllocationHysteresis @29
+    XMemSetOption @30
+    XMemSetWin32HeapName @31
+    XMemSetWin32HeapTrackingHooks @32
+    XMemSetWinHttpHooks=tuxbox_xhttp.XbSetWinHttpHooks @33
+    XMemTransferMemory @34
+    XMemVirtualAlloc @35
+    XMemVirtualQuery @36
     TuxBoxCopyPageMappings PRIVATE
     TuxBoxValidatePinnedPageMappings PRIVATE
     TuxBoxJoinPageRange PRIVATE

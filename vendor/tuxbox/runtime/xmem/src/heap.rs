@@ -178,3 +178,67 @@ unsafe extern "system" fn statistics(heap: HANDLE, out: *mut [usize; 2]) -> i32 
     }
     1
 }
+
+// XMemSetWin32HeapName / XMemGetWin32HeapName: copied from TuxBox aeed457
+// (brcly, Apache-2.0); the exports were missing.
+const HEAP_TAG: u32 = 7;
+const HEAP_TAG_BYTES: usize = 8;
+
+/// Store an 8-byte heap tag. A longer name is clipped. A null name with a
+/// non-zero size is rejected.
+///
+/// # Safety
+/// `name` must be readable for `bytes` when `bytes` is non-zero. `heap` must be
+/// a heap in this process or null.
+#[unsafe(export_name = "XMemSetWin32HeapName")]
+pub unsafe extern "system" fn set_heap_name(heap: HANDLE, name: *const u8, bytes: usize) -> i32 {
+    if name.is_null() && bytes != 0 {
+        unsafe { SetLastError(ERROR_INVALID_PARAMETER) };
+        return 0;
+    }
+    let mut tag = [0u8; HEAP_TAG_BYTES];
+    let copy = bytes.min(HEAP_TAG_BYTES);
+    if copy != 0 {
+        // SAFETY: the caller supplied `copy` readable name bytes, and `copy` fits `tag`.
+        unsafe { name.copy_to_nonoverlapping(tag.as_mut_ptr(), copy) };
+    }
+    // SAFETY: `tag` is 8 initialized bytes. The host validates the heap handle.
+    unsafe {
+        windows_sys::Win32::System::Memory::HeapSetInformation(heap, HEAP_TAG as _, tag.as_ptr().cast(), HEAP_TAG_BYTES)
+    }
+}
+
+/// Copy the stored heap tag into `name`. A zero capacity is invalid.
+///
+/// # Safety
+/// `name` must have room for `bytes` when non-zero. `written` must be null or
+/// point at one writable `usize`.
+#[unsafe(export_name = "XMemGetWin32HeapName")]
+pub unsafe extern "system" fn get_heap_name(heap: HANDLE, name: *mut u8, bytes: usize, written: *mut usize) -> i32 {
+    if bytes == 0 {
+        unsafe { SetLastError(ERROR_INVALID_PARAMETER) };
+        return 0;
+    }
+    let mut tag = [0u8; HEAP_TAG_BYTES];
+    let mut returned = 0usize;
+    // SAFETY: `tag` holds 8 writable bytes. The host validates the heap handle.
+    let ok = unsafe {
+        windows_sys::Win32::System::Memory::HeapQueryInformation(heap, HEAP_TAG as _, tag.as_mut_ptr().cast(), HEAP_TAG_BYTES, &mut returned)
+    };
+    if ok == 0 {
+        return 0;
+    }
+    let length = tag.iter().position(|&byte| byte == 0).unwrap_or(HEAP_TAG_BYTES);
+    let keep = length.min(bytes - 1);
+    // SAFETY: `keep` is within both the tag and the caller buffer, and one extra byte remains.
+    unsafe {
+        if keep != 0 {
+            tag.as_ptr().copy_to_nonoverlapping(name, keep);
+        }
+        name.add(keep).write(0);
+        if !written.is_null() {
+            written.write_unaligned(keep + 1);
+        }
+    }
+    1
+}

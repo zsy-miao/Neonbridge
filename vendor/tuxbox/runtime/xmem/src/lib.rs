@@ -169,6 +169,16 @@ fn process_heap_attributes(attributes: u64) -> bool {
         && attributes & 0xc000 == 0
 }
 
+/// Graphics types 1..=6 and 10..=12, and physical types 7..=9; page-size
+/// codes above 2 are not a host page class (TuxBox aeed457, brcly,
+/// Apache-2.0). TUXBOX_XMEM_DEVICE_ALLOC=0 refuses them again.
+fn device_memory(attributes: u64) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("TUXBOX_XMEM_DEVICE_ALLOC").is_ok_and(|v| v.trim() == "0"))
+        && matches!((attributes >> 29) & 15, 1..=12)
+        && (attributes >> 14) & 3 <= 2
+}
+
 /// Allocate guest memory with the selected backing. A null return denotes failure.
 #[unsafe(export_name = "XMemAllocDefault")]
 pub extern "system" fn alloc_default(bytes: usize, attributes: u64) -> *mut c_void {
@@ -201,6 +211,17 @@ fn alloc_default_inner(bytes: usize, attributes: u64) -> *mut c_void {
             virtual_memory::allocate_direct(extent)
         }
         attr if pools::cpu_attributes(attr) && attr & 0xc000 == 0 => virtual_memory::allocate_direct(bytes),
+        attr if device_memory(attr) => {
+            let result = virtual_memory::allocate_device_pages(bytes, attr);
+            static NOTED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            if NOTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                let line = format!(
+                    "TuxBox xmem: device allocation attributes={attr:#x} bytes={bytes} address={result:p} (TUXBOX_XMEM_DEVICE_ALLOC=0 off)\n\0"
+                );
+                unsafe { windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringA(line.as_ptr()) };
+            }
+            result
+        }
         _ => {
             // SAFETY: SetLastError accepts this Windows error code and only updates thread-local state.
             unsafe { SetLastError(ERROR_NOT_SUPPORTED) };
@@ -230,12 +251,13 @@ pub unsafe extern "system" fn free_default(memory: *mut c_void, attributes: u64)
             unsafe { virtual_memory::free_placement(memory) };
         }
         attr if pools::cpu_attributes(attr) && (virtual_memory::release_direct(memory) || pools::release(memory.addr())) => {}
+        attr if device_memory(attr) && virtual_memory::release_direct(memory) => {}
         // SAFETY: Recording an unsupported attribute does not access the caller's allocation.
         _ => unsafe { SetLastError(ERROR_NOT_SUPPORTED) },
     }
 }
 
-/// Return the host-backed title memory profile requested by Frosty (ordinal 16).
+/// Return the host-backed title memory profile requested by Frosty (ordinal 17 since the full export table, TuxBox aeed457).
 ///
 /// # Safety
 /// With selector 0x20000001, a nonnull output must point to 120 writable bytes.
@@ -294,5 +316,56 @@ pub unsafe extern "system" fn working_set_statistics(selector: u32, out: *mut [u
     result[11] = (process.PeakPagefileUsage as u64).max(used);
     // SAFETY: Same caller-provided result checked above. Publish the populated snapshot.
     unsafe { out.write_unaligned(result) };
+    publish_graphics_budget(out);
     1
+}
+
+// XMemRegisterGraphicsMemoryConfiguration: copied from TuxBox aeed457
+// (brcly, Apache-2.0); the export was missing. TUXBOX_XMEM_GRAPHICS_BUDGET=0
+// leaves the working-set record without it.
+struct GraphicsBudget {
+    registered: bool,
+    bytes: [u8; 24],
+}
+
+static GRAPHICS_BUDGET: std::sync::Mutex<GraphicsBudget> = std::sync::Mutex::new(GraphicsBudget { registered: false, bytes: [0; 24] });
+
+/// Record the one-shot 24-byte graphics budget. Later calls are ignored.
+/// The first dword is the GPU page-table size, and zero means 20 MiB.
+/// The second dword is the frame-preserve size.
+///
+/// # Safety
+/// `config` must be null or point at 24 readable bytes.
+#[unsafe(export_name = "XMemRegisterGraphicsMemoryConfiguration")]
+pub unsafe extern "system" fn register_graphics_memory(config: *const u8) {
+    if config.is_null() {
+        return;
+    }
+    let mut slot = GRAPHICS_BUDGET.lock().unwrap_or_else(|error| error.into_inner());
+    if slot.registered {
+        return;
+    }
+    // SAFETY: the caller provided 24 readable bytes and the slot owns the destination.
+    unsafe { config.copy_to_nonoverlapping(slot.bytes.as_mut_ptr(), 24) };
+    slot.registered = true;
+}
+
+fn publish_graphics_budget(out: *mut [u64; 15]) {
+    if std::env::var("TUXBOX_XMEM_GRAPHICS_BUDGET").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let slot = GRAPHICS_BUDGET.lock().unwrap_or_else(|error| error.into_inner());
+    if !slot.registered {
+        return;
+    }
+    let page_table = u32::from_le_bytes([slot.bytes[0], slot.bytes[1], slot.bytes[2], slot.bytes[3]]);
+    let frame = u32::from_le_bytes([slot.bytes[4], slot.bytes[5], slot.bytes[6], slot.bytes[7]]);
+    let page_table = if page_table == 0 { 0x140_0000 } else { page_table };
+    // The title record keeps the frame-preserve size at byte 84 and the GPU
+    // page-table size at byte 96. Both sit inside the 120-byte result.
+    unsafe {
+        let base = out.cast::<u8>();
+        base.add(84).cast::<u32>().write_unaligned(frame);
+        base.add(96).cast::<u32>().write_unaligned(page_table);
+    }
 }
