@@ -40,6 +40,23 @@ thread_local! {
     static REASON: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
 }
 
+/// Worker threads a title thread is waiting on (by thread id): their pending
+/// translation is marked urgent like a deadline wait's (f1d5b57 left a bind
+/// waiting on a pipeline a worker was already building out).
+static URGENT_WORKERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// A title thread waits on the build running on worker `thread` (true), or
+/// stopped waiting (false).
+pub(crate) fn urge_worker(thread: u32, on: bool) {
+    let mut w = URGENT_WORKERS.lock().unwrap_or_else(|e| e.into_inner());
+    if on { w.push(thread) } else if let Some(at) = w.iter().position(|&t| t == thread) { w.swap_remove(at); }
+}
+
+fn urged() -> bool {
+    let me = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    URGENT_WORKERS.lock().unwrap_or_else(|e| e.into_inner()).contains(&me)
+}
+
 /// Sets (or clears) this thread's translator deadline; returns the previous one.
 pub(crate) fn wait_until(deadline: Option<Instant>) -> Option<Instant> {
     DEADLINE.with(|d| d.replace(deadline))
@@ -295,14 +312,24 @@ fn request(
     let start = Instant::now();
     // A title thread waiting with a deadline (a bind or a stolen build) puts
     // its request ahead of background ones (the launcher reads urgent/).
+    let mut marked = false;
+    let mut mark = || {
+        if !marked {
+            marked = true;
+            let urgent = dir.join("urgent");
+            let _ = fs::create_dir_all(&urgent);
+            let _ = fs::write(urgent.join(key), b"");
+        }
+    };
     if DEADLINE.with(|d| d.get()).is_some() {
-        let urgent = dir.join("urgent");
-        let _ = fs::create_dir_all(&urgent);
-        let _ = fs::write(urgent.join(key), b"");
+        mark();
     }
     loop {
         if let Some(bytes) = read_portable_file(&result, stage) {
             return Some(bytes);
+        }
+        if UNBOUNDED.with(|u| u.get()) && urged() {
+            mark();
         }
         if failed.exists() {
             reason("translator refused or failed it (.failed; see shader-worker.log)");

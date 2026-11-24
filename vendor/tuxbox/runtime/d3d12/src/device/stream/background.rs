@@ -125,6 +125,11 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
         }
     }
     hurry(slot);
+    // The worker building it gets its translation served first.
+    let worker = slot.running.load(Ordering::Acquire);
+    if worker != 0 {
+        crate::device::shader_cache::urge_worker(worker, true);
+    }
     let deadline = std::time::Instant::now() + limit;
     let (lock, done) = &DONE;
     let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -137,6 +142,9 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
         held = done.wait_timeout(held, step).unwrap_or_else(|e| e.into_inner()).0;
     }
     drop(held);
+    if worker != 0 {
+        crate::device::shader_cache::urge_worker(worker, false);
+    }
     slot.built.get()
 }
 
