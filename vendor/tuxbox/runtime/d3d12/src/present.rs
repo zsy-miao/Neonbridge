@@ -224,7 +224,7 @@ impl SwapChain {
             frame.allocator.Reset()?;
             frame.list.Reset(&frame.allocator, None)?;
             record_copy(&frame.list, source, &buffer);
-            let sample = sampler::due().then(|| sampler::record(&frame.list, source, D3D12_RESOURCE_STATE_COMMON)).flatten();
+            let sample = (sampler::due() || crate::diagnostics::ctl::screenshot_pending()).then(|| sampler::record(&frame.list, source, D3D12_RESOURCE_STATE_COMMON)).flatten();
             frame.list.Close()?;
             frame.source = Some(source.clone());
             queue.ExecuteCommandLists(&[Some(ID3D12CommandList::clone(&frame.list))]);
@@ -440,10 +440,12 @@ pub(crate) mod sampler {
             }
             let (w, h, pitch) = (f.Width as usize, f.Height as usize, f.RowPitch as usize);
             let data = unsafe { std::slice::from_raw_parts(mapped.cast::<u8>(), pitch * h) };
+            crate::diagnostics::ctl::screenshot_frame(data, w, h, pitch, f.Format.0);
             let (mut lit, mut sum, mut grid) = (0u64, [0u64; 3], [[0u64; 4]; 4]);
             for y in (0..h).step_by(4) {
                 for x in (0..w).step_by(4) {
-                    let p = &data[y * pitch + x * 4..y * pitch + x * 4 + 4];
+                    // Decoded per format (16-bit integers, XR_BIAS 10:10:10:2, BGRA).
+                    let p = crate::diagnostics::ctl::rgb(data, x, y, pitch, f.Format.0).unwrap_or_default();
                     let luma = u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2]);
                     if luma > 6 { lit += 1; }
                     for c in 0..3 { sum[c] += u64::from(p[c]); }

@@ -89,6 +89,31 @@ enum AutoStart {
 
 const TRIES: u32 = 3;
 
+/// Buttons injected by `neonbridge ctl press/hold` and when they end (gi_time µs; u64::MAX holds).
+static INJECT_BUTTONS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static INJECT_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The control channel's pad input: `buttons` for `ms` milliseconds (0 releases,
+/// u32::MAX holds until released). Returns 1 when a pad exists to carry it.
+#[unsafe(no_mangle)]
+pub extern "system" fn TuxBoxPadInject(buttons: u32, ms: u32) -> u32 {
+    use std::sync::atomic::Ordering::Relaxed;
+    let until = match ms {
+        0 => 0,
+        u32::MAX => u64::MAX,
+        _ => gi_time() + u64::from(ms) * 1000,
+    };
+    INJECT_BUTTONS.store(buttons, Relaxed);
+    INJECT_UNTIL.store(until, Relaxed);
+    eprintln!("TuxBox gameinput: ctl: buttons {buttons:#x} {}", match ms { 0 => "released".into(), u32::MAX => "held".into(), _ => format!("for {ms} ms") });
+    1
+}
+
+fn injected(now: u64) -> u32 {
+    use std::sync::atomic::Ordering::Relaxed;
+    if now < INJECT_UNTIL.load(Relaxed) { INJECT_BUTTONS.load(Relaxed) } else { 0 }
+}
+
 /// Set by gi_pad when the title reads a pad sample with A held.
 static A_READ: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -247,6 +272,7 @@ impl Pool {
             _ => 0,
         };
         let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now, real);
+        let inject = injected(now);
         for slot in 0..DEVICES {
             let kind = kind(slot);
             if kind & mask == 0 {
@@ -271,8 +297,11 @@ impl Pool {
                 },
             };
             let data = match data {
-                Sample::Pad(mut pad) if press_a && primary == Some(slot) => {
-                    pad.buttons |= 0x4; // GameInputGamepadA
+                Sample::Pad(mut pad) if (press_a || inject != 0) && primary == Some(slot) => {
+                    if press_a {
+                        pad.buttons |= 0x4; // GameInputGamepadA
+                    }
+                    pad.buttons |= inject;
                     Sample::Pad(pad)
                 }
                 other => other,

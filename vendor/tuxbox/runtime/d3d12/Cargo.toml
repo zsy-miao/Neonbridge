@@ -25,6 +25,8 @@ windows = { workspace = true, features = [
     "Win32_Security_Cryptography",
     "Win32_System_Kernel",
     "Win32_System_Performance",
+    "Win32_System_Pipes",
+    "Win32_System_Console",
     "Win32_System_Memory",
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",

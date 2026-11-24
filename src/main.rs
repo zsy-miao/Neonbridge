@@ -9,6 +9,7 @@
 //! any game file they replace is moved to `<game>/_6ixpack_orig/` first and
 //! `--restore` puts it back.
 
+mod ctl;
 mod shaders;
 mod splash;
 
@@ -43,6 +44,7 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
   --cdb FILE   extra cdb commands (breakpoints etc.) run before the game starts; implies --debug
   --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
   --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
+  ctl <command>  control the running game over a local pipe (neonbridge ctl help)
 Needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target.";
 
 /// (cargo package, output DLL, export table relative to the TuxBox root, extra import libs, extra C++ sources)
@@ -76,6 +78,9 @@ enum Mode {
 }
 
 fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
+    if args.first().is_some_and(|a| a == "ctl") {
+        return ctl::run(&args[1..]);
+    }
     let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
     let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
     let mut it = args.iter();

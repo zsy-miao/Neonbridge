@@ -227,11 +227,26 @@ fn watchdog() {
 }
 
 fn hang_report(presents: u64, seconds: u64) {
+    let lines = all_stacks();
+    record(format_args!("hang: no frame presented for {seconds} s after present #{presents}; {} threads' stacks follow", lines.len()));
+    for line in lines {
+        record(format_args!("hang: {line}"));
+    }
+}
+
+/// Every thread's stack now, one line each (for `neonbridge ctl stack`).
+pub(crate) fn stacks_now() -> Vec<String> {
+    let lines = all_stacks();
+    super::log_line(format_args!("ctl: stack dump of {} threads", lines.len()));
+    lines
+}
+
+fn all_stacks() -> Vec<String> {
     let list = modules();
     let own = unsafe { GetCurrentThreadId() };
     let mut threads = Vec::new();
     unsafe {
-        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return };
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return Vec::new() };
         let pid = GetCurrentProcessId();
         let mut entry = THREADENTRY32 { dwSize: size_of::<THREADENTRY32>() as u32, ..Default::default() };
         let mut more = Thread32First(snap, &mut entry).is_ok();
@@ -243,7 +258,7 @@ fn hang_report(presents: u64, seconds: u64) {
         }
         let _ = CloseHandle(snap);
     }
-    record(format_args!("hang: no frame presented for {seconds} s after present #{presents}; {} threads' stacks follow", threads.len()));
+    let mut out = Vec::new();
     let mut context = Box::new(Aligned(CONTEXT::default()));
     let mut stack = vec![0usize; SCAN_WORDS];
     for tid in threads {
@@ -253,8 +268,9 @@ fn hang_report(presents: u64, seconds: u64) {
         let _ = unsafe { CloseHandle(handle) };
         let Some(words) = words else { continue };
         let name = super::threads::name_of(tid);
-        record(format_args!("hang: thread {name}({tid}): {}", stack_text(&list, context.0.Rip as usize, &stack[..words])));
+        out.push(format!("thread {name}({tid}): {}", stack_text(&list, context.0.Rip as usize, &stack[..words])));
     }
+    out
 }
 
 /// Suspend, read the context and copy the stack top; nothing allocates while suspended.
