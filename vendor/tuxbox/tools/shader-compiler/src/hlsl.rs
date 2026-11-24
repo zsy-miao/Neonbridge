@@ -519,12 +519,14 @@ fn is_quad_exchange(i: &Insn) -> bool {
 fn lower_wave_reductions(insns: &mut [Insn]) -> Result<Option<u32>, String> {
     for op in insns.iter_mut().filter(|op| op.enc == Enc::Vop1 && op.mnemonic == "v_mov_b32" && op.src == [Opnd::Raw(250)]) {
         let ctrl = *op.raw.get(1).ok_or("missing DPP16 move controls")?;
-        if ctrl & 0xffff0000 != 0xff0c0000 { return Err(format!("unsupported DPP16 move at {:#x}", op.offset)); }
+        // Other controls use the general DPP lowering.
+        if ctrl & 0xffff0000 != 0xff0c0000 || (ctrl >> 8) & 0x1ff > 0xff { continue; }
         op.op = OP_QUAD_MOVE;
         op.src[0] = Opnd::Vgpr(ctrl as u8);
         op.aux.imm = ((ctrl >> 8) & 255) as i64;
     }
     let mut width = None;
+    let mut general = false;
     let is_dpp = |i: &Insn| i.enc == Enc::Vop2 && matches!(i.src.first(), Some(Opnd::Raw(233 | 234 | 250)));
     let mut at = 0;
     while let Some(first) = (at..insns.len()).find(|&i| is_dpp(&insns[i])) {
@@ -546,7 +548,17 @@ fn lower_wave_reductions(insns: &mut [Insn]) -> Result<Option<u32>, String> {
         let saved_extrema = matches!(red.as_str(), "v_min_f32" | "v_max_f32")
             && first.checked_sub(3).is_some_and(|p| matches!(insns[p].mnemonic.as_str(), "s_or_saveexec_b32" | "s_or_saveexec_b64"));
         if matches!(red.as_str(), "v_add_nc_u32" | "v_min_u32" | "v_max_u32" | "v_add_f32" | "v_and_b32" | "v_or_b32") || saved_extrema {
-            let (required, next) = wave_sum::lower(insns, first).map_err(bad)?;
+            let (required, next) = match wave_sum::lower(insns, first) {
+                Ok(lowered) => lowered,
+                // Only this error follows a partial rewrite.
+                Err(e) if e == "invalid lane result" => return Err(bad(e)),
+                Err(_) => {
+                    // Leave the permutes to the general DPP lowering.
+                    general = true;
+                    at = first + 1;
+                    continue;
+                }
+            };
             if width.replace(required).is_some_and(|w| w != required) {
                 return Err(bad("conflicting integer sum wave widths"));
             }
@@ -554,57 +566,67 @@ fn lower_wave_reductions(insns: &mut [Insn]) -> Result<Option<u32>, String> {
             continue;
         }
         if !matches!(red.as_str(), "v_min_f32" | "v_max_f32") {
-            return Err(bad(&format!("unsupported reduction op {red}")));
+            general = true;
+            at = first + 1;
+            continue;
         }
-        let Some(Opnd::Vgpr(vr)) = insns[first].dst.first().copied() else { return Err(bad("no accumulator")) };
-        // Prologue: nand_saveexec, identity move, cndmask.
-        if first < 3 {
-            return Err(bad("no prologue"));
-        }
-        let (a, mv, cm) = (first - 3, first - 2, first - 1);
-        let saved = match (&insns[a].enc, insns[a].op, insns[a].dst.first(), insns[a].src.first()) {
-            (Enc::Sop1, 0x29, Some(Opnd::Sgpr(x)), Some(Opnd::ConstInt(0))) => *x,
-            _ => return Err(bad("prologue does not start with s_nand_saveexec_b64 sX, 0")),
-        };
-        let (ident_reg, ident) = match (insns[mv].mnemonic.as_str(), insns[mv].dst.first(), insns[mv].src.first()) {
-            ("v_mov_b32", Some(Opnd::Vgpr(v)), Some(Opnd::Literal(k))) => (*v, *k),
-            _ => return Err(bad("identity is not a literal move")),
-        };
-        let c = &insns[cm];
-        let vin = match (c.mnemonic.as_str(), c.dst.first(), c.src.first(), c.src.get(1), c.src.get(2)) {
-            ("v_cndmask_b32", Some(Opnd::Vgpr(d)), Some(Opnd::Vgpr(i)), Some(Opnd::Vgpr(x)), Some(Opnd::Sgpr(m)))
-                if *d == vr && *i == ident_reg && *m == saved =>
-            {
-                *x
+        let shape = (|| -> Result<_, String> {
+            let Some(Opnd::Vgpr(vr)) = insns[first].dst.first().copied() else { return Err(bad("no accumulator")) };
+            // Prologue: nand_saveexec, identity move, cndmask.
+            if first < 3 {
+                return Err(bad("no prologue"));
             }
-            _ => return Err(bad("unexpected select before the reduction")),
-        };
-        // Body up to the exec restore.
-        let mut end = None;
-        let mut last_read = None;
-        for i in first..insns.len() {
-            let x = &insns[i];
-            if x.mnemonic == "s_mov_b64" && x.dst.first() == Some(&Opnd::ExecLo) && x.src.first() == Some(&Opnd::Sgpr(saved)) {
-                end = Some(i);
-                break;
+            let (a, mv, cm) = (first - 3, first - 2, first - 1);
+            let saved = match (&insns[a].enc, insns[a].op, insns[a].dst.first(), insns[a].src.first()) {
+                (Enc::Sop1, 0x29, Some(Opnd::Sgpr(x)), Some(Opnd::ConstInt(0))) => *x,
+                _ => return Err(bad("prologue does not start with s_nand_saveexec_b64 sX, 0")),
+            };
+            let (ident_reg, ident) = match (insns[mv].mnemonic.as_str(), insns[mv].dst.first(), insns[mv].src.first()) {
+                ("v_mov_b32", Some(Opnd::Vgpr(v)), Some(Opnd::Literal(k))) => (*v, *k),
+                _ => return Err(bad("identity is not a literal move")),
+            };
+            let c = &insns[cm];
+            let vin = match (c.mnemonic.as_str(), c.dst.first(), c.src.first(), c.src.get(1), c.src.get(2)) {
+                ("v_cndmask_b32", Some(Opnd::Vgpr(d)), Some(Opnd::Vgpr(i)), Some(Opnd::Vgpr(x)), Some(Opnd::Sgpr(m)))
+                    if *d == vr && *i == ident_reg && *m == saved =>
+                {
+                    *x
+                }
+                _ => return Err(bad("unexpected select before the reduction")),
+            };
+            // Body up to the exec restore.
+            let mut end = None;
+            let mut last_read = None;
+            for i in first..insns.len() {
+                let x = &insns[i];
+                if x.mnemonic == "s_mov_b64" && x.dst.first() == Some(&Opnd::ExecLo) && x.src.first() == Some(&Opnd::Sgpr(saved)) {
+                    end = Some(i);
+                    break;
+                }
+                let ok = (x.enc == Enc::Vop2 && x.mnemonic == red && x.dst.first() == Some(&Opnd::Vgpr(vr)))
+                    || (x.enc == Enc::Vop3 && x.op == 0x378 && x.src.first() == Some(&Opnd::Vgpr(vr)))
+                    || (x.enc == Enc::Vop3 && x.op == 0x360 && x.src.first() == Some(&Opnd::Vgpr(vr)));
+                if !ok {
+                    return Err(bad(&format!("unexpected {} at {:#x} inside the reduction", x.mnemonic, x.offset)));
+                }
+                if x.enc == Enc::Vop3 && x.op == 0x360 {
+                    last_read = Some(i);
+                }
             }
-            let ok = (x.enc == Enc::Vop2 && x.mnemonic == red && x.dst.first() == Some(&Opnd::Vgpr(vr)))
-                || (x.enc == Enc::Vop3 && x.op == 0x378 && x.src.first() == Some(&Opnd::Vgpr(vr)))
-                || (x.enc == Enc::Vop3 && x.op == 0x360 && x.src.first() == Some(&Opnd::Vgpr(vr)));
-            if !ok {
-                return Err(bad(&format!("unexpected {} at {:#x} inside the reduction", x.mnemonic, x.offset)));
+            let (Some(end), Some(last)) = (end, last_read) else { return Err(bad("no exec restore / result read")) };
+            if insns[last].src.get(1) != Some(&Opnd::ConstInt(0)) {
+                return Err(bad("result is not read from lane 0"));
             }
-            if x.enc == Enc::Vop3 && x.op == 0x360 {
-                last_read = Some(i);
-            }
-        }
-        let (Some(end), Some(last)) = (end, last_read) else { return Err(bad("no exec restore / result read")) };
-        if insns[last].src.get(1) != Some(&Opnd::ConstInt(0)) {
-            return Err(bad("result is not read from lane 0"));
-        }
-        let res = match insns[last].dst.first() {
-            Some(Opnd::Vgpr(n)) | Some(Opnd::Sgpr(n)) => *n,
-            _ => return Err(bad("bad result register")),
+            let res = match insns[last].dst.first() {
+                Some(Opnd::Vgpr(n)) | Some(Opnd::Sgpr(n)) => *n,
+                _ => return Err(bad("bad result register")),
+            };
+            Ok((vr, a, cm, saved, ident, vin, end, last, res))
+        })();
+        let Ok((vr, a, cm, saved, ident, vin, end, last, res)) = shape else {
+            general = true;
+            at = first + 1;
+            continue;
         };
         // Rewrite.
         insns[a].mnemonic = "s_mov_b64".into();
@@ -628,7 +650,8 @@ fn lower_wave_reductions(insns: &mut [Insn]) -> Result<Option<u32>, String> {
         x.aux.imm = ident as i64;
         at = end + 1;
     }
-    Ok(width)
+    // General DPP permutes read guest lanes directly, so the host wave must match wave64.
+    Ok(width.or(general.then_some(64)))
 }
 
 use crate::rdna2::{wide_bit_result, writes_scalar};
@@ -4910,6 +4933,66 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
 
 
+    /// DPP8 / DPP16 (RDNA 2 ISA 6.2.3): src0 comes from another lane of the
+    /// wave. Read it with WaveReadLaneAt, then run the operation on that value.
+    fn emit_dpp(&mut self, ins: &Insn) -> Result<(), String> {
+        let Some(Opnd::Raw(code)) = ins.src.first().copied() else { unreachable!() };
+        let ctrl = *ins.raw.get(1).ok_or("missing DPP control word")?;
+        let source = Opnd::Vgpr(ctrl as u8);
+        self.touch(&source);
+        let value = r(&source)?;
+        let t = self.tmp;
+        self.tmp += 1;
+        let lane = "WaveGetLaneIndex()";
+        let (src, valid, fetch_inactive, bound_zero, write) = if code == 250 {
+            if (ctrl >> 20) & 15 != 0 {
+                return Err(format!("DPP16 source modifiers unsupported at {:#x}", ins.offset));
+            }
+            let dpp = (ctrl >> 8) & 0x1ff;
+            let n = dpp & 15;
+            let row = format!("({lane} & ~15u)");
+            let i = format!("({lane} & 15u)");
+            let (src, valid) = match dpp {
+                0..=0xff => (format!("(({lane} & ~3u) | (({dpp:#x}u >> (2u * ({lane} & 3u))) & 3u))"), "true".to_string()),
+                0x101..=0x10f => (format!("({lane} + {n}u)"), format!("({i} + {n}u < 16u)")),
+                0x111..=0x11f => (format!("({lane} - {n}u)"), format!("({i} >= {n}u)")),
+                0x121..=0x12f => (format!("({row} | (({i} - {n}u) & 15u))"), "true".into()),
+                0x140 => (format!("({row} | (15u - {i}))"), "true".into()),
+                0x141 => (format!("(({lane} & ~7u) | (7u - ({lane} & 7u)))"), "true".into()),
+                0x150..=0x15f => (format!("({row} | {n}u)"), "true".into()),
+                0x160..=0x16f => (format!("({row} | ({i} ^ {n}u))"), "true".into()),
+                _ => return Err(format!("reserved DPP16 control {dpp:#x} at {:#x}", ins.offset)),
+            };
+            let (bank, rows) = ((ctrl >> 24) & 15, (ctrl >> 28) & 15);
+            let write = if bank == 15 && rows == 15 { "true".to_string() } else {
+                format!("((({rows:#x}u >> (({lane} >> 4u) & 3u)) & 1u) != 0u && (({bank:#x}u >> (({lane} >> 2u) & 3u)) & 1u) != 0u)")
+            };
+            (src, valid, (ctrl >> 18) & 1 != 0, (ctrl >> 19) & 1 != 0, write)
+        } else {
+            let sel = ctrl >> 8;
+            (format!("(({lane} & ~7u) | (({sel:#x}u >> (3u * ({lane} & 7u))) & 7u))"), "true".to_string(), code == 234, true, "true".to_string())
+        };
+        self.line(&format!("uint t{t}src = {src} & (WaveGetLaneCount() - 1u);"));
+        self.line(&format!("uint t{t}v = WaveReadLaneAt({value}, t{t}src);"));
+        let active = if fetch_inactive { "true".to_string() } else { format!("(WaveReadLaneAt(exec_lo & 1u, t{t}src) != 0u)") };
+        self.line(&format!("bool t{t}ok = {valid} && {active};"));
+        let mut c = ins.clone();
+        c.raw.truncate(1);
+        c.src[0] = Opnd::Temp(t as u16);
+        if bound_zero {
+            self.line(&format!("uint tb_s{t} = t{t}ok ? t{t}v : 0u;"));
+            if write == "true" { return self.emit_vec(&c); }
+            self.line(&format!("if ({write}) {{"));
+        } else {
+            // BOUND_CTRL=0: an invalid source disables the write.
+            self.line(&format!("uint tb_s{t} = t{t}v;"));
+            self.line(&format!("if (t{t}ok && {write}) {{"));
+        }
+        self.emit_vec(&c)?;
+        self.line("}");
+        Ok(())
+    }
+
     fn emit_vec(&mut self, ins: &Insn) -> Result<(), String> {
         let mut m = ins.mnemonic.clone();
         let s = &ins.src;
@@ -4922,6 +5005,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         if m == "v_nop" {
             return Ok(());
+        }
+        if matches!(ins.enc, Enc::Vop1 | Enc::Vop2 | Enc::Vopc) && matches!(s.first(), Some(Opnd::Raw(233 | 234 | 250))) {
+            return self.emit_dpp(ins);
         }
         if ins.enc == Enc::Vop2 && ins.op == wave_sum::DPP_REDUCE {
             // Read the partner before the EXEC-guarded write, including when VDST aliases VSRC.
