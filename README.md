@@ -25,15 +25,16 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus and loading screens into the first mission, where the sound plays but the picture is still black. It now runs for minutes without crashing, at 15-30 fps, but video memory still runs over budget and slows it down.
+- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus and loading screens and now shows its picture, but the loading-screen videos are garbled into blocks. It runs for minutes at 15-30 fps, though some runs still lose the GPU device, and video memory runs over budget and slows it down.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and about 20 GB of free commit (RAM plus page file).
+- **Can I watch it from my phone?** Yes. With `NEONBRIDGE_FEED=1` the launcher streams the game's picture to a password-protected page on this PC (port 8788) and on your Tailscale network. The first run prints a Tailscale sign-in link to approve the PC once.
 - **Does it go online?** No. The game's crash handler would upload details of your PC, so it's blocked (`TUXBOX_NETWORK=1` lifts it).
 
 ## Roadmap
 
-1. **Show the world:** draw the first mission, which is black today.
+1. **Show the world:** clean loading-screen videos and the first mission drawn in full.
 2. **Memory:** keep the game's ~8 GB of textures within the GPU's video-memory budget.
 3. **Speed:** hold 30 fps; it peaks at about 32 today and sinks to 15 once video memory overflows.
 4. **Correct pictures:** the remaining BCPack texture modes and 5551 colour.
