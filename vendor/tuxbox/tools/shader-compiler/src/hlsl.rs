@@ -1167,7 +1167,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         em.reflected_lds_words = Some(bytes/4);
     }
     if let Some(width) = required_wave_size {
-        wave_sum::check_control_flow(&em.insns, width)?;
+        wave_sum::check_control_flow(&mut em.insns, width)?;
         let [x, y, z] = compute_group(ex);
         if ex.stage != Stage::Compute || !x.checked_mul(y).and_then(|n| n.checked_mul(z)).is_some_and(|n| n % width == 0) {
             return Err(format!("wave operation requires complete {width}-lane compute waves"));
@@ -5038,6 +5038,51 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             };
             self.line(&format!("uint t{t} = {combined};"));
             return self.wv(&d, &format!("t{t}"));
+        }
+        if ins.enc == Enc::Vop2 && ins.op == wave_sum::HALF_REDUCE {
+            let region = ins.aux.imm2;
+            let acc = r(&s[0])?;
+            let (wave, identity, float) = match m.as_str() {
+                "v_add_nc_u32" => ("WaveActiveSum", "0u", false),
+                "v_and_b32" => ("WaveActiveBitAnd", "0xffffffffu", false),
+                "v_or_b32" => ("WaveActiveBitOr", "0u", false),
+                "v_min_u32" => ("WaveActiveMin", "0xffffffffu", false),
+                "v_max_u32" => ("WaveActiveMax", "0u", false),
+                "v_add_f32" => ("WaveActiveSum", "0.0f", true),
+                "v_min_f32" => ("WaveActiveMin", "asfloat(0x7f800000u)", true),
+                "v_max_f32" => ("WaveActiveMax", "asfloat(0xff800000u)", true),
+                _ => return Err("invalid divergent reduction operation".into()),
+            };
+            let value = if float { format!("asfloat({acc})") } else { acc };
+            for (half, test) in [("lo", "<"), ("hi", ">=")] {
+                let e = format!("{wave}(WaveGetLaneIndex() {test} 32u ? {value} : {identity})");
+                self.line(&format!("uint hr{region}{half} = {};", if float { format!("asuint({e})") } else { e }));
+            }
+            return self.wv(&d, &format!("(WaveGetLaneIndex() < 32u ? hr{region}lo : hr{region}hi)"));
+        }
+        if ins.enc == Enc::Vop3 && ins.op == wave_sum::HALF_READ {
+            let region = ins.aux.imm2;
+            // Lane 32 holds the upper half; lane 0 the lower half, plus the upper
+            // half for wave64 after the following combine (read here as its result).
+            let value = match (ins.aux.imm, self.required_wave_size) {
+                (32, _) => format!("hr{region}hi"),
+                (_, Some(64)) => {
+                    let op = self.insns.get(self.cur_idx - 1).map(|i| i.mnemonic.clone()).unwrap_or_default();
+                    match op.as_str() {
+                        "v_add_nc_u32" => format!("(hr{region}lo + hr{region}hi)"),
+                        "v_and_b32" => format!("(hr{region}lo & hr{region}hi)"),
+                        "v_or_b32" => format!("(hr{region}lo | hr{region}hi)"),
+                        "v_min_u32" => format!("min(hr{region}lo, hr{region}hi)"),
+                        "v_max_u32" => format!("max(hr{region}lo, hr{region}hi)"),
+                        "v_add_f32" => format!("asuint(asfloat(hr{region}lo) + asfloat(hr{region}hi))"),
+                        "v_min_f32" => format!("asuint(min(asfloat(hr{region}lo), asfloat(hr{region}hi)))"),
+                        "v_max_f32" => format!("asuint(max(asfloat(hr{region}lo), asfloat(hr{region}hi)))"),
+                        _ => return Err("divergent wave64 reduction lacks its upper-half combine".into()),
+                    }
+                }
+                _ => format!("hr{region}lo"),
+            };
+            return self.ws(&d, &value);
         }
         if ins.enc == Enc::Vop3 && ins.op == wave_sum::READ_LANE {
             let lane = r(&s[1])?;

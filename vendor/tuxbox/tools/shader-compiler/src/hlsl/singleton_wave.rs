@@ -58,7 +58,9 @@ fn reduce_singleton_sum(code: &mut [Insn]) -> bool {
     let Ok((64, end)) = super::wave_sum::lower(&mut trial, first) else {
         return false;
     };
-    if super::wave_sum::check_control_flow(&trial, 64).is_err() {
+    let mut checked = trial.clone();
+    if super::wave_sum::check_control_flow(&mut checked, 64).is_err()
+        || checked.iter().any(|i| i.op == super::wave_sum::HALF_REDUCE && i.enc == super::Enc::Vop2) {
         return false;
     }
     trial[start].mnemonic = "s_mov_b64".into();

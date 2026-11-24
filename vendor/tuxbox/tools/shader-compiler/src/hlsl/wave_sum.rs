@@ -4,6 +4,9 @@ use super::{Emitter, Enc, Insn, Opnd};
 
 pub(super) const DPP_REDUCE: u32 = 0x7ff1;
 pub(super) const READ_LANE: u32 = 0x7ff2;
+/// Divergent reductions: per-half wave intrinsics over the participating lanes.
+pub(super) const HALF_REDUCE: u32 = 0x7ff3;
+pub(super) const HALF_READ: u32 = 0x7ff4;
 
 // Reductions may have a completed vector load and a second predicate.
 // The scalar AND intersects that predicate with the saved EXEC before the
@@ -192,9 +195,12 @@ pub(super) fn lower(insns: &mut [Insn], first: usize) -> Result<(u32, usize), &'
 
 /// The branch emitter predicates regions per host invocation. HLSL lane reads
 /// require the source invocation to participate, including lane zero when guest
-/// EXEC has masked it. A branch around or into the region can violate that.
-pub(super) fn check_control_flow(insns: &[Insn], width: u32) -> Result<(), String> {
-    for (first, ins) in insns.iter().enumerate() {
+/// EXEC has masked it. A branch around or into the region can violate that, so such
+/// regions compute each half's reduction with wave intrinsics instead: lanes that
+/// do not participate on the host are inactive in the guest and add the identity.
+pub(super) fn check_control_flow(insns: &mut [Insn], width: u32) -> Result<(), String> {
+    for first in 0..insns.len() {
+        let ins = &insns[first];
         if ins.op != DPP_REDUCE || ins.aux.imm != 0 {
             continue;
         }
@@ -212,19 +218,41 @@ pub(super) fn check_control_flow(insns: &[Insn], width: u32) -> Result<(), Strin
         };
         let start = insns[start].offset as i64;
         let end = insns[first + if width == 32 { 7 } else { 9 }].offset as i64;
+        let mut divergent = false;
         for branch in insns.iter().filter(|i| i.enc == Enc::Sopp) {
             let pc = branch.offset as i64;
             if branch.op == 1 && pc < start {
-                return Err(format!("wave reduction at {start:#x} after an early exit"));
+                divergent = true;
             }
             if Emitter::branch_cond(branch.op).is_some() {
                 let target = pc + 4 + 4 * branch.aux.imm;
                 if (pc < start && target > start) || (pc > end && target <= end) {
-                    return Err(format!(
-                        "wave reduction at {start:#x} may execute in divergent control flow"
-                    ));
+                    divergent = true;
                 }
             }
+        }
+        if !divergent {
+            continue;
+        }
+        // Steps 1-3, the cross-row permute and its combine fold into the first step.
+        for i in first + 1..first + 6 {
+            let x = &mut insns[i];
+            x.enc = Enc::Vop1;
+            x.op = 0;
+            x.mnemonic = "v_nop".into();
+            x.src.clear();
+            x.aux = Default::default();
+        }
+        insns[first].op = HALF_REDUCE;
+        insns[first].aux.imm2 = first as i64;
+        let reads: &[(usize, i64)] = if width == 32 { &[(first + 6, 0)] } else { &[(first + 6, 32), (first + 8, 0)] };
+        for &(i, lane) in reads {
+            if insns[i].op != READ_LANE {
+                return Err(format!("divergent wave reduction at {start:#x} lacks its lane reads"));
+            }
+            insns[i].op = HALF_READ;
+            insns[i].aux.imm = lane;
+            insns[i].aux.imm2 = first as i64;
         }
     }
     Ok(())
