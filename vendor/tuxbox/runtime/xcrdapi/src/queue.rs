@@ -104,6 +104,16 @@ struct Read {
     cancelled: bool,
 }
 
+fn eof_partial() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_EOF_PARTIAL").is_ok_and(|v| v.trim() == "1"))
+}
+
+/// Whether `size` bytes at `offset` lie inside a file of `length` bytes.
+fn within_file(offset: u64, size: usize, length: u64) -> bool {
+    offset.checked_add(size as u64).is_some_and(|end| end <= length)
+}
+
 fn log(message: std::fmt::Arguments) {
     if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
         eprintln!("TuxBox xcrdapi: {message}");
@@ -336,6 +346,18 @@ impl Read {
             return self.store(&fill);
         }
         if self.options & ZLIB == 0 && self.dest_pages.is_none() {
+            // A read running past the end of its file fails before touching
+            // the destination, as a staged (compressed) read does
+            // (Xbox2Windows 29757986). TUXBOX_EOF_PARTIAL=1 reads the part
+            // that exists into the destination first, as before.
+            if !eof_partial()
+                && let Source::File(file, offset) = &self.source
+                && let Ok(meta) = file.file.metadata()
+                && !within_file(*offset, self.size, meta.len())
+            {
+                { let mut stats = storage_stats(); stats.read_errors = stats.read_errors.saturating_add(1); }
+                return Err(HRESULT::from_win32(ERROR_HANDLE_EOF.0));
+            }
             return self.read_source(self.dest as *mut u8);
         }
         let mut local = Vec::new();
@@ -769,5 +791,19 @@ impl IQueue2_Impl for Queue_Impl {
                 until_submit: base.until_submit,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod eof_tests {
+    use super::within_file;
+
+    #[test]
+    fn reads_must_end_inside_their_file() {
+        assert!(within_file(0, 4096, 4096));
+        assert!(within_file(4092, 4, 4096));
+        assert!(!within_file(4093, 4, 4096)); // straddles EOF
+        assert!(!within_file(8192, 1, 4096)); // past EOF
+        assert!(!within_file(u64::MAX, 2, u64::MAX));
     }
 }
