@@ -301,7 +301,7 @@ mod writers {
     pub(super) fn wait_queued(queue: usize, address: u64, comparison: u32, target: u64) {
         if order_on() && traced() {
             crate::diagnostics::log_line(format_args!(
-                "wait order: queue {queue:#x} waits {address:#x} (comparison {comparison}) for {target:#x}"));
+                "wait order: queue {queue:#x} waits {address:#018x} (comparison {comparison}) for {target:#x}"));
         }
     }
 
@@ -348,7 +348,7 @@ mod writers {
                 if !traced() {
                     break;
                 }
-                let text: Vec<String> = writes.iter().map(|(a, v)| format!("{a:#x}={v:#x}")).collect();
+                let text: Vec<String> = writes.iter().map(|(a, v)| format!("{a:#018x}={v:#x}")).collect();
                 crate::diagnostics::log_line(format_args!(
                     "wait order: queue {queue:#x} runs list {:#x} writing {}", list as usize, text.join(", ")));
             }
