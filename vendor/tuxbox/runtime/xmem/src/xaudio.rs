@@ -10,6 +10,11 @@
 //!   (default device); COM missing (CO_E_NOTINITIALIZED) joins the MTA and
 //!   retries; any other failure retries with the host's own format (0
 //!   channels, 0 Hz) and the game-effects category.
+//! - A mastering rate of 0 (the device's own) becomes 48000 Hz, as
+//!   omonkeyz/xbox-emulator xaudio2_9 engine.rs create_mastering_voice does
+//!   (GPL-3.0-or-later): test50's device mixed at 192 kHz, so XAudio2
+//!   resampled every voice 4x on its thread and the intro audio broke up.
+//!   TUXBOX_MASTER_RATE=<Hz> picks another rate; 0 leaves it to the device.
 //!
 //! Both the exe's imports and its GetProcAddress lookups are covered.
 //! TUXBOX_XAUDIO_FIX=0 passes every call through unchanged (still logged).
@@ -42,6 +47,31 @@ const QUANTUM_1024: u32 = 0x8000;
 const MASTER_SLOT: usize = 7;
 const CO_E_NOTINITIALIZED: i32 = 0x8004_01F0_u32 as i32;
 const GAME_EFFECTS: u32 = 6;
+
+/// The rate a mastering voice asking for the device rate (0) gets.
+fn master_rate(asked: u32) -> u32 {
+    if asked != 0 {
+        return asked;
+    }
+    std::env::var("TUXBOX_MASTER_RATE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(48_000)
+}
+
+/// The created mastering voice's input rate (IXAudio2Voice::GetVoiceDetails).
+unsafe fn voice_rate(voice: *mut H) -> u32 {
+    if voice.is_null() {
+        return 0;
+    }
+    unsafe {
+        let object = *voice;
+        if object.is_null() {
+            return 0;
+        }
+        let mut details = [0u32; 4];
+        let get: unsafe extern "system" fn(H, *mut u32) = std::mem::transmute(*(*object.cast::<*const usize>()));
+        get(object, details.as_mut_ptr());
+        details[3]
+    }
+}
 
 static REAL_CREATE: AtomicUsize = AtomicUsize::new(0);
 static REAL_CREATE_VERSION: AtomicUsize = AtomicUsize::new(0);
@@ -152,7 +182,13 @@ unsafe extern "system" fn create_master(
         return hr;
     }
     let call = |c, r, cat| unsafe { real(engine, voice, c, r, flags, std::ptr::null(), effects, cat) };
+    let asked = rate;
+    let rate = master_rate(rate);
     let mut hr = call(channels, rate, category);
+    if hr < 0 && rate != asked {
+        log(&format!("xaudio2: CreateMasteringVoice at {rate} Hz failed {hr:#x}; asking for the device rate"));
+        hr = call(channels, asked, category);
+    }
     let mut how = "as asked";
     if hr == CO_E_NOTINITIALIZED {
         let co = unsafe { CoInitializeEx(std::ptr::null(), 0) }; // COINIT_MULTITHREADED
@@ -166,7 +202,8 @@ unsafe extern "system" fn create_master(
         log(&format!("xaudio2: CreateMasteringVoice {channels} ch {rate} Hz category {category} failed {first:#x}; retried with the host format"));
         how = "with the host format";
     }
-    log(&format!("xaudio2: CreateMasteringVoice {channels} ch {rate} Hz flags {flags:#x} category {category}, console device id {} = {hr:#x} ({how})",
+    let got = if hr >= 0 { unsafe { voice_rate(voice) } } else { 0 };
+    log(&format!("xaudio2: CreateMasteringVoice {channels} ch, asked {asked} Hz, requested {rate} Hz (TUXBOX_MASTER_RATE), got {got} Hz, flags {flags:#x} category {category}, console device id {} = {hr:#x} ({how})",
         if named { "ignored" } else { "none" }));
     hr
 }
