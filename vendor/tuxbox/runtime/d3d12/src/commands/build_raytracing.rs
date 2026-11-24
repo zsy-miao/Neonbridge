@@ -82,6 +82,8 @@ impl Instances {
             // Foreign addresses and GPU arrays of pointers have no safely resolved
             // input range. Native traversal remains valid until a BLAS moves.
             if unsafe { blas::has_relocations(owner) } {
+                crate::diagnostics::recording_error(format_args!(
+                    "scene preparation: instances at a foreign address or a GPU pointer array while BLASes are relocated (E_NOTIMPL)"));
                 return Err(E_NOTIMPL.into());
             }
             return Ok(());
@@ -180,6 +182,9 @@ fn translate(
     }
     if let Some(target) = relocated {
         if info.ResultDataMaxSizeInBytes > unsafe { target.GetDesc() }.Width {
+            crate::diagnostics::recording_error(format_args!(
+                "scene preparation: build needs {} bytes, relocated destination holds {} (E_NOTIMPL)",
+                info.ResultDataMaxSizeInBytes, unsafe { target.GetDesc() }.Width));
             return Err(E_NOTIMPL.into());
         }
         retain(state, &[&target])?;

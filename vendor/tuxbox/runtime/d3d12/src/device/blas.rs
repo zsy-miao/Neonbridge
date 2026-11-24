@@ -180,6 +180,8 @@ impl Buffers {
             .filter(|buf| address - buf.start < buf.bytes);
         let result = candidates.next().cloned().ok_or(E_INVALIDARG)?;
         if candidates.next().is_some() {
+            crate::diagnostics::recording_error(format_args!(
+                "scene preparation: address {address:#x} lies in several overlapping placed buffers (E_NOTIMPL)"));
             return Err(E_NOTIMPL.into()); // ambiguous overlapping placed resources
         }
         Ok(result)
