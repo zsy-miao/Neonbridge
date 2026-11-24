@@ -118,9 +118,50 @@ pub(crate) fn start(luid: LUID) {
                 }
                 crate::diagnostics::log_line(format_args!("{}",
                     line(local, non_local, counters.private as u64, status.ullAvailPageFile, status.ullTotalPageFile, &deltas)));
+                if crate::env_toggle!("TUXBOX_COMMIT_BREAKDOWN") != Some("0") {
+                    crate::diagnostics::log_line(format_args!("{}", commit_breakdown()));
+                }
             }
         });
     });
+}
+
+/// The process's committed address space by kind, and its largest
+/// allocations: test57 ran out of system commit with 20 GB process private
+/// and no breakdown. TUXBOX_COMMIT_BREAKDOWN=0 skips it.
+fn commit_breakdown() -> String {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    const PRIVATE: u32 = 0x2_0000;
+    const MAPPED: u32 = 0x4_0000;
+    const IMAGE: u32 = 0x100_0000;
+    let mut by_kind = [0u64; 3];
+    let mut by_base: std::collections::HashMap<(u64, u32), u64> = std::collections::HashMap::new();
+    let mut address = 0u64;
+    let mut regions = 0u32;
+    while address < 0x7fff_ffff_0000 && regions < 4_000_000 {
+        let mut m = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(address as *const core::ffi::c_void), &mut m, size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 {
+            break;
+        }
+        regions += 1;
+        let size = m.RegionSize as u64;
+        if m.State == MEM_COMMIT {
+            let kind = match m.Type.0 { PRIVATE => 0, MAPPED => 1, IMAGE => 2, _ => 0 };
+            by_kind[kind] += size;
+            if kind != 2 {
+                *by_base.entry((m.AllocationBase as u64, m.Type.0)).or_default() += size;
+            }
+        }
+        address = (m.BaseAddress as u64).saturating_add(size.max(0x1000));
+    }
+    let mut largest: Vec<_> = by_base.into_iter().collect();
+    largest.sort_unstable_by_key(|(_, b)| std::cmp::Reverse(*b));
+    let top: Vec<String> = largest.iter().take(8).map(|((base, kind), bytes)| {
+        format!("{base:#x} {} {} MiB", if *kind == MAPPED { "mapped" } else { "private" }, mib(*bytes))
+    }).collect();
+    let small = largest.iter().skip(8).fold((0u64, 0u64), |(n, b), (_, s)| (n + 1, b + s));
+    format!("commit: private {} MiB, mapped {} MiB, image {} MiB in {regions} regions; largest allocations: {}; the other {} allocations {} MiB (TUXBOX_COMMIT_BREAKDOWN=0 off)",
+        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), top.join(", "), small.0, mib(small.1))
 }
 
 #[cfg(test)]
