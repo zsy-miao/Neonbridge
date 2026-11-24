@@ -662,8 +662,9 @@ impl RenderHeaps {
         if let Some((&base, entry)) = heaps.range(..end).next_back()
             && let Some(heap) = entry.upgrade()
             && heap.end > address
-            && base <= address && end <= heap.end && (address - base).is_multiple_of(alignment) {
-            return Ok((heap, address - base));
+            && end <= heap.end
+            && let Some(offset) = heap_offset(base, address, alignment) {
+            return Ok((heap, offset));
         }
         // The title reuses guest memory for a larger or differently placed
         // image. Cover every overlapping heap's range with a new heap so later
@@ -693,6 +694,25 @@ impl RenderHeaps {
         heaps.insert(start, Arc::downgrade(&heap));
         Ok((heap, address - start))
     }
+}
+
+fn unaligned_fallback() -> bool {
+    crate::env_toggle!("TUXBOX_UNALIGNED_IMAGE_FALLBACK") != Some("0")
+}
+
+/// Where in a heap starting at `base` an image at `address` goes: the
+/// existing heap when the offset keeps `alignment`, else a heap of its own.
+fn heap_offset(base: u64, address: u64, alignment: u64) -> Option<u64> {
+    let offset = address.checked_sub(base)?;
+    offset.is_multiple_of(alignment.max(1)).then_some(offset)
+}
+
+#[cfg(test)]
+#[test]
+fn a_misaligned_image_starts_its_own_heap() {
+    assert_eq!(heap_offset(0xd4330_0000, 0xd433c_2000, 0x1_0000), None);
+    assert_eq!(heap_offset(0xd433c_2000, 0xd433c_2000, 0x1_0000), Some(0));
+    assert_eq!(heap_offset(0xd4330_0000, 0xd4332_0000, 0x1_0000), Some(0x2_0000));
 }
 
 unsafe fn place_gpu_target(
@@ -745,7 +765,20 @@ unsafe fn place_gpu_target(
             host.Alignment = small;
             allocation = requirements(&host);
         }
-        if allocation.Alignment == 0 || allocation.SizeInBytes == u64::MAX || !address.is_multiple_of(allocation.Alignment) {
+        // Console footprints let the title place images at 8 KiB (f2cc6d8),
+        // below the host's 64 KiB. The image lives in a host heap of its own
+        // anyway (the guest range is only its key), so a misaligned address
+        // gets a heap that starts at it: offset 0 satisfies any alignment.
+        let misaligned = allocation.Alignment != 0 && !address.is_multiple_of(allocation.Alignment);
+        if misaligned && unaligned_fallback() && allocation.SizeInBytes != u64::MAX {
+            static UNALIGNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = UNALIGNED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "placed GPU image at {address:#x} {}x{} format={} is not {:#x}-aligned: placed at the start of its own host heap ({n} so far; TUXBOX_UNALIGNED_IMAGE_FALLBACK=0 fails it)",
+                    desc.Width, desc.Height, desc.Format.0, allocation.Alignment));
+            }
+        } else if allocation.Alignment == 0 || allocation.SizeInBytes == u64::MAX || misaligned {
             crate::diagnostics::recording_error(format_args!("adapter image requirements {:#x}/{:#x}, array={} mips={} format={} samples={}/{}", allocation.SizeInBytes, allocation.Alignment, desc.DepthOrArraySize, desc.MipLevels, desc.Format.0, desc.SampleDesc.Count, desc.SampleDesc.Quality));
             return Err(E_INVALIDARG.into());
         }
