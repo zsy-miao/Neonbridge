@@ -1783,15 +1783,50 @@ fn cpu_copy_after_with(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>, values:
                     // keeps them for the list's lifetime.
                     unsafe { ptr::copy(source as *const u8, destination as *mut u8, size as usize) };
                 }
+                // test102: "the list writing 0xb77 there completed, yet the word
+                // reads 0xb76". A left-out list's value write lands here after
+                // its own batch's fence, which can be after another queue's GPU
+                // already wrote a newer value to the same fence word, so the
+                // plain store took the word backwards and stalled the waiter for
+                // up to a second. These stores only raise the word now; a store
+                // of a smaller value is skipped and logged.
+                // TUXBOX_ORPHAN_WRITES_MAX=0 stores unconditionally again.
+                let raise_only = crate::env_toggle!("TUXBOX_ORPHAN_WRITES_MAX") != Some("0");
                 for (address, value, bytes) in values {
                     if !accessible(address as usize, bytes as usize, true) {
                         continue;
                     }
                     // SAFETY: checked committed and writable just now.
-                    unsafe {
+                    let kept = unsafe {
                         match bytes {
-                            8 => (*(address as *const std::sync::atomic::AtomicU64)).store(value, Ordering::Release),
-                            _ => (*(address as *const std::sync::atomic::AtomicU32)).store(value as u32, Ordering::Release),
+                            8 => {
+                                let word = &*(address as *const std::sync::atomic::AtomicU64);
+                                if raise_only {
+                                    let old = word.fetch_max(value, Ordering::AcqRel);
+                                    (old > value).then_some(old)
+                                } else {
+                                    word.store(value, Ordering::Release);
+                                    None
+                                }
+                            }
+                            _ => {
+                                let word = &*(address as *const std::sync::atomic::AtomicU32);
+                                if raise_only {
+                                    let old = word.fetch_max(value as u32, Ordering::AcqRel);
+                                    (old > value as u32).then_some(u64::from(old))
+                                } else {
+                                    word.store(value as u32, Ordering::Release);
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    if let Some(newer) = kept {
+                        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                        if n <= 8 || n.is_power_of_two() {
+                            crate::diagnostics::log_line(format_args!(
+                                "left-out list value write {address:#x} = {value:#x} skipped: the word already reads {newer:#x}, written later by another list ({n} so far; TUXBOX_ORPHAN_WRITES_MAX=0 off)"));
                         }
                     }
                 }
