@@ -1213,7 +1213,10 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         Some(32)
     } else { required_wave_size };
     let uses_bpermute = insns.iter().any(|ins| ins.mnemonic == "ds_bpermute_b32");
-    if uses_bpermute && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some()) {
+    // EXEC branches vote across the wave (Emitter::exec_vote), so the host wave
+    // stays whole and absent source lanes are masked at the read (leonida
+    // ds_lane_read). VCC and SCC branches can still split it per lane.
+    if uses_bpermute && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && !matches!(ins.op, 2 | 8 | 9)) {
         return Err("backward permute with scalar branches needs verified convergent control flow".into());
     }
     let uses_quad_add = insns.iter().any(is_quad_exchange);
@@ -5366,7 +5369,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let t = self.tmp;
                 self.tmp += 1;
                 let (addr, data) = (r(&s[0])?, r(&s[1])?);
-                self.line(&format!("uint t{t} = WaveReadLaneAt(((exec_lo & 1u) != 0u) ? {data} : 0u, (({addr} + {}u) >> 2) & 31u);", ins.aux.imm));
+                // A source lane absent from this host wave (it skipped the region, so
+                // its guest EXEC bit is 0) reads 0: redirect it to the reader's own lane
+                // so WaveReadLaneAt stays defined, then mask the result (leonida
+                // rdna2spirv ds_lane_read).
+                self.line(&format!("uint tb_src{t} = (({addr} + {}u) >> 2) & 31u; bool tb_here{t} = ((WaveActiveBallot(true).x >> tb_src{t}) & 1u) != 0u;", ins.aux.imm));
+                self.line(&format!("uint t{t} = WaveReadLaneAt(((exec_lo & 1u) != 0u) ? {data} : 0u, tb_here{t} ? tb_src{t} : WaveGetLaneIndex()); if (!tb_here{t}) t{t} = 0u;"));
                 self.wv(&d.ok_or("no permute destination")?, &format!("t{t}"))
             }
             Enc::Ds if m == "ds_swizzle_b32" => {
