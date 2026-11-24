@@ -173,6 +173,9 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         use std::sync::atomic::Ordering::Relaxed;
         println!("[launch] shaders built: {} translated, {} from cache, {} unsupported, {} failed (log {})",
             st.prewarmed.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        for (reason, count) in st.top_reasons(25) {
+            println!("[launch]   {count:>6}  {reason}");
+        }
         let _ = fs::remove_dir_all(session);
         return Ok(());
     }

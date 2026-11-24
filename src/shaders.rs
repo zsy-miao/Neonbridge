@@ -44,6 +44,36 @@ pub struct Stats {
     pub failed: AtomicUsize,
     /// Archived requests translated before the title started.
     pub prewarmed: AtomicUsize,
+    /// Prewarm refusals and failures by reason (numbers folded to `N`).
+    pub reasons: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+}
+
+impl Stats {
+    fn note(&self, kind: &str, msg: &str) {
+        let line = msg.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(no message)");
+        let mut reason = String::with_capacity(line.len());
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c.is_ascii_digit() {
+                while chars.peek().is_some_and(|c| c.is_ascii_hexdigit() || *c == 'x') {
+                    chars.next();
+                }
+                reason.push('N');
+            } else {
+                reason.push(c);
+            }
+        }
+        let reason: String = format!("{kind}: {reason}").chars().take(160).collect();
+        *self.reasons.lock().unwrap().entry(reason).or_default() += 1;
+    }
+
+    /// The most common reasons, most frequent first.
+    pub fn top_reasons(&self, n: usize) -> Vec<(String, usize)> {
+        let mut v: Vec<_> = self.reasons.lock().unwrap().iter().map(|(r, c)| (r.clone(), *c)).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v.truncate(n);
+        v
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -223,15 +253,20 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             publish(&bytes)?;
             return Ok(Outcome::Cached);
         }
-        if fs::read(&refusal).is_ok_and(|m| m == key.as_bytes()) {
-            return Ok(Outcome::Unsupported("cached unsupported HLSL translation".into()));
+        // `<key>` on the first line, then xshader's reason (older entries hold the key alone).
+        if let Ok(text) = fs::read_to_string(&refusal) {
+            let (first, reason) = text.split_once('\n').unwrap_or((&text, ""));
+            if first == key {
+                let reason = if reason.trim().is_empty() { "cached unsupported HLSL translation" } else { reason.trim() };
+                return Ok(Outcome::Unsupported(reason.to_owned()));
+            }
         }
         let (hlsl, output, profile) = (work.join("shader.hlsl"), work.join("out.cso"), work.join("profile"));
         match run(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
             .arg("--profile-out").arg(&profile), Duration::from_secs(120)) {
             Ok(()) => {}
             Err(ToolError::Exit(XSHADER_UNSUPPORTED_HLSL, msg)) => {
-                let _ = fs::write(&refusal, key);
+                let _ = fs::write(&refusal, format!("{key}\n{msg}"));
                 return Ok(Outcome::Unsupported(msg));
             }
             Err(ToolError::Exit(c, msg)) => return Err(format!("xshader failed ({c}): {msg}")),
@@ -472,8 +507,8 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                     let counter = match compile(path, key, ext, tools, cache, scratch) {
                         Outcome::Compiled => &stats.prewarmed,
                         Outcome::Cached => &stats.cached,
-                        Outcome::Unsupported(_) => &stats.unsupported,
-                        Outcome::Failed(_) => &stats.failed,
+                        Outcome::Unsupported(m) => { stats.note("unsupported", &m); &stats.unsupported }
+                        Outcome::Failed(m) => { stats.note("failed", &m); &stats.failed }
                     };
                     counter.fetch_add(1, Ordering::Relaxed);
                     let _ = fs::remove_file(scratch.join(format!("{key}.cso")));
