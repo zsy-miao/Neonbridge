@@ -402,9 +402,6 @@ impl Worker {
 
 pub(super) type Splits = Vec<(usize, Arc<Segment>)>;
 
-/// The lists submitted before the wait of list `index` (from `start`), and
-/// where the rest begins: the batch splits before each waiting list, not
-/// once per batch.
 /// Wait diagnostics (rebox f65379f, re-derived; TUXBOX_WAIT_LOGS=0 off):
 /// a queue Wait on a fence value not yet signalled when it is queued, and a
 /// memory wait met only after TUXBOX_SLOW_WAIT_MS (default 50 ms).
@@ -465,6 +462,12 @@ pub(super) mod slow {
     }
 }
 
+/// The lists submitted before the wait of list `index` (from `start`), and
+/// where the rest begins: the batch splits before each waiting list, not
+/// once per batch. Marker writes a list records before its wait go in the
+/// segment's prefix, which runs before the wait's fence, and each queue has
+/// its own wait worker, so a cross-queue write/wait pair cannot hold both
+/// queues (the cycle rebox 424eab7 fixes does not arise here).
 fn split_before(start: usize, index: usize) -> (core::ops::Range<usize>, usize) {
     (start..index.max(start), index.max(start))
 }
