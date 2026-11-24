@@ -148,6 +148,8 @@ enum Res {
     HeapLoad(u16),
     HeapBuffer(u16),
     HeapTexture(u16, u32),
+    /// MUBUF through a descriptor fetched from the resource heap (index in s<n>).
+    HeapMubuf(u16),
     Cb(u32),
     Tex(u32, u32), // slot, dim
     Samp(u32),
@@ -394,6 +396,8 @@ struct Emitter<'a> {
     img_ty: BTreeMap<(bool, u32), u8>,
     uses_heap_sampler: bool,
     resource_heap_base: Option<u8>,
+    /// Words per element in `TBHeapWords` (structured heap buffers); 0 = unused.
+    heap_words: u32,
     private_samplers: BTreeMap<usize, u32>,
     binding_spaces: BTreeMap<(u32, u32), u32>,
     mesh_bindings: Option<mesh_bindings::MeshBindings>,
@@ -832,6 +836,30 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<bool, String> {
     Ok(found)
 }
 
+/// The user SGPR that carries the resource descriptor heap of a shader that
+/// indexes it directly (SM 6.6 `ResourceDescriptorHeap`, root signature flag
+/// CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED). The console ABI places it after the root
+/// parameters: one SGPR per table, two per root descriptor and one per
+/// constant (compute: s4 + 2 tables + 4 constants = s10).
+fn heap_register(ex: &ShaderExtract) -> Option<u8> {
+    use crate::meta::RootParamKind;
+    let root = ex.root_sig.as_ref()?;
+    if root.flags & 0x400 == 0 || ex.required_features? & (1 << 25) == 0 {
+        return None;
+    }
+    let base: u32 = match ex.stage {
+        Stage::Compute => 4,
+        Stage::Pixel | Stage::Vertex => 8,
+        _ => return None,
+    };
+    let words: u32 = root.params.iter().map(|p| match &p.kind {
+        RootParamKind::Table(_) => 1,
+        RootParamKind::Descriptor { .. } => 2,
+        RootParamKind::Constants { num32, .. } => *num32,
+    }).sum();
+    u8::try_from(base + words).ok().filter(|&r| r < 100)
+}
+
 fn compute_group(ex: &ShaderExtract) -> [u32; 3] {
     if let Some(threads) = ex.psv_threads { return threads; }
     let [_, x, y, z] = ex.isa_preamble;
@@ -1202,7 +1230,12 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
     let profile = if em.compute_derivatives || em.resolve_wave32 {
         "cs_6_6"
     } else if em.uses_heap_sampler || em.resource_heap_base.is_some() {
-        "ps_6_6"
+        match ex.stage {
+            Stage::Compute => "cs_6_6",
+            Stage::Vertex => "vs_6_6",
+            Stage::Geometry => "gs_6_6",
+            _ => "ps_6_6",
+        }
     } else if probe_trace {
         "cs_6_5"
     } else if is_ps && !em.uav.is_empty() {
@@ -1501,7 +1534,8 @@ impl<'a> Emitter<'a> {
             tbuf_ty: BTreeMap::new(),
             img_ty: BTreeMap::new(),
             uses_heap_sampler: false,
-            resource_heap_base: sampler_heap::resource_base(ex),
+            resource_heap_base: sampler_heap::resource_base(ex).or_else(|| heap_register(ex)),
+            heap_words: 0,
             private_samplers: ex.root_sig.as_ref().filter(|r| matches!(ex.stage, Stage::Compute | Stage::Pixel)
                 && ex.required_features.is_some_and(|flags| flags & (3 << 25) == 0)
                 && r.static_samplers.iter().any(|s| s[11] == 32765))
@@ -2753,6 +2787,10 @@ impl<'a> Emitter<'a> {
                     }
                     if let Some(Sym::DirectRaw(slot)) = sym.get(&rs) {
                         self.res.insert(idx, vec![Res::Raw(*slot, false)]);
+                        continue;
+                    }
+                    if sym.get(&rs) == Some(&Sym::HeapDescriptor(4)) {
+                        self.res.insert(idx, vec![Res::HeapMubuf(rs)]);
                         continue;
                     }
                     let cands = self.desc_candidates(sym.get(&rs)).ok_or_else(|| {
@@ -5722,6 +5760,90 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         Ok(())
     }
 
+    /// A buffer access whose V# was read from the resource descriptor heap.
+    /// The host view supplies what the console descriptor encoded: formatted
+    /// accesses read a typed buffer, IDXEN advances by the view's structure
+    /// stride, and byte addressing uses a raw view.
+    fn heap_mubuf(&mut self, ins: &Insn, src: u16) -> Result<(), String> {
+        let m = ins.mnemonic.as_str();
+        let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
+        let load = m.starts_with("buffer_load_");
+        if !load && !m.starts_with("buffer_store_") {
+            return Err(format!("{m} through a heap descriptor unsupported"));
+        }
+        let Opnd::Vgpr(base) = ins.dst[0] else { return Err("heap buffer needs VGPR data".into()); };
+        let soffset = r(&ins.src[2])?;
+        let t = self.tmp;
+        self.tmp += 1;
+        self.regs.insert(format!("s{src}"));
+        let rw = if load { "" } else { "RW" };
+        let index = format!("NonUniformResourceIndex(s{src})");
+        let format = m.contains("_format_");
+        let width: u8 = if format {
+            match m.rsplit('_').next() { Some("x") => 1, Some("xy") => 2, Some("xyz") => 3, Some("xyzw") => 4,
+                _ => return Err(format!("{m} through a heap descriptor unsupported")) }
+        } else {
+            match m.rsplit('_').next() { Some("dword") => 1, Some("dwordx2") => 2, Some("dwordx3") => 3, Some("dwordx4") => 4,
+                _ => return Err(format!("{m} through a heap descriptor unsupported")) }
+        };
+        let reg = |k: u8| base.checked_add(k).map(Opnd::Vgpr).ok_or("heap buffer register overflow");
+        if format {
+            // Typed view: IDXEN selects the element; byte offsets need a stride.
+            if offen || ins.aux.imm != 0 || !self.zero_buffer_offset(ins) {
+                return Err("formatted heap buffer access with byte offsets unsupported".into());
+            }
+            let element = if idxen { r(&ins.src[0])? } else { "0u".into() };
+            self.line(&format!("{rw}Buffer<uint4> tb_hb{t} = ResourceDescriptorHeap[{index}];"));
+            if load {
+                self.line(&format!("uint4 t{t} = tb_hb{t}[{element}];"));
+                for k in 0..width {
+                    self.wv(&reg(k)?, &format!("t{t}.{}", XYZW[k as usize]))?;
+                }
+            } else {
+                let mut parts = Vec::new();
+                for k in 0..4u8 {
+                    if k < width { let o = reg(k)?; self.touch(&o); parts.push(r(&o)?); } else { parts.push("0u".into()); }
+                }
+                self.line(&format!("if (exec_lo & 1u) tb_hb{t}[{element}] = uint4({});", parts.join(", ")));
+            }
+            return Ok(());
+        }
+        let byte = format!("{} + {soffset} + {}u", if offen { r(&ins.src[0])? } else { "0u".into() }, ins.aux.imm as u32);
+        if idxen {
+            // Structured view: the descriptor stride advances the element index.
+            let words = (ins.aux.imm as u32 / 4 + u32::from(width)).max(64);
+            self.heap_words = self.heap_words.max(words);
+            self.line(&format!("{rw}StructuredBuffer<TBHeapWords> tb_hb{t} = ResourceDescriptorHeap[{index}];"));
+            self.line(&format!("uint tb_he{t} = {}; uint tb_hw{t} = ({byte}) >> 2;", r(&ins.src[0])?));
+            for k in 0..width {
+                let at = format!("tb_hb{t}[tb_he{t}].w[tb_hw{t} + {k}u]");
+                if load {
+                    self.line(&format!("uint t{t}_{k} = {at};"));
+                } else {
+                    let o = reg(k)?; self.touch(&o);
+                    self.line(&format!("if (exec_lo & 1u) {at} = {};", r(&o)?));
+                }
+            }
+        } else {
+            self.line(&format!("{rw}ByteAddressBuffer tb_hb{t} = ResourceDescriptorHeap[{index}];"));
+            self.line(&format!("uint tb_ha{t} = {byte};"));
+            for k in 0..width {
+                if load {
+                    self.line(&format!("uint t{t}_{k} = tb_hb{t}.Load(tb_ha{t} + {}u);", 4 * k));
+                } else {
+                    let o = reg(k)?; self.touch(&o);
+                    self.line(&format!("if (exec_lo & 1u) tb_hb{t}.Store(tb_ha{t} + {}u, {});", 4 * k, r(&o)?));
+                }
+            }
+        }
+        if load {
+            for k in 0..width {
+                self.wv(&reg(k)?, &format!("t{t}_{k}"))?;
+            }
+        }
+        Ok(())
+    }
+
     fn zero_buffer_offset(&self, ins: &Insn) -> bool {
         match ins.src.get(2) {
             Some(Opnd::ConstInt(0)) => true,
@@ -5744,6 +5866,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         if (ins.raw.get(1).copied().unwrap_or(0) >> 23) & 1 != 0 {
             return Err("MUBUF TFE status return unsupported".into());
+        }
+        if let Some(Res::HeapMubuf(src)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
+            return self.heap_mubuf(ins, src);
         }
         if let Some(Res::CbDyn(slot)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
             let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
@@ -7035,6 +7160,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if self.cb_size.contains_key(&slot) && self.binding_spaces.get(&(2, slot)).copied().unwrap_or(0) == space { return Err("root constants overlap a table CBV".into()); }
             let width = if count == 1 { String::new() } else { count.to_string() };
             writeln!(h, "cbuffer TBIndex{slot}_{space} : register(b{slot}, space{space}) {{ uint{width} tb_index{slot}_{space}; }};").unwrap();
+        }
+        if self.heap_words != 0 {
+            let _ = writeln!(h, "struct TBHeapWords {{ uint w[{}]; }};", self.heap_words);
         }
         if self.resource_heap_base.is_some() {
             h.push_str("ByteAddressBuffer tb_heap_map : register(t0, space32766);\nstruct TBHeapConstants { uint4 data[4096]; };\nuint tb_heap_index(uint i) { return tb_heap_map.Load(0) == 0u ? i : tb_heap_map.Load(4u+i*4u); }\n");
