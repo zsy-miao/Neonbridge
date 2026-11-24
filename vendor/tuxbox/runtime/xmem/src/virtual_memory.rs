@@ -310,6 +310,8 @@ pub unsafe extern "system" fn virtual_alloc(
     protect: u32,
 ) -> *mut c_void {
     let result = unsafe { virtual_alloc_inner(address, bytes, allocation_type, profile, protect) };
+    super::diagnostics::large(bytes, result as usize, || format!(
+        "requested={address:p} type={allocation_type:#x} profile={profile:#x} protect={protect:#x}"));
     super::diagnostics::watch("XMemVirtualAlloc", result as usize, bytes, || format!(
         "requested={address:p} type={allocation_type:#x} profile={profile:#x} protect={protect:#x}"));
     result

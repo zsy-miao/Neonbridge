@@ -129,6 +129,37 @@ fn once(what: &'static str, message: std::fmt::Arguments) {
     }
 }
 
+/// Each request kind (source, page lists, compression) once, with one example
+/// (re-derived from rebox cb17013; TUXBOX_STORAGE_KINDS=0 off).
+fn kind_once(queue_type: u64, req: &Request, bcpack: u8) {
+    if std::env::var_os("TUXBOX_STORAGE_KINDS").is_some_and(|v| v == "0") {
+        return;
+    }
+    let memory = req.options & FROM_MEMORY != 0;
+    let key = (queue_type as u32) << 16
+        | u32::from(memory)
+        | u32::from(req.options & SOURCE_PAGES != 0) << 1
+        | u32::from(req.options & DEST_PAGES != 0) << 2
+        | u32::from(req.options & ZLIB != 0) << 3
+        | u32::from(bcpack) << 4;
+    static SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    {
+        let mut seen = lock(&SEEN);
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+    }
+    log(format_args!(
+        "request kind: queue type {queue_type} from {}{}{} {}; example size {:#x} into {:#x} at offset {:#x} options {:#x} tag {:#x}",
+        if memory { "memory" } else { "file" },
+        if req.options & SOURCE_PAGES != 0 { " (source page list)" } else { "" },
+        if req.options & DEST_PAGES != 0 { " to destination page list" } else { "" },
+        if req.options & ZLIB != 0 { "zlib".to_string() } else if bcpack != 0 { format!("bcpack mode {bcpack}") } else { "uncompressed".to_string() },
+        req.size, req.destination_size, req.offset, req.options, req.tag,
+    ));
+}
+
 fn bcpack_mode(options: u64) -> u8 {
     ((options >> BCPACK_SHIFT) & 0xF) as u8
 }
@@ -159,6 +190,7 @@ unsafe fn capture(queue_type: u64, req: *const Request) -> Result<Read, HRESULT>
     {
         return Err(E_INVALIDARG);
     }
+    kind_once(queue_type, req, bcpack);
     let source = if memory && req.options & SOURCE_PAGES != 0 {
         Source::Pages(unsafe { Pages::capture(req.source, req.offset as u16, req.size as usize)? })
     } else if memory {

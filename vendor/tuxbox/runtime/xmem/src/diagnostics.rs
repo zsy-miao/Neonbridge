@@ -90,3 +90,28 @@ pub(crate) fn watch(kind: &str, start: usize, len: usize, detail: impl FnOnce() 
     let line = format!("TuxBox xmem: watch {address:#x}: {kind} {start:#x}+{len:#x} {} from title RVA {rva:#x}\n\0", detail());
     unsafe { OutputDebugStringA(line.as_ptr()) };
 }
+
+/// The first title-image return address on this thread's stack, as an RVA (0: none).
+pub(crate) fn title_rva() -> usize {
+    use windows_sys::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace;
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    let image = unsafe { GetModuleHandleW(core::ptr::null()) } as usize;
+    let mut frames = [core::ptr::null_mut(); 24];
+    let count = unsafe { RtlCaptureStackBackTrace(1, 24, frames.as_mut_ptr(), core::ptr::null_mut()) } as usize;
+    frames[..count].iter().map(|&pc| pc as usize).find(|&pc| pc >= image && pc - image < 0x2000_0000).map_or(0, |pc| pc - image)
+}
+
+/// XMemVirtualAlloc calls of TUXBOX_BIG_RESERVE MiB or more (default 256, 0
+/// off; 32 lines at most), with the result and title caller (re-derived from
+/// rebox 3fff551).
+pub(crate) fn large(bytes: usize, result: usize, detail: impl FnOnce() -> String) {
+    use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static MIB: LazyLock<usize> = LazyLock::new(|| std::env::var("TUXBOX_BIG_RESERVE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(256));
+    static LINES: AtomicU32 = AtomicU32::new(0);
+    if *MIB == 0 || bytes < *MIB << 20 || LINES.fetch_add(1, Ordering::Relaxed) >= 32 {
+        return;
+    }
+    crate::loader::log(&format!("large reservation {} MiB ({bytes:#x}) -> {result:#x} {} from title RVA {:#x}",
+        bytes >> 20, detail(), title_rva()));
+}

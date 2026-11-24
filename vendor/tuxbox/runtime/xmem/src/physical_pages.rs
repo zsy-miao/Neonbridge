@@ -226,9 +226,27 @@ impl Pool {
         }
         page.has_section_data = true;
         page.aliases += 1;
+        let aliases = page.aliases;
         self.mappings.insert(at, token);
+        if aliases > 1 {
+            self.note_alias(token, at, aliases);
+        }
         self.apertures.entry(base).or_insert((extent, 0)).1 += 1;
         Ok(true)
+    }
+
+    /// A physical page now mapped at a second (or later) address, with its
+    /// other addresses (re-derived from rebox 7141e58; TUXBOX_ALIAS_LOG=0 off,
+    /// 32 lines at most).
+    fn note_alias(&self, token: u64, at: usize, aliases: usize) {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static LINES: AtomicU32 = AtomicU32::new(0);
+        if std::env::var_os("TUXBOX_ALIAS_LOG").is_some_and(|v| v == "0") || LINES.fetch_add(1, Ordering::Relaxed) >= 32 {
+            return;
+        }
+        let others: Vec<String> = self.mappings.iter().filter(|&(&a, &t)| t == token && a != at).take(4).map(|(a, _)| format!("{a:#x}")).collect();
+        crate::loader::log(&format!("physical page {token:#x} mapped at {at:#x}, {aliases} addresses now (also {}) from title RVA {:#x}",
+            others.join(" "), crate::diagnostics::title_rva()));
     }
 
     fn map_contiguous(&mut self, start: usize, tokens: &[u64]) -> Result<bool, u32> {
@@ -260,7 +278,11 @@ impl Pool {
             let p = self.pages.get_mut(&token).unwrap();
             p.aliases += 1;
             p.has_section_data = true;
+            let aliases = p.aliases;
             self.mappings.insert(start + i * PAGE, token);
+            if aliases > 1 {
+                self.note_alias(token, start + i * PAGE, aliases);
+            }
         }
         self.merge_views(start);
         Ok(true)
