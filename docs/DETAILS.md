@@ -59,6 +59,7 @@ These are in the vendored TuxBox provider:
   - Descriptors without the title's root layout are bound from the shader's own FSSM and PSV records.
   - Compute-heap stores, wave width, VCC branch votes across the wave, `bpermute`, and many single instructions translate.
   - Hint and debug SOPPs are no-ops.
+  - Every shader the title asks for is remembered in `tuxbox_shader_cache/seen`, and the next launch translates those before the title starts, so a world that went black waiting on compiles has its pipelines ready on the second run (`NEONBRIDGE_PREWARM_SEEN=0` off). The first launch seeds the list from the newest cache folders, and the worker log gives a "seen prewarm" line.
   - dxc retries at `-O0` when `-O1` takes longer than `NEONBRIDGE_DXC_O1_SECS` (10 s). One shader once spent 92 s in dxc, and dxc took almost all shader time, starving the pipelines the title waits on.
   - `[WaveSize]` widths the host GPU lacks are compiled out (`TB_NO_WAVESIZE_<n>`), using the wave range the runtime reads from the device.
 - **Speed:**
@@ -186,6 +187,7 @@ These are in the vendored TuxBox provider:
 
 ## Diagnostics
 
+- **Shadow hashing:** a shadow copy's hash walks its span and hashes only committed, readable memory, so a span crossing a reserved page no longer crashes; skipped lengths still change the hash and are logged (`TUXBOX_SHADOW_HASH_COMMITTED=0` off).
 - **Stale GPU pages:** each page remapped or unmapped under a GPU-imported heap is logged with the old frame the import still holds, and so is that frame when it is mapped again elsewhere, where GPU writes through the import would change the wrong memory (`TUXBOX_STALE_GPU_PAGES=0` off).
 - **Dead wait words:** once the watchdog has released a GPU memory wait's word, later waits on that word last at most `TUXBOX_WAIT_DEAD_MS` (100 ms, 0 off) until one completes by itself, so a cell its writer reaches late doesn't stall every frame.
 - **`--debug`:** runs under cdb and dumps registers, stacks, the memory region and code around a fault. Title `int 3` asserts are logged and stepped over.
