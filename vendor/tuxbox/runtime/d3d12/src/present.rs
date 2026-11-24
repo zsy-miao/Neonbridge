@@ -38,6 +38,16 @@ struct Letterbox {
     laid_out: (i32, i32, u32, u32),
 }
 
+fn present_minimised() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_PRESENT_MINIMISED").is_ok_and(|v| v.trim() == "1"))
+}
+
+fn occluded_status() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_OCCLUDED_STATUS").is_ok_and(|v| v.trim() == "1"))
+}
+
 fn letterbox_enabled() -> bool {
     std::env::var("TUXBOX_LETTERBOX").map_or(true, |v| v.trim() != "0")
 }
@@ -247,6 +257,9 @@ impl SwapChain {
                 Some((chain, letterbox)) => (chain, Some(letterbox)),
                 None => (factory.CreateSwapChainForHwnd(queue, window.hwnd(), &params, None, None)?, None),
             };
+            // DXGI's own Alt+Enter would try exclusive fullscreen behind the
+            // window hook's borderless toggle (xmem window.rs).
+            let _ = factory.MakeWindowAssociation(window.hwnd(), DXGI_MWA_NO_ALT_ENTER);
             Ok(Self {
                 chain: base.cast()?,
                 letterbox,
@@ -276,6 +289,12 @@ impl SwapChain {
         unsafe {
             if !self.window.is_open() {
                 return Err(DXGI_ERROR_ACCESS_LOST.into());
+            }
+            // Minimised: nothing is shown, so skip the copy and the flip and
+            // pace the title instead (TUXBOX_PRESENT_MINIMISED=1 presents anyway).
+            if windows::Win32::UI::WindowsAndMessaging::IsIconic(self.window.hwnd()).as_bool() && !present_minimised() {
+                std::thread::sleep(std::time::Duration::from_millis(16));
+                return Ok(S_OK);
             }
             if u64::from(self.width) != desc.Width
                 || self.height != desc.Height
@@ -332,6 +351,13 @@ impl SwapChain {
             // Return DXGI status codes such as DXGI_STATUS_OCCLUDED to the guest.
             let status = self.chain.Present(1, DXGI_PRESENT(0));
             uncloak_title_windows();
+            // A title that sees DXGI_STATUS_OCCLUDED may stop presenting for good
+            // (xvalkyrie): pace it briefly and report S_OK.
+            // TUXBOX_OCCLUDED_STATUS=1 returns the status as before.
+            if status == windows::Win32::Foundation::DXGI_STATUS_OCCLUDED && !occluded_status() {
+                std::thread::sleep(std::time::Duration::from_millis(16));
+                return Ok(S_OK);
+            }
             Ok(status)
         }
     }

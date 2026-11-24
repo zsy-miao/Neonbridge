@@ -16,7 +16,15 @@
 //! explicit size of at least 1280x720) is created as a popup covering the whole
 //! monitor it asked for, and d3d12 letterboxes the image to keep its aspect.
 //! NEONBRIDGE_WINDOWED=1 or TUXBOX_FULLSCREEN=0 keeps the 16:9 window inside
-//! the work area. Alt+Enter toggles between the two at run time.
+//! the work area. Alt+Enter or F11 toggles between the two at run time
+//! (TUXBOX_ALT_ENTER=0 leaves both keys to the title).
+//!
+//! TUXBOX_MONITOR=primary|nearest|N picks the monitor (default: the primary
+//! for a default position, else the one nearest the requested position; N is
+//! the 0-based enumeration index). The process is made per-monitor DPI aware
+//! (v2) before any window exists so rcMonitor is in real pixels
+//! (TUXBOX_DPI_AWARE=0 skips it; rebox 49e3f2a). TUXBOX_CLIP_CURSOR=1 confines
+//! the cursor to the client area while the window is active.
 
 use std::ffi::c_void;
 use std::sync::Mutex;
@@ -42,6 +50,97 @@ unsafe extern "system" {
     fn GetWindowLongPtrW(hwnd: H, index: i32) -> isize;
     fn SetWindowLongPtrW(hwnd: H, index: i32, value: isize) -> isize;
     fn SetWindowPos(hwnd: H, after: H, x: i32, y: i32, w: i32, h: i32, flags: u32) -> i32;
+    fn EnumDisplayMonitors(dc: H, clip: *const Rect, callback: unsafe extern "system" fn(H, H, *mut Rect, isize) -> i32, data: isize) -> i32;
+    fn GetClientRect(hwnd: H, rect: *mut Rect) -> i32;
+    fn ClientToScreen(hwnd: H, point: *mut Point) -> i32;
+    fn ClipCursor(rect: *const Rect) -> i32;
+}
+
+/// The monitor TUXBOX_MONITOR names, if it names one: `primary`, or a 0-based
+/// index into EnumDisplayMonitors. `nearest` (or unset) returns None.
+unsafe fn chosen_monitor() -> Option<H> {
+    let choice = std::env::var("TUXBOX_MONITOR").ok()?;
+    let choice = choice.trim().to_ascii_lowercase();
+    if choice == "primary" {
+        return Some(unsafe { MonitorFromPoint(Point { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) });
+    }
+    let index: usize = choice.parse().ok()?;
+    unsafe extern "system" fn collect(monitor: H, _: H, _: *mut Rect, data: isize) -> i32 {
+        unsafe { (*(data as *mut Vec<usize>)).push(monitor as usize) };
+        1
+    }
+    let mut all: Vec<usize> = Vec::new();
+    unsafe { EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), collect, &mut all as *mut Vec<usize> as isize) };
+    let found = all.get(index).map(|&m| m as H);
+    if found.is_none() {
+        log(&format!("window: TUXBOX_MONITOR={index} names no monitor ({} found); using the default", all.len()));
+    }
+    found
+}
+
+/// The monitor a top-level window at (x, y) goes on.
+unsafe fn target_monitor(x: i32, y: i32) -> H {
+    unsafe {
+        chosen_monitor().unwrap_or_else(|| {
+            if x == i32::MIN {
+                MonitorFromPoint(Point { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY)
+            } else {
+                MonitorFromPoint(Point { x, y }, MONITOR_DEFAULTTONEAREST)
+            }
+        })
+    }
+}
+
+/// Per-monitor DPI awareness v2, set before the title creates a window.
+unsafe fn make_dpi_aware() {
+    if std::env::var("TUXBOX_DPI_AWARE").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let user32: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+    unsafe {
+        let module = LoadLibraryW(user32.as_ptr());
+        let set = GetProcAddress(module, c"SetProcessDpiAwarenessContext".as_ptr().cast());
+        if module.is_null() || set.is_null() {
+            return;
+        }
+        let set: unsafe extern "system" fn(isize) -> i32 = std::mem::transmute(set);
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2; fails harmlessly when the
+        // manifest or the title already chose a mode.
+        let ok = set(-4) != 0;
+        log(&format!("window: per-monitor DPI awareness v2 {} (TUXBOX_DPI_AWARE=0 skips)", if ok { "set" } else { "already chosen" }));
+    }
+}
+
+const WM_ACTIVATE: u32 = 0x0006;
+const WM_KILLFOCUS: u32 = 0x0008;
+const WM_ENTERSIZEMOVE: u32 = 0x0231;
+const WM_EXITSIZEMOVE: u32 = 0x0232;
+const WM_SIZE: u32 = 0x0005;
+
+/// TUXBOX_CLIP_CURSOR=1: confine the cursor to the client area while active;
+/// released on deactivation, focus loss and while moving or sizing.
+unsafe fn clip_cursor(hwnd: H, msg: u32, w: usize) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("TUXBOX_CLIP_CURSOR").is_ok_and(|v| v.trim() == "1")) {
+        return;
+    }
+    unsafe {
+        match msg {
+            WM_ACTIVATE if w & 0xFFFF != 0 => {}
+            WM_EXITSIZEMOVE | WM_SIZE => {}
+            WM_ACTIVATE | WM_KILLFOCUS | WM_ENTERSIZEMOVE => {
+                ClipCursor(std::ptr::null());
+                return;
+            }
+            _ => return,
+        }
+        let mut client = Rect::default();
+        let mut origin = Point { x: 0, y: 0 };
+        if GetClientRect(hwnd, &mut client) != 0 && ClientToScreen(hwnd, &mut origin) != 0 && client.right > 0 {
+            let screen = Rect { left: origin.x, top: origin.y, right: origin.x + client.right, bottom: origin.y + client.bottom };
+            ClipCursor(&screen);
+        }
+    }
 }
 
 #[repr(C)]
@@ -105,7 +204,7 @@ unsafe fn windowed_bounds(work: Rect, style: u32, ex: u32) -> (i32, i32, i32, i3
 /// and a 16:9 framed window in that monitor's work area.
 unsafe fn toggle_fullscreen(hwnd: H) {
     unsafe {
-        let Some((monitor, work)) = monitor_rects(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)) else { return };
+        let Some((monitor, work)) = monitor_rects(chosen_monitor().unwrap_or_else(|| MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST))) else { return };
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
         if style & WS_POPUP == 0 {
@@ -125,12 +224,27 @@ unsafe fn toggle_fullscreen(hwnd: H) {
     }
 }
 
-/// Alt+Enter (WM_SYSKEYDOWN, VK_RETURN, context bit 29, not a repeat).
-/// TUXBOX_ALT_ENTER=0 leaves the key to the title.
-fn alt_enter(msg: u32, w: usize, l: isize) -> bool {
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_SYSCHAR: u32 = 0x0106;
+const VK_F11: usize = 0x7A;
+
+fn toggle_keys_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    msg == WM_SYSKEYDOWN && w == VK_RETURN && (l >> 29) & 1 != 0 && (l >> 30) & 1 == 0
-        && *ON.get_or_init(|| std::env::var("TUXBOX_ALT_ENTER").map_or(true, |v| v.trim() != "0"))
+    *ON.get_or_init(|| std::env::var("TUXBOX_ALT_ENTER").map_or(true, |v| v.trim() != "0"))
+}
+
+/// Alt+Enter (WM_SYSKEYDOWN, VK_RETURN, context bit 29) or F11 (WM_KEYDOWN),
+/// not a repeat. TUXBOX_ALT_ENTER=0 leaves both keys to the title.
+fn alt_enter(msg: u32, w: usize, l: isize) -> bool {
+    let fresh = (l >> 30) & 1 == 0;
+    let alt_return = msg == WM_SYSKEYDOWN && w == VK_RETURN && (l >> 29) & 1 != 0;
+    let f11 = msg == WM_KEYDOWN && w == VK_F11;
+    (alt_return || f11) && fresh && toggle_keys_enabled()
+}
+
+/// The WM_SYSCHAR that follows Alt+Enter would beep in DefWindowProc.
+fn alt_enter_char(msg: u32, w: usize) -> bool {
+    msg == WM_SYSCHAR && w == 0x0D && toggle_keys_enabled()
 }
 
 const WM_SYSCOMMAND: u32 = 0x0112;
@@ -153,6 +267,10 @@ unsafe extern "system" fn def_window_proc_a(hwnd: H, msg: u32, w: usize, l: isiz
         unsafe { toggle_fullscreen(hwnd) };
         return 0;
     }
+    if alt_enter_char(msg, w) {
+        return 0;
+    }
+    unsafe { clip_cursor(hwnd, msg, w) };
     if drop_key_menu(msg, w) {
         static LOGGED: std::sync::Once = std::sync::Once::new();
         LOGGED.call_once(|| log("window: dropped the Alt/F10 key menu (SC_KEYMENU; TUXBOX_KEY_MENU=1 allows it)"));
@@ -166,6 +284,10 @@ unsafe extern "system" fn def_window_proc_w(hwnd: H, msg: u32, w: usize, l: isiz
         unsafe { toggle_fullscreen(hwnd) };
         return 0;
     }
+    if alt_enter_char(msg, w) {
+        return 0;
+    }
+    unsafe { clip_cursor(hwnd, msg, w) };
     if drop_key_menu(msg, w) {
         return 0;
     }
@@ -240,12 +362,15 @@ unsafe extern "system" fn register_class_ex_a(class: *const c_void) -> u16 {
     }
 }
 
-/// The window's size and position fitted 16:9 into the primary work area, when
-/// the requested outer size does not fit there.
+/// The window's size and position fitted 16:9 into the target monitor's work
+/// area (TUXBOX_MONITOR, else the primary for a default position or the one
+/// nearest the requested position), when the requested outer size does not fit.
 unsafe fn fitted(ex: u32, style: u32, menu: bool, x: i32, y: i32, w: i32, h: i32) -> (i32, i32, i32, i32) {
     let mut work = Rect::default();
     unsafe {
-        if SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut Rect).cast(), 0) == 0 {
+        if let Some((_, area)) = monitor_rects(target_monitor(x, y)) {
+            work = area;
+        } else if SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut Rect).cast(), 0) == 0 {
             return (x, y, w, h);
         }
     }
@@ -269,9 +394,7 @@ unsafe extern "system" fn create_window_ex_a(ex: u32, class: *const u8, name: *c
     let main = top && w != i32::MIN && h != i32::MIN && w >= 1280 && h >= 720;
     let mut fullscreen = None;
     if main && fullscreen_default() {
-        let point = if x == i32::MIN { Point { x: 0, y: 0 } } else { Point { x, y } };
-        let flags = if x == i32::MIN { MONITOR_DEFAULTTOPRIMARY } else { MONITOR_DEFAULTTONEAREST };
-        fullscreen = unsafe { monitor_rects(MonitorFromPoint(point, flags)) }.map(|(monitor, _)| monitor);
+        fullscreen = unsafe { monitor_rects(target_monitor(x, y)) }.map(|(monitor, _)| monitor);
     }
     let (ex, style) = if fullscreen.is_some() { (ex & !WS_EX_FRAME_BITS, (style & !WS_FRAME_BITS) | WS_POPUP) } else { (ex, style) };
     let (fx, fy, fw, fh) = match fullscreen {
@@ -298,6 +421,7 @@ unsafe extern "system" fn create_window_ex_a(ex: u32, class: *const u8, name: *c
 }
 
 pub(crate) unsafe fn install() {
+    unsafe { make_dpi_aware() };
     let n = unsafe {
         patch_imports(
             |d| d.contains("ntuser-window") || d == "user32.dll",
@@ -309,5 +433,5 @@ pub(crate) unsafe fn install() {
             ],
         )
     };
-    log(&format!("window: {n} window import(s) patched (black class brush, borderless fullscreen or one-monitor fit, cloak until the first present, no Alt/F10 key menu, Alt+Enter toggle)"));
+    log(&format!("window: {n} window import(s) patched (black class brush, borderless fullscreen or one-monitor fit, cloak until the first present, no Alt/F10 key menu, Alt+Enter/F11 toggle)"));
 }
