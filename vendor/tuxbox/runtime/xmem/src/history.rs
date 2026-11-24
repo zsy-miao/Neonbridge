@@ -144,6 +144,7 @@ extern "system" fn DllMain(_: HINSTANCE, event: u32, reserved: *const c_void) ->
     if event == DLL_PROCESS_ATTACH {
         unsafe { crate::console_cpu::install() };
         unsafe { crate::loader::install() };
+        unsafe { crate::timer::install() };
         unsafe { start() };
     } else if event == DLL_PROCESS_DETACH && reserved.is_null() {
         crate::pools::unload();
