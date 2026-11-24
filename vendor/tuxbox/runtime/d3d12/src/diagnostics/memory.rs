@@ -169,9 +169,20 @@ fn commit_breakdown() -> String {
         format!("{base:#x} {} {} MiB", if *kind == MAPPED { "mapped" } else { "private" }, mib(*bytes))
     }).collect();
     let small = largest.iter().skip(8).fold((0u64, 0u64), |(n, b), (_, s)| (n + 1, b + s));
+    // test66 grew 6 GB of private commit in its last 30 s across thousands of
+    // small allocations: split them by whose address range they are in (the
+    // title's below 64 GiB, the host's above) and kind.
+    let mut split = [(0u64, 0u64); 4];
+    for ((base, kind), bytes) in largest.iter().skip(8) {
+        let i = usize::from(*base >= 0x10_0000_0000) * 2 + usize::from(*kind == MAPPED);
+        split[i].0 += 1;
+        split[i].1 += bytes;
+    }
+    let names = ["title private", "title mapped", "host private", "host mapped"];
+    let split: Vec<String> = split.iter().zip(names).map(|((n, b), name)| format!("{name} {n} ({} MiB)", mib(*b))).collect();
     let partial = if address < 0x7fff_ffff_0000 { format!(" (partial: stopped at {address:#x})") } else { String::new() };
-    format!("commit: private {} MiB, mapped {} MiB, image {} MiB in {regions} regions, walked in {} ms{partial}; largest allocations: {}; the other {} allocations {} MiB (TUXBOX_COMMIT_BREAKDOWN=0 off)",
-        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), started.elapsed().as_millis(), top.join(", "), small.0, mib(small.1))
+    format!("commit: private {} MiB, mapped {} MiB, image {} MiB in {regions} regions, walked in {} ms{partial}; largest allocations: {}; the other {} allocations {} MiB: {} (TUXBOX_COMMIT_BREAKDOWN=0 off)",
+        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), started.elapsed().as_millis(), top.join(", "), small.0, mib(small.1), split.join(", "))
 }
 
 #[cfg(test)]

@@ -87,6 +87,41 @@ struct Contents {
     previous: Vec<Vec<u8>>,
     uploaded: u64,
     readers: Vec<(ID3D12Fence, u64)>,
+    /// When each large level was last read back from guest memory (see
+    /// `big_snapshot`).
+    big_at: Vec<Option<std::time::Instant>>,
+}
+
+/// test66 froze presents for 15 s, then the title's watchdog killed it.
+/// The submitting thread sat in `snapshot_mip` under `pages::claim`
+/// throughout: a level is read back through ReadProcessMemory and compared
+/// in full whenever the texture lost its pages to another one, and the title
+/// had a 5808x5808 texture, hundreds of MiB a level, with a 1 GiB host
+/// allocation appearing as private commit grew 6 GB. A level larger than
+/// TUXBOX_SNAPSHOT_BIG_MB (64) is read again only when the write watch saw a
+/// CPU write in it, or none was ever read, and at most every
+/// TUXBOX_SNAPSHOT_BIG_MS (500); 0 MB reads every level every time.
+fn big_snapshot(size: u64, last: Option<std::time::Instant>, unchanged: Option<bool>) -> bool {
+    use std::sync::OnceLock;
+    static LIMITS: OnceLock<(u64, u64)> = OnceLock::new();
+    let (mb, ms) = *LIMITS.get_or_init(|| (
+        crate::env_toggle!("TUXBOX_SNAPSHOT_BIG_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(64),
+        crate::env_toggle!("TUXBOX_SNAPSHOT_BIG_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(500),
+    ));
+    if mb == 0 || size <= mb << 20 {
+        return false;
+    }
+    let Some(last) = last else { return false };
+    let skip = unchanged != Some(false) || last.elapsed() < std::time::Duration::from_millis(ms);
+    if skip {
+        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "placed textures: a {} MiB level not read back again ({n} so far; TUXBOX_SNAPSHOT_BIG_MB=0 reads every level)", size >> 20));
+        }
+    }
+    skip
 }
 
 struct Alias {
@@ -557,13 +592,23 @@ impl Texture {
             contents.readers.extend(inherited);
         }
         let mut skipped = 0;
+        if contents.big_at.len() < self.mips.len() {
+            contents.big_at.resize(self.mips.len(), None);
+        }
         for (level, mip) in self.mips.iter().enumerate() {
+            let range = self.address + mip.source.start..self.address + mip.source.end;
             // No CPU write since the last compare: the snapshot would match.
-            if !contents.previous[level].is_empty()
-                && watch.is_some_and(|w| w.unchanged(self.address + mip.source.start..self.address + mip.source.end))
-            {
+            if !contents.previous[level].is_empty() && watch.is_some_and(|w| w.unchanged(range.clone())) {
                 skipped += 1;
                 continue;
+            }
+            let size = mip.source.end - mip.source.start;
+            if big_snapshot(size, contents.big_at[level], watch.map(|w| w.unchanged(range))) {
+                skipped += 1;
+                continue;
+            }
+            if size > 1 << 20 {
+                contents.big_at[level] = Some(std::time::Instant::now());
             }
             if !self.snapshot_mip(mip, scratch)? {
                 contents.previous[level].clear();
