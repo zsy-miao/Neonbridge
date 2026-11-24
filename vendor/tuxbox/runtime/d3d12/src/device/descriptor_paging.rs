@@ -347,10 +347,19 @@ impl Arena {
             index
         } else {
             let index = tables.used;
-            let end = index
-                .checked_add(length)
-                .filter(|&n| n <= self.limit)
-                .ok_or(E_OUTOFMEMORY)?;
+            let Some(end) = index.checked_add(length).filter(|&n| n <= self.limit) else {
+                // rebox f516dfb (idea): its view tail ran out silently and the
+                // rest of a world's textures bound nothing. A full shader-visible
+                // table area here refuses every new table range, so say so.
+                static FULL: AtomicU64 = AtomicU64::new(0);
+                let n = FULL.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "descriptor arena at {:#x} is full: its shader-visible table area holds {} of {} slots in {} ranges (longest {}); a new {length}-slot table at slot {first} is refused and binds null ({n} so far)",
+                        self.base(), index, self.limit, tables.ranges.len(), tables.longest));
+                }
+                return Err(E_OUTOFMEMORY.into());
+            };
             if !self.inline {
                 self.copy(first, index, length);
             }
