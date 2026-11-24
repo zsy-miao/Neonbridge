@@ -29,6 +29,9 @@ pub struct Tools {
     pub dxc: PathBuf,
     /// dxc `-D` defines; bind_cache fills them from the host wave range.
     pub defines: Vec<String>,
+    /// Where dxc's output is kept by what it was given (`<cache_root>/dxil/<dxc
+    /// toolchain fingerprint>`); bind_cache fills it.
+    pub dxil: Option<PathBuf>,
 }
 
 /// `TB_NO_WAVESIZE_<n>` for each wave width outside the host's lane range, which
@@ -58,6 +61,8 @@ pub struct Stats {
     pub failed: AtomicUsize,
     /// Archived requests translated before the title started.
     pub prewarmed: AtomicUsize,
+    /// Translations whose HLSL dxc had compiled before (another xshader build).
+    pub reused: AtomicUsize,
     /// Prewarm refusals and failures by reason (registers, program counters
     /// and numbers masked, as TuxBox's triage_scarlett_shaders.py does).
     pub reasons: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
@@ -315,11 +320,29 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
     }
     let cache = cache_root.join("runtime").join(hex(&fp.finalize()));
     fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
-    Ok((Tools { xshader, dxc: tools.dxc.clone(), defines }, cache))
+    // dxc's output depends only on its input, its own binaries and the
+    // defines, not on xshader: keyed apart from the cache above, DXIL for HLSL
+    // a new xshader still emits unchanged is reused (VIctory c47b529 keys its
+    // cache by the translator, five-star 2d73fe7 keeps it across rebuilds).
+    let mut dxc_fp = Sha256::new();
+    dxc_fp.update(&version);
+    for d in &defines {
+        dxc_fp.update(b"-D");
+        dxc_fp.update(d.as_bytes());
+    }
+    dxc_fp.update(sha256(&fs::read(&tools.dxc).map_err(|e| e.to_string())?).as_bytes());
+    if let Some(dll) = tools.dxc.parent().map(|d| d.join("dxil.dll")) && let Ok(bytes) = fs::read(dll) {
+        dxc_fp.update(sha256(&bytes).as_bytes());
+    }
+    let dxil = (std::env::var("NEONBRIDGE_DXIL_REUSE").as_deref() != Ok("0"))
+        .then(|| cache_root.join("dxil").join(hex(&dxc_fp.finalize())))
+        .filter(|d| fs::create_dir_all(d).is_ok());
+    Ok((Tools { xshader, dxc: tools.dxc.clone(), defines, dxil }, cache))
 }
 
 /// Compiled carries the milliseconds spent in xshader and in dxc.
-enum Outcome { Compiled(u64, u64), Cached, Unsupported(String), Failed(String) }
+/// Reused carries the xshader milliseconds of a translation whose HLSL dxc had compiled before.
+enum Outcome { Compiled(u64, u64), Reused(u64), Cached, Unsupported(String), Failed(String) }
 
 fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path) -> Outcome {
     let work = cache.join(format!("tmp-{}-{}", std::process::id(), sha256(key.as_bytes()).get(..12).unwrap_or("x")));
@@ -399,6 +422,27 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         if !allowed.contains(&target.as_str()) {
             return Err(format!("unsupported compiler profile {target:?}"));
         }
+        // The same HLSL for the same profile compiled before (under another
+        // xshader build: test-to-test, most programs' HLSL is unchanged; the
+        // helper's exit-stub commit changed 12 of 885) is not compiled again.
+        let reused = tools.dxil.as_ref().and_then(|dir| {
+            let mut key = Sha256::new();
+            key.update(target.as_bytes());
+            key.update(&[0]);
+            key.update(fs::read(&hlsl).ok()?);
+            Some(dir.join(format!("{}.cso", hex(&key.finalize()))))
+        });
+        if let Some(path) = &reused
+            && let (Ok(bytes), Ok(sum)) = (fs::read(path), fs::read(path.with_extension("sha256")))
+            && bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes) {
+            // Into this build's cache as a compile would store it (renamed in whole).
+            let (copy, stamp) = (work.join("reused.cso"), work.join("reused.sha256"));
+            fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
+                .and_then(|_| fs::rename(&copy, &dest)).and_then(|_| fs::rename(&stamp, &checksum))
+                .map_err(|e| format!("store {}: {e}", dest.display()))?;
+            publish(&bytes)?;
+            return Ok(Outcome::Reused(translate_ms));
+        }
         let dxc = |opt: &str, secs: u64, give_up: &dyn Fn() -> bool| {
             let mut dxc = Command::new(&tools.dxc);
             dxc.arg("-T").arg(&target).arg(opt);
@@ -449,6 +493,14 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         let stamp = work.join("sha256");
         fs::write(&stamp, sha256(&bytes)).map_err(|e| e.to_string())?;
+        if let Some(path) = &reused {
+            // Written stamp-first under a temporary name: a reader sees both or neither.
+            let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+            if fs::write(&tmp, &bytes).and_then(|_| fs::write(path.with_extension("sha256"), sha256(&bytes)))
+                .and_then(|_| fs::rename(&tmp, path)).is_err() {
+                let _ = fs::remove_file(&tmp);
+            }
+        }
         fs::rename(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
         fs::rename(&stamp, &checksum).map_err(|e| e.to_string())?;
         publish(&bytes)?;
@@ -702,6 +754,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                 while let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let counter = match compile(path, key, ext, tools, cache, scratch) {
                         Outcome::Compiled(..) => &stats.prewarmed,
+                        Outcome::Reused(_) => &stats.reused,
                         Outcome::Cached => &stats.cached,
                         Outcome::Unsupported(m) => { stats.note("unsupported", &m); &stats.unsupported }
                         Outcome::Failed(m) => { stats.note("failed", &m); &stats.failed }
@@ -748,8 +801,8 @@ impl Worker {
             let started = std::time::Instant::now();
             let seen = seen_requests(&cache_root, &archive);
             prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), workers, &stats, Some(&seen));
-            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
-                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused, {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
+                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
         }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
         if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
@@ -836,6 +889,12 @@ impl Worker {
                                     // Measures whether dxc dominates (a direct DXIL writer would only save the dxc part).
                                     st.compiled.fetch_add(1, Ordering::Relaxed);
                                     log(format!("compiled Xbox shader {key} (xshader {xs} ms, dxc {dxc} ms)"));
+                                }
+                                Outcome::Reused(xs) => {
+                                    let n = st.reused.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if n <= 8 || n.is_power_of_two() {
+                                        log(format!("Xbox shader {key}: xshader {xs} ms, its HLSL compiled before: dxc skipped ({n} so far; NEONBRIDGE_DXIL_REUSE=0 off)"));
+                                    }
                                 }
                                 Outcome::Cached => { st.cached.fetch_add(1, Ordering::Relaxed); }
                                 Outcome::Unsupported(m) => { st.unsupported.fetch_add(1, Ordering::Relaxed); log(format!("Xbox shader {key}: unsupported: {m}")); }
