@@ -15,6 +15,25 @@ use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 pub(super) const PAGE: usize = 65536;
 
+thread_local! {
+    /// The last OS call that failed on this thread (function:line, error),
+    /// for the page-mapping failure log (test80: 256 error-87 failures with no
+    /// step named).
+    static LAST_OS_ERROR: std::cell::Cell<(&'static str, u32)> = const { std::cell::Cell::new(("", 0)) };
+}
+
+/// GetLastError, noted with the step that failed.
+pub(super) fn os_error(step: &'static str) -> u32 {
+    let error = unsafe { GetLastError() };
+    LAST_OS_ERROR.with(|l| l.set((step, error)));
+    error
+}
+
+/// Takes the last failed OS step on this thread.
+pub(super) fn take_os_error() -> (&'static str, u32) {
+    LAST_OS_ERROR.with(|l| l.replace(("", 0)))
+}
+
 /// Physical-page windows the title reserved with PAGE_GUARD: pages mapped
 /// there keep the guard; only cache modifiers are dropped from a view's
 /// protection (leonida 8d4dd7a8 / 80ed5dd3, re-derived). Base -> end.
@@ -108,7 +127,7 @@ impl Section {
             )
         };
         if h.is_null() {
-            return Err(unsafe { GetLastError() });
+            return Err(os_error("handle:111"));
         }
         self.handle
             .set(unsafe { OwnedHandle::from_raw_handle(h) })
@@ -135,10 +154,10 @@ impl Section {
             )
         };
         if view.Value.is_null() {
-            return Err(unsafe { GetLastError() });
+            return Err(os_error("map_range:138"));
         }
         if unsafe { VirtualAlloc(view.Value, bytes, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
-            let err = unsafe { GetLastError() };
+            let err = os_error("map_range:141");
             unmap(address)?;
             return Err(err);
         }
@@ -146,7 +165,7 @@ impl Section {
             let mut old = 0;
             let guard = windows_sys::Win32::System::Memory::PAGE_GUARD;
             if unsafe { windows_sys::Win32::System::Memory::VirtualProtect(view.Value, bytes, PAGE_READWRITE | guard, &mut old) } == 0 {
-                let err = unsafe { GetLastError() };
+                let err = os_error("map_range:149");
                 unmap(address)?;
                 return Err(err);
             }
@@ -164,10 +183,10 @@ impl Section {
         }
         let view = unsafe { MapViewOfFile(self.handle()?, FILE_MAP_WRITE, (page >> 32) as u32, page as u32, PAGE) };
         if view.Value.is_null() {
-            return Err(unsafe { GetLastError() });
+            return Err(os_error("write_from:167"));
         }
         let result = if unsafe { VirtualAlloc(view.Value, PAGE, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
-            Err(unsafe { GetLastError() })
+            Err(os_error("write_from:170"))
         } else {
             unsafe { ptr::copy_nonoverlapping(src, view.Value.cast::<u8>().add(within), bytes) };
             Ok(())
@@ -185,7 +204,7 @@ impl Section {
         }
         let view = unsafe { MapViewOfFile(self.handle()?, FILE_MAP_READ, (page >> 32) as u32, page as u32, PAGE) };
         if view.Value.is_null() {
-            return Err(unsafe { GetLastError() });
+            return Err(os_error("read_part:188"));
         }
         // Only pages with section data are read here (uncommitted ones fault).
         unsafe {
@@ -206,7 +225,7 @@ impl Section {
             )
         };
         if view.Value.is_null() {
-            return Err(unsafe { GetLastError() });
+            return Err(os_error("read_into:209"));
         }
         unsafe {
             ptr::copy_nonoverlapping(view.Value.cast(), dest, PAGE);
@@ -241,7 +260,7 @@ pub(super) fn unmap(address: usize) -> Result<(), u32> {
     if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, MEM_PRESERVE_PLACEHOLDER) } != 0 {
         return Ok(());
     }
-    let error = unsafe { GetLastError() };
+    let error = os_error("unmap:244");
     if error != windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER || !fallback_on() {
         return Err(error);
     }
@@ -253,13 +272,13 @@ pub(super) fn unmap(address: usize) -> Result<(), u32> {
     }
     let bytes = info.RegionSize;
     if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, 0) } == 0 {
-        return Err(unsafe { GetLastError() });
+        return Err(os_error("unmap:256"));
     }
     let placeholder = unsafe {
         VirtualAlloc2(GetCurrentProcess(), address as _, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, ptr::null_mut(), 0)
     };
     if placeholder.is_null() {
-        let e = unsafe { GetLastError() };
+        let e = os_error("unmap:262");
         fallback_note(format_args!("xmem: view {address:#x} (+{bytes:#x}) unmapped without its placeholder, which could not be reserved again: error {e}"));
         return Err(e);
     }
@@ -277,7 +296,7 @@ pub(super) fn region(address: usize) -> Result<MEMORY_BASIC_INFORMATION, u32> {
         )
     } == 0
     {
-        return Err(unsafe { GetLastError() });
+        return Err(os_error("region:280"));
     }
     Ok(info)
 }
@@ -297,7 +316,7 @@ pub(super) fn isolate_range(address: usize, bytes: usize, info: &MEMORY_BASIC_IN
     if (info.AllocationBase.addr() != address || info.RegionSize != bytes)
         && unsafe { VirtualFree(address as _, bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) } == 0
     {
-        return Err(unsafe { GetLastError() });
+        return Err(os_error("isolate_range:300"));
     }
     Ok(())
 }
@@ -307,7 +326,7 @@ pub(super) fn coalesce(base: usize, bytes: usize) -> Result<(), u32> {
         return Ok(());
     }
     if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) } == 0 {
-        let error = unsafe { GetLastError() };
+        let error = os_error("coalesce:310");
         // Placeholders from two reservations (a re-reserved join) or around a
         // still-mapped view cannot coalesce; split placeholders stay reserved
         // and map as before, so this is not a failure.
@@ -324,7 +343,7 @@ pub(super) fn coalesce(base: usize, bytes: usize) -> Result<(), u32> {
 // Neonbridge: join adjacent placeholders exactly covering [base, base+bytes).
 pub(super) fn coalesce_range(base: usize, bytes: usize) -> Result<(), u32> {
     if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) } == 0 {
-        Err(unsafe { GetLastError() })
+        Err(os_error("coalesce_range:327"))
     } else {
         Ok(())
     }
@@ -333,7 +352,7 @@ pub(super) fn coalesce_range(base: usize, bytes: usize) -> Result<(), u32> {
 // Neonbridge: split the leading `bytes` off a placeholder.
 pub(super) fn split(base: usize, bytes: usize) -> Result<(), u32> {
     if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) } == 0 {
-        Err(unsafe { GetLastError() })
+        Err(os_error("split:336"))
     } else {
         Ok(())
     }
@@ -357,13 +376,13 @@ pub(super) fn re_reserve(lo: usize, hi: usize, pieces: &[(usize, usize)]) -> Res
     };
     for (i, &(a, _)) in pieces.iter().enumerate() {
         if unsafe { VirtualFree(a as _, 0, MEM_RELEASE) } == 0 {
-            let e = unsafe { GetLastError() };
+            let e = os_error("re_reserve:360");
             restore(&pieces[..i]);
             return Err(e);
         }
     }
     if reserve(lo as _, hi - lo).is_null() {
-        let e = unsafe { GetLastError() };
+        let e = os_error("re_reserve:366");
         restore(pieces);
         return Err(e);
     }

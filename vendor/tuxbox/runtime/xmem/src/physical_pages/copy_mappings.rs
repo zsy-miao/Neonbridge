@@ -133,8 +133,8 @@ impl Pool {
                 if n <= 8 || n.is_power_of_two() {
                     let region = crate::shared_pages::region(entry.at).ok();
                     crate::loader::log(&format!(
-                        "page mappings: page {:#x} ({:?} -> {:?}, {} of {} done) failed error {error}; region {:?} ({n} so far)",
-                        entry.at, entry.old, entry.new, done, updates.len(),
+                        "page mappings: page {:#x} ({:?} -> {:?}, {} of {} done) failed error {error} (last failed OS step {:?}); region (AllocationBase, BaseAddress, size, state, protect, type) {:x?} ({n} so far)",
+                        entry.at, entry.old, entry.new, done, updates.len(), crate::shared_pages::take_os_error(),
                         region.map(|r| (r.AllocationBase.addr(), r.BaseAddress.addr(), r.RegionSize, r.State, r.AllocationProtect, r.Type))));
                 }
             }

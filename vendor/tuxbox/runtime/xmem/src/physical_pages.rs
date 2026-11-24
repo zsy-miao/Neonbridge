@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use windows_sys::Win32::Foundation::{
     ERROR_BUSY, ERROR_INVALID_ADDRESS, ERROR_INVALID_PARAMETER, ERROR_NOT_ENOUGH_MEMORY,
-    ERROR_NOT_SUPPORTED, GetLastError, SetLastError,
+    ERROR_NOT_SUPPORTED, SetLastError,
 };
 use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows_sys::Win32::System::Memory::{
@@ -70,7 +70,7 @@ fn available_memory() -> Result<u64, u32> {
         ..Default::default()
     };
     if unsafe { GlobalMemoryStatusEx(&mut info) } == 0 {
-        return Err(unsafe { GetLastError() });
+        return Err(shared_pages::os_error("available_memory:73"));
     }
     // Neonbridge: page tokens are SEC_RESERVE pagefile sections, committed only
     // when a page is first mapped, so a batch is bounded by the commit limit
@@ -669,7 +669,7 @@ impl Pool {
         }
         // SAFETY: caller owns the reserved range exclusively during this operation.
         if unsafe { VirtualAlloc(address as _, bytes, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
-            return Err(unsafe { GetLastError() });
+            return Err(shared_pages::os_error("map:672"));
         }
         for (i, &token) in tokens.iter().enumerate() {
             let p = &self.pages[&token];
@@ -748,12 +748,12 @@ impl Pool {
                 )
             } == 0
             {
-                return Err(unsafe { GetLastError() });
+                return Err(shared_pages::os_error("unmap:751"));
             }
         }
         // SAFETY: all pages in this aligned range are registered to this provider.
         if unsafe { VirtualFree(address as _, bytes, MEM_DECOMMIT) } == 0 {
-            return Err(unsafe { GetLastError() });
+            return Err(shared_pages::os_error("unmap:756"));
         }
         for at in (address..address + bytes).step_by(PAGE) {
             let token = self

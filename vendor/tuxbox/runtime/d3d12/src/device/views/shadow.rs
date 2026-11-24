@@ -152,7 +152,29 @@ fn copy_bytes(entries: &HashMap<(u64, u64, bool), Entry>) -> (u64, u64) {
     })
 }
 
-fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap<(u64, u64), ID3D12Resource>>) {
+/// Shadows and imports taken out under the shadow lock, released after it.
+/// test80 froze with title threads waiting on the lock in copy_of while a
+/// thread was inside OpenExistingHeapFromAddress1: releasing an import runs
+/// its pin's drop, which calls into xmem and the page-mapping registry, and
+/// that release ran under the lock (prune, reuse, replaced entries).
+/// TUXBOX_SHADOW_DROP_LOCKED=1 releases them under the lock as before.
+#[derive(Default)]
+struct Garbage(Vec<Entry>, Vec<ID3D12Resource>);
+
+fn drop_locked() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_DROP_LOCKED") == Some("1")
+}
+
+fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap<(u64, u64), ID3D12Resource>>) -> Garbage {
+    let mut garbage = Garbage::default();
+    prune_into(entries, sources, &mut garbage);
+    if drop_locked() {
+        drop(std::mem::take(&mut garbage));
+    }
+    garbage
+}
+
+fn prune_into(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap<(u64, u64), ID3D12Resource>>, garbage: &mut Garbage) {
     use std::sync::atomic::Ordering::Relaxed;
     static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut over = false;
@@ -163,12 +185,15 @@ fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap
         over = dead > dead_cap();
     }
     if entries.len() > KEPT || over {
-        entries.retain(|_, e| e.view.strong_count() > 0);
+        let dead: Vec<_> = entries.iter().filter(|(_, e)| e.view.strong_count() == 0).map(|(k, _)| *k).collect();
+        garbage.0.extend(dead.iter().filter_map(|k| entries.remove(k)));
         // A cached import pins its pages against remaps; keep only those a
         // remaining shadow still holds, so the cache pins nothing extra.
         let held: std::collections::HashSet<usize> = entries.values()
             .flat_map(|e| e.pieces.iter().map(|p| p.0.as_raw() as usize)).collect();
-        lock(sources).retain(|_, source| held.contains(&(source.as_raw() as usize)));
+        let mut sources = lock(sources);
+        let unheld: Vec<_> = sources.iter().filter(|(_, s)| !held.contains(&(s.as_raw() as usize))).map(|(k, _)| *k).collect();
+        garbage.1.extend(unheld.iter().filter_map(|k| sources.remove(k)));
     }
 }
 
@@ -177,16 +202,18 @@ fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap
 /// many entries and imports were released.
 pub(super) fn release_dead(shadows: &Shadows) -> usize {
     let mut entries = lock(&shadows.entries);
-    let before = entries.len();
-    entries.retain(|_, e| e.view.strong_count() > 0);
+    let dead: Vec<_> = entries.iter().filter(|(_, e)| e.view.strong_count() == 0).map(|(k, _)| *k).collect();
+    let gone: Vec<Entry> = dead.iter().filter_map(|k| entries.remove(k)).collect();
     let held: std::collections::HashSet<usize> = entries.values()
         .flat_map(|e| e.pieces.iter().map(|p| p.0.as_raw() as usize)).collect();
-    let released = before - entries.len();
     drop(entries);
     let mut sources = lock(&shadows.sources);
-    let kept = sources.len();
-    sources.retain(|_, source| held.contains(&(source.as_raw() as usize)));
-    released + (kept - sources.len())
+    let unheld: Vec<_> = sources.iter().filter(|(_, s)| !held.contains(&(s.as_raw() as usize))).map(|(k, _)| *k).collect();
+    let imports: Vec<ID3D12Resource> = unheld.iter().filter_map(|k| sources.remove(k)).collect();
+    drop(sources);
+    let released = gone.len() + imports.len();
+    drop((gone, imports));
+    released
 }
 
 /// TUXBOX_SHADOW_IMPORT_CACHE=0: every new shadow imports its title pages
@@ -274,8 +301,14 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
             .find(|(k, e)| !k.2 && !e.written && e.view.strong_count() == 0
                 && unsafe { e.copy.GetDesc() }.Width == size)
             .map(|(k, _)| *k);
-        dead.and_then(|k| entries.remove(&k)).map(|e| e.copy)
+        dead.and_then(|k| entries.remove(&k))
     } else { None };
+    let mut garbage = Garbage::default();
+    let reused = reused.map(|e| {
+        let copy = e.copy.clone();
+        garbage.0.push(e);
+        copy
+    });
     // The import and the copy's creation take milliseconds; with the lock
     // held every recording thread making a view and every submission's
     // refresh waited on them (rebox b077562, re-derived).
@@ -322,14 +355,16 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // Not registered by address: CBVs, UAVs and command arguments at this VA
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
-    prune(&mut entries, &shadows.sources);
-    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None,
+    let pruned = prune(&mut entries, &shadows.sources);
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
         by_copy.retain(|_, key| entries.contains_key(key));
         by_copy.insert(copy.as_raw() as usize, (address, bytes, writable));
     }
+    drop(entries);
+    drop((pruned, replaced, garbage));
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("shadowed buffer view at {address:#x}, {bytes} bytes"));
     Ok(view)
@@ -426,7 +461,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         // TUXBOX_SHADOW_HASH_LOCKED=1 hashes under the lock as before.
         let unlocked = crate::env_toggle!("TUXBOX_SHADOW_HASH_LOCKED") != Some("1");
         let mut entries = lock(&shadows.entries);
-        prune(&mut entries, &shadows.sources);
+        let pruned = prune(&mut entries, &shadows.sources);
         let skip = !back && skip_unchanged();
         let aging = !back && aging();
         let now = if back { 0 } else { REFRESHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 };
@@ -482,6 +517,8 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 }
             }
         }
+        drop(entries);
+        drop(pruned);
         static LOGGED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
         let n = LOGGED[usize::from(back)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if n < 4 || (n + 1).is_power_of_two() {
