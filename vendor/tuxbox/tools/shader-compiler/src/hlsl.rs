@@ -2388,8 +2388,30 @@ impl<'a> Emitter<'a> {
 
     /// Resource a MUBUF instruction addresses when its descriptor is `slot` of `table`
     /// (also records declaration requirements).
-    fn mubuf_res(&mut self, ins: &Insn, offset: u32, table: u8) -> Result<Res, String> {
+    /// `table_binding` for a buffer descriptor. Without a root range for the table
+    /// (no root signature, or the SGPR is not a table parameter), the PSV resource
+    /// list names the class when exactly one buffer-class range covers the register.
+    fn buffer_table_binding(&mut self, table: u8, offset: u32) -> Result<(Option<u32>, u32), String> {
         let (kind, slot) = self.table_binding(table, offset, 32)?;
+        if kind.is_some() {
+            return Ok((kind, slot));
+        }
+        let class = |t: u32| match t { 2 => Some(2), 3..=5 => Some(0), 6..=9 => Some(1), _ => None };
+        let mut found = self.ex.resources.iter()
+            .filter(|r| r.lower <= slot && slot <= r.upper)
+            .filter_map(|r| Some((class(r.res_type)?, r.space)));
+        let Some(first) = found.next() else { return Ok((None, slot)) };
+        if found.any(|other| other != first) {
+            return Ok((None, slot));
+        }
+        if self.binding_spaces.insert((first.0, slot), first.1).is_some_and(|previous| previous != first.1) {
+            return Err(format!("descriptor class {} register {slot} is used in multiple spaces", first.0));
+        }
+        Ok((Some(first.0), slot))
+    }
+
+    fn mubuf_res(&mut self, ins: &Insn, offset: u32, table: u8) -> Result<Res, String> {
+        let (kind, slot) = self.buffer_table_binding(table, offset)?;
         let is_uav = match kind {
             Some(0) => false,
             Some(1) => true,
@@ -2919,7 +2941,7 @@ impl<'a> Emitter<'a> {
                     })?;
                     let mut out: Vec<(u32, Res)> = Vec::new();
                     for (table, off) in &cands {
-                        let (kind, slot) = self.table_binding(*table, *off, 32)?;
+                        let (kind, slot) = self.buffer_table_binding(*table, *off)?;
                         let is_uav = match kind {
                             Some(0) => false,
                             Some(1) => true,
