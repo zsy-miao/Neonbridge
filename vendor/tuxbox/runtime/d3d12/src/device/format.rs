@@ -26,8 +26,23 @@ pub(crate) fn host_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
 pub(super) fn view_format(translated: bool, format: DXGI_FORMAT) -> DXGI_FORMAT {
     match format {
         DXGI_FORMAT_B4G4R4A4_UNORM if translated => DXGI_FORMAT_R8G8B8A8_UNORM,
+        DXGI_FORMAT_R9G9B9E5_SHAREDEXP if translated && rgb9e5_targets() => DXGI_FORMAT_R16G16B16A16_FLOAT,
         other => host_format(other),
     }
+}
+
+/// R9G9B9E5_SHAREDEXP, which desktop D3D12 never allows as a render target
+/// or unordered access, is backed by R16G16B16A16_FLOAT when the title asks
+/// for either use: half floats hold every RGB9E5 value with 10 mantissa bits
+/// for its 9. In Series S mode the title's FidelityFX upscale output is a
+/// 1920x1080 RGB9E5 target with unordered access; made in its own format the
+/// texture was refused and its render target view removed the device.
+/// VIctory-1984 3a55abd (GPL-3.0, PR #492's rule), with credit. Shortcut: a
+/// view of the stand-in reads the alpha written there, where RGB9E5 reads 1.
+/// Sampled-only RGB9E5 images (GTA's views of its R32_UINT colour) keep their
+/// format. TUXBOX_RGB9E5_TARGETS=0 off.
+fn rgb9e5_targets() -> bool {
+    crate::env_toggle!("TUXBOX_RGB9E5_TARGETS") != Some("0")
 }
 
 fn target_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
@@ -68,6 +83,12 @@ pub(super) fn substitute(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DE
         }
         DXGI_FORMAT_B4G4R4A4_UNORM if flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0 != 0 => {
             (DXGI_FORMAT_R8G8B8A8_UNORM, flags)
+        }
+        DXGI_FORMAT_R9G9B9E5_SHAREDEXP
+            if rgb9e5_targets()
+                && flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0 | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0) != 0 =>
+        {
+            (DXGI_FORMAT_R16G16B16A16_FLOAT, flags)
         }
         // Scarlett depth can also allow unordered access; the desktop image
         // keeps its format and depth usage. A UAV on it is reported at view creation.
