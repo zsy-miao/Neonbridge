@@ -3,3 +3,7 @@
 # The game feed's link helpers: RuneLink's Go tsproxy and cloudflared builds, never committed
 /tools/tsproxy.exe
 /tools/cloudflared.exe
+# Build output of any nested crate, Python caches, and run screenshots left at the root
+target/
+__pycache__/
+/*.jpg

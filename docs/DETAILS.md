@@ -14,7 +14,7 @@ What the Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own 
 - **Offline and contained:** the game's network calls fail as "no network", its `D:` drive is a local folder, and it runs in a job that ends with the launcher.
 - **Audio:** sound plays, and Bink movies keep to their clock.
 - **Menus:** dialogs, text entry, speech and relaunch requests are answered, so the menus no longer wait on missing console UI. The game gets through the menus and loading screens into the first mission, where the picture is still black.
-- **Longest run:** about 4-5 minutes (frame ~3100), ending in a 15 s freeze. One cause, a deadlock in the placement code, is fixed; the freeze still happens, so a second wait is being traced.
+- **Longest run:** about 5 minutes after the prewarm (frame ~3170). It ends at the scene load after the loading screens, either in the title's hang watchdog or, with the compile budget off, once Windows commit runs out.
 
 ## Runtime fixes
 
@@ -253,7 +253,7 @@ These are in the vendored TuxBox provider:
 
 - **Video memory:** the main limit. The game uses about 8 GB against a 7.2 GB device-local budget, and the frame rate sinks from about 40 to 20 once it overflows.
 - **Black picture:** the first mission plays sound but draws black.
-- **End-of-run freeze:** after about 3000 frames, at the scene load after the loading screens, no frame was presented and the title's hang watchdog ended the game. Four causes are fixed (a placement drop-order deadlock, title threads waiting on a shader-cache lock, binds waiting outside the first-use budget, and slow `-O1` compiles of shaders the title waits on), not yet confirmed by a run; test101 ran past it but then lost the device in a TLAS build.
+- **End-of-run freeze:** after about 3000 frames, at the scene load after the loading screens, no frame was presented and the title's hang watchdog ended the game. Four causes are fixed (a placement drop-order deadlock, title threads waiting on a shader-cache lock, binds waiting outside the first-use budget, and slow `-O1` compiles of shaders the title waits on), but the stop remains. With a warm prewarm the run reaches frame ~3150: the watchdog still fires while the pipeline threads wait in the compile budget for free commit, and with `TUXBOX_COMPILE_BUDGET=0` the watchdog stays quiet but commit runs out (the process grows to about 18.6 GB private, title mappings about 7.5 GB and our placed-texture mirror about 10.4 GB) and a read of title memory faults in the runtime. Commit growth and the never-signalled Subrender job event are being traced. test101 ran past it but then lost the device in a TLAS build.
 - **BCPack textures:** shown as grey blocks until a decoder is written (about 14% of textures).
 - **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
