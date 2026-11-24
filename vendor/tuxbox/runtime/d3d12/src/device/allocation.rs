@@ -202,10 +202,9 @@ pub(super) unsafe extern "system" fn info2(
         } else if let Some(requirement) = packed_requirements(&device.native, visible, d) {
             requirement
         } else if let Ok(host) = device.native.cast::<ID3D12Device8>() {
+            // Console-only flag bits (DCC and others) are dropped, as at creation.
             let mut native = *d;
-            if d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D {
-                native.Flags.0 &= !DCC_FLAGS;
-            }
+            native.Flags.0 &= super::format::HOST_FLAGS;
             let guest = D3D12_RESOURCE_DESC {
                 Dimension: d.Dimension, Alignment: d.Alignment, Width: d.Width, Height: d.Height,
                 DepthOrArraySize: d.DepthOrArraySize, MipLevels: d.MipLevels, Format: d.Format,
