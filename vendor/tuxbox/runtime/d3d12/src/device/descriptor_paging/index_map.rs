@@ -21,7 +21,10 @@ impl Upload {
         if data.is_null() {
             return Err(E_POINTER.into());
         }
-        unsafe { data.cast::<u32>().write_volatile(u32::from(count != 0)) };
+        // Word 0: 0 = identity, 0x8000_0000 | count = mapped with `count`
+        // entries; the shader clamps indices to count - 1 (xshader 932afdd).
+        let header = if count == 0 { 0 } else { 0x8000_0000 | (count & 0x7fff_ffff) };
+        unsafe { data.cast::<u32>().write_volatile(header) };
         Ok(Self {
             native,
             address: data.addr(),
