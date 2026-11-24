@@ -164,8 +164,10 @@ fn build_xshader(tuxbox: &Path, out: &Path) -> Result<PathBuf, Box<dyn Error>> {
         return Err(format!("{} missing", manifest.display()).into());
     }
     let target_dir = out.join("xshader");
+    // /Brepro: a rebuild of unchanged sources gives the same bytes, so the shader
+    // cache (keyed by xshader's hash) survives touched files and relinks.
     let status = Command::new("cargo").args(["build", "--release", "--quiet", "--manifest-path"]).arg(&manifest)
-        .arg("--target-dir").arg(&target_dir).status()?;
+        .arg("--target-dir").arg(&target_dir).env("RUSTFLAGS", "-C link-arg=/Brepro").status()?;
     if !status.success() {
         return Err(format!("cargo build of xshader failed ({status})").into());
     }
