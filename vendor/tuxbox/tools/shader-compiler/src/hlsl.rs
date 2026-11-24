@@ -395,7 +395,7 @@ uint tb_frexp_mant32(uint x) { uint e = (x >> 23) & 0xffu, m = x & 0x7fffffu; if
 int tb_top64(uint2 m) { return m.y != 0u ? 32 + (int)firstbithigh(m.y) : (int)firstbithigh(m.x); }
 int tb_frexp_exp64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return 0; if (e == 0u) return tb_top64(m) - 1073; return (int)e - 1022; }
 uint2 tb_frexp_mant64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return x; if (e == 0u) { m = tb_shl64(m, (uint)(52 - tb_top64(m))); m.y &= 0xfffffu; } return uint2(m.x, (x.y & 0x80000000u) | (1022u << 20) | m.y); }
-float tb_ldexp(float x, int n) { n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
+float tb_ldexp(float x, int n) { if (((asuint(x) >> 23) & 0xffu) == 0xffu) return x; n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
 float tb_mad(float a, float b, float c) { precise float s = a * b + c; return s; }
 "#;
 
@@ -8557,7 +8557,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_max3_f32" => Some(format!("tb_fmax(tb_fmax({}, {}), {})", fa()?, fb()?, fc()?)),
             // ISA: any NaN operand -> V_MIN3_F32 of the three; otherwise the median.
             "v_med3_f32" => Some(format!("tb_med3({}, {}, {})", fa()?, fb()?, fc()?)),
-            "v_ldexp_f32" => Some(format!("tb_ldexp({}, asint({b}))", fa()?)),
+            // frexp / ldexp only move bits, so abs and neg move the raw sign bit:
+            // through float abs/negate a NaN may come back as the driver's default
+            // NaN (leonida 5f063e58, SHADER-FREXP-LDEXP-SIGN-MODS).
+            "v_ldexp_f32" => Some(format!("tb_ldexp(asfloat({}), asint({b}))", Self::select_source(ins, a.clone(), 0))),
             "v_cvt_f32_i32" => Some(format!("(float)asint({a})")),
             "v_cvt_f32_u32" => Some(format!("(float)({a})")),
             "v_cvt_off_f32_i4" => Some(format!("((float)(asint({a} << 28) >> 28) * 0.0625f)")),
@@ -8567,7 +8570,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_cvt_f32_ubyte3" => Some(format!("(float)(({a} >> 24) & 0xffu)")),
             "v_cvt_f32_f16" => Some(format!("f16tof32({a})")),
             "v_fract_f32" => Some(format!("tb_fract({})", fa()?)),
-            "v_frexp_mant_f32" if vop1_f64_on() => Some(format!("asfloat(tb_frexp_mant32(asuint({})))", fa()?)),
+            "v_frexp_mant_f32" if vop1_f64_on() => Some(format!("asfloat(tb_frexp_mant32({}))", Self::select_source(ins, a.clone(), 0))),
             "v_trunc_f32" => Some(format!("trunc({})", fa()?)),
             "v_ceil_f32" => Some(format!("ceil({})", fa()?)),
             "v_rndne_f32" => Some(rounding::rndne(&fa()?)),

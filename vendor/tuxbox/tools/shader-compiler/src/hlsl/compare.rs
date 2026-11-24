@@ -128,6 +128,13 @@ impl Emitter<'_> {
         } else {
             "u64"
         };
+        // V_CMP_F / V_CMP_T are constant whatever the sources or modifiers
+        // (VIctory-zhai d7536bd / c012f2d, Davi713, Marvisak/VIctory#1685).
+        match ins.op & 7 {
+            0 => return Ok("false".into()),
+            7 => return Ok("true".into()),
+            _ => {}
+        }
         let (a, ah) = self.compare_pair(&ins.src[0], ty)?;
         if mask != 0 {
             return Err("unsupported 64-bit integer compare modifiers".into());
