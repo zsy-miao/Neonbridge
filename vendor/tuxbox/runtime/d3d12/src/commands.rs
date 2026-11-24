@@ -2119,7 +2119,7 @@ fn drop_batch(queue: &Queue, error: HRESULT) {
 }
 
 /// Committed memory of `len` bytes at `at`, readable (and writable if asked).
-fn accessible(at: usize, len: usize, write: bool) -> bool {
+pub(crate) fn accessible(at: usize, len: usize, write: bool) -> bool {
     use windows::Win32::System::Memory::*;
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if at == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
@@ -2233,6 +2233,8 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     // A list of the batch writes a 64-bit value (retire_waits).
     let retire_write = std::cell::Cell::new(false);
     let swap_lists = std::cell::RefCell::new(Vec::new());
+    // The batch's lists, for the transient-pool lifetime check.
+    let pool_lists = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
@@ -2246,6 +2248,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             .ok_or(E_INVALIDARG)?;
             let state = recording(list);
             placement::list_submitted(state.opened.elapsed());
+            if crate::diagnostics::transient_pool::enabled() {
+                pool_lists.borrow_mut().push(list.native.as_raw() as usize);
+            }
             if retire_waits::enabled() && state.value_writes.iter().any(|w| w.2 == 8) {
                 retire_write.set(true);
             }
@@ -2410,6 +2415,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             step("GPU memory wait submission", memory_wait::submit(queue, host, splits))?;
                         }
                         retire_waits::submitted(&queue.native);
+                        crate::diagnostics::transient_pool::submitted(&queue.native, &pool_lists.borrow());
                         device::committed_writeback::submitted(&queue.native);
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();

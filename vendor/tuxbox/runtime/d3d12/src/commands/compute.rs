@@ -126,6 +126,7 @@ fn null_sink(list: &List) -> Option<u64> {
 /// the one-byte import with pass-through.
 fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option<u64> {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    crate::diagnostics::transient_pool::touch(windows::core::Interface::as_raw(&list.native) as usize, guest);
     if guest == 0 || crate::env_toggle!("TUXBOX_ROOT_SPAN") == Some("1") {
         return address(list, state, guest, 1);
     }
