@@ -411,6 +411,37 @@ fn signed_add_overflow(a: &str, b: &str, sum: &str) -> String {
     format!("((~({a} ^ {b}) & ({a} ^ {sum})) >> 31)")
 }
 
+/// Address dwords of a non-NSA MIMG instruction (RDNA2 ISA 8.2.1, image
+/// opcodes): offset, bias, compare, gradients, coordinates (DIM, with the
+/// slice and sample index), then LOD, clamp or mip. None where it is not
+/// certain (A16 packing, cube gradients, BVH and unknown forms).
+fn mimg_address_dwords(ins: &Insn) -> Option<u32> {
+    let name = ins.mnemonic.as_str();
+    if ins.raw.get(1).is_some_and(|w1| (w1 >> 30) & 1 != 0) || name.starts_with("image_bvh") {
+        return None;
+    }
+    let dim = ins.aux.imm as u32;
+    let coords = [1, 2, 3, 3, 2, 3, 3, 4][(dim & 7) as usize];
+    if name == "image_get_resinfo" {
+        return Some(1);
+    }
+    let parts: Vec<&str> = name.split('_').skip(2).collect();
+    let has = |p: &str| parts.contains(&p);
+    let mut n = coords;
+    if name.starts_with("image_sample") || name.starts_with("image_gather4") || name == "image_get_lod" {
+        if has("d") || has("cd") {
+            let grad = match dim & 7 { 0 | 4 => 1, 1 | 5 => 2, 2 => 3, _ => return None };
+            n += 2 * grad;
+        }
+        n += u32::from(has("o")) + u32::from(has("b")) + u32::from(has("c")) + u32::from(has("l")) + u32::from(has("cl"));
+    } else if name.starts_with("image_load") || name.starts_with("image_store") || name.starts_with("image_atomic") {
+        n += u32::from(has("mip"));
+    } else {
+        return None;
+    }
+    Some(n)
+}
+
 /// Scalar register number of an operand (SGPRs, plus vcc_lo/vcc_hi = 106/107, which SMEM
 /// loads can target directly: `s_buffer_load_dwordx2 vcc_lo, ...`).
 fn sreg_num(o: &Opnd) -> Option<u8> {
@@ -3992,6 +4023,18 @@ impl<'a> Emitter<'a> {
                     }
                     if !written.contains(&nm) {
                         live.insert((if matches!(o, Opnd::Vgpr(_)) { 1 } else { 0 }, *n as u32));
+                    }
+                }
+            }
+            // A non-NSA image address is consecutive VGPRs from vaddr, and
+            // only vaddr is in src: the rest are reads too (NSA lists each
+            // one in src already). TB_MIMG_ADDR_LIVE=0 counts vaddr only.
+            let nonsa = ins.enc == Enc::Mimg && ins.aux.imm2 == 0
+                && std::env::var("TB_MIMG_ADDR_LIVE").map_or(true, |v| v.trim() != "0");
+            if let (true, Some(Opnd::Vgpr(vaddr)), Some(n)) = (nonsa, ins.src.first(), if nonsa { mimg_address_dwords(ins) } else { None }) {
+                for reg in u32::from(*vaddr) + 1..u32::from(*vaddr) + n {
+                    if !written.contains(&format!("v{reg}")) {
+                        live.insert((1, reg));
                     }
                 }
             }
