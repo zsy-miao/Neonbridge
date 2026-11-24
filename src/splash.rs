@@ -82,6 +82,7 @@ pub fn watch(exe: &std::path::Path) {
         let start = std::time::Instant::now();
         let mut names: std::collections::HashMap<u32, bool> = std::collections::HashMap::new();
         let mut covered = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut game: HWND = std::ptr::null_mut();
         while WINDOW.load(Ordering::Acquire) != -2 && start.elapsed().as_secs() < 600 {
             for hwnd in top_level_windows() {
                 let mut pid = 0;
@@ -90,6 +91,7 @@ pub fn watch(exe: &std::path::Path) {
                     continue;
                 }
                 let Some(bounds) = fit(hwnd) else { continue };
+                game = hwnd;
                 let splash = WINDOW.load(Ordering::Acquire);
                 if splash > 0 && !rect_eq(&bounds, &covered) {
                     covered = bounds;
@@ -100,6 +102,11 @@ pub fn watch(exe: &std::path::Path) {
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        // The title only reads input while it has focus (the auto A press for
+        // its player-selection prompt included), so hand it the foreground.
+        if !game.is_null() {
+            unsafe { SetForegroundWindow(game) };
         }
     });
 }

@@ -70,53 +70,72 @@ struct Pool {
     auto_start: AutoStart,
 }
 
-/// One injected A press so the title's player-selection prompt ("Account
+/// Injected A presses so the title's player-selection prompt ("Account
 /// Picker / Screen Narration / <gamertag>"), which waits on A, passes without
-/// a key press. The title polls the pad from its first frames, well before the
-/// prompt is drawn, so the press waits until the pad has been polled for a
-/// while, then holds A across several polls and releases. It fires once per
-/// process, so it cannot confirm anything later.
+/// a key press. The prompt's arrival time varies with load speed, so A is
+/// pulsed: from `delay` after the first pad poll, held across several polls
+/// (at least 400 ms), then released for 4 s, up to 12 times (about a minute).
+/// Any real button on a physical pad stops it, so it never fights the
+/// player. Only runs while the title's window has focus (the launcher brings it
+/// to the front when the loading screen closes).
 /// TUXBOX_AUTO_START=0 turns it off; a number sets the delay in seconds after
-/// the first pad poll (default 30).
+/// the first pad poll (default 8).
 enum AutoStart {
     Off,
     Waiting { delay: u64, first: Option<u64>, polls: u32 },
-    Pressing { since: u64, polls: u32 },
+    Pressing { since: u64, polls: u32, pulse: u32 },
+    Gap { until: u64, pulse: u32 },
     Done,
 }
 
+const PULSES: u32 = 12;
+const GAP: u64 = 4_000_000;
+
 impl AutoStart {
     fn from_env() -> Self {
-        match std::env::var("TUXBOX_AUTO_START") {
-            Ok(v) if v.trim() == "0" => Self::Off,
-            Ok(v) => Self::Waiting { delay: v.trim().parse::<u64>().unwrap_or(30).max(1) * 1_000_000, first: None, polls: 0 },
-            Err(_) => Self::Waiting { delay: 30_000_000, first: None, polls: 0 },
-        }
+        let delay = match std::env::var("TUXBOX_AUTO_START") {
+            Ok(v) if v.trim() == "0" => return Self::Off,
+            Ok(v) => v.trim().parse::<u64>().unwrap_or(8).max(1),
+            Err(_) => 8,
+        };
+        Self::Waiting { delay: delay * 1_000_000, first: None, polls: 0 }
     }
 
-    /// Advance once per pad poll; true while A is held.
-    fn step(&mut self, now: u64) -> bool {
+    /// Advance once per pad poll; `real` is the pad's own button mask. True while A is held.
+    fn step(&mut self, now: u64, real: u32) -> bool {
+        if real != 0 && !matches!(self, Self::Off | Self::Done) {
+            eprintln!("TuxBox gameinput: auto start: stopped, a real button ({real:#x}) was pressed");
+            *self = Self::Done;
+            return false;
+        }
         match self {
             Self::Off | Self::Done => false,
             Self::Waiting { delay, first, polls } => {
                 let start = *first.get_or_insert(now);
                 *polls += 1;
-                if now - start >= *delay && *polls >= 60 {
-                    eprintln!("TuxBox gameinput: auto start: pressing A for the player-selection prompt ({} s after the first pad poll, {polls} polls; TUXBOX_AUTO_START=0 turns this off)",
+                if now - start >= *delay && *polls >= 30 {
+                    eprintln!("TuxBox gameinput: auto start: pulsing A for the player-selection prompt ({} s after the first pad poll; TUXBOX_AUTO_START=0 turns this off)",
                         (now - start) / 1_000_000);
-                    *self = Self::Pressing { since: now, polls: 1 };
+                    *self = Self::Pressing { since: now, polls: 1, pulse: 1 };
                     return true;
                 }
                 false
             }
-            Self::Pressing { since, polls } => {
+            Self::Pressing { since, polls, pulse } => {
                 *polls += 1;
                 if *polls > 4 && now - *since >= 400_000 {
-                    eprintln!("TuxBox gameinput: auto start: released A after {polls} polls; no further presses");
-                    *self = Self::Done;
+                    eprintln!("TuxBox gameinput: auto start: A pulse {pulse}/{PULSES} released");
+                    *self = if *pulse >= PULSES { Self::Done } else { Self::Gap { until: now + GAP, pulse: *pulse } };
                     return false;
                 }
                 true
+            }
+            Self::Gap { until, pulse } => {
+                if now >= *until {
+                    *self = Self::Pressing { since: now, polls: 1, pulse: *pulse + 1 };
+                    return true;
+                }
+                false
             }
         }
     }
@@ -210,7 +229,11 @@ impl Pool {
         }
         // The title's primary pad: the keyboard-merged pad, else the first XInput pad.
         let primary = desktop_slot.or_else(|| self.pads.iter().position(Option::is_some).map(|i| i + 2));
-        let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now);
+        let real = match primary {
+            Some(slot) if slot >= 2 => self.pads[slot - 2].map_or(0, |pad| pad.buttons),
+            _ => 0,
+        };
+        let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now, real);
         for slot in 0..DEVICES {
             let kind = kind(slot);
             if kind & mask == 0 {
