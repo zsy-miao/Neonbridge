@@ -116,6 +116,27 @@ pub(super) fn refresh_read_budget() -> u64 {
 /// refresh (each re-reads every level): the refresh log line reports it.
 pub(super) static LOST_CLAIMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// test69 read one level of 4847 MiB back from guest memory into a scratch
+/// buffer and an upload copy (two 4847 MiB host allocations) on the submit
+/// thread until the title's watchdog fired. A level over
+/// TUXBOX_SNAPSHOT_MAX_MB (256) is never read back: guest CPU writes to it
+/// are not uploaded. 0 lifts the cap.
+fn too_big(size: u64, desc: &D3D12_RESOURCE_DESC, level: usize) -> bool {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let mb = *MB.get_or_init(|| crate::env_toggle!("TUXBOX_SNAPSHOT_MAX_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(256));
+    if mb == 0 || size <= mb << 20 {
+        return false;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "placed textures: level {level} of a {}x{}x{} format {} dimension {} texture spans {} MiB of guest memory: never read back ({n} so far; TUXBOX_SNAPSHOT_MAX_MB=0 reads it)",
+            desc.Width, desc.Height, desc.DepthOrArraySize, desc.Format.0, desc.Dimension.0, size >> 20));
+    }
+    true
+}
+
 /// A fast 64-bit hash of a level's bytes (four multiply-rotate lanes).
 pub(super) fn level_hash(bytes: &[u8]) -> u64 {
     const K: [u64; 4] = [0x9e37_79b9_7f4a_7c15, 0xc2b2_ae3d_27d4_eb4f, 0x1656_67b1_9e37_79f9, 0xff51_afd7_ed55_8ccd];
@@ -616,6 +637,7 @@ impl Texture {
         scratch: &mut Vec<u8>,
         watch: Option<&watch::Watch>,
         budget: &mut u64,
+        spare: &mut Vec<Vec<u8>>,
     ) -> Result<usize> {
         // Another texture over the same span bytes wrote them since this one
         // did: wait for its readers and upload every level again.
@@ -657,6 +679,10 @@ impl Texture {
                 continue;
             }
             let size = mip.source.end - mip.source.start;
+            if too_big(size, &self.desc, level) {
+                skipped += 1;
+                continue;
+            }
             if big_snapshot(size, contents.big_at[level], watch.map(|w| w.unchanged(range))) {
                 skipped += 1;
                 continue;
@@ -687,7 +713,7 @@ impl Texture {
                 changes.push(upload::Change {
                     texture: self.clone(),
                     level,
-                    bytes: std::mem::take(scratch),
+                    bytes: std::mem::replace(scratch, spare.pop().unwrap_or_default()),
                     hash,
                 });
             }

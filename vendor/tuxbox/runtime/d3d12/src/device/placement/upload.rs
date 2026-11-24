@@ -32,6 +32,9 @@ pub(super) struct Transfer {
     pub(super) failed: Option<HRESULT>,
     pending: VecDeque<(u64, Upload)>,
     scratch: Vec<u8>,
+    /// Snapshot buffers given back by uploads, for the next refresh (at most
+    /// SPARE_BYTES of capacity): test69's refresh allocated one per changed level.
+    spare: Vec<Vec<u8>>,
     watch: super::watch::Watch,
     refreshes: u64,
     pool: Vec<(u64, ID3D12Resource)>,
@@ -46,6 +49,8 @@ pub(super) struct Transfer {
 // TUXBOX_UPLOAD_POOL=0 makes a buffer of the exact size per batch as before.
 const POOL_CAP_BYTES: u64 = 256 << 20;
 const POOL_MIN_BUCKET: u64 = 64 << 10;
+/// Capacity of snapshot buffers kept between refreshes (`Transfer::spare`).
+const SPARE_BYTES: usize = 128 << 20;
 
 fn upload_pool() -> bool {
     crate::env_toggle!("TUXBOX_UPLOAD_POOL") != Some("0")
@@ -98,6 +103,7 @@ impl Transfer {
             failed: None,
             pending: VecDeque::new(),
             scratch: Vec::new(),
+            spare: Vec::new(),
             watch: Default::default(),
             refreshes: 0,
             pool: Vec::new(),
@@ -138,7 +144,7 @@ impl Transfer {
         let (mut skipped, mut mips) = (0, 0);
         let mut budget = super::refresh_read_budget();
         for texture in textures {
-            skipped += texture.changed(&mut changes, &mut self.scratch, watch, &mut budget)?;
+            skipped += texture.changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
             mips += texture.mips.len();
         }
         self.refreshes += 1;
@@ -192,12 +198,13 @@ impl Transfer {
         for change in changes {
             let mut state = lock(&change.texture.contents);
             state.previous[change.level] = Some(change.hash);
-            // Keep the largest buffer for the next snapshot; the rest are freed.
-            if change.bytes.capacity() > self.scratch.capacity() {
-                self.scratch = change.bytes;
-            }
             state.uploaded = tick;
             state.readers.clear();
+            drop(state);
+            let held: usize = self.spare.iter().map(Vec::capacity).sum();
+            if held + change.bytes.capacity() <= SPARE_BYTES && change.bytes.capacity() <= SPARE_BYTES / 4 {
+                self.spare.push(change.bytes);
+            }
         }
         Ok(())
     }
