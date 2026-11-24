@@ -94,6 +94,33 @@ fn over_budget_ms() -> i64 {
     *MS.get_or_init(|| crate::env_toggle!("TUXBOX_COMPUTE_OVER_BUDGET_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(750))
 }
 
+/// rebox 8af34bf (idea, re-derived): a draw into a display-sized target is
+/// what the frame shows, so a graphics pipeline still being made when it is
+/// bound with such a target waits up to TUXBOX_DISPLAY_DRAW_WAIT_MS (250; 0
+/// drops its draws as before) outside the frame's budget instead.
+pub(crate) fn wait_pending_display(p: &Pipeline) -> bool {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let limit = *MS.get_or_init(|| crate::env_toggle!("TUXBOX_DISPLAY_DRAW_WAIT_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(250));
+    if limit == 0 || !p.state.lazy || p.state.compute {
+        return false;
+    }
+    let Some(slot) = p.state.upgrade.get() else { return false };
+    if super::stream::background::failed(slot) {
+        return false;
+    }
+    let started = std::time::Instant::now();
+    let built = super::stream::background::wait_for(slot, std::time::Duration::from_millis(limit)).is_some();
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        let key = p.state.key.as_deref().unwrap_or("-");
+        crate::diagnostics::log_line(format_args!(
+            "graphics pipeline {} still being made at a bind with a display-sized target: waited {:.1} ms, {} ({n} so far; TUXBOX_DISPLAY_DRAW_WAIT_MS=0 drops its draws)",
+            &key[..key.len().min(16)], started.elapsed().as_secs_f64() * 1e3, if built { "made" } else { "not made, draws dropped" }));
+    }
+    true
+}
+
 pub(crate) fn refill_bind_wait() {
     let ms = bind_wait_frame_ms();
     BIND_WAIT_LEFT_MS.store(if ms == 0 { i64::MAX } else { ms }, std::sync::atomic::Ordering::Relaxed);

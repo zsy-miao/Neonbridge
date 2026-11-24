@@ -50,6 +50,9 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
             if pending && crate::device::compute::wait_pending_compute(host) {
                 (native, data, pending) = crate::device::compute::current(host);
             }
+            if pending && state.display_sized && crate::device::compute::wait_pending_display(host) {
+                (native, data, pending) = crate::device::compute::current(host);
+            }
             state.pipeline_pending = pending;
             if crate::diagnostics::capture::active() {
                 state.capture_pipeline = data.key.clone();
@@ -129,6 +132,8 @@ pub(super) unsafe extern "system" fn targets(
         return;
     }
     state.dsv_bound = !dsv.is_null();
+    state.display_sized = state.bound_placed_targets.iter()
+        .any(|t| { let (w, h) = t.extent(); crate::diagnostics::display_sized(w, h) });
     if let Some(h) = unsafe { dsv.as_ref() } {
         unsafe { crate::device::placement::touch_target(parent(&list.parent), h.ptr) };
     }

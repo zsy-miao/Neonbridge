@@ -45,6 +45,7 @@ pub(super) unsafe extern "system" fn clear_state(list: &List, pipeline: *mut c_v
     }
     state.dsv_bound = false;
     state.display_bound = false;
+    state.display_sized = false;
     state.trace_target = None;
     state.bound_placed_targets.clear();
     state.resource_heap = None;

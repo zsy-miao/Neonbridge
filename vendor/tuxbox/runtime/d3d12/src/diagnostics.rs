@@ -174,7 +174,17 @@ pub(super) fn submitted(kind: D3D12_COMMAND_LIST_TYPE, count: u32) {
     });
 }
 
+/// The presented plane's size (width << 32 | height), 0 before the first present.
+static DISPLAY_SIZE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether a target of this size is display-sized (the last presented plane's).
+pub(crate) fn display_sized(width: u64, height: u32) -> bool {
+    let size = DISPLAY_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+    size != 0 && size == (width.min(u64::from(u32::MAX)) << 32 | u64::from(height))
+}
+
 pub(super) fn presented(width: u64, height: u32) {
+    DISPLAY_SIZE.store(width.min(u64::from(u32::MAX)) << 32 | u64::from(height), std::sync::atomic::Ordering::Relaxed);
     static FIRST_PRESENT: Once = Once::new();
     log_once(&FIRST_PRESENT, || {
         format!("PresentX presented first frame ({width}x{height})")

@@ -628,6 +628,11 @@ fn host_desc(desc: &D3D12_RESOURCE_DESC) -> D3D12_RESOURCE_DESC {
 }
 
 impl Texture {
+    /// Width and height of the top level (display-sized draws).
+    pub(crate) fn extent(&self) -> (u64, u32) {
+        (self.desc.Width, self.desc.Height)
+    }
+
     /// Guest address of a subresource's texels. On the console Map returns this
     /// memory directly; the uploader publishes CPU writes before GPU reads.
     pub(crate) fn guest_pointer(&self, subresource: u32) -> Option<u64> {

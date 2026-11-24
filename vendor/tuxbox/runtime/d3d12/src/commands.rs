@@ -80,6 +80,8 @@ struct Recording {
     stencil_targets: Option<stencil::Targets>,
     dsv_bound: bool,
     display_bound: bool,
+    /// A bound render target has the presented plane's size (rebox 8af34bf).
+    display_sized: bool,
     trace_target: Option<ID3D12Resource>,
     trace_samples: Vec<(String, crate::present::sampler::Sample)>,
     null_pipeline: bool,
@@ -3045,6 +3047,7 @@ pub(crate) unsafe fn wrap_command_list(
             stencil_targets: None,
             dsv_bound: false,
             display_bound: false,
+            display_sized: false,
             trace_target: None,
             trace_samples: Vec::new(),
             null_pipeline: false,
