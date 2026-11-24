@@ -608,6 +608,11 @@ unsafe extern "system" fn reset(
         state.phase = ListState::Closed;
     }
     let native = &list.native;
+    if let Some(p) = initial
+        && device::compute::current(p).2
+    {
+        device::compute::wait_pending_compute(p);
+    }
     let pipeline = initial.map_or(ptr::null_mut(), |p| device::compute::current(p).0.as_raw());
     let host_reset = |host: &ID3D12CommandAllocator| unsafe {
         (native.vtable().Reset)(native.as_raw(), host.as_raw(), pipeline)

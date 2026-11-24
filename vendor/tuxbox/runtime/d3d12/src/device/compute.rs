@@ -36,6 +36,9 @@ pub(crate) struct PipelineData {
     pub(crate) used: std::sync::atomic::AtomicBool,
     /// The native is a shared placeholder until a worker makes the pipeline.
     pub(crate) lazy: bool,
+    /// A compute pipeline (slot 62): its dispatches wait for it rather than drop
+    /// (see `wait_pending_compute`).
+    pub(crate) compute: bool,
 }
 
 /// The host pipeline and state to bind: a worker's rebuild once it exists.
@@ -78,10 +81,12 @@ pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
     let limit = *LIMIT.get_or_init(|| {
         crate::env_toggle!("TUXBOX_COMPUTE_PENDING_WAIT_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(3000)
     });
-    let Some(key) = &p.state.key else { return false };
-    if limit == 0 || !p.state.lazy || !key.starts_with("compute:") {
+    // test106: 9186337 tested the key for "compute:", but the key is the digest
+    // of that string, so no bind ever waited. The pipeline is marked instead.
+    if limit == 0 || !p.state.lazy || !p.state.compute {
         return false;
     }
+    let key = p.state.key.as_deref().unwrap_or("-");
     let Some(slot) = p.state.upgrade.get() else { return false };
     if super::stream::background::failed(slot) {
         return false;
@@ -97,7 +102,7 @@ pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
         };
         crate::diagnostics::log_line(format_args!(
             "compute pipeline {} still being made at its bind: waited {:.1} ms, {} ({caller}; {n} so far; TUXBOX_COMPUTE_PENDING_WAIT_MS=0 drops its dispatches)",
-            &key[..key.len().min(48)], started.elapsed().as_secs_f64() * 1e3,
+            &key[..key.len().min(16)], started.elapsed().as_secs_f64() * 1e3,
             if built { "made" } else { "not made, dispatches dropped" }));
     }
     true
@@ -345,7 +350,7 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     {
         let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
         let work = background::Work::Compute(background::OwnedCompute::copy(guest, bytes));
-        let state = PipelineData { key: key.map(Into::into), lazy: true, ..Default::default() };
+        let state = PipelineData { key: key.map(Into::into), lazy: true, compute: true, ..Default::default() };
         let owner = (*identity(this)).clone();
         let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });
         return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
