@@ -983,7 +983,7 @@ pub(super) unsafe extern "system" fn barrier(
         return;
     }
     if groups.is_null() {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let Some(native) = list
@@ -991,7 +991,7 @@ pub(super) unsafe extern "system" fn barrier(
         .enhanced_barriers
         .get_or_init(|| enhanced_barriers(&list.native))
     else {
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     };
     if let Err(error) =
@@ -1000,6 +1000,6 @@ pub(super) unsafe extern "system" fn barrier(
         crate::diagnostics::recording_error(format_args!(
             "enhanced resource barrier group ({error:?})"
         ));
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
     }
 }

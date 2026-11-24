@@ -338,7 +338,7 @@ unsafe fn wait_value(
             word_bytes(wide) * 8,
             error.code()
         ));
-        state.error = error.code();
+        { state.error = error.code(); state.error_at = (file!(), line!()); }
     }
 }
 

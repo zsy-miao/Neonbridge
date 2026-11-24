@@ -18,7 +18,7 @@ pub(super) unsafe extern "system" fn query<const BEGIN: bool>(
     }
     let heap = unsafe { range(object, parent(&list.parent), kind, index, 1) };
     let Some((heap, _)) = heap else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     // Occlusion and stream-output queries exist only on direct lists, and a
@@ -39,14 +39,14 @@ pub(super) unsafe extern "system" fn query<const BEGIN: bool>(
     let open = state.open_queries.iter().position(|(h, k, i)| h == heap && *k == kind && *i == index);
     if BEGIN {
         if kind == D3D12_QUERY_TYPE_TIMESTAMP {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         }
         if open.is_some() {
             return;
         }
         if state.open_queries.try_reserve(1).is_err() {
-            state.error = windows::Win32::Foundation::E_OUTOFMEMORY;
+            { state.error = windows::Win32::Foundation::E_OUTOFMEMORY; state.error_at = (file!(), line!()); }
             return;
         }
         unsafe { list.native.BeginQuery(heap, kind, index) };
@@ -79,15 +79,15 @@ pub(super) unsafe extern "system" fn resolve(
     let heap = unsafe { range(object, owner, kind, start, count) };
     let dst = unsafe { resource_proxy(destination, owner) };
     let (Some((heap, stride)), Some(dst)) = (heap, dst) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     unsafe { crate::device::note_shadow_write(owner, windows::core::Interface::as_raw(&dst.native)) };
     let Some(offset) = super::compute::buffer_offset(dst, offset, u64::from(count) * stride) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
-    if !offset.is_multiple_of(8) { state.error = E_INVALIDARG; return; }
+    if !offset.is_multiple_of(8) { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; }
     unsafe {
         list.native
             .ResolveQueryData(heap, kind, start, count, &dst.native, offset)
@@ -157,7 +157,7 @@ pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, val
         *index += 1;
         state.prefix.push(&list.native, packet)
     })();
-    if let Err(error) = result { state.error = error.code(); }
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
 }
 
 pub(super) unsafe extern "system" fn frequency(queue: &Queue, hz: *mut u64) -> HRESULT {

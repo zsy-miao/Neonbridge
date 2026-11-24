@@ -58,7 +58,7 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
         }
         _ => {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BindsRefused);
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         }
     }
 }
@@ -75,7 +75,7 @@ pub(super) unsafe extern "system" fn viewports(
     if count > D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE
         || (count != 0 && views.is_null())
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     unsafe { (list.native.vtable().RSSetViewports)(list.native.as_raw(), count, views) };
@@ -89,7 +89,7 @@ pub(super) unsafe extern "system" fn scissors(list: &List, count: u32, rects: *c
     if count > D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE
         || (count != 0 && rects.is_null())
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     unsafe { (list.native.vtable().RSSetScissorRects)(list.native.as_raw(), count, rects) };
@@ -109,7 +109,7 @@ pub(super) unsafe extern "system" fn targets(
         return;
     }
     if count > D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT || (count != 0 && rtvs.is_null()) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // CPU RTV descriptors are consumed by OMSetRenderTargets immediately.
@@ -119,7 +119,7 @@ pub(super) unsafe extern "system" fn targets(
             parent(&list.parent), count, rtvs, contiguous.as_bool(), &mut state.bound_placed_targets,
         )
     } {
-        state.error = error.code();
+        { state.error = error.code(); state.error_at = (file!(), line!()); }
         return;
     }
     state.dsv_bound = !dsv.is_null();
@@ -145,7 +145,7 @@ pub(super) unsafe extern "system" fn targets(
             match super::stencil::Targets::new(native) {
                 Ok(targets) => state.stencil_targets = Some(targets),
                 Err(e) => {
-                    state.error = e.code();
+                    { state.error = e.code(); state.error_at = (file!(), line!()); }
                     return;
                 }
             }
@@ -201,12 +201,12 @@ pub(super) unsafe extern "system" fn shading_rate(
         D3D12_SHADING_RATE_2X2 | D3D12_SHADING_RATE_2X4 | D3D12_SHADING_RATE_4X2 | D3D12_SHADING_RATE_4X4)
         || (!combiners.is_null() && unsafe { std::slice::from_raw_parts(combiners, 2) }.iter()
             .any(|op| !(0..=4).contains(&op.0))) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let native = match list.native.cast::<ID3D12GraphicsCommandList5>() {
         Ok(native) => native,
-        Err(error) => { state.error = error.code(); return; }
+        Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
     };
     unsafe { native.RSSetShadingRate(rate, (!combiners.is_null()).then_some(combiners)) };
 }
@@ -221,7 +221,7 @@ pub(super) unsafe extern "system" fn force_shader_depth_order(list: &List, enabl
         return;
     }
     if enable > 1 || unsafe { list.native.GetType() } != D3D12_COMMAND_LIST_TYPE_DIRECT {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     static MODES: [std::sync::Once; 2] = [const { std::sync::Once::new() }; 2];
@@ -239,7 +239,7 @@ pub(super) unsafe extern "system" fn sample_mask(list: &List, mask: u64) {
     }
     if mask != u64::MAX {
         crate::diagnostics::recording_error(format_args!("SetSampleMaskX quad mask {mask:#018x}"));
-        state.error = windows::Win32::Foundation::E_NOTIMPL;
+        { state.error = windows::Win32::Foundation::E_NOTIMPL; state.error_at = (file!(), line!()); }
     }
 }
 
@@ -257,11 +257,11 @@ pub(super) unsafe extern "system" fn dispatch_mesh(list: &List, x: u32, y: u32, 
             D3D12_COMMAND_LIST_TYPE_DIRECT | D3D12_COMMAND_LIST_TYPE_BUNDLE
         )
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let Some(native) = list.state.mesh.get_or_init(|| list.native.cast().ok()) else {
-        state.error = windows::Win32::Foundation::E_NOINTERFACE;
+        { state.error = windows::Win32::Foundation::E_NOINTERFACE; state.error_at = (file!(), line!()); }
         return;
     };
     state.draw(list, x != 0 && y != 0 && z != 0, || unsafe { native.DispatchMesh(x, y, z) });
@@ -330,7 +330,7 @@ pub(super) unsafe extern "system" fn vertex_buffers(
     if start > D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT
         || count > D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - start
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if views.is_null() && count != 0 && null_views_unbind() {
@@ -354,7 +354,7 @@ pub(super) unsafe extern "system" fn vertex_buffers(
             let backed = unsafe { crate::device::command_buffer_address(super::parent(&list.parent), v.BufferLocation, u64::from(v.SizeInBytes).max(1)) };
             match backed {
                 Ok((Some(buffer), va)) => {
-                    if let Err(e) = super::raytracing::retain(&mut state, &[&buffer]) { state.error = e.code(); return; }
+                    if let Err(e) = super::raytracing::retain(&mut state, &[&buffer]) { { state.error = e.code(); state.error_at = (file!(), line!()); } return; }
                     v.BufferLocation = va;
                 }
                 Ok((None, _)) | Err(_) => {

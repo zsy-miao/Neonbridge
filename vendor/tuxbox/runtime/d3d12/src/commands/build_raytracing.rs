@@ -344,7 +344,7 @@ pub(super) unsafe extern "system" fn single(
     if desc.is_null() || (postbuild_count != 0 && postbuild.is_null()) {
         let mut state = recording(list);
         if state.can_record(&list.native) {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         }
         return;
     }
@@ -501,11 +501,11 @@ unsafe fn record_builds(
         return;
     }
     let Some(host) = &list.state.raytracing else {
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     };
     if entries.is_null() {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let entries = unsafe { core::slice::from_raw_parts(entries, count as usize) };
@@ -524,7 +524,7 @@ unsafe fn record_builds(
                 .is_multiple_of(alignment)
             || (update && b.SourceAccelerationStructureData == 0)
         {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         }
         if b.Inputs.Type == D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL
@@ -537,13 +537,13 @@ unsafe fn record_builds(
                 8
             };
             if va == 0 || !va.is_multiple_of(align) {
-                state.error = E_INVALIDARG;
+                { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
                 return;
             }
         }
     }
     let Some(owner) = &list.parent else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let shared = host_outputs(list, &state, outputs);
@@ -579,13 +579,13 @@ unsafe fn record_builds(
         // One build can need a late-bound instance table, an update-source
         // check, and a destination publication, in that command order.
         if state.scene_commands.try_reserve(3).is_err() {
-            state.error = E_OUTOFMEMORY;
+            { state.error = E_OUTOFMEMORY; state.error_at = (file!(), line!()); }
             return;
         }
         let (build, instances, bytes) = match translate(&mut state, owner, host, entry.build) {
             Ok(build) => build,
             Err(err) => {
-                state.error = err.code();
+                { state.error = err.code(); state.error_at = (file!(), line!()); }
                 return;
             }
         };

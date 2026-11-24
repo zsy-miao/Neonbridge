@@ -117,6 +117,9 @@ struct Recording {
     split_barriers: Vec<TransitionBarrier>,
     phase: ListState,
     error: HRESULT,
+    /// Where `error` was set (test119 logged two refused 0x80004001 calls
+    /// before its hang with nothing naming them).
+    error_at: (&'static str, u32),
 }
 
 impl Recording {
@@ -164,12 +167,12 @@ impl Recording {
                 &mut self.sampled_heaps, &self.resources, dispatch,
             ) && !table_drop::drops(error.code(), "dispatch")
             {
-                self.error = error.code();
+                { self.error = error.code(); self.error_at = (file!(), line!()); }
             }
             return;
         }
         if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<true>() {
-            self.error = E_NOTIMPL;
+            { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); }
             return;
         }
         if self.unresolved_tables.any(true) && table_drop::enabled() {
@@ -178,7 +181,7 @@ impl Recording {
         }
         if let Err(error) = self.bindings.refresh_inline_tables::<true>(self.descriptor_arena.as_deref()) {
             if !table_drop::drops(error.code(), "dispatch") {
-                self.error = error.code();
+                { self.error = error.code(); self.error_at = (file!(), line!()); }
             }
             return;
         }
@@ -215,7 +218,7 @@ impl Recording {
             crate::diagnostics::recording_error(format_args!(
                 "inline ray scene binding: {:?}", error.code()
             ));
-            self.error = error.code();
+            { self.error = error.code(); self.error_at = (file!(), line!()); }
         }
     }
 
@@ -239,7 +242,7 @@ impl Recording {
         if rasterizes {
             for target in &self.bound_placed_targets {
                 if let Err(error) = Self::track_texture(&mut self.placed_writes, target) {
-                    self.error = error;
+                    { self.error = error; self.error_at = (file!(), line!()); }
                     return;
                 }
             }
@@ -258,7 +261,7 @@ impl Recording {
             }
         };
         if let Some(table) = self.bindings.reflected_table::<false>() {
-            if self.stencil_slot.is_some() { self.error = E_NOTIMPL; return; }
+            if self.stencil_slot.is_some() { { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); } return; }
             if let Some(binding) = table.index_map.filter(|b| b.scalar_mask != 0) {
                 // These PSOs have one descriptor table followed by one root
                 // constants parameter. The native ISA selects its scalar
@@ -267,9 +270,9 @@ impl Recording {
                     .and_then(|word| self.resource_heap.as_ref()?.scalar_descriptor(
                         word & binding.scalar_mask, self.descriptor_arena.as_deref(),
                     ));
-                let Some(descriptor) = descriptor else { self.error = E_INVALIDARG; return };
+                let Some(descriptor) = descriptor else { { self.error = E_INVALIDARG; self.error_at = (file!(), line!()); } return };
                 if self.scalar_descriptors.try_reserve(1).is_err() {
-                    self.error = E_OUTOFMEMORY;
+                    { self.error = E_OUTOFMEMORY; self.error_at = (file!(), line!()); }
                     return;
                 }
                 self.scalar_descriptors.insert(descriptor);
@@ -277,7 +280,7 @@ impl Recording {
                     && !self.indexed_arenas.iter().any(|used| Arc::ptr_eq(used, arena))
                 {
                     if self.indexed_arenas.try_reserve(1).is_err() {
-                        self.error = E_OUTOFMEMORY;
+                        { self.error = E_OUTOFMEMORY; self.error_at = (file!(), line!()); }
                         return;
                     }
                     self.indexed_arenas.push(arena.clone());
@@ -287,7 +290,7 @@ impl Recording {
                 table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(), &mut self.sampled_heaps, &self.resources, draw,
             ) {
                 if table_drop::drops(error.code(), "draw") { return; }
-                self.error = error.code();
+                { self.error = error.code(); self.error_at = (file!(), line!()); }
                 if crate::diagnostics::display::trace_views() {
                     crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
                         "reflected raster binding failed {:#010x} guest RVA {:#x}", self.error.0,
@@ -298,7 +301,7 @@ impl Recording {
             return;
         }
         if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<false>() {
-            self.error = E_NOTIMPL;
+            { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); }
             return;
         }
         if self.unresolved_tables.any(false) && table_drop::enabled() {
@@ -307,7 +310,7 @@ impl Recording {
         }
         if let Err(error) = self.bindings.refresh_inline_tables::<false>(self.descriptor_arena.as_deref()) {
             if table_drop::drops(error.code(), "draw") { return; }
-            self.error = error.code();
+            { self.error = error.code(); self.error_at = (file!(), line!()); }
             if crate::diagnostics::display::trace_views() {
                 crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
                     "original raster binding failed {:#010x} guest RVA {:#x}", self.error.0,
@@ -326,7 +329,7 @@ impl Recording {
                 .ok_or_else(|| windows::core::Error::from(E_NOTIMPL))
                 .and_then(|t| t.draw(&list.native, slot, draw));
             if let Err(e) = status {
-                self.error = e.code();
+                { self.error = e.code(); self.error_at = (file!(), line!()); }
             } else { trace(self); }
         } else {
             draw();
@@ -370,7 +373,7 @@ impl Recording {
     fn can_record(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
         if !self.ensure_open(native) { return false; }
         if let Err(error) = self.prefix.finish(native) {
-            self.error = error.code();
+            { self.error = error.code(); self.error_at = (file!(), line!()); }
             return false;
         }
         true
@@ -423,7 +426,8 @@ impl Recording {
         let n = FORGIVEN.fetch_add(1, Ordering::Relaxed);
         if n < 8 || (n + 1).is_power_of_two() {
             crate::diagnostics::log_line(format_args!(
-                "dropped one refused recording call {:#010x}, list continues ({} so far)", self.error.0, n + 1
+                "dropped one refused recording call {:#010x} (set at {}:{}), list continues ({} so far)",
+                self.error.0, self.error_at.0, self.error_at.1, n + 1
             ));
         }
         self.error = S_OK;
@@ -445,7 +449,7 @@ impl Recording {
                 // Reopen with its original bindings when the first operation records.
                 if let Err(error) = unsafe { native.Reset(allocator, initial.as_ref()) } {
                     crate::diagnostics::log_line(format_args!("fresh list reopen failed {:#010x}", error.code().0));
-                    self.error = error.code();
+                    { self.error = error.code(); self.error_at = (file!(), line!()); }
                     return false;
                 }
                 self.phase = ListState::Open;
@@ -760,7 +764,7 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         ListState::Closed => return E_FAIL,
         ListState::Fresh(..) => {} // The initial empty recording is already closed on the host.
         ListState::Open => {
-            if let Err(error) = state.prefix.finish(&list.native) { state.error = error.code(); }
+            if let Err(error) = state.prefix.finish(&list.native) { { state.error = error.code(); state.error_at = (file!(), line!()); } }
             state.balance(&list.native);
             let closed = unsafe { list.native.Close() };
             if closed.is_ok() {
@@ -775,7 +779,7 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
                         error.code().0, state.error.0, unsafe { list.native.GetType() }.0, state.ring
                     ));
                 }
-                state.error = error.code();
+                { state.error = error.code(); state.error_at = (file!(), line!()); }
                 enhanced::close_failed(list);
             }
         }
@@ -873,7 +877,7 @@ unsafe extern "system" fn transition(
         return;
     }
     if barriers.is_null() {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // The guest supplies count readable barriers. Read a transition payload
@@ -1068,7 +1072,7 @@ unsafe extern "system" fn transition(
         },
     );
     if let Err(error) = result {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
     }
     for t in splits {
         let same = |b: &TransitionBarrier| b.resource == t.resource && b.subresource == t.subresource;
@@ -1168,7 +1172,7 @@ unsafe extern "system" fn flush_texture_cache(list: &List, mask: u32, address: u
     // global memory barrier, which also covers subranges and empty ranges.
     if !matches!(mask, 0xc0_0000 | 0x3000) && xargs_strict() {
         crate::diagnostics::recording_error(format_args!("texture cache flush mask {mask:#x}"));
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     }
     if !matches!(mask, 0xc0_0000 | 0x3000) {
@@ -1181,7 +1185,7 @@ unsafe extern "system" fn flush_texture_cache(list: &List, mask: u32, address: u
         crate::diagnostics::recording_error(format_args!(
             "overflowing texture cache flush address {address:#x} bytes {bytes:#x}"
         ));
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if address != 0 || bytes != 0xff_ffff_ff00 {
@@ -1203,7 +1207,7 @@ unsafe extern "system" fn extended_cache_barrier(
         return;
     }
     if address.checked_add(bytes).is_none() {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     global_cache_barrier(list, &mut state);
@@ -1216,7 +1220,7 @@ fn global_cache_barrier(list: &List, state: &mut Recording) {
         .get_or_init(|| enhanced_barriers(&list.native))
     else {
         crate::diagnostics::recording_error(format_args!("enhanced global barriers unavailable"));
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     };
     let barrier = D3D12_GLOBAL_BARRIER {
@@ -1249,7 +1253,7 @@ unsafe extern "system" fn clear_rtv(
         return;
     }
     if handle.ptr == 0 || color.is_null() || (count != 0 && rects.is_null()) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // palmetto cf825083 (GPL-3): a clear of a view created from a null resource
@@ -1268,7 +1272,7 @@ unsafe extern "system" fn clear_rtv(
     if let Some(target) = unsafe { placement::render_target(parent(&list.parent), handle.ptr) }
         && let Err(error) = Recording::track_texture(&mut state.placed_writes, &target)
     {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     unsafe {
@@ -1298,11 +1302,11 @@ unsafe extern "system" fn discard(
         return;
     }
     let Some(resource) = (unsafe { device::resource_proxy(object, parent(&list.parent)) }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     if (unsafe { region.as_ref() }).is_some_and(|r| r.NumRects != 0 && r.pRects.is_null()) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // CPU-backed read-only textures acquire their contents at submission.
@@ -1372,7 +1376,7 @@ unsafe extern "system" fn copy_texture(
     }
     if flags != 0 {
         crate::diagnostics::recording_error(format_args!("CopyTextureRegion flags {flags:#x}"));
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     }
     let device = parent(&list.parent);
@@ -1381,11 +1385,11 @@ unsafe extern "system" fn copy_texture(
             copy_location(src, device)
         })
     else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     if let Err(error) = state.prepare_copy(destination, source) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     crate::diagnostics::display::copy(dst.resource);
@@ -1419,7 +1423,7 @@ unsafe extern "system" fn copy_resource(
         crate::diagnostics::recording_error(format_args!(
             "slot 84 CopyResource options {options:#x}"
         ));
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     }
     let owner = parent(&list.parent);
@@ -1428,7 +1432,7 @@ unsafe extern "system" fn copy_resource(
     let (Some(dst), Some(src)) = (unsafe { device::resource_proxy(dst, owner) }, unsafe {
         device::resource_proxy(src, owner)
     }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     crate::diagnostics::display::copy(dst.native.as_raw());
@@ -1439,7 +1443,7 @@ unsafe extern "system" fn copy_resource(
         let (from, other) = src.state.buffer_window().unwrap_or((0, s.Width));
         if d.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || s.Dimension != d.Dimension || size != other
             || (dst.native == src.native && to < from + size && from < to + size) {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         }
         unsafe { list.native.CopyBufferRegion(&dst.native, to, &src.native, from, size) };
@@ -1454,11 +1458,11 @@ unsafe extern "system" fn copy_resource(
         // block-compressed and uncompressed textures. Leave those to the driver.
         || (d.Format == s.Format && (d.Width != s.Width || d.Height != s.Height))
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if let Err(error) = state.prepare_copy(dst.state.placed(), src.state.placed()) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     // SAFETY: both native resources belong to this open command list's device.
@@ -1493,20 +1497,20 @@ unsafe extern "system" fn execute_indirect(
         unsafe { device::indirect::signature(signature, owner) },
         unsafe { device::resource_proxy(arguments, owner) },
     ) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let bytes = u64::from(signature.state.stride) * u64::from(max_count);
     let Some(argument_offset) = compute::buffer_offset(arguments, argument_offset, bytes) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let (count, count_offset) = if count_buffer.is_null() { (None, count_offset) } else {
-        let Some(buffer) = (unsafe { device::resource_proxy(count_buffer, owner) }) else { state.error = E_INVALIDARG; return; };
-        let Some(offset) = compute::buffer_offset(buffer, count_offset, 4) else { state.error = E_INVALIDARG; return; };
+        let Some(buffer) = (unsafe { device::resource_proxy(count_buffer, owner) }) else { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; };
+        let Some(offset) = compute::buffer_offset(buffer, count_offset, 4) else { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; };
         (Some(&buffer.native), offset)
     };
-    if !(argument_offset | count_offset).is_multiple_of(4) { state.error = E_INVALIDARG; return; }
+    if !(argument_offset | count_offset).is_multiple_of(4) { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; }
     if max_count != 0 && !state.pipeline_pending && clamp_enabled()
         && let Some(host) = list.state.raytracing.as_ref()
     {
@@ -1520,13 +1524,13 @@ unsafe extern "system" fn execute_indirect(
                 if let Some(made) = made
                     && let Err(error) = raytracing::retain(&state, &[&made])
                 {
-                    state.error = error.code();
+                    { state.error = error.code(); state.error_at = (file!(), line!()); }
                     return;
                 }
                 // The clamp replaced the compute root and the pipeline.
                 if ran { unsafe { state.bindings.restore(host) }; }
             }
-            Err(error) => { state.error = error.code(); return; }
+            Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
         }
     }
     let execute = || unsafe {
@@ -1576,11 +1580,11 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
     let mut state = recording(list);
     if !state.ensure_open(&list.native) { return; }
     if address == 0 || !address.is_multiple_of(4) {
-        if xargs_strict() { state.error = E_INVALIDARG; }
+        if xargs_strict() { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } }
         return;
     }
     if (flags != 0 || reserved != 0) && xargs_strict() {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if flags != 0 || reserved != 0 {
@@ -1610,7 +1614,7 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
         let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest, Value: value };
         state.prefix.push(&list.native, memory_wait::Packet::Marker(write))
     })();
-    if let Err(error) = result { state.error = error.code(); }
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
 }
 
 /// List slot 62 on the newer console layout (60 on the older one):
@@ -1666,7 +1670,7 @@ unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64
         }
         Ok(())
     })();
-    if let Err(error) = result { state.error = error.code(); }
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
 }
 
 /// xcl's idea (re-derived from 21bc548/392dc0c): a copy whose source and
@@ -2007,7 +2011,7 @@ fn fill_memory(list: &List, address: u64, size: u64, pattern: [u8; 16], unit: u6
         }
         Ok(())
     })();
-    if let Err(error) = result { state.error = error.code(); }
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
 }
 
 fn repeat(bytes: &[u8]) -> [u8; 16] {
@@ -2979,6 +2983,7 @@ pub(crate) unsafe fn wrap_command_list(
             media: compact.then(|| media::Recording::new(allocator)),
             phase: ListState::Fresh(allocator.native.clone(), initial.map(|p| p.native.clone())),
             error: S_OK,
+            error_at: ("", 0),
         }),
     };
     unsafe {

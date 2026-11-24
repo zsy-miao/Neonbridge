@@ -265,11 +265,11 @@ pub(super) unsafe extern "system" fn copy(
         return;
     }
     let Some(host) = &list.state.raytracing else {
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     };
     let Some(owner) = &list.parent else {
-        state.error = E_POINTER;
+        { state.error = E_POINTER; state.error_at = (file!(), line!()); }
         return;
     };
     if let Err(error) = record(&mut state, host, owner, destination, source, mode) {
@@ -288,7 +288,7 @@ pub(super) unsafe extern "system" fn copy(
             mode.0,
             error.code()
         ));
-        state.error = error.code();
+        { state.error = error.code(); state.error_at = (file!(), line!()); }
     }
 }
 
@@ -363,7 +363,7 @@ pub(super) unsafe extern "system" fn postbuild(
         Ok(())
     })();
     if let Err(error) = result {
-        state.error = error.code();
+        { state.error = error.code(); state.error_at = (file!(), line!()); }
         crate::diagnostics::recording_error(format_args!(
             "slot 118 AS size query: {:?}",
             error.code()

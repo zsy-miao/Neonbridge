@@ -101,7 +101,7 @@ pub(super) unsafe extern "system" fn bind_heaps(
         return;
     }
     if count > 2 || (count != 0 && heaps.is_null()) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let guest = if count == 0 {
@@ -116,12 +116,12 @@ pub(super) unsafe extern "system" fn bind_heaps(
     let mut descriptor_arena = None;
     for (index, &object) in guest.iter().enumerate() {
         let Some(heap) = (unsafe { device::descriptor_heap(object, parent(&list.parent)) }) else {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         };
         let desc = &heap.state.desc;
         if desc.Flags != D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE || previous == Some(desc.Type) {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         }
         if let Some(views) = &heap.state.placed_views {
@@ -158,7 +158,7 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
     let logical = base;
     let base = if let Some(arena) = &state.descriptor_arena && arena.contains(base.ptr) {
         let Some(Some(length)) = state.bindings.paged_layout::<COMPUTE>().and_then(|t| t.get(index as usize)) else {
-            state.error = windows::Win32::Foundation::E_NOTIMPL;
+            { state.error = windows::Win32::Foundation::E_NOTIMPL; state.error_at = (file!(), line!()); }
             return;
         };
         // The selected PSO may supply a more precise descriptor layout.
@@ -172,7 +172,7 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
                 state.bindings.table::<COMPUTE>(index, logical, logical);
                 return;
             }
-            Err(error) => { state.error = error.code(); return; }
+            Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
         }
     } else { base };
     state.unresolved_tables.set(COMPUTE, index, false);

@@ -86,11 +86,11 @@ unsafe extern "system" fn barriers(list: &List, count: u32, input: *const D3D12_
         return;
     }
     if input.is_null() {
-        state.error = E_POINTER;
+        { state.error = E_POINTER; state.error_at = (file!(), line!()); }
         return;
     }
     let Some(media) = state.media.as_mut() else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let guest = unsafe { slice::from_raw_parts(input, count as usize) };
@@ -129,7 +129,7 @@ unsafe extern "system" fn barriers(list: &List, count: u32, input: *const D3D12_
         },
     );
     if let Err(e) = result {
-        state.error = e;
+        { state.error = e; state.error_at = (file!(), line!()); }
     }
 }
 
@@ -147,15 +147,15 @@ unsafe extern "system" fn copy(
         return;
     }
     let (Some(dst), Some(src)) = (unsafe { dst.as_ref() }, unsafe { src.as_ref() }) else {
-        state.error = E_POINTER;
+        { state.error = E_POINTER; state.error_at = (file!(), line!()); }
         return;
     };
     let Some(media) = state.media.as_mut() else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     if let Err(error) = unsafe { record_copy(list, media, dst, [x, y, z], src, region.as_ref()) } {
-        state.error = error.code();
+        { state.error = error.code(); state.error_at = (file!(), line!()); }
     }
 }
 

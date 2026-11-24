@@ -22,14 +22,14 @@ pub(super) unsafe extern "system" fn clear_state(list: &List, pipeline: *mut c_v
         unsafe { list.native.GetType() },
         D3D12_COMMAND_LIST_TYPE_DIRECT | D3D12_COMMAND_LIST_TYPE_COMPUTE
     ) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // A null pipeline is the cleared state. An unknown object is not.
     let pipeline = match unsafe { crate::device::compute::pipeline(pipeline, parent(&list.parent)) } {
         Ok(pipeline) => pipeline,
         Err(error) => {
-            state.error = error;
+            { state.error = error; state.error_at = (file!(), line!()); }
             return;
         }
     };
@@ -136,27 +136,27 @@ pub(super) unsafe extern "system" fn copy_tiles(
             static FIRST: std::sync::Once = std::sync::Once::new();
             crate::diagnostics::log_once(&FIRST, || format!("CopyTiles flags {:#x}", flags.0));
         }
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     let Some(region) = (unsafe { region.as_ref() }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     if coordinate.is_null() {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let Ok(tiles) = tile_count(region) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let Some(bytes) = tiles.checked_mul(u64::from(D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES)) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     if !offset.is_multiple_of(u64::from(D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES)) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let owner = parent(&list.parent);
@@ -164,11 +164,11 @@ pub(super) unsafe extern "system" fn copy_tiles(
         unsafe { crate::device::resource_proxy(tiled, owner) },
         unsafe { crate::device::resource_proxy(buffer, owner) },
     ) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let Some(offset) = super::compute::buffer_offset(buffer, offset, bytes) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     match reserved_resource(&tiled.native) {
@@ -176,16 +176,16 @@ pub(super) unsafe extern "system" fn copy_tiles(
         Ok(false) => {
             static FIRST: std::sync::Once = std::sync::Once::new();
             crate::diagnostics::log_once(&FIRST, || "CopyTiles resource is not reserved".to_string());
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         }
         Err(error) => {
-            state.error = error;
+            { state.error = error; state.error_at = (file!(), line!()); }
             return;
         }
     }
     if let Err(error) = state.prepare_copy(tiled.state.placed(), buffer.state.placed()) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     unsafe {
@@ -217,7 +217,7 @@ pub(super) unsafe extern "system" fn resolve_subresource(
         return;
     }
     if !resolve_format(format) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let owner = parent(&list.parent);
@@ -225,7 +225,7 @@ pub(super) unsafe extern "system" fn resolve_subresource(
         unsafe { crate::device::resource_proxy(dst, owner) },
         unsafe { crate::device::resource_proxy(src, owner) },
     ) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let (destination, source) = unsafe { (dst.native.GetDesc(), src.native.GetDesc()) };
@@ -237,11 +237,11 @@ pub(super) unsafe extern "system" fn resolve_subresource(
         || source.SampleDesc.Count <= 1
         || destination.SampleDesc.Count != 1
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if let Err(error) = state.prepare_copy(dst.state.placed(), src.state.placed()) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     unsafe {
@@ -272,7 +272,7 @@ pub(super) unsafe extern "system" fn set_predication(
         return;
     }
     if let Err(error) = predication_op(operation) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     if buffer.is_null() {
@@ -280,16 +280,16 @@ pub(super) unsafe extern "system" fn set_predication(
         return;
     }
     let Some(buffer) = (unsafe { crate::device::resource_proxy(buffer, parent(&list.parent)) }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     // The predicate is one 64-bit value.
     if !offset.is_multiple_of(8) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let Some(offset) = super::compute::buffer_offset(buffer, offset, 8) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     unsafe { list.native.SetPredication(&buffer.native, offset, operation) };
@@ -314,7 +314,7 @@ pub(super) unsafe extern "system" fn stream_output(
         return;
     }
     if let Err(error) = stream_output_range(start, count) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     if views.is_null() || count == 0 {
@@ -332,7 +332,7 @@ pub(super) unsafe extern "system" fn stream_output(
             || view.SizeInBytes == 0
             || !view.BufferLocation.is_multiple_of(4)
         {
-            state.error = E_INVALIDARG;
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
             return;
         }
         let Some(location) = super::compute::address(list, &mut state, view.BufferLocation, view.SizeInBytes) else {
@@ -341,7 +341,7 @@ pub(super) unsafe extern "system" fn stream_output(
         view.BufferLocation = location;
         if view.BufferFilledSizeLocation != 0 {
             if !view.BufferFilledSizeLocation.is_multiple_of(4) {
-                state.error = E_INVALIDARG;
+                { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
                 return;
             }
             let Some(filled) = super::compute::address(list, &mut state, view.BufferFilledSizeLocation, 4) else {
@@ -413,15 +413,15 @@ pub(super) unsafe extern "system" fn execute_bundle(list: &List, bundle: *mut c_
         return;
     }
     if unsafe { list.native.GetType() } != D3D12_COMMAND_LIST_TYPE_DIRECT {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     let Some(bundle) = (unsafe { super::guest_list(bundle, parent(&list.parent)) }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     if core::ptr::eq(list, bundle) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // Lock the caller first, then the bundle. The two lists are distinct.
@@ -430,11 +430,11 @@ pub(super) unsafe extern "system" fn execute_bundle(list: &List, bundle: *mut c_
         || !matches!(&bundle_state.phase, ListState::Closed)
         || bundle_state.error.is_err()
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if let Err(error) = adopt_bundle(&mut state, &bundle_state) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
     unsafe { list.native.ExecuteBundle(&bundle.native) };
@@ -459,7 +459,7 @@ pub(super) unsafe extern "system" fn set_marker(
         return;
     }
     if let Err(error) = event_data(data, size) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
     }
 }
 
@@ -474,7 +474,7 @@ pub(super) unsafe extern "system" fn begin_event(
         return;
     }
     if let Err(error) = event_data(data, size) {
-        state.error = error;
+        { state.error = error; state.error_at = (file!(), line!()); }
     }
 }
 

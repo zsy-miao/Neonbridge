@@ -42,7 +42,7 @@ pub(super) unsafe extern "system" fn constants<const COMPUTE: bool>(
         return;
     }
     if data.is_null() || offset.checked_add(count).is_none_or(|end| end > 64) {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     // SAFETY: the caller supplies count readable DWORDs for this command.
@@ -178,7 +178,7 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
             }
             Some(if crate::env_toggle!("TUXBOX_ROOT_STALE_CLEAR") == Some("sink") { 0 } else { UNRESOLVED })
         }
-        Err(e) => { state.error = e.code(); None }
+        Err(e) => { { state.error = e.code(); state.error_at = (file!(), line!()); } None }
     }
 }
 
@@ -227,7 +227,7 @@ pub(super) unsafe extern "system" fn dispatch(list: &List, x: u32, y: u32, z: u3
         return;
     }
     if x.max(y).max(z) > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if let Some(super::compute_bindings::Pipeline::Regular(pso, ..)) = &state.bindings.pipeline {
@@ -257,7 +257,7 @@ pub(super) fn address(list: &List, state: &mut super::Recording, guest: u64, byt
             if let Some(buffer) = buffer { super::raytracing::retain(state, &[&buffer])?; }
             Ok(va)
         });
-    match result { Ok(va) => Some(va), Err(e) => { state.error = e.code(); None } }
+    match result { Ok(va) => Some(va), Err(e) => { { state.error = e.code(); state.error_at = (file!(), line!()); } None } }
 }
 
 pub(super) unsafe extern "system" fn copy_buffer(
@@ -277,11 +277,11 @@ pub(super) unsafe extern "system" fn copy_buffer(
     let (Some(dst), Some(src)) = (unsafe { device::resource_proxy(dst, owner) }, unsafe {
         device::resource_proxy(src, owner)
     }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let (Some(dst_offset), Some(src_offset)) = (buffer_offset(dst, dst_offset, bytes), buffer_offset(src, src_offset, bytes)) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     unsafe { device::note_shadow_write(owner, windows::core::Interface::as_raw(&dst.native)) };

@@ -26,7 +26,7 @@ pub(super) unsafe extern "system" fn clear(
         || flags.0 & !(D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL).0 != 0
         || (count != 0 && rects.is_null())
     {
-        recording.error = E_INVALIDARG;
+        { recording.error = E_INVALIDARG; recording.error_at = (file!(), line!()); }
         return;
     }
     unsafe { crate::device::placement::touch_target(parent(&list.parent), handle.ptr) };
@@ -82,11 +82,11 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
         return;
     }
     let Some(resource) = (unsafe { resource_proxy(resource, parent(&list.parent)) }) else {
-        recording.error = E_INVALIDARG;
+        { recording.error = E_INVALIDARG; recording.error_at = (file!(), line!()); }
         return;
     };
     if gpu.ptr == 0 || cpu.ptr == 0 || values.is_null() || (count != 0 && rects.is_null()) {
-        recording.error = E_INVALIDARG;
+        { recording.error = E_INVALIDARG; recording.error_at = (file!(), line!()); }
         return;
     }
     if resource.state.unbacked_uav() {
@@ -101,7 +101,7 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
         let handle = match arena.gpu(gpu.ptr, 1) {
             Ok(handle) => handle,
             Err(error) => {
-                recording.error = error.code();
+                { recording.error = error.code(); recording.error_at = (file!(), line!()); }
                 return;
             }
         };
@@ -117,17 +117,17 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
         (gpu, uav_clear_cpu(list, cpu))
     };
     if let Err(error) = recording.prepare_copy(resource.state.placed(), None) {
-        recording.error = error;
+        { recording.error = error; recording.error_at = (file!(), line!()); }
         return;
     }
     let alias = match unsafe { crate::device::clear_buffer_alias(parent(&list.parent), cpu.ptr, resource) } {
         Ok(alias) => alias,
-        Err(error) => { recording.error = error.code(); return; }
+        Err(error) => { { recording.error = error.code(); recording.error_at = (file!(), line!()); } return; }
     };
     if let Some(target) = &alias
         && let Err(error) = super::raytracing::retain(&recording, &[target])
     {
-        recording.error = error.code();
+        { recording.error = error.code(); recording.error_at = (file!(), line!()); }
         return;
     }
     let target = alias.as_ref().unwrap_or_else(|| resource.state.depth()

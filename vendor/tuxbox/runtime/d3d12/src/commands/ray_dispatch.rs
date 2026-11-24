@@ -11,11 +11,11 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, object: *mut c_void) 
         return;
     }
     let Some(host) = &list.state.raytracing else {
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     };
     let Some(native) = (unsafe { crate::device::ray_state(object, parent(&list.parent)) }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     state.bindings.pipeline = Some(super::compute_bindings::Pipeline::Ray(native.clone()));
@@ -45,11 +45,11 @@ pub(super) unsafe extern "system" fn dispatch(list: &List, desc: *const D3D12_DI
         return;
     }
     let Some(host) = &list.state.raytracing else {
-        state.error = E_NOTIMPL;
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
         return;
     };
     let Some(desc) = (unsafe { desc.as_ref() }) else {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
     let table_alignment = u64::from(D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT);
@@ -73,7 +73,7 @@ pub(super) unsafe extern "system" fn dispatch(list: &List, desc: *const D3D12_DI
                     || t.StrideInBytes > u64::from(D3D12_RAYTRACING_MAX_SHADER_RECORD_STRIDE))
         })
     {
-        state.error = E_INVALIDARG;
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
     if raygen.StartAddress == 0 && raygen.SizeInBytes != 0 {
