@@ -2,7 +2,7 @@
 
 ![Neonbridge: GTA 6 Xbox Series launcher for Windows PC](assets/banner.svg)
 
-**Neonbridge is an open-source GTA VI (GTA 6) launcher for Windows PC.** It runs the Xbox Series X|S build of Grand Theft Auto VI, dumped from a console you own, natively on Windows. It **isn't playable yet**. No game files are included or linked.
+**Neonbridge is an open-source GTA VI (GTA 6) launcher and D3D12 compatibility layer for Windows PC.** It runs the Xbox Series X|S (Scarlett) build of Grand Theft Auto VI, dumped from a console you own, natively on Windows; its Xbox shaders are translated to DXIL. It **isn't playable yet**. No game files are included or linked.
 
 ![GTA 6 on PC progress: boot, intro, player select, menus and loading screens work; the picture goes black after the loading screens](assets/progress.svg)
 
@@ -25,9 +25,9 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus, plays the intro videos and shows the story loading screens. After them the first cutscene starts and its sound plays, but almost nothing is drawn and the game stops: nearly every draw waits on a pipeline the GPU driver is still building. Building all of the game's pipelines ahead of time is the next fix.
+- **Can I play GTA 6 on PC with this?** Not yet; GTA VI on PC is a work in progress. It gets through the menus, plays the intro videos and shows the story loading screens. After them the first cutscene starts and its sound plays, but almost nothing is drawn and the game stops: nearly every draw waits on a pipeline the GPU driver is still building. Building all of the game's pipelines ahead of time is the next fix.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
-- **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
+- **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively. It isn't a recompiler either: Xbox shaders are translated to DXIL as the game runs.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and at least 20 GB of free commit (RAM plus page file); the game grows to about 19 GB.
 - **Can I watch it from my phone?** Yes. With `NEONBRIDGE_FEED=1` the launcher streams the picture to a password-protected page on this PC (port 8788) and on your Tailscale network; the first run prints a sign-in link to approve the PC once. `neonbridge --feed-only` keeps the page up between games. The launcher keeps the displays on while the game runs, since with every display asleep Windows slows it to about 10 fps.
 - **Does it go online?** No. The game's crash handler would upload details of your PC, so it's blocked (`TUXBOX_NETWORK=1` lifts it).
