@@ -59,7 +59,7 @@ static LIBRARY: Mutex<State> = Mutex::new(State::Unknown);
 static LOADED: AtomicU64 = AtomicU64::new(0);
 static STORED: AtomicU64 = AtomicU64::new(0);
 
-fn folder() -> Option<&'static Path> {
+pub(in crate::device) fn folder() -> Option<&'static Path> {
     let build = super::shader_cache::runtime_dir()?;
     if crate::env_toggle!("TUXBOX_PIPELINE_CACHE_SHARED") == Some("0") {
         return Some(build);
@@ -275,7 +275,23 @@ mod staging_tests {
     }
 }
 
+/// The library's serialized size now (the pipeline builder's cap).
+pub(in crate::device) fn library_bytes() -> u64 {
+    let state = LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
+    match &*state {
+        State::Ready(Some(library)) => (unsafe { library.library.GetSerializedSize() }) as u64,
+        _ => 0,
+    }
+}
+
+/// Builds the pipeline journal's pipelines into the library outside the
+/// title (see `stream::background::journal`); the pipelines made.
+pub(crate) fn build_journal(threads: u32) -> u32 {
+    super::stream::background::journal::build(threads)
+}
+
 fn save(dir: &Path) {
+    super::stream::background::journal::flush();
     let blob = {
         let mut state = LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
         match &mut *state {

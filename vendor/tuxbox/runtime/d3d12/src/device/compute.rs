@@ -51,6 +51,7 @@ pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, boo
         && !p.state.used.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         super::pipeline_cache::note_used(key);
+        super::stream::background::journal::used(key);
     }
     let Some(slot) = p.state.upgrade.get() else {
         return (&p.native, &p.state, false);
@@ -451,7 +452,9 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
         && let Some(placeholder) = background::placeholder(this)
     {
         let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
-        let work = background::Work::Compute(background::OwnedCompute::copy(guest, bytes));
+        let owned = background::OwnedCompute::copy(guest, bytes);
+        background::journal::compute(this, key.as_deref(), &owned);
+        let work = background::Work::Compute(owned);
         let state = PipelineData { key: key.map(Into::into), lazy: true, compute: true, ..Default::default() };
         let owner = (*identity(this)).clone();
         let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });

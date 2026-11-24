@@ -29,7 +29,7 @@ use std::{
 };
 
 const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>] [--exe <name>] [--log <file>]
-                      [--build-only | --stage-only | --build-shaders | --restore] [-- <game args>]
+                      [--build-only | --stage-only | --build-shaders | --pipelines | --restore] [-- <game args>]
   --game       dumped package folder (holds MicrosoftGame.Config and the exe)
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
   providers build into %LOCALAPPDATA%/6ixpack/tuxbox; a release build ships them
@@ -43,6 +43,11 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
   --build-only build the providers, touch nothing in the game folder
   --stage-only build and stage the providers beside the exe, do not start it
   --build-shaders translate every shader in shaders.rpf into the cache, do not start the game
+  --pipelines  build the pipelines earlier runs created (their journal) into the pipeline
+               library in this process, below normal priority, without starting the game
+               (NEONBRIDGE_PIPELINE_THREADS, default half the cores; waits while under
+               TUXBOX_PIPELINE_BUILD_FREE_GB=6 of commit is free); also `neonbridge pipelines`.
+               Not while the game runs: both write the library
   --restore    remove staged providers and put the original game files back
   --debug      run under cdb (Windows Kits debugger): first-chance exceptions, the
                crash event, registers, stack and loaded modules go to the log
@@ -90,6 +95,7 @@ enum Mode {
     BuildOnly,
     StageOnly,
     BuildShaders,
+    Pipelines,
     Restore,
 }
 
@@ -117,6 +123,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             Some("--build-only") => mode = Mode::BuildOnly,
             Some("--stage-only") => mode = Mode::StageOnly,
             Some("--build-shaders") => mode = Mode::BuildShaders,
+            Some("--pipelines" | "pipelines") => mode = Mode::Pipelines,
             Some("--restore") => mode = Mode::Restore,
             Some("--debug") => debug = true,
             Some("--debug-full") => {
@@ -270,6 +277,16 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         let _ = fs::remove_dir_all(session);
         return Ok(());
     }
+    if mode == Mode::Pipelines {
+        let (w, name, session, log_path) = worker.ok_or("shader worker not started (the pipeline build translates through it)")?;
+        let result = build_pipelines(&game, &name);
+        let st = w.stop();
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("[launch] shaders: {} compiled, {} from cache, {} unsupported, {} failed (log {})",
+            st.compiled.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        let _ = fs::remove_dir_all(session);
+        return result;
+    }
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
     splash::status(0.6, "Starting the game");
     commit_preflight();
@@ -314,6 +331,43 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         let _ = fs::remove_dir_all(session);
     }
     result
+}
+
+/// `--pipelines`: loads the staged d3d12_xs.dll into this process and builds
+/// the pipeline journal's pipelines into the shared pipeline library, so the
+/// next run loads them instead of compiling them (XCL's `xcl pipelines`,
+/// ScarlettPort runtime/xcl/crates/xcl/src/pipelines.rs e980ecb). It
+/// translates through this launcher's shader worker session.
+fn build_pipelines(game: &Path, session: &str) -> Result<(), Box<dyn Error>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH, LoadLibraryExW};
+    use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, SetPriorityClass};
+    // SAFETY: the builder runs before any thread of ours reads the environment.
+    unsafe {
+        std::env::set_var("TUXBOX_SHADER_SESSION", session);
+        // The title's control pipe stays the title's.
+        std::env::set_var("TUXBOX_CTL", "0");
+        SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    let dll = game.join("d3d12_xs.dll");
+    let wide: Vec<u16> = dll.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    // SAFETY: a NUL-terminated path; the module stays loaded until exit.
+    let module = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
+    if module.is_null() {
+        return Err(format!("{} not loaded: {}", dll.display(), std::io::Error::last_os_error()).into());
+    }
+    // SAFETY: a NUL-terminated export name of the loaded module.
+    let Some(build) = (unsafe { GetProcAddress(module, c"TuxBoxBuildPipelines".as_ptr().cast()) }) else {
+        return Err(format!("{} has no TuxBoxBuildPipelines export (an older build)", dll.display()).into());
+    };
+    // SAFETY: the export is `extern "system" fn(u32) -> u32`.
+    let build: unsafe extern "system" fn(u32) -> u32 = unsafe { std::mem::transmute(build) };
+    let threads = std::env::var("NEONBRIDGE_PIPELINE_THREADS").ok().and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or_else(|| (std::thread::available_parallelism().map_or(2, |n| n.get()) as u32 / 2).max(1));
+    println!("[launch] pipelines: building the journal's pipelines on {threads} threads at below-normal priority (Ctrl+C stops; what is made is kept)");
+    let made = unsafe { build(threads) };
+    println!("[launch] pipelines: {made} made into the pipeline library");
+    Ok(())
 }
 
 /// Where the title's xgameruntime writes an XLaunchNewGame request.

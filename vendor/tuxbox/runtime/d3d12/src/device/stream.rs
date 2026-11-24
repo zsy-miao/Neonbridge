@@ -938,6 +938,7 @@ pub(super) unsafe extern "system" fn create_pipeline(
     {
         state.lazy = true;
         state.derive_from = super::derived::keep(desc);
+        background::journal::stream(device, state.key.as_deref(), &stream);
         let work = background::Work::Stream(stream);
         let owner = (*identity(device)).clone();
         let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });

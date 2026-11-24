@@ -251,3 +251,11 @@ unsafe extern "system" fn zero_memory(
 pub extern "system" fn tuxbox_save_pipeline_cache() {
     crate::device::pipeline_cache::save_now();
 }
+
+/// Builds the pipelines earlier runs created (the pipeline journal) into the
+/// pipeline library on `threads` threads, for `neonbridge --pipelines` in its
+/// own process; returns the pipelines made. XCL's `xcl pipelines`.
+#[unsafe(no_mangle)]
+pub extern "system" fn tuxbox_build_pipelines(threads: u32) -> u32 {
+    crate::device::pipeline_cache::build_journal(threads)
+}

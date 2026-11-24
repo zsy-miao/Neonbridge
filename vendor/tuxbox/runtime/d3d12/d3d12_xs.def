@@ -54,3 +54,4 @@ EXPORTS
     IID_IGraphicsUnknown @52 DATA
     InternalDriverCallX @53
     WKPDID_D3DDebugObjectNameW @54 DATA
+    TuxBoxBuildPipelines=tuxbox_build_pipelines @55

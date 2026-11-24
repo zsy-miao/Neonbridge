@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::{IUnknown, Interface, PCSTR};
 
+pub(in crate::device) mod journal;
+
 /// The pipeline a worker made for one created without its translation: an
 /// ordinary pipeline proxy of the same device, owned by the slot.
 pub(crate) struct Built(IUnknown);
