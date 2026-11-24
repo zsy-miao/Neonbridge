@@ -5,12 +5,12 @@ EXPORTS
     PixGetPixieEntryPoints @3
     D3D12ConfigureVirtualMemoryX @5
     D3D10CreateBlob=d3dcompiler_47.D3DCreateBlob @4
-    D3D12CreateRootSignatureDeserializer=d3d12.D3D12CreateRootSignatureDeserializer @7
-    D3D12CreateVersionedRootSignatureDeserializer=d3d12.D3D12CreateVersionedRootSignatureDeserializer @8
+    D3D12CreateRootSignatureDeserializer=tuxbox_create_root_signature_deserializer @7
+    D3D12CreateVersionedRootSignatureDeserializer=tuxbox_create_versioned_root_signature_deserializer @8
     D3D12CreateDevice=tuxbox_create_device @6
     D3D12GetDebugInterface @9
-    D3D12SerializeRootSignature=d3d12.D3D12SerializeRootSignature @10
-    D3D12SerializeVersionedRootSignature=d3d12.D3D12SerializeVersionedRootSignature @11
+    D3D12SerializeRootSignature=tuxbox_serialize_root_signature @10
+    D3D12SerializeVersionedRootSignature=tuxbox_serialize_versioned_root_signature @11
     D3D12UploadCustomMicrocodeX @12
     D3D12XboxEnableMemoryProfiling @14
     D3D12XboxGetProcessDebugFlags @15

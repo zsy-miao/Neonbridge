@@ -10,6 +10,7 @@ mod guids;
 mod present;
 mod private_driver;
 mod proxy;
+mod root_flags;
 mod survey;
 mod throttle;
 
