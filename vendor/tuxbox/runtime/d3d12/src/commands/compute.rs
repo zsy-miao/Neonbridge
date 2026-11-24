@@ -60,11 +60,41 @@ use super::compute_bindings::BufferView;
 fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: fn(u64) -> BufferView) {
     let mut state = recording(list);
     if state.can_record_for::<COMPUTE>(&list.native) {
-        let Some(address) = address(list, &mut state, guest, 1) else { return };
+        let Some(address) = root_address(list, &mut state, guest) else { return };
         let view = view(address);
         unsafe { view.apply::<COMPUTE>(&list.native, index) };
         state.bindings.buffer::<COMPUTE>(index, view);
     }
+}
+
+/// A root view's shader reads past the bound address (a CBV up to 64 KiB, an
+/// SRV/UAV unbounded), so importing one byte left the rest of the run outside
+/// GPU memory: a GPUVM fault or device removal (rebox aadcc49 adopts a 64 KiB
+/// run). Import up to 64 KiB of committed memory; an uncommitted address binds
+/// null instead of handing the GPU a raw title VA. TUXBOX_ROOT_SPAN=1 restores
+/// the one-byte import with pass-through.
+fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option<u64> {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    if guest == 0 || crate::env_toggle!("TUXBOX_ROOT_SPAN") == Some("1") {
+        return address(list, state, guest, 1);
+    }
+    let mut region = MEMORY_BASIC_INFORMATION::default();
+    if unsafe { VirtualQuery(Some(guest as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
+        static UNMAPPED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&UNMAPPED, || format!(
+            "root view at uncommitted title address {guest:#x} bound as null (guest RVA {:#x})",
+            crate::survey::title_rva().unwrap_or(0)));
+        return Some(0);
+    }
+    let end = region.BaseAddress as u64 + region.RegionSize as u64;
+    let span = end.saturating_sub(guest).min(0x10000).max(1);
+    let result = unsafe { device::command_buffer_address(parent(&list.parent), guest, span) }
+        .or_else(|_| unsafe { device::command_buffer_address(parent(&list.parent), guest, 1) })
+        .and_then(|(buffer, va)| {
+            if let Some(buffer) = buffer { super::raytracing::retain(state, &[&buffer])?; }
+            Ok(va)
+        });
+    match result { Ok(va) => Some(va), Err(e) => { state.error = e.code(); None } }
 }
 
 pub(super) unsafe extern "system" fn constant_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64) {
