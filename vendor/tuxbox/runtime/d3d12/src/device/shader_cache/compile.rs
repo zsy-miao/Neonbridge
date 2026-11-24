@@ -200,9 +200,28 @@ fn request(
     // publication for the same digest while allowing unrelated jobs to overlap.
     static LOCKS: [Mutex<()>; 32] = [const { Mutex::new(()) }; 32];
     let bucket = usize::from_str_radix(&key[..2], 16).ok()? % LOCKS.len();
-    let _guard = LOCKS[bucket]
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    // test100 hung with the title's inline first-bind compile blocked here
+    // behind workers that hold the bucket while they wait up to 90 s on the
+    // translator: the frame budget never covered this lock. A budgeted thread
+    // now gives up on a busy bucket as on a spent budget, and the pipeline
+    // goes to the workers. TUXBOX_SHADER_LOCK_SKIP=0 waits for the lock again.
+    let _guard = match LOCKS[bucket].try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            if !UNBOUNDED.with(|u| u.get()) && crate::env_toggle!("TUXBOX_SHADER_LOCK_SKIP") != Some("0") {
+                MISSED.with(|m| m.set(true));
+                static SKIPPED: AtomicUsize = AtomicUsize::new(0);
+                let skipped = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                if skipped <= 4 || skipped.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "shader cache: a title-thread request met a bucket busy with a worker's translation and went to the workers ({skipped} so far; TUXBOX_SHADER_LOCK_SKIP=0 off)"));
+                }
+                return None;
+            }
+            LOCKS[bucket].lock().unwrap_or_else(|error| error.into_inner())
+        }
+    };
     if let Some(bytes) = read_portable_file(&result, stage) {
         return Some(bytes);
     }
