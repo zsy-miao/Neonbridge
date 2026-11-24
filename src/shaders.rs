@@ -502,7 +502,10 @@ impl Worker {
         let workers = thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
         let archive = cache_root.join("requests");
         let _ = fs::create_dir_all(&archive);
-        prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats);
+        // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
+        if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
+            prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats);
+        }
         let (s, st) = (stop.clone(), stats.clone());
         let log = Arc::new(log);
         let handle = thread::Builder::new().name("shader-worker".into()).spawn(move || {
