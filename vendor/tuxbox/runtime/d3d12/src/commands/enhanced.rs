@@ -141,6 +141,23 @@ fn compute_layout(layout: D3D12_BARRIER_LAYOUT) -> D3D12_BARRIER_LAYOUT {
 fn fix_texture(item: &mut D3D12_TEXTURE_BARRIER, compute: bool, simultaneous: bool) {
     if !enhanced_fix() { return; }
     let original = (item.SyncBefore.0, item.SyncAfter.0, item.AccessBefore.0, item.AccessAfter.0, item.LayoutBefore.0, item.LayoutAfter.0);
+    // GTA's end-of-frame display transition names layout 31
+    // (DIRECT_QUEUE_GENERIC_READ_COMPUTE_QUEUE_ACCESSIBLE in the newest
+    // Agility headers), which the system D3D12Core rejects at Close; video
+    // layouts are invalid on graphics and compute lists too. Both become
+    // COMMON (= PRESENT), consistently on both halves.
+    for layout in [&mut item.LayoutBefore, &mut item.LayoutAfter] {
+        if layout.0 > 29 || (12..=17).contains(&layout.0) {
+            let from = layout.0;
+            static SEEN: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            if !seen.contains(&from) {
+                seen.push(from);
+                crate::diagnostics::log_line(format_args!("enhanced texture barrier layout {from} recorded as COMMON"));
+            }
+            *layout = D3D12_BARRIER_LAYOUT_COMMON;
+        }
+    }
     if compute {
         item.LayoutBefore = compute_layout(item.LayoutBefore);
         item.LayoutAfter = compute_layout(item.LayoutAfter);
