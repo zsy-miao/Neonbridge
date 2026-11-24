@@ -21,7 +21,7 @@ Build with `cargo build --release` (needs Visual Studio Build Tools x64 C++ and 
 
 ![GTA 6 keyboard and mouse controls mapped to an Xbox pad](assets/controls.svg)
 
-The game opens borderless fullscreen on its monitor; Alt+Enter or F11 switches to a window (`NEONBRIDGE_WINDOWED=1` starts windowed). The game window must be in front. `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real pads, and `TUXBOX_AUTO_START=0` stops the automatic A press at the player-selection prompt.
+Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts there; the game's picture is still black in that mode). The game window must be in front. `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real pads, and `TUXBOX_AUTO_START=0` stops the automatic A press at the player-selection prompt.
 
 ## FAQ
 
