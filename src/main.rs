@@ -130,7 +130,8 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
                 // Build every program in shaders.rpf into the prewarm archive (once per shaders.rpf).
                 let rpf = game.join("shaders.rpf");
-                if rpf.is_file() {
+                // The archive only feeds the prewarm; TUXBOX_PREWARM=0 skips both.
+                if rpf.is_file() && std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
                     println!("[launch] building shaders from {}", rpf.display());
                     match shaders::build_requests(&rpf, &cache_root.join("requests")) {
                         Ok(Some(b)) => println!("[launch] shaders.rpf: {} programs, {} new requests archived", b.programs, b.written),
