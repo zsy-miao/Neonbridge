@@ -605,6 +605,7 @@ pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, 
             return None;
         }
         let res = res?;
+        crate::device::mark_reserved(&res);
         let mut total = 0u32;
         device.GetResourceTiling(&res, Some(&mut total), None, None, None, 0, std::ptr::null_mut());
         let (skip, levels) = if system_ok { trim_tiles(device, &res, host) } else { (0, 0) };

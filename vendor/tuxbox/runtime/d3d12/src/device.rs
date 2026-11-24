@@ -278,6 +278,9 @@ unsafe extern "system" fn map_resource(
         }
         return windows::Win32::Foundation::S_OK;
     }
+    if !pc_mappable(host) {
+        return E_INVALIDARG;
+    }
     let Some((offset, width)) = this.state.buffer_window() else {
         let hr = unsafe { (host.vtable().Map)(host.as_raw(), subresource, read, data) };
         if hr.is_err() {
@@ -303,6 +306,50 @@ unsafe extern "system" fn map_resource(
         unsafe { data.write((*data).byte_add(offset as usize)) };
     }
     hr
+}
+
+/// Marks a reserved resource from its creation (xcl cf244b0/7d834d4 idea:
+/// GetHeapProperties on one is an invalid call too, debug layer 901). The
+/// mark is private data, so it goes with the object and a later resource at
+/// the same address is never taken for it.
+const RESERVED_MARK: windows::core::GUID = windows::core::GUID::from_u128(0x7b0e_52c1_3a4f_4d2e_9f61_8c3d_5a2b_e914);
+
+pub(crate) fn mark_reserved(resource: &ID3D12Resource) {
+    let one = 1u8;
+    let _ = unsafe { resource.SetPrivateData(&RESERVED_MARK, 1, Some(core::ptr::from_ref(&one).cast())) };
+}
+
+fn is_reserved(resource: &ID3D12Resource) -> bool {
+    let (mut size, mut value) = (1u32, 0u8);
+    unsafe { resource.GetPrivateData(&RESERVED_MARK, &mut size, Some(core::ptr::from_mut(&mut value).cast())) }.is_ok()
+}
+
+/// xcl's idea (21de1a8): a resource in a DEFAULT heap, a custom heap without
+/// CPU pages, or a reserved one (no heap) has no CPU view on the PC, and its
+/// Map is an invalid call (debug layer 822 / 824) the runtime answers with
+/// E_INVALIDARG. Those get E_INVALIDARG without reaching it.
+/// TUXBOX_MAP_HEAP_CHECK=0 always calls the PC's Map.
+fn pc_mappable(host: &ID3D12Resource) -> bool {
+    if crate::env_toggle!("TUXBOX_MAP_HEAP_CHECK") == Some("0") {
+        return true;
+    }
+    let mut props = D3D12_HEAP_PROPERTIES::default();
+    let mappable = !is_reserved(host)
+        && unsafe { host.GetHeapProperties(Some(&mut props), None) }.is_ok()
+        && match props.Type {
+            D3D12_HEAP_TYPE_DEFAULT => false,
+            D3D12_HEAP_TYPE_CUSTOM => props.CPUPageProperty != D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,
+            _ => true,
+        };
+    if !mappable {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "Map of a resource with no CPU pages (heap type {}) answered E_INVALIDARG without the PC's Map ({n} so far; TUXBOX_MAP_HEAP_CHECK=0 off)", props.Type.0));
+        }
+    }
+    mappable
 }
 
 unsafe extern "system" fn unmap_resource(

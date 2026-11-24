@@ -748,6 +748,7 @@ fn tiled_alias(device: &Device, base: u64, host: &D3D12_RESOURCE_DESC) -> window
     let mut resource: Option<ID3D12Resource> = None;
     unsafe { device.native.CreateReservedResource(&desc, D3D12_RESOURCE_STATE_COMMON, None, &mut resource)? };
     let resource = resource.ok_or(E_POINTER)?;
+    super::mark_reserved(&resource);
     let owner = core::ptr::from_ref(device) as usize;
     let mut queues = TILE_QUEUES.lock().unwrap_or_else(|e| e.into_inner());
     if !queues.iter().any(|q| q.0 == owner) {

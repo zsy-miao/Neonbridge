@@ -726,6 +726,60 @@ fn report_bad_view(kind: &str, device: &ID3D12Device, resource: Option<&ID3D12Re
         res.map(|r| format!("dimension={} {}x{}x{} mips={} format={} flags={:#x} layout={}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.MipLevels, r.Format.0, r.Flags.0, r.Layout.0))));
 }
 
+/// xcl's idea (re-derived from 615cb20): an SRV of a depth buffer made with
+/// no description. The host cannot view a depth or typeless format, so the
+/// view reads the depth plane (R32_FLOAT, R16_UNORM, R24_UNORM_X8 or
+/// R32_FLOAT_X8X24) over every mip and slice, multisampled when the buffer
+/// is (Texture2DMS / Texture2DMSArray). Before, the host call was invalid,
+/// and a substituted Scarlett depth buffer stopped the title.
+/// TUXBOX_DEPTH_DEFAULT_SRV=0 passes the null description on as before.
+fn default_depth_srv(resource: &ID3D12Resource) -> Option<D3D12_SHADER_RESOURCE_VIEW_DESC> {
+    use windows::Win32::Graphics::Dxgi::Common::*;
+    if crate::env_toggle!("TUXBOX_DEPTH_DEFAULT_SRV") == Some("0") {
+        return None;
+    }
+    let r = unsafe { resource.GetDesc() };
+    if r.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || !r.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) {
+        return None;
+    }
+    let format = match r.Format {
+        DXGI_FORMAT_D32_FLOAT | DXGI_FORMAT_R32_TYPELESS => DXGI_FORMAT_R32_FLOAT,
+        DXGI_FORMAT_D16_UNORM | DXGI_FORMAT_R16_TYPELESS => DXGI_FORMAT_R16_UNORM,
+        DXGI_FORMAT_D24_UNORM_S8_UINT | DXGI_FORMAT_R24G8_TYPELESS => DXGI_FORMAT_R24_UNORM_X8_TYPELESS,
+        DXGI_FORMAT_D32_FLOAT_S8X24_UINT | DXGI_FORMAT_R32G8X24_TYPELESS => DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS,
+        _ => return None,
+    };
+    let slices = u32::from(r.DepthOrArraySize);
+    let mut view = D3D12_SHADER_RESOURCE_VIEW_DESC {
+        Format: format,
+        Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+        ..Default::default()
+    };
+    match (r.SampleDesc.Count > 1, slices > 1) {
+        (true, false) => view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS,
+        (true, true) => {
+            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY;
+            view.Anonymous.Texture2DMSArray = D3D12_TEX2DMS_ARRAY_SRV { FirstArraySlice: 0, ArraySize: slices };
+        }
+        (false, false) => {
+            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            view.Anonymous.Texture2D = D3D12_TEX2D_SRV { MipLevels: u32::MAX, ..Default::default() };
+        }
+        (false, true) => {
+            view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            view.Anonymous.Texture2DArray = D3D12_TEX2D_ARRAY_SRV { MipLevels: u32::MAX, ArraySize: slices, ..Default::default() };
+        }
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "depth SRV with no description: format {} viewed as {} dimension {} ({n} so far; TUXBOX_DEPTH_DEFAULT_SRV=0 off)",
+            r.Format.0, format.0, view.ViewDimension.0));
+    }
+    Some(view)
+}
+
 pub(super) unsafe extern "system" fn srv(
     device: &Device,
     object: *mut c_void,
@@ -767,6 +821,10 @@ pub(super) unsafe extern "system" fn srv(
             translated = D3D12_SHADER_RESOURCE_VIEW_DESC {
                 Format: super::format::view_format(substitute.is_some(), view.Format), ..*view
             };
+            &raw const translated
+        }
+        None if let Some(view) = resource.and_then(default_depth_srv) => {
+            translated = view;
             &raw const translated
         }
         None if substitute.is_some_and(super::format::is_depth) => {
