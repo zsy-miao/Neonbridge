@@ -283,6 +283,21 @@ unsafe fn wait_value(
         if comparison == 8 || (comparison == 7 && target == 0) {
             return Ok(());
         }
+        if state.prefix.in_body && super::split::on() {
+            // Split the list here: the work before the wait runs ahead of it (split).
+            let segment = Arc::new(Segment { prefix: None, word, target, comparison, address });
+            if unsafe { super::split::split(list, &mut state, segment)? } {
+                return Ok(());
+            }
+            static UNSPLIT: AtomicU64 = AtomicU64::new(0);
+            let n = UNSPLIT.fetch_add(1, Ordering::Relaxed);
+            if n < 4 || (n + 1).is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "GPU memory wait {address:#x} >= {target:#x} after rendering commands skipped: the list cannot split (open queries, split barriers, predication, a bundle or 4 splits; {} so far)",
+                    n + 1));
+            }
+            return Ok(());
+        }
         if state.prefix.in_body {
             // Waits are honoured only at a native list boundary. Failing here
             // rejected the whole list (black frames); dropping the wait keeps

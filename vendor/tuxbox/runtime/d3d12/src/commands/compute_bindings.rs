@@ -574,6 +574,36 @@ impl Bindings {
         }
     }
 
+    /// Every binding on a new host list (split): heaps, both root
+    /// signatures with their arguments, and the pipeline.
+    pub(super) unsafe fn restore_all(&self, host: &ID3D12GraphicsCommandList) {
+        unsafe {
+            if !self.heaps.is_empty() {
+                host.SetDescriptorHeaps(&self.heaps);
+            }
+            if self.compute.is_some() {
+                host.SetComputeRootSignature(self.compute.as_ref());
+                self.apply_compute_args(host, &[]);
+            }
+            if host.GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT && self.graphics.is_some() {
+                host.SetGraphicsRootSignature(self.graphics.as_ref());
+                self.apply_graphics_arguments(host);
+                for (&slot, &base) in &self.graphics_tables {
+                    host.SetGraphicsRootDescriptorTable(slot, base.native);
+                }
+            }
+            match self.pipeline.as_ref() {
+                Some(Pipeline::Regular(pso, ..)) => host.SetPipelineState(pso),
+                Some(Pipeline::Ray(pso)) => {
+                    if let Ok(host) = windows::core::Interface::cast::<ID3D12GraphicsCommandList4>(host) {
+                        host.SetPipelineState1(pso);
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
     pub(super) unsafe fn restore(&self, host: &ID3D12GraphicsCommandList4) {
         unsafe {
             host.SetDescriptorHeaps(&self.heaps);

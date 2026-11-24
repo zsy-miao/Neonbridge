@@ -30,6 +30,7 @@ mod queries;
 mod ray_dispatch;
 mod raytracing;
 pub(crate) mod serialized_blas;
+mod split;
 mod standard;
 mod stencil;
 mod table_drop;
@@ -115,6 +116,8 @@ struct Recording {
     open_queries: Vec<(ID3D12QueryHeap, D3D12_QUERY_TYPE, u32)>,
     /// BEGIN_ONLY transitions without their END_ONLY yet, finished at Close.
     split_barriers: Vec<TransitionBarrier>,
+    /// Host lists this recording was split into at GPU memory waits (split).
+    segments: split::Segments,
     phase: ListState,
     error: HRESULT,
     /// Where `error` was set (test119 logged two refused 0x80004001 calls
@@ -452,6 +455,8 @@ impl Recording {
                     { self.error = error.code(); self.error_at = (file!(), line!()); }
                     return false;
                 }
+                let allocator = allocator.clone();
+                self.segments.reset(Some(allocator));
                 self.phase = ListState::Open;
             }
             ListState::Open => {}
@@ -669,6 +674,7 @@ unsafe extern "system" fn reset(
         state.resources = allocator.state.clone();
         state.timestamp_page = None;
         state.prefix = memory_wait::Prefix::default();
+        state.segments.reset(Some(used.clone()));
         state.scene_commands.clear();
         state.bindings = compute_bindings::Bindings::new(initial);
         if state.media.is_some() {
@@ -729,17 +735,24 @@ unsafe fn rebuild_native(list: &List, allocator: &device::Allocator, pipeline: *
         }
     };
     crate::dred::name(&fresh, "title (rebuilt)");
+    let old = unsafe { swap_native(list, fresh)? };
+    retire(old);
+    Ok(())
+}
+
+/// Put `fresh` in place of the list's host list and its cached casts; the
+/// old host list is returned. The caller records on this list (inside Reset,
+/// or holding its recording), so no other thread uses these fields.
+unsafe fn swap_native(list: &List, fresh: ID3D12GraphicsCommandList) -> windows::core::Result<ID3D12GraphicsCommandList> {
     let raytracing = if list.state.raytracing.is_some() { Some(fresh.cast::<ID3D12GraphicsCommandList4>()?) } else { None };
     // SAFETY: see above; these fields are only read by recording calls.
-    let old = unsafe {
+    Ok(unsafe {
         drop(ptr::replace(ptr::addr_of!(list.state.extended).cast_mut(), OnceLock::new()));
         drop(ptr::replace(ptr::addr_of!(list.state.enhanced_barriers).cast_mut(), OnceLock::new()));
         drop(ptr::replace(ptr::addr_of!(list.state.mesh).cast_mut(), OnceLock::new()));
         drop(ptr::replace(ptr::addr_of!(list.state.raytracing).cast_mut(), raytracing));
         ptr::replace(ptr::addr_of!(list.native).cast_mut(), fresh)
-    };
-    retire(old);
-    Ok(())
+    })
 }
 
 /// The replaced host list may still be executing its previous, successful
@@ -2354,6 +2367,8 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     let swap_lists = std::cell::RefCell::new(Vec::new());
     // The batch's lists, for the transient-pool lifetime check.
     let pool_lists = std::cell::RefCell::new(Vec::new());
+    // Later host lists of lists split at GPU memory waits (split), by first host list.
+    let tails: std::cell::RefCell<Vec<(*mut c_void, Vec<(Arc<memory_wait::Segment>, *mut c_void)>)>> = Default::default();
     let result = translate_batch(
         guest,
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
@@ -2439,7 +2454,11 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
             cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
             swap_lists.borrow_mut().push(list as *const List as usize);
-            Ok(list.native.as_raw())
+            let first = state.segments.first(&list.native);
+            if first != list.native.as_raw() {
+                tails.borrow_mut().push((first, state.segments.tails(&list.native)));
+            }
+            Ok(first)
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
             let _site = crate::diagnostics::cost::site();
@@ -2489,7 +2508,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                                             "left a list out of its batch: its scene (BLAS) preparation failed {:#010x}; the batch's other lists run ({n} so far; TUXBOX_STRICT_SCENE=1 drops the batch)",
                                             error.code().0));
                                     }
-                                    left_out.push(list.native.as_raw());
+                                    left_out.push(state.segments.first(&list.native));
                                     if orphan_writes_on() {
                                         orphan_writes.borrow_mut().extend(state.value_writes.iter().copied());
                                     }
@@ -2531,7 +2550,13 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                         }
                         {
                             let _site = crate::diagnostics::cost::site();
-                            step("GPU memory wait submission", memory_wait::submit(queue, host, splits))?;
+                            let tails = tails.borrow();
+                            if tails.is_empty() {
+                                step("GPU memory wait submission", memory_wait::submit(queue, host, splits))?;
+                            } else {
+                                let (host, splits) = split::expand(host, splits, &tails);
+                                step("GPU memory wait submission", memory_wait::submit(queue, &host, splits))?;
+                            }
                         }
                         retire_waits::submitted(&queue.native);
                         crate::diagnostics::transient_pool::submitted(&queue.native, &pool_lists.borrow());
@@ -2980,6 +3005,7 @@ pub(crate) unsafe fn wrap_command_list(
             copy_scratch: None,
             open_queries: Vec::new(),
             split_barriers: Vec::new(),
+            segments: Default::default(),
             media: compact.then(|| media::Recording::new(allocator)),
             phase: ListState::Fresh(allocator.native.clone(), initial.map(|p| p.native.clone())),
             error: S_OK,

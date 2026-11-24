@@ -32,6 +32,7 @@ pub(super) unsafe extern "system" fn topology(list: &List, primitive: D3D_PRIMIT
         } else {
             primitive
         };
+        state.segments.replay.topology(native);
         unsafe { list.native.IASetPrimitiveTopology(native) };
     }
 }
@@ -78,6 +79,7 @@ pub(super) unsafe extern "system" fn viewports(
         { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
+    unsafe { state.segments.replay.viewports(count, views) };
     unsafe { (list.native.vtable().RSSetViewports)(list.native.as_raw(), count, views) };
 }
 
@@ -92,6 +94,7 @@ pub(super) unsafe extern "system" fn scissors(list: &List, count: u32, rects: *c
         { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     }
+    unsafe { state.segments.replay.scissors(count, rects) };
     unsafe { (list.native.vtable().RSSetScissorRects)(list.native.as_raw(), count, rects) };
 }
 
@@ -158,6 +161,7 @@ pub(super) unsafe extern "system" fn targets(
     } else if let Some(targets) = &mut state.stencil_targets {
         targets.unbind();
     }
+    unsafe { state.segments.replay.targets(count, rtvs, contiguous.as_bool(), dsv) };
     unsafe {
         (list.native.vtable().OMSetRenderTargets)(
             list.native.as_raw(),
@@ -287,6 +291,7 @@ pub(super) unsafe extern "system" fn index_buffer(
                 crate::diagnostics::null_va("index buffer", format_args!("{} bytes, format {}", v.SizeInBytes, v.Format.0));
             }
         }
+        state.segments.replay.index(host);
         unsafe { list.native.IASetIndexBuffer(host.as_ref().map(core::ptr::from_ref)) };
 
     }
@@ -337,6 +342,7 @@ pub(super) unsafe extern "system" fn vertex_buffers(
         // A null view array unbinds the slots: bind empty views explicitly
         // rather than trusting the driver with a null pointer.
         let empty = [D3D12_VERTEX_BUFFER_VIEW::default(); D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT as usize];
+        state.segments.replay.vertex(start, &empty[..count as usize]);
         unsafe { list.native.IASetVertexBuffers(start, Some(&empty[..count as usize])) };
         return;
     }
@@ -370,6 +376,7 @@ pub(super) unsafe extern "system" fn vertex_buffers(
     if let Some(v) = host.iter().find(|v| v.BufferLocation == 0 && v.SizeInBytes != 0) {
         crate::diagnostics::null_va("vertex buffer", format_args!("{} bytes, stride {}", v.SizeInBytes, v.StrideInBytes));
     }
+    state.segments.replay.vertex(start, host);
     unsafe { list.native.IASetVertexBuffers(start, Some(host)) };
 
 }
@@ -398,6 +405,7 @@ pub(super) unsafe extern "system" fn draw_indexed(
 pub(super) unsafe extern "system" fn blend_factor(list: &List, factor: *const f32) {
     let mut state = recording(list);
     if state.can_record_graphics(&list.native) {
+        unsafe { state.segments.replay.blend(factor) };
         unsafe { (list.native.vtable().OMSetBlendFactor)(list.native.as_raw(), factor) };
     }
 }
@@ -405,6 +413,7 @@ pub(super) unsafe extern "system" fn blend_factor(list: &List, factor: *const f3
 pub(super) unsafe extern "system" fn stencil_ref(list: &List, reference: u32) {
     let mut state = recording(list);
     if state.can_record_graphics(&list.native) {
+        state.segments.replay.stencil(reference);
         unsafe { list.native.OMSetStencilRef(reference) };
     }
 }
@@ -421,7 +430,10 @@ pub(super) unsafe extern "system" fn depth_bounds(list: &List, minimum: f32, max
         .extended
         .get_or_init(|| list.native.cast::<ID3D12GraphicsCommandList1>().ok());
     match native {
-        Some(native) => unsafe { native.OMSetDepthBounds(minimum, maximum) },
+        Some(native) => {
+            state.segments.replay.depth_bounds(minimum, maximum);
+            unsafe { native.OMSetDepthBounds(minimum, maximum) }
+        }
         None => state.error = windows::Win32::Foundation::E_NOINTERFACE,
     }
 }

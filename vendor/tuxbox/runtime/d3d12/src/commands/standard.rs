@@ -276,6 +276,7 @@ pub(super) unsafe extern "system" fn set_predication(
         return;
     }
     if buffer.is_null() {
+        state.segments.replay.predicated(false);
         unsafe { list.native.SetPredication(None::<&ID3D12Resource>, offset, operation) };
         return;
     }
@@ -292,6 +293,7 @@ pub(super) unsafe extern "system" fn set_predication(
         { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         return;
     };
+    state.segments.replay.predicated(true);
     unsafe { list.native.SetPredication(&buffer.native, offset, operation) };
 }
 
