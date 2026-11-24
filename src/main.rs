@@ -10,6 +10,7 @@
 //! `--restore` puts it back.
 
 mod ctl;
+mod picker;
 mod shaders;
 mod splash;
 
@@ -116,6 +117,12 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             }
             _ => return Err(format!("launch: unknown argument {}\n{USAGE}", a.to_string_lossy()).into()),
         }
+    }
+    // No --game: the one-line picker (folder, exe or MicrosoftGame.Config).
+    if game.is_none() && mode != Mode::BuildOnly && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
+        let Some((folder, picked_exe)) = picker::pick() else { return Ok(()) };
+        game = Some(folder);
+        exe = exe.or(picked_exe);
     }
     if mode == Mode::Restore {
         return restore(&game.ok_or(USAGE)?);
