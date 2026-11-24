@@ -228,7 +228,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         let (hlsl, output, profile) = (work.join("shader.hlsl"), work.join("out.cso"), work.join("profile"));
         match run(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
-            .arg("--profile-out").arg(&profile), Duration::from_secs(30)) {
+            .arg("--profile-out").arg(&profile), Duration::from_secs(120)) {
             Ok(()) => {}
             Err(ToolError::Exit(XSHADER_UNSUPPORTED_HLSL, msg)) => {
                 let _ = fs::write(&refusal, key);
@@ -248,11 +248,11 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             return Err(format!("unsupported compiler profile {target:?}"));
         }
         let mut dxc = Command::new(&tools.dxc);
-        dxc.arg("-T").arg(&target);
+        dxc.arg("-T").arg(&target).arg("-O1");
         if target != "lib_6_3" {
             dxc.args(["-E", "main"]);
         }
-        match run(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(50)) {
+        match run(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(600)) {
             Ok(()) => {}
             Err(ToolError::Exit(c, msg)) => return Err(format!("dxc failed ({c}): {msg}")),
             Err(ToolError::Other(msg)) => return Err(format!("dxc: {msg}")),
