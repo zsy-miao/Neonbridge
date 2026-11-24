@@ -89,6 +89,11 @@ fn bind_wait_frame_ms() -> i64 {
     *MS.get_or_init(|| crate::env_toggle!("TUXBOX_COMPUTE_PENDING_FRAME_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(4000))
 }
 
+fn over_budget_ms() -> i64 {
+    static MS: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| crate::env_toggle!("TUXBOX_COMPUTE_OVER_BUDGET_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(750))
+}
+
 pub(crate) fn refill_bind_wait() {
     let ms = bind_wait_frame_ms();
     BIND_WAIT_LEFT_MS.store(if ms == 0 { i64::MAX } else { ms }, std::sync::atomic::Ordering::Relaxed);
@@ -114,7 +119,25 @@ pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
     if frame_ms != 0 && BIND_WAIT_LEFT_MS.load(O::Relaxed) > frame_ms {
         refill_bind_wait();
     }
-    let left = BIND_WAIT_LEFT_MS.load(O::Relaxed);
+    let mut left = BIND_WAIT_LEFT_MS.load(O::Relaxed);
+    // test119 hung at the world switch: dispatches were dropped as "still
+    // being made" with this frame's bind waits spent, and a GPU memory
+    // wait later never saw its label (a dropped dispatch can be the one
+    // that writes it). Every DXIL is cached now, so making one is the
+    // driver's compile alone: past the frame budget a bind still makes
+    // its pipeline on this thread (stolen from the queue), up to
+    // TUXBOX_COMPUTE_OVER_BUDGET_MS (750; 0 drops as before).
+    let over = over_budget_ms();
+    if left <= 0 && over > 0 {
+        static OVER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = OVER.fetch_add(1, O::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "compute pipeline {} still being made with this frame's bind waits spent: made at its bind anyway, up to {over} ms ({n} so far; TUXBOX_COMPUTE_OVER_BUDGET_MS=0 drops its dispatches)",
+                &key[..key.len().min(16)]));
+        }
+        left = over;
+    }
     if left <= 0 {
         static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = SKIPPED.fetch_add(1, O::Relaxed) + 1;
