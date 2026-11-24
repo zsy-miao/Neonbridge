@@ -166,9 +166,9 @@ pub(super) unsafe extern "system" fn create_root_signature(
 /// state blocks (Xbox2Windows d3d12_xs_device.cpp, MIT). The description's
 /// shader stages are not decoded yet, so the title gets a placeholder
 /// pipeline whose draws and dispatches command lists drop, S_OK instead of
-/// E_NOTIMPL. The first calls log 96 description bytes, dump 0x300 of them
+/// E_NOTIMPL, only with TUXBOX_SLOT57=placeholder (default E_NOTIMPL). The first calls log 96 description bytes, dump 0x300 of them
 /// to %TEMP%\tuxbox-slotN-K.bin, and decode state block A's blend words
-/// (cb_blend). TUXBOX_SLOT57=stub answers E_NOTIMPL as before.
+/// (cb_blend). By default it answers E_NOTIMPL.
 pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     this: &Device,
     desc: *const c_void,
@@ -179,7 +179,11 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     let hr = unsafe { check_output::<ID3D12PipelineState>(iid, out) };
     static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let stub = crate::env_toggle!("TUXBOX_SLOT57") == Some("stub");
+    // E_NOTIMPL by default: the title then falls back to pipelines it draws
+    // with. The placeholder (S_OK, draws dropped) left the picture black
+    // (test38-45: clears only; test46 with the stub drew).
+    // TUXBOX_SLOT57=placeholder answers the placeholder.
+    let stub = crate::env_toggle!("TUXBOX_SLOT57") != Some("placeholder");
     if call < 2 {
         unsafe { describe_state_blocks(N, call, desc) };
     }
@@ -196,7 +200,7 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     let _ = state.upgrade.set(super::stream::background::never());
     if call < 4 {
         crate::diagnostics::log_line(format_args!(
-            "device slot {N} pipeline from state blocks at title RVA {:#x}: placeholder (its draws are dropped; TUXBOX_SLOT57=stub answers E_NOTIMPL)",
+            "device slot {N} pipeline from state blocks at title RVA {:#x}: placeholder (its draws are dropped; TUXBOX_SLOT57=placeholder chose it)",
             crate::survey::title_rva().unwrap_or(0)));
     }
     unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) }
