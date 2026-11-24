@@ -1053,6 +1053,8 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<(bool, bool), String> {
 fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
     let mut masks = BTreeSet::<u8>::new();
     let mut reads = BTreeSet::new();
+    let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
+    let mut half = BTreeMap::<u8, bool>::new();
     let is_mask = |masks: &BTreeSet<u8>, o: &Opnd| match o {
         Opnd::ExecLo | Opnd::VccLo => true,
         Opnd::Sgpr(n) => masks.contains(n),
@@ -1075,6 +1077,30 @@ fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
             || (matches!(m, "s_mov_b64" | "s_and_b64" | "s_or_b64" | "s_andn2_b64" | "s_xor_b64")
                 && ins.src.iter().any(|o| is_mask(&masks, o)));
         if mask { masks.insert(d); }
+        // A pair assembled by two 32-bit moves, one half from a lane mask and the
+        // other a constant (or both from masks), is a lane mask too: wave64 code
+        // built from wave32 halves. TB_MASK_HALF_PAIR=0 turns this off.
+        if half_pairs {
+            let kind = if m == "s_mov_b32" {
+                match ins.src.first() {
+                    Some(Opnd::ExecLo | Opnd::ExecHi | Opnd::VccLo | Opnd::VccHi) => Some(true),
+                    Some(Opnd::Sgpr(n)) if masks.contains(n) || (*n > 0 && masks.contains(&(n - 1))) => Some(true),
+                    Some(Opnd::ConstInt(_) | Opnd::Literal(_)) => Some(false),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            half.remove(&d);
+            if wide { half.remove(&(d + 1)); }
+            if let Some(k) = kind {
+                half.insert(d, k);
+                let p = d & !1;
+                if let (Some(&a), Some(&b)) = (half.get(&p), half.get(&(p + 1))) {
+                    if a || b { masks.insert(p); }
+                }
+            }
+        }
     }
     reads
 }
@@ -6059,8 +6085,31 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if matches!(m.as_str(), "v_dot4_i32_i8" | "v_dot4c_i32_i8") {
             let compact = ins.enc == Enc::Vop2 && ins.aux.sdwa.is_none();
             let mut rhs = r(&s[1])?;
+            let mut lhs = r(&s[0])?;
+            let general = std::env::var("TB_DOT4_OPSEL").map_or(true, |v| v.trim() != "0");
             let acc = if compact {
                 &d
+            } else if ins.op == 0x416 && general {
+                // Raw VOP3P bits (palmetto 81924b17; llvm-mc drops some forms):
+                // per source, OP_SEL picks the 16-bit half feeding the low byte
+                // pair and OP_SEL_HI the half feeding the high pair. NEG, NEG_HI,
+                // CLAMP and a non-default accumulator selection are refused.
+                // TB_DOT4_OPSEL=0 keeps only the three FSPX-observed forms.
+                let (w0, w1) = (ins.raw[0], ins.raw[1]);
+                if w0 & 0x8700 != 0 || w1 >> 29 != 0 || (w0 >> 13) & 1 != 0 || (w0 >> 14) & 1 != 1 {
+                    return Err("unsupported signed byte dot product modifiers".into());
+                }
+                let pick = |v: &str, i: u32| -> String {
+                    let (lo, hi) = ((w0 >> (11 + i)) & 1, (w1 >> (27 + i)) & 1);
+                    let half = |sel: u32| if sel == 0 { format!("({v} & 65535u)") } else { format!("({v} >> 16u)") };
+                    match (lo, hi) {
+                        (0, 1) => v.to_string(),
+                        _ => format!("({} | ({} << 16u))", half(lo), half(hi)),
+                    }
+                };
+                lhs = pick(&lhs, 0);
+                rhs = pick(&rhs, 1);
+                &s[2]
             } else if ins.op == 0x416 {
                 // OP_SEL and OP_SEL_HI choose source 1's half for each dot
                 // pair. These three combinations were observed in FSPX.
@@ -6074,7 +6123,6 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             } else {
                 return Err("unsupported signed byte dot product encoding".into());
             };
-            let lhs = r(&s[0])?;
             let acc = r(acc)?;
             let value = if self.fspx_wave.is_some() {
                 format!("asuint(dot4add_i8packed({lhs}, {rhs}, asint({acc})))")

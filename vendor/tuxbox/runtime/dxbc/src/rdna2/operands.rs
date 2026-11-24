@@ -108,7 +108,14 @@ pub(super) fn decode_operands(enc: Enc, raw: &[u32]) -> (Vec<Opnd>, Vec<Opnd>, I
             (Vec::new(), Vec::new())
         }
         Enc::Smem => {
-            aux.imm = i64::from(second & 0x1f_ffff);
+            // OFFSET is a 21-bit signed byte offset (palmetto 36ab9ce7).
+            // TUXBOX_SMEM_SIGNED_OFFSET=0 reads it unsigned as before.
+            let raw_off = second & 0x1f_ffff;
+            aux.imm = if std::env::var("TUXBOX_SMEM_SIGNED_OFFSET").map_or(true, |v| v.trim() != "0") {
+                i64::from(((raw_off << 11) as i32) >> 11)
+            } else {
+                i64::from(raw_off)
+            };
             (
                 vec![source((first >> 6) & 127, 0)],
                 vec![Opnd::Sgpr(((first & 63) * 2) as u8)],
