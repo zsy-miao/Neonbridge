@@ -188,6 +188,70 @@ unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) ->
     unsafe { canonical(Some(device), desc) }
 }
 
+/// Census of the guest pipelines the title creates (test139: 84,186 at
+/// load): distinct programs, distinct program sets and distinct pipelines
+/// (the guest key, which adds the state). The driver's compile cost goes by
+/// the distinct sets and states, not the count. Logged at powers of two from
+/// 1024 and every 20,000. TUXBOX_PIPELINE_CENSUS=0 off.
+unsafe fn census(desc: &D3D12_PIPELINE_STATE_STREAM_DESC, key: Option<&str>) {
+    use std::collections::{HashMap, HashSet};
+    use std::hash::{Hash, Hasher};
+    #[derive(Default)]
+    struct Census { by_blob: HashMap<(usize, usize), u64>, programs: HashSet<u64>, sets: HashSet<u64>, keys: HashSet<String>, count: u64 }
+    static CENSUS: std::sync::Mutex<Option<Census>> = std::sync::Mutex::new(None);
+    if crate::env_toggle!("TUXBOX_PIPELINE_CENSUS") == Some("0") {
+        return;
+    }
+    let (input, size) = (desc.pPipelineStateSubobjectStream.cast::<u8>().cast_const(), desc.SizeInBytes);
+    if input.is_null() {
+        return;
+    }
+    let mut blobs = Vec::new();
+    let mut at = 0;
+    while at < size {
+        let record = unsafe { input.add(at) };
+        let tag = unsafe { record.cast::<i32>().read() };
+        let Some((offset, used)) = (match tag {
+            24 | 25 => Some(subobject::<D3D12_SHADER_BYTECODE>()),
+            AMPLIFICATION_X | STENCIL_X.. => None,
+            _ => layout(tag),
+        }) else { break };
+        if used > size - at {
+            break;
+        }
+        if matches!(tag, 1..=6 | 23..=25) {
+            let shader = unsafe { &*record.add(offset).cast::<D3D12_SHADER_BYTECODE>() };
+            if !shader.pShaderBytecode.is_null() && shader.BytecodeLength != 0 && shader.BytecodeLength <= isize::MAX as usize {
+                blobs.push((tag, shader.pShaderBytecode as usize, shader.BytecodeLength));
+            }
+        }
+        at += used;
+    }
+    let mut g = CENSUS.lock().unwrap_or_else(|e| e.into_inner());
+    let c = g.get_or_insert_with(Default::default);
+    let mut set = std::collections::hash_map::DefaultHasher::new();
+    for (tag, ptr, len) in blobs {
+        let program = *c.by_blob.entry((ptr, len)).or_insert_with(|| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            unsafe { slice::from_raw_parts(ptr as *const u8, len) }.hash(&mut h);
+            h.finish()
+        });
+        c.programs.insert(program);
+        (tag, program).hash(&mut set);
+    }
+    c.sets.insert(set.finish());
+    if let Some(key) = key {
+        c.keys.insert(key.to_owned());
+    }
+    c.count += 1;
+    let n = c.count;
+    if (n >= 1024 && n.is_power_of_two()) || n.is_multiple_of(20_000) {
+        crate::diagnostics::log_line(format_args!(
+            "pipeline census: {n} created; {} distinct programs, {} distinct program sets, {} distinct pipelines (with state) (TUXBOX_PIPELINE_CENSUS=0 off)",
+            c.programs.len(), c.sets.len(), c.keys.len()));
+    }
+}
+
 /// The DXBC digests of a stream's shaders (diagnostics capture).
 pub(super) unsafe fn shader_digests(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Vec<String> {
     let (input, size) = (desc.pPipelineStateSubobjectStream.cast::<u8>().cast_const(), desc.SizeInBytes);
@@ -777,6 +841,9 @@ pub(super) unsafe extern "system" fn create_pipeline(
     // A pipeline no earlier run bound is made on its first bind (VIctory's
     // lazy pipelines); the ones an earlier run bound are handed to the
     // workers now (see `background::eager`).
+    if !worker {
+        unsafe { census(desc, state.key.as_deref()) };
+    }
     let used_before = state.key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));
     if !worker
         && (!used_before || !background::eager_on_title())
