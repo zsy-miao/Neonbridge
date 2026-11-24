@@ -4,8 +4,9 @@
 //! The chain is a composition swap chain shown through one DirectComposition
 //! visual that is scaled and centred to keep the image's aspect in whatever
 //! client area the window has (borderless fullscreen leaves black bars from
-//! the window's class brush). TUXBOX_LETTERBOX=0, or a failure to build it,
-//! falls back to the HWND swap chain stretched to the client area.
+//! the window's class brush). Opt-in with TUXBOX_LETTERBOX=1 (the borderless
+//! default showed no picture through it); off, or on a failure to build it,
+//! the HWND swap chain is stretched to the client area.
 
 mod overlay;
 mod window;
@@ -49,7 +50,7 @@ fn occluded_status() -> bool {
 }
 
 fn letterbox_enabled() -> bool {
-    std::env::var("TUXBOX_LETTERBOX").map_or(true, |v| v.trim() != "0")
+    std::env::var("TUXBOX_LETTERBOX").is_ok_and(|v| v.trim() == "1")
 }
 
 impl Letterbox {
@@ -88,7 +89,7 @@ impl Letterbox {
         }
         if self.laid_out.0 == 0 {
             crate::diagnostics::log_line(format_args!(
-                "presentation letterboxed {width}x{height} into {cw}x{ch} at {:.0}x{:.0} (TUXBOX_LETTERBOX=0 stretches)",
+                "presentation letterboxed {width}x{height} into {cw}x{ch} at {:.0}x{:.0} (TUXBOX_LETTERBOX=1)",
                 shown_w, shown_h
             ));
         }
