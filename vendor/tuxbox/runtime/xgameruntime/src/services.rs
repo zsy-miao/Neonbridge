@@ -368,14 +368,19 @@ pub(super) unsafe extern "system" fn package_register_progress(
 
 /// XUserGetGamertag(user, component, size, buffer, used) on interface cef4fac0.
 pub(super) unsafe extern "system" fn user_gamertag(
-    _: &Object, user: *mut c_void, _component: u32, size: usize, buffer: *mut u8, used: *mut usize,
+    _: &Object, user: *mut c_void, component: u32, size: usize, buffer: *mut u8, used: *mut usize,
 ) -> i32 {
-    const NAME: &[u8] = b"TuxBox\0";
+    // XUserGamertagComponent: 0 classic, 1 modern, 2 modern suffix, 3 unique
+    // modern. The name has no suffix, so the suffix is empty and the unique
+    // modern form is the name itself. TUXBOX_GAMERTAG_SUFFIX=0 answers the
+    // name for every component (old behaviour).
+    let suffix = component == 2 && std::env::var("TUXBOX_GAMERTAG_SUFFIX").map_or(true, |v| v.trim() != "0");
+    let name: &[u8] = if suffix { b"\0" } else { b"TuxBox\0" };
     if !is_user(user) { return INVALID; }
-    if !used.is_null() { unsafe { used.write(NAME.len()) } };
+    if !used.is_null() { unsafe { used.write(name.len()) } };
     if buffer.is_null() { return POINTER; }
-    if size < NAME.len() { return INSUFFICIENT_BUFFER; }
-    unsafe { core::ptr::copy_nonoverlapping(NAME.as_ptr(), buffer, NAME.len()) };
+    if size < name.len() { return INSUFFICIENT_BUFFER; }
+    unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), buffer, name.len()) };
     OK
 }
 

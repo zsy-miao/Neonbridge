@@ -60,6 +60,11 @@ static HANDLES: LazyLock<Mutex<Handles>> = LazyLock::new(|| {
 });
 static PROCESS_QUEUE: LazyLock<Arc<Queue>> = LazyLock::new(|| Queue::new([1, 1]));
 
+fn terminate_wakes() -> bool {
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_QUEUE_TERMINATE_WAKE").map_or(true, |v| v.trim() != "0"));
+    *ON
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -181,6 +186,12 @@ impl Queue {
             // for a subsequent Submit or Terminate call.
             let waiting_final = port == 1 && matches!(s.ending, Ending::Draining(Some(_)));
             if automatic && p.pending.is_empty() && !waiting_final {
+                return false;
+            }
+            // A terminated queue ends a manual dispatch that has nothing left to
+            // run on its port (timed or infinite), so its thread can exit.
+            // TUXBOX_QUEUE_TERMINATE_WAKE=0 keeps waiting for the timeout.
+            if !matches!(s.ending, Ending::Open) && p.pending.is_empty() && !waiting_final && terminate_wakes() {
                 return false;
             }
             let next = if matches!(s.ending, Ending::Open)
