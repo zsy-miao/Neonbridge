@@ -51,6 +51,14 @@ struct Stream {
 const CACHED_STREAMS: usize = 16;
 const LOOK_BACK: u64 = 16;
 
+/// TUXBOX_DSTORAGE_IGNORE_FAILURES=1 (rebox d9dc7cb, re-derived): a failed
+/// read stays out of the next status entry, which reports success; the error
+/// record and event still report it. Off by default.
+fn ignore_failures() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_IGNORE_FAILURES").is_ok_and(|v| v.trim() == "1"))
+}
+
 fn zlib_chunks() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TUXBOX_ZLIB_CHUNKS").map_or(true, |v| v.trim() != "0"))
@@ -672,7 +680,7 @@ fn consume(shared: &Shared) {
             });
             for (entry, result) in batch.iter().zip(results) {
                 if let Err(hr) = result {
-                    if last_error.is_ok() {
+                    if last_error.is_ok() && !ignore_failures() {
                         last_error = hr;
                     }
                     {
@@ -722,7 +730,7 @@ fn consume(shared: &Shared) {
             }
         };
         if let Err(hr) = result {
-            if last_error.is_ok() {
+            if last_error.is_ok() && !(ignore_failures() && matches!(entry, Entry::Read(_))) {
                 last_error = hr;
             }
             {
