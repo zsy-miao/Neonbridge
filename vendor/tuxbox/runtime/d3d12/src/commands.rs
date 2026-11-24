@@ -410,7 +410,14 @@ unsafe extern "system" fn reset(
     };
     let mut state = recording(list);
     if matches!(state.phase, ListState::Open) {
-        return E_FAIL;
+        // Pooled titles reset a list they never closed (rebox closes and retries).
+        // Close the host recording and discard it; the reset below replaces it.
+        let _ = state.prefix.finish(&list.native);
+        let closed = unsafe { list.native.Close() };
+        static OPEN: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&OPEN, || format!(
+            "list reset while recording: closed the host list first ({:?})", closed.err().map(|e| e.code())));
+        state.phase = ListState::Closed;
     }
     let native = &list.native;
     let pipeline = initial.map_or(ptr::null_mut(), |p| device::compute::current(p).0.as_raw());
@@ -1635,15 +1642,16 @@ unsafe fn present_planes(
     if count == 0 || planes.is_null() {
         return E_INVALIDARG;
     }
-    if count != 1 {
-        return E_NOTIMPL;
-    }
+    // Show plane 0 (rebox does the same); overlay planes and extra
+    // resources are dropped with a log line.
     let plane = unsafe { &*planes };
     if plane.resource_count == 0 || plane.resources.is_null() {
         return E_INVALIDARG;
     }
-    if plane.resource_count != 1 {
-        return E_NOTIMPL;
+    if count != 1 || plane.resource_count != 1 {
+        static EXTRA: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&EXTRA, || format!(
+            "present: showing plane 0 resource 0 of {count} planes, {} resources", plane.resource_count));
     }
     let Some(source) = (unsafe { device::resource(*plane.resources, parent(&queue.parent)) })
     else {
@@ -1665,7 +1673,9 @@ unsafe fn present_planes(
         if rect.is_some_and(|r| r.left != 0 || r.top != 0 || r.right as u64 != desc.Width || r.bottom as u32 != desc.Height)
             || destination.is_some_and(|r| *r != [0.0, 0.0, 1.0, 1.0])
             || full.color_space != 0 || full.remaining != [0; 7] || params.options != [0; 7] {
-            return E_NOTIMPL;
+            // Presented as a full-plane copy anyway; the first mismatch is logged above.
+            static PARTIAL: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&PARTIAL, || "present: source rect, destination, color space or options ignored".to_owned());
         }
     }
     let result = queue.state.presentation.present(&queue.native, source);

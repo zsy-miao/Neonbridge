@@ -1,4 +1,5 @@
-//! Present one RGBA8 or RGB10A2 guest texture through a double-buffered DXGI swap chain.
+//! Present one RGBA8, BGRA8 (either sRGB or not), RGB10A2 or RGBA16F guest
+//! texture through a triple-buffered DXGI swap chain.
 
 mod window;
 use window::OutputWindow;
@@ -8,11 +9,24 @@ use std::sync::Mutex;
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, E_NOTIMPL, HANDLE, S_OK};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM,
-    DXGI_SAMPLE_DESC,
+    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R10G10B10A2_UNORM,
+    DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::*;
 use windows::core::{HRESULT, Interface, Result};
+
+/// The flip-model back-buffer format a plane copies into. Flip swap chains take
+/// no sRGB formats; CopyResource between UNORM and UNORM_SRGB of one family is legal.
+fn swap_format(format: DXGI_FORMAT) -> Option<DXGI_FORMAT> {
+    Some(match format {
+        DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_R8G8B8A8_UNORM_SRGB => DXGI_FORMAT_R8G8B8A8_UNORM,
+        DXGI_FORMAT_B8G8R8A8_UNORM | DXGI_FORMAT_B8G8R8A8_UNORM_SRGB => DXGI_FORMAT_B8G8R8A8_UNORM,
+        DXGI_FORMAT_R10G10B10A2_UNORM => DXGI_FORMAT_R10G10B10A2_UNORM,
+        DXGI_FORMAT_R16G16B16A16_FLOAT => DXGI_FORMAT_R16G16B16A16_FLOAT,
+        _ => return None,
+    })
+}
 
 #[derive(Default)]
 pub(crate) struct Presentation {
@@ -31,20 +45,24 @@ impl Presentation {
         source: &ID3D12Resource,
     ) -> Result<HRESULT> {
         // SAFETY: source is a live native resource held by the caller.
-        let desc = unsafe { source.GetDesc() };
+        let mut desc = unsafe { source.GetDesc() };
+        let chain_format = swap_format(desc.Format);
         if desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
-            || !matches!(
-                desc.Format,
-                DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_R10G10B10A2_UNORM
-            )
+            || chain_format.is_none()
             || desc.DepthOrArraySize != 1
             || desc.MipLevels != 1
             || desc.SampleDesc.Count != 1
             || desc.SampleDesc.Quality != 0
             || desc.Width > u64::from(u32::MAX)
         {
+            static REFUSED: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&REFUSED, || format!(
+                "present refused: {:?} {}x{} format={} arrays={} mips={} samples={}",
+                desc.Dimension, desc.Width, desc.Height, desc.Format.0, desc.DepthOrArraySize, desc.MipLevels, desc.SampleDesc.Count));
             return Err(E_NOTIMPL.into());
         }
+        // The swap chain only needs the plane's size and back-buffer format.
+        desc.Format = chain_format.unwrap_or(desc.Format);
         let owner = device_of(source)?;
         let device = device_of(queue)?;
         if owner.as_raw() != device.as_raw() {
