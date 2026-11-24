@@ -233,9 +233,18 @@ fn prune_into(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<Ha
         DEAD_BYTES.store(dead, Relaxed);
         over = dead > dead_cap();
     }
-    if entries.len() > KEPT || over {
+    // test85: past KEPT live entries every copy_of scanned all entries and
+    // cached imports under the shadow lock, and title threads spun on it
+    // (62% of a hot title thread). The scan now runs again only once the map
+    // has grown KEPT/8 past its size after the last one.
+    // TUXBOX_SHADOW_PRUNE_EVERY=1 scans on every call as before.
+    static AFTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let every = crate::env_toggle!("TUXBOX_SHADOW_PRUNE_EVERY") == Some("1");
+    let due = entries.len() > KEPT && (every || entries.len() > AFTER.load(Relaxed) + KEPT / 8);
+    if due || over {
         let dead: Vec<_> = entries.iter().filter(|(_, e)| e.view.strong_count() == 0).map(|(k, _)| *k).collect();
         garbage.0.extend(dead.iter().filter_map(|k| entries.remove(k)));
+        AFTER.store(entries.len(), Relaxed);
         // A cached import pins its pages against remaps; keep only those a
         // remaining shadow still holds, so the cache pins nothing extra.
         let held: std::collections::HashSet<usize> = entries.values()

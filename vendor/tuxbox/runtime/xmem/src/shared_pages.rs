@@ -257,13 +257,15 @@ fn fallback_note(what: std::fmt::Arguments) {
 /// recorded view, both keeping and not keeping its placeholder, with no live
 /// GPU import over the page. A released imported heap's kernel allocation can
 /// hold the view until the GPU passes it, and test82's queues were stalled.
-/// An unmap failing with 87 is retried after 1, 2, 4, 8 and 16 ms (31 ms at
-/// most), logged; TUXBOX_XMEM_UNMAP_RETRY=0 fails at once.
+/// An unmap failing with 87 was retried after 1, 2, 4, 8 and 16 ms (31 ms at
+/// most). test83's 21 retries all failed, and test85 had a title thread 61%
+/// asleep in them, so the retry is now off; failed unmaps are deferred
+/// instead (copy_mappings.rs). TUXBOX_XMEM_UNMAP_RETRY=1 retries.
 pub(super) fn unmap(address: usize) -> Result<(), u32> {
     let first = unmap_once(address);
     if first != Err(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER)
         || NO_RETRY.with(|n| n.get())
-        || std::env::var("TUXBOX_XMEM_UNMAP_RETRY").is_ok_and(|v| v.trim() == "0")
+        || !std::env::var("TUXBOX_XMEM_UNMAP_RETRY").is_ok_and(|v| v.trim() == "1")
     {
         return first;
     }
