@@ -188,6 +188,37 @@ unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) ->
     unsafe { canonical(Some(device), desc) }
 }
 
+/// The DXBC digests of a stream's shaders (diagnostics capture).
+pub(super) unsafe fn shader_digests(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Vec<String> {
+    let (input, size) = (desc.pPipelineStateSubobjectStream.cast::<u8>().cast_const(), desc.SizeInBytes);
+    let mut digests = Vec::new();
+    if input.is_null() {
+        return digests;
+    }
+    let mut at = 0;
+    while at < size {
+        let record = unsafe { input.add(at) };
+        let tag = unsafe { record.cast::<i32>().read() };
+        let Some((offset, used)) = (match tag {
+            24 | 25 => Some(subobject::<D3D12_SHADER_BYTECODE>()),
+            AMPLIFICATION_X | STENCIL_X.. => None,
+            _ => layout(tag),
+        }) else { break };
+        if used > size - at {
+            break;
+        }
+        if matches!(tag, 1..=6 | 23..=25) {
+            let shader = unsafe { &*record.add(offset).cast::<D3D12_SHADER_BYTECODE>() };
+            if !shader.pShaderBytecode.is_null() && shader.BytecodeLength != 0 {
+                let bytes = unsafe { slice::from_raw_parts(shader.pShaderBytecode.cast::<u8>(), shader.BytecodeLength) };
+                digests.extend(super::shader_cache::source_digest(bytes));
+            }
+        }
+        at += used;
+    }
+    digests
+}
+
 /// The pipeline library name of a desktop stream made by `create`.
 /// The DXIL bytes of a desktop stream's shaders (for the compile budget).
 pub(super) unsafe fn shader_bytes(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> u64 {
@@ -737,6 +768,11 @@ pub(super) unsafe extern "system" fn create_pipeline(
     let worker = background::on_worker();
     if !worker {
         state.key = unsafe { guest_key(device, desc) }.map(Into::into);
+        if let Some(key) = state.key.as_deref()
+            && crate::diagnostics::capture::shaders_on()
+        {
+            crate::diagnostics::capture::pipeline_shaders(key, unsafe { shader_digests(desc) });
+        }
     }
     // A pipeline no earlier run bound is made on its first bind (VIctory's
     // lazy pipelines); the ones an earlier run bound are handed to the

@@ -396,6 +396,15 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     use super::stream::background;
     let worker = background::on_worker();
     let key = if worker { None } else { unsafe { compute_key(this, desc) } };
+    if let Some(key) = key.as_deref()
+        && crate::diagnostics::capture::shaders_on()
+        && let Some(guest) = unsafe { desc.as_ref() }
+        && !guest.CS.pShaderBytecode.is_null()
+        && guest.CS.BytecodeLength != 0
+    {
+        let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
+        crate::diagnostics::capture::pipeline_shaders(key, super::shader_cache::source_digest(bytes).into_iter().collect());
+    }
     // As for streams: a pipeline no earlier run bound is made on first bind,
     // one an earlier run bound is handed to the workers now.
     let used_before = key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));

@@ -7,7 +7,11 @@
 //! refused recording). The lines go to
 //! %TEMP%\tuxbox_capture\<pid>-frame<N>\frame.jsonl (TUXBOX_CAPTURE_DIR
 //! names the parent) with a summary in the log; `neonbridge replay-shaders`
-//! reads the pipeline keys back. Unarmed, a hook costs one atomic load.
+//! reads the shader keys back. Unarmed, a hook costs one atomic load.
+//! pipelines.jsonl names each pipeline's shaders by the SHA-256 of their
+//! DXBC (the shader cache's request key) when TUXBOX_CAPTURE_FRAME is set
+//! or TUXBOX_CAPTURE_SHADERS=1 at startup: the digests are taken as the
+//! pipelines are made, before any frame is armed.
 //! Idea from leonida 88797f3e (LEONIDA_CAPTURE) and VIctory
 //! (VICTORY_DUMP_TARGETS); written here.
 use std::collections::BTreeMap;
@@ -33,6 +37,25 @@ struct Frame {
 }
 
 static FRAME: Mutex<Option<Frame>> = Mutex::new(None);
+static SHADERS: Mutex<Option<std::collections::HashMap<String, Vec<String>>>> = Mutex::new(None);
+
+/// Whether pipelines note their shaders' digests (see the header).
+pub(crate) fn shaders_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        crate::env_toggle!("TUXBOX_CAPTURE_SHADERS") == Some("1")
+            || crate::env_toggle!("TUXBOX_CAPTURE_FRAME").is_some_and(|v| !v.trim().is_empty() && v.trim() != "0")
+    })
+}
+
+/// The pipeline with `key` was made from shaders with these DXBC digests.
+pub(crate) fn pipeline_shaders(key: &str, shaders: Vec<String>) {
+    if shaders.is_empty() {
+        return;
+    }
+    let mut map = SHADERS.lock().unwrap_or_else(|e| e.into_inner());
+    map.get_or_insert_with(Default::default).entry(key.to_owned()).or_insert(shaders);
+}
 
 fn armed_from_env() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -175,8 +198,14 @@ fn write(frame: Frame) {
         let _ = writeln!(summary, "  {kind} {outcome}: {n}");
     }
     let mut pipelines = String::new();
-    for (key, (ran, dropped)) in &frame.pipelines {
-        let _ = writeln!(pipelines, "{{\"pipeline\":\"{}\",\"ran\":{ran},\"dropped\":{dropped}}}", escape(key));
+    {
+        let shaders = SHADERS.lock().unwrap_or_else(|e| e.into_inner());
+        for (key, (ran, dropped)) in &frame.pipelines {
+            let list = shaders.as_ref().and_then(|m| m.get(key)).map_or(String::new(), |s| {
+                s.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(",")
+            });
+            let _ = writeln!(pipelines, "{{\"pipeline\":\"{}\",\"ran\":{ran},\"dropped\":{dropped},\"shaders\":[{list}]}}", escape(key));
+        }
     }
     let result = std::fs::create_dir_all(&dir)
         .and_then(|()| std::fs::write(dir.join("frame.jsonl"), frame.lines.join("\n") + "\n"))

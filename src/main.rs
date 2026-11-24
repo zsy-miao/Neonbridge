@@ -11,6 +11,7 @@
 
 mod ctl;
 mod picker;
+mod replay;
 mod shaders;
 mod splash;
 
@@ -31,6 +32,8 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
   providers build into %LOCALAPPDATA%/6ixpack/tuxbox; a release build ships them
   prebuilt in a tuxbox folder beside neonbridge.exe and builds nothing
+  replay-shaders <capture dir> [--xshader <exe>] [--against <dir>]  translate a
+               TUXBOX_CAPTURE_FRAME capture's shaders offline and diff the outcomes
   --package-release DIR  build everything and lay out a portable release in DIR,
                zipped as neonbridge-<version>-win-x64.zip beside it
   --exe        executable name (default: the MicrosoftGame.Config Executable, else the only x64 exe)
@@ -91,6 +94,13 @@ enum Mode {
 fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if args.first().is_some_and(|a| a == "ctl") {
         return ctl::run(&args[1..]);
+    }
+    if args.first().is_some_and(|a| a == "replay-shaders") {
+        return replay::run_cli(&args[1..], || {
+            let tuxbox = env_path("TUXBOX_ROOT").unwrap_or_else(baked_tuxbox);
+            let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+            build_xshader(&tuxbox, &out)
+        });
     }
     let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
     let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
