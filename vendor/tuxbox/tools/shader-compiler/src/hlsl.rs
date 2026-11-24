@@ -8303,6 +8303,13 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             for k in 0..group_ids.len() {
                 self.regs.insert(format!("s{}", g + k));
             }
+            // COMPUTE_PGM_RSRC2.TG_SIZE_EN [10]: the thread-group register follows the
+            // group IDs: wave count [5:0], wave index in the group at [11:6] and
+            // [25:20], and bit 31 on the first wave (Leonida rdna2spirv).
+            let tg_size = from_rsrc2 && (rsrc2 >> 10) & 1 != 0;
+            if tg_size {
+                self.regs.insert(format!("s{}", g + group_ids.len()));
+            }
             let _ = writeln!(h, "{}", self.reg_decls());
             if self.page_waves || self.wave_cull {
                 writeln!(h, "    uint tb_wave_tid = gtid.x + {tx}u * (gtid.y + {ty_}u * gtid.z);").unwrap();
@@ -8317,6 +8324,11 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             }
             let ids: Vec<String> = group_ids.iter().enumerate().map(|(k, &c)| format!("s{} = gid.{};", g + k, XYZW[c])).collect();
             let _ = writeln!(h, "    {}", ids.join(" "));
+            if tg_size {
+                let width = self.required_wave_size.unwrap_or(64);
+                let waves = (tx * ty_ * tz).div_ceil(width).min(63);
+                let _ = writeln!(h, "    {{ uint tb_wave = (gtid.x + {tx}u * (gtid.y + {ty_}u * gtid.z)) / {width}u; s{} = {waves}u | ((tb_wave & 63u) << 6) | ((tb_wave & 63u) << 20) | (tb_wave == 0u ? 0x80000000u : 0u); }}", g + group_ids.len());
+            }
             sampler_heap::init_constants(ex, &self.regs, &mut h);
             if let Some(plan) = &self.packed { plan.init_args(&mut h); }
             h.push_str(&self.body);
