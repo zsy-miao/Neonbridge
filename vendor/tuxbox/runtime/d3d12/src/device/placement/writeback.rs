@@ -27,8 +27,23 @@ pub(super) struct Readback {
     _allocator: ID3D12CommandAllocator,
     buffer: ID3D12Resource,
     size: usize,
+    /// Bytes counted in IN_FLIGHT until this is dropped.
+    reserved: u64,
     // One footprint offset per mip (including array slices) in the readback buffer.
     textures: Vec<(Arc<Texture>, Vec<u64>)>,
+}
+
+/// test84 ended with three 939 MiB readback buffers alive (one batch's
+/// write-back of about 500 textures each) and 259 MiB of free commit. Live
+/// readback buffers together stay within TUXBOX_WRITEBACK_INFLIGHT_MB (512;
+/// 0: no cap): a texture that would pass it is not written back this batch
+/// and the title's CPU keeps its old bytes there.
+static IN_FLIGHT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl Drop for Readback {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(self.reserved, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Readback {
@@ -46,7 +61,19 @@ impl Readback {
         // keeps its old bytes there. 0 lifts the cap.
         static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
         let cap = *MB.get_or_init(|| crate::env_toggle!("TUXBOX_WRITEBACK_MAX_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(256)) << 20;
+        static BUDGET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let budget = *BUDGET.get_or_init(|| crate::env_toggle!("TUXBOX_WRITEBACK_INFLIGHT_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(512)) << 20;
+        let in_flight = IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed);
+        let (mut over, mut over_bytes) = (0usize, 0u64);
         for texture in writers {
+            if budget != 0 {
+                let bytes: u64 = texture.mips.iter().map(|m| m.bytes.next_multiple_of(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT.into())).sum();
+                if in_flight + total + bytes > budget {
+                    over += 1;
+                    over_bytes += bytes;
+                    continue;
+                }
+            }
             if cap != 0 && let Some(big) = texture.mips.iter().map(|m| m.bytes).max().filter(|&b| b > cap) {
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -67,6 +94,15 @@ impl Readback {
                 offsets.push(offset);
             }
             textures.push((texture.clone(), offsets));
+        }
+        if over != 0 {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 8 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "placed textures: {over} of {} written textures ({} MiB) not written back: readback buffers in flight {} MiB + this batch {} MiB reach TUXBOX_WRITEBACK_INFLIGHT_MB ({n} so far; 0 lifts it)",
+                    writers.len(), over_bytes >> 20, in_flight >> 20, total >> 20));
+            }
         }
         let size = usize::try_from(total)
             .ok()
@@ -127,7 +163,9 @@ impl Readback {
             }
         }
         unsafe { list.Close()? };
+        IN_FLIGHT.fetch_add(total, std::sync::atomic::Ordering::Relaxed);
         Ok(Self {
+            reserved: total,
             list: list.cast()?,
             _allocator: allocator,
             buffer,
