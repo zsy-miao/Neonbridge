@@ -434,7 +434,12 @@ pub(super) unsafe extern "system" fn storage_get_path(_: &Object, size: usize, b
     let needed = path.len() + 1;
     if !used.is_null() { unsafe { used.write(needed) } };
     if buffer.is_null() { return POINTER; }
-    if size < needed { return INSUFFICIENT_BUFFER; }
+    if size < needed {
+        // The console answers a short buffer with E_FAIL (the PC runtime with
+        // ERROR_INSUFFICIENT_BUFFER; TUXBOX_STORAGE_PATH_PC=1 answers that).
+        // VIctory 376b3cf.
+        return if std::env::var("TUXBOX_STORAGE_PATH_PC").is_ok_and(|v| v.trim() == "1") { INSUFFICIENT_BUFFER } else { 0x80004005u32 as i32 };
+    }
     unsafe {
         core::ptr::copy_nonoverlapping(path.as_ptr(), buffer, path.len());
         buffer.add(path.len()).write(0);
