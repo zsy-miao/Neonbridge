@@ -28,6 +28,39 @@ unsafe extern "system" {
     fn LoadLibraryW(name: *const u16) -> H;
     fn GetProcAddress(module: H, name: *const u8) -> *const c_void;
     fn IsWindow(hwnd: H) -> i32;
+    fn DefWindowProcA(hwnd: H, msg: u32, w: usize, l: isize) -> isize;
+    fn DefWindowProcW(hwnd: H, msg: u32, w: usize, l: isize) -> isize;
+}
+
+const WM_SYSCOMMAND: u32 = 0x0112;
+const SC_KEYMENU: usize = 0xF100;
+
+/// Alt or F10 sends WM_SYSCOMMAND SC_KEYMENU, and DefWindowProc then runs a
+/// modal menu loop on the title's window thread: the title stops presenting
+/// and reading input, and its watchdog aborts it about 30 s later. The key
+/// menu is dropped; the mouse-opened window menu (SC_MOUSEMENU) still works.
+/// TUXBOX_KEY_MENU=1 lets it through (old behaviour). From VIctory ff8694a.
+fn drop_key_menu(msg: u32, w: usize) -> bool {
+    static ALLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    msg == WM_SYSCOMMAND
+        && w & 0xFFF0 == SC_KEYMENU
+        && !*ALLOW.get_or_init(|| std::env::var("TUXBOX_KEY_MENU").is_ok_and(|v| v.trim() == "1"))
+}
+
+unsafe extern "system" fn def_window_proc_a(hwnd: H, msg: u32, w: usize, l: isize) -> isize {
+    if drop_key_menu(msg, w) {
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| log("window: dropped the Alt/F10 key menu (SC_KEYMENU; TUXBOX_KEY_MENU=1 allows it)"));
+        return 0;
+    }
+    unsafe { DefWindowProcA(hwnd, msg, w, l) }
+}
+
+unsafe extern "system" fn def_window_proc_w(hwnd: H, msg: u32, w: usize, l: isize) -> isize {
+    if drop_key_menu(msg, w) {
+        return 0;
+    }
+    unsafe { DefWindowProcW(hwnd, msg, w, l) }
 }
 
 #[repr(C)]
@@ -147,8 +180,10 @@ pub(crate) unsafe fn install() {
             &[
                 ("CreateWindowExA", create_window_ex_a as *const () as usize),
                 ("RegisterClassExA", register_class_ex_a as *const () as usize),
+                ("DefWindowProcA", def_window_proc_a as *const () as usize),
+                ("DefWindowProcW", def_window_proc_w as *const () as usize),
             ],
         )
     };
-    log(&format!("window: {n} window import(s) patched (black class brush, one-monitor fit, cloak until the first present)"));
+    log(&format!("window: {n} window import(s) patched (black class brush, one-monitor fit, cloak until the first present, no Alt/F10 key menu)"));
 }
