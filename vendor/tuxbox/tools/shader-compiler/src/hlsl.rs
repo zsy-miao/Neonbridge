@@ -184,6 +184,20 @@ enum Res {
 
 const XYZW: [&str; 4] = ["x", "y", "z", "w"];
 
+/// Plain image loads, including the packed RGBA8 forms (image_load_pck,
+/// _pck_sgn, _mip_pck, _mip_pck_sgn: DMASK channels, one byte per dword,
+/// addressed as image_load; Xbox2Windows 580299da). TB_IMAGE_PCK=0 leaves the
+/// packed forms unsupported.
+fn is_image_load(m: &str) -> bool {
+    match m {
+        "image_load" | "image_load_mip" => true,
+        "image_load_pck" | "image_load_pck_sgn" | "image_load_mip_pck" | "image_load_mip_pck_sgn" => {
+            std::env::var("TB_IMAGE_PCK").map_or(true, |v| v.trim() != "0")
+        }
+        _ => false,
+    }
+}
+
 /// Float min/max for the DPP and wave reductions: the helpers that order -0
 /// below +0 as RDNA2 does (a wrong -0 turns a following rsq's +inf into -inf),
 /// or plain HLSL min/max with TB_MINMAX_FAST=1 (VIctory bf84134, re-derived).
@@ -2411,7 +2425,7 @@ impl<'a> Emitter<'a> {
                         _ => unreachable!(),
                     };
                     let regs = (0..image_data_registers(ins)).map(|k| vd.wrapping_add(k)).collect();
-                    let load = matches!(ins.mnemonic.as_str(), "image_load" | "image_load_mip");
+                    let load = is_image_load(&ins.mnemonic);
                     Some(((true, is_uav, slot), regs, load, ins.mnemonic == "image_store"))
                 }
                 _ => None,
@@ -3486,7 +3500,7 @@ impl<'a> Emitter<'a> {
                     let dim = ins.aux.imm as u32;
                     let mut tex_res: Vec<(u32, Res)> = Vec::new();
                     if sym.get(&rs) == Some(&Sym::HeapDescriptor(8)) {
-                        let load = matches!(ins.mnemonic.as_str(), "image_load" | "image_load_mip") && matches!(dim, 0 | 1 | 2 | 4 | 5);
+                        let load = is_image_load(&ins.mnemonic) && matches!(dim, 0 | 1 | 2 | 4 | 5);
                         let resinfo = ins.mnemonic == "image_get_resinfo" && dim == 1;
                         if !load && !resinfo && (!ins.mnemonic.starts_with("image_sample") || !matches!(dim, 1 | 3 | 5)) {
                             return Err(format!("unsupported direct heap texture operation {} dim {dim}", ins.mnemonic));
@@ -7743,8 +7757,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "image_atomic_or" => Some("InterlockedOr"),
             _ => None,
         };
-        if atomic.is_some() || matches!(ins.mnemonic.as_str(), "image_load" | "image_load_mip" | "image_store" | "image_store_mip") {
-            let with_mip = ins.mnemonic == "image_load_mip";
+        if atomic.is_some() || is_image_load(&ins.mnemonic) || matches!(ins.mnemonic.as_str(), "image_store" | "image_store_mip") {
+            let with_mip = ins.mnemonic.starts_with("image_load_mip");
+            let pck = ins.mnemonic.contains("_pck");
+            let sgn = ins.mnemonic.ends_with("_sgn");
             let (slot, dim, is_uav, heap) = match rs.first() {
                 Some(Res::Tex(t, d)) => (*t, *d, false, None),
                 Some(Res::Uav(t, d)) => (*t, *d, true, None),
@@ -7934,11 +7950,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     return self.write_d16(vd, &chans);
                 }
                 for (n, x) in chans.iter().enumerate() {
-                    let e = match ety {
+                    let mut e = match ety {
+                        // A packed load reads each selected byte unconverted. Through a
+                        // normalized (float) view the byte is recovered from the value.
+                        "float4" if pck => format!("((uint)round(saturate({x}) * 255.0))"),
                         "float4" => format!("asuint({x})"),
                         "int4" => format!("(uint){x}"),
                         _ => x.clone(),
                     };
+                    if pck {
+                        // One byte per dword, zero-extended, or sign-extended from bit 7.
+                        e = if sgn { format!("asuint(asint(({e}) << 24) >> 24)") } else { format!("(({e}) & 0xffu)") };
+                    }
                     self.wv(&Opnd::Vgpr(vd + n as u8), &e)?;
                 }
             }
