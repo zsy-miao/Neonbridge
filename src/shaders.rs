@@ -290,7 +290,8 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
     Ok((Tools { xshader, dxc: tools.dxc.clone(), defines }, cache))
 }
 
-enum Outcome { Compiled, Cached, Unsupported(String), Failed(String) }
+/// Compiled carries the milliseconds spent in xshader and in dxc.
+enum Outcome { Compiled(u64, u64), Cached, Unsupported(String), Failed(String) }
 
 fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path) -> Outcome {
     let work = cache.join(format!("tmp-{}-{}", std::process::id(), sha256(key.as_bytes()).get(..12).unwrap_or("x")));
@@ -348,6 +349,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             }
         }
         let (hlsl, output, profile) = (work.join("shader.hlsl"), work.join("out.cso"), work.join("profile"));
+        let translate_started = std::time::Instant::now();
         match run(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
             .arg("--profile-out").arg(&profile), Duration::from_secs(120)) {
             Ok(()) => {}
@@ -358,6 +360,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Err(ToolError::Exit(c, msg)) => return Err(format!("xshader failed ({c}): {msg}")),
             Err(ToolError::Other(msg)) => return Err(format!("xshader: {msg}")),
         }
+        let translate_ms = translate_started.elapsed().as_millis() as u64;
         let target = fs::read_to_string(&profile).map_err(|e| format!("xshader wrote no profile: {e}"))?.trim().to_owned();
         let allowed: &[&str] = if ext == "link" {
             &["vs_6_0", "vs_6_1", "vs_6_6", "gs_6_0", "gs_6_1", "gs_6_6"]
@@ -381,6 +384,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         };
         // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
         // unoptimised DXIL compiles in seconds and the driver optimises it again.
+        let dxc_started = std::time::Instant::now();
         let compiled = match dxc("-O1", 120) {
             Err(ToolError::Other(msg)) if msg == "timed out" => {
                 let _ = fs::remove_file(&output);
@@ -393,6 +397,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Err(ToolError::Exit(c, msg)) => return Err(format!("dxc failed ({c}): {msg}")),
             Err(ToolError::Other(msg)) => return Err(format!("dxc: {msg}")),
         }
+        let dxc_ms = dxc_started.elapsed().as_millis() as u64;
         let bytes = fs::read(&output).map_err(|e| format!("dxc wrote no output: {e}"))?;
         if !has_dxil_container(&bytes) {
             return Err("compiler returned an invalid DXIL container".into());
@@ -402,7 +407,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         fs::rename(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
         fs::rename(&stamp, &checksum).map_err(|e| e.to_string())?;
         publish(&bytes)?;
-        Ok(Outcome::Compiled)
+        Ok(Outcome::Compiled(translate_ms, dxc_ms))
     })();
     let _ = fs::remove_dir_all(&work);
     result.unwrap_or_else(Outcome::Failed)
@@ -606,7 +611,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
             scope.spawn(|| {
                 while let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let counter = match compile(path, key, ext, tools, cache, scratch) {
-                        Outcome::Compiled => &stats.prewarmed,
+                        Outcome::Compiled(..) => &stats.prewarmed,
                         Outcome::Cached => &stats.cached,
                         Outcome::Unsupported(m) => { stats.note("unsupported", &m); &stats.unsupported }
                         Outcome::Failed(m) => { stats.note("failed", &m); &stats.failed }
@@ -719,7 +724,11 @@ impl Worker {
                         thread::spawn(move || {
                             let outcome = compile(&path, &key, &ext, &tools, &cache, &session);
                             match &outcome {
-                                Outcome::Compiled => { st.compiled.fetch_add(1, Ordering::Relaxed); log(format!("compiled Xbox shader {key}")); }
+                                Outcome::Compiled(xs, dxc) => {
+                                    // Measures whether dxc dominates (a direct DXIL writer would only save the dxc part).
+                                    st.compiled.fetch_add(1, Ordering::Relaxed);
+                                    log(format!("compiled Xbox shader {key} (xshader {xs} ms, dxc {dxc} ms)"));
+                                }
                                 Outcome::Cached => { st.cached.fetch_add(1, Ordering::Relaxed); }
                                 Outcome::Unsupported(m) => { st.unsupported.fetch_add(1, Ordering::Relaxed); log(format!("Xbox shader {key}: unsupported: {m}")); }
                                 Outcome::Failed(m) => { st.failed.fetch_add(1, Ordering::Relaxed); log(format!("Xbox shader {key}: {m}")); }
