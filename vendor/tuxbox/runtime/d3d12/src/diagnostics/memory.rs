@@ -37,6 +37,28 @@ pub(crate) fn note(category: Category, bytes: u64) {
     BYTES[category as usize].fetch_add(bytes, Relaxed);
 }
 
+static LIVE_COUNTS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+static LIVE_BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+
+/// Device memory counted as created (`note`) and as live until dropped: the
+/// memory line's "live" part. test72's line named only creation totals, so
+/// which kind held its 8.2 GB of device-local memory was unknown.
+pub(crate) struct Live(Category, u64);
+
+pub(crate) fn live(category: Category, bytes: u64) -> Live {
+    note(category, bytes);
+    LIVE_COUNTS[category as usize].fetch_add(1, Relaxed);
+    LIVE_BYTES[category as usize].fetch_add(bytes, Relaxed);
+    Live(category, bytes)
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        LIVE_COUNTS[self.0 as usize].fetch_sub(1, Relaxed);
+        LIVE_BYTES[self.0 as usize].fetch_sub(self.1, Relaxed);
+    }
+}
+
 fn interval_ms() -> u64 {
     crate::env_toggle!("TUXBOX_MEM_STATS_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(10_000)
 }
@@ -78,8 +100,12 @@ fn line(local: (u64, u64), non_local: (u64, u64), private: u64, free_commit: u64
     let spans = crate::device::placement::alias::stats();
     let paged = crate::device::placement::pages::stats();
     let watched = crate::device::placement::watch::scan_stats();
-    format!("memory: device local {}/{} MiB, non-local {}/{} MiB (usage/budget); process private {} MiB; system free commit {} of {} MiB; shadow copies live {} MiB, dead kept {} MiB (TUXBOX_SHADOW_DEAD_MB caps); placed textures live {} ({} MiB), pooled {} ({} MiB, TUXBOX_PLACED_TEXTURE_POOL_MB caps), reused {}, of the live superseded by a newer placement {} ({} MiB); span heaps live {} ({} MiB, TUXBOX_PLACED_ALIAS=0 off), of those in system memory {} ({} MiB, TUXBOX_PLACED_SYSTEM_PCT), evicted {} ({} MiB; evictions {}, made resident again {}, TUXBOX_SPAN_EVICT_S), retired but held by live textures {} ({} MiB), placed in spans {}, on 64 KiB pages {} (recycled {}; pages in use {} MiB of pools {} MiB, {} pools in system memory, {} evicted, evictions {}, made resident again {}; TUXBOX_PLACED_PAGES=0 off), superseded and unmapped {} ({} MiB; unmaps {}, remaps {}, {} MiB of pages returned), of those sharing a span {}, committed fallbacks: {}; write-watch merged scans {} (calls saved {}, TUXBOX_WATCH_GAP_MB); created: {}",
-        mib(local.1), mib(local.0), mib(non_local.1), mib(non_local.0), mib(private), mib(free_commit), mib(total_commit), mib(live), mib(dead),
+    let held: Vec<String> = NAMES.iter().enumerate()
+        .filter(|(i, _)| LIVE_COUNTS[*i].load(Relaxed) != 0)
+        .map(|(i, name)| format!("{name} {} ({} MiB)", LIVE_COUNTS[i].load(Relaxed), mib(LIVE_BYTES[i].load(Relaxed))))
+        .collect();
+    format!("memory: device local {}/{} MiB, non-local {}/{} MiB (usage/budget); live now: {}; process private {} MiB; system free commit {} of {} MiB; shadow copies live {} MiB, dead kept {} MiB (TUXBOX_SHADOW_DEAD_MB caps); placed textures live {} ({} MiB), pooled {} ({} MiB, TUXBOX_PLACED_TEXTURE_POOL_MB caps), reused {}, of the live superseded by a newer placement {} ({} MiB); span heaps live {} ({} MiB, TUXBOX_PLACED_ALIAS=0 off), of those in system memory {} ({} MiB, TUXBOX_PLACED_SYSTEM_PCT), evicted {} ({} MiB; evictions {}, made resident again {}, TUXBOX_SPAN_EVICT_S), retired but held by live textures {} ({} MiB), placed in spans {}, on 64 KiB pages {} (recycled {}; pages in use {} MiB of pools {} MiB, {} pools in system memory, {} evicted, evictions {}, made resident again {}; TUXBOX_PLACED_PAGES=0 off), superseded and unmapped {} ({} MiB; unmaps {}, remaps {}, {} MiB of pages returned), of those sharing a span {}, committed fallbacks: {}; write-watch merged scans {} (calls saved {}, TUXBOX_WATCH_GAP_MB); created: {}",
+        mib(local.1), mib(local.0), mib(non_local.1), mib(non_local.0), if held.is_empty() { "none tracked".to_string() } else { held.join(", ") }, mib(private), mib(free_commit), mib(total_commit), mib(live), mib(dead),
         placed.live, mib(placed.live_bytes), placed.pooled, mib(placed.pooled_bytes), placed.reused, placed.superseded, mib(placed.superseded_bytes),
         spans.spans, mib(spans.span_bytes), spans.system, mib(spans.system_bytes), spans.evicted, mib(spans.evicted_bytes), spans.evictions, spans.residencies, spans.retired, mib(spans.retired_bytes), spans.placed, paged.placed, paged.recycled, mib(paged.in_use), mib(paged.pools), paged.system_pools, paged.evicted_pools, paged.pool_evictions, paged.pool_residencies, paged.unmapped, mib(paged.unmapped_bytes), paged.unmaps, paged.remaps, mib(paged.returned_bytes), spans.shared, spans.fallback, watched.0, watched.1,
         if categories.is_empty() { "nothing".into() } else { categories.join(", ") })

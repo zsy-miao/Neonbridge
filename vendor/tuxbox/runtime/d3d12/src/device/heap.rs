@@ -751,6 +751,7 @@ fn tiled_alias(device: &Device, base: u64, host: &D3D12_RESOURCE_DESC) -> window
 pub(super) struct RenderHeap {
     native: ID3D12Heap,
     end: u64,
+    _live: crate::diagnostics::memory::Live,
 }
 
 // Device-local heaps for images placed at guest addresses whose texels the
@@ -824,8 +825,8 @@ impl RenderHeaps {
         };
         let mut native = None;
         unsafe { device.CreateHeap(&desc, &mut native)? };
-        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes);
-        let heap = Arc::new(RenderHeap { native: native.ok_or(E_POINTER)?, end: stop });
+        let heap = Arc::new(RenderHeap { native: native.ok_or(E_POINTER)?, end: stop,
+            _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes) });
         heaps.insert(start, Arc::downgrade(&heap));
         Ok((heap, address - start))
     }
