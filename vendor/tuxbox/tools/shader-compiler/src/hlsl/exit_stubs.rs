@@ -139,6 +139,154 @@ fn inline_all(insns: &mut Vec<Insn>) -> usize {
         insns.splice(to..to, stub);
         moved += 1;
     }
+    if std::env::var("TB_MOVE_BLOCKS").map_or(true, |v| v.trim() != "0") {
+        moved += move_blocks(insns);
+    }
+    moved
+}
+
+/// Branch targets as positions in `order`; `n` is the end of the program.
+struct View<'a> {
+    insns: &'a [Insn],
+    order: &'a [usize],
+    pos: HashMap<usize, usize>,
+    end: i64,
+}
+
+impl<'a> View<'a> {
+    fn new(insns: &'a [Insn], order: &'a [usize]) -> Self {
+        let pos = order.iter().enumerate().map(|(p, &i)| (insns[i].offset, p)).collect();
+        let end = insns.last().map_or(0, |l| (l.offset + l.dwords * 4) as i64);
+        View { insns, order, pos, end }
+    }
+    fn at(&self, p: usize) -> &Insn {
+        &self.insns[self.order[p]]
+    }
+    fn target(&self, p: usize) -> Option<usize> {
+        let t = target(self.at(p));
+        if t >= self.end { Some(self.order.len()) } else { usize::try_from(t).ok().and_then(|t| self.pos.get(&t).copied()) }
+    }
+    /// Pairs of loops that overlap without nesting (the structured form needs none).
+    fn interleaved(&self) -> usize {
+        let mut heads: HashMap<usize, usize> = HashMap::new();
+        for p in 0..self.order.len() {
+            if is_branch(self.at(p)) {
+                if let Some(t) = self.target(p).filter(|&t| t <= p) {
+                    let e = heads.entry(t).or_insert(p);
+                    *e = (*e).max(p);
+                }
+            }
+        }
+        let loops: Vec<(usize, usize)> = heads.into_iter().collect();
+        let mut n = 0;
+        for (i, &(l1, b1)) in loops.iter().enumerate() {
+            for &(l2, b2) in &loops[i + 1..] {
+                let disjoint = b1 < l2 || b2 < l1;
+                let nested = (l1 <= l2 && b2 <= b1) || (l2 <= l1 && b1 <= b2);
+                n += usize::from(!(disjoint || nested));
+            }
+        }
+        n
+    }
+}
+
+enum Move {
+    /// Region `a..=b` goes before its target H, its closing `s_branch` first.
+    Before { a: usize, b: usize, h: usize },
+    /// Region `a..=b` goes after the flow-ending instruction at `p`.
+    After { a: usize, b: usize, p: usize },
+}
+
+impl Move {
+    fn apply(&self, order: &[usize]) -> Vec<usize> {
+        let mut out = Vec::with_capacity(order.len());
+        match *self {
+            Move::Before { a, b, h } => {
+                out.extend_from_slice(&order[..h]);
+                out.push(order[b]);
+                out.extend_from_slice(&order[a..b]);
+                out.extend_from_slice(&order[h..a]);
+            }
+            Move::After { a, b, p } => {
+                out.extend_from_slice(&order[..=p]);
+                out.extend_from_slice(&order[a..=b]);
+                out.extend_from_slice(&order[p + 1..a]);
+            }
+        }
+        out.extend_from_slice(&order[match *self { Move::Before { b, .. } | Move::After { b, .. } => b + 1 }..]);
+        out
+    }
+}
+
+/// Region `a..=b` (entered only by branches, ending in the `s_branch` at `b` to `h`, every
+/// branch inside staying inside, going to `h` or leaving the program) and where it can go.
+fn region_move(v: &View, branches: &[usize], a: usize, b: usize, h: usize) -> Option<Move> {
+    let n = v.order.len();
+    let mut entries = Vec::new();
+    for &p in branches {
+        let t = v.target(p)?;
+        if (a..=b).contains(&p) {
+            if p != b && !((a..=b).contains(&t) || t == n || t == h) {
+                return None;
+            }
+        } else if (a..=b).contains(&t) {
+            entries.push(p);
+        }
+    }
+    let last = *entries.iter().max()?;
+    if last < h {
+        // Before h, a branch inside to its own closing `s_branch` would point backwards.
+        if branches.iter().any(|&p| (a..b).contains(&p) && v.target(p) == Some(b)) {
+            return None;
+        }
+        return Some(Move::Before { a, b, h });
+    }
+    let p = (last + 1..a).find(|&q| ends_flow(v.at(q)))?;
+    (p >= h).then_some(Move::After { a, b, p })
+}
+
+/// Out-of-line blocks that make loops overlap. The guest compiler places some blocks
+/// after the code that follows them: in 4326f79f the continue path of the loop at 0x6188
+/// (0x7420..0x76c4) sits past the end of the enclosing loop at 0x6100, and three exits
+/// to the shared tail at 0x8168 sit past that tail. A block that is entered only by
+/// branches and ends in an unconditional `s_branch` runs the same wherever it is placed,
+/// so it can go before its target (behind that `s_branch`, as the stubs above) or after
+/// any instruction that does not fall through. Only programs whose loops overlap are
+/// touched, and a move is kept only when fewer loops overlap after it (a move before
+/// the target may also keep the count). TB_MOVE_BLOCKS=0 off.
+fn move_blocks(insns: &mut Vec<Insn>) -> usize {
+    let mut order: Vec<usize> = (0..insns.len()).collect();
+    let mut cur = View::new(insns, &order).interleaved();
+    let mut moved = 0;
+    'round: while cur > 0 && moved < 64 {
+        let v = View::new(insns, &order);
+        let branches: Vec<usize> = (0..order.len()).filter(|&p| is_branch(v.at(p))).collect();
+        for &b in &branches {
+            if !(v.at(b).enc == Enc::Sopp && v.at(b).op == 2) {
+                continue;
+            }
+            let Some(h) = v.target(b).filter(|&h| h < b) else { continue };
+            for a in (h + 1..=b).rev() {
+                if !ends_flow(v.at(a - 1)) {
+                    continue;
+                }
+                let Some(m) = region_move(&v, &branches, a, b, h) else { continue };
+                let trial = m.apply(&order);
+                let after = View::new(insns, &trial).interleaved();
+                if after < cur || (matches!(m, Move::Before { .. }) && after == cur) {
+                    order = trial;
+                    cur = after;
+                    moved += 1;
+                    continue 'round;
+                }
+            }
+        }
+        break;
+    }
+    if moved > 0 {
+        let mut old: Vec<Option<Insn>> = insns.drain(..).map(Some).collect();
+        insns.extend(order.iter().map(|&i| old[i].take().expect("each instruction once")));
+    }
     moved
 }
 
@@ -188,6 +336,28 @@ mod tests {
         ];
         assert_eq!(endpgm_exits(&mut code), 1);
         assert_eq!(target(&code[3]), 0x14);
+    }
+
+    #[test]
+    fn continue_block_moves_into_the_loop_it_continues() {
+        // Loop W 0x00..0x14 and loop Y 0x04..0x20 overlap: Y's continue block 0x1c..0x20
+        // sits past W. After 0x0c (Y's other back edge, no fall-through) Y nests in W.
+        let end = || op(0, "s_endpgm", Enc::Sopp, 1, 0, vec![], vec![]);
+        let mut code = vec![
+            alu(0x00),
+            alu(0x04),
+            branch(0x08, "s_cbranch_scc1", 5, 0x1c),
+            branch(0x0c, "s_branch", 2, 0x04),
+            alu(0x10),
+            branch(0x14, "s_cbranch_scc0", 4, 0x00),
+            Insn { offset: 0x18, ..end() },
+            alu(0x1c),
+            branch(0x20, "s_branch", 2, 0x04),
+            Insn { offset: 0x24, ..end() },
+        ];
+        assert_eq!(inline_all(&mut code), 1);
+        let order: Vec<usize> = code.iter().map(|i| i.offset).collect();
+        assert_eq!(order, [0x00, 0x04, 0x08, 0x0c, 0x1c, 0x20, 0x10, 0x14, 0x18, 0x24]);
     }
 
     #[test]
