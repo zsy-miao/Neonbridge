@@ -419,6 +419,12 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     }
     let mut copies = Vec::new();
     {
+        // test79 froze 15 s with four title threads waiting on this lock: it
+        // was held while hashing title memory, whose reads can fault into the
+        // title's own handlers. Entries to hash are collected under the lock,
+        // hashed without it, and settled under it again.
+        // TUXBOX_SHADOW_HASH_LOCKED=1 hashes under the lock as before.
+        let unlocked = crate::env_toggle!("TUXBOX_SHADOW_HASH_LOCKED") != Some("1");
         let mut entries = lock(&shadows.entries);
         prune(&mut entries, &shadows.sources);
         let skip = !back && skip_unchanged();
@@ -426,31 +432,54 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         let now = if back { 0 } else { REFRESHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 };
         let (mut live, mut skipped, mut aged) = (0u64, 0u64, 0u64);
         let all = write_back_all();
-        for (&(address, bytes, _), entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (e.written || all))) {
+        // (key, is an aged check, view) to hash outside the lock.
+        let mut checks: Vec<((u64, u64, bool), bool, Arc<TextureAddress>)> = Vec::new();
+        for (&key, entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (e.written || all))) {
+            let (address, bytes, _) = key;
             // Dead entries wait for revival; their title pages may be unmapped.
             let Some(view) = entry.view.upgrade() else { continue };
             live += 1;
-            if aging && !entry.writable && !fresh(now, entry.bound) {
-                if !aged_check_due(now, address) {
-                    aged += 1;
+            let aged_check = aging && !entry.writable && !fresh(now, entry.bound);
+            if aged_check && !aged_check_due(now, address) {
+                aged += 1;
+                continue;
+            }
+            if aged_check || (skip && !entry.writable) {
+                if unlocked {
+                    checks.push((key, aged_check, view));
                     continue;
                 }
                 let h = hash(address, bytes);
                 if entry.hash.replace(h) == Some(h) {
-                    aged += 1;
+                    if aged_check { aged += 1 } else { skipped += 1 }
                     continue;
                 }
-                // Changed: copy, and treat it as fresh again.
-                entry.bound = now;
-            } else if skip && !entry.writable {
-                let now = hash(address, bytes);
-                if entry.hash.replace(now) == Some(now) {
-                    skipped += 1;
-                    continue;
+                if aged_check {
+                    // Changed: copy, and treat it as fresh again.
+                    entry.bound = now;
                 }
             }
             for (source, offset, at, bytes) in &entry.pieces {
                 copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
+            }
+        }
+        if !checks.is_empty() {
+            drop(entries);
+            // The views are held, so their title ranges stay imported.
+            let hashed: Vec<u64> = checks.iter().map(|((address, bytes, _), _, _)| hash(*address, *bytes)).collect();
+            entries = lock(&shadows.entries);
+            for ((key, aged_check, view), h) in checks.into_iter().zip(hashed) {
+                let Some(entry) = entries.get_mut(&key) else { continue };
+                if entry.hash.replace(h) == Some(h) {
+                    if aged_check { aged += 1 } else { skipped += 1 }
+                    continue;
+                }
+                if aged_check {
+                    entry.bound = now;
+                }
+                for (source, offset, at, bytes) in &entry.pieces {
+                    copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
+                }
             }
         }
         static LOGGED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];

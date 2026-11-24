@@ -431,6 +431,13 @@ impl Pool {
             for (a, _) in restored { shared_pages::unmap(a)?; }
             shared_pages::coalesce(lo, hi - lo)?;
             section.map_range(offset, lo, hi - lo)?;
+            // test79: these splits failed with error 87 and refused the page
+            // mapping. The view is back as it was; with bytes == PAGE the
+            // caller rebuilds it page by page instead (rebuild_view).
+            if bytes == PAGE && Self::unmap_fallback_on() {
+                Self::fallback_log(format_args!("splitting {at:#x} out of view {lo:#x}..{hi:#x} failed with error {e}: view restored, rebuilt page by page instead"));
+                return Ok(false);
+            }
             return Err(e);
         }
         self.views.remove(&lo);
@@ -482,20 +489,44 @@ impl Pool {
     fn rebuild_view(&mut self, at: usize) -> Result<bool, u32> {
         if !Self::unmap_fallback_on() { return Ok(false); }
         let Some((lo, hi)) = Self::os_view(at) else { return Ok(false) };
-        if (lo, hi) == (at, at + PAGE) || !lo.is_multiple_of(PAGE) || !hi.is_multiple_of(PAGE) { return Ok(false); }
+        if (lo, hi) == (at, at + PAGE) { return Ok(false); }
+        if !lo.is_multiple_of(PAGE) || !hi.is_multiple_of(PAGE) {
+            Self::fallback_log(format_args!("page {at:#x} lies in an unaligned OS view {lo:#x}..{hi:#x}: left"));
+            return Ok(false);
+        }
         if !(lo..hi).step_by(PAGE).all(|a| self.mappings.get(&a).is_some_and(|t| self.pages.contains_key(t))) {
             Self::fallback_log(format_args!("page {at:#x} lies in a {} KiB OS view at {lo:#x} with pages this pool does not map: left", (hi - lo) >> 10));
             return Ok(false);
         }
-        let stale: Vec<usize> = self.views.range(..hi).filter(|&(&a, &b)| a < hi && lo < b).map(|(&a, _)| a).collect();
-        if stale.iter().any(|&a| a < lo || self.views[&a] > hi) { return Ok(false); }
-        shared_pages::unmap(lo)?;
-        for a in stale { self.views.remove(&a); }
-        shared_pages::isolate_page(at, &shared_pages::region(at)?)?;
-        for a in (lo..hi).step_by(PAGE).filter(|&a| a != at) {
+        // OS views never overlap, so a recorded view overlapping this one
+        // but not equal to it is stale (test79: none of these logged).
+        let stale: Vec<(usize, usize)> = self.views.range(..hi).filter(|&(&a, &b)| a < hi && lo < b).map(|(&a, &b)| (a, b)).collect();
+        if let Err(e) = shared_pages::unmap(lo) {
+            Self::fallback_log(format_args!("page {at:#x}: unmapping its OS view {lo:#x}..{hi:#x} failed with error {e} (recorded views over it {stale:x?})"));
+            return Err(e);
+        }
+        for (a, _) in &stale { self.views.remove(a); }
+        let remap = |pool: &Self, a: usize| -> Result<(), u32> {
             shared_pages::isolate_page(a, &shared_pages::region(a)?)?;
-            let page = &self.pages[&self.mappings[&a]];
-            page.section.map(page.offset, a)?;
+            if a != at {
+                let page = &pool.pages[&pool.mappings[&a]];
+                page.section.map(page.offset, a)?;
+            }
+            Ok(())
+        };
+        let mut done = Vec::new();
+        for a in (lo..hi).step_by(PAGE) {
+            if let Err(e) = remap(self, a) {
+                Self::fallback_log(format_args!("page {at:#x}: rebuilding its OS view {lo:#x}..{hi:#x} failed at {a:#x} with error {e}; view mapped back whole"));
+                // Back to the one view it was (one section run, as the OS had it).
+                for &b in &done { let _ = shared_pages::unmap(b); }
+                let _ = shared_pages::coalesce(lo, hi - lo);
+                let first = &self.pages[&self.mappings[&lo]];
+                first.section.map_range(first.offset, lo, hi - lo)?;
+                self.views.insert(lo, hi);
+                return Err(e);
+            }
+            if a != at { done.push(a); }
         }
         Self::fallback_log(format_args!("page {at:#x} lay in a {} KiB OS view at {lo:#x} that did not match the recorded views: view rebuilt page by page without it", (hi - lo) >> 10));
         Ok(true)
