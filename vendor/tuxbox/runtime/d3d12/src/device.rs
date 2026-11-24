@@ -1151,6 +1151,7 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
     crate::dred::configure();
     crate::diagnostics::crash::install();
     crate::diagnostics::ctl::install();
+    crate::diagnostics::teb::run();
     // Audio endpoint probe as early as we run: the title may open its endpoint before the first frame.
     let _ = std::thread::Builder::new().name("TuxBox audio probe".into()).spawn(crate::diagnostics::audio::install_wasapi);
     // A null adapter picks the high-performance GPU (or TUXBOX_ADAPTER), not

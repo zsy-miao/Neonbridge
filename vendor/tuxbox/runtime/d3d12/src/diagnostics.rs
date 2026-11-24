@@ -557,6 +557,7 @@ pub(crate) mod audio;
 pub(crate) mod crash;
 pub(crate) mod ctl;
 mod crash_detail;
+pub(crate) mod teb;
 pub(crate) mod sampler;
 
 pub(crate) mod threads {

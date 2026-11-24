@@ -51,7 +51,12 @@ fn c_string(address: usize) -> String {
 }
 
 pub(crate) fn instruction_bytes(rip: usize) -> String {
-    let n = (0..16).take_while(|&i| readable(rip + i, 1)).count();
+    bytes(rip, 16)
+}
+
+/// Up to `len` readable bytes from `address` as hex.
+pub(crate) fn bytes(rip: usize, len: usize) -> String {
+    let n = (0..len).take_while(|&i| readable(rip + i, 1)).count();
     if n == 0 {
         return "unreadable".into();
     }
