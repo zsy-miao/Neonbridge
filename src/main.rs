@@ -465,7 +465,7 @@ fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug
         let script = log.with_extension("cdb.cmd");
         // Illegal instructions are the title's CPU feature probes: not logged; module
         // loads are not dumped (lm) since ModLoad lines already list them.
-        let dump = ".echo ==== FAULT ====;.lastevent;.exr -1;r;!address @rip;.echo ==== code at rip ====;ub @rip L8;u @rip L4;.echo ==== stack ====;kn 40";
+        let dump = ".echo ==== FAULT ====;.lastevent;.exr -1;r;!vprot @rip;.echo ==== code at rip ====;ub @rip L8;u @rip L4;.echo ==== stack ====;kn 40";
         fs::write(&script, format!("sxe -c \".exr -1;kn 25;gn\" e06d7363
 sxe -c \".exr -1;kn 25;gn\" e0000001
 sxe -c \".exr -1;kn 25;gn\" 40080201
