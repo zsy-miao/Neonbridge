@@ -2728,7 +2728,38 @@ impl<'a> Emitter<'a> {
             || self.ex.root_sig.as_ref().is_some_and(|r| !r.static_samplers.is_empty())
             || (self.ex.stage == Stage::Compute && self.ex.root_sig.as_ref().is_some_and(|r| !r.static_samplers.is_empty())
                 && self.ex.resources.iter().filter(|r| r.res_type == 1).count() > 1);
+        let range_end = range.end;
+        let mut swap_skip = 0usize;
         for idx in range {
+            // `a ^= b; b ^= a; a ^= b` swaps two SGPRs: swap what they hold.
+            if swap_skip > 0 {
+                swap_skip -= 1;
+                continue;
+            }
+            if idx + 3 <= range_end {
+                let xor = |i: &Insn| (i.mnemonic == "s_xor_b32").then(|| match (i.dst.as_slice(), i.src.as_slice()) {
+                    ([Opnd::Sgpr(d)], [Opnd::Sgpr(x), Opnd::Sgpr(y)]) if d == x => Some((*d, *y)),
+                    _ => None,
+                }).flatten();
+                if let (Some((a, b)), Some((b2, a2)), Some((a3, b3))) = (xor(&insns[idx]), xor(&insns[idx + 1]), xor(&insns[idx + 2])) {
+                    if a != b && (b2, a2) == (b, a) && (a3, b3) == (a, b) {
+                        let (a, b) = (u16::from(a), u16::from(b));
+                        let (sa, sb) = (sym.remove(&a), sym.remove(&b));
+                        // A never-written user SGPR is a table pointer; keep that meaning.
+                        let user = |r: u16, s: Option<Sym>, written: &BTreeSet<u16>| match s {
+                            None if !written.contains(&r) => u8::try_from(r).ok().map(Sym::Table),
+                            other => other,
+                        };
+                        let (sa, sb) = (user(a, sa, written), user(b, sb, written));
+                        if let Some(v) = sb { sym.insert(a, v); }
+                        if let Some(v) = sa { sym.insert(b, v); }
+                        written.insert(a);
+                        written.insert(b);
+                        swap_skip = 2;
+                        continue;
+                    }
+                }
+            }
             if let Some(r) = dbg_reg {
                 let cur = sym.get(&r).copied();
                 if cur != dbg_prev && idx > 0 {
