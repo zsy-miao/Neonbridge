@@ -4830,6 +4830,45 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         Ok(())
                     }
                     "s_flbit_i32_b32" => self.ws(&d, &format!("({a} == 0u ? ~0u : 31u - firstbithigh({a}))")),
+                    // Zero counts and first-zero / sign-run scans (Xbox2Windows 40e7766f).
+                    "s_bcnt0_i32_b32" => {
+                        self.ws(&d, &format!("(32u - countbits({a}))"))?;
+                        self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
+                        Ok(())
+                    }
+                    "s_bcnt0_i32_b64" => {
+                        self.touch(&hi(&s[0]));
+                        let ah = r(&hi(&s[0]))?;
+                        self.ws(&d, &format!("(64u - countbits({a}) - countbits({ah}))"))?;
+                        self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
+                        Ok(())
+                    }
+                    "s_ff0_i32_b32" => self.ws(&d, &format!("firstbitlow(~{a})")),
+                    "s_ff0_i32_b64" => {
+                        self.touch(&hi(&s[0]));
+                        let ah = r(&hi(&s[0]))?;
+                        self.ws(&d, &format!("((~{a}) != 0u ? firstbitlow(~{a}) : ((~{ah}) != 0u ? 32u + firstbitlow(~{ah}) : ~0u))"))
+                    }
+                    "s_flbit_i32_b64" => {
+                        self.touch(&hi(&s[0]));
+                        let ah = r(&hi(&s[0]))?;
+                        self.ws(&d, &format!("({ah} != 0u ? 31u - firstbithigh({ah}) : ({a} != 0u ? 63u - firstbithigh({a}) : ~0u))"))
+                    }
+                    // Signed: bits from the MSB until one differs from the sign bit.
+                    "s_flbit_i32" => {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint t{t} = {a} ^ (uint)(asint({a}) >> 31);"));
+                        self.ws(&d, &format!("(t{t} == 0u ? ~0u : 31u - firstbithigh(t{t}))"))
+                    }
+                    "s_flbit_i32_i64" => {
+                        self.touch(&hi(&s[0]));
+                        let ah = r(&hi(&s[0]))?;
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint t{t}s = (uint)(asint({ah}) >> 31); uint t{t}h = {ah} ^ t{t}s; uint t{t}l = {a} ^ t{t}s;"));
+                        self.ws(&d, &format!("(t{t}h != 0u ? 31u - firstbithigh(t{t}h) : (t{t}l != 0u ? 63u - firstbithigh(t{t}l) : ~0u))"))
+                    }
                     "s_ff1_i32_b32" => self.ws(&d, &format!("firstbitlow({a})")),
                     "s_sext_i32_i8" => self.ws(&d, &format!("asuint(asint({a} << 24) >> 24)")),
                     "s_sext_i32_i16" => self.ws(&d, &format!("asuint(asint({a} << 16) >> 16)")),
@@ -6576,6 +6615,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     /// Number of dwords moved by a MUBUF dword load/store mnemonic.
     fn mubuf_dwords(m: &str) -> Option<u32> {
+        // The D16 subword forms move one byte or short (Xbox2Windows 06e764bf).
+        let m = m.trim_end_matches("_d16_hi").trim_end_matches("_d16");
         Some(match m.rsplit('_').next()? {
             "dword" | "byte" | "short" | "ubyte" | "sbyte" | "ushort" | "sshort" => 1,
             "dwordx2" => 2,
@@ -7288,9 +7329,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             None => format!("{nm}[{index}].w[{}]", w0 + k),
             Some(_) => format!("{nm}[{index} + (t{t}w + {k}u) / {nwords}u].w[(t{t}w + {k}u) % {nwords}u]"),
         };
-        let subword = match ins.mnemonic.as_str() {
+        // D16 forms: `_d16` loads write the low 16 bits of vdata and keep the
+        // high half; `_d16_hi` loads write the high half, and `_d16_hi` stores
+        // take the byte or short from bit 16 (Xbox2Windows 06e764bf).
+        let d16_hi = ins.mnemonic.ends_with("_d16_hi");
+        let d16 = d16_hi || ins.mnemonic.ends_with("_d16");
+        let base_name = ins.mnemonic.trim_end_matches("_d16_hi").trim_end_matches("_d16");
+        let subword = match base_name {
             "buffer_load_ubyte" | "buffer_load_sbyte" | "buffer_store_byte" => Some(8),
-            "buffer_load_ushort" | "buffer_load_sshort" | "buffer_store_short" => Some(16),
+            "buffer_load_ushort" | "buffer_load_sshort" | "buffer_store_short" | "buffer_load_short" => Some(16),
             _ => None,
         };
         if let Some(bits) = subword {
@@ -7304,14 +7351,24 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if ins.mnemonic.starts_with("buffer_store") {
                 if !is_uav { return Err("subword store requires a UAV".into()); }
                 self.touch(&data);
-                let value = r(&data)?;
+                let value = if d16_hi { format!("({} >> 16)", r(&data)?) } else { r(&data)? };
                 self.line(&format!("if (exec_lo & 1u) {{ uint old{t}, seen{t} = 0u; [allow_uav_condition] do {{ old{t} = seen{t}; uint v = (old{t} & ~({mask}u << shift{t})) | (({value} & {mask}u) << shift{t}); InterlockedCompareExchange({word}, old{t}, v, seen{t}); }} while (seen{t} != old{t}); }}"));
                 return Ok(());
             }
             let field = format!("(({word} >> shift{t}) & {mask}u)");
-            let value = if ins.mnemonic.starts_with("buffer_load_s") {
+            let value = if ins.mnemonic.starts_with("buffer_load_s") && bits == 8 {
+                format!("asuint(asint({field} << {0}) >> {0})", 32-bits)
+            } else if ins.mnemonic.starts_with("buffer_load_ss") {
                 format!("asuint(asint({field} << {0}) >> {0})", 32-bits)
             } else { field };
+            if d16 {
+                // Keep the half of vdata this load does not write.
+                self.touch(&data);
+                let old = r(&data)?;
+                let half = format!("(({value}) & 0xffffu)");
+                let merged = if d16_hi { format!("(({old} & 0xffffu) | ({half} << 16))") } else { format!("(({old} & 0xffff0000u) | {half})") };
+                return self.wv(&data, &merged);
+            }
             return self.wv(&data, &value);
         }
         if ins.mnemonic.starts_with("buffer_store") {
