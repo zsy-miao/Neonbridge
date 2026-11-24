@@ -39,9 +39,14 @@ pub(super) fn expression(ins: &Insn) -> Result<Option<String>, String> {
     };
     let packed = ins.op >= 0x400;
     let (w0, w1) = (ins.raw[0], ins.raw[1]);
+    // A packed integer op reads an inline float constant as its 32-bit pattern
+    // (1.0 is 0x3f800000), and op_sel / op_sel_hi pick halves of that, as `r`
+    // already spells it (VIctory a0efd2d). TB_PK_INLINE_STRICT=1 refuses them;
+    // the non-packed 16-bit forms still do.
+    let float_inline_ok = packed && std::env::var("TB_PK_INLINE_STRICT").map_or(true, |v| v.trim() != "1");
     if w0 & 0x8700 != 0
         || w1 >> (if packed { 29 } else { 27 }) != 0
-        || ins.src[..2].iter().any(|s| matches!(s, Opnd::ConstF32(_)))
+        || (!float_inline_ok && ins.src[..2].iter().any(|s| matches!(s, Opnd::ConstF32(_))))
     {
         return Err("unsupported 16-bit integer modifiers or inline float".into());
     }
