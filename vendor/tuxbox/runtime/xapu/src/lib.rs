@@ -228,7 +228,10 @@ pub unsafe extern "system" fn XApuEnqueueCommand(
         completion.decoded_bytes() / 4 / state.channels().max(1), false, completion.failed());
     state.pending += 1;
     connection.results.push_back(completion);
-    if connection.event != 0 {
+    // Both references signal only when the command's options ask (bit 0 of
+    // the options word @12); TUXBOX_XAPU_SIGNAL_ALWAYS=1 signals every one.
+    let options = unsafe { command.add(12).cast::<u32>().read_unaligned() };
+    if connection.event != 0 && signals(options) {
         unsafe { SetEvent(connection.event as *mut _) };
     }
     connection.submitted = connection.submitted.wrapping_add(1);
@@ -236,6 +239,12 @@ pub unsafe extern "system" fn XApuEnqueueCommand(
         unsafe { sequence.write_unaligned(connection.submitted) };
     }
     0
+}
+
+fn signals(options: u32) -> bool {
+    static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALWAYS.get_or_init(|| std::env::var("TUXBOX_XAPU_SIGNAL_ALWAYS").is_ok_and(|v| v.trim() == "1"))
+        || options & 1 != 0
 }
 
 /// # Safety

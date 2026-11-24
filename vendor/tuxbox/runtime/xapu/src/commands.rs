@@ -78,7 +78,23 @@ impl Completion {
         u32::from_le_bytes(self.bytes[offset..offset + 4].try_into().unwrap())
     }
 
+    /// The status for XApuDequeueResult: with the reference result layout
+    /// it is carried in the record's error field and Dequeue answers S_OK.
     pub(super) unsafe fn write_to(&self, out: *mut u8) -> i32 {
+        if ref_layout() {
+            let mut bytes = self.bytes;
+            bytes[44..48].copy_from_slice(&self.result.to_le_bytes());
+            let length = if self.kind() == 3 { 80 } else { 48 };
+            unsafe {
+                if self.kind() == 3 {
+                    ptr::copy_nonoverlapping(bytes.as_ptr(), out, length);
+                } else {
+                    ptr::copy_nonoverlapping(bytes.as_ptr(), out, 24);
+                    ptr::copy_nonoverlapping(bytes.as_ptr().add(36), out.add(36), 12);
+                }
+            }
+            return 0;
+        }
         // Non-process completions echo the 24-byte command header. Bytes between
         // the header and the two timing fields belong to the caller.
         if self.kind() == 3 {
@@ -91,6 +107,47 @@ impl Completion {
         }
         self.result
     }
+}
+
+/// The Process result record as VIctory (apu.rs) and rebox (xapu.c) lay it
+/// out, re-derived: state 3 (output ready, more input wanted) @24, usec 0
+/// @36, status in error @44, kept frames @48, output length/address
+/// @52/@56, pitch @64 (the command's target pitch), bytes consumed @68,
+/// packet address @72; Dequeue answers S_OK. A failed Dequeue made the title
+/// skip the result, so that stream's slot never came back (leonida
+/// xapu_chad). TUXBOX_XAPU_REF_LAYOUT=0: the old record (packet bytes @64,
+/// QPC usec, the status as Dequeue's answer).
+pub(super) fn ref_layout() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_REF_LAYOUT").map_or(true, |v| v.trim() != "0"))
+}
+
+/// The process result fields after the header, reference layout.
+fn fill_result(bytes: &mut [u8; 80], frames: u32, output_length: u32, output: usize, pitch: f32, input_length: u32, input: usize) {
+    bytes[24..28].copy_from_slice(&3u32.to_le_bytes());
+    bytes[28..44].fill(0);
+    bytes[48..52].copy_from_slice(&frames.to_le_bytes());
+    bytes[52..56].copy_from_slice(&output_length.to_le_bytes());
+    bytes[56..64].copy_from_slice(&output.to_le_bytes());
+    let pitch = if pitch.is_finite() && pitch > 0.0 { pitch } else { 1.0 };
+    bytes[64..68].copy_from_slice(&pitch.to_le_bytes());
+    bytes[68..72].copy_from_slice(&input_length.to_le_bytes());
+    bytes[72..80].copy_from_slice(&input.to_le_bytes());
+}
+
+#[cfg(test)]
+#[test]
+fn reference_process_result_layout() {
+    let mut bytes = [0xaau8; 80];
+    fill_result(&mut bytes, 960, 7680, 0x1000, f32::NAN, 120, 0x2000);
+    assert_eq!(&bytes[24..28], &3u32.to_le_bytes());
+    assert_eq!(&bytes[36..44], &[0; 8]);
+    assert_eq!(&bytes[48..52], &960u32.to_le_bytes());
+    assert_eq!(&bytes[52..56], &7680u32.to_le_bytes());
+    assert_eq!(&bytes[56..64], &0x1000usize.to_le_bytes());
+    assert_eq!(&bytes[64..68], &1.0f32.to_le_bytes());
+    assert_eq!(&bytes[68..72], &120u32.to_le_bytes());
+    assert_eq!(&bytes[72..80], &0x2000usize.to_le_bytes());
 }
 
 fn timestamp() -> u64 {
@@ -150,6 +207,7 @@ impl Stream {
                     |offset| usize::from_le_bytes(record[offset..][..8].try_into().unwrap());
                 let packet = address(44);
                 let packet_bytes = field(40);
+                let target_pitch = f32::from_le_bytes(record[28..32].try_into().unwrap());
                 let output = address(56);
                 let capacity = field(52);
                 if !arena.contains(packet, packet_bytes) || !arena.contains(output, capacity) {
@@ -212,18 +270,31 @@ impl Stream {
                                 bytes,
                             )
                         };
-                        completion.bytes[52..56].copy_from_slice(&(bytes as u32).to_le_bytes());
-                        completion.bytes[56..64].copy_from_slice(&output.to_le_bytes());
-                        completion.bytes[64..68]
-                            .copy_from_slice(&(packet_bytes as u32).to_le_bytes());
-                        completion.bytes[72..80].copy_from_slice(&packet.to_le_bytes());
+                        if ref_layout() {
+                            let frames = bytes / (channels.max(1) * 4);
+                            fill_result(&mut completion.bytes, frames as u32, bytes as u32, output,
+                                target_pitch, packet_bytes as u32, packet);
+                        } else {
+                            completion.bytes[52..56].copy_from_slice(&(bytes as u32).to_le_bytes());
+                            completion.bytes[56..64].copy_from_slice(&output.to_le_bytes());
+                            completion.bytes[64..68]
+                                .copy_from_slice(&(packet_bytes as u32).to_le_bytes());
+                            completion.bytes[72..80].copy_from_slice(&packet.to_le_bytes());
+                        }
                     }
-                    Err(status) => completion.result = status,
+                    Err(status) => {
+                        completion.result = status;
+                        if ref_layout() {
+                            fill_result(&mut completion.bytes, 0, 0, output, target_pitch, packet_bytes as u32, packet);
+                        }
+                    }
                 }
             }
             _ => return Err(INVALID),
         }
-        completion.bytes[36..44].copy_from_slice(&timestamp().to_le_bytes());
+        if !ref_layout() {
+            completion.bytes[36..44].copy_from_slice(&timestamp().to_le_bytes());
+        }
         Ok(completion)
     }
 }
