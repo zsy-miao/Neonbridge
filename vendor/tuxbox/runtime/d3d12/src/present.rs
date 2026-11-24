@@ -41,12 +41,12 @@ struct Letterbox {
 
 fn present_minimised() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TUXBOX_PRESENT_MINIMISED").is_ok_and(|v| v.trim() == "1"))
+    *ON.get_or_init(|| std::env::var("TUXBOX_PRESENT_MINIMISED").map_or(true, |v| v.trim() != "0"))
 }
 
 fn occluded_status() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TUXBOX_OCCLUDED_STATUS").is_ok_and(|v| v.trim() == "1"))
+    *ON.get_or_init(|| std::env::var("TUXBOX_OCCLUDED_STATUS").map_or(true, |v| v.trim() != "0"))
 }
 
 fn letterbox_enabled() -> bool {
@@ -292,7 +292,8 @@ impl SwapChain {
                 return Err(DXGI_ERROR_ACCESS_LOST.into());
             }
             // Minimised: nothing is shown, so skip the copy and the flip and
-            // pace the title instead (TUXBOX_PRESENT_MINIMISED=1 presents anyway).
+            // pace the title instead. Opt-in (TUXBOX_PRESENT_MINIMISED=0) until
+            // A/B runs clear it of the borderless no-draw runs.
             if windows::Win32::UI::WindowsAndMessaging::IsIconic(self.window.hwnd()).as_bool() && !present_minimised() {
                 std::thread::sleep(std::time::Duration::from_millis(16));
                 return Ok(S_OK);
@@ -354,7 +355,7 @@ impl SwapChain {
             uncloak_title_windows();
             // A title that sees DXGI_STATUS_OCCLUDED may stop presenting for good
             // (xvalkyrie): pace it briefly and report S_OK.
-            // TUXBOX_OCCLUDED_STATUS=1 returns the status as before.
+            // Opt-in (TUXBOX_OCCLUDED_STATUS=0) until A/B runs clear it.
             if status == windows::Win32::Foundation::DXGI_STATUS_OCCLUDED && !occluded_status() {
                 std::thread::sleep(std::time::Duration::from_millis(16));
                 return Ok(S_OK);
