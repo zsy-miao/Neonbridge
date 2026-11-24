@@ -39,7 +39,25 @@ impl Readback {
     ) -> Result<Self> {
         let mut total = 0u64;
         let mut textures = Vec::new();
+        // test72 made 2821 MiB of readback buffers in ten seconds for four
+        // batches (a texture with levels of hundreds of MiB, copied back to
+        // title memory on every write). A texture with a level over
+        // TUXBOX_WRITEBACK_MAX_MB (256) is not written back: the title's CPU
+        // keeps its old bytes there. 0 lifts the cap.
+        static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let cap = *MB.get_or_init(|| crate::env_toggle!("TUXBOX_WRITEBACK_MAX_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(256)) << 20;
         for texture in writers {
+            if cap != 0 && let Some(big) = texture.mips.iter().map(|m| m.bytes).max().filter(|&b| b > cap) {
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    let d = &texture.desc;
+                    crate::diagnostics::log_line(format_args!(
+                        "placed textures: a {}x{}x{} format {} texture with a {} MiB level not written back to title memory ({n} so far; TUXBOX_WRITEBACK_MAX_MB=0 writes it)",
+                        d.Width, d.Height, d.DepthOrArraySize, d.Format.0, big >> 20));
+                }
+                continue;
+            }
             let mut offsets = Vec::with_capacity(texture.mips.len());
             for mip in &texture.mips {
                 let offset = total
@@ -56,7 +74,8 @@ impl Readback {
             .ok_or(E_OUTOFMEMORY)?;
         let desc = D3D12_RESOURCE_DESC {
             Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
-            Width: total,
+            // Every writer may be over the cap: an empty copy still completes.
+            Width: total.max(256),
             Height: 1,
             DepthOrArraySize: 1,
             MipLevels: 1,
