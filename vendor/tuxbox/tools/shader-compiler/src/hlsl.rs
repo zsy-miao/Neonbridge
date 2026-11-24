@@ -5411,6 +5411,20 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     }
                     "s_cmov_b32" => self.ws(&d, &format!("((scc != 0u) ? {a} : {})", name(&d)?)),
                     "s_brev_b32" => self.ws(&d, &format!("reversebits({a})")),
+                    // D.u64[2i] = D.u64[2i+1] = S0.u32[i]; SCC unchanged. Xbox2Windows 285cbc6c
+                    // (PR #1582, MIT, Asimmimx) folds constant sources; this spreads any source.
+                    // TB_BITREPLICATE=0 leaves it unsupported.
+                    "s_bitreplicate_b64_b32" if std::env::var("TB_BITREPLICATE").map_or(true, |v| v.trim() != "0") => {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint t{t}s = {a}; uint2 t{t} = uint2(t{t}s & 0xffffu, t{t}s >> 16);"));
+                        self.line(&format!("t{t} = (t{t} | (t{t} << 8)) & 0x00ff00ffu; t{t} = (t{t} | (t{t} << 4)) & 0x0f0f0f0fu;"));
+                        self.line(&format!("t{t} = (t{t} | (t{t} << 2)) & 0x33333333u; t{t} = (t{t} | (t{t} << 1)) & 0x55555555u; t{t} |= t{t} << 1;"));
+                        self.ws(&d, &format!("t{t}.x"))?;
+                        let dh = hi(&d);
+                        self.touch(&dh);
+                        self.ws(&dh, &format!("t{t}.y"))
+                    }
                     "s_bcnt1_i32_b64" if self.lane_masks.contains(&self.cur_idx) => {
                         let t = self.tmp;
                         self.tmp += 1;
