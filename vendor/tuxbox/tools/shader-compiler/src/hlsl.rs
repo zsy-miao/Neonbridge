@@ -6768,6 +6768,19 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
             }
             Enc::Sopc => {
+                // A lane mask's bit N: the mask is ballotted first (see `mixed_mask`).
+                if m.starts_with("s_bitcmp") && self.mixed_masks.contains_key(&idx) {
+                    self.touch(&s[0]);
+                    let (v, n) = (r(&s[0])?, r(&s[1])?);
+                    let t = self.tmp;
+                    self.tmp += 1;
+                    self.line(mixed_mask::MARK);
+                    self.line(&format!("uint4 t{t}b = WaveActiveBallot(({v} & 1u) != 0u);"));
+                    let word = if m.ends_with("_b64") { format!("((({n} & 63u) < 32u) ? t{t}b.x : t{t}b.y)") } else { format!("t{t}b.x") };
+                    let want = if m.starts_with("s_bitcmp1") { "!=" } else { "==" };
+                    self.line(&format!("scc = ((({word} >> ({n} & 31u)) & 1u) {want} 0u) ? 1u : 0u;"));
+                    return Ok(());
+                }
                 let c = match m {
                     "s_bitcmp0_b32" => format!("((({} >> ({} & 31u)) & 1u) == 0u)", r(&s[0])?, r(&s[1])?),
                     "s_bitcmp1_b32" => format!("((({} >> ({} & 31u)) & 1u) != 0u)", r(&s[0])?, r(&s[1])?),

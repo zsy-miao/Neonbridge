@@ -34,6 +34,12 @@ pub(super) fn bitwise(ins: &Insn) -> Option<&str> {
 /// when the other source is a plain number (an SGPR that is no mask, or a
 /// constant other than 0 and all ones, whose bits differ by lane).
 pub(super) fn mask_position(masks: &BTreeSet<u8>, ins: &Insn) -> Option<usize> {
+    // s_bitcmp0/1 of a lane mask tests one bit of the whole mask, not this
+    // lane's (Xbox2Windows 7ea49908 / ca1ed1a9, MIT, refuse the projected mask;
+    // here the mask is ballotted instead).
+    if ins.mnemonic.starts_with("s_bitcmp") && ins.src.first().is_some_and(|o| is_lane_mask(masks, o)) {
+        return Some(0);
+    }
     if bitwise(ins).is_none() || ins.src.len() != 2 {
         return None;
     }
