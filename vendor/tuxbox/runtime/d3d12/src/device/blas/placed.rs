@@ -10,6 +10,10 @@
 //!   the same address. The guest-to-native publication every build already
 //!   records lets instances and views find it.
 //!
+//! - Copies (clone, compact, deserialize) to or from a title address use the
+//!   same private buffer; a copy that cannot be resolved is logged and
+//!   skipped instead of failing the list (TUXBOX_AS_COPY_SKIP=0 fails it).
+//!
 //! TUXBOX_PLACED_DXR=0 passes title addresses through as before.
 use super::{guest, lock, rebuild};
 use std::collections::BTreeMap;
@@ -45,13 +49,25 @@ unsafe fn placed(owner: &IUnknown, address: u64, bytes: u64) -> Result<Option<(I
     }
 }
 
-/// The private destination for a title address inside a slot-133 buffer, at
-/// least `bytes` large. None when the address is not title placed memory.
-pub(crate) unsafe fn destination(owner: &IUnknown, address: u64, bytes: u64) -> Result<Option<ID3D12Resource>> {
+pub(crate) fn copy_skip() -> bool {
+    crate::env_toggle!("TUXBOX_AS_COPY_SKIP") != Some("0")
+}
+
+/// Whether a title placed buffer holds `address`.
+pub(crate) unsafe fn is_title(owner: &IUnknown, address: u64) -> bool {
+    enabled() && matches!(unsafe { placed(owner, address, 1) }, Ok(Some(_)))
+}
+
+/// The private destination for a title address inside a slot-133 buffer:
+/// `[address, address + guest_bytes)` must lie in one placed buffer and the
+/// private buffer holds at least `host_bytes`. None when the address is not
+/// title placed memory.
+pub(crate) unsafe fn destination(owner: &IUnknown, address: u64, guest_bytes: u64, host_bytes: u64) -> Result<Option<ID3D12Resource>> {
     if !enabled() || !address.is_multiple_of(ALIGNMENT) {
         return Ok(None);
     }
-    if unsafe { placed(owner, address, bytes) }?.is_none() {
+    let bytes = host_bytes.max(guest_bytes);
+    if unsafe { placed(owner, address, guest_bytes) }?.is_none() {
         return Ok(None);
     }
     let device = unsafe { guest(owner) };

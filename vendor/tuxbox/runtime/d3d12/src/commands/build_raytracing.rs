@@ -172,7 +172,7 @@ fn translate(
     // A destination or scratch in a slot-133 buffer is a title address.
     let relocated = match unsafe { blas::resolve(owner, desc.DestAccelerationStructureData) }? {
         Some(target) => Some(target),
-        None => unsafe { blas::placed::destination(owner, desc.DestAccelerationStructureData, info.ResultDataMaxSizeInBytes) }?,
+        None => unsafe { blas::placed::destination(owner, desc.DestAccelerationStructureData, info.ResultDataMaxSizeInBytes, info.ResultDataMaxSizeInBytes) }?,
     };
     if let Some((buffer, host)) = unsafe { blas::placed::scratch(owner, desc.ScratchAccelerationStructureData, scratch) }? {
         retain(state, &[&buffer])?;

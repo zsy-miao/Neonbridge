@@ -148,13 +148,37 @@ fn record(
                 ));
             })
             };
-            let source_as = resolve(source, "source")?;
+            // A title placed source or destination is served by its private
+            // buffer (blas::placed), like a build.
+            let source_as = match resolve(source, "source")? {
+                Some(backing) => Some(backing),
+                None => unsafe { blas::placed::existing(owner, source) },
+            };
             let destination_as = resolve(destination, "destination")?;
             if source == destination {
                 return Err(E_INVALIDARG.into());
             }
+            let placed_destination = destination_as.is_none() && unsafe { blas::placed::is_title(owner, destination) };
+            if source_as.is_none() && unsafe { blas::placed::is_title(owner, source) } {
+                // Nothing was built at this title address yet.
+                return Err(E_NOTIMPL.into());
+            }
+            let placed_target = |bytes: u64| -> Result<(ID3D12Resource, u64)> {
+                let target = unsafe { blas::placed::destination(owner, destination, bytes, bytes) }?.ok_or(E_INVALIDARG)?;
+                let va = unsafe { target.GetGPUVirtualAddress() };
+                Ok((target, va))
+            };
             let (src, dst, capacity) = if let Some(backing) = source_as {
-                let (dst, va) = unsafe { blas::copy_dest(owner, destination, &backing) }?;
+                // Clone needs the source size and compaction never grows it:
+                // the published prebuild size bounds both (the compacted
+                // postbuild size is only known on the GPU while recording).
+                let source_va = unsafe { backing.GetGPUVirtualAddress() };
+                let (dst, va) = if placed_destination {
+                    let width = unsafe { backing.GetDesc() }.Width;
+                    placed_target(unsafe { blas::submitted_size(owner, source, source_va) }.unwrap_or(width).min(width))?
+                } else {
+                    unsafe { blas::copy_dest(owner, destination, &backing) }?
+                };
                 retain(state, &[&backing, &dst])?;
                 (
                     unsafe { backing.GetGPUVirtualAddress() },
@@ -175,6 +199,16 @@ fn record(
                     unsafe { backing.GetGPUVirtualAddress() },
                     Some(unsafe { backing.GetDesc() }.Width),
                 )
+            } else if placed_destination {
+                // A source in place in a registered pool: the rest of that
+                // pool bounds its size.
+                let direct = unsafe { blas::direct_source(owner, source) }?;
+                let start = unsafe { direct.GetGPUVirtualAddress() };
+                let remaining = unsafe { direct.GetDesc() }.Width.saturating_sub(source - start);
+                let bytes = unsafe { blas::submitted_size(owner, source, source) }.unwrap_or(remaining).min(remaining);
+                let (target, va) = placed_target(bytes)?;
+                retain(state, &[&direct, &target])?;
+                (source, va, Some(unsafe { target.GetDesc() }.Width))
             } else {
                 (source, destination, None)
             };
@@ -239,6 +273,16 @@ pub(super) unsafe extern "system" fn copy(
         return;
     };
     if let Err(error) = record(&mut state, host, owner, destination, source, mode) {
+        if error.code() != windows::Win32::Foundation::E_OUTOFMEMORY && blas::placed::copy_skip() {
+            static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 8 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "slot 119 AS copy mode {}, source {source:#x}, destination {destination:#x} unresolved ({:?}): skipped ({n} so far; TUXBOX_AS_COPY_SKIP=0 fails the list)",
+                    mode.0, error.code()));
+            }
+            return;
+        }
         crate::diagnostics::recording_error(format_args!(
             "slot 119 AS copy mode {}, source {source:#x}, destination {destination:#x}: {:?}",
             mode.0,

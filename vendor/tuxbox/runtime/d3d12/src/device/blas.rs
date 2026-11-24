@@ -428,7 +428,11 @@ impl Input {
         let mut previous = lock(&self.snapshot);
         let (bytes, _) = self.upload.snapshot(self.guest_capacity)?;
         let registry = &unsafe { guest(owner) }.state.blas;
-        let pool = registry.find(self.guest_destination, Kind::Structure)?;
+        let pool = match registry.find(self.guest_destination, Kind::Structure) {
+            Ok(pool) => Some(pool),
+            Err(_) if unsafe { placed::existing(owner, self.guest_destination) }.is_some() => None,
+            Err(e) => return Err(e),
+        };
         if previous.0 == bytes {
             unsafe {
                 publish_destination(
@@ -438,7 +442,9 @@ impl Input {
                     Some(previous.2),
                 )
             };
-            inline_geometry::set_decoded(registry, &pool, self.native_destination, &previous.1);
+            if let Some(pool) = &pool {
+                inline_geometry::set_decoded(registry, pool, self.native_destination, &previous.1);
+            }
             return Ok(());
         }
         let src = self.upload.buffer.start + self.upload.offset as u64;
@@ -482,7 +488,9 @@ impl Input {
                 Some(compacted),
             )
         };
-        inline_geometry::set_decoded(registry, &pool, self.native_destination, &normals);
+        if let Some(pool) = &pool {
+            inline_geometry::set_decoded(registry, pool, self.native_destination, &normals);
+        }
         *previous = (bytes, normals, compacted);
         Ok(())
     }
@@ -542,11 +550,18 @@ pub(crate) unsafe fn deserialize(owner: &IUnknown, src: u64, dst: u64) -> Result
         offset: (src - buffer.start) as usize,
         buffer,
     };
-    let buffer = registry
-        .find(dst, Kind::Structure)
-        .inspect_err(|e| failure(src, dst, "destination lookup", e.code(), None))?;
+    // A title placed destination has no registered pool (placed.rs).
+    let buffer = match registry.find(dst, Kind::Structure) {
+        Ok(buffer) => Some(buffer),
+        Err(_) if unsafe { placed::is_title(owner, dst) } => None,
+        Err(e) => {
+            failure(src, dst, "destination lookup", e.code(), None);
+            return Err(e);
+        }
+    };
+    let capacity = buffer.as_ref().map_or(u64::MAX, |b| b.bytes - (dst - b.start));
     let (snapshot, guest_bytes) = upload
-        .snapshot(buffer.bytes - (dst - buffer.start))
+        .snapshot(capacity)
         .inspect_err(|e| failure(src, dst, "upload header", e.code(), None))?;
     let triangles = crate::commands::serialized_blas::decode_for_build(&snapshot).map_err(|e| {
         failure(src, dst, "triangle decoder", e, Some(&snapshot));
@@ -562,9 +577,16 @@ pub(crate) unsafe fn deserialize(owner: &IUnknown, src: u64, dst: u64) -> Result
         .build(&triangles)
         .inspect_err(|e| failure(src, dst, "native build", e.code(), Some(&snapshot)))?;
     drop(builder);
-    let (destination, destination_address) =
-        target(&device.native, &buffer, dst, guest_bytes, compacted)
-            .inspect_err(|e| failure(src, dst, "placement", e.code(), Some(&snapshot)))?;
+    let (destination, destination_address) = match &buffer {
+        Some(buffer) => target(&device.native, buffer, dst, guest_bytes, compacted),
+        None => unsafe { placed::destination(owner, dst, guest_bytes, compacted) }
+            .and_then(|t| t.ok_or_else(|| E_INVALIDARG.into()))
+            .map(|t| {
+                let va = unsafe { t.GetGPUVirtualAddress() };
+                (t, va)
+            }),
+    }
+    .inspect_err(|e| failure(src, dst, "placement", e.code(), Some(&snapshot)))?;
     static TRACE: LazyLock<bool> =
         LazyLock::new(|| std::env::var("TUXBOX_TRACE_RAYTRACING").as_deref() == Ok("1"));
     static FIRST: Once = Once::new();
@@ -578,7 +600,9 @@ pub(crate) unsafe fn deserialize(owner: &IUnknown, src: u64, dst: u64) -> Result
         });
     }
     let normals = Arc::new(inline_geometry::decoded(&triangles));
-    inline_geometry::set_decoded(registry, &buffer, destination_address, &normals);
+    if let Some(buffer) = &buffer {
+        inline_geometry::set_decoded(registry, buffer, destination_address, &normals);
+    }
     Ok(Rebuilt {
         input: Input {
             upload,
