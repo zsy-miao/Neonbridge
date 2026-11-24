@@ -5500,6 +5500,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     && (m == "ds_wrxchg_rtn_b32" || matches!(
                         m.replace("_rtn", "").as_str(),
                         "ds_add_u32" | "ds_min_u32" | "ds_max_u32" | "ds_and_b32" | "ds_or_b32" | "ds_xor_b32"
+                            | "ds_min_i32" | "ds_max_i32"
                     )) =>
             {
                 // Atomic read-modify-write on group-shared memory (the `_rtn` forms also
@@ -5512,7 +5513,23 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     op.enc == Enc::Sopp && Self::branch_cond(op.op).is_some()) {
                     return Err("LDS exchange with unverified branch convergence".into());
                 }
-                let func = match m.replace("_rtn", "").as_str() {
+                let base = m.replace("_rtn", "");
+                if base == "ds_min_i32" || base == "ds_max_i32" {
+                    // Signed order on the uint LDS words: a compare-exchange loop with a
+                    // signed min/max (a uint InterlockedMin puts negatives above
+                    // positives; Xbox2Windows 60ddf539).
+                    let pick = if base == "ds_min_i32" { "min" } else { "max" };
+                    let off = ins.aux.imm as u32 & 0xffff;
+                    let (addr, val) = (r(&s[0])?, r(&s[1])?);
+                    let t = self.tmp;
+                    self.tmp += 1;
+                    self.line(&format!("uint t{t} = 0u; if (exec_lo & 1u) {{ uint t{t}a = (({addr} + {off:#x}u) >> 2) & 8191u; uint t{t}p; t{t} = tb_lds[t{t}a]; do {{ t{t}p = t{t}; InterlockedCompareExchange(tb_lds[t{t}a], t{t}p, asuint({pick}(asint(t{t}p), asint({val}))), t{t}); }} while (t{t} != t{t}p); }}"));
+                    if m.contains("_rtn") {
+                        self.wv(&d.ok_or("no dst")?, &format!("t{t}"))?;
+                    }
+                    return Ok(());
+                }
+                let func = match base.as_str() {
                     "ds_add_u32" => "InterlockedAdd",
                     "ds_min_u32" => "InterlockedMin",
                     "ds_max_u32" => "InterlockedMax",
@@ -7755,6 +7772,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "image_atomic_umin" => Some("InterlockedMin"),
             "image_atomic_umax" => Some("InterlockedMax"),
             "image_atomic_or" => Some("InterlockedOr"),
+            // Sign-agnostic on the uint texel.
+            "image_atomic_and" => Some("InterlockedAnd"),
+            "image_atomic_xor" => Some("InterlockedXor"),
+            "image_atomic_swap" => Some("InterlockedExchange"),
+            // Signed order: a compare-exchange loop (below).
+            "image_atomic_smin" => Some("min"),
+            "image_atomic_smax" => Some("max"),
             _ => None,
         };
         if atomic.is_some() || is_image_load(&ins.mnemonic) || matches!(ins.mnemonic.as_str(), "image_store" | "image_store_mip") {
@@ -7854,7 +7878,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let t = self.tmp;
                 self.tmp += 1;
                 self.line(&format!("uint t{t} = 0u;"));
-                self.line(&format!("if (exec_lo & 1u) {func}(uav{slot}[uint{ncoord}({})], {}, t{t});", c.join(", "), r(&o)?));
+                if func == "min" || func == "max" {
+                    let texel = format!("uav{slot}[uint{ncoord}({})]", c.join(", "));
+                    self.line(&format!("if (exec_lo & 1u) {{ uint t{t}p; t{t} = {texel}; do {{ t{t}p = t{t}; InterlockedCompareExchange({texel}, t{t}p, asuint({func}(asint(t{t}p), asint({}))), t{t}); }} while (t{t} != t{t}p); }}", r(&o)?));
+                } else {
+                    self.line(&format!("if (exec_lo & 1u) {func}(uav{slot}[uint{ncoord}({})], {}, t{t});", c.join(", "), r(&o)?));
+                }
                 if ins.raw[0] & (1 << 13) != 0 { // GLC requests the old value in VDATA.
                     self.wv(&o, &format!("t{t}"))?;
                 }
