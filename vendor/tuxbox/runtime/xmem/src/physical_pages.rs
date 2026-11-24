@@ -72,7 +72,11 @@ fn available_memory() -> Result<u64, u32> {
     if unsafe { GlobalMemoryStatusEx(&mut info) } == 0 {
         return Err(unsafe { GetLastError() });
     }
-    Ok(info.ullAvailPhys.min(info.ullAvailPageFile))
+    // 6ixlaunch: page tokens are SEC_RESERVE pagefile sections, committed only
+    // when a page is first mapped, so a batch is bounded by the commit limit
+    // (RAM + pagefile), not by what is free right now. GTA VI asks for 6.5 GB
+    // at once on a 16 GB PC; a later commit failure is reported by the map.
+    Ok(info.ullTotalPageFile)
 }
 
 pub(super) fn relinquished() -> u64 {
@@ -579,7 +583,11 @@ pub unsafe extern "system" fn allocate(flags: u64, count: *mut usize, tokens: *m
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     let first = match pool.allocate(requested) {
         Ok(first) => first,
-        Err(e) => return failure(e),
+        Err(e) => {
+            crate::loader::log(&format!("XMemAllocatePhysicalPages flags={flags:#x} pages={requested:#x} failed {e}: available {:?} relinquished {:#x} held {:#x}",
+                available_memory(), relinquished(), pool.pages.len()));
+            return failure(e);
+        }
     };
     for i in 0..requested {
         // SAFETY: caller provided requested entries.
