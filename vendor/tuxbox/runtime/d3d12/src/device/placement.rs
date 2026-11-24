@@ -769,6 +769,14 @@ impl Texture {
     }
 }
 
+fn overlap_note(what: &str) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("{what}: batch runs anyway ({n} so far; TUXBOX_OVERLAP_STRICT=1 drops it)"));
+    }
+}
+
 fn overlaps(a: &Range<u64>, b: &Range<u64>) -> bool {
     a.start < b.end && b.start < a.end
 }
@@ -804,15 +812,25 @@ pub(crate) unsafe fn submit(
     unsafe { pages::before_execute(queue) };
     alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref()))?;
     pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t))?;
+    // test63: refusing a batch whose written texture overlaps another of its
+    // textures dropped five batches, with the lists in them that write GPU
+    // memory wait words, and every queue then stalled on those words 2 s at
+    // a time (0.1 fps). The batch now runs: overlapping layouts see each
+    // other's bytes as the console's would. TUXBOX_OVERLAP_STRICT=1 refuses.
+    let strict = crate::env_toggle!("TUXBOX_OVERLAP_STRICT") == Some("1");
     for writer in writes.iter() {
         if textures
             .iter()
             .any(|t| !Arc::ptr_eq(writer, t) && overlaps(&writer.range(), &t.range()))
         {
-            crate::diagnostics::recording_error(format_args!(
-                "overlapping placed texture layouts in one GPU write batch"
-            ));
-            return Err(E_NOTIMPL.into());
+            if strict {
+                crate::diagnostics::recording_error(format_args!(
+                    "overlapping placed texture layouts in one GPU write batch"
+                ));
+                return Err(E_NOTIMPL.into());
+            }
+            overlap_note("a written placed texture overlaps another texture of its batch");
+            break;
         }
     }
 
@@ -841,10 +859,14 @@ pub(crate) unsafe fn submit(
             .filter(|w| overlaps(&texture.range(), &w.range))
         {
             if Arc::as_ptr(texture) != write.texture.as_ptr() {
-                crate::diagnostics::recording_error(format_args!(
-                    "placed texture layout alias before GPU write publication"
-                ));
-                return Err(E_NOTIMPL.into());
+                if strict {
+                    crate::diagnostics::recording_error(format_args!(
+                        "placed texture layout alias before GPU write publication"
+                    ));
+                    return Err(E_NOTIMPL.into());
+                }
+                // Ordered after the write; the alias keeps its native bytes.
+                overlap_note("a placed texture aliases one whose GPU write is not yet published");
             }
             // CPU bytes still contain the old version. The native image contains
             // the ordered GPU write and can be read directly by the next batch.

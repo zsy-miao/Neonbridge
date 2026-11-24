@@ -107,8 +107,10 @@ struct Target {
     heaps: Vec<u32>,
     /// a sampled texture, whose new pools may go to system memory
     system_ok: bool,
-    /// leading tiles (mip 0) left unmapped (see `trim_tiles`)
+    /// leading tiles (the top `levels` mips) left unmapped (see `trim_tiles`)
     skip: u32,
+    /// the first mapped mip
+    levels: u32,
 }
 
 /// The title's pages of video memory for tiled textures (see the module's comment).
@@ -225,6 +227,7 @@ impl Pages {
     /// i-th tile from there in the resource's linear tile order) – one call
     /// per pool heap.
     unsafe fn map(&mut self, res: &ID3D12Resource, tiles: &[Tile], first: u32) {
+        // `first` is the first mapped mip of a one-slice texture.
         let mut heaps: Vec<u32> = tiles.iter().map(|t| t.0).collect();
         heaps.sort_unstable();
         heaps.dedup();
@@ -315,7 +318,7 @@ impl Pages {
     }
 
     /// Acquire/share all `total` tiles for `res` at `va` and map them on the `Pages` queue.
-    unsafe fn bind(&mut self, dev: &ID3D12Device, res: &ID3D12Resource, va: usize, console_bytes: Option<u64>, total: u32, system_ok: bool, skip: u32) -> Option<(Vec<usize>, Vec<(usize, usize)>, Vec<u32>)> {
+    unsafe fn bind(&mut self, dev: &ID3D12Device, res: &ID3D12Resource, va: usize, console_bytes: Option<u64>, total: u32, system_ok: bool, (skip, levels): (u32, u32)) -> Option<(Vec<usize>, Vec<(usize, usize)>, Vec<u32>)> {
         let (first, own) = (total > 0).then(|| owned_pages(va, console_bytes, total as usize)).flatten()?;
         let now = std::time::Instant::now();
         self.sweep(now);
@@ -363,7 +366,7 @@ impl Pages {
             self.release_tiles(used, used_extra, now, true);
             return None;
         }
-        self.map(res, &tiles, u32::from(skip != 0));
+        self.map(res, &tiles, levels);
         let mut heaps: Vec<u32> = tiles.iter().map(|t| t.0).collect();
         heaps.sort_unstable();
         heaps.dedup();
@@ -434,7 +437,7 @@ pub(super) unsafe fn remap_if_unmapped(res: &ID3D12Resource) -> bool {
     let key = res.as_raw() as usize;
     let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
     let Some(Some(pages)) = g.get_mut(&(dev.as_raw() as usize)) else { return false };
-    let Some((va, console_bytes, total, mapped, system_ok, skip)) = pages.targets.get(&key).map(|t| (t.va, t.console_bytes, t.total, t.mapped, t.system_ok, t.skip)) else {
+    let Some((va, console_bytes, total, mapped, system_ok, skip)) = pages.targets.get(&key).map(|t| (t.va, t.console_bytes, t.total, t.mapped, t.system_ok, (t.skip, t.levels))) else {
         return false;
     };
     if mapped {
@@ -459,7 +462,7 @@ fn forget_pages(resource: usize) {
     for pages in g.values_mut().flatten() {
         let Some(t) = pages.targets.remove(&resource) else { continue };
         if t.skip != 0 {
-            trimmed(resource, false);
+            trimmed(resource, 0);
         }
         if t.mapped {
             pages.release_tiles(t.used, t.used_extra, now, false);
@@ -539,17 +542,17 @@ pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, 
         let res = res?;
         let mut total = 0u32;
         device.GetResourceTiling(&res, Some(&mut total), None, None, None, 0, std::ptr::null_mut());
-        let skip = if system_ok { trim_tiles(device, &res, host) } else { 0 };
-        let (used, used_extra, heaps) = pages.bind(device, &res, va as usize, Some(console_bytes), total, system_ok, skip)?;
-        trimmed(res.as_raw() as usize, skip != 0);
+        let (skip, levels) = if system_ok { trim_tiles(device, &res, host) } else { (0, 0) };
+        let (used, used_extra, heaps) = pages.bind(device, &res, va as usize, Some(console_bytes), total, system_ok, (skip, levels))?;
+        trimmed(res.as_raw() as usize, levels);
         if skip != 0 && TRIMS.fetch_add(1, Relaxed) % 1024 == 0 {
             let saved = TRIMMED_BYTES.fetch_add(u64::from(skip) * PAGE as u64, Relaxed) + u64::from(skip) * PAGE as u64;
-            crate::diagnostics::log_line(format_args!("placed textures: {} trimmed to mip 1 while device local is over budget ({} MiB of mip 0 not mapped)",
+            crate::diagnostics::log_line(format_args!("placed textures: {} trimmed to mip 1 or 2 while device local is over budget ({} MiB of top mips not mapped; this one from mip {levels})",
                 TRIMS.load(Relaxed), saved >> 20));
         } else if skip != 0 {
             TRIMMED_BYTES.fetch_add(u64::from(skip) * PAGE as u64, Relaxed);
         }
-        pages.targets.insert(res.as_raw() as usize, Target { va: va as usize, console_bytes: Some(console_bytes), total, mapped: true, used, used_extra, heaps, system_ok, skip });
+        pages.targets.insert(res.as_raw() as usize, Target { va: va as usize, console_bytes: Some(console_bytes), total, mapped: true, used, used_extra, heaps, system_ok, skip, levels });
         PLACED.fetch_add(1, Relaxed);
         Some((res, u64::from(total) * PAGE as u64, readers))
     }
@@ -562,39 +565,52 @@ pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, 
 /// it textures on pages, and hung with system commit exhausted. Only 2D
 /// textures of one slice, at least 512x512, whose mip 1 is not packed;
 /// unmapped tiles read zero and drop writes (tiled resources tier 2).
-/// TUXBOX_PAGES_TRIM_PCT=0 maps every mip.
-unsafe fn trim_tiles(device: &ID3D12Device, res: &ID3D12Resource, host: &D3D12_RESOURCE_DESC) -> u32 {
+/// TUXBOX_PAGES_TRIM_PCT=0 maps every mip. test63 still ran at 8442 of 7188
+/// MiB (render targets and images alone 6.6 GB), so above
+/// TUXBOX_PAGES_TRIM2_PCT (110) mips 0 and 1 are both left unmapped (1/16).
+/// Returns (tiles skipped, first mapped mip).
+unsafe fn trim_tiles(device: &ID3D12Device, res: &ID3D12Resource, host: &D3D12_RESOURCE_DESC) -> (u32, u32) {
     let pct: u64 = crate::env_toggle!("TUXBOX_PAGES_TRIM_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(95);
     if pct == 0 || host.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || host.DepthOrArraySize != 1
         || host.MipLevels < 2 || host.Width < 512 || host.Height < 512
     {
-        return 0;
+        return (0, 0);
     }
-    if !super::alias::segment(device, true).is_some_and(|(usage, budget)| usage.saturating_mul(100) > budget.saturating_mul(pct)) {
-        return 0;
+    let Some((usage, budget)) = super::alias::segment(device, true) else { return (0, 0) };
+    if usage.saturating_mul(100) <= budget.saturating_mul(pct) {
+        return (0, 0);
     }
-    let mut count = 2u32;
-    let mut tilings = [D3D12_SUBRESOURCE_TILING::default(); 2];
+    let deep: u64 = crate::env_toggle!("TUXBOX_PAGES_TRIM2_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(110);
+    let mut count = 3u32;
+    let mut tilings = [D3D12_SUBRESOURCE_TILING::default(); 3];
     let mut packed = D3D12_PACKED_MIP_INFO::default();
     unsafe { device.GetResourceTiling(res, None, Some(&mut packed), None, Some(&mut count), 0, tilings.as_mut_ptr()) };
-    let mip1 = tilings[1].StartTileIndexInOverallResource;
-    // Mip 1 packed (u32::MAX) or mip 0 not first: leave it whole.
-    if count < 2 || packed.NumStandardMips < 2 || mip1 == u32::MAX || mip1 == 0 || tilings[0].StartTileIndexInOverallResource != 0 {
-        return 0;
+    if count < 2 || tilings[0].StartTileIndexInOverallResource != 0 {
+        return (0, 0);
     }
-    mip1
+    // A mip whose tiles are packed (u32::MAX) can't start the mapping.
+    let start = |level: usize| (level < count as usize && u32::from(packed.NumStandardMips) > level as u32)
+        .then(|| tilings[level].StartTileIndexInOverallResource)
+        .filter(|&s| s != 0 && s != u32::MAX);
+    if deep != 0 && host.MipLevels >= 3 && usage.saturating_mul(100) > budget.saturating_mul(deep)
+        && let Some(s) = start(2)
+    {
+        return (s, 2);
+    }
+    start(1).map_or((0, 0), |s| (s, 1))
 }
 
 static TRIMS: AtomicU64 = AtomicU64::new(0);
 static TRIMMED_BYTES: AtomicU64 = AtomicU64::new(0);
-static TRIMMED: Mutex<Option<std::collections::HashSet<usize>>> = Mutex::new(None);
+static TRIMMED: Mutex<Option<HashMap<usize, u32>>> = Mutex::new(None);
 
-fn trimmed(resource: usize, on: bool) {
+/// Record the first mapped mip of `resource` (0: all mapped).
+fn trimmed(resource: usize, levels: u32) {
     let mut g = TRIMMED.lock().unwrap_or_else(|e| e.into_inner());
-    if on {
-        g.get_or_insert_with(Default::default).insert(resource);
-    } else if let Some(set) = g.as_mut() {
-        set.remove(&resource);
+    if levels != 0 {
+        g.get_or_insert_with(Default::default).insert(resource, levels);
+    } else if let Some(map) = g.as_mut() {
+        map.remove(&resource);
     }
 }
 
@@ -606,12 +622,13 @@ pub(crate) fn clamp_view(resource: Option<&ID3D12Resource>, view: &mut D3D12_SHA
         return;
     }
     let key = resource.as_raw() as usize;
-    if !TRIMMED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.contains(&key)) {
+    let Some(levels) = TRIMMED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key).copied()) else {
         return;
-    }
+    };
     let t = unsafe { &mut view.Anonymous.Texture2D };
-    if t.MostDetailedMip == 0 && t.MipLevels != 1 {
-        t.ResourceMinLODClamp = t.ResourceMinLODClamp.max(1.0);
+    // A view whose mips all lie in the unmapped ones is left as it is.
+    if t.MostDetailedMip < levels && (t.MipLevels == u32::MAX || t.MostDetailedMip + t.MipLevels > levels) {
+        t.ResourceMinLODClamp = t.ResourceMinLODClamp.max(levels as f32);
     }
 }
 
