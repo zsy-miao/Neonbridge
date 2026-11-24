@@ -385,6 +385,10 @@ pub(super) struct AddressSrv {
 }
 const _: () = assert!(std::mem::offset_of!(AddressSrv, address) == 40);
 
+fn uav_imports() -> bool {
+    crate::env_toggle!("TUXBOX_UAV_IMPORTS") != Some("0")
+}
+
 fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool)
     -> windows::core::Result<Option<std::sync::Arc<TextureAddress>>> {
     use windows::Win32::Foundation::E_INVALIDARG;
@@ -412,7 +416,13 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     let mut host = D3D12_RESOURCE_DESC {
         Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: bytes, Height: 1, DepthOrArraySize: 1,
         // D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT (Agility SDK 617).
-        Flags: if tight { D3D12_RESOURCE_FLAGS(0x400) } else { D3D12_RESOURCE_FLAG_NONE },
+        // test120: every address UAV landed on an imported buffer flagged
+        // only ALLOW_CROSS_ADAPTER and bound a null view, so the world's
+        // compute writes went nowhere. Imported buffers now also allow
+        // unordered access (legal for a cross-adapter buffer);
+        // TUXBOX_UAV_IMPORTS=0 imports them without it, as before.
+        Flags: (if tight { D3D12_RESOURCE_FLAGS(0x400) } else { D3D12_RESOURCE_FLAG_NONE })
+            | if uav_imports() { D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS } else { D3D12_RESOURCE_FLAG_NONE },
         MipLevels: 1, Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
         SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, ..Default::default()
     };
@@ -1380,8 +1390,12 @@ pub(super) unsafe extern "system" fn address_uav(
         return null("GPU mapping still pending", &view);
     }
     let width = resource_desc.Width.max(1);
+    // An earlier import made without unordered access (before
+    // TUXBOX_UAV_IMPORTS, or a placed resource's) cannot hold the view:
+    // it goes through the written-back copy instead.
+    let uav_capable = |e: &TextureAddress| (unsafe { e.native.GetDesc() }.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS).0 != 0;
     let entry = match buffer_at(device, desc.address, width, element as u32, false) {
-        Ok(Some(entry)) if entry.offset(desc.address).is_multiple_of(element) => {
+        Ok(Some(entry)) if entry.offset(desc.address).is_multiple_of(element) && uav_capable(&entry) => {
             unsafe { view.Anonymous.Buffer.FirstElement += entry.offset(desc.address) / element };
             entry
         }
