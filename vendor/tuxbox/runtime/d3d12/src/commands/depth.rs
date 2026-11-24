@@ -30,6 +30,7 @@ pub(super) unsafe extern "system" fn clear(
         return;
     }
     unsafe { crate::device::placement::touch_target(parent(&list.parent), handle.ptr) };
+    let depth = if flags.0 & D3D12_CLEAR_FLAG_DEPTH.0 != 0 { clear_depth(depth) } else { depth };
     unsafe {
         (list.native.vtable().ClearDepthStencilView)(
             list.native.as_raw(),
@@ -41,6 +42,20 @@ pub(super) unsafe extern "system" fn clear(
             rects,
         )
     };
+}
+
+/// A desktop depth clear must lie in [0, 1]: one outside is clamped to it and
+/// NaN becomes 0, as leonida-ce PR #516 (673dd15d, GPL-3.0) does without
+/// VK_EXT_depth_range_unrestricted. TUXBOX_DEPTH_CLEAR_CLAMP=0 passes it through.
+fn clear_depth(depth: f32) -> f32 {
+    if (0.0..=1.0).contains(&depth) || crate::env_toggle!("TUXBOX_DEPTH_CLEAR_CLAMP") == Some("0") {
+        return depth;
+    }
+    let host = if depth.is_nan() { 0.0 } else { depth.clamp(0.0, 1.0) };
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&ONCE, || format!(
+        "depth clear {depth} is outside [0, 1]: cleared to {host} (logged once; TUXBOX_DEPTH_CLEAR_CLAMP=0 passes it through)"));
+    host
 }
 
 /// The host descriptor behind a UAV clear's CPU handle;
