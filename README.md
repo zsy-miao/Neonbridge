@@ -1,5 +1,7 @@
 # 6ixlaunch
 
+![6ixlaunch](assets/banner.svg)
+
 Runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
 ```
