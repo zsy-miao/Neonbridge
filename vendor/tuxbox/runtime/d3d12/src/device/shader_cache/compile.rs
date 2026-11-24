@@ -205,7 +205,18 @@ fn request(
     // translator: the frame budget never covered this lock. A budgeted thread
     // now gives up on a busy bucket as on a spent budget, and the pipeline
     // goes to the workers. TUXBOX_SHADER_LOCK_SKIP=0 waits for the lock again.
-    let _guard = match LOCKS[bucket].try_lock() {
+    // Rather than giving up at once (a dropped draw, rebox c86c310's idea), it
+    // first polls the bucket while the frame's wait budget lasts, so the wait
+    // stays bounded by the same budget as the translator wait below.
+    let mut busy = LOCKS[bucket].try_lock();
+    while matches!(busy, Err(std::sync::TryLockError::WouldBlock))
+        && !UNBOUNDED.with(|u| u.get())
+        && WAIT_BUDGET_MS.fetch_sub(1, Ordering::Relaxed) > 0
+    {
+        std::thread::sleep(Duration::from_millis(1));
+        busy = LOCKS[bucket].try_lock();
+    }
+    let _guard = match busy {
         Ok(guard) => guard,
         Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
         Err(std::sync::TryLockError::WouldBlock) => {
@@ -215,7 +226,7 @@ fn request(
                 let skipped = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
                 if skipped <= 4 || skipped.is_power_of_two() {
                     crate::diagnostics::log_line(format_args!(
-                        "shader cache: a title-thread request met a bucket busy with a worker's translation and went to the workers ({skipped} so far; TUXBOX_SHADER_LOCK_SKIP=0 off)"));
+                        "shader cache: a title-thread request met a bucket busy past the frame wait budget and went to the workers ({skipped} so far; TUXBOX_SHADER_LOCK_SKIP=0 off)"));
                 }
                 return None;
             }
