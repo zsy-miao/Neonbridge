@@ -466,6 +466,24 @@ unsafe extern "system" fn reset(
         (native.vtable().Reset)(native.as_raw(), host.as_raw(), pipeline)
     };
     let mut hr = host_reset(&allocator.native);
+    if hr == E_INVALIDARG && state.error.is_err() {
+        // A host Close that failed (an invalid call was recorded) leaves the
+        // list unresettable forever; the title asserts on the Reset. Swap in
+        // a fresh host list, already open on this allocator. Retrying on
+        // overflow allocators first only made a new allocator per reset.
+        hr = match unsafe { rebuild_native(list, allocator, pipeline) } {
+            Ok(()) => S_OK,
+            Err(error) => error.code(),
+        };
+        static REBUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = REBUILT.fetch_add(1, Ordering::Relaxed);
+        if n < 4 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "rebuilt host list {list:p} after a failed Close ({:#010x}): {:#010x} ({} so far)",
+                state.error.0, hr.0, n + 1
+            ));
+        }
+    }
     if hr == E_INVALIDARG {
         // The allocator is bound to another recording list (legal on Xbox).
         for extra in device::overflow_allocators(allocator) {
@@ -479,23 +497,6 @@ unsafe extern "system" fn reset(
                 Ok(extra) => host_reset(&extra),
                 Err(error) => error.code(),
             };
-        }
-        if hr == E_INVALIDARG && state.error.is_err() {
-            // A host Close that failed (an invalid call was recorded) leaves the
-            // list unresettable forever; the title asserts on the Reset. Swap in
-            // a fresh host list, already open on this allocator.
-            hr = match unsafe { rebuild_native(list, allocator, pipeline) } {
-                Ok(()) => S_OK,
-                Err(error) => error.code(),
-            };
-            static REBUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let n = REBUILT.fetch_add(1, Ordering::Relaxed);
-            if n < 4 || (n + 1).is_power_of_two() {
-                crate::diagnostics::log_line(format_args!(
-                    "rebuilt host list {list:p} after a failed Close ({:#010x}): {:#010x} ({} so far)",
-                    state.error.0, hr.0, n + 1
-                ));
-            }
         }
     }
     if hr.is_ok() {
@@ -556,14 +557,29 @@ unsafe fn rebuild_native(list: &List, allocator: &device::Allocator, pipeline: *
     };
     let raytracing = if list.state.raytracing.is_some() { Some(fresh.cast::<ID3D12GraphicsCommandList4>()?) } else { None };
     // SAFETY: see above; these fields are only read by recording calls.
-    unsafe {
+    let old = unsafe {
         drop(ptr::replace(ptr::addr_of!(list.state.extended).cast_mut(), OnceLock::new()));
         drop(ptr::replace(ptr::addr_of!(list.state.enhanced_barriers).cast_mut(), OnceLock::new()));
         drop(ptr::replace(ptr::addr_of!(list.state.mesh).cast_mut(), OnceLock::new()));
         drop(ptr::replace(ptr::addr_of!(list.state.raytracing).cast_mut(), raytracing));
-        drop(ptr::replace(ptr::addr_of!(list.native).cast_mut(), fresh));
-    }
+        ptr::replace(ptr::addr_of!(list.native).cast_mut(), fresh)
+    };
+    retire(old);
     Ok(())
+}
+
+/// The replaced host list may still be executing its previous, successful
+/// recording. Keep the last few alive instead of releasing them at once.
+fn retire(old: ID3D12GraphicsCommandList) {
+    struct Retired(#[allow(dead_code)] ID3D12GraphicsCommandList);
+    // SAFETY: only held and released; D3D12 objects are free-threaded.
+    unsafe impl Send for Retired {}
+    static RETIRED: Mutex<std::collections::VecDeque<Retired>> = Mutex::new(std::collections::VecDeque::new());
+    let mut retired = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
+    if retired.len() >= 64 {
+        retired.pop_front();
+    }
+    retired.push_back(Retired(old));
 }
 
 unsafe extern "system" fn close(list: &List) -> HRESULT {
