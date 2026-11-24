@@ -25,7 +25,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus and loading screens into the first mission, where the sound plays but the picture is still black, and it runs out of memory after about two minutes.
+- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus and loading screens into the first mission, where the sound plays but the picture is still black. It now runs for minutes without crashing, at 15-30 fps, but video memory still runs over budget and slows it down.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and about 20 GB of free commit (RAM plus page file).
@@ -34,8 +34,8 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 ## Roadmap
 
 1. **Show the world:** draw the first mission, which is black today.
-2. **Memory:** fit the game's ~8 GB of textures without running out after about two minutes.
-3. **Speed:** from about 15 fps to 30.
+2. **Memory:** keep the game's ~8 GB of textures within the GPU's video-memory budget.
+3. **Speed:** hold 30 fps; it peaks at about 32 today and sinks to 15 once video memory overflows.
 4. **Correct pictures:** the remaining BCPack texture modes and 5551 colour.
 5. **Playable:** control the first mission.
 
@@ -43,7 +43,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 GPL-3.0 code from these projects is used with credit; GPL-2.0-only projects (xcl, rebox) are re-implemented, except xcl's placed-texture page pool, copied with credit in `placement/pages.rs`. Details of each contribution are in [docs/DETAILS.md](docs/DETAILS.md#credits).
 
-[TuxBox](https://github.com/brcly/TuxBox) (brcly, vendored under `vendor/tuxbox`) · [VIctory](https://github.com/Marvisak/VIctory) (Marvisak) · [xcl](https://github.com/ivall/xcl) (ivall) · [Xbox2Windows](https://github.com/R0Y00/Xbox2Windows) (R0Y00) · [xbox-emulator](https://github.com/omonkeyz/xbox-emulator) (omonkeyz) · [OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett) (californiaAlmonds) · [rebox](https://github.com/puffnfresh/rebox) (puffnfresh) · [palmetto](https://github.com/luizwidmer/palmetto) (luizwidmer) · [leonida-ce](https://github.com/IAmNotSiob/leonida-ce) (IAmNotSiob) · [KestrelX](https://github.com/Batushn/KestrelX) (Batushn) · [GTA6-BootTest](https://github.com/OnlyMoisties/GTA6-BootTest) (OnlyMoisties) · [Leonida](https://github.com/ubiquitarianism/leonida) (ubiquitarianism) · [Leonida](https://github.com/LeonidaReforge/Leonida) (LeonidaReforge) · Microsoft (GDK headers, dxc)
+[TuxBox](https://github.com/brcly/TuxBox) (brcly, vendored under `vendor/tuxbox`) · [VIctory](https://github.com/Marvisak/VIctory) (Marvisak) · [xcl](https://github.com/ivall/xcl) (ivall) · [Xbox2Windows](https://github.com/R0Y00/Xbox2Windows) (R0Y00) · [xbox-emulator](https://github.com/omonkeyz/xbox-emulator) (omonkeyz) · [OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett) (californiaAlmonds) · [rebox](https://github.com/puffnfresh/rebox) (puffnfresh) · [palmetto](https://github.com/luizwidmer/palmetto) (luizwidmer) · [leonida-ce](https://github.com/IAmNotSiob/leonida-ce) (IAmNotSiob) · [five-star-recomp](https://github.com/ThatRecompDev/five-star-recomp) (ThatRecompDev) · [KestrelX](https://github.com/Batushn/KestrelX) (Batushn) · [GTA6-BootTest](https://github.com/OnlyMoisties/GTA6-BootTest) (OnlyMoisties) · [Leonida](https://github.com/ubiquitarianism/leonida) (ubiquitarianism) · [Leonida](https://github.com/LeonidaReforge/Leonida) (LeonidaReforge) · Microsoft (GDK headers, dxc)
 
 ## Licence
 
