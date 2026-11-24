@@ -648,10 +648,14 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
             if let Err(error) = state.prefix.finish(&list.native) { state.error = error.code(); }
             state.balance(&list.native);
             if let Err(error) = unsafe { list.native.Close() } {
-                crate::diagnostics::log_line(format_args!(
-                    "host list Close failed {:#010x} (recorded error {:#010x}, list type {}, last guest callers {:x?})",
-                    error.code().0, state.error.0, unsafe { list.native.GetType() }.0, state.ring
-                ));
+                static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "host list Close failed {:#010x} (recorded error {:#010x}, list type {}, last guest callers {:x?}) ({n} so far)",
+                        error.code().0, state.error.0, unsafe { list.native.GetType() }.0, state.ring
+                    ));
+                }
                 state.error = error.code();
             }
         }

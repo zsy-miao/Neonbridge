@@ -581,7 +581,11 @@ fn debug_report(text: &str) -> Vec<&str> {
 /// One line from this run's game log: exit code, how far it got, first fatal line
 /// and the counts of the diagnostics that say what broke.
 fn run_summary(text: &str, code: Option<i32>) -> String {
-    let count = |needle: &str| text.lines().filter(|l| l.contains(needle)).count();
+    // Rate-limited lines carry "(N so far)": the largest N is the true count.
+    let count = |needle: &str| {
+        let hits: Vec<&str> = text.lines().filter(|l| l.contains(needle)).collect();
+        hits.iter().filter_map(|l| l.rsplit_once(" so far)")?.0.rsplit('(').next()?.trim().parse::<usize>().ok()).max().unwrap_or(0).max(hits.len())
+    };
     let presents = text.lines().filter_map(|l| l.split("completed PresentX #").nth(1))
         .filter_map(|r| r.split(|c: char| !c.is_ascii_digit()).next()?.parse::<u64>().ok()).max().unwrap_or(0);
     let lits: Vec<&str> = text.lines().filter_map(|l| l.split(" lit=").nth(1)?.split(' ').next()).collect();

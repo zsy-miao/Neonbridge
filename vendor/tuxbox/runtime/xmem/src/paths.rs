@@ -45,7 +45,13 @@ fn map(p: *const u16) -> Option<Vec<u16>> {
     let rest = if rest.first().is_some_and(|&c| c == SEP || c == SLASH) { &rest[1..] } else { rest };
     let mut out = exe_dir()?.to_vec();
     out.extend(rest.iter().map(|&c| if c == SLASH { SEP } else { c }));
-    log(&format!("{} -> {}", String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) }), String::from_utf16_lossy(&out)));
+    // Streaming opens files all game long: the first rewrites show the mapping,
+    // later ones only a power-of-two heartbeat.
+    static REWRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = REWRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if count <= 64 || count.is_power_of_two() {
+        log(&format!("{} -> {} ({count} so far)", String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) }), String::from_utf16_lossy(&out)));
+    }
     out.push(0);
     Some(out)
 }
