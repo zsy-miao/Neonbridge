@@ -127,6 +127,21 @@ pub(super) fn nv12_pitch(desc: &D3D12_RESOURCE_DESC) -> Option<u64> {
         .then(|| desc.Width.next_multiple_of(256))
 }
 
+/// The console layout of a texture description: the default (unknown)
+/// layout is XG's 4 KiB pick and row major is linear, so a placed texture
+/// reads title memory in the layout its console size assumed
+/// (TUXBOX_CONSOLE_SIZES=0 keeps the description as given).
+pub(super) fn console_layout(desc: &D3D12_RESOURCE_DESC) -> D3D12_RESOURCE_DESC {
+    if crate::env_toggle!("TUXBOX_CONSOLE_SIZES") == Some("0") || desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER {
+        return *desc;
+    }
+    match desc.Layout.0 {
+        0 => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x105), ..*desc },
+        1 => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x100), ..*desc },
+        _ => *desc,
+    }
+}
+
 pub(super) fn color_plane(desc: &D3D12_RESOURCE_DESC) -> Result<Plane> {
     let flags = if (desc.Layout.0 == 0x105 && desc.Flags.0 & !0x300004 == 0)
         || (desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && desc.Layout.0 == 0x105
@@ -198,7 +213,7 @@ impl Texture {
         clear: Option<&D3D12_CLEAR_VALUE>,
     ) -> Result<Arc<Self>> {
         let pitch = nv12_pitch(desc);
-        let plane = if pitch.is_some() { None } else { Some(color_plane(desc)?) };
+        let plane = if pitch.is_some() { None } else { Some(color_plane(&console_layout(desc))?) };
         let luma_bytes = pitch.unwrap_or_default() * u64::from(desc.Height);
         let volume = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D;
         let (size, alignment, count) = plane.as_ref().map_or(

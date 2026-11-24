@@ -100,6 +100,50 @@ pub(super) unsafe extern "system" fn info_watched(
     result
 }
 
+/// TUXBOX_CONSOLE_SIZES=0: only Xbox layouts 0x100-0x10a and packed UAVs get
+/// console sizes; other descriptions get the host's answer, as before.
+/// On (leonida-ce 9bd2a8d3 / VIctory resource.rs, re-derived): the title
+/// carves its GPU allocations from a pool it reserves at start, sized from
+/// these answers; PC answers (64 KiB per small texture) filled it ~87 s in.
+fn console_sizes() -> bool {
+    crate::env_toggle!("TUXBOX_CONSOLE_SIZES") != Some("0")
+}
+
+/// The console footprint of one description: buffers are their width at
+/// 64 KiB; textures of the default (unknown) layout take XG's 4 KiB pick, row
+/// major takes the linear layout, Xbox layouts their own. None when the
+/// console layout cannot size it (the host answer is kept then).
+fn console_item(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_ALLOCATION_INFO> {
+    if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER {
+        let size = desc.Width.checked_next_multiple_of(65536).filter(|&n| n != 0)?;
+        return Some(D3D12_RESOURCE_ALLOCATION_INFO { SizeInBytes: size, Alignment: 65536 });
+    }
+    if super::placement::nv12_pitch(desc).is_some() {
+        return None;
+    }
+    if !matches!(desc.Layout.0, 0 | 1 | 0x100..=0x10a) {
+        return None;
+    }
+    let console = super::placement::console_layout(desc);
+    let plane = super::placement::color_plane(&console).ok()?;
+    (plane.size != 0 && plane.alignment != 0).then(|| D3D12_RESOURCE_ALLOCATION_INFO {
+        SizeInBytes: plane.size, Alignment: plane.alignment.max(desc.Alignment),
+    })
+}
+
+/// The batch's console footprint, each item at its alignment, or None if
+/// any item has no console size.
+fn console_footprint(descs: &[D3D12_RESOURCE_DESC]) -> Option<D3D12_RESOURCE_ALLOCATION_INFO> {
+    let mut bytes = 0u64;
+    let mut alignment = 256u64;
+    for desc in descs {
+        let item = console_item(desc)?;
+        bytes = bytes.checked_next_multiple_of(item.Alignment)?.checked_add(item.SizeInBytes)?;
+        alignment = alignment.max(item.Alignment);
+    }
+    Some(D3D12_RESOURCE_ALLOCATION_INFO { SizeInBytes: bytes.checked_next_multiple_of(alignment)?, Alignment: alignment })
+}
+
 pub(super) unsafe extern "system" fn info(
     out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
     device: &Device,
@@ -119,6 +163,10 @@ pub(super) unsafe extern "system" fn info(
         return out;
     }
     let descs = unsafe { slice::from_raw_parts(descs, count as usize) };
+    if console_sizes() && let Some(answer) = console_footprint(descs) {
+        *out = answer;
+        return out;
+    }
     if descs.iter().any(|d| matches!(d.Layout.0, 0x100..=0x102 | 0x105 | 0x109 | 0x10a)
         || !packed_uav_formats(d.Format, d.Flags).is_empty()) {
         // The guest will allocate these bytes itself and pass the address to
@@ -248,12 +296,13 @@ pub(super) unsafe extern "system" fn info2(
     let mut placements = Vec::new();
     if !details.is_null() && placements.try_reserve_exact(inputs.len()).is_err() { return out; }
     for d in inputs {
-        let requirement = if d.Layout.0 >= 0x100 {
-            let desc = D3D12_RESOURCE_DESC {
-                Dimension: d.Dimension, Alignment: d.Alignment, Width: d.Width, Height: d.Height,
-                DepthOrArraySize: d.DepthOrArraySize, MipLevels: d.MipLevels, Format: d.Format,
-                SampleDesc: d.SampleDesc, Layout: d.Layout, Flags: d.Flags,
-            };
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: d.Dimension, Alignment: d.Alignment, Width: d.Width, Height: d.Height,
+            DepthOrArraySize: d.DepthOrArraySize, MipLevels: d.MipLevels, Format: d.Format,
+            SampleDesc: d.SampleDesc, Layout: d.Layout, Flags: d.Flags,
+        };
+        let console = console_sizes() && console_item(&desc).is_some();
+        let requirement = if d.Layout.0 >= 0x100 || console {
             let mut item = invalid;
             unsafe { info(&mut item, device, visible, 1, &desc) };
             item
@@ -325,5 +374,36 @@ pub(super) unsafe extern "system" fn footprints(
             row_bytes,
             total,
         );
+    }
+}
+
+#[cfg(test)]
+mod console_size_tests {
+    use super::*;
+
+    fn texture(width: u64, height: u32, format: i32, layout: i32, flags: i32) -> D3D12_RESOURCE_DESC {
+        D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D, Width: width, Height: height, DepthOrArraySize: 1,
+            MipLevels: 1, Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT(format),
+            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Layout: D3D12_TEXTURE_LAYOUT(layout), Flags: D3D12_RESOURCE_FLAGS(flags), ..Default::default()
+        }
+    }
+
+    #[test]
+    fn buffers_are_their_width_at_64k() {
+        let buffer = D3D12_RESOURCE_DESC { Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: 100, ..texture(100, 1, 0, 1, 0) };
+        let item = console_item(&buffer).unwrap();
+        assert_eq!((item.SizeInBytes, item.Alignment), (65536, 65536));
+    }
+
+    #[test]
+    fn a_small_default_texture_is_far_below_megabytes() {
+        // 160x90 RGBA8: the PC answer path once asked 4.9 MB for this.
+        let item = console_item(&texture(160, 90, 28, 0, 0)).unwrap();
+        assert!(item.SizeInBytes < 0x2_0000, "{:#x}", item.SizeInBytes);
+        assert_eq!(item.SizeInBytes % 4096, 0);
+        let batch = console_footprint(&[texture(160, 90, 28, 0, 0), texture(160, 90, 28, 0, 0)]).unwrap();
+        assert!(batch.SizeInBytes >= 2 * item.SizeInBytes);
     }
 }
