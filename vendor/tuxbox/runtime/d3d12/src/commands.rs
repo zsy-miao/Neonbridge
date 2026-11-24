@@ -1476,6 +1476,50 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
     if let Err(error) = result { state.error = error.code(); }
 }
 
+/// List slot 62 on the newer console layout (60 on the older one):
+/// CopyMemoryToMemoryX(destination, source, size, flags), a GPU copy between
+/// two title GPU addresses. Both translate to imported host buffers; buffers
+/// promote from COMMON to COPY_SOURCE / COPY_DEST implicitly.
+unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64, size: u64, flags: u32) {
+    let mut state = recording(list);
+    if !state.ensure_open(&list.native) { return; }
+    static WARN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let warn = |what: std::fmt::Arguments| if WARN.fetch_add(1, Ordering::Relaxed) < 16 {
+        crate::diagnostics::log_line(format_args!("CopyMemoryToMemoryX {source:#x} -> {destination:#x} ({size:#x} bytes): {what}"));
+    };
+    if size == 0 || destination == 0 || source == 0 {
+        return warn(format_args!("empty, skipped"));
+    }
+    if flags != 0 {
+        static FLAGS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FLAGS, || format!("CopyMemoryToMemoryX flags {flags:#x} ignored"));
+    }
+    if destination < source.saturating_add(size) && source < destination.saturating_add(size) {
+        return warn(format_args!("overlapping ranges, skipped"));
+    }
+    memory_wait::note_write(list, &mut state, "memory copy", destination, size);
+    let owner = parent(&list.parent);
+    let result = (|| -> windows::core::Result<()> {
+        let (Some(dst), dst_va) = (unsafe { device::command_buffer_address(owner, destination, size)? }) else {
+            warn(format_args!("destination is not GPU memory, skipped"));
+            return Ok(());
+        };
+        let (Some(src), src_va) = (unsafe { device::command_buffer_address(owner, source, size)? }) else {
+            warn(format_args!("source is not GPU memory, skipped"));
+            return Ok(());
+        };
+        raytracing::retain(&state, &[&dst, &src])?;
+        // SAFETY: both buffers hold the translated ranges and are retained by the list.
+        unsafe {
+            let dst_offset = dst_va - dst.GetGPUVirtualAddress();
+            let src_offset = src_va - src.GetGPUVirtualAddress();
+            list.native.CopyBufferRegion(&dst, dst_offset, &src, src_offset, size);
+        }
+        Ok(())
+    })();
+    if let Err(error) = result { state.error = error.code(); }
+}
+
 static LIST_SLOTS: Slots<149> = {
     let mut slots = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
     slots[8] = crate::slot!(get_type);
@@ -1589,6 +1633,8 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     // 0xc280 "entries" at 0x20000. Slot 131 tells the two forms apart.
     slots[131] = crate::slot!(slot131);
     slots[132] = crate::slot!(extended_cache_barrier);
+    // GTA VI (test10, title RVA 0x9796a0): CopyMemoryToMemoryX, older #60.
+    slots[62] = crate::slot!(copy_memory);
     slots[70] = crate::slot!(graphics::depth_bounds);
     slots[75] = crate::slot!(graphics::force_shader_depth_order);
     slots[142] = crate::slot!(graphics::sample_mask);
