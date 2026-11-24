@@ -895,6 +895,9 @@ impl RenderHeap {
     /// A use of an image in it: recorded now, made resident first if evicted.
     pub(super) fn touch(&self) {
         use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+        if !residency::tracking() {
+            return;
+        }
         // A use within the last 100 ms already keeps it from the evictor,
         // which only takes heaps unused for seconds: submissions touch every
         // render view in their tables, so most touches are skipped here.
@@ -948,8 +951,18 @@ pub(super) mod residency {
         START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1
     }
 
+    /// test97 fell from 35-40 fps to 15 with this on: every submit walked
+    /// all render views of its descriptor heaps under the map's mutex, which
+    /// every view creation and descriptor copy on the title's threads takes
+    /// too. Use tracking and eviction stay off unless
+    /// TUXBOX_RENDER_HEAP_EVICT=1.
+    pub(crate) fn tracking() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RENDER_HEAP_EVICT") == Some("1"))
+    }
+
     fn enabled() -> bool {
-        crate::env_toggle!("TUXBOX_RENDER_HEAP_EVICT") != Some("0")
+        tracking()
     }
 
     fn after_ms() -> u64 {

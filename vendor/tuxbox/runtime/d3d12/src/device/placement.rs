@@ -870,7 +870,7 @@ pub(super) struct Placements {
 
 pub(crate) unsafe fn render_target(device: *mut c_void, handle: usize) -> Option<Arc<Texture>> {
     let device = unsafe { &*device.cast::<Device>() };
-    if let Some(heap) = device.state.placements.render_targets.get(handle) {
+    if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
         heap.touch();
     }
     device.state.placements.targets.get(handle)
@@ -879,7 +879,7 @@ pub(crate) unsafe fn render_target(device: *mut c_void, handle: usize) -> Option
 /// A bound or cleared DSV (or RTV) handle: its render heap is used.
 pub(crate) unsafe fn touch_target(device: *mut c_void, handle: usize) {
     let device = unsafe { &*device.cast::<Device>() };
-    if let Some(heap) = device.state.placements.render_targets.get(handle) {
+    if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
         heap.touch();
     }
 }
@@ -907,7 +907,7 @@ pub(crate) unsafe fn render_targets(
         } else {
             unsafe { (*handles.add(i)).ptr }
         };
-        if let Some(heap) = device.state.placements.render_targets.get(handle) {
+        if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
             heap.touch();
         }
         if let Some(texture) = device.state.placements.targets.get(handle) {
@@ -1145,8 +1145,8 @@ pub(crate) unsafe fn submit(
 ) -> Result<()> {
     let device = unsafe { &*device.cast::<Device>() };
     let placements = &device.state.placements;
-    placements.render_views.each_in(heaps, |heap| heap.touch());
-    {
+    if super::heap::residency::tracking() {
+        placements.render_views.each_in(heaps, |heap| heap.touch());
         static PASS: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
         let now = std::time::Instant::now();
         let due = {

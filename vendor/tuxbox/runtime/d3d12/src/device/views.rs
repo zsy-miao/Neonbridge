@@ -49,7 +49,7 @@ pub(super) unsafe extern "system" fn cbv(
     super::view_formats::write(handle.ptr, 0);
     check_destination(handle);
     device.state.placements.views.set(handle.ptr, None, false);
-    device.state.placements.render_views.set(handle.ptr, None);
+    if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
     device.state.blas.views.store(handle.ptr, None);
     // Xbox uses the actual constant data length. A desktop CBV's size is in
     // 256-byte units. Keep the address at the start chosen by the guest.
@@ -610,7 +610,7 @@ pub(super) unsafe extern "system" fn address_srv(
             device.state.imported_views.store(handle.ptr, None);
             device.state.blas.views.store(handle.ptr, None);
             device.state.placements.views.set(handle.ptr, None, false);
-            device.state.placements.render_views.set(handle.ptr, None);
+            if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
             unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
             return;
         }
@@ -646,7 +646,7 @@ pub(super) unsafe extern "system" fn address_srv(
                     device.state.imported_views.store(handle.ptr, None);
                     device.state.blas.views.store(handle.ptr, None);
                     device.state.placements.views.set(handle.ptr, None, false);
-                    device.state.placements.render_views.set(handle.ptr, None);
+                    if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
                     super::view_formats::write(handle.ptr, 0);
                     unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
                     return;
@@ -675,7 +675,7 @@ pub(super) unsafe extern "system" fn address_srv(
             device.state.imported_views.store(handle.ptr, None);
             device.state.blas.views.store(handle.ptr, None);
             device.state.placements.views.set(handle.ptr, None, false);
-            device.state.placements.render_views.set(handle.ptr, None);
+            if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
             super::view_formats::write(handle.ptr, 0);
             unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
             return;
@@ -691,7 +691,7 @@ pub(super) unsafe extern "system" fn address_srv(
     device.state.imported_views.store(handle.ptr, owner);
     device.state.blas.views.store(handle.ptr, None);
     device.state.placements.views.set(handle.ptr, placed.as_ref(), false);
-    device.state.placements.render_views.set(handle.ptr, existing.as_ref().and_then(|e| e.render_heap()));
+    if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, existing.as_ref().and_then(|e| e.render_heap())); }
     let native = existing.as_ref().map(|e| &e.native).or_else(|| placed.as_ref().map(|p| &p.native)).or_else(|| imported.as_ref().map(|e| &e.native));
     crate::diagnostics::display::texture_view(handle.ptr, native, Some(view.Format.0));
     super::view_formats::write(handle.ptr, super::view_formats::srv_code(Some(&view)));
@@ -848,7 +848,7 @@ pub(super) unsafe extern "system" fn srv(
     let scene = device.state.blas.scene_view(proxy, unsafe { desc.as_ref() });
     device.state.blas.views.store(handle.ptr, scene);
     device.state.placements.views.set(handle.ptr, texture, false);
-    device.state.placements.render_views.set(handle.ptr, proxy.and_then(|p| p.state.render_heap()));
+    if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, proxy.and_then(|p| p.state.render_heap())); }
     if let Some((mode, offset, stride)) = byte_view {
         mode.create_srv(device, resource.expect("placed buffer"), unsafe { *desc }, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("placed SRV offset={offset} stride={stride}: {:?}", e.code())));
@@ -943,7 +943,7 @@ pub(super) unsafe extern "system" fn uav(
         &adjusted
     } else { desc };
     device.state.placements.views.set(handle.ptr, placed, true);
-    device.state.placements.render_views.set(handle.ptr, proxy.and_then(|p| p.state.render_heap()));
+    if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, proxy.and_then(|p| p.state.render_heap())); }
     device.state.blas.views.store(handle.ptr, None);
     device.state.imported_views.store(handle.ptr, uav_alias.as_ref().map(|(alias, original)|
         DescriptorBacking::BufferAlias { native: alias.clone(), original: original.clone() }));
@@ -1074,7 +1074,7 @@ pub(super) unsafe extern "system" fn rtv(
     crate::diagnostics::display::capture_target(handle.ptr, resource);
     crate::diagnostics::display::rtv(handle.ptr, proxy.map(|p| p.native.as_raw()));
     device.state.placements.targets.set(handle.ptr, proxy.and_then(|p| p.state.placed()));
-    device.state.placements.render_targets.set(handle.ptr, proxy.and_then(|p| p.state.render_heap()));
+    if super::heap::residency::tracking() { device.state.placements.render_targets.set(handle.ptr, proxy.and_then(|p| p.state.render_heap())); }
     // A null RTV has no host resource to match, so give it the host format a
     // real one would get (B4G4R4A4 is not renderable on desktop) and plane 0.
     let null = resource.is_none();
@@ -1117,8 +1117,8 @@ pub(super) unsafe extern "system" fn dsv(
     handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 ) {
     let resource = unsafe { view_resource(device, object, desc, handle) };
-    device.state.placements.render_targets.set(handle.ptr,
-        unsafe { super::resource_proxy(object, identity(device).as_raw()) }.and_then(|p| p.state.render_heap()));
+    if super::heap::residency::tracking() { device.state.placements.render_targets.set(handle.ptr,
+        unsafe { super::resource_proxy(object, identity(device).as_raw()) }.and_then(|p| p.state.render_heap())); }
     let translated;
     let desc = match unsafe { desc.as_ref() } {
         Some(view) if super::format::host_format(view.Format) != view.Format => {
