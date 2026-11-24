@@ -725,6 +725,7 @@ pub(crate) unsafe fn submit(
         return execute();
     }
     unique(textures);
+    alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref()))?;
     for writer in writes.iter() {
         if textures
             .iter()

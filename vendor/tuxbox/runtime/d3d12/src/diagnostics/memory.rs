@@ -76,10 +76,10 @@ fn line(local: (u64, u64), non_local: (u64, u64), private: u64, free_commit: u64
     let (live, dead) = (crate::device::shadow_bytes().0, crate::device::shadow_bytes().1);
     let placed = crate::device::placement::pool::stats();
     let spans = crate::device::placement::alias::stats();
-    format!("memory: device local {}/{} MiB, non-local {}/{} MiB (usage/budget); process private {} MiB; system free commit {} of {} MiB; shadow copies live {} MiB, dead kept {} MiB (TUXBOX_SHADOW_DEAD_MB caps); placed textures live {} ({} MiB), pooled {} ({} MiB, TUXBOX_PLACED_TEXTURE_POOL_MB caps), reused {}, of the live superseded by a newer placement {} ({} MiB); span heaps live {} ({} MiB, TUXBOX_PLACED_ALIAS=0 off), of those in system memory {} ({} MiB, TUXBOX_PLACED_SYSTEM_PCT), retired but held by live textures {} ({} MiB), placed in spans {}, of those sharing a span {}, committed fallbacks: {}; created: {}",
+    format!("memory: device local {}/{} MiB, non-local {}/{} MiB (usage/budget); process private {} MiB; system free commit {} of {} MiB; shadow copies live {} MiB, dead kept {} MiB (TUXBOX_SHADOW_DEAD_MB caps); placed textures live {} ({} MiB), pooled {} ({} MiB, TUXBOX_PLACED_TEXTURE_POOL_MB caps), reused {}, of the live superseded by a newer placement {} ({} MiB); span heaps live {} ({} MiB, TUXBOX_PLACED_ALIAS=0 off), of those in system memory {} ({} MiB, TUXBOX_PLACED_SYSTEM_PCT), evicted {} ({} MiB; evictions {}, made resident again {}, TUXBOX_SPAN_EVICT_S), retired but held by live textures {} ({} MiB), placed in spans {}, of those sharing a span {}, committed fallbacks: {}; created: {}",
         mib(local.1), mib(local.0), mib(non_local.1), mib(non_local.0), mib(private), mib(free_commit), mib(total_commit), mib(live), mib(dead),
         placed.live, mib(placed.live_bytes), placed.pooled, mib(placed.pooled_bytes), placed.reused, placed.superseded, mib(placed.superseded_bytes),
-        spans.spans, mib(spans.span_bytes), spans.system, mib(spans.system_bytes), spans.retired, mib(spans.retired_bytes), spans.placed, spans.shared, spans.fallback,
+        spans.spans, mib(spans.span_bytes), spans.system, mib(spans.system_bytes), spans.evicted, mib(spans.evicted_bytes), spans.evictions, spans.residencies, spans.retired, mib(spans.retired_bytes), spans.placed, spans.shared, spans.fallback,
         if categories.is_empty() { "nothing".into() } else { categories.join(", ") })
 }
 

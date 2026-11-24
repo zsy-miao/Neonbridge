@@ -37,6 +37,7 @@ use core::ops::Range;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::Instant;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::Interface;
 
@@ -54,6 +55,11 @@ pub(super) struct Span {
     /// In system memory (a custom L0 heap), made under device-memory pressure.
     system: bool,
     pub(super) retired: bool,
+    /// Evicted (ID3D12Device::Evict) after going unused under memory
+    /// pressure; made resident again before a submission that uses it.
+    evicted: bool,
+    /// The last submission or placement that used it.
+    used: Instant,
     pub(super) live: HashSet<usize>,
     /// Heap offsets and the texture whose bytes they hold now.
     owners: Vec<(Range<u64>, Weak<Texture>)>,
@@ -192,6 +198,10 @@ static RETIRED: AtomicU64 = AtomicU64::new(0);
 static SYSTEM_COUNT: AtomicU64 = AtomicU64::new(0);
 static SYSTEM_BYTES: AtomicU64 = AtomicU64::new(0);
 static RETIRED_BYTES: AtomicU64 = AtomicU64::new(0);
+static EVICTED_COUNT: AtomicU64 = AtomicU64::new(0);
+static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
+static EVICTIONS: AtomicU64 = AtomicU64::new(0);
+static RESIDENCIES: AtomicU64 = AtomicU64::new(0);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -275,28 +285,39 @@ fn reservation(va: u64) -> Option<(u64, u64)> {
 /// own pages (OpenExistingHeapFromAddress, alias.rs Kind::Title) hold only
 /// buffers and row-major textures, so they can't take tiled textures.
 /// TUXBOX_PLACED_SYSTEM_PCT=0 keeps every span in device memory.
-fn under_pressure(device: &ID3D12Device) -> bool {
+fn adapter(device: &ID3D12Device) -> Option<&'static windows::Win32::Graphics::Dxgi::IDXGIAdapter3> {
     use std::sync::OnceLock;
-    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIAdapter, IDXGIAdapter3, IDXGIFactory4};
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter, IDXGIAdapter3, IDXGIFactory4};
+    static ADAPTER: OnceLock<Option<IDXGIAdapter3>> = OnceLock::new();
+    ADAPTER.get_or_init(|| {
+        let luid = unsafe { device.GetAdapterLuid() };
+        unsafe { CreateDXGIFactory1::<IDXGIFactory4>() }.ok()
+            .and_then(|f| unsafe { f.EnumAdapterByLuid::<IDXGIAdapter>(luid) }.ok())
+            .and_then(|a| a.cast().ok())
+    }).as_ref()
+}
+
+/// A memory segment group's usage and budget.
+fn segment(device: &ID3D12Device, local: bool) -> Option<(u64, u64)> {
+    use windows::Win32::Graphics::Dxgi::{DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO};
+    let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+    let group = if local { DXGI_MEMORY_SEGMENT_GROUP_LOCAL } else { DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL };
+    (unsafe { adapter(device)?.QueryVideoMemoryInfo(0, group, &mut info) }.is_ok() && info.Budget != 0).then_some((info.CurrentUsage, info.Budget))
+}
+
+fn under_pressure(device: &ID3D12Device) -> bool {
     let pct: u64 = crate::env_toggle!("TUXBOX_PLACED_SYSTEM_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(80);
     if pct == 0 {
         return false;
     }
-    static ADAPTER: OnceLock<Option<IDXGIAdapter3>> = OnceLock::new();
     static CHECKED: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
     let mut checked = lock(&CHECKED);
     if let Some((at, over)) = *checked && at.elapsed().as_millis() < 250 {
         return over;
     }
-    let adapter = ADAPTER.get_or_init(|| {
-        let luid = unsafe { device.GetAdapterLuid() };
-        unsafe { CreateDXGIFactory1::<IDXGIFactory4>() }.ok()
-            .and_then(|f| unsafe { f.EnumAdapterByLuid::<IDXGIAdapter>(luid) }.ok())
-            .and_then(|a| a.cast().ok())
-    });
-    let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
-    let over = adapter.as_ref().is_some_and(|a| unsafe { a.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info) }.is_ok()
-        && info.Budget != 0 && info.CurrentUsage.saturating_mul(100) > info.Budget.saturating_mul(pct));
+    let (usage, budget) = segment(device, true).unwrap_or((0, 0));
+    let over = budget != 0 && usage.saturating_mul(100) > budget.saturating_mul(pct);
+    let info = windows::Win32::Graphics::Dxgi::DXGI_QUERY_VIDEO_MEMORY_INFO { CurrentUsage: usage, Budget: budget, ..Default::default() };
     if over != checked.is_some_and(|(_, was)| was) {
         crate::diagnostics::log_line(format_args!("placed textures: device local {} of {} MiB is {} {pct}%; new sampled-texture spans go to {} memory (TUXBOX_PLACED_SYSTEM_PCT)",
             info.CurrentUsage >> 20, info.Budget >> 20, if over { "over" } else { "back under" }, if over { "system" } else { "device" }));
@@ -344,6 +365,10 @@ fn housekeeping(sp: &mut Spans) -> Vec<Span> {
     for s in &idle {
         SPAN_COUNT.fetch_sub(1, Relaxed);
         SPAN_BYTES.fetch_sub(s.heap_bytes, Relaxed);
+        if s.evicted {
+            EVICTED_COUNT.fetch_sub(1, Relaxed);
+            EVICTED_BYTES.fetch_sub(s.heap_bytes, Relaxed);
+        }
         if s.system {
             SYSTEM_COUNT.fetch_sub(1, Relaxed);
             SYSTEM_BYTES.fetch_sub(s.heap_bytes, Relaxed);
@@ -430,7 +455,7 @@ fn place_locked(
             };
             sp.retire_covered(id, lo, hi);
             Ok::<_, usize>(sp.insert(Span { lo, hi, device: id, heap: Some(heap), heap_bytes: round_up(bytes, PLACEMENT_ALIGN), system,
-                retired: false, live: HashSet::new(), owners: Vec::new() }))
+                retired: false, evicted: false, used: Instant::now(), live: HashSet::new(), owners: Vec::new() }))
         };
         // A va finer than the alignment is placed at the aligned offset below
         // it: textures over the same guest bytes still share heap bytes, and
@@ -444,6 +469,7 @@ fn place_locked(
             }
         };
         let span = sp.get_mut(key);
+        span.used = Instant::now();
         let offset = (va - span.lo) / align * align;
         let mut native: Option<ID3D12Resource> = None;
         let heap = span.heap.as_ref().ok_or(PLACE)?;
@@ -481,6 +507,130 @@ fn place_locked(
             placed.lo, placed.bytes.start, if fresh { " (new heap)" } else { "" }, SHARED.load(Relaxed), fallbacks));
     }
     Ok((native, size, placed))
+}
+
+/// Seconds a span goes unused before it may be evicted under memory
+/// pressure: TUXBOX_SPAN_EVICT_S (default 10; 0 evicts none).
+fn evict_after() -> f64 {
+    use std::sync::OnceLock;
+    static S: OnceLock<f64> = OnceLock::new();
+    *S.get_or_init(|| crate::env_toggle!("TUXBOX_SPAN_EVICT_S").and_then(|v| v.trim().parse().ok()).unwrap_or(10.0))
+}
+
+/// Device-local or non-local usage over TUXBOX_SPAN_EVICT_PCT (default 90)
+/// percent of its budget.
+fn over_budget(device: &ID3D12Device) -> bool {
+    let pct: u64 = crate::env_toggle!("TUXBOX_SPAN_EVICT_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(90);
+    [true, false].into_iter().filter_map(|local| segment(device, local))
+        .any(|(usage, budget)| usage.saturating_mul(100) > budget.saturating_mul(pct))
+}
+
+fn pageables(heaps: &[ID3D12Heap]) -> Vec<Option<ID3D12Pageable>> {
+    heaps.iter().filter_map(|h| h.cast::<ID3D12Pageable>().ok()).map(Some).collect()
+}
+
+/// Evicts the spans unused for `after` seconds that `keep` doesn't name,
+/// oldest first, until about `need` bytes are evicted (all when None).
+fn evict_idle(device: &ID3D12Device, after: f64, keep: &HashSet<(u64, usize)>, need: Option<u64>) -> u64 {
+    let id = device.as_raw() as usize;
+    let mut sp = lock(&SPANS);
+    let mut idle: Vec<&mut Span> = sp.by_lo.values_mut().flatten()
+        .filter(|s| s.device == id && !s.evicted && s.heap.is_some() && !keep.contains(&(s.lo, s.id()))
+            && s.used.elapsed().as_secs_f64() >= after)
+        .collect();
+    idle.sort_by_key(|s| s.used);
+    let mut heaps = Vec::new();
+    let mut bytes = 0;
+    for s in idle {
+        if need.is_some_and(|n| bytes >= n) {
+            break;
+        }
+        s.evicted = true;
+        bytes += s.heap_bytes;
+        heaps.push(s.heap.clone().unwrap());
+    }
+    if heaps.is_empty() {
+        return 0;
+    }
+    let list = pageables(&heaps);
+    // Evict is synchronous with the device and doesn't touch the GPU's queue;
+    // the spans' last use is at least `after` seconds old.
+    if let Err(e) = unsafe { device.Evict(&list) } {
+        crate::diagnostics::log_line(format_args!("placed textures: Evict of {} span heaps failed {e}", heaps.len()));
+        for (_, v) in sp.by_lo.iter_mut() {
+            for s in v.iter_mut().filter(|s| s.heap.as_ref().is_some_and(|h| heaps.contains(h))) {
+                s.evicted = false;
+            }
+        }
+        return 0;
+    }
+    EVICTED_COUNT.fetch_add(heaps.len() as u64, Relaxed);
+    EVICTED_BYTES.fetch_add(bytes, Relaxed);
+    let n = EVICTIONS.fetch_add(heaps.len() as u64, Relaxed);
+    if n < 8 || (n + heaps.len() as u64).ilog2() != (n + 1).ilog2() {
+        crate::diagnostics::log_line(format_args!("placed textures: evicted {} span heaps ({} MiB) unused for {after:.0} s (TUXBOX_SPAN_EVICT_S, TUXBOX_SPAN_EVICT_PCT)",
+            heaps.len(), bytes >> 20));
+    }
+    bytes
+}
+
+/// Before a submission: marks the spans its textures sit in as used, makes
+/// the evicted ones resident again, and, at most once a second under memory
+/// pressure, evicts the spans gone unused for evict_after() seconds.
+pub(super) fn touch<'a>(device: &ID3D12Device, placed: impl Iterator<Item = &'a Placed>) -> windows::core::Result<()> {
+    let after = evict_after();
+    if !enabled() || after <= 0.0 {
+        return Ok(());
+    }
+    let now = Instant::now();
+    let mut keep = HashSet::new();
+    let mut resident = Vec::new();
+    let mut bytes = 0;
+    {
+        let mut sp = lock(&SPANS);
+        for p in placed {
+            if !keep.insert((p.lo, p.heap)) {
+                continue;
+            }
+            if let Some(s) = sp.by_id(p.lo, p.heap) {
+                s.used = now;
+                if s.evicted && let Some(h) = &s.heap {
+                    s.evicted = false;
+                    bytes += s.heap_bytes;
+                    resident.push(h.clone());
+                }
+            }
+        }
+    }
+    if !resident.is_empty() {
+        let list = pageables(&resident);
+        let mut made = unsafe { device.MakeResident(&list) };
+        if made.is_err() {
+            // Make room from spans this submission doesn't use, then retry.
+            evict_idle(device, 1.0, &keep, Some(bytes));
+            made = unsafe { device.MakeResident(&list) };
+        }
+        EVICTED_COUNT.fetch_sub(resident.len() as u64, Relaxed);
+        EVICTED_BYTES.fetch_sub(bytes, Relaxed);
+        RESIDENCIES.fetch_add(resident.len() as u64, Relaxed);
+        if let Err(e) = made {
+            crate::diagnostics::log_line(format_args!("placed textures: MakeResident of {} span heaps ({} MiB) failed {e}", resident.len(), bytes >> 20));
+            return Err(e);
+        }
+    }
+    static PASS: Mutex<Option<Instant>> = Mutex::new(None);
+    let due = {
+        let mut pass = lock(&PASS);
+        let due = pass.is_none_or(|at| now.duration_since(at).as_secs_f64() >= 1.0);
+        if due {
+            *pass = Some(now);
+        }
+        due
+    };
+    if due && over_budget(device) {
+        evict_idle(device, after, &keep, None);
+    }
+    Ok(())
 }
 
 /// A span-placed texture is gone: its span is released, after the registry
@@ -529,6 +679,10 @@ pub(crate) struct Stats {
     pub(crate) retired_bytes: u64,
     pub(crate) system: u64,
     pub(crate) system_bytes: u64,
+    pub(crate) evicted: u64,
+    pub(crate) evicted_bytes: u64,
+    pub(crate) evictions: u64,
+    pub(crate) residencies: u64,
 }
 
 pub(crate) fn stats() -> Stats {
@@ -546,6 +700,10 @@ pub(crate) fn stats() -> Stats {
         retired_bytes: RETIRED_BYTES.load(Relaxed),
         system: SYSTEM_COUNT.load(Relaxed),
         system_bytes: SYSTEM_BYTES.load(Relaxed),
+        evicted: EVICTED_COUNT.load(Relaxed),
+        evicted_bytes: EVICTED_BYTES.load(Relaxed),
+        evictions: EVICTIONS.load(Relaxed),
+        residencies: RESIDENCIES.load(Relaxed),
     }
 }
 
@@ -554,7 +712,7 @@ mod tests {
     use super::*;
 
     fn span(lo: u64, hi: u64) -> Span {
-        Span { lo, hi, device: 1, heap: None, heap_bytes: 0, system: false, retired: false, live: HashSet::new(), owners: Vec::new() }
+        Span { lo, hi, device: 1, heap: None, heap_bytes: 0, system: false, retired: false, evicted: false, used: Instant::now(), live: HashSet::new(), owners: Vec::new() }
     }
 
     #[test]
