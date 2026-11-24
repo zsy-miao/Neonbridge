@@ -393,6 +393,99 @@ fn host_outputs(
     out
 }
 
+/// The geometry descriptors of a BLAS build (checked readable by ray_build::valid).
+unsafe fn geometries(inputs: &D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS) -> Vec<D3D12_RAYTRACING_GEOMETRY_DESC> {
+    let n = inputs.NumDescs as usize;
+    if inputs.Type != D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL || n == 0 {
+        return Vec::new();
+    }
+    unsafe {
+        if inputs.DescsLayout == D3D12_ELEMENTS_LAYOUT_ARRAY {
+            core::slice::from_raw_parts(inputs.Anonymous.pGeometryDescs, n).to_vec()
+        } else {
+            core::slice::from_raw_parts(inputs.Anonymous.ppGeometryDescs, n).iter().map(|p| **p).collect()
+        }
+    }
+}
+
+/// test114 lost the device (DXGI_ERROR_DEVICE_HUNG, DRED page fault at VA 0)
+/// in a list whose incomplete op was an acceleration structure build. A build
+/// whose geometry reads address 0 (vertices, indices of an indexed build,
+/// AABBs) is skipped and logged. TUXBOX_AS_NULL_SKIP=0 records it anyway;
+/// TUXBOX_AS_BUILDS=0 skips every build (an A/B).
+unsafe fn skip_build(b: &D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC) -> Option<String> {
+    if crate::env_toggle!("TUXBOX_AS_BUILDS") == Some("0") {
+        return Some("every build skipped (TUXBOX_AS_BUILDS=0)".into());
+    }
+    let trace = as_trace();
+    if crate::env_toggle!("TUXBOX_AS_NULL_SKIP") == Some("0") && !trace {
+        return None;
+    }
+    let mut why = None;
+    for (i, g) in unsafe { geometries(&b.Inputs) }.iter().enumerate() {
+        let bad = if g.Type == D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES {
+            let t = unsafe { g.Anonymous.Triangles };
+            if trace_left() {
+                crate::diagnostics::log_line(format_args!(
+                    "AS build trace: dest {:#x} geometry {i}: vertices {:#x} ({} x {} bytes, format {}), indices {:#x} ({} format {}), transform {:#x}",
+                    b.DestAccelerationStructureData, t.VertexBuffer.StartAddress, t.VertexCount, t.VertexBuffer.StrideInBytes,
+                    t.VertexFormat.0, t.IndexBuffer, t.IndexCount, t.IndexFormat.0, t.Transform3x4));
+            }
+            if t.VertexCount != 0 && t.VertexBuffer.StartAddress == 0 {
+                Some("vertex buffer")
+            } else if t.IndexFormat != windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN && t.IndexCount != 0 && t.IndexBuffer == 0 {
+                Some("index buffer")
+            } else {
+                None
+            }
+        } else {
+            let a = unsafe { g.Anonymous.AABBs };
+            if trace_left() {
+                crate::diagnostics::log_line(format_args!(
+                    "AS build trace: dest {:#x} geometry {i}: {} AABBs at {:#x}",
+                    b.DestAccelerationStructureData, a.AABBCount, a.AABBs.StartAddress));
+            }
+            (a.AABBCount != 0 && a.AABBs.StartAddress == 0).then_some("AABB buffer")
+        };
+        if let Some(what) = bad && why.is_none() {
+            why = Some(format!("geometry {i} has a null {what}"));
+        }
+    }
+    if trace && b.Inputs.Type == D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL && trace_left() {
+        crate::diagnostics::log_line(format_args!(
+            "AS build trace: TLAS dest {:#x} scratch {:#x} source {:#x}, {} instances at {:#x} (layout {})",
+            b.DestAccelerationStructureData, b.ScratchAccelerationStructureData, b.SourceAccelerationStructureData,
+            b.Inputs.NumDescs, unsafe { b.Inputs.Anonymous.InstanceDescs }, b.Inputs.DescsLayout.0));
+    }
+    if crate::env_toggle!("TUXBOX_AS_NULL_SKIP") == Some("0") { None } else { why }
+}
+
+/// TUXBOX_AS_TRACE=N logs the addresses of the first N geometries and TLAS builds (default 0).
+fn as_trace() -> bool {
+    trace_limit() != 0
+}
+
+fn trace_limit() -> u64 {
+    static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *N.get_or_init(|| crate::env_toggle!("TUXBOX_AS_TRACE").and_then(|v| v.trim().parse().ok()).unwrap_or(0))
+}
+
+fn trace_left() -> bool {
+    static USED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    USED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < trace_limit()
+}
+
+fn skipped_build(b: &D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC, why: &str) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "acceleration structure build skipped: {why} (type {}, dest {:#x}, scratch {:#x}, {} descs; title RVA {:#x}; {n} so far; TUXBOX_AS_NULL_SKIP=0 records it)",
+            b.Inputs.Type.0, b.DestAccelerationStructureData, b.ScratchAccelerationStructureData, b.Inputs.NumDescs,
+            crate::survey::title_rva().unwrap_or(0)));
+    }
+}
+
 pub(super) unsafe extern "system" fn batch(list: &List, count: u32, entries: *const Entry) {
     unsafe { record_builds(list, count, entries, &[]) };
 }
@@ -479,6 +572,10 @@ unsafe fn record_builds(
             };
             &own
         };
+        if let Some(why) = unsafe { skip_build(&entry.build) } {
+            skipped_build(&entry.build, &why);
+            continue;
+        }
         // One build can need a late-bound instance table, an update-source
         // check, and a destination publication, in that command order.
         if state.scene_commands.try_reserve(3).is_err() {
