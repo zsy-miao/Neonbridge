@@ -184,6 +184,22 @@ enum Res {
 
 const XYZW: [&str; 4] = ["x", "y", "z", "w"];
 
+/// D16 typed heap transfers: (is d16, is the _d16_hi_ form). TB_HEAP_D16=0 refuses
+/// them (they were previously moved as whole dwords).
+fn heap_d16(m: &str, channels: u8) -> Result<(bool, bool), String> {
+    if !m.contains("_d16_") {
+        return Ok((false, false));
+    }
+    if std::env::var("TB_HEAP_D16").is_ok_and(|v| v.trim() == "0") {
+        return Err(format!("{m} through a heap descriptor unsupported (TB_HEAP_D16=0)"));
+    }
+    let high = m.contains("_d16_hi_");
+    if high && channels != 1 {
+        return Err(format!("unsupported D16 high-half heap op {m}"));
+    }
+    Ok((true, high))
+}
+
 /// Typed heap buffer views consult the runtime's view-format table
 /// (tb_view_formats). TB_TYPED_FMT=0 keeps float4 views only.
 fn typed_fmt_table() -> bool {
@@ -7160,10 +7176,41 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             _ => return Err(format!("unsupported typed heap load {}", ins.mnemonic)),
         };
         let Opnd::Vgpr(vd) = ins.dst[0] else { return Err("bad vdata".into()) };
+        let (d16, high) = heap_d16(&ins.mnemonic, channels)?;
         let index = r(&ins.src[0])?;
         let t = self.tmp;
         self.tmp += 1;
         let buf = self.bind_heap(HeapView::Typed, src);
+        if d16 {
+            // D16 (Xbox2Windows bb90a3d0): component k is 16 bits in half k % 2 of
+            // vd + k / 2; an integer view's channel is zero-extended to the half as it
+            // is, a float view's is converted to binary16.
+            let table = typed_fmt_table();
+            self.view_formats |= table;
+            self.line(&format!("uint4 t{t} = 0; uint t{t}c = 0u; if (exec_lo & 1u) {{ {} }}", if table {
+                format!("t{t}c = tb_view_formats.Load(s{src} * 4u) & 255u;                     if (t{t}c == 1u) {{ Buffer<uint4> t{t}u = ResourceDescriptorHeap[s{src}]; t{t} = t{t}u.Load({index}); }}                     else if (t{t}c == 2u) {{ Buffer<int4> t{t}i = ResourceDescriptorHeap[s{src}]; t{t} = asuint(t{t}i.Load({index})); }}                     else t{t} = asuint({buf}.Load({index}));")
+            } else {
+                format!("t{t} = asuint({buf}.Load({index}));")
+            }));
+            let half = |k: u8| {
+                let c = XYZW[k as usize];
+                format!("(t{t}c == 0u ? f32tof16(asfloat(t{t}.{c})) : (t{t}.{c} & 0xffffu))")
+            };
+            for j in 0..channels.div_ceil(2) {
+                let o = Opnd::Vgpr(vd + j);
+                let value = if high {
+                    self.touch(&o);
+                    format!("(({} & 0xffffu) | ({} << 16))", r(&o)?, half(0))
+                } else if j * 2 + 1 < channels {
+                    format!("({} | ({} << 16))", half(j * 2), half(j * 2 + 1))
+                } else {
+                    self.touch(&o);
+                    format!("(({} & 0xffff0000u) | {})", r(&o)?, half(j * 2))
+                };
+                self.wv(&o, &value)?;
+            }
+            return Ok(());
+        }
         if typed_fmt_table() {
             // The runtime's view-format table (D3D12 92f6234) names an integer view,
             // read through a matching Buffer<uint4>/<int4> so the dwords come back
@@ -7196,26 +7243,41 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if fmt_store_strict() && !typed_fmt_table() {
             return Err("typed heap store: the view's element format is not known here (TB_FMT_STORE_STRICT)".into());
         }
+        let (d16, high) = heap_d16(&ins.mnemonic, channels)?;
         let index = r(&ins.src[0])?;
         let buf = self.bind_heap(HeapView::TypedRw, src);
+        // Per channel: (float value, uint word, sign-correct int word). D16 reads
+        // half k % 2 of vd + k / 2 (the high half of vd for _d16_hi_x).
         let mut value = Vec::new();
+        let mut words = Vec::new();
+        let mut iwords = Vec::new();
         for k in 0..4u8 {
-            value.push(if k < channels {
-                let o = Opnd::Vgpr(vd + k);
+            if k < channels {
+                let o = Opnd::Vgpr(vd + if d16 { k / 2 } else { k });
                 self.touch(&o);
-                format!("asfloat({})", r(&o)?)
-            } else if k == 3 { "1.0f".into() } else { "0.0f".into() });
+                let reg = r(&o)?;
+                if d16 {
+                    let h = if high || k % 2 == 1 { format!("({reg} >> 16)") } else { format!("({reg} & 0xffffu)") };
+                    value.push(format!("f16tof32({h})"));
+                    iwords.push(format!("asuint(asint({h} << 16) >> 16)"));
+                    words.push(h);
+                } else {
+                    value.push(format!("asfloat({reg})"));
+                    words.push(reg.clone());
+                    iwords.push(reg);
+                }
+            } else {
+                value.push(if k == 3 { "1.0f".into() } else { "0.0f".into() });
+                words.push(if k == 3 { "1u".into() } else { "0u".into() });
+                iwords.push(if k == 3 { "1u".into() } else { "0u".into() });
+            }
         }
         if typed_fmt_table() {
             self.view_formats = true;
-            let mut words = Vec::new();
-            for k in 0..4u8 {
-                words.push(if k < channels { r(&Opnd::Vgpr(vd + k))? } else if k == 3 { "1u".into() } else { "0u".into() });
-            }
-            let words = words.join(", ");
+            let (words, iwords) = (words.join(", "), iwords.join(", "));
             let t = self.tmp;
             self.tmp += 1;
-            self.line(&format!("if (exec_lo & 1u) {{ uint t{t}c = tb_view_formats.Load(s{src} * 4u) & 255u;                 if (t{t}c == 1u) {{ RWBuffer<uint4> t{t}u = ResourceDescriptorHeap[s{src}]; t{t}u[{index}] = uint4({words}); }}                 else if (t{t}c == 2u) {{ RWBuffer<int4> t{t}i = ResourceDescriptorHeap[s{src}]; t{t}i[{index}] = asint(uint4({words})); }}                 else {buf}[{index}] = float4({}); }}", value.join(", ")));
+            self.line(&format!("if (exec_lo & 1u) {{ uint t{t}c = tb_view_formats.Load(s{src} * 4u) & 255u;                 if (t{t}c == 1u) {{ RWBuffer<uint4> t{t}u = ResourceDescriptorHeap[s{src}]; t{t}u[{index}] = uint4({words}); }}                 else if (t{t}c == 2u) {{ RWBuffer<int4> t{t}i = ResourceDescriptorHeap[s{src}]; t{t}i[{index}] = asint(uint4({iwords})); }}                 else {buf}[{index}] = float4({}); }}", value.join(", ")));
             return Ok(());
         }
         self.line(&format!("if (exec_lo & 1u) {buf}[{index}] = float4({});", value.join(", ")));
