@@ -6,3 +6,5 @@ EXPORTS
   UninitializeApiImpl @4
   XErrorReport @5
   InitializeApiImplEx2 @6
+  XErrorSetCallback @7
+  XErrorSetOptions @8

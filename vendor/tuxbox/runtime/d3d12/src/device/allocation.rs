@@ -291,6 +291,31 @@ pub(super) unsafe extern "system" fn info2_watched(
     result
 }
 
+/// palmetto cc7e044b (GPL-3.0): a description the host cannot size got an
+/// invalid answer (u64::MAX) the title then used. It now gets a conservative
+/// 64 KiB-aligned size: 16 bytes a texel (the widest format) for every
+/// sample, slice and mip, twice the top mip for a chain. Logged.
+/// TUXBOX_SLOT108_FALLBACK=0 answers invalid again.
+fn fallback_size(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_ALLOCATION_INFO> {
+    if crate::env_toggle!("TUXBOX_SLOT108_FALLBACK") == Some("0") { return None; }
+    let bytes = if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER {
+        desc.Width
+    } else {
+        let texels = desc.Width.checked_mul(u64::from(desc.Height.max(1)))?.checked_mul(u64::from(desc.DepthOrArraySize.max(1)))?;
+        let chain = if desc.MipLevels == 1 { 1 } else { 2 };
+        texels.checked_mul(16 * u64::from(desc.SampleDesc.Count.max(1)) * chain)?
+    };
+    let size = bytes.max(1).checked_next_multiple_of(0x10000)?;
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "allocation info2: answered {size:#x} bytes at 64 KiB for a description the host could not size (format {} {}x{}; {n} so far; TUXBOX_SLOT108_FALLBACK=0 answers invalid)",
+            desc.Format.0, desc.Width, desc.Height));
+    }
+    Some(D3D12_RESOURCE_ALLOCATION_INFO { SizeInBytes: size, Alignment: 0x10000 })
+}
+
 pub(super) unsafe extern "system" fn info2(
     out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
     device: &Device,
@@ -336,10 +361,10 @@ pub(super) unsafe extern "system" fn info2(
             }
             unsafe { host.GetResourceAllocationInfo2(visible, 1, &native, None) }
         } else { return out };
-        if requirement.Alignment == 0 || requirement.SizeInBytes == u64::MAX {
+        let requirement = if requirement.Alignment == 0 || requirement.SizeInBytes == u64::MAX {
             crate::diagnostics::recording_error(format_args!("allocation info2 dim={} {}x{} format={} flags={:#x} layout={:#x} alignment={}", d.Dimension.0, d.Width, d.Height, d.Format.0, d.Flags.0, d.Layout.0, d.Alignment));
-            return out;
-        }
+            match fallback_size(&desc) { Some(r) => r, None => return out }
+        } else { requirement };
         let Some(start) = offset.checked_next_multiple_of(requirement.Alignment) else { return out };
         let Some(end) = start.checked_add(requirement.SizeInBytes) else { return out };
         if !details.is_null() {

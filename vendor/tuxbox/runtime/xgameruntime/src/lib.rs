@@ -55,12 +55,39 @@ extern "system" fn UninitializeApiImpl() {
     let _ = INITIALIZATIONS.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
 }
 
+/// KestrelX ee0f749 (MIT): XErrorReport returns bool and calls the callback
+/// set with XErrorSetCallback(callback, context), which decides the result
+/// (true without one). TUXBOX_XERROR_CALLBACK=0 never calls it.
+type ErrorCallback = unsafe extern "system" fn(i32, *const c_char, *mut c_void) -> bool;
+static CALLBACK: std::sync::Mutex<Option<(ErrorCallback, usize)>> = std::sync::Mutex::new(None);
+static OPTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[unsafe(no_mangle)]
-unsafe extern "system" fn XErrorReport(_error: i32, message: *const c_char) {
+unsafe extern "system" fn XErrorReport(error: i32, message: *const c_char) -> bool {
     if !message.is_null() {
         // The GDK error message is a borrowed, NUL-terminated ANSI string.
         unsafe { OutputDebugStringA(message.cast()) };
     }
+    if std::env::var("TUXBOX_XERROR_CALLBACK").is_ok_and(|v| v.trim() == "0") {
+        return true;
+    }
+    let callback = *CALLBACK.lock().unwrap_or_else(|e| e.into_inner());
+    match callback {
+        Some((callback, context)) => unsafe { callback(error, message, context as *mut c_void) },
+        None => true,
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "system" fn XErrorSetCallback(callback: Option<ErrorCallback>, context: *mut c_void) -> i32 {
+    *CALLBACK.lock().unwrap_or_else(|e| e.into_inner()) = callback.map(|c| (c, context as usize));
+    0
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "system" fn XErrorSetOptions(debugger_present: u32, debugger_not_present: u32) -> i32 {
+    OPTIONS.store(u64::from(debugger_present) | (u64::from(debugger_not_present) << 32), Ordering::Relaxed);
+    0
 }
 
 #[unsafe(no_mangle)]
