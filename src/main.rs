@@ -48,7 +48,7 @@ Needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc 
 /// (cargo package, output DLL, export table relative to the TuxBox root, extra import libs, extra C++ sources)
 const PROVIDERS: &[(&str, &str, &str, &[&str], &[&str])] = &[
     ("tuxbox-xmem-http", "tuxbox_xhttp.dll", "runtime/xmem/xhttp.def", &["winhttp.lib"], &[]),
-    ("tuxbox-xmem", "xmem.dll", "runtime/xmem/xmem.def", &["tuxbox_xhttp.lib", "ole32.lib", "/include:DllMain"], &[]), // own DllMain must win over the libcmt stub; forwards XMemSetWinHttpHooks to tuxbox_xhttp
+    ("tuxbox-xmem", "xmem.dll", "runtime/xmem/xmem.def", &["tuxbox_xhttp.lib", "ole32.lib", "user32.lib", "gdi32.lib", "/include:DllMain"], &[]), // own DllMain must win over the libcmt stub; forwards XMemSetWinHttpHooks to tuxbox_xhttp
     ("tuxbox-acphal", "AcpHal.dll", "runtime/acphal/AcpHal.def", &[], &[]),
     ("tuxbox-xapu", "xapu.dll", "runtime/xapu/xapu.def", &[], &[]),
     ("tuxbox-xapu", "chad.dll", "runtime/xapu/chad.def", &[], &[]),

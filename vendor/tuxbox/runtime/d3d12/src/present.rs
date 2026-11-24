@@ -240,7 +240,9 @@ impl SwapChain {
             }
             self.next = next_value;
             // Return DXGI status codes such as DXGI_STATUS_OCCLUDED to the guest.
-            Ok(self.chain.Present(1, DXGI_PRESENT(0)))
+            let status = self.chain.Present(1, DXGI_PRESENT(0));
+            uncloak_title_windows();
+            Ok(status)
         }
     }
     fn drain(&self) -> Result<()> {
@@ -460,4 +462,19 @@ pub(crate) mod sampler {
             }
         }
     }
+}
+
+/// xmem cloaks the title's top-level window from creation so its unpainted
+/// client never flashes white; the first present shows it (TuxBoxUncloakWindows).
+fn uncloak_title_windows() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        if let Ok(module) = GetModuleHandleW(windows::core::w!("xmem.dll"))
+            && let Some(f) = GetProcAddress(module, windows::core::s!("TuxBoxUncloakWindows"))
+        {
+            let uncloak: unsafe extern "system" fn() = core::mem::transmute(f);
+            uncloak();
+        }
+    });
 }

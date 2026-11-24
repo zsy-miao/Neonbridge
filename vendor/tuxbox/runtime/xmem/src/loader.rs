@@ -136,6 +136,7 @@ pub(crate) unsafe fn install() {
         crate::xaudio::install();
         crate::write_watch::install();
         crate::net::install();
+        crate::window::install();
     }
 }
 
