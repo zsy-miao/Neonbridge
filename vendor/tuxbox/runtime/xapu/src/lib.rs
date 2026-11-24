@@ -70,6 +70,7 @@ struct Connection {
     submitted: u32,
     received: u32,
     event: usize,
+    flags: u32,
 }
 
 impl Drop for Connection {
@@ -168,6 +169,7 @@ pub unsafe extern "system" fn XApuConnect(
             submitted: 0,
             received: 0,
             event,
+            flags: flags as u32,
         },
     );
     unsafe {
@@ -215,7 +217,7 @@ pub unsafe extern "system" fn XApuEnqueueCommand(
         return QUEUE_FULL;
     }
     let started = std::time::Instant::now();
-    let completion = match unsafe { state.submit(command, &connection.arena) } {
+    let completion = match unsafe { state.submit(command, &connection.arena, connection.flags) } {
         Ok(completion) => completion,
         Err(status) => {
             stats::note(handle, stream, 0, 0.0, 0, false, true);
