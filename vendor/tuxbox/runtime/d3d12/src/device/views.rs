@@ -1,6 +1,8 @@
 //! Standard Xbox resource views and samplers, device slots 17 through 22.
 mod byte_offset;
+mod shadow;
 pub(super) use byte_offset::AddressViews;
+pub(crate) use shadow::Shadows;
 
 use super::{Device, identity, resource};
 use crate::proxy::fail_call;
@@ -91,6 +93,14 @@ impl TextureAddress {
         self.buffer_offset + (address - self.base as u64)
     }
 
+    /// A view backed by `native` at `base` that address lookups never find.
+    fn unlisted(device: &Device, native: &ID3D12Resource, base: usize) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            base, buffer_offset: 0, native: native.clone(), registry: device.state.texture_addresses.clone(), owns_address: false,
+            _title_memory: None, _render_heap: None, depth: None, buffer_heap: None,
+        })
+    }
+
     pub(super) fn register(device: &Device, native: &ID3D12Resource, desc: &D3D12_RESOURCE_DESC) -> std::sync::Arc<Self> {
         use windows::Win32::System::Memory::{VirtualAlloc, MEM_RESERVE, PAGE_NOACCESS};
         let size = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) }.SizeInBytes;
@@ -148,6 +158,12 @@ pub(crate) unsafe fn clear_buffer_alias(
 
 /// The guest device owns the descriptor metadata for ordinary heaps and for
 /// the staging handles of virtualized heaps. Descriptor copies preserve it.
+/// Refresh shadowed buffer views before `queue` runs guest work.
+pub(crate) unsafe fn refresh_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    unsafe { shadow::refresh(device, queue) }
+}
+
 pub(crate) unsafe fn is_constant_buffer(owner: &windows::core::IUnknown, handle: usize) -> bool {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     matches!(device.state.imported_views.lookup(handle), Some(DescriptorBacking::ConstantBuffer { .. }))
@@ -196,9 +212,12 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
         if info.Alignment == 0 || info.SizeInBytes == u64::MAX { return Err(E_INVALIDARG.into()); }
         let origin = region.AllocationBase.addr() as u64;
         // Search no further than a single period of the alignment congruence.
-        (0..info.Alignment.min((address - origin) / u64::from(stride) + 1))
+        let base = (0..info.Alignment.min((address - origin) / u64::from(stride) + 1))
             .map(|n| address - n * u64::from(stride))
-            .find(|&base| (base - origin).is_multiple_of(info.Alignment)).ok_or(E_INVALIDARG)?
+            .find(|&base| (base - origin).is_multiple_of(info.Alignment));
+        // No host placement boundary is a whole number of records away.
+        let Some(base) = base else { return shadow::view(device, address, bytes).map(Some) };
+        base
     } else { nearest };
     host.Width = bytes.checked_add(address - page).ok_or(E_INVALIDARG)?;
     if !tight { host.Width = host.Width.checked_next_multiple_of(65536).ok_or(E_INVALIDARG)?; }

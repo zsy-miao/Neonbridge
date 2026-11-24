@@ -1314,6 +1314,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                                 command.prepare(list)?;
                             }
                         }
+                        if let Some(owner) = queue.parent.as_ref() {
+                            device::refresh_shadows(owner, &queue.native)?;
+                        }
                         memory_wait::submit(queue, host, splits)?;
                         if !trace_samples.borrow().is_empty() {
                             let mut device: Option<ID3D12Device> = None;

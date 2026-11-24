@@ -43,7 +43,7 @@ pub(crate) mod stencil;
 mod stream;
 mod title_memory;
 mod views;
-pub(crate) use views::{clear_buffer_alias, command_buffer_address, is_constant_buffer};
+pub(crate) use views::{clear_buffer_alias, command_buffer_address, is_constant_buffer, refresh_shadows};
 
 type Device = Proxy<ID3D12Device, dxgi::DxgiDevice>;
 pub(crate) enum Backing {

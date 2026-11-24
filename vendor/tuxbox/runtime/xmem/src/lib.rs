@@ -1,4 +1,5 @@
 //! CPU-backed Xbox default allocations. Callers retain ownership until the matching free.
+mod console_cpu;
 mod diagnostics;
 mod heap;
 mod history;
