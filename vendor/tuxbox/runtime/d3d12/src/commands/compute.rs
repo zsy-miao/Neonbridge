@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Direct3D12::{
 
 pub(super) unsafe extern "system" fn bind_root(list: &List, signature: *mut c_void) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_shader(&list.native) {
         return;
     }
     // SAFETY: the guest holds its signature during this call. Only a native
@@ -37,7 +37,7 @@ pub(super) unsafe extern "system" fn constants<const COMPUTE: bool>(
     offset: u32,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) || count == 0 {
+    if !state.can_record_for::<COMPUTE>(&list.native) || count == 0 {
         return;
     }
     if data.is_null() || offset.checked_add(count).is_none_or(|end| end > 64) {
@@ -59,7 +59,7 @@ use super::compute_bindings::BufferView;
 
 fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: fn(u64) -> BufferView) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_for::<COMPUTE>(&list.native) {
         let Some(address) = address(list, &mut state, guest, 1) else { return };
         let view = view(address);
         unsafe { view.apply::<COMPUTE>(&list.native, index) };
@@ -106,7 +106,7 @@ pub(super) unsafe extern "system" fn async_compute_budget(list: &List, budget: *
 
 pub(super) unsafe extern "system" fn dispatch(list: &List, x: u32, y: u32, z: u32) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_shader(&list.native) {
         return;
     }
     if x.max(y).max(z) > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION {

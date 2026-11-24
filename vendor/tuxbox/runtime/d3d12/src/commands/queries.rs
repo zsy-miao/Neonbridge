@@ -21,6 +21,20 @@ pub(super) unsafe extern "system" fn query<const BEGIN: bool>(
         state.error = E_INVALIDARG;
         return;
     };
+    // Occlusion and stream-output queries exist only on direct lists, and a
+    // copy list takes timestamps alone; the core runtime refuses the list.
+    let list_kind = unsafe { list.native.GetType() };
+    let supported = match list_kind {
+        D3D12_COMMAND_LIST_TYPE_DIRECT => true,
+        D3D12_COMMAND_LIST_TYPE_COMPUTE => matches!(kind, D3D12_QUERY_TYPE_TIMESTAMP | D3D12_QUERY_TYPE_PIPELINE_STATISTICS),
+        _ => kind == D3D12_QUERY_TYPE_TIMESTAMP,
+    };
+    if !supported {
+        static DROPPED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&DROPPED, || format!(
+            "dropped query type {} on a type {} list", kind.0, list_kind.0));
+        return;
+    }
     if BEGIN {
         if kind == D3D12_QUERY_TYPE_TIMESTAMP {
             state.error = E_INVALIDARG;

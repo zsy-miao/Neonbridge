@@ -17,7 +17,7 @@ pub(super) unsafe extern "system" fn clear(
     rects: *const RECT,
 ) {
     let mut recording = recording(list);
-    if !recording.can_record(&list.native) {
+    if !recording.can_record_graphics(&list.native) {
         return;
     }
     if handle.ptr == 0

@@ -94,6 +94,12 @@ pub(super) unsafe extern "system" fn bind_heaps(
     if !state.ensure_open(&list.native) {
         return;
     }
+    if unsafe { list.native.GetType() } == D3D12_COMMAND_LIST_TYPE_COPY {
+        // A copy list has no descriptor heaps; the core runtime refuses the list.
+        static COPY: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&COPY, || "dropped SetDescriptorHeaps on a copy list".into());
+        return;
+    }
     if count > 2 || (count != 0 && heaps.is_null()) {
         state.error = E_INVALIDARG;
         return;
@@ -146,7 +152,7 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
     base: D3D12_GPU_DESCRIPTOR_HANDLE,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_for::<COMPUTE>(&list.native) {
         return;
     }
     let logical = base;

@@ -10,7 +10,7 @@ use windows::core::{BOOL, Interface};
 
 pub(super) unsafe extern "system" fn root(list: &List, signature: *mut c_void) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     match unsafe { root_proxy(signature, parent(&list.parent)) } {
@@ -25,7 +25,7 @@ pub(super) unsafe extern "system" fn root(list: &List, signature: *mut c_void) {
 
 pub(super) unsafe extern "system" fn topology(list: &List, primitive: D3D_PRIMITIVE_TOPOLOGY) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_graphics(&list.native) {
         let native = if primitive.0 == crate::device::rectangle::LIST {
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST
         } else {
@@ -62,7 +62,7 @@ pub(super) unsafe extern "system" fn viewports(
     views: *const D3D12_VIEWPORT,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if count > D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE
@@ -76,7 +76,7 @@ pub(super) unsafe extern "system" fn viewports(
 
 pub(super) unsafe extern "system" fn scissors(list: &List, count: u32, rects: *const RECT) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if count > D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE
@@ -98,7 +98,7 @@ pub(super) unsafe extern "system" fn targets(
     dsv: *const D3D12_CPU_DESCRIPTOR_HANDLE,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if count > D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT || (count != 0 && rtvs.is_null()) {
@@ -167,7 +167,7 @@ pub(super) unsafe extern "system" fn draw(
     start_instance: u32,
 ) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_graphics(&list.native) {
         state.draw(list, vertices != 0 && instances != 0, || unsafe {
             list.native
                 .DrawInstanced(vertices, instances, start_vertex, start_instance);
@@ -184,7 +184,7 @@ pub(super) unsafe extern "system" fn shading_rate(
     combiners: *const D3D12_SHADING_RATE_COMBINER,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if !matches!(rate, D3D12_SHADING_RATE_1X1 | D3D12_SHADING_RATE_1X2 | D3D12_SHADING_RATE_2X1 |
@@ -224,7 +224,7 @@ pub(super) unsafe extern "system" fn force_shader_depth_order(list: &List, enabl
 // 2x2 quad. Enabling every sample preserves the coverage of the bound PSO.
 pub(super) unsafe extern "system" fn sample_mask(list: &List, mask: u64) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if mask != u64::MAX {
@@ -268,7 +268,7 @@ pub(super) unsafe extern "system" fn index_buffer(
     view: *const D3D12_INDEX_BUFFER_VIEW,
 ) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_graphics(&list.native) {
         let mut host = unsafe { view.as_ref() }.copied();
         if let Some(v) = &mut host {
             let Some(address) = super::compute::address(list, &mut state, v.BufferLocation, v.SizeInBytes.into()) else { return; };
@@ -286,7 +286,7 @@ pub(super) unsafe extern "system" fn vertex_buffers(
     views: *const D3D12_VERTEX_BUFFER_VIEW,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if start > D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT
@@ -320,7 +320,7 @@ pub(super) unsafe extern "system" fn draw_indexed(
     first_instance: u32,
 ) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_graphics(&list.native) {
         state.draw(list, indices != 0 && instances != 0, || unsafe {
             list.native
                 .DrawIndexedInstanced(indices, instances, first, base_vertex, first_instance);
@@ -333,14 +333,14 @@ pub(super) unsafe extern "system" fn draw_indexed(
 // Frosty's ApplyState records these output-merger values at RVAs 0x57f0356 and 0x57f0398.
 pub(super) unsafe extern "system" fn blend_factor(list: &List, factor: *const f32) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_graphics(&list.native) {
         unsafe { (list.native.vtable().OMSetBlendFactor)(list.native.as_raw(), factor) };
     }
 }
 
 pub(super) unsafe extern "system" fn stencil_ref(list: &List, reference: u32) {
     let mut state = recording(list);
-    if state.can_record(&list.native) {
+    if state.can_record_graphics(&list.native) {
         unsafe { list.native.OMSetStencilRef(reference) };
     }
 }
@@ -349,7 +349,7 @@ pub(super) unsafe extern "system" fn stencil_ref(list: &List, reference: u32) {
 // slot 68 call returning at title RVA 0x57f03ed.
 pub(super) unsafe extern "system" fn depth_bounds(list: &List, minimum: f32, maximum: f32) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     let native = list

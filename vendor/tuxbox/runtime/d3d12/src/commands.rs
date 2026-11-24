@@ -76,6 +76,9 @@ struct Recording {
     indexed_arenas: Vec<Arc<device::descriptor_paging::Arena>>,
     scalar_descriptors: std::collections::HashSet<descriptors::ScalarDescriptor>,
     sampled_heaps: Vec<Range<usize>>,
+    /// TUXBOX_LIST_RING=1: guest caller RVAs of the latest recording calls,
+    /// dumped when the host Close rejects the list.
+    ring: std::collections::VecDeque<usize>,
     phase: ListState,
     error: HRESULT,
 }
@@ -286,9 +289,42 @@ impl Recording {
         true
     }
 
+    /// A graphics-only call on a compute or copy list: the core runtime
+    /// refuses the whole list at Close, so drop just the call.
+    fn can_record_graphics(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if !self.can_record(native) { return false; }
+        let kind = unsafe { native.GetType() };
+        if kind == D3D12_COMMAND_LIST_TYPE_DIRECT { return true; }
+        static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = DROPPED.fetch_add(1, Ordering::Relaxed);
+        if n < 8 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "dropped a graphics-only call on a type {} list from guest RVA {:#x} ({} so far)",
+                kind.0, crate::survey::title_rva().unwrap_or(0), n + 1
+            ));
+        }
+        false
+    }
+
+    fn can_record_for<const COMPUTE: bool>(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if COMPUTE { self.can_record_shader(native) } else { self.can_record_graphics(native) }
+    }
+
+    /// Shader state and dispatches: a copy list refuses them like graphics.
+    fn can_record_shader(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if unsafe { native.GetType() } == D3D12_COMMAND_LIST_TYPE_COPY {
+            return self.can_record_graphics(native);
+        }
+        self.can_record(native)
+    }
+
     fn ensure_open(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
         if self.error.is_err() {
             return false;
+        }
+        if ring_enabled() {
+            if self.ring.len() >= 32 { self.ring.pop_front(); }
+            self.ring.push_back(crate::survey::title_rva().unwrap_or(0));
         }
         match &self.phase {
             ListState::Fresh(allocator, initial) => {
@@ -306,6 +342,11 @@ impl Recording {
         }
         self.error.is_ok()
     }
+}
+
+fn ring_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TUXBOX_LIST_RING").is_some_and(|v| v != "0"))
 }
 
 // Xbox callers can emit native command packets when space is available.
@@ -484,6 +525,7 @@ unsafe extern "system" fn reset(
         state.indexed_arenas.clear();
         state.scalar_descriptors.clear();
         state.sampled_heaps.clear();
+        state.ring.clear();
         state.error = S_OK;
     }
     if hr.is_err() {
@@ -532,7 +574,10 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         ListState::Open => {
             if let Err(error) = state.prefix.finish(&list.native) { state.error = error.code(); }
             if let Err(error) = unsafe { list.native.Close() } {
-                crate::diagnostics::log_line(format_args!("host list Close failed {:#010x} (recorded error {:#010x})", error.code().0, state.error.0));
+                crate::diagnostics::log_line(format_args!(
+                    "host list Close failed {:#010x} (recorded error {:#010x}, list type {}, last guest callers {:x?})",
+                    error.code().0, state.error.0, unsafe { list.native.GetType() }.0, state.ring
+                ));
                 state.error = error.code();
             }
         }
@@ -636,6 +681,7 @@ unsafe extern "system" fn transition(
     // The guest supplies count readable barriers. Read a transition payload
     // only after checking the union tag.
     let guest = unsafe { slice::from_raw_parts(barriers, count as usize) };
+    let kind = unsafe { list.native.GetType() };
     let result = translate_batch(
         guest,
         Vec::new(),
@@ -717,8 +763,8 @@ unsafe extern "system" fn transition(
             let texture = needs_dimension
                 && unsafe { resource.native.GetDesc().Dimension }
                     != D3D12_RESOURCE_DIMENSION_BUFFER;
-            host.before = device::host_state(host.before, texture);
-            host.after = device::host_state(host.after, texture);
+            host.before = list_state(device::host_state(host.before, texture), kind);
+            host.after = list_state(device::host_state(host.after, texture), kind);
             if resource.state.unbacked_uav() {
                 // The host depth image has no unordered access; see unbacked_uav.
                 for state in [&mut host.before, &mut host.after] {
@@ -763,7 +809,21 @@ unsafe extern "system" fn transition(
                 } else {
                     ptr::null_mut()
                 };
-            } else if different && host.before == host.after {
+            } else if host.before == host.after {
+                // The core runtime refuses a transition between equal states.
+                // UA to UA orders UAV accesses; a split half has nothing to do.
+                if host.before == D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                    && host.flags == D3D12_RESOURCE_BARRIER_FLAG_NONE
+                {
+                    return Ok(RecordedBarrier {
+                        transition: TransitionBarrier {
+                            kind: D3D12_RESOURCE_BARRIER_TYPE_UAV,
+                            flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
+                            resource: resource.native.as_raw(),
+                            ..Default::default()
+                        },
+                    });
+                }
                 host.resource = ptr::null_mut();
             } else {
                 host.resource = resource.native.as_raw();
@@ -800,6 +860,60 @@ unsafe extern "system" fn transition(
     if let Err(error) = result {
         state.error = error;
     }
+}
+
+/// Legacy resource state bits the desktop runtime knows, excluding the
+/// video-queue states (no graphics, compute or copy list accepts those).
+const LIST_STATES: i32 = 0x3fff
+    | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE.0
+    | D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE.0;
+const WRITE_STATES: i32 = D3D12_RESOURCE_STATE_RENDER_TARGET.0
+    | D3D12_RESOURCE_STATE_UNORDERED_ACCESS.0
+    | D3D12_RESOURCE_STATE_DEPTH_WRITE.0
+    | D3D12_RESOURCE_STATE_STREAM_OUT.0
+    | D3D12_RESOURCE_STATE_COPY_DEST.0
+    | D3D12_RESOURCE_STATE_RESOLVE_DEST.0;
+const COMPUTE_STATES: i32 = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER.0
+    | D3D12_RESOURCE_STATE_UNORDERED_ACCESS.0
+    | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE.0
+    | D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT.0
+    | D3D12_RESOURCE_STATE_COPY_DEST.0
+    | D3D12_RESOURCE_STATE_COPY_SOURCE.0
+    | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE.0;
+
+/// Restrict a barrier state to what the core runtime accepts on this list
+/// type. An invalid state makes the host Close fail with E_INVALIDARG and
+/// drops the whole list. Compute lists take shader reads as non-pixel reads
+/// and copy lists only copy states; one write state excludes all others.
+fn list_state(state: D3D12_RESOURCE_STATES, kind: D3D12_COMMAND_LIST_TYPE) -> D3D12_RESOURCE_STATES {
+    let mut bits = state.0 & LIST_STATES;
+    match kind {
+        D3D12_COMMAND_LIST_TYPE_COMPUTE => {
+            if bits & (D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE.0 | D3D12_RESOURCE_STATE_DEPTH_READ.0) != 0 {
+                bits |= D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE.0;
+            }
+            bits &= COMPUTE_STATES;
+        }
+        D3D12_COMMAND_LIST_TYPE_COPY => {
+            bits &= D3D12_RESOURCE_STATE_COPY_DEST.0 | D3D12_RESOURCE_STATE_COPY_SOURCE.0;
+        }
+        _ => {}
+    }
+    let writes = bits & WRITE_STATES;
+    if writes != 0 && bits != writes & writes.wrapping_neg() {
+        bits = writes & writes.wrapping_neg();
+    }
+    if bits != state.0 {
+        static SEEN: Mutex<Vec<(i32, i32)>> = Mutex::new(Vec::new());
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 16 && !seen.contains(&(kind.0, state.0)) {
+            seen.push((kind.0, state.0));
+            crate::diagnostics::log_line(format_args!(
+                "barrier state {:#x} on a type {} list recorded as {bits:#x}", state.0, kind.0
+            ));
+        }
+    }
+    D3D12_RESOURCE_STATES(bits)
 }
 
 fn enhanced_barriers(native: &ID3D12GraphicsCommandList) -> Option<ID3D12GraphicsCommandList7> {
@@ -908,7 +1022,7 @@ unsafe extern "system" fn clear_rtv(
     rects: *const RECT,
 ) {
     let mut state = recording(list);
-    if !state.can_record(&list.native) {
+    if !state.can_record_graphics(&list.native) {
         return;
     }
     if handle.ptr == 0 || color.is_null() || (count != 0 && rects.is_null()) {
@@ -1777,6 +1891,7 @@ pub(crate) unsafe fn wrap_command_list(
             indexed_arenas: Vec::new(),
             scalar_descriptors: Default::default(),
             sampled_heaps: Vec::new(),
+            ring: std::collections::VecDeque::new(),
             media: compact.then(|| media::Recording::new(allocator)),
             phase: ListState::Fresh(allocator.native.clone(), initial.map(|p| p.native.clone())),
             error: S_OK,
