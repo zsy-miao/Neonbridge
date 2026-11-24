@@ -7500,6 +7500,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     /// DPP8 / DPP16 (RDNA 2 ISA 6.2.3): src0 comes from another lane of the
     /// wave. Read it with WaveReadLaneAt, then run the operation on that value.
+    /// The sign bit DPP abs/neg act on: that of the op's float source type (the
+    /// last `_f16` / `_f32` in the mnemonic, so `v_cvt_f32_f16` reads f16).
+    fn dpp_sign_bit(mnemonic: &str) -> Option<u32> {
+        match mnemonic.rsplit('_').find(|p| p.starts_with('f') || p.starts_with('i') || p.starts_with('u') || p.starts_with('b'))? {
+            "f16" => Some(0x8000),
+            "f32" => Some(0x8000_0000),
+            _ => None,
+        }
+    }
+
     fn emit_dpp(&mut self, ins: &Insn) -> Result<(), String> {
         let Some(Opnd::Raw(code)) = ins.src.first().copied() else { unreachable!() };
         let ctrl = *ins.raw.get(1).ok_or("missing DPP control word")?;
@@ -7510,7 +7520,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         self.tmp += 1;
         let lane = "WaveGetLaneIndex()";
         let (src, valid, fetch_inactive, bound_zero, write) = if code == 250 {
-            if (ctrl >> 20) & 15 != 0 {
+            // abs/neg (bits 20..23) move the sign bit of a float source, exactly as
+            // the hardware does (Xbox2Windows d8b51b5f, MIT: binary16 DPP16 with
+            // bit-15 modifiers). The sign is bit 15 for an f16 source, bit 31 for f32.
+            if (ctrl >> 20) & 15 != 0 && Self::dpp_sign_bit(&ins.mnemonic).is_none() {
                 return Err(format!("DPP16 source modifiers unsupported at {:#x}", ins.offset));
             }
             let dpp = (ctrl >> 8) & 0x1ff;
@@ -7544,6 +7557,23 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let mut c = ins.clone();
         c.raw.truncate(1);
         c.src[0] = Opnd::Temp(t as u16);
+        let mods = if code == 250 { (ctrl >> 20) & 15 } else { 0 };
+        let sign = Self::dpp_sign_bit(&ins.mnemonic).unwrap_or(0);
+        let modify = |v: String, neg: bool, abs: bool| {
+            let v = if abs { format!("({v} & {:#x}u)", !sign) } else { v };
+            if neg { format!("({v} ^ {sign:#x}u)") } else { v }
+        };
+        if mods & 3 != 0 {
+            self.line(&format!("t{t}v = {};", modify(format!("t{t}v"), mods & 1 != 0, mods & 2 != 0)));
+        }
+        if mods & 12 != 0 {
+            let src1 = *c.src.get(1).ok_or("DPP source modifier on a missing source 1")?;
+            self.touch(&src1);
+            let u = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("uint tb_s{u} = {};", modify(r(&src1)?, mods & 4 != 0, mods & 8 != 0)));
+            c.src[1] = Opnd::Temp(u as u16);
+        }
         if bound_zero {
             self.line(&format!("uint tb_s{t} = t{t}ok ? t{t}v : 0u;"));
             if write == "true" { return self.emit_vec(&c); }
