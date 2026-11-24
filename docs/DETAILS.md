@@ -257,14 +257,16 @@ These are in the vendored TuxBox provider.
 
 ## Open issues
 
-- **Scene-load stop:** runs reach frame ~3310, about 5 minutes after the shader prewarm, and end at the scene load after the loading screens.
-  - Usually the title's 30 s hang watchdog (game+0x2215a60) fires, logging "GPU Loc Sig" and writing 0x4d8bd421 to address 0. The render thread waits on Subrender job events, and the title's 5 job workers never got their batch's start signal. Being traced with `TUXBOX_HANG_PEEK`.
+- **Scene-load stop:** runs pass the loading screens into the first cutscene (its audio plays) and stop there; test139 hung at frame 2291.
+  - Root cause being traced: pipeline creation. In the cutscene a 10 s window recorded 66 of 3700 draws and 633 of 3271 dispatches; 6268 were dropped as "pipeline still being made" and 458 binds were untranslatable. The only busy threads were the two pipeline workers, both inside the GPU driver's compiler. Open questions: why the cutscene needs thousands of new pipelines, why they miss the driver cache, and why only two workers build them. Building the title's whole pipeline set ahead of time is the planned fix.
+  - Usually the title's 30 s hang watchdog (game+0x2215a60) fires, logging "GPU Loc Sig" and writing 0x4d8bd421 to address 0. The render thread waits on Subrender job events from the title's 5 job workers (traced with `TUXBOX_HANG_PEEK`); whether those workers are starved by the pipeline backlog, or fault in the title's pool allocators as five-star-recomp found for this build, is still to be shown.
   - With `TUXBOX_COMPILE_BUDGET=0`, Windows commit runs out instead: about 18.6 GB private, of which about 7.5 GB is title mappings and about 10.4 GB our placed-texture mirror.
   - Already fixed on the way: a placement drop-order deadlock, title threads waiting on a shader-cache lock, binds waiting outside the first-use budget, and slow `-O1` compiles of awaited shaders.
-- **Video memory:** the game uses about 8 GB against a 7.2 GB device-local budget; the frame rate sinks from about 35 to below 20 once it overflows.
+- **Video memory:** the game uses about 8.1 GB against a 7.2 GB device-local budget; the frame rate sinks from about 35 to below 20 once it overflows. Superseded placed textures are not the cause: nearly all are already unmapped and hold no video memory.
   - The memory line's "live now" also counts committed placed-texture copies, upload and readback buffers, device buffers, descriptor-table buffers and span heaps, held by a marker on each object until its last release.
   - The process ends itself with `STATUS_COMMITMENT_LIMIT`, after logging the memory line, once less than `TUXBOX_MIN_COMMIT_MB` (2048) of system commit is left, so other programs keep working (`TUXBOX_MIN_COMMIT_MB=0` runs to the limit).
-- **Black picture:** the first mission plays sound but draws black.
+- **Black picture:** the first cutscene plays sound but draws almost nothing, because nearly every draw is dropped while its pipeline is built (see the scene-load stop).
+- **Intro video blocks:** the intro Bink video shows block garbage in motion at about 15 fps, with broken audio; being traced.
 - **BCPack textures:** grey blocks until a decoder is written (about 14% of textures).
 - **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
