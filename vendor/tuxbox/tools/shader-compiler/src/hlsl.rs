@@ -2751,10 +2751,16 @@ impl<'a> Emitter<'a> {
     }
 
     /// Candidate descriptors `(table, offset)` of a symbol that is dword 0 of a descriptor.
-    fn desc_candidates(&self, s: Option<&Sym>) -> Option<Vec<(u8, u32)>> {
+    /// Descriptor table candidates for a descriptor starting at the register
+    /// holding `s`. One wide s_load (x8/x16) can fetch several descriptors: the
+    /// one starting at dword `k` of the load is the descriptor at `off + 4k`,
+    /// when `k` is a multiple of its table stride in dwords (`align`: 8 for
+    /// T#/V# rows, 4 for S#) (Xbox2Windows 882d2aa0).
+    fn desc_candidates(&self, s: Option<&Sym>, align: u32) -> Option<Vec<(u8, u32)>> {
         match s {
-            Some(Sym::Desc { table, off, k: 0 }) => Some(vec![(*table, *off)]),
-            Some(Sym::Multi { set, k: 0 }) => self.multi_sets.get(*set as usize).cloned(),
+            Some(Sym::Desc { table, off, k }) if k % align == 0 => Some(vec![(*table, *off + 4 * *k)]),
+            Some(Sym::Multi { set, k }) if k % align == 0 => self.multi_sets.get(*set as usize)
+                .map(|v| v.iter().map(|&(t, o)| (t, o + 4 * *k)).collect()),
             _ => None,
         }
     }
@@ -3288,7 +3294,7 @@ impl<'a> Emitter<'a> {
                     }
                     // CBV descriptors sit on a 32-byte stride (cb1 is loaded from table offset
                     // 0x20 in MainOnePassPointLightPS).
-                    let cands = self.desc_candidates(sym.get(&b)).ok_or_else(|| {
+                    let cands = self.desc_candidates(sym.get(&b), 8).ok_or_else(|| {
                         format!("s_buffer_load at {:#x}: base s{b} is not a buffer descriptor ({:?})", ins.offset, sym.get(&b))
                     })?;
                     // A dynamic SOFFSET register indexes the buffer at run time: size the
@@ -3353,7 +3359,7 @@ impl<'a> Emitter<'a> {
                     if ins.op >= 4 {
                         return Err("typed buffer store requires a verified linear root SRV".into());
                     }
-                    let cands = self.desc_candidates(sym.get(&rs)).ok_or_else(|| {
+                    let cands = self.desc_candidates(sym.get(&rs), 8).ok_or_else(|| {
                         format!("mtbuf at {:#x}: s{rs} not a buffer descriptor ({:?})", ins.offset, sym.get(&rs))
                     })?;
                     let mut out: Vec<(u32, Res)> = Vec::new();
@@ -3394,7 +3400,7 @@ impl<'a> Emitter<'a> {
                             continue;
                         }
                     }
-                    let cands = self.desc_candidates(sym.get(&rs)).ok_or_else(|| {
+                    let cands = self.desc_candidates(sym.get(&rs), 8).ok_or_else(|| {
                         format!("mubuf at {:#x}: s{rs} not a buffer descriptor ({:?})", ins.offset, sym.get(&rs))
                     })?;
                     let mut out: Vec<(u32, Res)> = Vec::new();
@@ -3426,7 +3432,7 @@ impl<'a> Emitter<'a> {
                         }
                         tex_res.push((0, Res::HeapTexture(rs, dim)));
                     } else {
-                        let tex_c = self.desc_candidates(sym.get(&rs)).ok_or_else(|| {
+                        let tex_c = self.desc_candidates(sym.get(&rs), 8).ok_or_else(|| {
                             format!("mimg at {:#x}: s{rs} not an image descriptor ({:?})", ins.offset, sym.get(&rs))
                         })?;
                         for (ttable, off) in &tex_c {
@@ -3446,7 +3452,7 @@ impl<'a> Emitter<'a> {
                     }
                     let mut samp_res: Vec<(u32, Res)> = Vec::new();
                     if ins.mnemonic.starts_with("image_sample") || ins.mnemonic.starts_with("image_gather") || ins.mnemonic == "image_get_lod" {
-                        if let Some(candidates) = self.desc_candidates(sym.get(&ss)) {
+                        if let Some(candidates) = self.desc_candidates(sym.get(&ss), 4) {
                             for (table, offset) in candidates {
                                 if Some(table) == self.sampler_heap_base {
                                     // Static index into the sampler descriptor heap.
