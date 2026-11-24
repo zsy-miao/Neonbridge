@@ -8,6 +8,14 @@
 //! every 10 s, how often each call ran, how long the waits took, how many
 //! frames were skipped, and the movie's frame advance against its rate.
 //! TUXBOX_BINK_TRACE=0 leaves Bink's imports alone.
+//!
+//! test56: the 4K intro played 14 of its 30 frames/s, held back by the
+//! title's frame loop (BinkDoFrameAsyncWait took 3-5 ms), so its audio came
+//! at half rate. After the title's BinkNextFrame, a movie behind its clock
+//! decodes and advances extra frames (the title's last BinkDoFrameAsyncMulti
+//! arguments replayed and waited on, else BinkDoFrame), at most
+//! TUXBOX_BINK_CATCHUP (default 2) per call, so audio keeps the movie's rate
+//! while fewer frames are shown. TUXBOX_BINK_CATCHUP=0 decodes none.
 use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,7 +31,11 @@ const NAMES: [&str; 9] = [
     "BinkDoFrameAsyncMulti", "BinkDoFrameAsyncWait", "BinkOpenWithOptions", "BinkSetSoundTrack",
 ];
 const SOUND_SYSTEM: usize = 0;
+const DO_FRAME: usize = 1;
+const NEXT_FRAME: usize = 2;
 const WAIT: usize = 3;
+const ASYNC_MULTI: usize = 5;
+const ASYNC_WAIT: usize = 6;
 const SHOULD_SKIP: usize = 4;
 const OPEN: usize = 7;
 static REAL: [AtomicUsize; 9] = [const { AtomicUsize::new(0) }; 9];
@@ -43,6 +55,7 @@ struct Window {
     movie: u64,
     first_frame: Option<u32>,
     last_frame: u32,
+    caught_up: u32,
 }
 
 static WINDOW: Mutex<Option<Window>> = Mutex::new(None);
@@ -80,7 +93,8 @@ fn header(movie: u64) -> Option<[u32; 7]> {
 fn record(index: usize, movie: u64, result: u64, us: u64) {
     let mut guard = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
-    let window = guard.get_or_insert_with(|| Window { started: now, calls: [Call::default(); 9], movie: 0, first_frame: None, last_frame: 0 });
+    let window = guard.get_or_insert_with(|| Window { started: now, calls: [Call::default(); 9], movie: 0, first_frame: None, last_frame: 0, caught_up: 0 });
+    window.caught_up += std::mem::take(&mut *CAUGHT_UP.lock().unwrap_or_else(|e| e.into_inner()));
     let call = &mut window.calls[index];
     call.count += 1;
     call.nonzero += u32::from(result as u32 != 0);
@@ -108,13 +122,89 @@ fn record(index: usize, movie: u64, result: u64, us: u64) {
             c.total_us as f64 / 1e3 / f64::from(c.count), c.max_us as f64 / 1e3, c.nonzero)
     }).collect();
     let movie_line = match (header(window.movie), window.first_frame) {
-        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s against {:.2} nominal",
-            h[0], h[1], h[3], h[2], f64::from(window.last_frame.wrapping_sub(first)) / seconds,
+        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, TUXBOX_BINK_CATCHUP) against {:.2} nominal",
+            h[0], h[1], h[3], h[2], f64::from(window.last_frame.wrapping_sub(first)) / seconds, window.caught_up,
             if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) }),
         _ => String::new(),
     };
     log(&format!("bink: last {seconds:.1} s: {}{movie_line}; Bink's own waits: {}", if parts.is_empty() { "no calls".into() } else { parts.join(", ") }, take_waits(seconds)));
-    *window = Window { started: now, calls: [Call::default(); 9], movie: window.movie, first_frame: None, last_frame: window.last_frame };
+    *window = Window { started: now, calls: [Call::default(); 9], movie: window.movie, first_frame: None, last_frame: window.last_frame, caught_up: 0 };
+}
+
+/// Extra frames decoded since the last record.
+static CAUGHT_UP: Mutex<u32> = Mutex::new(0);
+
+struct Clock {
+    movie: u64,
+    started: Instant,
+    first_frame: u32,
+    /// The title's last BinkDoFrameAsyncMulti arguments after the handle.
+    multi: Option<(u64, u64, u64)>,
+}
+
+static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
+
+fn catch_up_cap() -> u32 {
+    use std::sync::OnceLock;
+    static CAP: OnceLock<u32> = OnceLock::new();
+    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2))
+}
+
+fn note_multi(movie: u64, b: u64, c: u64, d: u64) {
+    let mut clock = CLOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(clock) = clock.as_mut().filter(|c| c.movie == movie) {
+        clock.multi = Some((b, c, d));
+    }
+}
+
+/// After the title's BinkNextFrame: decode and advance the frames the movie
+/// is behind its clock, at most catch_up_cap().
+unsafe fn catch_up(movie: u64) {
+    let cap = catch_up_cap();
+    let Some(h) = header(movie).filter(|_| cap != 0) else { return };
+    let (frames, frame, rate) = (h[2], h[3], if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) });
+    if !(1.0..=240.0).contains(&rate) {
+        return;
+    }
+    let (behind, multi) = {
+        let mut guard = CLOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let restart = guard.as_ref().is_none_or(|c| c.movie != movie || frame < c.first_frame);
+        if restart {
+            let multi = guard.as_ref().filter(|c| c.movie == movie).and_then(|c| c.multi);
+            *guard = Some(Clock { movie, started: now, first_frame: frame, multi });
+            return;
+        }
+        let clock = guard.as_mut().unwrap();
+        let target = f64::from(clock.first_frame) + now.duration_since(clock.started).as_secs_f64() * rate;
+        let behind = target - f64::from(frame);
+        // A stall over 2 s (loading, pause) restarts the clock instead of racing.
+        if behind > rate * 2.0 {
+            clock.started = now;
+            clock.first_frame = frame;
+            return;
+        }
+        (behind.floor().max(0.0) as u32, clock.multi)
+    };
+    let real = |i: usize| -> F4 { unsafe { std::mem::transmute(REAL[i].load(Ordering::Acquire)) } };
+    let mut done = 0;
+    for _ in 0..behind.min(cap) {
+        if header(movie).is_none_or(|h| h[3] >= frames) {
+            break;
+        }
+        match multi {
+            Some((b, c, d)) if REAL[ASYNC_MULTI].load(Ordering::Relaxed) != 0 && REAL[ASYNC_WAIT].load(Ordering::Relaxed) != 0 => unsafe {
+                real(ASYNC_MULTI)(movie, b, c, d);
+                real(ASYNC_WAIT)(movie, u64::from(u32::MAX), 0, 0);
+            },
+            _ => unsafe { real(DO_FRAME)(movie, 0, 0, 0); },
+        }
+        unsafe { real(NEXT_FRAME)(movie, 0, 0, 0) };
+        done += 1;
+    }
+    if done != 0 {
+        *CAUGHT_UP.lock().unwrap_or_else(|e| e.into_inner()) += done;
+    }
 }
 
 unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
@@ -128,6 +218,11 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
             header(result).map_or(String::new(), |h| format!(", {}x{} {} frames at {}/{}", h[0], h[1], h[2], h[5], h[6])))),
         8 => log(&format!("bink: BinkSetSoundTrack({a}, {b:#x}) = {result:#x}")),
         _ => record(index, a, result, us),
+    }
+    match index {
+        ASYNC_MULTI => note_multi(a, b, c, d),
+        NEXT_FRAME => unsafe { catch_up(a) },
+        _ => {}
     }
     result
 }
