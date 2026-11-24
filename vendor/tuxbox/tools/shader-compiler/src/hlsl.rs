@@ -593,6 +593,10 @@ struct Emitter<'a> {
     dsel_moves: HashMap<usize, (u16, u16)>,
     /// s_cselect / s_cmov of descriptors: (dst, chosen when SCC is set, else).
     dsel_selects: HashMap<usize, (u16, u16, u16)>,
+    /// v_mov_b32 of a descriptor's first dword into a VGPR: (vgpr, sgpr).
+    vdsel_moves: HashMap<usize, (u8, u16)>,
+    /// v_readfirstlane_b32 of such a VGPR: (sgpr, vgpr).
+    vdsel_reads: HashMap<usize, (u16, u8)>,
     /// Registers read before written (entry ABI), from `live_in`.
     live: Vec<String>,
     /// Pixel shader needs its position within the 2x2 quad (ds_swizzle).
@@ -2086,6 +2090,8 @@ impl<'a> Emitter<'a> {
             dsel_loads: HashMap::new(),
             dsel_moves: HashMap::new(),
             dsel_selects: HashMap::new(),
+            vdsel_moves: HashMap::new(),
+            vdsel_reads: HashMap::new(),
             live: Vec::new(),
             uses_quad: false,
             compute_swizzle: false,
@@ -3247,6 +3253,26 @@ impl<'a> Emitter<'a> {
                         }
                     }
                 }
+                // A descriptor copied into VGPRs (v_mov_b32 v, s), joined per lane at
+                // control-flow merges, and read back by a waterfall loop's
+                // v_readfirstlane (VIctory ffa6635 / 6638098, re-derived). Every
+                // lane runs the loop as on the console, so the first lane's
+                // selector is the one the access uses each pass; no waterfall
+                // proof is needed. TB_VGPR_DESC=0 leaves such VGPRs unknown.
+                Enc::Vop1 | Enc::Vop3
+                    if ins.mnemonic == "v_mov_b32" && vgpr_descriptors()
+                        && matches!(ins.dst.first(), Some(Opnd::Vgpr(_)))
+                        && ins.src.first().and_then(sg).and_then(|s| sym.get(&s))
+                            .is_some_and(|v| matches!(v, Sym::Desc { .. } | Sym::Multi { .. })) =>
+                {
+                    if let (Some(Opnd::Vgpr(v)), Some(s)) = (ins.dst.first(), ins.src.first().and_then(sg)) {
+                        let value = sym[&s];
+                        if matches!(value, Sym::Desc { k: 0, .. } | Sym::Multi { k: 0, .. }) {
+                            self.vdsel_moves.insert(idx, (*v, s));
+                        }
+                        sym.insert(2000 + *v as u16, value);
+                    }
+                }
                 Enc::Sop2 if self.resource_heap_base.is_some() && ins.mnemonic == "s_lshl_b32" && ins.src.get(1) == Some(&Opnd::ConstInt(5)) => {
                     if let Some(d) = ins.dst.first().and_then(sg) {
                         sym.insert(d, Sym::HeapOffset);
@@ -3435,6 +3461,11 @@ impl<'a> Emitter<'a> {
                     let code = source == Some(Sym::Code);
                     if let Some(d) = ins.dst.first().and_then(sg) {
                         if matches!(source, Some(Sym::HeapOffset | Sym::SamplerHeapOffset)) {
+                            sym.insert(d, source.unwrap());
+                        } else if vgpr_descriptors() && matches!(source, Some(Sym::Desc { .. } | Sym::Multi { .. })) {
+                            if let (Some(Sym::Desc { k: 0, .. } | Sym::Multi { k: 0, .. }), Some(Opnd::Vgpr(v))) = (source, ins.src.first()) {
+                                self.vdsel_reads.insert(idx, (d, *v));
+                            }
                             sym.insert(d, source.unwrap());
                         } else if code {
                             sym.insert(d, Sym::Code);
@@ -4110,6 +4141,27 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     /// Guarded write to a VGPR (inactive lanes keep their value).
+    /// `dst = value` of the first lane whose guest EXEC bit is set, as
+    /// v_readfirstlane_b32 is emitted.
+    fn first_lane_into(&mut self, value: &str, dst: &str) {
+        if self.resolve_wave32 {
+            self.line(&format!("{dst} = WaveReadLaneAt({value}, exec_lo == 0u ? 0u : uint(firstbitlow(exec_lo)));"));
+            return;
+        }
+        if self.ex.stage == Stage::Mesh || (self.is_cs && compute_group(self.ex) == [1, 1, 1]) {
+            self.line(&format!("{dst} = {value};"));
+            return;
+        }
+        let t = self.tmp;
+        self.tmp += 1;
+        self.line("#if __SHADER_TARGET_MAJOR >= 6");
+        self.line(&format!("uint t{t} = WaveActiveMin((exec_lo & 1u) ? WaveGetLaneIndex() : 0xffffffffu);"));
+        self.line(&format!("{dst} = WaveReadLaneAt({value}, t{t} == 0xffffffffu ? 0u : t{t});"));
+        self.line("#else");
+        self.line(&format!("{dst} = {value};"));
+        self.line("#endif");
+    }
+
     fn wv(&mut self, dst: &Opnd, expr: &str) -> Result<(), String> {
         self.touch(dst);
         let d = name(dst)?;
@@ -4792,6 +4844,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.regs.insert(format!("tb_dsel{d}"));
                 self.regs.insert(format!("tb_dsel{s}"));
                 self.line(&format!("tb_dsel{d} = tb_dsel{s};"));
+            }
+            if let Some(&(v, s)) = self.vdsel_moves.get(&idx) {
+                self.regs.insert(format!("tb_vdsel{v}"));
+                self.regs.insert(format!("tb_dsel{s}"));
+                self.line(&format!("if (exec_lo & 1u) tb_vdsel{v} = tb_dsel{s};"));
+            }
+            if let Some(&(s, v)) = self.vdsel_reads.get(&idx) {
+                self.regs.insert(format!("tb_vdsel{v}"));
+                self.regs.insert(format!("tb_dsel{s}"));
+                self.first_lane_into(&format!("tb_vdsel{v}"), &format!("tb_dsel{s}"));
             }
             if let Some(&(d, a, b)) = self.dsel_selects.get(&idx) {
                 for r in [d, a, b] {
@@ -9739,6 +9801,11 @@ fn compute_heap_base(ex: &ShaderExtract) -> Option<u8> {
         return None;
     }
     u8::try_from(loc & 0xff).ok()
+}
+
+/// TB_VGPR_DESC=0: descriptors are not followed through VGPR copies.
+fn vgpr_descriptors() -> bool {
+    std::env::var("TB_VGPR_DESC").map_or(true, |v| v.trim() != "0")
 }
 
 /// The one-instruction 64-bit raw UAV atomic for a buffer_atomic_*_x2
