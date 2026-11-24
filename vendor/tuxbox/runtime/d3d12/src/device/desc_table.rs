@@ -492,6 +492,7 @@ impl DescTable {
                 None => {
                     let allocator: ID3D12CommandAllocator = device.CreateCommandAllocator(kind)?;
                     let list: ID3D12GraphicsCommandList = device.CreateCommandList(0, kind, &allocator, None)?;
+                    crate::dred::name(&list, "tuxbox descriptor table copy");
                     let fence: ID3D12Fence = device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
                     Recorder { kind, allocator, list, fence, value: 0, held: Vec::new() }
                 }

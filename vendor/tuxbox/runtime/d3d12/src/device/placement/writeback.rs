@@ -98,6 +98,7 @@ impl Readback {
         let allocator = unsafe { device.CreateCommandAllocator(kind)? };
         let list: ID3D12GraphicsCommandList =
             unsafe { device.CreateCommandList(0, kind, &allocator, None)? };
+        crate::dred::name(&list, "tuxbox placed texture readback");
         for (texture, offsets) in &textures {
             for (level, &offset) in offsets.iter().enumerate() {
                 let mut footprint = texture.mips[level].footprint;

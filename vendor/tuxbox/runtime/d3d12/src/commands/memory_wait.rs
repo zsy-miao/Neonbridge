@@ -295,6 +295,7 @@ unsafe fn wait_value(
             let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(kind)? };
             let native: ID3D12GraphicsCommandList =
                 unsafe { device.CreateCommandList(0, kind, &allocator, None)? };
+            crate::dred::name(&native, "tuxbox memory wait prefix");
             for packet in state.prefix.pending.drain(..) {
                 packet.emit(&native)?;
             }

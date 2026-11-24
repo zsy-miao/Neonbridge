@@ -1017,6 +1017,7 @@ unsafe extern "system" fn create_list_x(
         Ok(list) => list,
         Err(error) => return error.code(),
     };
+    crate::dred::name(&list, "title");
     // Hold an empty native recording ready for a close-first guest, releasing
     // the allocator so reset-first callers can rewind it before their list.
     if let Err(error) = unsafe { list.Close() } {

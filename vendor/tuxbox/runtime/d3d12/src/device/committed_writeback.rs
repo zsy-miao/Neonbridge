@@ -246,6 +246,7 @@ unsafe fn fill(
     let readback = readback.ok_or(E_FAIL)?;
     let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) }?;
     let list: ID3D12GraphicsCommandList = unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &allocator, None) }?;
+    crate::dred::name(&list, "tuxbox committed writeback");
     let barriers: ID3D12GraphicsCommandList7 = list.cast()?;
     let from = if layout == D3D12_BARRIER_LAYOUT_UNDEFINED { D3D12_BARRIER_LAYOUT_COMMON } else { layout };
     let transition = |before: D3D12_BARRIER_LAYOUT, after: D3D12_BARRIER_LAYOUT, to_copy: bool| {

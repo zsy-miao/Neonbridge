@@ -11,6 +11,19 @@ fn enabled() -> bool {
     std::env::var_os("TUXBOX_DRED").is_some_and(|v| v == "1")
 }
 
+/// Names a command list for DRED (TUXBOX_DRED=1 only): test73's breadcrumbs
+/// showed every list as "", so a fault in our own copies, uploads, readbacks
+/// or wait lists could not be told from the title's.
+pub(crate) fn name(list: &impl windows::core::Interface, label: &str) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(enabled) {
+        return;
+    }
+    if let Ok(object) = list.cast::<windows::Win32::Graphics::Direct3D12::ID3D12Object>() {
+        let _ = unsafe { object.SetName(&windows::core::HSTRING::from(label)) };
+    }
+}
+
 fn log(line: &str) {
     crate::diagnostics::log_once(&std::sync::Once::new(), || format!("DRED: {line}"));
 }
@@ -74,6 +87,10 @@ unsafe fn report(device: &ID3D12Device) {
         // test61 printed no ops: every list's breadcrumbs had completed, or
         // none were kept. Count them, and show the tails of the last lists.
         let mut tails: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        // The completed lists just before the first incomplete one (test73:
+        // all 35 incomplete lists had done nothing, so the fault was in work
+        // DRED counted complete).
+        let mut before_first: Option<Vec<String>> = None;
         while !node.is_null() && count < 4096 {
             let n = unsafe { &*node };
             let done = if n.pLastBreadcrumbValue.is_null() { 0 } else { unsafe { *n.pLastBreadcrumbValue } };
@@ -87,6 +104,9 @@ unsafe fn report(device: &ID3D12Device) {
                 }
             }
             if done < n.BreadcrumbCount {
+                if incomplete == 0 {
+                    before_first = Some(tails.iter().rev().skip(1).cloned().collect());
+                }
                 incomplete += 1;
                 if incomplete > 16 {
                     node = n.pNext;
@@ -109,6 +129,10 @@ unsafe fn report(device: &ID3D12Device) {
         if incomplete == 0 {
             for line in tails {
                 log(&line);
+            }
+        } else if let Some(lines) = before_first {
+            for line in lines.iter().rev() {
+                log(&format!("completed before the first incomplete: {line}"));
             }
         }
     } else {

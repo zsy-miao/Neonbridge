@@ -478,6 +478,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         None => unsafe {
             let allocator: ID3D12CommandAllocator = device.native.CreateCommandAllocator(kind)?;
             let list: ID3D12GraphicsCommandList = device.native.CreateCommandList(0, kind, &allocator, None)?;
+            crate::dred::name(&list, "tuxbox shadow copy");
             let fence: ID3D12Fence = device.native.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
             Recorder { kind, allocator, list, fence, value: 0, held: Vec::new() }
         },

@@ -670,6 +670,7 @@ unsafe fn rebuild_native(list: &List, allocator: &device::Allocator, pipeline: *
             unsafe { device.CreateCommandList(0, kind, &extra, pso)? }
         }
     };
+    crate::dred::name(&fresh, "title (rebuilt)");
     let raytracing = if list.state.raytracing.is_some() { Some(fresh.cast::<ID3D12GraphicsCommandList4>()?) } else { None };
     // SAFETY: see above; these fields are only read by recording calls.
     let old = unsafe {

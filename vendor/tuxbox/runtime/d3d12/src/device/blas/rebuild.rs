@@ -143,6 +143,7 @@ impl Builder {
         let allocator = unsafe { device.CreateCommandAllocator(desc.Type) }?;
         let list: ID3D12GraphicsCommandList4 =
             unsafe { device.CreateCommandList(0, desc.Type, &allocator, None) }?;
+        crate::dred::name(&list, "tuxbox BLAS rebuild");
         unsafe { list.Close() }?;
         Ok(Self {
             device: device.cast()?,

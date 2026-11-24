@@ -270,6 +270,7 @@ impl Upload {
         let allocator = unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY)? };
         let list: ID3D12GraphicsCommandList =
             unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, &allocator, None)? };
+        crate::dred::name(&list, "tuxbox placed texture upload");
         let mut mapped = core::ptr::null_mut();
         let empty = D3D12_RANGE::default();
         unsafe {

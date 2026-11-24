@@ -188,6 +188,7 @@ impl Frame {
             let allocator = device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)?;
             let list: ID3D12GraphicsCommandList =
                 device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &allocator, None)?;
+            crate::dred::name(&list, "tuxbox present");
             list.Close()?;
             Ok(Self {
                 allocator,
