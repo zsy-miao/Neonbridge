@@ -237,7 +237,22 @@ unsafe extern "system" fn reset_allocator(this: &Allocator) -> HRESULT {
 // The Xbox callback supplies additional command-buffer pages on demand.
 // Native D3D12 allocators obtain their own storage, so recording translated
 // commands never requests a guest page.
-extern "system" fn set_allocator_callback(_: &Allocator, _: *const c_void, _: *mut c_void) {}
+/// Allocator slot 9. It returned nothing, so the title read whatever RAX held.
+/// leonida-ce 6e02c937 (GPL-3): the title calls it in a loop over its blocks (a3 steps
+/// by 0x30) and retried about 2.5 million times while the answer was a failure. It
+/// answers S_OK now; the first calls are logged (20 lines at most).
+/// TUXBOX_ALLOC_SLOT9_OK=0 answers E_NOTIMPL instead.
+extern "system" fn set_allocator_callback(_: &Allocator, a2: *const c_void, a3: *mut c_void) -> HRESULT {
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let ok = crate::env_toggle!("TUXBOX_ALLOC_SLOT9_OK") != Some("0");
+    if n <= 4 || (n.is_power_of_two() && n < 1 << 16) {
+        crate::diagnostics::log_line(format_args!(
+            "allocator slot 9 call {n}: a2={a2:p} a3={a3:p}, answered {} (leonida-ce 6e02c937; TUXBOX_ALLOC_SLOT9_OK=0 E_NOTIMPL)",
+            if ok { "S_OK" } else { "E_NOTIMPL" }));
+    }
+    if ok { windows::Win32::Foundation::S_OK } else { windows::Win32::Foundation::E_NOTIMPL }
+}
 
 /// Last Release: forget the guest's host allocators (alloc_swap::released) and
 /// its OVERFLOW entries, which are keyed by address and would otherwise pass
