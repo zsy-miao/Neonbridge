@@ -109,26 +109,33 @@ pub(super) struct Direct {
     exhausted: bool,
 }
 
+/// Merge a write made before the index map exists into the ranges it replays
+/// when it is built (inside the arena lock, before it is published; the
+/// lazy-mirror replay of VIctory a4e7f1d, already the case here).
+fn remember(written: &mut BTreeMap<u32, u32>, mut range: Range<u32>) {
+    if let Some((&lo, &hi)) = written.range(..=range.start).next_back() {
+        if range.end <= hi {
+            return;
+        }
+        if range.start <= hi {
+            range.start = lo;
+            written.remove(&lo);
+        }
+    }
+    while let Some((&lo, &hi)) = written.range(range.start..=range.end).next() {
+        written.remove(&lo);
+        range.end = range.end.max(hi);
+    }
+    written.insert(range.start, range.end);
+}
+
 impl Direct {
-    pub(super) fn publish(&mut self, arena: &Arena, mut range: Range<u32>, used: &mut u32) {
+    pub(super) fn publish(&mut self, arena: &Arena, range: Range<u32>, used: &mut u32) {
         if let Some(resident) = &mut self.resident {
             self.exhausted |= resident.copy(arena, range, used).is_err();
             return;
         }
-        if let Some((&lo, &hi)) = self.written.range(..=range.start).next_back() {
-            if range.end <= hi {
-                return;
-            }
-            if range.start <= hi {
-                range.start = lo;
-                self.written.remove(&lo);
-            }
-        }
-        while let Some((&lo, &hi)) = self.written.range(range.start..=range.end).next() {
-            self.written.remove(&lo);
-            range.end = range.end.max(hi);
-        }
-        self.written.insert(range.start, range.end);
+        remember(&mut self.written, range);
     }
 
     pub(super) fn contiguous(&self, first: u32, count: u32) -> Option<u32> {
@@ -202,4 +209,20 @@ pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Resul
     direct.written.clear();
     *used = next;
     Ok(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_before_the_map_exists_are_all_kept_for_replay() {
+        let mut written = BTreeMap::new();
+        remember(&mut written, 10..20);
+        remember(&mut written, 30..40);
+        remember(&mut written, 12..15); // inside: no change
+        remember(&mut written, 18..32); // bridges both
+        remember(&mut written, 50..51);
+        assert_eq!(written.into_iter().collect::<Vec<_>>(), vec![(10, 40), (50, 51)]);
+    }
 }
