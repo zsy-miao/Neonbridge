@@ -71,7 +71,7 @@ unsafe extern "system" fn unsupported_slot<const NUMBER: usize>() -> i32 {
     static SEEN: [std::sync::atomic::AtomicBool; 192] = [const { std::sync::atomic::AtomicBool::new(false) }; 192];
     if !SEEN[NUMBER % 192].swap(true, std::sync::atomic::Ordering::Relaxed) {
         crate::diagnostics::log_line(format_args!(
-            "unsupported D3D12.x vtable slot {NUMBER} answered 0 (title RVA {:#x}); TUXBOX_UNMAPPED=failfast to stop here",
+            "unmapped slot {NUMBER}: D3D12.x vtable slot answered 0 (title RVA {:#x}); TUXBOX_UNMAPPED=failfast to stop here",
             crate::survey::title_rva().unwrap_or(0)));
     }
     0
