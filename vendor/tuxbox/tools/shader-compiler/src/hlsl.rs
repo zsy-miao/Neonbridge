@@ -361,6 +361,7 @@ int tb_top64(uint2 m) { return m.y != 0u ? 32 + (int)firstbithigh(m.y) : (int)fi
 int tb_frexp_exp64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return 0; if (e == 0u) return tb_top64(m) - 1073; return (int)e - 1022; }
 uint2 tb_frexp_mant64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return x; if (e == 0u) { m = tb_shl64(m, (uint)(52 - tb_top64(m))); m.y &= 0xfffffu; } return uint2(m.x, (x.y & 0x80000000u) | (1022u << 20) | m.y); }
 float tb_ldexp(float x, int n) { n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
+float tb_mad(float a, float b, float c) { precise float s = a * b + c; return s; }
 "#;
 
 /// Number of VGPRs occupied by the MIMG data operand. Gather selects a channel
@@ -1208,6 +1209,10 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<(bool, bool), String> {
 /// (TB_VOP1_F64=0 refuses them as before).
 fn vop1_f64_on() -> bool {
     std::env::var("TB_VOP1_F64").map_or(true, |v| v.trim() != "0")
+}
+
+fn mad_unfused() -> bool {
+    std::env::var("TB_MAD_UNFUSED").map_or(true, |v| v.trim() != "0")
 }
 
 fn mask_high_shadow() -> bool {
@@ -7302,6 +7307,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_mul_f32" => Some(format!("{} * {}", fa()?, fb()?)),
             "v_min_f32" => Some(format!("tb_fmin({}, {})", fa()?, fb()?)),
             "v_max_f32" => Some(format!("tb_fmax({}, {})", fa()?, fb()?)),
+            // gfx10 v_mad/v_mac/v_madmk/v_madak (and the legacy forms) round the
+            // product before the sum; a bare `a * b + c` lets dxc fuse them.
+            // Xbox2Windows f7b7297d (#1768, Jess-Doit, MIT), re-derived as
+            // `precise` (TB_MAD_UNFUSED=0 leaves the expression unmarked).
+            "v_mac_f32" if legacy && mad_unfused() => Some(format!("tb_mad(1.0, tb_mull({}, {}), asfloat({dn}))", fa()?, fb()?)),
+            "v_mac_f32" if mad_unfused() => Some(format!("tb_mad({}, {}, asfloat({dn}))", fa()?, fb()?)),
+            "v_madmk_f32" if mad_unfused() => Some(format!("tb_mad({}, {k}, {})", fa()?, fb()?)),
+            "v_madak_f32" if mad_unfused() => Some(format!("tb_mad({}, {}, {k})", fa()?, fb()?)),
+            "v_mad_f32" if legacy && mad_unfused() => Some(format!("tb_mad(1.0, tb_mull({}, {}), {})", fa()?, fb()?, fc()?)),
+            "v_mad_f32" if mad_unfused() => Some(format!("tb_mad({}, {}, {})", fa()?, fb()?, fc()?)),
             "v_mac_f32" | "v_fmac_f32" if legacy => Some(format!("tb_mull({}, {}) + asfloat({dn})", fa()?, fb()?)),
             "v_mac_f32" | "v_fmac_f32" => Some(format!("{} * {} + asfloat({dn})", fa()?, fb()?)),
             "v_madmk_f32" | "v_fmamk_f32" => Some(format!("{} * {k} + {}", fa()?, fb()?)),
