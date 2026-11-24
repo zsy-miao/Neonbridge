@@ -7999,7 +7999,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 Opnd::Vgpr(n) => n,
                 _ => return Err("bad offset operand".into()),
             };
+            // A sample's immediate offset must be a constant in -8..7 (HLSL/DXIL);
+            // a computed or wider one samples with no offset and is logged, unless
+            // TB_OFFSET_STRICT=1 refuses it (VIctory 260611a, re-derived).
+            let strict = std::env::var("TB_OFFSET_STRICT").is_ok_and(|v| v.trim() == "1");
+            let dropped = |em: &mut Self, why: &str| -> Result<Option<String>, String> {
+                let what = format!("{why} on {} at {:#x}", ins.mnemonic, ins.offset);
+                if strict { return Err(what); }
+                eprintln!("xshader: {what}: sampled with no offset");
+                em.line(&format!("// ({what}: sampled with no offset)"));
+                Ok(None)
+            };
             match self.const_vgpr(idx, reg) {
+                Some(v) if !gather && (0..noff).any(|k| !(-8..=7).contains(&sx(v, 8 * k as u32))) => {
+                    dropped(self, "texel offset outside -8..7")?
+                }
                 Some(v) => {
                     let c: Vec<String> = (0..noff).map(|k| sx(v, 8 * k as u32).to_string()).collect();
                     Some(if noff == 1 { c[0].clone() } else { format!("int{noff}({})", c.join(", ")) })
@@ -8011,7 +8025,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         (0..noff).map(|k| format!("(asint({x} << {}) >> 26)", 26 - 8 * k)).collect();
                     Some(if noff == 1 { c[0].clone() } else { format!("int{noff}({})", c.join(", ")) })
                 }
-                None => return Err("non-constant texel offset on a sample op".into()),
+                None => dropped(self, "non-constant texel offset")?,
             }
         } else {
             None
