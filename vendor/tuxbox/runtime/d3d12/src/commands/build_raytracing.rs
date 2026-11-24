@@ -257,20 +257,37 @@ fn translate(
                 Instances::Gpu(patched)
             }
             Err(e) if e.code() != E_INVALIDARG => return Err(e),
-            // A direct array at a foreign address: the fixup kernel reads it
-            // through a root view of the raw address, as the build itself does.
+            // A direct array at a foreign address. test101 lost the device
+            // (DRED page fault) when the fixup kernel read the raw title
+            // address: it is a title buffer address (placed in title memory),
+            // so it is translated to its host buffer first. One that resolves
+            // to no host buffer builds an empty TLAS while BLASes are relocated.
             Err(_) if !indirect && foreign_instances() => {
-                let patched = unsafe {
-                    blas::instance_fixup::Instances::record(owner, host, address, count as u32)?
-                };
-                unsafe {
-                    state.bindings.restore(host);
+                match unsafe { crate::device::command_buffer_address(windows::core::Interface::as_raw(owner), address, bytes) } {
+                    Ok((Some(source), read)) => {
+                        let patched = unsafe {
+                            blas::instance_fixup::Instances::record(owner, host, read, count as u32)?
+                        };
+                        unsafe {
+                            state.bindings.restore(host);
+                        }
+                        retain(state, &[&source, patched.output()])?;
+                        desc.Inputs.Anonymous.InstanceDescs =
+                            unsafe { patched.output().GetGPUVirtualAddress() };
+                        foreign_note("a direct array in a title buffer goes through the GPU address fixup");
+                        Instances::Gpu(patched)
+                    }
+                    _ if unsafe { blas::has_relocations(owner) } => {
+                        desc.Inputs.NumDescs = 0;
+                        foreign_note("a direct array at an unresolved address with relocated BLASes builds an empty TLAS");
+                        return Ok((
+                            desc,
+                            unsafe { blas::empty_instance_buffer(owner) }.ok(),
+                            info.ResultDataMaxSizeInBytes,
+                        ));
+                    }
+                    _ => Instances::Direct,
                 }
-                retain(state, &[patched.output()])?;
-                desc.Inputs.Anonymous.InstanceDescs =
-                    unsafe { patched.output().GetGPUVirtualAddress() };
-                foreign_note("a direct array at a foreign address goes through the GPU address fixup");
-                Instances::Gpu(patched)
             }
             // A GPU array of pointers cannot be dereferenced by the fixup
             // kernel. With BLASes relocated its records would name stale
