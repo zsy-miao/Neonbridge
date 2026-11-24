@@ -85,17 +85,18 @@ unsafe extern "system" fn QueryApiImpl(
         return unsafe { query(&SYSTEM_OBJECT, iid, out) };
     }
     if !same(class, &THREADING) {
-        report(format_args!("unsupported API class {} (interface {})", guid_text(class), guid_text(iid)));
         let by_interface = probe::CLASSES.iter().position(|(c, _)| same(c, iid))
             .filter(|&i| i == probe::GAMERTAG);
         if let Some(index) = by_interface.or_else(|| probe::CLASSES.iter().position(|(c, _)| same(c, class)))
             && probe::available(index)
         {
+            report(format_args!("API class {} (interface {}) served by the probe table", guid_text(class), guid_text(iid)));
             let object = &probe::OBJECTS[index];
             add_ref(unsafe { &*ptr::from_ref(object).cast::<Object>() });
             unsafe { out.write(ptr::from_ref(object).cast_mut().cast()) };
             return OK;
         }
+        report(format_args!("unsupported API class {} (interface {})", guid_text(class), guid_text(iid)));
         return NO_INTERFACE;
     }
     unsafe { query(&THREAD_OBJECT, iid, out) }
