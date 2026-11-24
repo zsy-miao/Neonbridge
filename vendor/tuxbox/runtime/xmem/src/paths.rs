@@ -1,6 +1,8 @@
 //! 6ixpack: the console's `G:` drive (the title's install root, e.g. `G:/appdata0.rpf`)
 //! is the folder that holds the exe. The exe's path-taking file imports are patched
 //! so `G:\...` / `G:/...` resolve there; every rewrite is logged (TUXBOX_LOG).
+//! The console's `D:` drive (scratch; the title writes `D:/LocalDumps`) is a
+//! per-title folder under %LOCALAPPDATA%\TuxBox\D.
 
 use std::ffi::c_void;
 
@@ -24,15 +26,36 @@ unsafe extern "system" {
 const SEP: u16 = b'\\' as u16;
 const SLASH: u16 = b'/' as u16;
 
-/// `G:` path -> NUL-terminated path under the exe directory; `None` leaves it alone.
+/// The per-title `D:` folder, %LOCALAPPDATA%\TuxBox\D\<exe name>\, with a
+/// trailing separator; created on first use.
+fn d_root() -> Option<&'static [u16]> {
+    static ROOT: std::sync::OnceLock<Option<Vec<u16>>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let base = std::env::var("LOCALAPPDATA").ok()?;
+        let exe = std::env::current_exe().ok()?.file_stem()?.to_string_lossy().into_owned();
+        let root = format!(r"{base}\TuxBox\D\{exe}\");
+        std::fs::create_dir_all(&root).ok()?;
+        log(&format!(r"D:\ maps to {root}"));
+        Some(root.encode_utf16().collect())
+    })
+    .as_deref()
+}
+
+/// `G:` (exe folder) / `D:` (per-title folder) path -> NUL-terminated host
+/// path; `None` leaves it alone.
 fn map(p: *const u16) -> Option<Vec<u16>> {
     if p.is_null() {
         return None;
     }
     let (d, c) = unsafe { (*p, *p.add(1)) };
-    if !(d == b'G' as u16 || d == b'g' as u16) || c != b':' as u16 {
+    if c != b':' as u16 {
         return None;
     }
+    let root = match d | 0x20 {
+        0x67 => exe_dir()?, // g
+        0x64 => d_root()?,  // d
+        _ => return None,
+    };
     let s = unsafe { *p.add(2) };
     if !(s == 0 || s == SEP || s == SLASH) {
         return None;
@@ -43,7 +66,7 @@ fn map(p: *const u16) -> Option<Vec<u16>> {
     }
     let rest = unsafe { std::slice::from_raw_parts(p.add(2), n - 2) };
     let rest = if rest.first().is_some_and(|&c| c == SEP || c == SLASH) { &rest[1..] } else { rest };
-    let mut out = exe_dir()?.to_vec();
+    let mut out = root.to_vec();
     out.extend(rest.iter().map(|&c| if c == SLASH { SEP } else { c }));
     // Streaming opens files all game long: the first rewrites show the mapping,
     // later ones only a power-of-two heartbeat.
@@ -120,5 +143,5 @@ pub(crate) unsafe fn install() {
             ],
         )
     };
-    log(&format!("{n} file import(s) patched; G:\\ maps to the exe folder"));
+    log(&format!("{n} file import(s) patched; G:\\ maps to the exe folder, D:\ to a per-title folder"));
 }
