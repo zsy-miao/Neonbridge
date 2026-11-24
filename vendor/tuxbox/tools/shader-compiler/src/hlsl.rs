@@ -1191,6 +1191,12 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
     let material_classify = ps09_classify::prepare(ex, &mut insns);
     let classify_tiles = classify_materials::prepare(ex, &mut insns);
     singleton_wave::prepare(ex, &mut insns);
+    // s_endpgm_saved (0x1b) and s_endpgm_ordered_ps_done (0x1e) end the program
+    // like s_endpgm.
+    for ins in insns.iter_mut().filter(|i| i.enc == Enc::Sopp && matches!(i.op, 0x1b | 0x1e)) {
+        ins.op = 1;
+        ins.mnemonic = "s_endpgm".into();
+    }
     let hair_multisample = hair_multisample::recognize(ex);
     let fspx_wave = fspx_wave::width(ex, &insns);
     let wave_cull = fspx_wave.is_some() || hair_multisample || wave_cull::recognize(ex);
@@ -1213,10 +1219,10 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         Some(32)
     } else { required_wave_size };
     let uses_bpermute = insns.iter().any(|ins| ins.mnemonic == "ds_bpermute_b32");
-    // EXEC branches vote across the wave (Emitter::exec_vote), so the host wave
-    // stays whole and absent source lanes are masked at the read (leonida
-    // ds_lane_read). VCC and SCC branches can still split it per lane.
-    if uses_bpermute && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && !matches!(ins.op, 2 | 8 | 9)) {
+    // EXEC and VCC branches vote across the wave (Emitter::exec_vote), so the
+    // host wave stays whole and absent source lanes are masked at the read
+    // (leonida ds_lane_read). SCC branches can still split it per lane.
+    if uses_bpermute && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && !matches!(ins.op, 2 | 6..=9)) {
         return Err("backward permute with scalar branches needs verified convergent control flow".into());
     }
     let uses_quad_add = insns.iter().any(is_quad_exchange);
@@ -3830,7 +3836,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     /// Condition under which a SOPP branch opcode is taken (None = not a branch).
-    /// s_cbranch_execz/execnz test EXEC across the whole wave: a lane whose own
+    /// s_cbranch_vccz/vccnz and s_cbranch_execz/execnz test the mask across the whole wave: a lane whose own
     /// bit is clear still follows the wave's branch, so the scalar work in the
     /// region stays uniform (vector writes are guarded by EXEC). SM 5 has no wave
     /// intrinsics and keeps the per-lane test (palmetto rdna2spirv).
@@ -3838,7 +3844,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if self.resolve_wave32 || self.wave_cull || self.packed.is_some() {
             return None;
         }
+        // VCC bits of lanes off in EXEC are 0 on hardware after a compare; mask
+        // them so a stale per-lane value does not vote.
         match op {
+            6 => Some("!WaveActiveAnyTrue((vcc_lo & 1u) != 0u && (exec_lo & 1u) != 0u)"),
+            7 => Some("WaveActiveAnyTrue((vcc_lo & 1u) != 0u && (exec_lo & 1u) != 0u)"),
             8 => Some("!WaveActiveAnyTrue((exec_lo & 1u) != 0u)"),
             9 => Some("WaveActiveAnyTrue((exec_lo & 1u) != 0u)"),
             _ => None,
@@ -4537,6 +4547,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     1 if br.is_some() => Some("true".to_string()),
                     // s_sleep (0x0e) and s_setprio (0x0f) are scheduling hints.
                     0 | 1 | 0x0a | 0x0c | 0x0e | 0x0f | 0x1f | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 => None,
+                    // Hints and debug/trace ops with no effect on results: s_wakeup,
+                    // s_setkill, s_sethalt 0, s_trap, s_icache_inv, s_inc/decperflevel,
+                    // s_ttracedata, s_cbranch_cdbg* (never taken without a debugger),
+                    // 0x22 and 0x28 (AnyPS5 treats both as no-ops).
+                    0x03 | 0x0b | 0x12..=0x1a | 0x22 | 0x28 => None,
+                    0x0d if ins.aux.imm & 1 == 0 => None,
                     _ => return Err("unsupported SOPP".into()),
                 };
                 if let (Some(c), Some(t)) = (cond, br) {
