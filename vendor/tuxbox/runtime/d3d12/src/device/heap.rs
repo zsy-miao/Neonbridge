@@ -703,13 +703,42 @@ fn keep_recent(heap: &Arc<ImportedHeap>) {
     drop(gone);
 }
 
+/// Keys of LIVE in insertion order, one each, for the incremental sweep.
+static SWEEP: std::sync::Mutex<std::collections::VecDeque<ImportKey>> = std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// Past 65536 entries, each new import checks the next 16 keys in the sweep
+/// order (dropping expired ones) instead of walking the whole map: with the
+/// title holding every page live, the full retain ran on every import. TuxBox
+/// 97642c7 (Valdi320, Apache-2.0), re-derived for this map: an entry is still
+/// added at the limit, since a lost entry costs a repeat kernel open
+/// (test102). TUXBOX_IMPORT_SWEEP=0 walks the whole map as before.
 fn note_live(key: ImportKey, heap: &Arc<ImportedHeap>) {
+    const LIMIT: usize = 1 << 16;
+    const STEP: usize = 16;
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     let map = live.get_or_insert_with(std::collections::HashMap::new);
-    if map.len() >= 1 << 16 {
-        map.retain(|_, h| h.strong_count() != 0);
+    if let Some(entry) = map.get_mut(&key) {
+        *entry = Arc::downgrade(heap);
+        return;
+    }
+    let mut sweep = SWEEP.lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() >= LIMIT {
+        if crate::env_toggle!("TUXBOX_IMPORT_SWEEP") == Some("0") {
+            map.retain(|_, h| h.strong_count() != 0);
+            sweep.retain(|k| map.contains_key(k));
+        } else {
+            for _ in 0..STEP.min(sweep.len()) {
+                let Some(old) = sweep.pop_front() else { break };
+                if map.get(&old).is_some_and(|h| h.strong_count() != 0) {
+                    sweep.push_back(old);
+                } else {
+                    map.remove(&old);
+                }
+            }
+        }
     }
     map.insert(key, Arc::downgrade(heap));
+    sweep.push_back(key);
 }
 
 /// True when [base, base + size) lies in one OS allocation, the only range
@@ -1526,13 +1555,29 @@ pub(super) unsafe extern "system" fn committed_layout(
 
 /// Neonbridge: report a refused CPU-memory heap import with the region's VirtualQuery view
 /// (the host requires committed, private, read-write pages covering whole allocations).
-fn import_failure(call: &str, base: u64, size: u64, error: &windows::core::Error) {
+/// A failed native import, logged once per (call, size, result, title
+/// caller) for the first 256 such keys, with the title RVA that asked (TuxBox
+/// 56cbb05, Valdi320, Apache-2.0: which path called the import). Each failure
+/// was printed before (a fresh Once per call).
+fn import_failure(call: &'static str, base: u64, size: u64, error: &windows::core::Error) {
+    use crate::diagnostics::{Seen, Sighting};
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
-    let mut r = MEMORY_BASIC_INFORMATION::default();
-    unsafe { VirtualQuery(Some(base as _), &mut r, size_of_val(&r)) };
-    crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
-        "{call}({base:#x}, {size:#x}) failed {:#010x}: region base={:p} alloc={:p} size={:#x} state={:#x} protect={:#x} type={:#x}",
-        error.code().0, r.BaseAddress, r.AllocationBase, r.RegionSize, r.State.0, r.Protect.0, r.Type.0));
+    static SEEN: Seen<(&'static str, u64, i32, usize)> = Seen::new(256);
+    static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let caller = crate::survey::title_rva().unwrap_or(0);
+    match SEEN.sight(&(call, size, error.code().0, caller)) {
+        Sighting::New => {
+            let mut r = MEMORY_BASIC_INFORMATION::default();
+            unsafe { VirtualQuery(Some(base as _), &mut r, size_of_val(&r)) };
+            crate::diagnostics::log_line(format_args!(
+                "{call}({base:#x}, {size:#x}) failed {:#010x} for title RVA {caller:#x}: region base={:p} alloc={:p} size={:#x} state={:#x} protect={:#x} type={:#x} ({n} import failures so far)",
+                error.code().0, r.BaseAddress, r.AllocationBase, r.RegionSize, r.State.0, r.Protect.0, r.Type.0));
+        }
+        Sighting::Full => crate::diagnostics::log_line(format_args!(
+            "import failures: 256 distinct kinds logged, later new ones counted only ({n} so far)")),
+        Sighting::Repeat => {}
+    }
 }
 
 fn validate_shared_range(start: u64, end: u64) -> windows::core::Result<()> {
