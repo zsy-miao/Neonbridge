@@ -31,6 +31,12 @@
 //! test140 had six threads in nvgpucomp64 with 19.8 GB private and 3971 MiB
 //! of commit free. Like the reserves, only compiles no title thread waits on
 //! are held (and only up to TUXBOX_COMPILE_BUDGET_WAIT_MS).
+//!
+//! The ceiling also counts the shader worker's private bytes (five-star-recomp
+//! fec516c, GPL-3.0, with credit): the process named by the session's
+//! `worker-pid` and its children (xshader, dxc), all but this one, sampled at
+//! most every 250 ms. The launcher holds its own translation jobs to the same
+//! ceiling (src/shaders.rs).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -88,6 +94,19 @@ fn ceiling() -> u64 {
     crate::env_toggle!("TUXBOX_COMPILE_CEILING_GB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(28) << 30
 }
 
+/// The shader worker's private bytes (see the header), sampled at most
+/// every 250 ms.
+fn helper_private() -> u64 {
+    static LAST: Mutex<Option<(std::time::Instant, u64)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, bytes)) = *last && at.elapsed() < std::time::Duration::from_millis(250) {
+        return bytes;
+    }
+    let bytes = super::shader_cache::worker_pid().map_or(0, crate::diagnostics::memory::private_bytes_with_children);
+    *last = Some((std::time::Instant::now(), bytes));
+    bytes
+}
+
 fn try_enter(estimate: u64, tiny: bool, large: bool) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let private = crate::diagnostics::memory::private_bytes();
@@ -103,7 +122,9 @@ fn try_enter(estimate: u64, tiny: bool, large: bool) -> bool {
         }
         if state.large != 0 {
             let (most, ceiling) = (max_large(), ceiling());
-            if (most != 0 && state.large >= most) || (ceiling != 0 && private.saturating_add(need) > ceiling) {
+            if (most != 0 && state.large >= most)
+                || (ceiling != 0 && private.saturating_add(helper_private()).saturating_add(need) > ceiling)
+            {
                 return false;
             }
         }

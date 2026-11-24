@@ -306,3 +306,35 @@ fn the_line_names_only_categories_that_ever_grew() {
     assert!(text.contains("shadow copies +3 (+3 MiB) of 10 (40 MiB)"));
     assert!(!text.contains("device buffers"));
 }
+
+/// The private commit of process `pid` plus that of its children (all but
+/// this process): the shader worker and the xshader and dxc it runs, which
+/// five-star-recomp fec516c (GPL-3.0) counts toward the compile ceiling.
+pub(crate) fn private_bytes_with_children(pid: u32) -> u64 {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::*;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let me = std::process::id();
+    let mut pids = Vec::new();
+    if pid != me {
+        pids.push(pid);
+    }
+    if let Ok(snapshot) = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) } {
+        let mut entry = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok();
+        while more {
+            if entry.th32ParentProcessID == pid && entry.th32ProcessID != me {
+                pids.push(entry.th32ProcessID);
+            }
+            more = unsafe { Process32NextW(snapshot, &mut entry) }.is_ok();
+        }
+        let _ = unsafe { CloseHandle(snapshot) };
+    }
+    pids.into_iter().map(|p| {
+        let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, p) }) else { return 0 };
+        let mut counters = ProcessMemoryCounters { cb: size_of::<ProcessMemoryCounters>() as u32, ..Default::default() };
+        let ok = unsafe { K32GetProcessMemoryInfo(process.0 as isize, &mut counters, counters.cb) } != 0;
+        let _ = unsafe { CloseHandle(process) };
+        if ok { counters.private as u64 } else { 0 }
+    }).sum()
+}

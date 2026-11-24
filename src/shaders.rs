@@ -17,11 +17,95 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Duration;
 use std::{fs, thread};
 
 const MAX_SHADER_BYTES: u64 = 64 << 20;
+
+/// The running title's process id (main.rs sets it at each start), whose
+/// private bytes count toward the compile ceiling below.
+pub static GAME_PID: AtomicU32 = AtomicU32::new(0);
+
+/// The private commit of `pid` and, with `children`, of the processes it
+/// started but the title (this worker's xshader and dxc).
+fn private_bytes(pid: u32, children: bool) -> u64 {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let mut pids = vec![pid];
+    if children {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot != INVALID_HANDLE_VALUE {
+                let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+                entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+                let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+                while more {
+                    // The title is a child too; the caller counts it once.
+                    if entry.th32ParentProcessID == pid && entry.th32ProcessID != GAME_PID.load(Ordering::Relaxed) {
+                        pids.push(entry.th32ProcessID);
+                    }
+                    more = Process32NextW(snapshot, &mut entry) != 0;
+                }
+                CloseHandle(snapshot);
+            }
+        }
+    }
+    pids.into_iter().map(|p| unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, p);
+        if process.is_null() {
+            return 0;
+        }
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        let ok = GetProcessMemoryInfo(process, (&raw mut counters).cast::<PROCESS_MEMORY_COUNTERS>(), counters.cb) != 0;
+        CloseHandle(process);
+        if ok { counters.PrivateUsage as u64 } else { 0 }
+    }).sum()
+}
+
+/// Whether a translation job may start beside `running` others: the title's
+/// and this worker's private bytes (with its xshader and dxc) are under
+/// TUXBOX_COMPILE_CEILING_GB (28; 0 off), the ceiling d3d12_xs holds its
+/// driver compiles to, or none runs. Ported from five-star-recomp fec516c
+/// (GPL-3.0, CompileBudget.RoomForPrograms), with credit. test140 had 19.8 GB
+/// private in the title alone while translations and driver compiles ran
+/// together.
+fn room_for_programs(running: usize) -> bool {
+    static CEILING: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let ceiling = *CEILING.get_or_init(|| {
+        std::env::var("TUXBOX_COMPILE_CEILING_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(28) << 30
+    });
+    if running == 0 || ceiling == 0 {
+        return true;
+    }
+    // Sampled at most every 250 ms: the dispatch loop asks every 5 ms.
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, u64)>> = std::sync::Mutex::new(None);
+    let total = {
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        match *last {
+            Some((at, total)) if at.elapsed() < Duration::from_millis(250) => total,
+            _ => {
+                let game = GAME_PID.load(Ordering::Relaxed);
+                let total = private_bytes(std::process::id(), true) + if game != 0 { private_bytes(game, false) } else { 0 };
+                *last = Some((std::time::Instant::now(), total));
+                total
+            }
+        }
+    };
+    if total <= ceiling {
+        return true;
+    }
+    static HELD: AtomicUsize = AtomicUsize::new(0);
+    let n = HELD.fetch_add(1, Ordering::Relaxed) + 1;
+    if n == 1 || n.is_power_of_two() {
+        println!("[launch] shaders: a translation waits: {} MiB private in the title and the shader worker is over TUXBOX_COMPILE_CEILING_GB={} ({running} running, {n} waits so far)",
+            total >> 20, ceiling >> 30);
+    }
+    false
+}
 const XSHADER_UNSUPPORTED_HLSL: i32 = 65;
 
 pub struct Tools {
@@ -748,11 +832,18 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         return;
     }
     let next = AtomicUsize::new(0);
+    let running = AtomicUsize::new(0);
     thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
                 while let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    let counter = match compile(path, key, ext, tools, cache, scratch) {
+                    while !room_for_programs(running.load(Ordering::Acquire)) {
+                        thread::sleep(Duration::from_millis(250));
+                    }
+                    running.fetch_add(1, Ordering::AcqRel);
+                    let outcome = compile(path, key, ext, tools, cache, scratch);
+                    running.fetch_sub(1, Ordering::AcqRel);
+                    let counter = match outcome {
                         Outcome::Compiled(..) => &stats.prewarmed,
                         Outcome::Reused(_) => &stats.reused,
                         Outcome::Cached => &stats.cached,
@@ -785,6 +876,8 @@ impl Worker {
         fs::write(session_dir.join("compiler-id.tmp"), &id)
             .and_then(|_| fs::rename(session_dir.join("compiler-id.tmp"), session_dir.join("compiler-id")))
             .map_err(|e| e.to_string())?;
+        // d3d12_xs counts this process (and its xshader and dxc) toward its compile ceiling.
+        let _ = fs::write(session_dir.join("worker-pid"), std::process::id().to_string());
         let stop = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Stats::default());
         let workers = thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
@@ -859,7 +952,11 @@ impl Worker {
                         idle = false;
                         let mine = name.rsplit_once('.').map_or("", |(k, _)| k).to_owned();
                         let mut rescan = false;
-                        while active.load(Ordering::Acquire) >= workers {
+                        // A request a title thread waits on is never held by the ceiling.
+                        let urgent = first.contains(&key);
+                        while active.load(Ordering::Acquire) >= workers
+                            || (!urgent && !room_for_programs(active.load(Ordering::Acquire)))
+                        {
                             thread::sleep(Duration::from_millis(5));
                             if urgent_keys(&busy.lock().unwrap()).iter().any(|k| *k != mine) {
                                 rescan = true;

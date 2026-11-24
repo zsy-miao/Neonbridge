@@ -916,6 +916,7 @@ q
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    shaders::GAME_PID.store(child.id(), std::sync::atomic::Ordering::Relaxed);
     kill_on_close(&child);
     splash::watch(exe);
     let tee = |r: Box<dyn std::io::Read + Send>, mut f: fs::File| {

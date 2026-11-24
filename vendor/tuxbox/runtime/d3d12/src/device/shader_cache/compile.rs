@@ -145,6 +145,17 @@ pub(crate) fn wait_unbounded() {
     UNBOUNDED.with(|u| u.set(true));
 }
 
+/// The process serving this session's translations (the launcher writes
+/// `worker-pid` beside `compiler-id`).
+pub(crate) fn worker_pid() -> Option<u32> {
+    static PID: OnceLock<u32> = OnceLock::new();
+    if let Some(pid) = PID.get() {
+        return Some(*pid);
+    }
+    let pid = fs::read_to_string(session()?.join("worker-pid")).ok()?.trim().parse().ok()?;
+    Some(*PID.get_or_init(|| pid))
+}
+
 fn session() -> Option<&'static PathBuf> {
     static SESSION: OnceLock<Option<PathBuf>> = OnceLock::new();
     SESSION
