@@ -35,7 +35,7 @@ fn readable(address: usize, len: usize) -> bool {
     true
 }
 
-fn read<T: Copy>(address: usize) -> Option<T> {
+pub(crate) fn read<T: Copy>(address: usize) -> Option<T> {
     readable(address, size_of::<T>()).then(|| unsafe { (address as *const T).read_unaligned() })
 }
 

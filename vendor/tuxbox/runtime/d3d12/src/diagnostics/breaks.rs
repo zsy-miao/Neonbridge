@@ -22,6 +22,7 @@ struct Site {
 
 static SITES: OnceLock<Vec<Site>> = OnceLock::new();
 static CAP: AtomicU32 = AtomicU32::new(16);
+static BASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static PATCH: Mutex<()> = Mutex::new(());
 
 thread_local! {
@@ -36,6 +37,7 @@ const TRAP_FLAG: u32 = 0x100;
 pub(crate) fn install(list: &str) {
     let Ok(module) = (unsafe { GetModuleHandleW(None) }) else { return };
     let base = module.0 as usize;
+    BASE.store(base, Ordering::Relaxed);
     if let Some(cap) = std::env::var("TUXBOX_BREAK_HITS").ok().and_then(|v| v.trim().parse().ok()) {
         CAP.store(cap, Ordering::Relaxed);
     }
@@ -68,7 +70,7 @@ pub(crate) fn install(list: &str) {
     }
     for site in SITES.get().into_iter().flatten() {
         patch(site.address, 0xcc);
-        super::log_line(format_args!("break: set at game+{:#x} (original byte {:#04x}, {} hits at most)", site.rva, site.original, CAP.load(Ordering::Relaxed)));
+        super::log_line(format_args!("break: set at game+{:#x} (planted 0xcc over original byte {:#04x}, {} hits at most)", site.rva, site.original, CAP.load(Ordering::Relaxed)));
     }
 }
 
@@ -85,6 +87,19 @@ fn patch(address: usize, byte: u8) {
     }
 }
 
+/// The first 8 stack words (raw, not an unwind: stale frames can look like
+/// return addresses), title-image words as game+RVA. Logged in the hit's one line.
+fn stack_words(rsp: usize) -> String {
+    let base = BASE.load(Ordering::Relaxed);
+    let size = if base == 0 { 0 } else { super::crash_detail::read::<u32>(base + 0x3c)
+        .and_then(|nt| super::crash_detail::read::<u32>(base + nt as usize + 24 + 56)).unwrap_or(0) as usize };
+    (0..8).map(|i| match super::crash_detail::read::<usize>(rsp + 8 * i) {
+        Some(w) if w >= base && w < base + size => format!("game+{:#x}", w - base),
+        Some(w) => format!("{w:#x}"),
+        None => "?".into(),
+    }).collect::<Vec<_>>().join(" ")
+}
+
 unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     const CONTINUE_EXECUTION: i32 = -1;
     const CONTINUE_SEARCH: i32 = 0;
@@ -99,10 +114,10 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
             let hit = site.hits.fetch_add(1, Ordering::Relaxed) + 1;
             let cap = CAP.load(Ordering::Relaxed);
             if hit <= cap {
-                let top = super::crash_detail::bytes(c.Rsp as usize, 8);
+                let top = stack_words(c.Rsp as usize);
                 super::log_line(format_args!(
                     "break game+{:#x} hit {hit} thread {}: rax={:#x} rbx={:#x} rcx={:#x} rdx={:#x} rsi={:#x} rdi={:#x} rbp={:#x} rsp={:#x} \
-                     r8={:#x} r9={:#x} r10={:#x} r11={:#x} r12={:#x} r13={:#x} r14={:#x} r15={:#x} eflags={:#x} [rsp]={top}{}",
+                     r8={:#x} r9={:#x} r10={:#x} r11={:#x} r12={:#x} r13={:#x} r14={:#x} r15={:#x} eflags={:#x} stack [{top}]{}",
                     site.rva, unsafe { windows::Win32::System::Threading::GetCurrentThreadId() },
                     c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.Rbp, c.Rsp,
                     c.R8, c.R9, c.R10, c.R11, c.R12, c.R13, c.R14, c.R15, c.EFlags,
