@@ -155,34 +155,51 @@ pub(super) fn resource_base(ex: &ShaderExtract) -> Option<u8> {
 /// with direct textures to a static sampler in the supplied root signature.
 /// Require every serialized state field before selecting a register.
 pub(super) fn inline_sampler(ex: &ShaderExtract, literal: [u32; 4]) -> Option<(u32, u32)> {
+    // The title's compiler inlines a static sampler's state whether or not the
+    // shader's resource list names it; any root static sampler with the same
+    // state binds identically. Prefer a declared one.
+    let samplers = &ex.root_sig.as_ref()?.static_samplers;
+    let matching = || samplers.iter().filter(|s| {
+        let vis = s[12];
+        (vis == 0 || (vis == 5 && ex.stage == Stage::Pixel)) && static_sampler_words(s) == Some(literal)
+    });
+    let declared = |s: &&[u32; 13]| ex.resources.iter().any(|r| (r.res_type, r.lower, r.upper, r.space) == (1, s[10], s[10], s[11]));
+    matching().find(declared).or_else(|| matching().next()).map(|s| (s[10], s[11]))
+}
+
+/// The RDNA2 sampler words a D3D12 static sampler compiles to, for the
+/// isotropic, unbiased states the title inlines; None for anything else.
+fn static_sampler_words(s: &[u32; 13]) -> Option<[u32; 4]> {
+    let [filter, u, v, w, bias, aniso, compare, border, min, max, ..] = *s;
     fn address(mode: u32) -> Option<u32> {
         match mode {
-            1 => Some(0),
-            3 => Some(2),
-            4 => Some(6),
+            1 => Some(0), // wrap
+            2 => Some(1), // mirror
+            3 => Some(2), // clamp to last texel
+            4 => Some(6), // clamp to border
+            5 => Some(3), // mirror once
             _ => None,
         }
     }
-    ex.root_sig.as_ref()?.static_samplers.iter().find_map(|s| {
-        let [filter, u, v, w, bias, aniso, compare, border, min, max, slot, space, vis] = *s;
-        if !(vis == 0 || (vis == 5 && ex.stage == Stage::Pixel))
-            || (bias, aniso, compare, border, min, max) != (0, 1, 1, 0, 0, 12.0_f32.to_bits())
-            || !ex
-                .resources
-                .iter()
-                .any(|r| (r.res_type, r.lower, r.upper, r.space) == (1, slot, slot, space))
-        {
-            return None;
-        }
-        let filter = match filter {
-            0 => 0x14000000,
-            0x14 => 0x14500000,
-            0x15 => 0x18500000,
-            _ => return None,
-        };
-        let clamp = address(u)? | address(v)? << 3 | address(w)? << 6;
-        (literal == [clamp, 0x00c00000, filter, 0]).then_some((slot, space))
-    })
+    // Point/linear min, mag and mip with an optional comparison or min/max reduction.
+    if filter & !0x195 != 0 || bias != 0 || aniso > 1 || border > 2 {
+        return None;
+    }
+    let lod = |bits: u32| {
+        let f = f32::from_bits(bits);
+        (f >= 0.0 && f.is_finite()).then(|| ((f * 256.0).round() as u32).min(0xfff))
+    };
+    let (min, max) = (lod(min)?, lod(max)?);
+    let mut word0 = address(u)? | address(v)? << 3 | address(w)? << 6;
+    match filter >> 7 {
+        0 => {}
+        1 => word0 |= (compare.checked_sub(1).filter(|c| *c < 8)?) << 12,
+        2 => word0 |= 1 << 29,
+        _ => word0 |= 2 << 29,
+    }
+    let mip = if filter & 1 != 0 { 2 } else { 1 };
+    let word2 = 0x1000_0000 | mip << 26 | (filter >> 4 & 1) << 22 | (filter >> 2 & 1) << 20;
+    Some([word0, min | max << 12, word2, border << 30])
 }
 
 /// An empty EXEC branch can skip inline sampler initialization only when the

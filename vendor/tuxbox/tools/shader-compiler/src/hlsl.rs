@@ -2976,7 +2976,7 @@ impl<'a> Emitter<'a> {
                     if sym.get(&rs) == Some(&Sym::HeapDescriptor(8)) {
                         let load = matches!(ins.mnemonic.as_str(), "image_load" | "image_load_mip") && matches!(dim, 0 | 1 | 2 | 4 | 5);
                         let resinfo = ins.mnemonic == "image_get_resinfo" && dim == 1;
-                        if !load && !resinfo && (!ins.mnemonic.starts_with("image_sample") || !matches!(dim, 1 | 5)) {
+                        if !load && !resinfo && (!ins.mnemonic.starts_with("image_sample") || !matches!(dim, 1 | 3 | 5)) {
                             return Err(format!("unsupported direct heap texture operation {} dim {dim}", ins.mnemonic));
                         }
                         tex_res.push((0, Res::HeapTexture(rs, dim)));
@@ -6927,7 +6927,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             Some(Res::Tex(slot, d)) => (format!("tex{slot}"), *d),
             Some(Res::HeapTexture(src, dim)) => {
                 let (src, dim) = (*src, *dim);
-                let ty = if dim == 1 { "Texture2D" } else { "Texture2DArray" };
+                let ty = match dim { 1 => "Texture2D", 3 => "TextureCube", _ => "Texture2DArray" };
                 let name = format!("tb_texture{idx}");
                 self.regs.insert(format!("s{src}"));
                 self.line(&format!("{ty}<float4> {name} = ResourceDescriptorHeap[NonUniformResourceIndex(s{src})];"));
