@@ -1245,6 +1245,10 @@ pub fn translate_ordered(
     let out = translate_outputs(ex, feeds_ps, output_order, None);
     if let Err(why) = &out {
         dump_untranslated(ex, why);
+    } else if let Some(dir) = std::env::var_os("TB_DUMP_COMPUTE").filter(|d| !d.is_empty()) {
+        if ex.stage == Stage::Compute {
+            dump_program(ex, std::path::Path::new(&dir), None);
+        }
     }
     out
 }
@@ -1254,13 +1258,22 @@ pub fn translate_ordered(
 /// signature, resources, FSSM user-data rows and the ISA words) plus the raw
 /// program as .isa, once per program, for offline analysis (palmetto c2113e42).
 fn dump_untranslated(ex: &ShaderExtract, why: &str) {
-    use std::fmt::Write as _;
     if ex.stage != Stage::Compute {
         return;
     }
     let Some(dir) = std::env::var_os("TB_DUMP_UNTRANSLATED").filter(|d| !d.is_empty()) else { return };
+    dump_program(ex, std::path::Path::new(&dir), Some(why));
+}
+
+/// Write one compute program (`cs_<isa hash>.txt` + `.isa`) and its compute-state
+/// sidecar (`.state`: RSRC2 fields, guest wave width, group size, user SGPRs, FSPX
+/// config, root parameters), once per program, so pipeline-library programs can be
+/// re-translated offline (palmetto 48756cdb). TB_DUMP_COMPUTE=<dir> dumps every
+/// compute program, translated or not.
+fn dump_program(ex: &ShaderExtract, dir: &std::path::Path, why: Option<&str>) {
+    use std::fmt::Write as _;
+    let why = why.unwrap_or("(translated)");
     let hash = ex.isa.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
-    let dir = std::path::PathBuf::from(dir);
     let path = dir.join(format!("cs_{hash:016x}.txt"));
     if path.exists() || std::fs::create_dir_all(&dir).is_err() {
         return;
@@ -1287,6 +1300,36 @@ fn dump_untranslated(ex: &ShaderExtract, why: &str) {
         let _ = writeln!(t, "  {:05x}: {}", n * 32, words.join(" "));
     }
     let _ = std::fs::write(path.with_extension("isa"), &ex.isa);
+    let rsrc2 = ex.isa_preamble[0];
+    let mut st = String::new();
+    let _ = writeln!(st, "rsrc2={rsrc2:#010x}");
+    let _ = writeln!(st, "user_sgpr_count={}", (rsrc2 >> 1) & 31);
+    let _ = writeln!(st, "tgid_en={},{},{}", (rsrc2 >> 7) & 1, (rsrc2 >> 8) & 1, (rsrc2 >> 9) & 1);
+    let _ = writeln!(st, "tg_size_en={}", (rsrc2 >> 10) & 1);
+    let _ = writeln!(st, "tidig_comp_cnt={}", (rsrc2 >> 11) & 3);
+    let _ = writeln!(st, "lds_size_granules={}", (rsrc2 >> 15) & 0x1ff);
+    let _ = writeln!(st, "group_size={},{},{}", ex.isa_preamble[1], ex.isa_preamble[2], ex.isa_preamble[3]);
+    let _ = writeln!(st, "psv_threads={:?}", ex.psv_threads);
+    let _ = writeln!(st, "guest_wave_width={}", guest_wave_width(ex));
+    let _ = writeln!(st, "fspx_config={:08x?}", ex.fspx_config);
+    let _ = writeln!(st, "required_features={:?}", ex.required_features);
+    if let Some(root) = &ex.root_sig {
+        let _ = writeln!(st, "root_flags={:#x}", root.flags);
+        for (n, p) in root.params.iter().enumerate() {
+            let _ = writeln!(st, "root_param{n}={:?}", p.kind);
+        }
+    } else {
+        let _ = writeln!(st, "root=none");
+    }
+    if let Some(rows) = tuxbox_dxbc::compute_table::user_data_records(&ex.fssm) {
+        for row in rows {
+            let _ = writeln!(st, "user_data={row:08x?}");
+        }
+    }
+    for r in &ex.resources {
+        let _ = writeln!(st, "binding={r:?}");
+    }
+    let _ = std::fs::write(path.with_extension("state"), st);
     if std::fs::write(&path, t).is_ok() {
         eprintln!("xshader: untranslated compute program dumped to {}", path.display());
     }

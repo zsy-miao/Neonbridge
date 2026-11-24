@@ -178,7 +178,7 @@ pub(super) unsafe extern "system" fn user_add_async(_: &Object, options: u32, bl
     unsafe { std::env::set_var("TUXBOX_SIGNED_IN", "1") };
     unsafe { complete(block, OK, 0, Payload::User) }
 }
-pub(super) unsafe extern "system" fn user_add_result(_: &Object, block: *mut c_void, out: *mut *mut c_void) -> i32 {
+unsafe extern "system" fn user_add_result_impl(_: &Object, block: *mut c_void, out: *mut *mut c_void) -> i32 {
     if out.is_null() { return POINTER; }
     match take(block) {
         Ok(Payload::User) => {
@@ -201,7 +201,7 @@ pub(super) unsafe extern "system" fn user_find_by_local_id(_: &Object, id: u64, 
     unsafe { out.write(user_handle()) };
     OK
 }
-pub(super) unsafe extern "system" fn user_id(_: &Object, user: *mut c_void, out: *mut u64) -> i32 {
+unsafe extern "system" fn user_id_impl(_: &Object, user: *mut c_void, out: *mut u64) -> i32 {
     if out.is_null() { return POINTER; }
     if !is_user(user) { return INVALID; }
     unsafe { out.write(USER_ID) };
@@ -213,21 +213,21 @@ pub(super) unsafe extern "system" fn user_find_by_id(_: &Object, id: u64, out: *
     unsafe { out.write(user_handle()) };
     OK
 }
-pub(super) unsafe extern "system" fn user_is_guest(_: &Object, user: *mut c_void, out: *mut bool) -> i32 {
+unsafe extern "system" fn user_is_guest_impl(_: &Object, user: *mut c_void, out: *mut bool) -> i32 {
     if out.is_null() { return POINTER; }
     if !is_user(user) { return INVALID; }
     unsafe { out.write(false) };
     OK
 }
 /// XUserState::SignedIn is 0.
-pub(super) unsafe extern "system" fn user_state(_: &Object, user: *mut c_void, out: *mut u32) -> i32 {
+unsafe extern "system" fn user_state_impl(_: &Object, user: *mut c_void, out: *mut u32) -> i32 {
     if out.is_null() { return POINTER; }
     if !is_user(user) { return INVALID; }
     unsafe { out.write(0) };
     OK
 }
 /// XUserCheckPrivilege: every privilege is granted offline.
-pub(super) unsafe extern "system" fn user_check_privilege(
+unsafe extern "system" fn user_check_privilege_impl(
     _: &Object, user: *mut c_void, _options: u32, _privilege: u32, has: *mut bool, reason: *mut u32,
 ) -> i32 {
     if has.is_null() { return POINTER; }
@@ -367,7 +367,7 @@ pub(super) unsafe extern "system" fn package_register_progress(
 }
 
 /// XUserGetGamertag(user, component, size, buffer, used) on interface cef4fac0.
-pub(super) unsafe extern "system" fn user_gamertag(
+unsafe extern "system" fn user_gamertag_impl(
     _: &Object, user: *mut c_void, component: u32, size: usize, buffer: *mut u8, used: *mut usize,
 ) -> i32 {
     // XUserGamertagComponent: 0 classic, 1 modern, 2 modern suffix, 3 unique
@@ -385,7 +385,7 @@ pub(super) unsafe extern "system" fn user_gamertag(
 }
 
 /// XUserGetAgeGroup: Adult (3).
-pub(super) unsafe extern "system" fn user_age_group(_: &Object, user: *mut c_void, out: *mut u32) -> i32 {
+unsafe extern "system" fn user_age_group_impl(_: &Object, user: *mut c_void, out: *mut u32) -> i32 {
     if out.is_null() { return POINTER; }
     if !is_user(user) { return INVALID; }
     unsafe { out.write(3) };
@@ -452,7 +452,7 @@ pub(super) unsafe extern "system" fn storage_get_path(_: &Object, size: usize, b
 // XNetworking (class 37e56907) and XDisplay (class 03f0fe74)
 
 /// XNetworkingGetConnectivityHint: initialized, no connectivity.
-pub(super) unsafe extern "system" fn network_hint(_: &Object, out: *mut u8) -> i32 {
+unsafe extern "system" fn network_hint_impl(_: &Object, out: *mut u8) -> i32 {
     if out.is_null() { return POINTER; }
     // { level, cost, ianaInterfaceType: u32; networkInitialized,
     //   approachingDataLimit, overDataLimit, roaming: bool } = 16 bytes.
@@ -1285,4 +1285,73 @@ pub(super) unsafe extern "system" fn game_restart_on_crash(_: &Object, args: *co
     let args = unsafe { text(args).unwrap_or_default() };
     super::report(format_args!("XLaunchRestartOnCrash(\"{args}\") accepted"));
     OK
+}
+
+// ---------------------------------------------------------------------------
+// TUXBOX_TRACE_API=1 (Xbox2Windows dce4ce6d/8d6c5477/9731fae2): one line per
+// traced provider call with its HRESULT, who answered (every provider here is
+// the stand-in), and which declared outputs changed. Only the outputs in each
+// call's contract are read, each bounded by its declared width.
+
+fn trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_TRACE_API").is_ok_and(|v| v.trim() == "1"))
+}
+
+/// (output name, pointer, width in bytes); a null pointer is not read.
+type Contract<'a> = &'a [(&'a str, *const u8, usize)];
+
+unsafe fn traced(api: &str, outs: Contract<'_>, call: impl FnOnce() -> i32) -> i32 {
+    if !trace_on() {
+        return call();
+    }
+    let read = |p: *const u8, w: usize| (!p.is_null() && w != 0).then(|| unsafe { std::slice::from_raw_parts(p, w) }.to_vec());
+    let before: Vec<Option<Vec<u8>>> = outs.iter().map(|&(_, p, w)| read(p, w)).collect();
+    let hr = call();
+    let mut changed = Vec::new();
+    for (&(name, p, w), old) in outs.iter().zip(before) {
+        if let (Some(old), Some(new)) = (old, read(p, w)) {
+            if old != new {
+                let hex: String = new.iter().map(|b| format!("{b:02x}")).collect();
+                changed.push(format!("{name}={hex}"));
+            }
+        }
+    }
+    eprintln!("TuxBox api: {api} -> {:#010x} (stand-in) changed [{}]", hr as u32, changed.join(", "));
+    hr
+}
+
+pub(super) unsafe extern "system" fn user_add_result(o: &Object, block: *mut c_void, out: *mut *mut c_void) -> i32 {
+    unsafe { traced("XUserAddResult", &[("user", out.cast(), 8)], || user_add_result_impl(o, block, out)) }
+}
+pub(super) unsafe extern "system" fn user_id(o: &Object, user: *mut c_void, out: *mut u64) -> i32 {
+    unsafe { traced("XUserGetId", &[("id", out.cast(), 8)], || user_id_impl(o, user, out)) }
+}
+pub(super) unsafe extern "system" fn user_is_guest(o: &Object, user: *mut c_void, out: *mut bool) -> i32 {
+    unsafe { traced("XUserGetIsGuest", &[("guest", out.cast(), 1)], || user_is_guest_impl(o, user, out)) }
+}
+pub(super) unsafe extern "system" fn user_state(o: &Object, user: *mut c_void, out: *mut u32) -> i32 {
+    unsafe { traced("XUserGetState", &[("state", out.cast(), 4)], || user_state_impl(o, user, out)) }
+}
+pub(super) unsafe extern "system" fn user_check_privilege(
+    o: &Object, user: *mut c_void, options: u32, privilege: u32, has: *mut bool, reason: *mut u32,
+) -> i32 {
+    unsafe {
+        traced("XUserCheckPrivilege", &[("has", has.cast(), 1), ("deny_reason", reason.cast(), 4)],
+            || user_check_privilege_impl(o, user, options, privilege, has, reason))
+    }
+}
+pub(super) unsafe extern "system" fn user_gamertag(
+    o: &Object, user: *mut c_void, component: u32, size: usize, buffer: *mut u8, used: *mut usize,
+) -> i32 {
+    unsafe {
+        traced("XUserGetGamertag", &[("gamertag", buffer.cast_const(), size.min(64)), ("used", used.cast(), 8)],
+            || user_gamertag_impl(o, user, component, size, buffer, used))
+    }
+}
+pub(super) unsafe extern "system" fn user_age_group(o: &Object, user: *mut c_void, out: *mut u32) -> i32 {
+    unsafe { traced("XUserGetAgeGroup", &[("age_group", out.cast(), 4)], || user_age_group_impl(o, user, out)) }
+}
+pub(super) unsafe extern "system" fn network_hint(o: &Object, out: *mut u8) -> i32 {
+    unsafe { traced("XNetworkingGetConnectivityHint", &[("hint", out.cast_const(), 16)], || network_hint_impl(o, out)) }
 }
