@@ -6277,6 +6277,39 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
             };
         }
+        if m == "v_mad_i64_i32" && std::env::var("TB_MAD_I64").map_or(true, |v| v.trim() != "0") {
+            // D = sext(S0) * sext(S1) + S2 mod 2^64 (Xbox2Windows d5f83f7e): the low
+            // product, the signed high product, and S2's pair (an inline constant is
+            // sign-extended) added with the low carry into the high word. The signed
+            // form's carry-out is not established: a null sdst is the verified case;
+            // any other sdst is written 0 and logged.
+            let Opnd::Vgpr(low) = d else { return Err("expected VGPR pair".into()); };
+            let high = Opnd::Vgpr(low.checked_add(1).ok_or("VGPR pair overflows")?);
+            if ins.raw[0] & 0x8000 != 0 || ins.raw[1] >> 27 != 0 {
+                return Err("unsupported multiply-add modifiers".into());
+            }
+            let cout = match (ins.raw[0] >> 8) & 127 {
+                125 => None,
+                n @ 0..=104 => Some(Opnd::Sgpr(n as u8)),
+                106 => Some(Opnd::VccLo),
+                _ => return Err("unsupported multiply-add carry destination".into()),
+            };
+            let (a, b, c, ch) = (r(&s[0])?, r(&s[1])?, r(&s[2])?, self.pair_high(&s[2])?);
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("uint t{t}lo = {a} * {b} + {c}; uint t{t}hi = tb_mulhi_i32({a}, {b}) + {ch} + uint({a} * {b} + {c} < {c});"));
+            self.wv(&d, &format!("t{t}lo"))?;
+            self.wv(&high, &format!("t{t}hi"))?;
+            if let Some(cout) = cout {
+                eprintln!("xshader: v_mad_i64_i32 carry-out at {:#x} is not established; written 0", ins.offset);
+                self.line("// (v_mad_i64_i32 carry-out not established: written 0)");
+                self.ws(&cout, "0u")?;
+                if !self.one_word_vector_mask() && !self.resolve_wave32 {
+                    self.ws(&hi(&cout), "0u")?;
+                }
+            }
+            return Ok(());
+        }
         if m == "v_mad_u64_u32" {
             let Opnd::Vgpr(low) = d else { return Err("expected VGPR pair".into()); };
             let high = Opnd::Vgpr(low.checked_add(1).ok_or("VGPR pair overflows")?);
