@@ -1541,6 +1541,14 @@ unsafe extern "system" fn copy_resource(
     });
 }
 
+// DriverHintX (Scarlett slot 101, GDK d3d12_xs.h). The desktop driver manages
+// its own hardware policy, so console tuning hints have no effect. GTA VI calls
+// it with feature 2 and value 1 (title RVA 0x50a6651) and ignores the result.
+// TuxBox bedf503 (brcly, Apache-2.0).
+unsafe extern "system" fn driver_hint(_list: &List, _feature: u64, _value: u64) -> u64 {
+    0
+}
+
 // Frosty's RHIDispatchIndirectComputeShader calls slot 59 (RVA 0x57876df).
 unsafe extern "system" fn execute_indirect(
     list: &List,
@@ -2216,6 +2224,14 @@ unsafe extern "system" fn slot131(list: &List, a: u32, b: usize, c: u64, d: u64)
 // base graphics-list IID. The List6-only cache barriers remain separate.
 static DEVICE11_LIST_SLOTS: Slots<149> = {
     let mut slots = LIST_SLOTS;
+    // Scarlett's list adds InsertGpuMarker and InsertTimingMarker after
+    // EndEvent (GDK d3d12_xs.h), so ExecuteIndirect moves from slot 59 to 61.
+    // GTA VI calls it at title RVA 0x248cbba (vtable +0x1e8, one command) and
+    // DriverHintX at 0x50a6651 (+0x328); both answered 0 as unmapped in
+    // test130/131, so those indirect commands never ran. TuxBox bedf503
+    // (brcly, Apache-2.0).
+    slots[61] = crate::slot!(execute_indirect);
+    slots[101] = crate::slot!(driver_hint);
     // GTA VI calls slot 131 on this table as the extended cache barrier
     // (cache 0xc280, engines 0x20000, address 0, bytes 0xffffffffff00 at
     // game+0x1560994); sending it to the batched AS build faulted reading
