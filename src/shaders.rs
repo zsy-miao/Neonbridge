@@ -428,6 +428,10 @@ fn remove_request(path: &Path) {
 /// Keep a copy of a request the title made, so the next launch can translate it
 /// before the title asks (TuxBox's ProjectScarlett prewarm).
 fn archive_request(path: &Path, name: &str, archive: &Path) {
+    // The title asked for it: mark it for the next launch's seen prewarm.
+    if let Some(seen) = archive.parent().map(|r| r.join("seen")) {
+        let _ = fs::create_dir_all(&seen).and_then(|_| fs::write(seen.join(name), b""));
+    }
     let dest = archive.join(name);
     if fs::symlink_metadata(&dest).is_ok() {
         return;
@@ -597,12 +601,53 @@ pub fn build_requests(rpf: &Path, archive: &Path) -> Result<Option<Built>, Strin
     Ok(Some(built))
 }
 
-/// Translate every archived request into the cache before the title starts,
-/// so its pipelines load translations instead of waiting on the worker.
-fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats) {
+/// Request names the title asked for in earlier launches (`<cache_root>/seen`).
+/// The first launch with this marker list seeds it from the keys every
+/// recent toolchain's cache dir holds a translation for, matched against
+/// the archive (all of those came from title requests while
+/// TUXBOX_PREWARM=0).
+fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet<String> {
+    let seen = cache_root.join("seen");
+    let names = |dir: &Path| fs::read_dir(dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
+    let marked: std::collections::HashSet<String> = names(&seen).into_iter().filter(|n| valid_request(n).is_some()).collect();
+    if !marked.is_empty() {
+        return marked;
+    }
+    // The four newest toolchain dirs: older ones include whole-archive
+    // builds (--build-shaders), ~3000 programs the title never asked for.
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(cache_root.join("runtime")).into_iter().flatten().flatten()
+        .filter(|e| is_key(&e.file_name().to_string_lossy()))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut keys = std::collections::HashSet::new();
+    for (_, dir) in dirs.iter().take(4) {
+        for name in names(dir) {
+            if let Some(key) = name.strip_suffix(".cso") {
+                keys.insert(key.to_owned());
+            }
+        }
+    }
+    let found: std::collections::HashSet<String> = names(archive).into_iter()
+        .filter(|n| valid_request(n).is_some_and(|(k, _)| keys.contains(k))).collect();
+    if fs::create_dir_all(&seen).is_ok() {
+        for n in &found {
+            let _ = fs::write(seen.join(n), b"");
+        }
+    }
+    found
+}
+
+/// Translate archived requests into the cache before the title starts, so its
+/// pipelines load translations instead of waiting on the worker. `only`
+/// limits it to those request names.
+fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
+    only: Option<&std::collections::HashSet<String>>) {
     let Ok(entries) = fs::read_dir(archive) else { return };
     let jobs: Vec<(PathBuf, String, String)> = entries.flatten().filter_map(|e| {
         let name = e.file_name().to_string_lossy().into_owned();
+        if only.is_some_and(|o| !o.contains(&name)) {
+            return None;
+        }
         let (key, ext) = valid_request(&name)?;
         Some((e.path(), key.to_owned(), ext.to_owned()))
     }).collect();
@@ -647,9 +692,23 @@ impl Worker {
         let workers = thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
         let archive = cache_root.join("requests");
         let _ = fs::create_dir_all(&archive);
+        // test113-116 all said "0 prewarmed, N compiled, 0 from cache": runs
+        // set TUXBOX_PREWARM=0 (the full archive is ~80k programs) and xshader
+        // changed between runs, so each run started on an empty cache dir and
+        // the world's pipelines waited on hundreds of compiles. The programs
+        // the title asked for before (a few hundred) are translated first,
+        // whatever TUXBOX_PREWARM says; with an unchanged toolchain they are
+        // cache hits. NEONBRIDGE_PREWARM_SEEN=0 turns it off.
+        if std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0") {
+            let started = std::time::Instant::now();
+            let seen = seen_requests(&cache_root, &archive);
+            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), workers, &stats, Some(&seen));
+            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
+                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+        }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
         if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
-            prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats);
+            prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats, None);
         }
         let (s, st) = (stop.clone(), stats.clone());
         let log = Arc::new(log);
