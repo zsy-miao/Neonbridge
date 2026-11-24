@@ -4,7 +4,7 @@
 
 **Neonbridge is an open-source GTA VI (GTA 6) launcher for Windows PC.** It starts the Xbox Series X|S build of Grand Theft Auto VI, dumped from a console you own, natively on Windows. It isn't a slow whole-console emulator: Xbox Series consoles and Windows PCs use the same x64 processor family, so the game's own code runs directly. Neonbridge only swaps the console system pieces it calls into (graphics, files, input, sound) for Windows versions built on D3D12.
 
-**Where it is today:** GTA VI boots, plays its intro (the GTA stars) and reaches the player-selection prompt, where it takes keyboard input through a virtual Xbox pad. It runs at about 5 fps and **isn't playable yet** (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of the game. No game files are included or linked.
+**Where it is today:** GTA VI boots, plays its intro (the GTA stars), gets past the player-selection prompt on its own and goes on into the menus at about 16 fps, with keyboard input through a virtual Xbox pad. Saves load, the game is kept offline, and it **isn't playable yet** (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of the game. No game files are included or linked.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively, and its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -20,15 +20,16 @@ Needs Visual Studio Build Tools (x64 C++), cargo, and the x86_64-pc-windows-msvc
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. GTA VI reaches its player-selection screen but isn't playable. Watch the [Roadmap](#roadmap).
+- **Can I play GTA 6 on PC with this?** Not yet. GTA VI gets past its player-selection screen into the menus but isn't playable. Watch the [Roadmap](#roadmap).
 - **Is this a GTA 6 download or crack?** No. Neonbridge contains no game files, keys or binaries, and it doesn't bypass any protection. It only runs a copy you dumped from your own Xbox Series console.
 - **Is it an Xbox Series X|S emulator?** Not a full one. Like Wine, it translates system calls: the game's x64 code runs natively, and Xbox D3D12, memory, file, input and runtime calls go to Windows equivalents.
-- **What hardware do I need?** A Windows 10 or 11 x64 PC with a D3D12 GPU. Speed is still far from the console's.
+- **What hardware do I need?** A Windows 10 or 11 x64 PC with a D3D12 GPU, and plenty of RAM plus page file (other projects see GTA VI commit about 15 GB). Speed is still far from the console's.
+- **Does it go online?** No. The game is cut off from the network by default, because its crash handler uploads a dump with details of your PC. `TUXBOX_NETWORK=1` lifts the block.
 - **Other Xbox Series games?** The launcher works with any dumped GDK executable, but GTA VI is the only title being tested.
 
 ## Controls
 
-Keyboard and mouse drive a virtual Xbox pad. It's on by default, and `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real XInput pads. The game window must be in front.
+Keyboard and mouse drive a virtual Xbox pad. It's on by default, and `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real XInput pads. The game window must be in front. The player-selection prompt is answered with one automatic A press after sign-in (`TUXBOX_AUTO_START=0` turns it off).
 
 ![GTA 6 keyboard and mouse controls mapped to an Xbox pad](assets/controls.svg)
 
@@ -37,10 +38,13 @@ Keyboard and mouse drive a virtual Xbox pad. It's on by default, and `TUXBOX_KEY
 What the Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own dump) does today:
 
 - **Boot:** it runs natively with the console DLLs replaced by Rust providers, passes `xgameruntime` initialisation, maps the console `G:` drive to the executable's folder and mounts every `.rpf` archive.
-- **Rendering:** it creates a D3D12 device and draws lit frames in its own window: the GTA stars intro, then the player-selection prompt (Account Picker / Screen Narration / TuxBox). Command lists close cleanly every frame, with no device removal.
-- **Input:** the title reads the virtual pad at the player-selection prompt, and an A press (Enter or Z) reaches it.
-- **Saves:** game saves and settings are written to `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`, so choices should carry over between launches (new, not yet confirmed in a run).
-- **Longest run:** 344 s and 1777 frames at about 4.5 fps, ending on a fail-fast exit (`0xc0000602`) that a `--debug` run is tracing.
+- **Rendering:** it creates a D3D12 device and draws lit frames in a window fitted to one monitor at 16:9: the GTA stars intro, the player-selection prompt, then the menus beyond it. There's no white flash at start: the window stays hidden until its first frame.
+- **Speed:** about 16 fps (it was 5 fps until the game's page-by-page memory was joined so the GPU uses it in place instead of copying ~1.2 GB every submission).
+- **Input:** the title reads the virtual pad, and an automatic A press gets it past the player-selection prompt.
+- **Saves:** XGameSave containers are stored under `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`, and the game loads its "Player" save on the next launch.
+- **Offline and contained:** the game's network calls fail as "no network", its `D:` drive is a local folder, and it runs in a job that ends with the launcher.
+- **Audio:** sound plays, but it cuts in and out. The game mixes its own audio into Windows spatial audio. A fine system timer, which other projects needed for GTA VI's mixer, is now on, and a probe is tracing the rest.
+- **Longest run:** 344 s, ending on a fail-fast exit (`0xc0000602`). Runs into the menus have also hit a fail-fast exit, which the new crash record will name.
 
 ### Runtime fixes
 
@@ -53,6 +57,14 @@ These are in the vendored TuxBox provider:
 - **Texture layouts:** Xbox layout 0x10a (64 KiB display swizzle, mipped) gets a real size and placement, instead of an invalid one that crashed the title.
 - **Copies:** list slot 62 (`CopyMemoryToMemoryX`) records a buffer copy instead of failing fast.
 - **Game saves (`xgameruntime`):** XGameSave containers, blobs, updates, quota and the save-files folder are stored on disk instead of returning nothing.
+- **Unknown calls don't crash:** a D3D12.x slot we haven't mapped logs `unmapped slot <n>` and answers 0 instead of failing fast (`TUXBOX_UNMAPPED=failfast` restores the old behaviour). Newer list slots (fills, `DispatchX`, `CopyResourceX`, markers) and device slot 55 (derived pipelines) are handled, and GPU memory waits honour every comparison.
+- **Platform:**
+  - The title asks for a 1 ms (or finer) system timer, so its audio mixer isn't slowed by the default 15.6 ms tick (`TUXBOX_FINE_TIMER=0`).
+  - The console model reads as Series X (`TUXBOX_CONSOLE`).
+  - `clwb`, `rdpid` and `mcommit` are emulated on CPUs without them.
+  - Title memory that the GPU window can't hold is placed below 2^40.
+  - XAudio2 is created without console-only flags or core masks.
+- **Textures:** BCPack-compressed textures get neutral grey blocks until a decoder exists (`TUXBOX_BCPACK=refuse`), and placed textures are only re-compared when the CPU wrote them.
 - **Rendering:**
   - A stale inline descriptor binds a typed null instead of failing the command list.
   - A failed batch drops only itself, instead of blocking every later submission.
@@ -80,8 +92,9 @@ These are in the vendored TuxBox provider:
   - `[WaveSize]` widths the host GPU lacks are compiled out (`TB_NO_WAVESIZE_<n>`), using the wave range the runtime reads from the device.
 - **Speed:**
   - Buffer binds keep their imported memory alive, so recording dropped from about 156 ms to under 2 ms per frame.
-  - Copies of buffers that span separately mapped pages are merged, and buffers are written back only after the GPU actually wrote them.
-- **Launch:** a neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off).
+  - The title maps memory one 64 KiB page at a time. Neighbouring pages are now joined into one view on demand, so large buffers import zero-copy instead of being copied in and out every submission.
+  - Buffers are written back only after the GPU actually wrote them.
+- **Launch:** a neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off). The game window is kept on one monitor at 16:9, and the game ends when the launcher does (`NEONBRIDGE_JOB=0`).
 
 ### Diagnostics
 
@@ -94,44 +107,51 @@ These are in the vendored TuxBox provider:
   - `TUXBOX_BARRIER_PROBE=1` closes each barrier alone to name a field the host rejects.
   - Each crash theory has its own `TUXBOX_*` switch, so variants can run from one build.
 - **Input logs:** GameInput logs when the title reads the pad and which buttons are down.
+- **Crash record:** any unhandled exception, Rust panic or fail-fast logs its code, module and offset, registers and stack, and every thread's stack is logged after 15 s without a frame (`TUXBOX_CRASH_RECORD=0` turns it off).
+- **Hot threads:** the heartbeat samples where the busiest threads spend their time and names the functions.
+- **Audio probe:** logs the audio endpoints the title opens (spatial audio stream format, buffer and period gaps).
+- **Shader bisect:** `TUXBOX_FALLBACK=flat`, `TUXBOX_NULL_SHADERS` and `TUXBOX_NULL_BISECT` swap out individual shaders to find a bad one.
 
 ## Open
 
-- **Frame rate (about 5 fps):** about 117 large buffers sit over separately mapped 64 KiB pages that D3D12 can't open as one heap, so every submission copies roughly 640 MB in and out. Mapping those buffers onto the game's memory as tiles removed the GPU device in testing, so it's off for now (`TUXBOX_TILED_ALIAS=1`). Next: map the game's memory in bigger pieces, or copy only the parts each frame uses.
-- **Fail-fast exit:** the 344 s run ended on `0xc0000602` with no stack in the log, so a `--debug` run is catching it.
-- **Later screens:** according to other projects, screens after the start screen need blend state read from the pipeline's render-state block before they draw correctly.
+- **Menu crash:** a longer run into the menus ends on a fail-fast exit. Other projects needed a text-entry dialog and the rest of the UI runtime, relaunch support, console-order shutdown and enough Windows commit to get through GTA VI's menus; those are being added.
+- **Audio:** cuts in and out. The fine timer is in. Next, the probe on the game's spatial audio stream shows where the gaps come from.
+- **Frame rate:** about 16 fps. The busiest thread spends most of a frame re-importing title memory.
+- **BCPack textures:** shown as grey blocks until a decoder is written (about 14% of textures).
+- **Later screens:** blend patches from derived pipelines are logged but not applied yet.
 - **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders. A full prewarm (`TUXBOX_PREWARM`, on by default) waits on these.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
 
 ## Roadmap
 
-1. **Speed.** Back each XMem pool with one section (or copy only what a frame touches) so GPU imports need no per-submission copies.
-2. **Get past the start screen.** Fix the fail-fast exit, pick the profile, and take blend state from the pipeline's render-state block so later screens draw.
-3. **Correct colour.** Pack 5551 in the shader, or substitute R8G8B8A8 for B5G5R5A1 UAV and render-target images.
-4. **Shaders.** Finish the remaining `xshader` refusals, then run a full prewarm and ship the pipeline cache.
-5. **Audio.** Check the audio path once the title reaches its menu.
-6. **Playable.** Reach the menu, load into the world, and profile frame time.
+1. **Through the menus.** Name and fix the menu crash, add the UI runtime (text entry), relaunch and shutdown pieces, and apply derived-pipeline blend patches so later screens draw.
+2. **Clean audio.** Find and close the gaps in the spatial audio stream.
+3. **Speed.** Cut the per-frame memory re-imports, then profile per pass.
+4. **Correct pictures.** A BCPack decoder, and 5551 packing (or an R8G8B8A8 substitute) for B5G5R5A1 images.
+5. **Shaders.** Finish the remaining `xshader` refusals, then run a full prewarm and ship the pipeline cache.
+6. **Playable.** Load into the world and profile frame time.
 
 No game files, keys or binaries are in this repository. Bring your own copy of the game. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive. Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by Rockstar, Take-Two or Microsoft.
 
 ## Credits
 
-Neonbridge stands on other people's work. Thank you to:
+Neonbridge stands on other people's work. Ideas from GPL projects are re-implemented from their behaviour, not copied. Thank you to:
 
-- **[TuxBox](https://github.com/brcly/TuxBox)** by brcly: the console-DLL providers, D3D12 runtime and `xshader` translator, vendored under `vendor/tuxbox` (Apache-2.0), plus many later upstream fixes ported in, including the title-assert step-over.
-- **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak: typed null descriptors, async pipeline building, argument clamps and per-frame pipeline budgets.
-- **[xcl](https://github.com/ivall/xcl)** by ivall: page-split copies and zero-filled placed uploads, triple-buffered presentation, and the resize and memory-wait designs.
-- **[Xbox2Windows](https://github.com/R0Y00/Xbox2Windows)** by R0Y00: sampler-heap bounds and shader-translation cross-checks.
-- **[xbox-emulator](https://github.com/omonkeyz/xbox-emulator)** by omonkeyz: fence handling on device removal.
-- **[OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett)** by californiaAlmonds: rendering fixes.
-- **[rebox](https://github.com/puffnfresh/rebox)** by puffnfresh: stalled GPU memory-wait diagnostics.
+- **[TuxBox](https://github.com/brcly/TuxBox)** by brcly: the console-DLL providers, D3D12 runtime and `xshader` translator, vendored under `vendor/tuxbox` (Apache-2.0), plus many later upstream fixes ported in, including the title-assert step-over and one-dword raw buffer transfers.
+- **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak: typed null descriptors, async pipeline building, argument clamps and per-frame pipeline budgets, the fine timer for GTA VI's audio mixer, and the list of what the menus need (UI runtime, relaunch, low memory placement, commit).
+- **[xcl](https://github.com/ivall/xcl)** by ivall: page-split copies and zero-filled placed uploads, triple-buffered presentation, the resize and memory-wait designs, unknown slots answering instead of failing, the finest timer resolution for choppy audio, XAudio2 creation clean-up and blocking the title's network.
+- **[Xbox2Windows](https://github.com/R0Y00/Xbox2Windows)** by R0Y00: sampler-heap bounds, shader-translation cross-checks, scalar bit-count instructions, flat integer parameters and the derived-pipeline blend patches.
+- **[xbox-emulator](https://github.com/omonkeyz/xbox-emulator)** by omonkeyz: fence handling on device removal, and network blocking.
+- **[OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett)** by californiaAlmonds: rendering fixes and the game-save layouts.
+- **[rebox](https://github.com/puffnfresh/rebox)** by puffnfresh: stalled GPU memory-wait diagnostics and the 2 s watchdog, CPU copies into memory the GPU can't reach, dropping `DispatchX`, and network blocking.
 - **[palmetto](https://github.com/luizwidmer/palmetto)** by luizwidmer: queue slot 35 as a clock calibration, and per-lane wave tests in `xshader`.
-- **[leonida-ce](https://github.com/IAmNotSiob/leonida-ce)** by IAmNotSiob: which extended list options and timestamp writes are safe to ignore or emulate.
+- **[leonida-ce](https://github.com/IAmNotSiob/leonida-ce)** by IAmNotSiob: which extended list options and timestamp writes are safe to ignore or emulate, and the game-save shim layouts.
 - **[KestrelX](https://github.com/Batushn/KestrelX)** by Batushn (MIT): compiling `[WaveSize]` out per wave width so kernels run on the host wave.
 - **[GTA6-BootTest](https://github.com/OnlyMoisties/GTA6-BootTest)** by OnlyMoisties: notes on what later screens need, such as blend state from the render-state block.
 - **[Leonida](https://github.com/ubiquitarianism/leonida)** by ubiquitarianism: shader-translation ports in `xshader`.
 - **[Leonida](https://github.com/LeonidaReforge/Leonida)** by LeonidaReforge: the retail boot chain that sized the device table.
 - ~~**[leonida-anyp5](https://github.com/m3ll0wSm0ke/leonida-anyp5)**: lowering lane reads and writes to subgroup shuffles in `xshader`.~~
+- **Microsoft**: the public GDK headers and documentation (XGameSave, XUser, GameInput, D3D12) that the slot layouts were checked against, and dxc.
 
 ## Licence
 
