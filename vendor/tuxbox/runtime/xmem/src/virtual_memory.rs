@@ -63,8 +63,35 @@ pub(super) unsafe fn host_alloc(address: *const c_void, bytes: usize, kind: u32,
     };
     let base = unsafe { VirtualAlloc2(windows_sys::Win32::System::Threading::GetCurrentProcess(),
         ptr::null(), bytes, kind, protect, &raw mut param, 1) };
-    if base.is_null() { unsafe { VirtualAlloc(address, bytes, kind, protect) } } else { base }
+    if !base.is_null() {
+        return base;
+    }
+    // The GPU window is full: stay below 2^40 anyway, since the title packs
+    // 40-bit addresses (VIctory places all title memory there). Only then the
+    // OS's own choice. TUXBOX_LOW_MEMORY=0 skips this step.
+    if !std::env::var("TUXBOX_LOW_MEMORY").is_ok_and(|v| v.trim() == "0") {
+        let mut requirements = MEM_ADDRESS_REQUIREMENTS {
+            LowestStartingAddress: WINDOW.0 as _, HighestEndingAddress: (LOW_LIMIT - 1) as _, Alignment: alignment,
+        };
+        let mut param = MEM_EXTENDED_PARAMETER {
+            Anonymous1: MEM_EXTENDED_PARAMETER_0 { _bitfield: MemExtendedParameterAddressRequirements as u64 },
+            Anonymous2: MEM_EXTENDED_PARAMETER_1 { Pointer: (&raw mut requirements).cast() },
+        };
+        let low = unsafe { VirtualAlloc2(windows_sys::Win32::System::Threading::GetCurrentProcess(),
+            ptr::null(), bytes, kind, protect, &raw mut param, 1) };
+        static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+            super::loader::log(&format!("reservation of {bytes:#x} bytes outside the GPU window: below 2^40 at {low:?}"));
+        }
+        if !low.is_null() {
+            return low;
+        }
+    }
+    unsafe { VirtualAlloc(address, bytes, kind, protect) }
 }
+
+/// Title pointers are packed into 40 bits.
+pub(super) const LOW_LIMIT: usize = 1 << 40;
 
 pub(super) unsafe fn free_placement(base: *mut c_void) {
     use windows_sys::Win32::System::Memory::{VirtualFree, MEM_RELEASE};

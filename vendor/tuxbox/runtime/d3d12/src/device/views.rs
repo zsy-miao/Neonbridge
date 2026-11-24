@@ -833,7 +833,11 @@ pub(super) unsafe extern "system" fn sampler(
 pub(super) unsafe extern "system" fn sampler_x(
     device: &Device, words: *const u32, handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 ) {
-    if words.is_null() { fail_call(format_args!("null extended sampler")); }
+    if words.is_null() {
+        static NULL: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&NULL, || "null extended sampler skipped".into());
+        return;
+    }
     let w = unsafe { core::slice::from_raw_parts(words, 21) };
     // The raw words of the first calls settle the layout against the reading
     // as a desktop D3D12_SAMPLER_DESC (leonida PR 7115) in one run.
@@ -842,8 +846,22 @@ pub(super) unsafe extern "system" fn sampler_x(
         crate::diagnostics::log_line(format_args!("device slot 61 sampler words {w:08x?}"));
     }
     let comparison = w[16] != D3D12_COMPARISON_FUNC_NEVER.0 as u32 && w[16] != 0;
-    let reduction = if comparison { 1 } else { match w[5] { 0 => 0, 1 => 2, 2 => 3, other => fail_call(format_args!("unsupported sampler reduction {other}")) } };
-    let linear = |filter: u32| match filter { 0 | 1 => 0, 2 => 1, other => fail_call(format_args!("unsupported sampler filter {other}")) };
+    // Unknown reductions and filters fall back to standard / linear (logged
+    // once each) instead of stopping the title; TUXBOX_UNMAPPED=failfast stops.
+    let unknown = |what: &str, value: u32, fallback: i32| -> i32 {
+        if crate::env_toggle!("TUXBOX_UNMAPPED") == Some("failfast") {
+            fail_call(format_args!("unsupported sampler {what} {value}"));
+        }
+        static SEEN: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 32 && !seen.iter().any(|(w, v)| w == what && *v == value) {
+            seen.push((what.into(), value));
+            crate::diagnostics::log_line(format_args!("unsupported sampler {what} {value}; using {fallback}"));
+        }
+        fallback
+    };
+    let reduction = if comparison { 1 } else { match w[5] { 0 => 0, 1 => 2, 2 => 3, other => unknown("reduction", other, 0) } };
+    let linear = |filter: u32| match filter { 0 | 1 => 0, 2 | 3 => 1, other => unknown("filter", other, 1) };
     let bits = if w[1] == 3 && w[2] == 3 { 0x55 } else {
         linear(w[1]) << 4 | linear(w[2]) << 2 | linear(w[3])
     };
