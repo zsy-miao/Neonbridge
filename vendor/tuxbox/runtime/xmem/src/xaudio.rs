@@ -183,8 +183,35 @@ pub(crate) fn lookup(dll: &str, name: &str) -> Option<usize> {
     }
 }
 
+/// XAudio2Create is export #1 of xaudio2_9; Bink2Scarlett.dll imports it by
+/// ordinal for the intro movies' own engine.
+const CREATE_ORDINAL: u16 = 1;
+
+/// Wraps a title DLL's XAudio2 imports (by name and by ordinal), so its
+/// engine gets host arguments too: Bink created its own engine with the
+/// console core mask and flags, and the intro movie sounded bad while the
+/// title's own audio was fine. TUXBOX_XAUDIO_DLLS=0 leaves DLLs alone.
+pub(crate) unsafe fn patch_module(module: H, label: &str) -> usize {
+    if module.is_null() || std::env::var("TUXBOX_XAUDIO_DLLS").is_ok_and(|v| v.trim() == "0") {
+        return 0;
+    }
+    let n = unsafe {
+        crate::loader::patch_module_imports(module.cast(), |d| d.starts_with("xaudio2_9"), &[
+            ("XAudio2Create", create as *const () as usize),
+            ("XAudio2CreateWithVersionInfo", create_version as *const () as usize),
+        ], &[(CREATE_ORDINAL, create as *const () as usize)])
+    };
+    if n > 0 {
+        log(&format!("xaudio2: {n} XAudio2Create import(s) of {label} wrapped (TUXBOX_XAUDIO_DLLS=0 skips)"));
+    }
+    n
+}
+
 /// Called from loader::install (xmem DllMain), after the exe's imports are bound.
 pub(crate) unsafe fn install() {
+    // Bink2Scarlett is bound with the exe, before any late-load hook runs.
+    let bink: Vec<u16> = "bink2scarlett.dll".encode_utf16().chain([0]).collect();
+    unsafe { patch_module(GetModuleHandleW(bink.as_ptr()), "Bink2Scarlett.dll") };
     let patched = unsafe {
         patch_imports(|d| d.starts_with("xaudio2_9"), &[
             ("XAudio2Create", create as *const () as usize),

@@ -106,7 +106,8 @@ fn late_patch(module: Hmod, name: &str) {
     });
     let base = name.rsplit(['\\', '/']).next().unwrap_or(name).to_ascii_lowercase();
     if in_exe_dir && !CONSOLE.contains(&base.as_str()) {
-        let n = unsafe { crate::net::patch_module(module, name) + crate::console_mode::patch_module(module) };
+        let n = unsafe { crate::net::patch_module(module, name) + crate::console_mode::patch_module(module)
+            + crate::xaudio::patch_module(module.cast(), name) };
         if n > 0 {
             log(&format!("late load {name}: {n} import(s) patched (TUXBOX_LATE_PATCH=0 skips this)"));
         }
