@@ -86,27 +86,49 @@ pub fn pixel(shader: &[u8]) -> Option<[u32; 13]> {
                 .iter()
                 .rev()
                 .find(|x| rdna2::clobbers_scalar(x, r))?;
-            if load.dst != [Opnd::Sgpr(r)]
-                || branches
-                    .iter()
-                    .any(|&(from, to)| from < load.offset && to > load.offset && to <= op.offset)
+            if branches
+                .iter()
+                .any(|&(from, to)| from < load.offset && to > load.offset && to <= op.offset)
             {
                 return None;
             }
-            *dst = match (load.mnemonic.as_str(), load.src.as_slice()) {
-                ("s_movk_i32", []) => load.aux.imm as i16 as i32 as u32,
-                ("s_mov_b32", [Opnd::ConstInt(v)]) => *v as u32,
-                ("s_mov_b32", [Opnd::Literal(v)]) => *v,
-                ("s_brev_b32", [Opnd::ConstInt(v)]) => (*v as u32).reverse_bits(),
-                ("s_brev_b32", [Opnd::Literal(v)]) => v.reverse_bits(),
-                _ => return None,
-            };
+            *dst = constant_word(load, r)?;
         }
         if sampler.replace(words).is_some_and(|prior| prior != words) {
             return None;
         }
     }
     descriptor(sampler?, reg, space, 5)
+}
+
+/// The constant `op` leaves in SGPR `r`, if it writes only constants there.
+/// Covers 32-bit moves and the 64-bit pair writes the pipeline-library compute
+/// programs use for sampler words (`s_bfm_b64 s[N:N+1], 2, 54` gives
+/// word0 = 0, word1 = 0x00C00000; `s_mov_b64` for the other pair).
+fn constant_word(op: &rdna2::Insn, r: u8) -> Option<u32> {
+    let [Opnd::Sgpr(base)] = op.dst[..] else { return None };
+    let pair = |value: u64| match r.checked_sub(base)? {
+        0 => Some(value as u32),
+        1 => Some((value >> 32) as u32),
+        _ => None,
+    };
+    match (op.mnemonic.as_str(), op.src.as_slice()) {
+        ("s_movk_i32", []) if base == r => Some(op.aux.imm as i16 as i32 as u32),
+        ("s_mov_b32", [Opnd::ConstInt(v)]) if base == r => Some(*v as u32),
+        ("s_mov_b32", [Opnd::Literal(v)]) if base == r => Some(*v),
+        ("s_brev_b32", [Opnd::ConstInt(v)]) if base == r => Some((*v as u32).reverse_bits()),
+        ("s_brev_b32", [Opnd::Literal(v)]) if base == r => Some(v.reverse_bits()),
+        // Inline constants are sign-extended to 64 bits.
+        ("s_mov_b64", [Opnd::ConstInt(v)]) => pair(*v as u64),
+        // A literal's upper half is unambiguous only when its sign bit is clear.
+        ("s_mov_b64", [Opnd::Literal(v)]) if *v >> 31 == 0 => pair(u64::from(*v)),
+        ("s_bfm_b64", [Opnd::ConstInt(width), Opnd::ConstInt(offset)]) => {
+            let (width, offset) = ((*width as u32) & 63, (*offset as u32) & 63);
+            let mask = if width == 0 { 0 } else { u64::MAX >> (64 - width) };
+            pair(mask << offset)
+        }
+        _ => None,
+    }
 }
 
 fn descriptor(words: [u32; 4], reg: u32, space: u32, visibility: u32) -> Option<[u32; 13]> {
@@ -231,20 +253,12 @@ fn sites_where(isa: &[u8], visibility: u32, partial: bool) -> Option<InlineSampl
             }
             let op = &ops[i];
             if rdna2::clobbers_scalar(op, r) {
-                if op.dst != [Opnd::Sgpr(r)] {
-                    return None;
-                }
                 let value = match (op.mnemonic.as_str(), op.src.as_slice()) {
-                    ("s_movk_i32", []) => Some(op.aux.imm as i16 as i32 as u32),
-                    ("s_mov_b32", [Opnd::ConstInt(v)]) => Some(*v as u32),
-                    ("s_mov_b32", [Opnd::Literal(v)]) => Some(*v),
-                    ("s_brev_b32", [Opnd::ConstInt(v)]) => Some((*v as u32).reverse_bits()),
-                    ("s_brev_b32", [Opnd::Literal(v)]) => Some(v.reverse_bits()),
-                    ("s_mov_b32", [Opnd::Sgpr(src)]) => {
+                    ("s_mov_b32", [Opnd::Sgpr(src)]) if op.dst == [Opnd::Sgpr(r)] => {
                         r = *src;
                         None
                     }
-                    _ => return None,
+                    _ => Some(constant_word(op, r)?),
                 };
                 if let Some(value) = value {
                     if literal.replace(value).is_some_and(|last| last != value) {
