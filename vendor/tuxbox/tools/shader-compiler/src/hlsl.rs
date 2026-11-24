@@ -44,6 +44,8 @@ mod classify_materials;
 mod int16;
 mod norm16;
 mod rounding;
+#[cfg(test)]
+mod perm_tests;
 mod indexed_lane;
 mod particle_sort;
 mod persistent;
