@@ -138,11 +138,53 @@ fn skip_unchanged() -> bool {
     crate::env_toggle!("TUXBOX_SHADOW_SKIP") == Some("1")
 }
 
-/// FNV-1a over 8-byte words of `bytes` at `address` (title memory, readable
-/// while the view lives).
+/// FNV-1a over the committed, readable parts of `bytes` at `address`.
+///
+/// test116 crashed here: an access violation reading reserved but
+/// uncommitted title memory partway through a 0x19800-byte span (the title
+/// decommitted pages under a live view). Each region is checked with
+/// VirtualQuery first; a skipped region mixes its length into the hash so
+/// commits and decommits still change it, and the first skip is logged.
+/// TUXBOX_SHADOW_HASH_COMMITTED=0 reads the whole span as before.
 fn hash(address: u64, bytes: u64) -> u64 {
+    if crate::env_toggle!("TUXBOX_SHADOW_HASH_COMMITTED") == Some("0") {
+        return hash_span(0xcbf2_9ce4_8422_2325, address, bytes);
+    }
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
+    static SKIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut h = 0xcbf2_9ce4_8422_2325u64;
-    // SAFETY: the shadow's title range was imported, so it is committed.
+    let (mut at, end) = (address, address.saturating_add(bytes));
+    while at < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        // SAFETY: VirtualQuery only reads the address space map.
+        let known = unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } != 0;
+        let region_end = if known { (region.BaseAddress as u64).saturating_add(region.RegionSize as u64) } else { 0 };
+        let next = if region_end > at { region_end.min(end) } else { end };
+        let readable = known
+            && region.State == MEM_COMMIT
+            && (region.Protect.0 & (PAGE_GUARD.0 | PAGE_NOACCESS.0)) == 0
+            && region.Protect.0 != 0;
+        if readable {
+            h = hash_span(h, at, next - at);
+        } else {
+            let n = SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "shadow hash: skipped {:#x} bytes at {at:#x} of {address:#x}+{bytes:#x} (state {:#x}, protect {:#x}), skip {}",
+                    next - at, region.State.0, region.Protect.0, n + 1
+                ));
+            }
+            h = (h ^ 0x5eed ^ (next - at)).wrapping_mul(0x100_0000_01b3);
+        }
+        at = next;
+    }
+    h
+}
+
+/// FNV-1a over 8-byte words of a committed span, continuing from `h`.
+fn hash_span(mut h: u64, address: u64, bytes: u64) -> u64 {
+    // SAFETY: the caller checked the span is committed and readable (or
+    // TUXBOX_SHADOW_HASH_COMMITTED=0 trusts the import).
     let data = unsafe { core::slice::from_raw_parts(address as *const u8, bytes as usize) };
     let mut words = data.chunks_exact(8);
     for w in &mut words {
