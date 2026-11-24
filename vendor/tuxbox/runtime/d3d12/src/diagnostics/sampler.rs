@@ -121,11 +121,19 @@ fn run() {
     let mut stack = vec![0usize; STACK_WORDS];
     let mut list: Vec<Module> = Vec::new();
     let mut refreshed: Option<std::time::Instant> = None;
+    let mut audio_modules = 0usize;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(2));
         if refreshed.is_none_or(|at| at.elapsed().as_secs() >= 2) {
             list = modules();
             refreshed = Some(std::time::Instant::now());
+            // Which host audio path the title opened (it has no audio provider of ours in its output).
+            let sound: Vec<&str> = list.iter().map(|m| m.name.as_str())
+                .filter(|n| ["audio", "mmdevapi", "avrt", "dsound", "winmm", "mfplat", "bink"].iter().any(|k| n.contains(k))).collect();
+            if sound.len() != audio_modules {
+                audio_modules = sound.len();
+                super::log_line(format_args!("audio modules loaded: {}", sound.join(", ")));
+            }
             let mut shared = MODULES.lock().unwrap_or_else(|e| e.into_inner());
             *shared = list.iter().map(|m| Module { base: m.base, end: m.end, name: m.name.clone(), title: m.title }).collect();
         }

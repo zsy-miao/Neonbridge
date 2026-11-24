@@ -2,6 +2,7 @@
 mod commands;
 mod dsp;
 mod opus;
+mod stats;
 
 use commands::{Completion, Stream};
 use std::{
@@ -210,12 +211,19 @@ pub unsafe extern "system" fn XApuEnqueueCommand(
         return BAD_STREAM;
     };
     if state.pending >= connection.depth {
+        stats::note(handle, stream, 0, 0.0, 0, true, false);
         return QUEUE_FULL;
     }
+    let started = std::time::Instant::now();
     let completion = match unsafe { state.submit(command, &connection.arena) } {
         Ok(completion) => completion,
-        Err(status) => return status,
+        Err(status) => {
+            stats::note(handle, stream, 0, 0.0, 0, false, true);
+            return status;
+        }
     };
+    stats::note(handle, stream, completion.kind(), started.elapsed().as_secs_f64() * 1e3,
+        completion.decoded_bytes() / 4 / state.channels().max(1), false, completion.failed());
     state.pending += 1;
     connection.results.push_back(completion);
     if connection.event != 0 {

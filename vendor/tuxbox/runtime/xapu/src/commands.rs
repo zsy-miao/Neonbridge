@@ -23,6 +23,13 @@ impl Completion {
     pub(super) fn kind(&self) -> u32 {
         self.word(0)
     }
+    /// Diagnostics: PCM bytes a decode command produced (0 for other commands).
+    pub(super) fn decoded_bytes(&self) -> usize {
+        if self.kind() == 3 && self.result == 0 { self.word(52) as usize } else { 0 }
+    }
+    pub(super) fn failed(&self) -> bool {
+        self.result != 0
+    }
     pub(super) fn stream(&self) -> usize {
         self.word(4) as usize
     }
@@ -60,6 +67,9 @@ fn timestamp() -> u64 {
 }
 
 impl Stream {
+    pub(super) fn channels(&self) -> usize {
+        self.channels
+    }
     // The caller supplies the packet of the size specified by its command code.
     pub(super) unsafe fn submit(
         &mut self,
