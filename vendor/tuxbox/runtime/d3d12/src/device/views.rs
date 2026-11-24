@@ -128,13 +128,17 @@ fn cbv_fallback() -> bool {
 }
 
 fn cbv_fell_back(address: u64, bytes: u32, code: windows::core::HRESULT, copied: bool) {
+    view_fell_back("CBV", address, u64::from(bytes), code, copied);
+}
+
+fn view_fell_back(what: &str, address: u64, bytes: u64, code: windows::core::HRESULT, copied: bool) {
     static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if logged_fallback(n) {
         crate::diagnostics::log_line(format_args!(
-            "CBV {address:#x}+{bytes} not importable ({code:?}) from title RVA {:#x}: {} ({n} so far; TUXBOX_CBV_FALLBACK=0 fails fast)",
+            "{what} {address:#x}+{bytes} not importable ({code:?}) from title RVA {:#x}: {} ({n} view fallbacks so far; TUXBOX_CBV_FALLBACK=0 fails fast)",
             crate::survey::title_rva().unwrap_or(0),
-            if copied { "read from a copy" } else { "null CBV" }));
+            if copied { "read from a copy" } else { "null view" }));
     }
 }
 
@@ -597,10 +601,29 @@ pub(super) unsafe extern "system" fn address_srv(
             unsafe { VirtualQuery(Some(desc.address as _), &mut r, size_of_val(&r)) };
             (r.AllocationBase.addr(), r.BaseAddress.addr(), r.RegionSize, r.State.0, r.Protect.0)
         };
-        let entry = buffer_at(device, desc.address, resource_desc.Width, placement_stride, true)
-            .unwrap_or_else(|e| fail_call(format_args!("import SRV at {:#x}, {} bytes stride={stride} fmt={} first={} count={} failed {:?} ({}; region {:#x?}, placement stride {})",
-                desc.address, resource_desc.Width, view.Format.0, buffer.FirstElement, buffer.NumElements, e.code(), mode.name(), region(), placement_stride)))
-            .expect("required buffer import");
+        let entry = match buffer_at(device, desc.address, resource_desc.Width, placement_stride, true) {
+            Ok(entry) => entry.expect("required buffer import"),
+            Err(e) if !cbv_fallback() => fail_call(format_args!("import SRV at {:#x}, {} bytes stride={stride} fmt={} first={} count={} failed {:?} ({}; region {:#x?}, placement stride {})",
+                desc.address, resource_desc.Width, view.Format.0, buffer.FirstElement, buffer.NumElements, e.code(), mode.name(), region(), placement_stride)),
+            // Title pages no heap opens (views that would not join): read the
+            // buffer from a copy that starts at the guest VA, else bind a
+            // null view; logged, never a fail-fast (TUXBOX_CBV_FALLBACK=0).
+            Err(e) => match shadow::view(device, desc.address, resource_desc.Width.max(1)) {
+                Ok(copy) => {
+                    view_fell_back("address SRV", desc.address, resource_desc.Width, e.code(), true);
+                    copy
+                }
+                Err(_) => {
+                    view_fell_back("address SRV", desc.address, resource_desc.Width, e.code(), false);
+                    device.state.imported_views.store(handle.ptr, None);
+                    device.state.blas.views.store(handle.ptr, None);
+                    device.state.placements.views.set(handle.ptr, None, false);
+                    super::view_formats::write(handle.ptr, 0);
+                    unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
+                    return;
+                }
+            },
+        };
         let offset = entry.offset(desc.address);
         if offset.is_multiple_of(u64::from(stride)) {
             view.Anonymous.Buffer.FirstElement = buffer.FirstElement + offset / u64::from(stride);
