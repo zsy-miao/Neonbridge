@@ -281,9 +281,35 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     }
 }
 
+/// Buffers that command lists bound recently. texture_addresses holds only
+/// weak entries, so a bind that kept just the native resource let its
+/// TextureAddress (and any shadow copy) die at once: every vertex, index and
+/// value-write bind re-imported the pages, about 5-8 ms each (test9: 140 of
+/// 156 ms/frame), and a shadow made for a bind was gone before its
+/// submission refreshed it. Holding the most recent ones keeps both alive.
+#[derive(Default)]
+pub(crate) struct RecentBuffers(std::sync::Mutex<std::collections::VecDeque<std::sync::Arc<TextureAddress>>>);
+
+impl RecentBuffers {
+    const CAPACITY: usize = 1024;
+
+    fn keep(&self, buffer: &std::sync::Arc<TextureAddress>) {
+        let mut recent = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Hits mostly repeat a buffer bound moments ago.
+        if recent.iter().rev().take(64).any(|held| std::sync::Arc::ptr_eq(held, buffer)) {
+            return;
+        }
+        if recent.len() >= Self::CAPACITY {
+            recent.pop_front();
+        }
+        recent.push_back(buffer.clone());
+    }
+}
+
 pub(crate) unsafe fn command_buffer_address(device: *mut c_void, address: u64, bytes: u64) -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
     let device = unsafe { &*device.cast::<Device>() };
     let Some(buffer) = buffer_at(device, address, bytes, 1, false)? else { return Ok((None, address)) };
+    device.state.recent_buffers.keep(&buffer);
     let host = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
     Ok((Some(buffer.native.clone()), host))
 }

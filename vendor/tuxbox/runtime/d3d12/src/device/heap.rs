@@ -802,9 +802,26 @@ impl PagePools {
     }
 
     fn import(&self, device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
+        // A range the host refused is refused again for 5 s without asking:
+        // each retry cost an OpenExistingHeapFromAddress1 before the caller
+        // fell back to its shadow copy. The window lets a remapped range in.
+        static REFUSED: std::sync::Mutex<Vec<(u64, u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
         let open = || -> windows::core::Result<Arc<ImportedHeap>> {
+            {
+                let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+                refused.retain(|(.., at)| at.elapsed() < std::time::Duration::from_secs(5));
+                if refused.iter().any(|&(b, s, _)| b == base && s == size) {
+                    return Err(windows::Win32::Foundation::E_INVALIDARG.into());
+                }
+            }
             let native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) }
-                .inspect_err(|e| import_failure("OpenExistingHeapFromAddress1", base, size, e))?;
+                .inspect_err(|e| {
+                    import_failure("OpenExistingHeapFromAddress1", base, size, e);
+                    if e.code() == windows::Win32::Foundation::E_INVALIDARG {
+                        let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+                        if refused.len() < 4096 { refused.push((base, size, std::time::Instant::now())); }
+                    }
+                })?;
             Ok(Arc::new(ImportedHeap { native, _pin: pin }))
         };
         if size == u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT) {
