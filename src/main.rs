@@ -29,7 +29,10 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
                       [--build-only | --stage-only | --build-shaders | --restore] [-- <game args>]
   --game       dumped package folder (holds MicrosoftGame.Config and the exe)
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
-  providers build into %LOCALAPPDATA%/6ixpack/tuxbox
+  providers build into %LOCALAPPDATA%/6ixpack/tuxbox; a release build ships them
+  prebuilt in a tuxbox folder beside neonbridge.exe and builds nothing
+  --package-release DIR  build everything and lay out a portable release in DIR,
+               zipped as neonbridge-<version>-win-x64.zip beside it
   --exe        executable name (default: the MicrosoftGame.Config Executable, else the only x64 exe)
   --log        game log file (default %LOCALAPPDATA%/6ixpack/logs/<exe>_<unix time>.log)
   --build-only build the providers, touch nothing in the game folder
@@ -46,7 +49,8 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
   --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
   --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
   ctl <command>  control the running game over a local pipe (neonbridge ctl help)
-Needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target.";
+Building needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target;
+a release with a prebuilt tuxbox folder needs neither.";
 
 /// (cargo package, output DLL, export table relative to the TuxBox root, extra import libs, extra C++ sources)
 const PROVIDERS: &[(&str, &str, &str, &[&str], &[&str])] = &[
@@ -103,6 +107,10 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             }
             Some("--timeout") => timeout = Some(val("--timeout")?.to_string_lossy().parse::<f64>().map_err(|e| format!("--timeout: {e}"))?),
             Some("--summary") => return print_summary(Path::new(&val("--summary")?)),
+            Some("--package-release") => {
+                let dir = PathBuf::from(val("--package-release")?);
+                return package_release(tuxbox.unwrap_or_else(baked_tuxbox), &dir);
+            }
             Some("--sandbox") => sandbox = true,
             Some("--cdb") => {
                 cdb_extra = Some(fs::read_to_string(val("--cdb")?)?);
@@ -127,9 +135,17 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if mode == Mode::Restore {
         return restore(&game.ok_or(USAGE)?);
     }
-    let tuxbox = tuxbox.unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/vendor/tuxbox")));
-    if !tuxbox.join("runtime/d3d12/d3d12_xs.def").is_file() {
-        return Err(format!("{} is not a TuxBox provider source (no runtime/d3d12/d3d12_xs.def)", tuxbox.display()).into());
+    // A release ships the providers prebuilt beside the exe: use them unless a
+    // source was named (--tuxbox or TUXBOX_ROOT).
+    let prebuilt = if tuxbox.is_none() { prebuilt_dir() } else { None };
+    let tuxbox = tuxbox.unwrap_or_else(baked_tuxbox);
+    if prebuilt.is_none() && !tuxbox.join("runtime/d3d12/d3d12_xs.def").is_file() {
+        return Err(if tuxbox == baked_tuxbox() {
+            format!("no prebuilt providers in a tuxbox folder beside neonbridge.exe, and the source it was built from ({}) is gone; \
+                unpack the full release zip, or pass --tuxbox <TuxBox checkout> (or set TUXBOX_ROOT)", tuxbox.display())
+        } else {
+            format!("{} is not a TuxBox provider source (no runtime/d3d12/d3d12_xs.def)", tuxbox.display())
+        }.into());
     }
     let game = if mode == Mode::BuildOnly { game } else { Some(game.ok_or(USAGE)?) };
     let target = match &game {
@@ -141,7 +157,14 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         splash::show("Building the TuxBox runtime");
     }
     let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
-    let dlls = build_providers(&tuxbox, &out)?;
+    let dlls = match &prebuilt {
+        Some(dir) => {
+            println!("[launch] prebuilt providers: {} (nothing to build)", dir.display());
+            fs::create_dir_all(&out)?;
+            PROVIDERS.iter().map(|p| dir.join(p.1)).collect()
+        }
+        None => build_providers(&tuxbox, &out)?,
+    };
     splash::status(0.3, "Staging the runtime beside the game");
     if mode == Mode::BuildOnly {
         println!("[launch] built {} providers in {}", dlls.len(), out.display());
@@ -153,6 +176,9 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let mut dlls = dlls;
     if let Some(dxc) = shaders::find_dxc() {
         dlls.extend(["dxcompiler.dll", "dxil.dll"].map(|n| dxc.with_file_name(n)).into_iter().filter(|p| p.is_file()));
+    } else if let Some(dir) = &prebuilt {
+        // The release's redistributable copies (Windows SDK Redist\D3D\x64).
+        dlls.extend(["dxcompiler.dll", "dxil.dll"].map(|n| dir.join(n)).into_iter().filter(|p| p.is_file()));
     }
     if mode != Mode::BuildShaders {
         stage(&game, &dlls)?;
@@ -164,7 +190,11 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     splash::status(0.4, "Preparing shaders");
     // Runtime shader worker (TuxBox runtime_shaders.py on Windows): xshader + SDK dxc.
     let worker = if std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() == Ok("0") { None } else {
-        match (build_xshader(&tuxbox, &out), shaders::find_dxc()) {
+        let xshader = match prebuilt.as_ref().map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
+            Some(prebuilt) => Ok(prebuilt),
+            None => build_xshader(&tuxbox, &out),
+        };
+        match (xshader, shaders::find_dxc()) {
             (Ok(xshader), Some(dxc)) => {
                 let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
                 // Build every program in shaders.rpf into the prewarm archive (once per shaders.rpf).
@@ -337,6 +367,94 @@ fn wait_for_image(exe: &Path) {
     if waited {
         println!("[launch] {name} ended {:.1}s later", t.elapsed().as_secs_f64());
     }
+}
+
+/// The vendored TuxBox source this exe was built from (absent on other PCs).
+fn baked_tuxbox() -> PathBuf {
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/vendor/tuxbox"))
+}
+
+/// `<exe dir>/tuxbox` when it holds every provider DLL (a release layout).
+fn prebuilt_dir() -> Option<PathBuf> {
+    if std::env::var("NEONBRIDGE_PREBUILT").is_ok_and(|v| v.trim() == "0") {
+        return None;
+    }
+    let dir = std::env::current_exe().ok()?.parent()?.join("tuxbox");
+    PROVIDERS.iter().all(|p| dir.join(p.1).is_file()).then_some(dir)
+}
+
+const RELEASE_README: &str = r"Neonbridge (portable)
+
+Run neonbridge.exe, pick the dumped game folder (it holds MicrosoftGame.Config)
+or its executable, and press Launch. Nothing is built: the runtime DLLs in
+tuxbox\ are copied beside the game exe (originals are kept in _6ixpack_orig\;
+neonbridge --restore --game <dir> puts them back).
+
+No game files are included; you need your own dump.
+
+Shaders: the runtime shader worker needs dxc.exe, which may not be
+redistributed. Install the Windows 10/11 SDK, or unpack a DirectX Shader
+Compiler release (github.com/microsoft/DirectXShaderCompiler) and set the DXC
+environment variable to its bin\x64\dxc.exe. tuxbox\dxcompiler.dll and
+tuxbox\dxil.dll are the Windows SDK's redistributable copies (Redist\D3D\x64).
+
+Options: neonbridge --help. NEONBRIDGE_WINDOWED=1 starts in a window instead of
+borderless fullscreen; Alt+Enter or F11 toggles.
+
+Licences: LICENSE (Neonbridge), tuxbox\LICENSE (TuxBox runtime),
+tuxbox\NOTICE-acphal (LGPL xma code in AcpHal.dll).
+";
+
+/// Build the providers and xshader into `<dir>/build`, lay out a portable
+/// release in `<dir>/neonbridge-<version>-win-x64` and zip it beside it.
+fn package_release(tuxbox: PathBuf, dir: &Path) -> Result<(), Box<dyn Error>> {
+    if !tuxbox.join("runtime/d3d12/d3d12_xs.def").is_file() {
+        return Err(format!("{} is not a TuxBox provider source; pass --tuxbox", tuxbox.display()).into());
+    }
+    let name = format!("neonbridge-{}-win-x64", env!("CARGO_PKG_VERSION"));
+    let build = dir.join("build");
+    let stage = dir.join(&name);
+    let zip = dir.join(format!("{name}.zip"));
+    fs::create_dir_all(&build)?;
+    let dlls = build_providers(&tuxbox, &build)?;
+    let xshader = build_xshader(&tuxbox, &build)?;
+    if stage.exists() {
+        fs::remove_dir_all(&stage)?;
+    }
+    let runtime = stage.join("tuxbox");
+    fs::create_dir_all(&runtime)?;
+    fs::copy(std::env::current_exe()?, stage.join("neonbridge.exe"))?;
+    for dll in &dlls {
+        fs::copy(dll, runtime.join(dll.file_name().unwrap()))?;
+    }
+    fs::copy(&xshader, runtime.join("xshader.exe"))?;
+    // dxcompiler.dll and dxil.dll are on the Windows SDK redist list (Redist\D3D\x64);
+    // dxc.exe is not, so it is never shipped.
+    let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+    let redist = Path::new(&pf86).join(r"Windows Kits\10\Redist\D3D\x64");
+    for n in ["dxcompiler.dll", "dxil.dll"] {
+        match fs::copy(redist.join(n), runtime.join(n)) {
+            Ok(_) => {}
+            Err(e) => println!("[package] {n} not shipped ({}: {e})", redist.display()),
+        }
+    }
+    let root = tuxbox.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_default();
+    for (from, to) in [
+        (root.join("LICENSE"), stage.join("LICENSE")),
+        (tuxbox.join("LICENSE"), runtime.join("LICENSE")),
+        (tuxbox.join("runtime/acphal/NOTICE"), runtime.join("NOTICE-acphal")),
+    ] {
+        fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    }
+    fs::write(stage.join("README.txt"), RELEASE_README.replace('\n', "\r\n"))?;
+    let _ = fs::remove_file(&zip);
+    check(
+        Command::new("powershell").args(["-NoProfile", "-Command", "Compress-Archive -Path $env:NB_STAGE -DestinationPath $env:NB_ZIP -CompressionLevel Optimal"])
+            .env("NB_STAGE", &stage).env("NB_ZIP", &zip),
+        "Compress-Archive",
+    )?;
+    println!("[package] {} ({} providers, xshader) -> {}", stage.display(), dlls.len(), zip.display());
+    Ok(())
 }
 
 fn env_path(k: &str) -> Option<PathBuf> {
