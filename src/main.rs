@@ -48,7 +48,7 @@ Needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc 
 /// (cargo package, output DLL, export table relative to the TuxBox root, extra import libs, extra C++ sources)
 const PROVIDERS: &[(&str, &str, &str, &[&str], &[&str])] = &[
     ("tuxbox-xmem-http", "tuxbox_xhttp.dll", "runtime/xmem/xhttp.def", &["winhttp.lib"], &[]),
-    ("tuxbox-xmem", "xmem.dll", "runtime/xmem/xmem.def", &["tuxbox_xhttp.lib", "ole32.lib", "user32.lib", "gdi32.lib", "/include:DllMain"], &[]), // own DllMain must win over the libcmt stub; forwards XMemSetWinHttpHooks to tuxbox_xhttp
+    ("tuxbox-xmem", "xmem.dll", "runtime/xmem/xmem.def", &["tuxbox_xhttp.lib", "ole32.lib", "user32.lib", "gdi32.lib", "advapi32.lib", "/include:DllMain"], &[]), // own DllMain must win over the libcmt stub; forwards XMemSetWinHttpHooks to tuxbox_xhttp
     ("tuxbox-acphal", "AcpHal.dll", "runtime/acphal/AcpHal.def", &[], &[]),
     ("tuxbox-xapu", "xapu.dll", "runtime/xapu/xapu.def", &[], &[]),
     ("tuxbox-xapu", "chad.dll", "runtime/xapu/chad.def", &[], &[]),
@@ -652,11 +652,16 @@ fn print_summary(log: &Path) -> Result<(), Box<dyn Error>> {
 /// written beside the provider DLL.
 fn hot_lines(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
-    let Some(last) = lines.iter().rposition(|l| l.contains("hot thread ")) else { return Vec::new() };
-    let first = lines[..last].iter().rposition(|l| !l.contains("hot thread ")).map_or(0, |i| i + 1);
+    let last = lines.iter().rposition(|l| l.contains("hot thread ")).unwrap_or(usize::MAX);
+    let first = if last == usize::MAX { usize::MAX } else { lines[..last].iter().rposition(|l| !l.contains("hot thread ")).map_or(0, |i| i + 1) };
     let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
     let mut maps: HashMap<String, Option<Vec<(u64, String)>>> = HashMap::new();
-    lines[first..=last].iter().filter_map(|l| l.split_once("hot thread ")).map(|(_, rest)| {
+    // Crash records and hang stacks (every one) and the last heartbeat's hot threads.
+    let picked: Vec<(&str, &str)> = lines.iter().enumerate()
+        .filter_map(|(i, l)| ["crash record: ", "hang: "].iter().find_map(|k| l.split_once(k).map(|(_, r)| (*k, r)))
+            .or_else(|| (i >= first && i <= last).then(|| l.split_once("hot thread ").map(|(_, r)| ("hot thread ", r))).flatten()))
+        .collect();
+    picked.into_iter().map(|(kind, rest)| {
         let named: Vec<String> = rest.split(' ').map(|word| {
             let core = word.trim_end_matches([',', ';']);
             let tail = &word[core.len()..];
@@ -668,7 +673,7 @@ fn hot_lines(text: &str) -> Vec<String> {
                 _ => word.to_owned(),
             }
         }).collect();
-        format!("hot thread {}", named.join(" "))
+        format!("{kind}{}", named.join(" "))
     }).collect()
 }
 

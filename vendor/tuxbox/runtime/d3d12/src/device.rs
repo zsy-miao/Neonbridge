@@ -1051,6 +1051,7 @@ pub(crate) const DEVICE_INTERFACES: &[GUID] = &[
 /// a cleared, writable output pointer for the new guest device reference.
 pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> HRESULT {
     crate::dred::configure();
+    crate::diagnostics::crash::install();
     let mut native = None;
     // SAFETY: The public factory validated its arguments. A null adapter
     // selects D3D12's default, otherwise it remains borrowed for this call.

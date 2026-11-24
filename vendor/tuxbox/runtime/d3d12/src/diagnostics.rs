@@ -554,6 +554,7 @@ pub(crate) mod gpu_clock {
 /// GetThreadTimes deltas between heartbeats: says whether a title thread is
 /// CPU-bound or the frame is spent waiting.
 pub(crate) mod audio;
+pub(crate) mod crash;
 pub(crate) mod sampler;
 
 pub(crate) mod threads {
@@ -568,6 +569,20 @@ pub(crate) mod threads {
     };
 
     static PREV: Mutex<Option<HashMap<u32, u64>>> = Mutex::new(None);
+
+    /// The thread's description, or "?".
+    pub(crate) fn name_of(tid: u32) -> String {
+        unsafe {
+            let Ok(thread) = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, tid) else { return "?".into() };
+            let mut name = String::new();
+            if let Ok(desc) = GetThreadDescription(thread) {
+                name = desc.to_string().unwrap_or_default();
+                let _ = LocalFree(Some(HLOCAL(desc.0.cast())));
+            }
+            let _ = CloseHandle(thread);
+            if name.is_empty() { "?".into() } else { name }
+        }
+    }
 
     fn ticks(t: FILETIME) -> u64 { (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime) }
 

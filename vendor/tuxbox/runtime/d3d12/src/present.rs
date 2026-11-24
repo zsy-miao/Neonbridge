@@ -78,6 +78,7 @@ impl Presentation {
         let status = chain.present(queue, source, &desc)?;
         if status == S_OK {
             overlay::frame();
+            crate::diagnostics::crash::presented();
             crate::diagnostics::presented(desc.Width, desc.Height);
         }
         Ok(status)

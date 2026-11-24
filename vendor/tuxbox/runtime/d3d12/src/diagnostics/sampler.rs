@@ -28,7 +28,7 @@ const STACK_WORDS: usize = 2048;
 
 type Chain = [usize; DEPTH];
 
-struct Module {
+pub(crate) struct Module {
     base: usize,
     end: usize,
     name: String,
@@ -60,7 +60,7 @@ pub(crate) fn watch(threads: &[(u32, String)]) {
     });
 }
 
-fn modules() -> Vec<Module> {
+pub(crate) fn modules() -> Vec<Module> {
     let mut list = Vec::new();
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_string_lossy().to_lowercase()));
     let exe = std::env::current_exe().ok().map(|p| p.to_string_lossy().to_lowercase());
@@ -87,14 +87,14 @@ fn modules() -> Vec<Module> {
     list
 }
 
-fn module_of(list: &[Module], address: usize) -> Option<&Module> {
+pub(crate) fn module_of(list: &[Module], address: usize) -> Option<&Module> {
     let i = list.partition_point(|m| m.base <= address);
     list.get(i.checked_sub(1)?).filter(|m| address < m.end)
 }
 
 /// True when the bytes before `address` are a call, so the address can be a
 /// return address rather than a stale code pointer.
-fn follows_call(module: &Module, address: usize) -> bool {
+pub(crate) fn follows_call(module: &Module, address: usize) -> bool {
     if address < module.base + 8 {
         return false;
     }
@@ -104,7 +104,7 @@ fn follows_call(module: &Module, address: usize) -> bool {
     b[2] == 0xe8 || indirect(5) || indirect(4) || indirect(3) || indirect(1) || indirect(0)
 }
 
-fn function_start(address: usize) -> usize {
+pub(crate) fn function_start(address: usize) -> usize {
     let mut image = 0u64;
     // SAFETY: looks the address up in the loaded images' unwind tables.
     let entry = unsafe { RtlLookupFunctionEntry(address as u64, &mut image, None) };
@@ -220,7 +220,7 @@ fn run() {
     }
 }
 
-fn label(list: &[Module], address: usize) -> String {
+pub(crate) fn label(list: &[Module], address: usize) -> String {
     match module_of(list, address) {
         Some(module) => format!("{}+{:#x}", module.name, address - module.base),
         None => format!("{address:#x}"),

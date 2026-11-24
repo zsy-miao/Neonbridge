@@ -48,6 +48,8 @@ pub(crate) fn fail_call(reason: std::fmt::Arguments<'_>) -> ! {
         Some(rva) => format!("Project TuxBox: {reason}, title return RVA {rva:#x}\n\0"),
         None => format!("Project TuxBox: {reason}\n\0"),
     };
+    // Fail-fast skips exception filters: write the crash record here.
+    crate::diagnostics::crash::record_here(&format!("fail-fast: {}", message.trim_end_matches(char::is_control)));
     unsafe {
         OutputDebugStringA(PCSTR(message.as_ptr()));
         RaiseFailFastException(None, None, 0);
