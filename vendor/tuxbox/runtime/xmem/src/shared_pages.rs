@@ -248,3 +248,34 @@ pub(super) fn split(base: usize, bytes: usize) -> Result<(), u32> {
         Ok(())
     }
 }
+
+/// Neonbridge: placeholders coalesce only inside one OS reservation, so a
+/// range whose unmapped placeholders (`pieces`, each [a, b)) come from two
+/// reservations (a joined range and the next page, Err(87)) is re-reserved:
+/// every placeholder in it is released and one new placeholder reserved over
+/// [lo, hi). On failure the original placeholders are reserved again.
+/// TUXBOX_JOIN_RERESERVE=0 leaves such ranges unjoined (shadow copies).
+pub(super) fn re_reserve(lo: usize, hi: usize, pieces: &[(usize, usize)]) -> Result<(), u32> {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("TUXBOX_JOIN_RERESERVE").is_none_or(|v| v != "0")) {
+        return Err(87);
+    }
+    let restore = |freed: &[(usize, usize)]| {
+        for &(a, b) in freed {
+            let _ = reserve(a as _, b - a);
+        }
+    };
+    for (i, &(a, _)) in pieces.iter().enumerate() {
+        if unsafe { VirtualFree(a as _, 0, MEM_RELEASE) } == 0 {
+            let e = unsafe { GetLastError() };
+            restore(&pieces[..i]);
+            return Err(e);
+        }
+    }
+    if reserve(lo as _, hi - lo).is_null() {
+        let e = unsafe { GetLastError() };
+        restore(pieces);
+        return Err(e);
+    }
+    Ok(())
+}

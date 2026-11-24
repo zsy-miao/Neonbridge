@@ -969,7 +969,13 @@ impl Pool {
                 if let Err(e) = shared_pages::unmap(a) { undo(unmapped)?; return Err(e); }
                 unmapped += 1;
             }
-            if let Err(e) = shared_pages::coalesce_range(lo, hi - lo) { undo(unmapped)?; return Err(e); }
+            if let Err(e) = shared_pages::coalesce_range(lo, hi - lo) {
+                // Placeholders of two reservations never coalesce: re-reserve
+                // the range as one placeholder instead.
+                let again = if e == 87 { shared_pages::re_reserve(lo, hi, &pieces) } else { Err(e) };
+                crate::loader::log(&format!("join range {lo:#x}..{hi:#x}: coalesce Err({e}); re-reserve {again:?}"));
+                if let Err(e) = again { undo(unmapped)?; return Err(e); }
+            }
             if let Err(e) = section.map_range(offset, lo, hi - lo) {
                 for &(a, b) in &pieces[..pieces.len() - 1] { shared_pages::split(a, b - a)?; }
                 undo(unmapped)?;
