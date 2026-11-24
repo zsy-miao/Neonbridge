@@ -51,6 +51,9 @@ struct Table {
     /// Host allocators of released guests kept until no list references them
     /// and their submissions are done.
     orphans: Vec<Host>,
+    /// Host allocators with a submission no fence could track: never idle,
+    /// never reset (Xbox2Windows a14064ec).
+    untracked: std::collections::HashSet<usize>,
 }
 
 // SAFETY: D3D12 objects are free-threaded; the table is behind a mutex.
@@ -73,6 +76,27 @@ fn done(pending: &mut Vec<(ID3D12Fence, u64)>) -> bool {
 
 fn referenced(lists: &HashMap<usize, usize>, host: usize) -> bool {
     lists.values().any(|&h| h == host)
+}
+
+/// TUXBOX_ALLOC_UNTRACKED=0: a submission whose fence could not be made or
+/// signalled leaves its allocators looking idle, as before.
+fn keep_untracked() -> bool {
+    crate::env_toggle!("TUXBOX_ALLOC_UNTRACKED") != Some("0")
+}
+
+/// A submission of these host allocators could not be tracked: an idle
+/// look would let a Reset wipe a recording the GPU may still run.
+fn untrack(t: &mut Table, hosts: &[usize], why: &str) {
+    if !keep_untracked() {
+        return;
+    }
+    t.untracked.extend(hosts.iter().copied());
+    static LOGGED: AtomicU64 = AtomicU64::new(0);
+    if LOGGED.fetch_add(1, Ordering::Relaxed) < 4 {
+        crate::diagnostics::log_line(format_args!(
+            "allocator submission not tracked ({why}): {} host allocators are never reset again ({} in all; TUXBOX_ALLOC_UNTRACKED=0 treats them as idle)",
+            hosts.len(), t.untracked.len()));
+    }
 }
 
 /// The host allocator a list Reset on `guest` records on.
@@ -112,6 +136,7 @@ pub(crate) fn submitted(queue: &ID3D12CommandQueue, lists: &[usize]) {
             .and(device)
             .and_then(|d| unsafe { d.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) }.ok())
         else {
+            untrack(&mut t, &hosts, "no fence for the queue");
             return;
         };
         t.queues.insert(q, (fence, 0));
@@ -122,6 +147,7 @@ pub(crate) fn submitted(queue: &ID3D12CommandQueue, lists: &[usize]) {
         (entry.0.clone(), entry.1)
     };
     if unsafe { queue.Signal(&fence, value) }.is_err() {
+        untrack(&mut t, &hosts, "Signal failed");
         return;
     }
     for host in hosts {
@@ -178,8 +204,11 @@ pub(crate) fn released(guest: &Allocator, overflow: Vec<ID3D12CommandAllocator>)
 
 /// Drop orphaned host allocators that are idle.
 fn prune(t: &mut Table) {
-    let lists = &t.lists;
-    t.orphans.retain_mut(|h| referenced(lists, h.allocator.as_raw() as usize) || !done(&mut h.pending));
+    let (lists, untracked) = (&t.lists, &t.untracked);
+    t.orphans.retain_mut(|h| {
+        let raw = h.allocator.as_raw() as usize;
+        referenced(lists, raw) || untracked.contains(&raw) || !done(&mut h.pending)
+    });
 }
 
 static SWAPS: AtomicU64 = AtomicU64::new(0);
@@ -200,12 +229,12 @@ pub(crate) fn reset(guest: &Allocator) -> Option<windows::core::HRESULT> {
     let (current_raw, busy) = match &mut g.current {
         Some(h) => {
             let raw = h.allocator.as_raw() as usize;
-            (raw, referenced(&t.lists, raw) || !done(&mut h.pending))
+            (raw, referenced(&t.lists, raw) || t.untracked.contains(&raw) || !done(&mut h.pending))
         }
         None => {
             let raw = guest.native.as_raw() as usize;
             let pending = t.native_pending.entry(raw).or_default();
-            (raw, referenced(&t.lists, raw) || !done(pending))
+            (raw, referenced(&t.lists, raw) || t.untracked.contains(&raw) || !done(pending))
         }
     };
     if !busy {
@@ -222,7 +251,7 @@ pub(crate) fn reset(guest: &Allocator) -> Option<windows::core::HRESULT> {
     };
     let idle = g.aside.iter_mut().position(|h| {
         let raw = h.allocator.as_raw() as usize;
-        !referenced(&t.lists, raw) && done(&mut h.pending)
+        !referenced(&t.lists, raw) && !t.untracked.contains(&raw) && done(&mut h.pending)
     });
     let next = match idle {
         Some(i) => {
