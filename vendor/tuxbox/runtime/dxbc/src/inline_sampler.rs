@@ -268,18 +268,8 @@ fn states(isa: &[u8], visibility: u32, skip: bool, describable: bool) -> Option<
         }
     }
     // Accept a literal only if every reaching definition supplies exactly
-    // that value, including loop backedges and moves between SGPRs. Words
-    // built from literals by s_and/s_or/s_andn2 fold to their constant
-    // (computed S# words, an AnyPS5 idea reimplemented).
-    fn reaching(ops: &[rdna2::Insn], incoming: &[Vec<usize>], pc: usize, reg: u8, depth: u32) -> Option<u32> {
-        let operand = |at: usize, o: &Opnd| -> Option<u32> {
-            match *o {
-                Opnd::ConstInt(v) => Some(v as u32),
-                Opnd::Literal(v) => Some(v),
-                Opnd::Sgpr(s) if depth < 8 => reaching(ops, incoming, at, s, depth + 1),
-                _ => None,
-            }
-        };
+    // that value, including loop backedges and moves between SGPRs.
+    let reaching = |pc: usize, reg: u8| -> Option<u32> {
         let mut literal = None;
         let mut seen = BTreeSet::new();
         let mut pending: Vec<_> = incoming[pc].iter().map(|&i| (i, reg)).collect();
@@ -293,10 +283,6 @@ fn states(isa: &[u8], visibility: u32, skip: bool, describable: bool) -> Option<
                     ("s_mov_b32", [Opnd::Sgpr(src)]) if op.dst == [Opnd::Sgpr(r)] => {
                         r = *src;
                         None
-                    }
-                    (name @ ("s_and_b32" | "s_or_b32" | "s_andn2_b32"), [a, b]) if op.dst == [Opnd::Sgpr(r)] => {
-                        let (a, b) = (operand(i, a)?, operand(i, b)?);
-                        Some(match name { "s_and_b32" => a & b, "s_or_b32" => a | b, _ => a & !b })
                     }
                     _ => Some(constant_word(op, r)?),
                 };
@@ -313,8 +299,7 @@ fn states(isa: &[u8], visibility: u32, skip: bool, describable: bool) -> Option<
             pending.extend(incoming[i].iter().map(|&pred| (pred, r)));
         }
         literal
-    }
-    let reaching = |pc: usize, reg: u8| reaching(&ops, &incoming, pc, reg, 0);
+    };
     let mut states = BTreeMap::new();
     for (i, op) in ops.iter().enumerate().filter(|(_, op)| {
         op.enc == Enc::Mimg
@@ -341,18 +326,8 @@ fn states(isa: &[u8], visibility: u32, skip: bool, describable: bool) -> Option<
     Some(states)
 }
 
-/// The tb_desc_table form of an S#, shared by the runtime and xshader:
-/// word 3 keeps only BORDER_COLOR_PTR [11:0] and BORDER_COLOR_TYPE [31:30]
-/// (reserved [29:12] cleared), and is zero when no CLAMP_X/Y/Z mode reads the
-/// border (mode bit 2, word 0 bits 2, 5, 8). Words 0-2 are unchanged.
-pub fn canonical_sampler(words: [u32; 4]) -> [u32; 4] {
-    let [a, b, c, d] = words;
-    [a, b, c, if a & 0x124 == 0 { 0 } else { d & 0xC000_0FFF }]
-}
-
 /// Every literal S# at a sampling instruction, whether or not a static sampler
 /// can express it: the keys a translated stage may look up in tb_desc_table.
-/// The words are canonical (see [`canonical_sampler`]).
 pub fn literal_words(shader: &[u8]) -> Vec<[u32; 4]> {
     let words = || {
         let d = Dxbc::parse(shader).ok()?;
@@ -363,7 +338,7 @@ pub fn literal_words(shader: &[u8]) -> Vec<[u32; 4]> {
             return None;
         };
         let states = states(&fssm::decode(program).ok()?.isa, 0, true, false)?;
-        let unique: std::collections::BTreeSet<_> = states.into_values().map(canonical_sampler).collect();
+        let unique: std::collections::BTreeSet<_> = states.into_values().collect();
         Some(unique.into_iter().collect())
     };
     words().unwrap_or_default()

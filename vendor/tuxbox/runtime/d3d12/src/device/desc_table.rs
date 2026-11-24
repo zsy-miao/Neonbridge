@@ -46,10 +46,7 @@ fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
 
 pub(crate) type Key = [u32; 8];
 
-/// Keys hold canonical S# words, so a title sampler and the shader's literal
-/// or computed words agree on border and reserved bits.
 pub(crate) fn sampler_key(words: [u32; 4]) -> Key {
-    let words = tuxbox_dxbc::inline_sampler::canonical_sampler(words);
     [words[0], words[1], words[2], words[3], u32::MAX, u32::MAX, u32::MAX, u32::MAX]
 }
 
