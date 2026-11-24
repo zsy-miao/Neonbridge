@@ -684,7 +684,18 @@ fn next_job() -> Job {
 fn send(job: Job, bound: bool) {
     static STARTED: OnceLock<bool> = OnceLock::new();
     let started = *STARTED.get_or_init(|| {
-        let workers = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).clamp(2, 8));
+        // test117a: with every translation prewarmed, eight workers created
+        // pipelines at once (two of them 375 ms of CPU a frame each, in the
+        // driver's DXIL-to-ISA compile) and the intro fell from 39 to 2.6-7.8
+        // fps. TUXBOX_PIPELINE_WORKERS=N sets the count (default 2);
+        // =auto uses half the cores, 2 to 8, as before.
+        let auto = || std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).clamp(2, 8));
+        let workers = match crate::env_toggle!("TUXBOX_PIPELINE_WORKERS") {
+            Some("auto") => auto(),
+            Some(v) => v.trim().parse::<usize>().ok().filter(|&n| n > 0).map_or(2, |n| n.min(16)),
+            None => 2,
+        };
+        crate::diagnostics::log_line(format_args!("pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto)"));
         let mut any = false;
         for i in 0..workers {
             let spawned = std::thread::Builder::new()

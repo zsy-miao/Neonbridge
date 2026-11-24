@@ -145,14 +145,54 @@ fn skip_unchanged() -> bool {
 /// decommitted pages under a live view). Each region is checked with
 /// VirtualQuery first; a skipped region mixes its length into the hash so
 /// commits and decommits still change it, and the first skip is logged.
-/// TUXBOX_SHADOW_HASH_COMMITTED=0 reads the whole span as before.
+/// test117a: the walk cost submit 374 ms a frame. VirtualQuery waited in
+/// the kernel behind the pipeline workers' driver compiles (hot leaf in
+/// ntdll under hash). By default each 64 KiB chunk is now copied with
+/// ReadProcessMemory, which fails instead of faulting on an uncommitted
+/// page and does not query the address space; only a chunk that fails to
+/// copy is walked with VirtualQuery.
+/// TUXBOX_SHADOW_HASH_COMMITTED=query walks every span as abbe817 did;
+/// =0 reads the whole span directly, as before abbe817.
 fn hash(address: u64, bytes: u64) -> u64 {
-    if crate::env_toggle!("TUXBOX_SHADOW_HASH_COMMITTED") == Some("0") {
-        return hash_span(0xcbf2_9ce4_8422_2325, address, bytes);
+    let seed = 0xcbf2_9ce4_8422_2325u64;
+    match crate::env_toggle!("TUXBOX_SHADOW_HASH_COMMITTED") {
+        Some("0") => return hash_span(seed, address, bytes),
+        Some("query") => return hash_queried(seed, address, bytes),
+        _ => {}
     }
+    use windows::Win32::System::{Diagnostics::Debug::ReadProcessMemory, Threading::GetCurrentProcess};
+    const CHUNK: u64 = 64 << 10;
+    thread_local! {
+        static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0; CHUNK as usize]);
+    }
+    BUFFER.with(|buffer| {
+        let mut buffer = buffer.borrow_mut();
+        let mut h = seed;
+        let (mut at, end) = (address, address.saturating_add(bytes));
+        while at < end {
+            let n = (end - at).min(CHUNK);
+            let mut copied = 0usize;
+            // SAFETY: ReadProcessMemory reports unreadable pages as an error.
+            let ok = unsafe {
+                ReadProcessMemory(GetCurrentProcess(), at as *const core::ffi::c_void, buffer.as_mut_ptr().cast(), n as usize, Some(&mut copied))
+            }.is_ok() && copied as u64 == n;
+            h = if ok {
+                // SAFETY: the buffer holds `n` copied bytes.
+                hash_span(h, buffer.as_ptr() as u64, n)
+            } else {
+                hash_queried(h, at, n)
+            };
+            at += n;
+        }
+        h
+    })
+}
+
+/// The committed, readable regions of a span hashed in place (found with
+/// VirtualQuery), continuing from `h`.
+fn hash_queried(mut h: u64, address: u64, bytes: u64) -> u64 {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
     static SKIPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
     let (mut at, end) = (address, address.saturating_add(bytes));
     while at < end {
         let mut region = MEMORY_BASIC_INFORMATION::default();
