@@ -62,6 +62,13 @@ pub(crate) fn ffmpeg() -> Option<PathBuf> {
     hits.pop()
 }
 
+/// How long the encoder re-sends the last frame with no new one before it
+/// ends: NEONBRIDGE_FEED_STALE_S (5; 0 re-sends it for as long as anyone watches).
+fn stale_after() -> Option<Duration> {
+    let secs = std::env::var("NEONBRIDGE_FEED_STALE_S").ok().and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(5.0);
+    (secs > 0.0).then(|| Duration::from_secs_f64(secs))
+}
+
 pub(crate) struct Sub {
     pub queue: VecDeque<Arc<Vec<u8>>>,
     wait_key: bool,
@@ -140,11 +147,14 @@ impl Encoder {
         let mut child: Option<Child> = None;
         let result = (|| -> Result<(), String> {
             let exe = ffmpeg().ok_or("ffmpeg not found (PATH, WinGet Gyan.FFmpeg or NEONBRIDGE_FFMPEG)")?;
-            // The game captures only while someone watches: wake it and wait for a frame.
+            // The game captures only while someone watches: wake it and wait for a
+            // frame published after now (the shared memory keeps the last frame of
+            // a game that has since exited).
             let until = Instant::now() + Duration::from_secs(10);
+            let stale_number = if stale_after().is_some() { crate::frames::published() } else { 0 };
             let first = loop {
                 crate::frames::heartbeat();
-                if let Some(f) = crate::frames::latest(0) {
+                if let Some(f) = crate::frames::latest(stale_number) {
                     break f;
                 }
                 if Instant::now() > until {
@@ -177,6 +187,8 @@ impl Encoder {
             let mut frame = first;
             let mut next = Instant::now();
             let period = Duration::from_secs_f64(1.0 / f64::from(fps));
+            let stale = stale_after();
+            let mut fresh = Instant::now();
             // Constant rate: the newest frame is re-sent until the next one lands.
             while !self.dead.load(Ordering::SeqCst) {
                 crate::frames::heartbeat();
@@ -185,6 +197,14 @@ impl Encoder {
                         break; // resized: viewers reconnect to a new encoder
                     }
                     frame = f;
+                    fresh = Instant::now();
+                } else if stale.is_some_and(|s| fresh.elapsed() > s) {
+                    // The game stopped publishing (it exited or stopped presenting):
+                    // re-sending its last frame forever froze the page on it. Ending
+                    // here sends viewers back to the waiting screen, which polls
+                    // /status for "paused" / "none".
+                    crate::say(format!("no new game frame for {:.0} s; encoder ended", fresh.elapsed().as_secs_f64()));
+                    break;
                 }
                 if stdin.write_all(&frame.pixels).is_err() {
                     if self.kind == Kind::Mp4 && !NVENC_BAD.load(Ordering::Relaxed)
