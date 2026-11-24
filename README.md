@@ -4,7 +4,7 @@
 
 **Neonbridge is an open-source GTA VI (GTA 6) launcher for Windows PC.** It runs the Xbox Series X|S build of Grand Theft Auto VI, dumped from a console you own, natively on Windows. It **isn't playable yet**. No game files are included or linked.
 
-![GTA 6 on PC progress: boot, intro, player select and menus work; it reaches the loading screen](assets/progress.svg)
+![GTA 6 on PC progress: boot, intro, player select and menus work; it gets past the loading screens into the first mission](assets/progress.svg)
 
 ![How Neonbridge runs the GTA 6 Xbox executable on Windows](assets/how-it-works.svg)
 
@@ -21,11 +21,11 @@ Build with `cargo build --release` (needs Visual Studio Build Tools x64 C++ and 
 
 ![GTA 6 keyboard and mouse controls mapped to an Xbox pad](assets/controls.svg)
 
-Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts there; the game's picture is still black in that mode). The game window must be in front. `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real pads, and `TUXBOX_AUTO_START=0` stops the automatic A press at the player-selection prompt.
+Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts there). The game window must be in front. `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real pads, and `TUXBOX_AUTO_START=0` stops the automatic A press at the player-selection prompt.
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus to the loading screen but isn't playable.
+- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus and loading screens into the first mission, where the sound plays but the picture is still black, and it runs out of memory after about two minutes.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and about 20 GB of free commit (RAM plus page file).
@@ -33,11 +33,11 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## Roadmap
 
-1. **Load the world:** get past the loading screen.
-2. **Clean audio:** close the gaps in the game's sound stream.
-3. **Speed:** hold 22 fps and beyond.
-4. **Correct pictures:** BCPack textures and 5551 colour.
-5. **Playable:** load into the world.
+1. **Show the world:** draw the first mission, which is black today.
+2. **Memory:** fit the game's ~8 GB of textures without running out after about two minutes.
+3. **Speed:** from about 15 fps to 30.
+4. **Correct pictures:** the remaining BCPack texture modes and 5551 colour.
+5. **Playable:** control the first mission.
 
 ## Credits
 
