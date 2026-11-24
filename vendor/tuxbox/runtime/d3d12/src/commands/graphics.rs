@@ -283,6 +283,9 @@ pub(super) unsafe extern "system" fn index_buffer(
         if let Some(v) = &mut host {
             let Some(address) = super::compute::address(list, &mut state, v.BufferLocation, v.SizeInBytes.into()) else { return; };
             v.BufferLocation = address;
+            if address == 0 && v.SizeInBytes != 0 {
+                crate::diagnostics::null_va("index buffer", format_args!("{} bytes, format {}", v.SizeInBytes, v.Format.0));
+            }
         }
         unsafe { list.native.IASetIndexBuffer(host.as_ref().map(core::ptr::from_ref)) };
 
@@ -363,6 +366,9 @@ pub(super) unsafe extern "system" fn vertex_buffers(
         }
         let Some(address) = super::compute::address(list, &mut state, v.BufferLocation, v.SizeInBytes.into()) else { return; };
         v.BufferLocation = address;
+    }
+    if let Some(v) = host.iter().find(|v| v.BufferLocation == 0 && v.SizeInBytes != 0) {
+        crate::diagnostics::null_va("vertex buffer", format_args!("{} bytes, stride {}", v.SizeInBytes, v.StrideInBytes));
     }
     unsafe { list.native.IASetVertexBuffers(start, Some(host)) };
 

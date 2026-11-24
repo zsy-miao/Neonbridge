@@ -1547,6 +1547,14 @@ unsafe extern "system" fn execute_indirect(
     };
     // Ray shader records can carry local descriptor tables.
     if signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS {
+        if ray_dispatch::skip_rays() {
+            return;
+        }
+        // The 104-byte records name shader tables by GPU address and sit in a
+        // GPU buffer, so they are not checked here; log that they are in use.
+        static INDIRECT_RAYS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&INDIRECT_RAYS, || format!(
+            "indirect DispatchRays recorded (max_count {max_count}): its table addresses are not validated (TUXBOX_RAYS=0 skips rays)"));
         state.sample_heap();
     }
     if signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH {

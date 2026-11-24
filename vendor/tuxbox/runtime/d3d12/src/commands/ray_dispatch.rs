@@ -28,6 +28,17 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, object: *mut c_void) 
 
 const _: () = assert!(size_of::<D3D12_DISPATCH_RAYS_DESC>() == 104);
 
+/// TUXBOX_RAYS=0 skips every DispatchRays, direct and indirect (an A/B for
+/// device-hung runs; pairs with TUXBOX_AS_BUILDS=0). Logged once.
+pub(super) fn skip_rays() -> bool {
+    let skip = crate::env_toggle!("TUXBOX_RAYS") == Some("0");
+    if skip {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&ONCE, || "DispatchRays skipped (TUXBOX_RAYS=0)".to_owned());
+    }
+    skip
+}
+
 pub(super) unsafe extern "system" fn dispatch(list: &List, desc: *const D3D12_DISPATCH_RAYS_DESC) {
     let mut state = recording(list);
     if !state.can_record(&list.native) {
@@ -63,6 +74,17 @@ pub(super) unsafe extern "system" fn dispatch(list: &List, desc: *const D3D12_DI
         })
     {
         state.error = E_INVALIDARG;
+        return;
+    }
+    if raygen.StartAddress == 0 && raygen.SizeInBytes != 0 {
+        crate::diagnostics::null_va("ray generation record", format_args!("{} bytes, {}x{}x{}", raygen.SizeInBytes, desc.Width, desc.Height, desc.Depth));
+    }
+    for (name, t) in [("miss table", desc.MissShaderTable), ("hit group table", desc.HitGroupTable), ("callable table", desc.CallableShaderTable)] {
+        if t.StartAddress == 0 && t.SizeInBytes != 0 {
+            crate::diagnostics::null_va(name, format_args!("{} bytes, stride {}", t.SizeInBytes, t.StrideInBytes));
+        }
+    }
+    if skip_rays() {
         return;
     }
     state.sample_heap();

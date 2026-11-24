@@ -779,3 +779,23 @@ pub(crate) mod cost {
         format!("{buckets}; top sites ms/frame: {}", sites::top(frames, 8))
     }
 }
+
+/// test114/115 lost the device with a DRED page fault at GPU VA 0. The first
+/// binding of each kind that hands the GPU address 0 with a nonzero size is
+/// logged (root CBV/SRV/UAV, index and vertex streams, ray tables) with its
+/// title RVA. TUXBOX_NULL_VA_TRACE=0 turns it off.
+pub(crate) fn null_va(kind: &'static str, detail: std::fmt::Arguments) {
+    if crate::env_toggle!("TUXBOX_NULL_VA_TRACE") == Some("0") {
+        return;
+    }
+    static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.contains(&kind) {
+        return;
+    }
+    seen.push(kind);
+    drop(seen);
+    log_line(format_args!(
+        "GPU address 0 bound: {kind} {detail} (title RVA {:#x}; first of its kind; TUXBOX_NULL_VA_TRACE=0 off)",
+        crate::survey::title_rva().unwrap_or(0)));
+}

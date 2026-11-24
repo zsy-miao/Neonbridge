@@ -87,6 +87,12 @@ pub(super) enum BufferView {
 
 impl BufferView {
     pub(super) unsafe fn apply<const COMPUTE: bool>(self, list: &ID3D12GraphicsCommandList, slot: u32) {
+        match self {
+            Self::Cbv(0) => crate::diagnostics::null_va("root CBV", format_args!("slot {slot}, compute {COMPUTE}")),
+            Self::Srv(0) => crate::diagnostics::null_va("root SRV", format_args!("slot {slot}, compute {COMPUTE}")),
+            Self::Uav(0) => crate::diagnostics::null_va("root UAV", format_args!("slot {slot}, compute {COMPUTE}")),
+            _ => {}
+        }
         unsafe {
             match (COMPUTE, self) {
                 (true, Self::Cbv(va)) => list.SetComputeRootConstantBufferView(slot, va),
