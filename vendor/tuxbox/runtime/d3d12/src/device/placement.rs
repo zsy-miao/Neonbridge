@@ -116,6 +116,25 @@ pub(super) fn refresh_read_budget() -> u64 {
 /// refresh (each re-reads every level): the refresh log line reports it.
 pub(super) static LOST_CLAIMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Adds inherited readers keeping one entry per fence (the highest value) and
+/// none already passed. test70 froze inside `changed` growing a 4 GB readers
+/// list: two textures taking the same pages from each other each copied the
+/// other's whole list every refresh, doubling both, and a kept claim never
+/// uploads to clear them. TUXBOX_READERS_MERGE=0 appends as before.
+fn merge_readers(readers: &mut Vec<(ID3D12Fence, u64)>, inherited: Vec<(ID3D12Fence, u64)>) {
+    if crate::env_toggle!("TUXBOX_READERS_MERGE") == Some("0") {
+        readers.extend(inherited);
+        return;
+    }
+    for (fence, value) in inherited {
+        match readers.iter_mut().find(|(f, _)| *f == fence) {
+            Some((_, v)) => *v = (*v).max(value),
+            None => readers.push((fence, value)),
+        }
+    }
+    readers.retain(|(f, v)| unsafe { f.GetCompletedValue() } < *v);
+}
+
 /// test69 read one level of 4847 MiB back from guest memory into a scratch
 /// buffer and an upload copy (two 4847 MiB host allocations) on the submit
 /// thread until the title's watchdog fired. A level over
@@ -666,7 +685,7 @@ impl Texture {
             contents.previous.iter_mut().for_each(|p| *p = None);
         }
         // A later upload over the shared pages still waits for their readers.
-        contents.readers.extend(inherited);
+        merge_readers(&mut contents.readers, inherited);
         let mut skipped = 0;
         if contents.big_at.len() < self.mips.len() {
             contents.big_at.resize(self.mips.len(), None);
