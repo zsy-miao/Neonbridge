@@ -200,6 +200,11 @@ fn report(text: std::fmt::Arguments<'_>) {
     }
     seen.push(line.clone());
     drop(seen);
+    // The launcher captures stderr into its log (TUXBOX_LOG=stderr); a debug
+    // string alone is only visible under a debugger.
+    if std::env::var_os("TUXBOX_LOG").is_some_and(|v| v == "stderr") {
+        eprintln!("{line}");
+    }
     let message = format!("{line}\n\0");
     unsafe { OutputDebugStringA(message.as_ptr()) };
 }
