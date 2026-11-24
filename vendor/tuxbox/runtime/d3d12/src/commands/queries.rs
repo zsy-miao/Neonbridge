@@ -115,9 +115,18 @@ pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, val
             }
             return Ok(());
         }
-        if !address.is_multiple_of(8) { return Err(E_INVALIDARG.into()); }
-        let (resource, gpu) = unsafe { crate::device::command_buffer_address(parent(&list.parent), address, 8)? };
-        let resource = resource.ok_or(E_INVALIDARG)?;
+        // A timestamp to memory that is not GPU memory (or not 8-byte aligned)
+        // was refused, which poisoned the list; it is skipped and logged.
+        let (resource, gpu) = if address.is_multiple_of(8) {
+            unsafe { crate::device::command_buffer_address(parent(&list.parent), address, 8)? }
+        } else { (None, 0) };
+        let Some(resource) = resource else {
+            static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            if SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                crate::diagnostics::log_line(format_args!("timestamp write to {address:#x} (mode {mode:#x}) is not GPU memory; skipped"));
+            }
+            return Ok(());
+        };
         let offset = gpu.checked_sub(unsafe { resource.GetGPUVirtualAddress() }).ok_or(E_INVALIDARG)?;
         super::raytracing::retain(&state, &[&resource])?;
         if state.timestamp_page.as_ref().is_none_or(|(_, next)| *next >= SLOTS) {

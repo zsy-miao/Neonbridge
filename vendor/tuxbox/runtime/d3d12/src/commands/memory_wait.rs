@@ -105,10 +105,26 @@ impl Word {
         })
     }
 
-    fn reached(&self, value: u64) -> bool {
+    fn reached(&self, value: u64, comparison: u32) -> bool {
         // X64 aligned 64-bit load. The COM resource and its CPU mapping stay alive
         // until all queued waits release their segment.
-        unsafe { AtomicU64::from_ptr(self.mapped as *mut u64).load(Ordering::Acquire) >= value }
+        let now = unsafe { AtomicU64::from_ptr(self.mapped as *mut u64).load(Ordering::Acquire) };
+        compare(now, value, comparison)
+    }
+}
+
+/// D3D12_COMPARISON_FUNC of `now` against `target` (the console's memory
+/// waits use the same values); unknown ones wait as GREATER_EQUAL (7).
+fn compare(now: u64, target: u64, comparison: u32) -> bool {
+    match comparison {
+        1 => false,
+        2 => now < target,
+        3 => now == target,
+        4 => now <= target,
+        5 => now > target,
+        6 => now != target,
+        8 => true,
+        _ => now >= target,
     }
 }
 
@@ -116,6 +132,7 @@ pub(super) struct Segment {
     prefix: Option<(ID3D12CommandList, ID3D12CommandAllocator)>,
     word: Word,
     target: u64,
+    comparison: u32,
     address: u64,
 }
 
@@ -159,12 +176,15 @@ pub(super) unsafe extern "system" fn wait_value64(
         // The fifth argument is stack junk on some callers (rebox), so only
         // the comparison selects the wait.
         let _ = flags;
-        if comparison != 7 {
-            crate::diagnostics::recording_error(format_args!("GPU memory wait comparison {comparison}"));
-            return Err(E_NOTIMPL.into());
-        }
+        // Every comparison is honoured (only 7, GREATER_EQUAL, was; others
+        // refused the list); NEVER waits as ALWAYS rather than forever.
+        let comparison = match comparison { 1 => 8, 2..=8 => comparison, _ => {
+            static ODD: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&ODD, || format!("GPU memory wait comparison {comparison} waits as >="));
+            7
+        } };
         let word = Word::map(list, address)?;
-        if target == 0 {
+        if comparison == 8 || (comparison == 7 && target == 0) {
             return Ok(());
         }
         if state.prefix.in_body {
@@ -210,6 +230,7 @@ pub(super) unsafe extern "system" fn wait_value64(
             prefix,
             word,
             target,
+            comparison,
             address,
         }));
         Ok(())
@@ -245,7 +266,7 @@ impl Worker {
                         // stall and release the queue after a watchdog period.
                         let started = std::time::Instant::now();
                         let mut warned = false;
-                        while !job.segment.word.reached(job.segment.target) {
+                        while !job.segment.word.reached(job.segment.target, job.segment.comparison) {
                             unsafe {
                                 job.device.GetDeviceRemovedReason()?;
                             }
