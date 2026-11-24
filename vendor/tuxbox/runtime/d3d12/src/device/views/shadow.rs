@@ -35,6 +35,42 @@ struct Entry {
     written: bool,
     /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP=1).
     hash: Option<u64>,
+    /// Refresh number at which a descriptor last bound this shadow (or its
+    /// title bytes last changed), for aging.
+    bound: u64,
+}
+
+/// Refreshes so far (one per queue submission).
+static REFRESHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A read-only shadow is copied on every refresh while fresh (bound in the
+/// last FRESH refreshes); after that its title bytes are hashed every
+/// CHECK_EVERY refreshes and copied only when they changed, which makes it
+/// fresh again. test36: 7630 live shadows, 249 MB copied per submission,
+/// submit time 2.3 -> 69 ms. TUXBOX_SHADOW_AGING=0 copies every live shadow
+/// on every submission as before.
+const FRESH: u64 = 8;
+const CHECK_EVERY: u64 = 16;
+
+fn aging() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_AGING") != Some("0")
+}
+
+/// Whether an aged entry is checked on refresh `now` (staggered by address).
+fn aged_check_due(now: u64, address: u64) -> bool {
+    (now.wrapping_add(address >> 4)).is_multiple_of(CHECK_EVERY)
+}
+
+fn fresh(now: u64, bound: u64) -> bool {
+    now.saturating_sub(bound) <= FRESH
+}
+
+#[cfg(test)]
+#[test]
+fn aged_shadows_are_checked_once_every_sixteen_refreshes() {
+    assert!(fresh(10, 2) && !fresh(11, 2));
+    let due = (0..CHECK_EVERY).filter(|&n| aged_check_due(n, 0x1230)).count();
+    assert_eq!(due, 1);
 }
 
 /// TUXBOX_SHADOW_SKIP=1: a read-only shadow whose title bytes hash the same
@@ -169,6 +205,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     let mut entries = lock(&shadows.entries);
     if let Some(entry) = entries.get_mut(&(address, bytes, writable)) {
         if let Some(view) = entry.view.upgrade() {
+            entry.bound = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
             return Ok(view);
         }
     }
@@ -181,6 +218,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         let view = TextureAddress::unlisted(device, &entry.copy, address as usize);
         entry.view = Arc::downgrade(&view);
         entry.hash = None;
+        entry.bound = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
         return Ok(view);
     }
     let page = address & !0xffff;
@@ -223,7 +261,8 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     prune(&mut entries, &shadows.sources);
-    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None });
+    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None,
+        bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
         by_copy.retain(|_, key| entries.contains_key(key));
@@ -321,13 +360,27 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         let mut entries = lock(&shadows.entries);
         prune(&mut entries, &shadows.sources);
         let skip = !back && skip_unchanged();
-        let (mut live, mut skipped) = (0u64, 0u64);
+        let aging = !back && aging();
+        let now = if back { 0 } else { REFRESHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 };
+        let (mut live, mut skipped, mut aged) = (0u64, 0u64, 0u64);
         let all = write_back_all();
         for (&(address, bytes, _), entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (e.written || all))) {
             // Dead entries wait for revival; their title pages may be unmapped.
             let Some(view) = entry.view.upgrade() else { continue };
             live += 1;
-            if skip && !entry.writable {
+            if aging && !entry.writable && !fresh(now, entry.bound) {
+                if !aged_check_due(now, address) {
+                    aged += 1;
+                    continue;
+                }
+                let h = hash(address, bytes);
+                if entry.hash.replace(h) == Some(h) {
+                    aged += 1;
+                    continue;
+                }
+                // Changed: copy, and treat it as fresh again.
+                entry.bound = now;
+            } else if skip && !entry.writable {
                 let now = hash(address, bytes);
                 if entry.hash.replace(now) == Some(now) {
                     skipped += 1;
@@ -343,7 +396,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         if n < 4 || (n + 1).is_power_of_two() {
             let total: u64 = copies.iter().map(|c| c.3).sum();
             crate::diagnostics::log_line(format_args!(
-                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {} copies, {total} bytes",
+                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {aged} aged skipped (TUXBOX_SHADOW_AGING=0 copies them), {} copies, {total} bytes",
                 if back { "write-back" } else { "refresh" }, n + 1, copies.len()));
         }
     }
