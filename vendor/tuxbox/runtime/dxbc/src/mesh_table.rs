@@ -67,10 +67,19 @@ impl MeshLayout {
             {
                 return None;
             }
+            // PSV0 resource types each FSSM class may name.
+            let types: &[u32] = match class { 0x300 => &[3, 4, 5], 0x303 => &[6, 7, 8, 9], 0x401 => &[1], _ => &[] };
             let (ty, width) = match (class, location & 255, shape) {
                 (0x300, 4, 1) => (4, 1),
                 (0x300, 4, n) if (4..=2048).contains(&n) && n % 4 == 0 => (5, 1),
                 (0x302, 4, 0) => (2, 1),
+                // Textures, UAVs and samplers: the PSV entry at this register gives the type.
+                (0x300 | 0x303 | 0x401, 4, _) => {
+                    let mut typed = resources.iter().filter(|r| types.contains(&r[0]) && r[2] == register && r[3] == register);
+                    let found = typed.next()?[0];
+                    if typed.next().is_some() { return None; }
+                    (found, 1)
+                }
                 (0x100, 4, 1) => (4, 2),
                 (2, 4, 0) => {
                     let RootParamKind::Constants { num32, .. } = root_param.kind else {
@@ -87,7 +96,7 @@ impl MeshLayout {
                 .iter()
                 .filter(|r| (r[0], r[2], r[3]) == (ty, register, register));
             let space = matching.next()?[1];
-            let binding_class = if ty == 2 { 2 } else { 0 };
+            let binding_class = match class { 0x302 | 2 => 2, 0x303 => 1, 0x401 => 3, _ => 0 };
             if matching.next().is_some()
                 || !used_resources.insert((binding_class, space, register))
                 || u32::from(sgpr) + width > 104
@@ -101,17 +110,17 @@ impl MeshLayout {
             }
             match &root_param.kind {
                 RootParamKind::Table(_)
-                    if matches!(class, 0x300 | 0x302)
-                        && offset % 8 == 0
+                    if matches!(class, 0x300 | 0x302 | 0x303 | 0x401)
+                        && offset % if class == 0x401 { 4 } else { 8 } == 0
                         && user.contains(&[3, offset, 1, register, location >> 8]) =>
                 {
-                    let kind = if class == 0x302 { 2 } else { 0 };
+                    let kind = binding_class;
                     let binding = MeshTableBinding {
                         parameter: index,
                         kind,
                         register,
                         space,
-                        stride_words: (ty == 5).then_some(shape / 4),
+                        stride_words: (matches!(ty, 5 | 8 | 9) && shape >= 4).then_some(shape / 4),
                     };
                     if result
                         .tables
@@ -125,7 +134,7 @@ impl MeshLayout {
                         num: 1,
                         base_register: register,
                         space,
-                        offset_in_table: offset / 8,
+                        offset_in_table: offset / if class == 0x401 { 4 } else { 8 },
                     });
                 }
                 RootParamKind::Descriptor {

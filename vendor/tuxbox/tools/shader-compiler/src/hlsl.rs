@@ -1751,7 +1751,7 @@ impl<'a> Emitter<'a> {
 
     fn table_binding_space(&self, sgpr: u8, offset: u32, stride: u32) -> Result<(Option<u32>, u32, u32), String> {
         if let Some(mesh) = &self.mesh_bindings {
-            let binding = mesh.tables.get(&(sgpr, offset)).filter(|_| stride == 32)
+            let binding = mesh.tables.get(&(sgpr, offset)).filter(|b| stride == if b.kind == 3 { 16 } else { 32 })
                 .ok_or_else(|| format!("unverified mesh descriptor at s{sgpr} + {offset:#x}"))?;
             return Ok((Some(binding.kind), binding.register, binding.space));
         }
