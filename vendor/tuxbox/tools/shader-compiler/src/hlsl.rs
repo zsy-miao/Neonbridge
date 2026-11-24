@@ -8092,6 +8092,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             None => format!("{nm}[{index}].w[{}]", w0 + k),
             Some(_) => format!("{nm}[{index} + (t{t}w + {k}u) / {nwords}u].w[(t{t}w + {k}u) % {nwords}u]"),
         };
+        // five-star-recomp 3d287ab (GPL-3.0): an indexed (structured) access
+        // whose offset runs past the element is out of range on RDNA
+        // (OOB_SELECT 0): loads read 0 and stores are dropped, where the
+        // flat addressing above reached into the next element.
+        // TB_STRUCT_OFFSET_OOB=0 keeps the flat addressing.
+        let guard = |k: u32| -> Option<String> {
+            if !idxen || std::env::var("TB_STRUCT_OFFSET_OOB").is_ok_and(|v| v.trim() == "0") {
+                return None;
+            }
+            Some(match &voff {
+                None if w0 + k >= nwords => "false".to_string(),
+                None => return None,
+                Some(_) => format!("(t{t}w + {k}u) < {nwords}u"),
+            })
+        };
         // D16 forms: `_d16` loads write the low 16 bits of vdata and keep the
         // high half; `_d16_hi` loads write the high half, and `_d16_hi` stores
         // take the byte or short from bit 16 (Xbox2Windows 06e764bf).
@@ -8141,11 +8156,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             for k in 0..n {
                 let o = Opnd::Vgpr(vd + k as u8);
                 self.touch(&o);
-                self.line(&format!("if (exec_lo & 1u) {} = {};", elem(k), r(&o)?));
+                match guard(k) {
+                    Some(c) => self.line(&format!("if ((exec_lo & 1u) && {c}) {} = {};", elem(k), r(&o)?)),
+                    None => self.line(&format!("if (exec_lo & 1u) {} = {};", elem(k), r(&o)?)),
+                }
             }
         } else {
             for k in 0..n {
-                self.line(&format!("uint t{t}_{k} = {};", elem(k)));
+                match guard(k) {
+                    Some(c) => self.line(&format!("uint t{t}_{k} = ({c}) ? {} : 0u;", elem(k))),
+                    None => self.line(&format!("uint t{t}_{k} = {};", elem(k))),
+                }
             }
             for k in 0..n {
                 self.wv(&Opnd::Vgpr(vd + k as u8), &format!("t{t}_{k}"))?;
