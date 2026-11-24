@@ -202,6 +202,12 @@ fn heap_d16(m: &str, channels: u8) -> Result<(bool, bool), String> {
     Ok((true, high))
 }
 
+/// image_load/image_store/atomics on a cube UAV address it as a 2D array with
+/// face = z (leonida-ce 0d27fdcf); TB_CUBE_UAV=0 leaves them unsupported.
+fn cube_uavs() -> bool {
+    std::env::var("TB_CUBE_UAV").map_or(true, |v| v.trim() != "0")
+}
+
 /// Image inc/dec/fmin/fmax/cmpswap/fcmpswap; TB_IMAGE_ATOMIC_EXT=0 leaves them unsupported.
 fn image_atomic_ext() -> bool {
     std::env::var("TB_IMAGE_ATOMIC_EXT").map_or(true, |v| v.trim() != "0")
@@ -8506,6 +8512,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 0 => 1,     // 1D
                 1 => 2,     // 2D
                 2 | 5 => 3, // 3D / 2D array
+                // Cube UAV: (s, t, face) into the six-slice 2D array it is bound as.
+                3 if is_uav && cube_uavs() => 3,
                 4 => 2,     // 1D array
                 6 => 2,     // 2D multisampled (the next component is the sample index)
                 _ => return Err(format!("image dim {dim} unsupported for load/store")),
@@ -9577,6 +9585,9 @@ uint tb_heap_index(uint i) { return i; }
                 (2, false) => format!("RWTexture3D<{e}>"),
                 (4, false) => format!("RWTexture1DArray<{e}>"),
                 (5, false) => format!("RWTexture2DArray<{e}>"),
+                // A cube UAV is a six-slice 2D array on the PC (leonida-ce 0d27fdcf).
+                (3, false) if cube_uavs() => format!("RWTexture2DArray<{e}>"),
+                (3, true) if cube_uavs() => "RWTexture2DArray<uint>".to_string(),
                 (0, true) => "RWTexture1D<uint>".to_string(),
                 (1, true) if self.wide_visibility_uavs.contains(slot) => "RWTexture2D<uint64_t>".to_string(),
                 (1, true) => "RWTexture2D<uint>".to_string(),
