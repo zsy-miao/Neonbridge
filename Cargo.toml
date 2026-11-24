@@ -13,3 +13,6 @@ exclude = ["vendor"]
 
 [profile.release]
 opt-level = 3
+
+[dependencies]
+sha2 = "0.10"

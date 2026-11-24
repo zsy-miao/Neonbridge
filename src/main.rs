@@ -9,6 +9,8 @@
 //! any game file they replace is moved to `<game>/_6ixpack_orig/` first and
 //! `--restore` puts it back.
 
+mod shaders;
+
 use std::{
     collections::HashMap,
     error::Error,
@@ -121,7 +123,70 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         println!("[launch] staged {} providers beside {}; not started (--stage-only)", dlls.len(), target.display());
         return Ok(());
     }
-    start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), sandbox)
+    // Runtime shader worker (TuxBox runtime_shaders.py on Windows): xshader + SDK dxc.
+    let worker = if std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() == Ok("0") { None } else {
+        match (build_xshader(&tuxbox, &out), shaders::find_dxc()) {
+            (Ok(xshader), Some(dxc)) => {
+                let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
+                let name = format!("run-{}", std::process::id());
+                let real = cache_root.join(&name);
+                let session = if sandbox { boxed_path(&real).unwrap_or(real) } else { real };
+                println!("[launch] shader worker: {} + {}; session {}", xshader.display(), dxc.display(), session.display());
+                let log_path = out.join("shader-worker.log");
+                let _ = fs::remove_file(&log_path);
+                let sink = std::sync::Mutex::new(fs::OpenOptions::new().create(true).append(true).open(&log_path)?);
+                match shaders::Worker::start(shaders::Tools { xshader, dxc }, cache_root, session.clone(),
+                    move |line| { let _ = writeln!(sink.lock().unwrap(), "{line}"); }) {
+                    Ok(w) => Some((w, name, session, log_path)),
+                    Err(e) => { println!("[launch] shader worker not started: {e}"); None }
+                }
+            }
+            (Err(e), _) => { println!("[launch] shader worker not started: xshader build failed: {e}"); None }
+            (_, None) => { println!("[launch] shader worker not started: no Windows SDK dxc.exe with dxil.dll (or set DXC)"); None }
+        }
+    };
+    let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
+    let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), sandbox, &env);
+    if let Some((w, _, session, log_path)) = worker {
+        let st = w.stop();
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("[launch] shaders: {} compiled, {} from cache, {} unsupported, {} failed (log {})",
+            st.compiled.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        let _ = fs::remove_dir_all(session);
+    }
+    result
+}
+
+/// Build the vendored TuxBox shader translator (tools/shader-compiler -> xshader.exe).
+fn build_xshader(tuxbox: &Path, out: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let manifest = tuxbox.join("tools/shader-compiler/Cargo.toml");
+    if !manifest.is_file() {
+        return Err(format!("{} missing", manifest.display()).into());
+    }
+    let target_dir = out.join("xshader");
+    let status = Command::new("cargo").args(["build", "--release", "--quiet", "--manifest-path"]).arg(&manifest)
+        .arg("--target-dir").arg(&target_dir).status()?;
+    if !status.success() {
+        return Err(format!("cargo build of xshader failed ({status})").into());
+    }
+    Ok(target_dir.join("release/xshader.exe"))
+}
+
+/// Block while any process runs this exe image (Start.exe /wait can return early).
+fn wait_for_image(exe: &Path) {
+    let Some(name) = exe.file_name().map(|n| n.to_string_lossy().into_owned()) else { return };
+    let running = || Command::new("tasklist").args(["/FI", &format!("IMAGENAME eq {name}"), "/NH"]).output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&name.to_ascii_lowercase()))
+        .unwrap_or(false);
+    let t = Instant::now();
+    let mut waited = false;
+    while running() {
+        waited = true;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    if waited {
+        println!("[launch] {name} ended {:.1}s later", t.elapsed().as_secs_f64());
+    }
 }
 
 fn env_path(k: &str) -> Option<PathBuf> {
@@ -329,7 +394,7 @@ fn restore(game: &Path) -> Result<(), Box<dyn Error>> {
 
 /// Start the exe from its folder (optionally under cdb and/or in Sandboxie);
 /// stdout+stderr go to the console and the log.
-fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, sandbox: bool) -> Result<(), Box<dyn Error>> {
+fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, sandbox: bool, env: &[(String, String)]) -> Result<(), Box<dyn Error>> {
     let log = log.unwrap_or_else(|| {
         let base = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/logs");
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -389,6 +454,7 @@ q
         .current_dir(game)
         .args(&argv[1..])
         .env("TUXBOX_LOG", std::env::var("TUXBOX_LOG").unwrap_or_else(|_| "stderr".into()))
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -405,6 +471,7 @@ q
     let b = tee(Box::new(child.stderr.take().unwrap()), file.try_clone()?);
     let status = child.wait()?;
     let _ = (a.join(), b.join());
+    wait_for_image(exe);
     println!("[launch] exited with {status}{} after {:.1}s", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default(), t.elapsed().as_secs_f64());
     if debug.is_some() {
         // Sandboxie redirects the debugger's log write into the box; fetch it back.
@@ -442,12 +509,16 @@ fn find_cdb() -> Option<PathBuf> {
 
 /// Where Sandboxie puts a file the boxed process wrote under the user profile.
 fn sandboxed_copy(p: &Path) -> Option<PathBuf> {
+    boxed_path(p).filter(|c| c.is_file())
+}
+
+/// The box's copy of a path under the user profile.
+fn boxed_path(p: &Path) -> Option<PathBuf> {
     let user = std::env::var("USERNAME").ok()?;
     let bx = std::env::var("SANDBOXIE_BOX").unwrap_or_else(|_| "DefaultBox".into());
     let profile = env_path("USERPROFILE")?;
     let rel = p.strip_prefix(&profile).ok()?;
-    let c = Path::new(r"C:\Sandbox").join(user).join(bx).join(r"user\current").join(rel);
-    c.is_file().then_some(c)
+    Some(Path::new(r"C:\Sandbox").join(user).join(bx).join(r"user\current").join(rel))
 }
 
 fn ntstatus(c: u32) -> &'static str {
