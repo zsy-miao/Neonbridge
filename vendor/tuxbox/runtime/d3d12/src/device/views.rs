@@ -244,8 +244,13 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     } else { nearest };
     host.Width = bytes.checked_add(address - page).ok_or(E_INVALIDARG)?;
     if !tight { host.Width = host.Width.checked_next_multiple_of(65536).ok_or(E_INVALIDARG)?; }
-    let native = super::heap::import_buffer(device, page, &host, D3D12_RESOURCE_STATE_COMMON)?;
-    Ok(Some(TextureAddress::at(device, &native, page as usize, false, None)))
+    // A range spanning several separately mapped guest views cannot be opened as
+    // one heap; read it through a shadow copy instead.
+    match super::heap::import_buffer(device, page, &host, D3D12_RESOURCE_STATE_COMMON) {
+        Ok(native) => Ok(Some(TextureAddress::at(device, &native, page as usize, false, None))),
+        Err(e) if e.code() == E_INVALIDARG => shadow::view(device, address, bytes).map(Some),
+        Err(e) => Err(e),
+    }
 }
 
 pub(crate) unsafe fn command_buffer_address(device: *mut c_void, address: u64, bytes: u64) -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
@@ -382,7 +387,33 @@ pub(super) unsafe extern "system" fn address_srv(
             .unwrap_or_else(|e| fail_call(format_args!("byte-offset SRV at {:#x} offset={offset} stride={stride}: {:?}", desc.address, e.code())));
     } else {
         unsafe { device.native.CreateShaderResourceView(native, Some(&view), handle) };
+        report_bad_view("address SRV", &device.native, native, Some(&view));
     }
+}
+
+/// Once, when a view creation has just removed the device ("bad view create"),
+/// log the view and resource descriptions that caused it.
+fn report_bad_view(kind: &str, device: &ID3D12Device, resource: Option<&ID3D12Resource>, view: Option<&D3D12_SHADER_RESOURCE_VIEW_DESC>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if REPORTED.load(Ordering::Relaxed) || unsafe { device.GetDeviceRemovedReason() }.is_ok() || REPORTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let res = resource.map(|r| unsafe { r.GetDesc() });
+    let view = view.map(|v| {
+        let detail = match v.ViewDimension {
+            D3D12_SRV_DIMENSION_BUFFER => format!("{:?}", unsafe { v.Anonymous.Buffer }),
+            D3D12_SRV_DIMENSION_TEXTURE2D => format!("{:?}", unsafe { v.Anonymous.Texture2D }),
+            D3D12_SRV_DIMENSION_TEXTURE2DARRAY => format!("{:?}", unsafe { v.Anonymous.Texture2DArray }),
+            D3D12_SRV_DIMENSION_TEXTURECUBE => format!("{:?}", unsafe { v.Anonymous.TextureCube }),
+            D3D12_SRV_DIMENSION_TEXTURE3D => format!("{:?}", unsafe { v.Anonymous.Texture3D }),
+            _ => String::new(),
+        };
+        format!("format={} dimension={} mapping={:#x} {detail}", v.Format.0, v.ViewDimension.0, v.Shader4ComponentMapping)
+    });
+    crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+        "{kind} creation removed the device: view {view:?}; resource {:?}",
+        res.map(|r| format!("dimension={} {}x{}x{} mips={} format={} flags={:#x} layout={}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.MipLevels, r.Format.0, r.Flags.0, r.Layout.0))));
 }
 
 pub(super) unsafe extern "system" fn srv(
@@ -441,7 +472,9 @@ pub(super) unsafe extern "system" fn srv(
         mode.create_srv(device, resource.expect("placed buffer"), unsafe { *desc }, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("placed SRV offset={offset} stride={stride}: {:?}", e.code())));
     } else {
-        unsafe { device.native.CreateShaderResourceView(alias.as_ref().map(|(native, _)| native).or(resource), Some(desc), handle) };
+        let target = alias.as_ref().map(|(native, _)| native).or(resource);
+        unsafe { device.native.CreateShaderResourceView(target, Some(desc), handle) };
+        report_bad_view("SRV", &device.native, target, unsafe { desc.as_ref() });
     }
     device.state.imported_views.store(handle.ptr, alias.map(|(native, original)| DescriptorBacking::BufferAlias { native, original }));
 }
@@ -582,6 +615,20 @@ pub(super) unsafe extern "system" fn uav(
             .unwrap_or_else(|e| fail_call(format_args!("placed UAV offset={offset} stride={stride}: {:?}", e.code())));
     } else {
         unsafe { device.native.CreateUnorderedAccessView(buffer, counter, Some(desc), handle) };
+        if unsafe { device.native.GetDeviceRemovedReason() }.is_err() {
+            static BAD_UAV: std::sync::Once = std::sync::Once::new();
+            let res = buffer.map(|r| unsafe { r.GetDesc() });
+            let view = unsafe { desc.as_ref() }.map(|v| format!("format={} dimension={} {}", v.Format.0, v.ViewDimension.0, match v.ViewDimension {
+                D3D12_UAV_DIMENSION_BUFFER => format!("{:?}", unsafe { v.Anonymous.Buffer }),
+                D3D12_UAV_DIMENSION_TEXTURE2D => format!("{:?}", unsafe { v.Anonymous.Texture2D }),
+                D3D12_UAV_DIMENSION_TEXTURE2DARRAY => format!("{:?}", unsafe { v.Anonymous.Texture2DArray }),
+                D3D12_UAV_DIMENSION_TEXTURE3D => format!("{:?}", unsafe { v.Anonymous.Texture3D }),
+                _ => String::new(),
+            }));
+            crate::diagnostics::log_once(&BAD_UAV, || format!(
+                "UAV creation removed the device: view {view:?}; counter {}; resource {:?}", counter.is_some(),
+                res.map(|r| format!("dimension={} {}x{}x{} mips={} format={} flags={:#x} layout={}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.MipLevels, r.Format.0, r.Flags.0, r.Layout.0))));
+        }
     }
 }
 

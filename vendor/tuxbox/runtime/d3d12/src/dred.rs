@@ -5,6 +5,7 @@ use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
 use windows::core::Interface;
+use std::os::windows::ffi::OsStrExt;
 
 fn enabled() -> bool {
     std::env::var_os("TUXBOX_DRED").is_some_and(|v| v == "1")
@@ -100,7 +101,16 @@ pub(crate) fn debug_device(adapter: Option<&windows::core::IUnknown>) -> Option<
         D3D12GetInterface(&CLSID_D3D12SDKConfiguration, &mut config)?;
         let config = config.ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
         let dir = std::ffi::CString::new(path.clone()).map_err(|_| windows::Win32::Foundation::E_INVALIDARG)?;
-        let factory: ID3D12DeviceFactory = config.CreateDeviceFactory(722, windows::core::PCSTR(dir.as_ptr().cast()))?;
+        // The factory must ask for the SDK version the directory's D3D12Core.dll exports.
+        let version = {
+            use windows::Win32::System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LoadLibraryExW};
+            let core: Vec<u16> = std::path::Path::new(&path).join("D3D12Core.dll").as_os_str().encode_wide().chain([0]).collect();
+            let module = LoadLibraryExW(windows::core::PCWSTR(core.as_ptr()), None, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)?;
+            let export = GetProcAddress(module, windows::core::s!("D3D12SDKVersion")).ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
+            *(export as *const u32)
+        };
+        log(&format!("debug layer SDK version {version}"));
+        let factory: ID3D12DeviceFactory = config.CreateDeviceFactory(version, windows::core::PCSTR(dir.as_ptr().cast()))?;
         let debug: ID3D12Debug = factory.GetConfigurationInterface(&CLSID_D3D12Debug)?;
         debug.EnableDebugLayer();
         let mut device: Option<ID3D12Device> = None;

@@ -4,7 +4,7 @@ use super::Device;
 use core::slice;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT, DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R16_UINT,
+    DXGI_FORMAT, DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R9G9B9E5_SHAREDEXP,
 };
 use windows::core::Interface;
 
@@ -31,6 +31,11 @@ fn host_description(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
 pub(super) fn packed_uav_formats(format: DXGI_FORMAT, flags: D3D12_RESOURCE_FLAGS) -> &'static [DXGI_FORMAT] {
     if format == DXGI_FORMAT_B5G5R5A1_UNORM && flags.contains(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) {
         &[DXGI_FORMAT_R16_UINT]
+    } else if format == DXGI_FORMAT_R32_UINT
+        && flags.contains(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) {
+        // GTA renders packed HDR colour as R32_UINT and samples it as R9G9B9E5.
+        // Not for UAV-only images: a castable list made their own-format UAVs invalid.
+        &[DXGI_FORMAT_R9G9B9E5_SHAREDEXP]
     } else {
         &[]
     }

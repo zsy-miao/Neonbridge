@@ -23,9 +23,8 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 use windows::core::{Interface, Result};
 
 struct Entry {
-    source: ID3D12Resource,
-    offset: u64,
-    bytes: u64,
+    /// (title pages, offset in them, offset in the copy, bytes).
+    pieces: Vec<(ID3D12Resource, u64, u64, u64)>,
     writable: bool,
     view: Weak<TextureAddress>,
 }
@@ -76,7 +75,21 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     }
     let page = address & !0xffff;
     let width = (address - page + bytes).next_multiple_of(65536);
-    let source = crate::device::heap::import_buffer(device, page, &buffer(width), D3D12_RESOURCE_STATE_COMMON)?;
+    let pieces = match crate::device::heap::import_buffer(device, page, &buffer(width), D3D12_RESOURCE_STATE_COMMON) {
+        Ok(source) => vec![(source, address - page, 0, bytes)],
+        // The range spans separately mapped title pages that no single heap can
+        // open; copy each 64 KiB page through its own import.
+        Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG => {
+            let mut pieces = Vec::new();
+            for at in (page..address + bytes).step_by(65536) {
+                let source = crate::device::heap::import_buffer(device, at, &buffer(65536), D3D12_RESOURCE_STATE_COMMON)?;
+                let (start, end) = (address.max(at), (address + bytes).min(at + 65536));
+                pieces.push((source, start - at, start - address, end - start));
+            }
+            pieces
+        }
+        Err(e) => return Err(e),
+    };
     let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
     let mut copy: Option<ID3D12Resource> = None;
     unsafe {
@@ -92,7 +105,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     entries.retain(|_, e| e.view.strong_count() > 0);
-    entries.insert((address, bytes, writable), Entry { source, offset: address - page, bytes, writable, view: Arc::downgrade(&view) });
+    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view) });
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("shadowed buffer view at {address:#x}, {bytes} bytes"));
     Ok(view)
@@ -120,7 +133,9 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         entries.retain(|_, e| e.view.strong_count() > 0);
         for entry in entries.values().filter(|e| !back || e.writable) {
             if let Some(view) = entry.view.upgrade() {
-                copies.push((entry.source.clone(), entry.offset, entry.bytes, view));
+                for (source, offset, at, bytes) in &entry.pieces {
+                    copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
+                }
             }
         }
     }
@@ -144,11 +159,11 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
             Recorder { kind, allocator, list, fence, value: 0, held: Vec::new() }
         },
     };
-    for (source, offset, bytes, view) in &copies {
+    for (source, offset, at, bytes, view) in &copies {
         if back {
-            unsafe { recorder.list.CopyBufferRegion(source, *offset, &view.native, 0, *bytes) };
+            unsafe { recorder.list.CopyBufferRegion(source, *offset, &view.native, *at, *bytes) };
         } else {
-            unsafe { recorder.list.CopyBufferRegion(&view.native, 0, source, *offset, *bytes) };
+            unsafe { recorder.list.CopyBufferRegion(&view.native, *at, source, *offset, *bytes) };
         }
         recorder.held.push((source.clone(), view.native.clone()));
     }
