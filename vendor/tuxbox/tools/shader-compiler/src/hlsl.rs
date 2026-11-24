@@ -1211,6 +1211,10 @@ fn vop1_f64_on() -> bool {
     std::env::var("TB_VOP1_F64").map_or(true, |v| v.trim() != "0")
 }
 
+fn typed_half4() -> bool {
+    std::env::var("TB_TYPED_HALF4").map_or(true, |v| v.trim() != "0")
+}
+
 fn mad_unfused() -> bool {
     std::env::var("TB_MAD_UNFUSED").map_or(true, |v| v.trim() != "0")
 }
@@ -7739,7 +7743,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let packed = format!("t{}", self.tmp);
         let packed1 = format!("t{}", self.tmp + 1);
         self.tmp += 2;
-        if ins.aux.imm2 == 69 && upstream_ff1_fmt69() {
+        let half4 = ins.aux.imm2 == 71 && typed_half4();
+        if (ins.aux.imm2 == 69 && upstream_ff1_fmt69()) || half4 {
             self.line(&format!(
                 "uint {packed} = 0u; uint {packed1} = 0u; if (exec_lo & 1u) {{ {packed} = {buffer}.Load({address}); {packed1} = {buffer}.Load({address} + 4u); }}"
             ));
@@ -7772,6 +7777,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 13 => (if channel == 3 { "asuint(1.0f)" } else { "0u" }).to_string(),
                 // BUFFER_FORMAT_16_16_16_16_UINT: four 16-bit unsigned channels.
                 69 if upstream_ff1_fmt69() => tbuf_16_16_16_16_uint_channel(channel, &packed, &packed1),
+                // BUFFER_FORMAT_16_16_16_16_FLOAT: four binary16 channels in
+                // one 8-byte element, x/y in the first dword, z/w in the second.
+                // Xbox2Windows 5d0dce30 (#1699, triggered02, MIT), re-derived;
+                // TB_TYPED_HALF4=0 reads (0, 0, 0, 1) as before.
+                71 if half4 => format!("asuint(f16tof32({} >> {}u))", if channel < 2 { &packed } else { &packed1 }, (channel % 2) * 16),
                 // BUFFER_FORMAT_16_16_UNORM / UINT / FLOAT.
                 23 | 27 | 29 if channel >= 2 => (if channel == 3 { if ins.aux.imm2 == 27 { "1u" } else { "asuint(1.0f)" } } else { "0u" }).to_string(),
                 23 => format!("asuint(float(({packed} >> {}u) & 65535u) / 65535.0f)", channel * 16),
