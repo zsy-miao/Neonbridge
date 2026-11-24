@@ -64,6 +64,19 @@ static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 static POOLED: AtomicU64 = AtomicU64::new(0);
 static POOLED_BYTES: AtomicU64 = AtomicU64::new(0);
 static REUSED: AtomicU64 = AtomicU64::new(0);
+static SUPERSEDED: AtomicU64 = AtomicU64::new(0);
+static SUPERSEDED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// A live texture a newer placement overlaps (true), or one of those dropped.
+pub(super) fn superseded(bytes: u64, now: bool) {
+    if now {
+        SUPERSEDED.fetch_add(1, Relaxed);
+        SUPERSEDED_BYTES.fetch_add(bytes, Relaxed);
+    } else {
+        SUPERSEDED.fetch_sub(1, Relaxed);
+        SUPERSEDED_BYTES.fetch_sub(bytes, Relaxed);
+    }
+}
 
 fn enabled() -> bool {
     crate::env_toggle!("TUXBOX_PLACED_TEXTURE_REUSE") != Some("0")
@@ -124,6 +137,8 @@ pub(crate) struct Stats {
     pub(crate) pooled: u64,
     pub(crate) pooled_bytes: u64,
     pub(crate) reused: u64,
+    pub(crate) superseded: u64,
+    pub(crate) superseded_bytes: u64,
 }
 
 pub(crate) fn stats() -> Stats {
@@ -133,6 +148,8 @@ pub(crate) fn stats() -> Stats {
         pooled: POOLED.load(Relaxed),
         pooled_bytes: POOLED_BYTES.load(Relaxed),
         reused: REUSED.load(Relaxed),
+        superseded: SUPERSEDED.load(Relaxed),
+        superseded_bytes: SUPERSEDED_BYTES.load(Relaxed),
     }
 }
 

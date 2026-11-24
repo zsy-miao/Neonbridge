@@ -92,8 +92,51 @@ struct Alias {
     texture: Weak<Texture>,
 }
 
+/// Aliases by start address, and each 64 KiB page's textures (rebox
+/// 7287e01, re-derived): a placement over pages older textures cover marks
+/// them superseded, counted on the memory line, since on the console the
+/// newer one now owns that memory. TUXBOX_PLACED_PAGE_INDEX=0 keeps no
+/// page index.
 #[derive(Default)]
-struct Images(Mutex<BTreeMap<u64, Vec<Alias>>>);
+struct Images(Mutex<BTreeMap<u64, Vec<Alias>>>, Mutex<std::collections::HashMap<u64, Vec<Weak<Texture>>>>);
+
+fn page_index() -> bool {
+    crate::env_toggle!("TUXBOX_PLACED_PAGE_INDEX") != Some("0")
+}
+
+fn pages(range: &Range<u64>) -> core::ops::RangeInclusive<u64> {
+    range.start >> 16..=(range.end.max(range.start + 1) - 1) >> 16
+}
+
+#[cfg(test)]
+#[test]
+fn a_range_covers_the_pages_it_touches() {
+    assert_eq!(pages(&(0x10000..0x20000)), 1..=1);
+    assert_eq!(pages(&(0xffff..0x10001)), 0..=1);
+    assert_eq!(pages(&(0x30000..0x30000)), 3..=3);
+}
+
+/// Indexes a new texture by page and marks the live older textures it
+/// overlaps superseded. Returns those textures: the caller drops them
+/// after releasing the image locks, since a last reference runs Drop,
+/// which takes both.
+fn index_pages(images: &Images, texture: &Arc<Texture>) -> Vec<Arc<Texture>> {
+    let range = texture.range();
+    let mut older = Vec::new();
+    let mut index = lock(&images.1);
+    for page in pages(&range) {
+        let list = index.entry(page).or_default();
+        list.retain(|t| t.strong_count() != 0);
+        for old in list.iter().filter_map(Weak::upgrade) {
+            if overlaps(&old.range(), &range) && !old.superseded.swap(true, Ordering::Relaxed) {
+                pool::superseded(old.bytes, true);
+            }
+            older.push(old);
+        }
+        list.push(Arc::downgrade(texture));
+    }
+    older
+}
 
 pub(crate) struct Texture {
     pub(super) native: ID3D12Resource,
@@ -106,6 +149,8 @@ pub(crate) struct Texture {
     images: Weak<Images>,
     /// The native copy's allocation size, for the live count and the pool.
     bytes: u64,
+    /// A newer placement overlaps this one's memory.
+    superseded: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for Texture {
@@ -113,6 +158,9 @@ impl Drop for Texture {
         crate::exports::profiling::mapping_released();
         let readers = std::mem::take(&mut self.contents.get_mut().unwrap_or_else(|e| e.into_inner()).readers);
         pool::release(&self.native, host_desc(&self.desc), self.bytes, readers);
+        if *self.superseded.get_mut() {
+            pool::superseded(self.bytes, false);
+        }
         let Some(images) = self.images.upgrade() else {
             return;
         };
@@ -122,6 +170,17 @@ impl Drop for Texture {
                 .retain(|alias| alias.texture.strong_count() != 0);
             if entry.get().is_empty() {
                 entry.remove();
+            }
+        }
+        if page_index() {
+            let mut index = lock(&images.1);
+            for page in pages(&self.range()) {
+                if let std::collections::hash_map::Entry::Occupied(mut list) = index.entry(page) {
+                    list.get_mut().retain(|t| t.strong_count() != 0);
+                    if list.get().is_empty() {
+                        list.remove();
+                    }
+                }
             }
         }
     }
@@ -333,6 +392,7 @@ impl Texture {
             contents,
             images: Arc::downgrade(images),
             bytes,
+            superseded: Default::default(),
         }))
     }
 
@@ -576,6 +636,9 @@ impl Placements {
             desc: *desc,
             texture: Arc::downgrade(&texture),
         });
+        let older = if page_index() { index_pages(&self.memory.images, &texture) } else { Vec::new() };
+        drop(images);
+        drop(older);
         Ok(texture)
     }
 }
