@@ -592,7 +592,24 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
                 super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) };
         }
         Err(error) if backstop_on() => {
-            let native = match import_or_back(device, address, desc, D3D12_RESOURCE_STATE_COMMON) {
+            // TuxBox 6171f56 (Valdi320, Apache-2.0): a retry that commits the
+            // pages and imports them is a real import of the title's memory,
+            // but it was registered like the stand-in, at address 0 with no
+            // heap, so its GPU address read 0 and views of the title address
+            // never found it. The widened import is retried first, then the
+            // exact one; either keeps the title address and its heap.
+            let widened = if base != address || host.Flags != desc.Flags {
+                import_with_commit(device, base, &host, D3D12_RESOURCE_STATE_COMMON).ok().map(|i| (i, delta))
+            } else { None };
+            let exact = || import_with_commit(device, address, desc, D3D12_RESOURCE_STATE_COMMON).ok().map(|i| (i, 0));
+            if let Some(((native, heap), offset)) = widened.or_else(exact) {
+                let buffer = super::views::TextureAddress::with_heap(
+                    device, &native, address as usize, false, None, None, None, offset, Some(heap),
+                );
+                return unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
+                    super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) };
+            }
+            let native = match stand_in_buffer(device, desc, D3D12_RESOURCE_STATE_COMMON) {
                 Ok(native) => native,
                 Err(fallback) => {
                     crate::diagnostics::recording_error(format_args!(
@@ -646,23 +663,37 @@ fn stand_in_buffer(device: &Device, desc: &D3D12_RESOURCE_DESC, state: D3D12_RES
 /// A placed buffer over guest memory that will not import (a reserved, not
 /// committed range): commit those pages and import again, else a device
 /// buffer stands in. Copied from TuxBox aeed457 (brcly, Apache-2.0).
+/// Imports the buffer at `address`, committing its reserved guest pages and
+/// importing again if the first try fails; the heap comes back with it.
+fn import_with_commit(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES)
+    -> windows::core::Result<(ID3D12Resource, Arc<ImportedHeap>)> {
+    let error = match import_buffer_with_heap(device, address, desc, state) {
+        Ok(import) => return Ok(import),
+        Err(error) => error,
+    };
+    if !backstop_on() {
+        return Err(error);
+    }
+    let info = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) };
+    let bytes = if info.SizeInBytes == u64::MAX { desc.Width } else { info.SizeInBytes };
+    let base = address & !0xffff;
+    let Some(end) = address.checked_add(bytes).and_then(|end| end.checked_next_multiple_of(0x10000)) else { return Err(error) };
+    if commit_guest_pages(base, end - base)
+        && let Ok(import) = import_buffer_with_heap(device, address, desc, state)
+    {
+        static COMMITTED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&COMMITTED, || format!(
+            "placed buffer at {address:#x} bytes={} committed reserved guest pages (TUXBOX_PLACED_BACKSTOP=0 off)", desc.Width));
+        return Ok(import);
+    }
+    Err(error)
+}
+
 fn import_or_back(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES)
     -> windows::core::Result<ID3D12Resource> {
-    match import_buffer(device, address, desc, state) {
-        Ok(native) => Ok(native),
+    match import_with_commit(device, address, desc, state) {
+        Ok((native, _)) => Ok(native),
         Err(error) if backstop_on() => {
-            let info = unsafe { device.native.GetResourceAllocationInfo(0, std::slice::from_ref(desc)) };
-            let bytes = if info.SizeInBytes == u64::MAX { desc.Width } else { info.SizeInBytes };
-            let base = address & !0xffff;
-            let end = address.saturating_add(bytes).saturating_add(0xffff) & !0xffff;
-            if commit_guest_pages(base, end.saturating_sub(base))
-                && let Ok(native) = import_buffer(device, address, desc, state)
-            {
-                static COMMITTED: std::sync::Once = std::sync::Once::new();
-                crate::diagnostics::log_once(&COMMITTED, || format!(
-                    "placed buffer at {address:#x} bytes={} committed reserved guest pages (TUXBOX_PLACED_BACKSTOP=0 off)", desc.Width));
-                return Ok(native);
-            }
             let native = stand_in_buffer(device, desc, state)?;
             static DEVICE: std::sync::Once = std::sync::Once::new();
             crate::diagnostics::log_once(&DEVICE, || format!(
