@@ -9,6 +9,7 @@ pub(crate) const USAGE: &str = "usage: neonbridge ctl <command>   (talks to the 
   status                 fps, frame split, GPU latency, hot threads, audio counters
   log [N] [filter]       the last N (default 40) log lines containing the filter
   stack                  every thread's stack now
+  where ADDR             what game+0xRVA or 0xVA is now (module+RVA, export, memory kind, bytes)
   press BUTTONS [ms]     A B X Y Menu View Up Down Left Right LB RB LS RS, join with + (default 150 ms)
   hold BUTTONS | release
   screenshot FILE        the next presented frame as .bmp

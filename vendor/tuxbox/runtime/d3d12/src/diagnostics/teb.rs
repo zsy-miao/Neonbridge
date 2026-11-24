@@ -23,6 +23,7 @@ pub(crate) fn run() {
     if let Ok(value) = std::env::var("TUXBOX_STREAM_WATCH") && value != "0" {
         super::streams::start(&value);
     }
+    super::memwatch::start();
 }
 
 fn gs(offset: usize) -> usize {

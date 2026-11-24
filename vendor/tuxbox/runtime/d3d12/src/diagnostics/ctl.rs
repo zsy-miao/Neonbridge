@@ -90,11 +90,24 @@ fn read_line(pipe: HANDLE) -> String {
     String::from_utf8_lossy(&out).lines().next().unwrap_or("").to_string()
 }
 
+/// `where ADDR`: what an address a call or store names is now (palmetto
+/// 88307252, re-derived): module+RVA and nearest export, or the memory kind.
+fn where_is(arg: Option<&str>) -> String {
+    let Some((address, _)) = arg.and_then(super::memwatch::parse_address) else {
+        return "usage: where game+0xRVA | 0xVA\n".into();
+    };
+    let list = super::sampler::modules();
+    let export = super::crash_detail::export_near(&list, address).map_or(String::new(), |e| format!("; export {e}"));
+    format!("{address:#x} = {}: {}{export}; bytes {}\n", super::memwatch::label(address),
+        super::crash_detail::address_kind(&list, address), super::crash_detail::bytes(address, 16))
+}
+
 fn handle(line: &str) -> String {
     let words: Vec<&str> = line.split_whitespace().collect();
     let Some((&command, args)) = words.split_first() else { return help() };
     match command.to_ascii_lowercase().as_str() {
         "status" => status(),
+        "where" => where_is(args.first().copied()),
         "log" => log_tail(args),
         "stack" | "stacks" => super::crash::stacks_now().join("\n") + "\n",
         "press" => pad(args.first().copied(), args.get(1).and_then(|v| v.parse().ok()).unwrap_or(150)),

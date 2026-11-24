@@ -140,6 +140,7 @@ pub(super) unsafe extern "system" fn create_root_signature(
     }
     // SAFETY: serialized signature bytes are borrowed only for this call.
     let bytes = unsafe { slice::from_raw_parts(blob, length) };
+    crate::diagnostics::rootsig::note(bytes);
     match unsafe {
         this.native
             .CreateRootSignature::<ID3D12RootSignature>(node, bytes)
