@@ -292,6 +292,22 @@ fn fit_host(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
     for access in [&mut item.AccessBefore, &mut item.AccessAfter] {
         if access.0 != D3D12_BARRIER_ACCESS_NO_ACCESS.0 { access.0 &= allowed; }
     }
+    // test89: the fresh-list probe found the host rejects SHADER_RESOURCE|
+    // DEPTH_STENCIL_READ access in DEPTH_STENCIL_READ layout on R24G8 depth
+    // textures and accepts DEPTH_STENCIL_READ alone; the next barrier then
+    // failed for carrying the same pair before. That side drops
+    // SHADER_RESOURCE (TUXBOX_DS_READ_SR=1 keeps it).
+    if desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 != 0
+        && crate::env_toggle!("TUXBOX_DS_READ_SR") != Some("1")
+    {
+        for (layout, access) in [(item.LayoutBefore, &mut item.AccessBefore), (item.LayoutAfter, &mut item.AccessAfter)] {
+            if layout == D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_READ
+                && access.0 & D3D12_BARRIER_ACCESS_DEPTH_STENCIL_READ.0 != 0
+            {
+                access.0 &= !D3D12_BARRIER_ACCESS_SHADER_RESOURCE.0;
+            }
+        }
+    }
     // DISCARD is only a hint; the host restricts which layouts take it.
     item.Flags = D3D12_TEXTURE_BARRIER_FLAGS(0);
     let after = snapshot(item);
@@ -644,6 +660,34 @@ unsafe fn probe_resource(native: &ID3D12GraphicsCommandList7, failed: &D3D12_TEX
     format!("; resource {:#x}: legacy DEPTH_READ->PIXEL_SHADER_RESOURCE transition {legacy}, a global barrier {global}, {heap}, {device}", resource.as_raw() as usize)
 }
 
+/// test89: an all-subresource barrier on an R32G8X24 depth texture was
+/// rejected with no single-field fix. A depth-stencil barrier covering both
+/// planes is recorded once per plane (TUXBOX_DS_PLANE_SPLIT=0 keeps one).
+fn plane_split(item: &D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) -> Option<[D3D12_BARRIER_SUBRESOURCE_RANGE; 2]> {
+    if desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 == 0
+        || crate::env_toggle!("TUXBOX_DS_PLANE_SPLIT") == Some("0")
+    {
+        return None;
+    }
+    let r = item.Subresources;
+    let (mip, mips, slice, slices) = if r.IndexOrFirstMipLevel == u32::MAX {
+        (0, u32::from(desc.MipLevels.max(1)), 0, if desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D { 1 } else { u32::from(desc.DepthOrArraySize.max(1)) })
+    } else if r.NumPlanes >= 2 && r.FirstPlane == 0 && r.NumMipLevels != 0 {
+        (r.IndexOrFirstMipLevel, r.NumMipLevels, r.FirstArraySlice, r.NumArraySlices.max(1))
+    } else {
+        return None;
+    };
+    // Only formats with a stencil plane have two.
+    use windows::Win32::Graphics::Dxgi::Common as dxgi;
+    let two = [dxgi::DXGI_FORMAT_R32G8X24_TYPELESS, dxgi::DXGI_FORMAT_D32_FLOAT_S8X24_UINT,
+        dxgi::DXGI_FORMAT_R24G8_TYPELESS, dxgi::DXGI_FORMAT_D24_UNORM_S8_UINT].contains(&desc.Format);
+    if !two { return None; }
+    let plane = |p| D3D12_BARRIER_SUBRESOURCE_RANGE {
+        IndexOrFirstMipLevel: mip, NumMipLevels: mips, FirstArraySlice: slice, NumArraySlices: slices, FirstPlane: p, NumPlanes: 1,
+    };
+    Some([plane(0), plane(1)])
+}
+
 /// Whether barriers on this resource are left out (see BAD).
 fn bad_resource(item: &D3D12_TEXTURE_BARRIER) -> bool {
     if !ANY_BAD.load(Ordering::Acquire) || !skip_on() { return false; }
@@ -862,6 +906,16 @@ unsafe fn record(
                         continue;
                     }
                     device::committed_writeback::note_layout(&resource.native, item.LayoutAfter);
+                    if let Some(planes) = plane_split(&item, &desc) {
+                        // A bitwise copy per plane: the COM pointer stays borrowed.
+                        for range in planes {
+                            let mut one = unsafe { ptr::read(&item) };
+                            one.Subresources = range;
+                            barriers.push(one);
+                        }
+                        mem::forget(item);
+                        continue;
+                    }
                     barriers.push(item);
                 }
                 texture_group(native, &barriers);

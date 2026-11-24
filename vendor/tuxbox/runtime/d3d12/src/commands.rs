@@ -2421,6 +2421,8 @@ unsafe extern "system" fn present(
 unsafe fn present_planes(
     queue: &Queue, count: u32, planes: *const PresentPlane, params: *const PresentParameters,
 ) -> HRESULT {
+    // Before the submission lock: the wait must not hold up this queue.
+    crate::throttle::presented();
     let mut submitted = queue
         .state
         .submission
@@ -2668,6 +2670,7 @@ pub(crate) unsafe fn wrap_command_queue(
     device11_queue: bool,
     out: *mut *mut c_void,
 ) -> HRESULT {
+    crate::throttle::follow(&native);
     let state = QueueState {
         reserved: 0,
         kind: unsafe { native.GetDesc() }.Type,
