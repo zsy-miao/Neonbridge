@@ -76,6 +76,23 @@ pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, boo
 /// to TUXBOX_COMPUTE_PENDING_WAIT_MS (3000; 0 drops its dispatches as before).
 /// Returns whether the bind waited; logs each pipeline that waited (first 16,
 /// then powers of two) with its key, the wait and the caller.
+/// test111 hung ("no frame presented for 15 s"): title threads waited on 32+
+/// pending compute pipelines one bind after another, each up to the full
+/// limit. The waits of all binds share TUXBOX_COMPUTE_PENDING_FRAME_MS
+/// (4000; 0 unlimited) per presented frame; past it a bind drops its dispatches
+/// as before, the frame ends and the budget refills.
+static BIND_WAIT_LEFT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MAX);
+
+fn bind_wait_frame_ms() -> i64 {
+    static MS: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| crate::env_toggle!("TUXBOX_COMPUTE_PENDING_FRAME_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(4000))
+}
+
+pub(crate) fn refill_bind_wait() {
+    let ms = bind_wait_frame_ms();
+    BIND_WAIT_LEFT_MS.store(if ms == 0 { i64::MAX } else { ms }, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
     static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     let limit = *LIMIT.get_or_init(|| {
@@ -91,8 +108,26 @@ pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
     if super::stream::background::failed(slot) {
         return false;
     }
+    use std::sync::atomic::Ordering as O;
+    let frame_ms = bind_wait_frame_ms();
+    if frame_ms != 0 && BIND_WAIT_LEFT_MS.load(O::Relaxed) > frame_ms {
+        refill_bind_wait();
+    }
+    let left = BIND_WAIT_LEFT_MS.load(O::Relaxed);
+    if left <= 0 {
+        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SKIPPED.fetch_add(1, O::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "compute pipeline {} still being made at its bind: not waited, this frame's bind waits are spent ({n} so far; TUXBOX_COMPUTE_PENDING_FRAME_MS)",
+                &key[..key.len().min(16)]));
+        }
+        return false;
+    }
     let started = std::time::Instant::now();
-    let built = super::stream::background::wait_for(slot, std::time::Duration::from_millis(limit)).is_some();
+    let wait = limit.min(u64::try_from(left).unwrap_or(u64::MAX));
+    let built = super::stream::background::wait_for(slot, std::time::Duration::from_millis(wait)).is_some();
+    BIND_WAIT_LEFT_MS.fetch_sub(started.elapsed().as_millis() as i64, O::Relaxed);
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if n <= 16 || n.is_power_of_two() {
@@ -103,7 +138,10 @@ pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
         crate::diagnostics::log_line(format_args!(
             "compute pipeline {} still being made at its bind: waited {:.1} ms, {} ({caller}; {n} so far; TUXBOX_COMPUTE_PENDING_WAIT_MS=0 drops its dispatches)",
             &key[..key.len().min(16)], started.elapsed().as_secs_f64() * 1e3,
-            if built { "made" } else { "not made, dispatches dropped" }));
+            if built { "made" }
+            else if super::stream::background::failed(slot) { "not made: its build failed (see the creation failure above), dispatches dropped" }
+            else if wait < limit { "not made: this frame's bind waits ran out, dispatches dropped" }
+            else { "not made in time, dispatches dropped" }));
     }
     true
 }
@@ -436,7 +474,11 @@ unsafe fn make_compute(
                 .or_else(|| super::shader_cache::prepared(bytes));
             let Some(code) = code else {
                 super::compute_table::capture_stage_root(bytes, &table.original);
-                crate::diagnostics::compute_failure(bytes, E_NOTIMPL.0, super::shader_cache::take_reason());
+                // A miss on the title's thread goes to the workers (create_pipeline),
+                // so it is not final; say so rather than look like a failure.
+                let why = super::shader_cache::take_reason();
+                let why = if super::shader_cache::missed() { format!("{why}; handed to the pipeline workers, not final") } else { why.to_string() };
+                crate::diagnostics::compute_failure(bytes, E_NOTIMPL.0, &why);
                 return unsafe { null_compute(this, root.map(|p| &p.native), desc, out) }.unwrap_or(E_NOTIMPL);
             };
             (Some(code), Some(table))

@@ -26,6 +26,12 @@ const FRAME_BUDGET_MS: i64 = 50;
 pub(crate) fn frame_presented() {
     let budget = crate::env_toggle!("TUXBOX_FRAME_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(FRAME_BUDGET_MS);
     WAIT_BUDGET_MS.store(budget, Ordering::Relaxed);
+    crate::device::compute::refill_bind_wait();
+}
+
+/// Whether this thread's last request ran out of time (left set, unlike take_missed).
+pub(crate) fn missed() -> bool {
+    MISSED.with(|m| m.get())
 }
 
 thread_local! {
@@ -319,6 +325,13 @@ fn request(
             let urgent = dir.join("urgent");
             let _ = fs::create_dir_all(&urgent);
             let _ = fs::write(urgent.join(key), b"");
+            static MARKED: AtomicUsize = AtomicUsize::new(0);
+            let n = MARKED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 8 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "shader cache: request {} marked urgent, a title thread waits on it ({n} so far; the launcher logs each one it serves first)",
+                    &key[..key.len().min(16)]));
+            }
         }
     };
     if DEADLINE.with(|d| d.get()).is_some() {

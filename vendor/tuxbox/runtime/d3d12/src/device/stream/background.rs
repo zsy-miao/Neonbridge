@@ -118,6 +118,9 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
         return Some(built);
     }
     promote(slot);
+    // test111: a steal that ran out of time was followed by a full new wait,
+    // so one bind could block 2x its limit. Both now share one deadline.
+    let deadline = std::time::Instant::now() + limit;
     if steal_on() && let Some(job) = steal(slot) {
         build_here(job, limit);
         if let Some(built) = slot.built.get() {
@@ -130,7 +133,6 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
     if worker != 0 {
         crate::device::shader_cache::urge_worker(worker, true);
     }
-    let deadline = std::time::Instant::now() + limit;
     let (lock, done) = &DONE;
     let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
     while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) {
