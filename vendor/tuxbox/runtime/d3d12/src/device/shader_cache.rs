@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Read;
 use std::sync::{LazyLock, Mutex, Once};
+use crate::diagnostics::{Seen, Sighting};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL};
 use windows::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash};
 use windows::core::HRESULT;
@@ -66,14 +67,16 @@ impl Stage {
         }
         // Parallel pipeline jobs can miss several distinct shaders before the
         // title stops. Record each source once, with bounded process lifetime storage.
-        static MISSES: Mutex<Vec<String>> = Mutex::new(Vec::new());
-        let mut misses = MISSES.lock().unwrap_or_else(|error| error.into_inner());
-        if misses.len() < 64 && !misses.iter().any(|seen| seen == source) {
-            misses.push(source.to_owned());
-            drop(misses);
-            crate::diagnostics::log_once(&Once::new(), || {
+        static MISSES: Seen<String> = Seen::new(64);
+        match MISSES.sight(source) {
+            Sighting::New => crate::diagnostics::log_once(&Once::new(), || {
                 format!("prepared {name} shader missing or invalid, source SHA-256 {source}")
-            });
+            }),
+            Sighting::Full => crate::diagnostics::log_once(&Once::new(), || {
+                "prepared shader misses exceeded 64 distinct sources; further ones are not logged"
+                    .to_owned()
+            }),
+            Sighting::Repeat => {}
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use std::ffi::OsStr;
 use std::io::{self, Write};
-use std::sync::Once;
+use std::sync::{Mutex, Once};
 use windows::Win32::Graphics::Direct3D12::{
     D3D12_COMMAND_LIST_TYPE, D3D12_COMMAND_LIST_TYPE_COMPUTE, D3D12_COMMAND_LIST_TYPE_COPY,
     D3D12_COMMAND_LIST_TYPE_DIRECT, ID3D12Device,
@@ -22,6 +22,47 @@ pub(crate) fn log_once(site: &Once, detail: impl FnOnce() -> String) {
             unsafe { OutputDebugStringA(PCSTR(line.as_ptr())) };
         }
     });
+}
+
+/// Whether a keyed diagnostic should print. `Full` is returned once, for the
+/// first new key past the cap, so truncation is visible in the log.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Sighting {
+    New,
+    Full,
+    Repeat,
+}
+
+/// Keys already reported, bounded so a long session cannot grow it without limit.
+pub(crate) struct Seen<T> {
+    state: Mutex<(Vec<T>, bool)>,
+    cap: usize,
+}
+
+impl<T> Seen<T> {
+    pub(crate) const fn new(cap: usize) -> Self {
+        Self { state: Mutex::new((Vec::new(), false)), cap }
+    }
+
+    pub(crate) fn sight<Q>(&self, key: &Q) -> Sighting
+    where
+        Q: PartialEq + ToOwned<Owned = T> + ?Sized,
+        T: std::borrow::Borrow<Q>,
+    {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let (keys, full) = &mut *state;
+        if keys.iter().any(|seen| seen.borrow() == key) {
+            Sighting::Repeat
+        } else if keys.len() < self.cap {
+            keys.push(key.to_owned());
+            Sighting::New
+        } else if !*full {
+            *full = true;
+            Sighting::Full
+        } else {
+            Sighting::Repeat
+        }
+    }
 }
 
 pub(crate) struct RasterDraw {
@@ -96,9 +137,22 @@ pub(super) fn presented(width: u64, height: u32) {
 /// A shader's container ID and chunk types let the package tools locate the
 /// original program without copying shader bytecode into the game log.
 pub(super) fn compute_failure(shader: &[u8], status: i32) {
-    static FIRST_FAILURE: Once = Once::new();
-    log_once(&FIRST_FAILURE, || {
-        let description = if shader.starts_with(b"DXBC") && shader.len() >= 32 {
+    // Each distinct program is worth one line; repeats of the same ID add nothing.
+    static FAILURES: Seen<Option<[u8; 16]>> = Seen::new(64);
+    let id = (shader.starts_with(b"DXBC") && shader.len() >= 32)
+        .then(|| <[u8; 16]>::try_from(&shader[4..20]).unwrap());
+    match FAILURES.sight(&id) {
+        Sighting::Repeat => return,
+        Sighting::Full => {
+            return log_once(&Once::new(), || {
+                "compute pipeline failures exceeded 64 distinct shaders; further ones are not logged"
+                    .to_owned()
+            });
+        }
+        Sighting::New => {}
+    }
+    log_once(&Once::new(), || {
+        let description = if let Some(id) = id {
             let count =
                 u32::from_le_bytes([shader[28], shader[29], shader[30], shader[31]]) as usize;
             let mut chunks = Vec::new();
@@ -111,7 +165,7 @@ pub(super) fn compute_failure(shader: &[u8], status: i32) {
                     chunks.push(name);
                 }
             }
-            let id: String = shader[4..20].iter().map(|b| format!("{b:02x}")).collect();
+            let id: String = id.iter().map(|b| format!("{b:02x}")).collect();
             format!("DXBC {id}, chunks {}", chunks.join("/"))
         } else {
             "unrecognized shader container".to_owned()
@@ -352,5 +406,21 @@ pub(crate) mod display {
         let c: Vec<u64> = COUNTS.iter().map(|c| c.swap(0, Ordering::Relaxed)).collect();
         format!("display writes recorded: draws={} (null pipeline {}) clears={} copies={} rtv-binds={} | all draws={} | display resources={}",
             c[0], c[1], c[2], c[3], c[5], c[4], RESOURCES.lock().unwrap_or_else(|e| e.into_inner()).len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_each_key_once_and_the_cap_once() {
+        let seen = Seen::<String>::new(2);
+        assert_eq!(seen.sight("a"), Sighting::New);
+        assert_eq!(seen.sight("a"), Sighting::Repeat);
+        assert_eq!(seen.sight("b"), Sighting::New);
+        assert_eq!(seen.sight("c"), Sighting::Full);
+        assert_eq!(seen.sight("d"), Sighting::Repeat);
+        assert_eq!(seen.sight("b"), Sighting::Repeat);
     }
 }

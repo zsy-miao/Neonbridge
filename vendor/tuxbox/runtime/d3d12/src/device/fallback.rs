@@ -9,7 +9,7 @@
 //! The shaders bind no resources, so they are compatible with any root
 //! signature. The vertex shader emits a clipped position (w = 0); the pixel
 //! shader writes nothing.
-use std::sync::{LazyLock, Mutex, OnceLock, atomic::{AtomicU64, Ordering}};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW};
 use windows::core::{Interface, s, w};
 
@@ -63,13 +63,39 @@ pub(super) fn bytecode(code: &[u8]) -> windows::Win32::Graphics::Direct3D12::D3D
     }
 }
 
-/// Count and occasionally report substituted pipelines.
-pub(super) fn substituted(kind: &str) {
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-    let count = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+/// Count and occasionally report substituted pipelines. Counts are per kind
+/// so each "so far" label describes the pipelines it names.
+pub(super) fn substituted(kind: &'static str) {
+    static COUNTS: Mutex<Vec<(&str, u64)>> = Mutex::new(Vec::new());
+    let count = bump(&mut COUNTS.lock().unwrap_or_else(|e| e.into_inner()), kind);
     if count.is_power_of_two() {
         crate::diagnostics::log_once(&std::sync::Once::new(), || {
             format!("substituted null {kind} pipeline for an untranslated shader ({count} so far)")
         });
+    }
+}
+
+fn bump(counts: &mut Vec<(&'static str, u64)>, kind: &'static str) -> u64 {
+    match counts.iter_mut().find(|(seen, _)| *seen == kind) {
+        Some((_, count)) => {
+            *count += 1;
+            *count
+        }
+        None => {
+            counts.push((kind, 1));
+            1
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn counts_each_kind_separately() {
+        let mut counts = Vec::new();
+        assert_eq!(super::bump(&mut counts, "compute"), 1);
+        assert_eq!(super::bump(&mut counts, "compute"), 2);
+        assert_eq!(super::bump(&mut counts, "raster stream"), 1);
+        assert_eq!(super::bump(&mut counts, "compute"), 3);
     }
 }
