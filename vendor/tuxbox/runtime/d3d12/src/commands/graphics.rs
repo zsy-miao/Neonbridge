@@ -279,6 +279,24 @@ pub(super) unsafe extern "system" fn index_buffer(
     }
 }
 
+/// TUXBOX_NULL_UNBACKED_STREAMS=0: a vertex stream with no backing passes its
+/// guest address through (and an import failure fails the list), as before.
+/// On: it is bound as an empty stream and logged (the bounded vertex-stream
+/// binding of Xbox2Windows fc547dd7, re-derived; a stream crossing placements
+/// is still served by one import covering it).
+fn null_unbacked_streams() -> bool {
+    crate::env_toggle!("TUXBOX_NULL_UNBACKED_STREAMS") != Some("0")
+}
+
+fn note_null_stream(address: u64, bytes: u32, error: Option<windows::core::HRESULT>) {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "vertex stream {address:#x} ({bytes} bytes) has no backing ({error:?}): bound empty ({n} so far; TUXBOX_NULL_UNBACKED_STREAMS=0 passes it through)"));
+    }
+}
+
 pub(super) unsafe extern "system" fn vertex_buffers(
     list: &List,
     start: u32,
@@ -303,6 +321,22 @@ pub(super) unsafe extern "system" fn vertex_buffers(
     let host = &mut translated[..count as usize];
     host.copy_from_slice(unsafe { core::slice::from_raw_parts(views, count as usize) });
     for v in host.iter_mut() {
+        if null_unbacked_streams() && v.BufferLocation != 0 {
+            // A stream no title buffer or committed page backs would hand the
+            // guest VA to the GPU as a host address; bind it empty instead.
+            let backed = unsafe { crate::device::command_buffer_address(super::parent(&list.parent), v.BufferLocation, u64::from(v.SizeInBytes).max(1)) };
+            match backed {
+                Ok((Some(buffer), va)) => {
+                    if let Err(e) = super::raytracing::retain(&mut state, &[&buffer]) { state.error = e.code(); return; }
+                    v.BufferLocation = va;
+                }
+                Ok((None, _)) | Err(_) => {
+                    note_null_stream(v.BufferLocation, v.SizeInBytes, backed.err().map(|e| e.code()));
+                    *v = D3D12_VERTEX_BUFFER_VIEW::default();
+                }
+            }
+            continue;
+        }
         let Some(address) = super::compute::address(list, &mut state, v.BufferLocation, v.SizeInBytes.into()) else { return; };
         v.BufferLocation = address;
     }
