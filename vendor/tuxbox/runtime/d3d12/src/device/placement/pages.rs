@@ -193,8 +193,17 @@ impl Pages {
     /// pools for 2607 MiB of pages in use, at device local 7748 of 7188 MiB.
     /// Nothing maps an empty pool, so unlike a demoted one it cannot be
     /// sampled while evicted. TUXBOX_PAGES_TRIM_EMPTY=0 off.
-    unsafe fn trim_empty(&mut self, dev: &ID3D12Device) {
-        if crate::env_toggle!("TUXBOX_PAGES_TRIM_EMPTY") == Some("0") {
+    ///
+    /// Every pass (over budget or not) also packs: test93 held 3776 MiB of
+    /// pools for 3136 MiB of pages and never had an empty pool, since the
+    /// free list was LIFO and tiles given back came out of every pool. The
+    /// free list is ordered so new tiles come from the fullest pools first
+    /// and the sparsest pools are taken from last, so they drain to empty.
+    /// TUXBOX_PAGES_PACK=0 keeps the old order.
+    unsafe fn trim_empty(&mut self, dev: &ID3D12Device, over_budget: bool) {
+        let pack = crate::env_toggle!("TUXBOX_PAGES_PACK") != Some("0");
+        let trim = over_budget && crate::env_toggle!("TUXBOX_PAGES_TRIM_EMPTY") != Some("0");
+        if !pack && !trim {
             return;
         }
         while self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) {
@@ -206,7 +215,7 @@ impl Pages {
         for t in &self.free {
             free[t.0 as usize] += 1;
         }
-        let empty: Vec<usize> = (0..self.pools.len()).filter(|&h| free[h] >= POOL_PAGES).collect();
+        let empty: Vec<usize> = if trim { (0..self.pools.len()).filter(|&h| free[h] >= POOL_PAGES).collect() } else { Vec::new() };
         let resident: Vec<usize> = empty.iter().copied().filter(|&h| !self.pool_empty[h]).collect();
         let kept = usize::from(empty.len() == resident.len());
         let cold: Vec<usize> = resident.into_iter().skip(kept).collect();
@@ -225,9 +234,23 @@ impl Pages {
                 Err(e) => crate::diagnostics::log_line(format_args!("placed textures: Evict of {} empty page pools failed {e}", cold.len())),
             }
         }
-        // Evicted pools' tiles are taken last.
+        // Evicted pools' tiles are taken last; packing takes the fullest
+        // pools' tiles first (the end of the list).
         let pool_empty = &self.pool_empty;
-        self.free.sort_by_key(|t| !pool_empty[t.0 as usize]);
+        if pack {
+            self.free.sort_unstable_by_key(|t| (!pool_empty[t.0 as usize], std::cmp::Reverse(free[t.0 as usize]), t.0, std::cmp::Reverse(t.1)));
+            static PACKS: AtomicU64 = AtomicU64::new(0);
+            let n = PACKS.fetch_add(1, Relaxed) + 1;
+            if n.is_power_of_two() && n >= 16 {
+                let all_free = free.iter().filter(|&&f| f >= POOL_PAGES).count();
+                let half_free = free.iter().filter(|&&f| f >= POOL_PAGES / 2).count();
+                crate::diagnostics::log_line(format_args!(
+                    "placed textures: packing pass {n}: {} pools, {all_free} with no tile in use, {half_free} at least half free, {} tiles free (TUXBOX_PAGES_PACK=0 off)",
+                    self.pools.len(), self.free.len()));
+            }
+        } else {
+            self.free.sort_by_key(|t| !pool_empty[t.0 as usize]);
+        }
     }
 
     /// Pages no resource used for `IDLE` go back to the pools.
@@ -1009,9 +1032,12 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
         }
         due
     };
-    if due && super::alias::over_budget(device) {
-        unsafe { pages.trim_empty(device) };
-        evict(pages, &keep, after, None);
+    if due {
+        let over = super::alias::over_budget(device);
+        unsafe { pages.trim_empty(device, over) };
+        if over {
+            evict(pages, &keep, after, None);
+        }
     }
     Ok(())
 }
