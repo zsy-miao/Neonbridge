@@ -144,7 +144,7 @@ fn image_name(pid: u32) -> Option<String> {
 }
 
 /// Moves a title window that leaves its monitor's work area into the primary
-/// monitor's, keeping its client aspect, and returns its bounds once visible.
+/// monitor's at 16:9, and returns its bounds once visible.
 /// Tool, owned and child windows are left alone (None), as is a window that is
 /// already fullscreen on, or inside, one monitor.
 fn fit(hwnd: HWND) -> Option<RECT> {
@@ -177,10 +177,10 @@ fn fit(hwnd: HWND) -> Option<RECT> {
         let mut frame: RECT = std::mem::zeroed();
         AdjustWindowRectEx(&mut frame, style, (!GetMenu(hwnd).is_null()).into(), extended);
         let (border_w, border_h) = (frame.right - frame.left, frame.bottom - frame.top);
-        let (mut w, mut h) = (i64::from(client.right), i64::from(client.bottom));
-        if w <= 0 || h <= 0 {
-            (w, h) = (16, 9);
-        }
+        // The title sizes this window to the whole desktop (32:9 across two
+        // monitors); its swap chain is 16:9 (3840x2160), so fit that shape.
+        let _ = client;
+        let (w, h) = (16i64, 9i64);
         let available_w = i64::from(work.right - work.left - border_w);
         let available_h = i64::from(work.bottom - work.top - border_h);
         if available_w <= 0 || available_h <= 0 {
