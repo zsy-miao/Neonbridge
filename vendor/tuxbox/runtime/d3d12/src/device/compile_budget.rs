@@ -110,7 +110,15 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
         return None;
     }
     let estimate = estimate(shader_bytes);
-    let tiny = shader_bytes < TINY_SHADER_BYTES;
+    // test133: with the budget on, title threads and bound pipelines waited
+    // the full 30 s behind an 8 GB commit reserve this machine never had.
+    // Only a prefetch waits now; a compile a title thread waits on (on its
+    // own thread, bound, or stolen) is counted and starts at once
+    // (five-star-recomp "Programs on demand", xcl 724b9e2: never gate a
+    // pipeline a game thread waits for). TUXBOX_COMPILE_BUDGET=all gates every
+    // compile as before.
+    let gated = super::stream::background::prefetching() || crate::env_toggle!("TUXBOX_COMPILE_BUDGET") == Some("all");
+    let tiny = shader_bytes < TINY_SHADER_BYTES || !gated;
     let mut waited = None;
     while !try_enter(estimate, tiny || waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait())) {
         if waited.is_none() {

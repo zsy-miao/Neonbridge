@@ -683,6 +683,16 @@ thread_local! {
     static WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set when a pipeline created on this thread fell back to a null pipeline.
     static NULLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set while a dedicated worker builds a job nothing has bound yet.
+    static PREFETCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread's driver compile is a prefetch no title thread waits
+/// on: a dedicated pipeline worker building a created, not yet bound, job.
+/// Only these wait in `compile_budget` (five-star-recomp and xcl 724b9e2:
+/// a pipeline a game thread waits for is never gated).
+pub(in crate::device) fn prefetching() -> bool {
+    PREFETCH.with(|p| p.get()) && !STEALING.with(|s| s.get())
 }
 
 /// Whether this thread is a pipeline worker (its builds are never deferred).
@@ -803,13 +813,17 @@ fn build_here(job: Job, limit: std::time::Duration) {
     }
 }
 
-fn next_job() -> Job {
+/// The next job, and whether it is a prefetch (created, not yet bound).
+fn next_job() -> (Job, bool) {
     let (lock, ready) = &JOBS;
     let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         let jobs = g.get_or_insert_with(Default::default);
-        if let Some(job) = jobs.bound.pop_front().or_else(|| jobs.created.pop_front()) {
-            return job;
+        if let Some(job) = jobs.bound.pop_front() {
+            return (job, false);
+        }
+        if let Some(job) = jobs.created.pop_front() {
+            return (job, true);
         }
         g = ready.wait(g).unwrap_or_else(|e| e.into_inner());
     }
@@ -845,7 +859,10 @@ fn send(job: Job, bound: bool) {
                         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
                     }
                     loop {
-                        build(next_job());
+                        let (job, prefetch) = next_job();
+                        PREFETCH.with(|p| p.set(prefetch));
+                        build(job);
+                        PREFETCH.with(|p| p.set(false));
                     }
                 });
             any |= spawned.is_ok();
