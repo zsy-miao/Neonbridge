@@ -1060,6 +1060,18 @@ fn heap_register(ex: &ShaderExtract) -> Option<u8> {
     u8::try_from(base + words).ok().filter(|&r| r < 100)
 }
 
+/// The guest's wave width: FSSM header word at 0xD4 bit 5 (set = wave32; Leonida
+/// rdna2spirv 17414-17441), else FSPX config word 4 bit 20, else wave64.
+fn guest_wave_width(ex: &ShaderExtract) -> u32 {
+    if let Some(w) = ex.fssm.get(0xd4..0xd8) {
+        return if u32::from_le_bytes([w[0], w[1], w[2], w[3]]) & 0x20 != 0 { 32 } else { 64 };
+    }
+    match ex.fspx_config {
+        Some(c) if (c[4] >> 20) & 1 != 0 => 32,
+        _ => 64,
+    }
+}
+
 /// Whether `ins` reads SGPR `n`, counting the register widths of memory
 /// descriptors and 64-bit scalar or VOP3 operands.
 fn reads_sgpr(ins: &Insn, n: u8) -> bool {
@@ -8544,7 +8556,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             let ids: Vec<String> = group_ids.iter().enumerate().map(|(k, &c)| format!("s{} = gid.{};", g + k, XYZW[c])).collect();
             let _ = writeln!(h, "    {}", ids.join(" "));
             if tg_size {
-                let width = self.required_wave_size.unwrap_or(64);
+                let width = guest_wave_width(ex);
                 let waves = (tx * ty_ * tz).div_ceil(width).min(63);
                 let _ = writeln!(h, "    {{ uint tb_wave = (gtid.x + {tx}u * (gtid.y + {ty_}u * gtid.z)) / {width}u; s{} = {waves}u | ((tb_wave & 63u) << 6) | ((tb_wave & 63u) << 20) | (tb_wave == 0u ? 0x80000000u : 0u); }}", g + group_ids.len());
             }
