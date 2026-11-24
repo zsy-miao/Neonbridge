@@ -23,7 +23,7 @@ use std::{
 };
 
 const USAGE: &str = "usage: 6ixlaunch --game <dir> [--tuxbox <TuxBox checkout>] [--exe <name>] [--log <file>]
-                      [--build-only | --stage-only | --restore] [-- <game args>]
+                      [--build-only | --stage-only | --build-shaders | --restore] [-- <game args>]
   --game       dumped package folder (holds MicrosoftGame.Config and the exe)
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
   providers build into %LOCALAPPDATA%/6ixpack/tuxbox
@@ -31,6 +31,7 @@ const USAGE: &str = "usage: 6ixlaunch --game <dir> [--tuxbox <TuxBox checkout>] 
   --log        game log file (default %LOCALAPPDATA%/6ixpack/logs/<exe>_<unix time>.log)
   --build-only build the providers, touch nothing in the game folder
   --stage-only build and stage the providers beside the exe, do not start it
+  --build-shaders translate every shader in shaders.rpf into the cache, do not start the game
   --restore    remove staged providers and put the original game files back
   --debug      run under cdb (Windows Kits debugger): first-chance exceptions, the
                crash event, registers, stack and loaded modules go to the log
@@ -65,6 +66,7 @@ enum Mode {
     Run,
     BuildOnly,
     StageOnly,
+    BuildShaders,
     Restore,
 }
 
@@ -81,6 +83,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             Some("--log") => log = Some(PathBuf::from(val("--log")?)),
             Some("--build-only") => mode = Mode::BuildOnly,
             Some("--stage-only") => mode = Mode::StageOnly,
+            Some("--build-shaders") => mode = Mode::BuildShaders,
             Some("--restore") => mode = Mode::Restore,
             Some("--debug") => debug = true,
             Some("--sandbox") => sandbox = true,
@@ -124,7 +127,9 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if let Some(dxc) = shaders::find_dxc() {
         dlls.extend(["dxcompiler.dll", "dxil.dll"].map(|n| dxc.with_file_name(n)).into_iter().filter(|p| p.is_file()));
     }
-    stage(&game, &dlls)?;
+    if mode != Mode::BuildShaders {
+        stage(&game, &dlls)?;
+    }
     if mode == Mode::StageOnly {
         println!("[launch] staged {} providers beside {}; not started (--stage-only)", dlls.len(), target.display());
         return Ok(());
@@ -162,6 +167,15 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             (_, None) => { println!("[launch] shader worker not started: no Windows SDK dxc.exe with dxil.dll (or set DXC)"); None }
         }
     };
+    if mode == Mode::BuildShaders {
+        let (w, _, session, log_path) = worker.ok_or("shader worker not started")?;
+        let st = w.stop();
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("[launch] shaders built: {} translated, {} from cache, {} unsupported, {} failed (log {})",
+            st.prewarmed.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        let _ = fs::remove_dir_all(session);
+        return Ok(());
+    }
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
     let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), sandbox, &env);
     if let Some((w, _, session, log_path)) = worker {
