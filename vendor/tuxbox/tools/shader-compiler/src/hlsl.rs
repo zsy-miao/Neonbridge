@@ -184,6 +184,12 @@ enum Res {
 
 const XYZW: [&str; 4] = ["x", "y", "z", "w"];
 
+/// Typed heap buffer views consult the runtime's view-format table
+/// (tb_view_formats). TB_TYPED_FMT=0 keeps float4 views only.
+fn typed_fmt_table() -> bool {
+    std::env::var("TB_TYPED_FMT").map_or(true, |v| v.trim() != "0")
+}
+
 /// TB_FMT_STORE_STRICT=1: a buffer_store_format whose UAV element type is not
 /// known (no integer use inferred, or a heap view) is refused instead of
 /// stored as float4, so a 32_UINT target cannot take float-converted values.
@@ -508,6 +514,10 @@ struct Emitter<'a> {
     compute_heap: bool,
     /// The root carries TuxBox's guest-to-host heap index map (root SRV t0, space32766).
     heap_map: bool,
+    /// Declares tb_view_formats (root SRV t2, space32766): one dword per host heap
+    /// slot, class | dxgi << 8 (0 float/unknown, 1 UINT, 2 SINT), for typed heap
+    /// buffer views. TB_TYPED_FMT=0 keeps the float4-only path.
+    view_formats: bool,
     /// Compute sampler heap base SGPR (FSSM user-data class 6).
     sampler_heap_base: Option<u8>,
     /// Sampler slots read from that heap: bound from SamplerDescriptorHeap in main.
@@ -1885,6 +1895,7 @@ impl<'a> Emitter<'a> {
             sampler_heap_base: (sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none())
                 .then(|| compute_heap_base(ex).and_then(|_| compute_user_sgpr(ex, 6))).flatten(),
             heap_sampler_slots: BTreeSet::new(),
+            view_formats: false,
             heap_map: ex.root_sig.as_ref().is_some_and(|root| root.params.iter().any(|p| matches!(p.kind,
                 crate::meta::RootParamKind::Descriptor { kind: 3, register: 0, space: 32766 }))),
             heap_words: 0,
@@ -7076,6 +7087,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let t = self.tmp;
         self.tmp += 1;
         let buf = self.bind_heap(HeapView::Typed, src);
+        if typed_fmt_table() {
+            // The runtime's view-format table (D3D12 92f6234) names an integer view,
+            // read through a matching Buffer<uint4>/<int4> so the dwords come back
+            // unconverted; float/unknown keeps Buffer<float4>.
+            self.view_formats = true;
+            self.line(&format!("uint4 t{t} = 0; if (exec_lo & 1u) {{ uint t{t}c = tb_view_formats.Load(s{src} * 4u) & 255u;                 if (t{t}c == 1u) {{ Buffer<uint4> t{t}u = ResourceDescriptorHeap[s{src}]; t{t} = t{t}u.Load({index}); }}                 else if (t{t}c == 2u) {{ Buffer<int4> t{t}i = ResourceDescriptorHeap[s{src}]; t{t} = asuint(t{t}i.Load({index})); }}                 else t{t} = asuint({buf}.Load({index})); }}"));
+            for k in 0..channels {
+                self.wv(&Opnd::Vgpr(vd + k), &format!("t{t}.{}", XYZW[k as usize]))?;
+            }
+            return Ok(());
+        }
         self.line(&format!("float4 t{t} = 0; if (exec_lo & 1u) t{t} = {buf}.Load({index});"));
         for k in 0..channels {
             self.wv(&Opnd::Vgpr(vd + k), &format!("asuint(t{t}.{})", XYZW[k as usize]))?;
@@ -7094,7 +7116,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             _ => return Err(format!("unsupported typed heap store {}", ins.mnemonic)),
         };
         let Opnd::Vgpr(vd) = ins.dst[0] else { return Err("bad vdata".into()) };
-        if fmt_store_strict() {
+        if fmt_store_strict() && !typed_fmt_table() {
             return Err("typed heap store: the view's element format is not known here (TB_FMT_STORE_STRICT)".into());
         }
         let index = r(&ins.src[0])?;
@@ -7106,6 +7128,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.touch(&o);
                 format!("asfloat({})", r(&o)?)
             } else if k == 3 { "1.0f".into() } else { "0.0f".into() });
+        }
+        if typed_fmt_table() {
+            self.view_formats = true;
+            let mut words = Vec::new();
+            for k in 0..4u8 {
+                words.push(if k < channels { r(&Opnd::Vgpr(vd + k))? } else if k == 3 { "1u".into() } else { "0u".into() });
+            }
+            let words = words.join(", ");
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("if (exec_lo & 1u) {{ uint t{t}c = tb_view_formats.Load(s{src} * 4u) & 255u;                 if (t{t}c == 1u) {{ RWBuffer<uint4> t{t}u = ResourceDescriptorHeap[s{src}]; t{t}u[{index}] = uint4({words}); }}                 else if (t{t}c == 2u) {{ RWBuffer<int4> t{t}i = ResourceDescriptorHeap[s{src}]; t{t}i[{index}] = asint(uint4({words})); }}                 else {buf}[{index}] = float4({}); }}", value.join(", ")));
+            return Ok(());
         }
         self.line(&format!("if (exec_lo & 1u) {buf}[{index}] = float4({});", value.join(", ")));
         Ok(())
@@ -8774,6 +8808,10 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
     }
     return 0u;
 }
+");
+        }
+        if self.view_formats {
+            h.push_str("ByteAddressBuffer tb_view_formats : register(t2, space32766);
 ");
         }
         if self.compute_heap && !self.heap_map {
