@@ -408,6 +408,12 @@ unsafe fn null_compute(
     let native = crate::big_stack::run(|| unsafe { this.native.CreateComputePipelineState::<ID3D12PipelineState>(&host) });
     unsafe { ManuallyDrop::drop(&mut host.pRootSignature) };
     if native.is_err() { return None; }
+    if let Ok(pipeline) = &native {
+        let code = unsafe { std::slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
+        if crate::diagnostics::display::enabled() && let Some(digest) = super::shader_cache::source_digest(code) {
+            crate::diagnostics::display::mark_null_compute(pipeline.as_raw(), digest);
+        }
+    }
     substituted("compute");
     super::stream::background::mark_nulled();
     Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData::default(), out) })

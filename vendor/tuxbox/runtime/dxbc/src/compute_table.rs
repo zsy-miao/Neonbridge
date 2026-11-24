@@ -143,7 +143,11 @@ fn read_bindings(
     let mut resolve_constants = None;
     for [class, offset, register, shape, location] in records {
         let table = if stage == 5 { location >> 16 } else { 0 };
-        let (kind, psv_type) = match (class, location) {
+        // Root-less raster programs (RAGE) can receive their descriptor table in
+        // s9 instead of s8. The descriptor encodings are otherwise identical.
+        let descriptor_location = if stage <= 1 && matches!(class, 0x300 | 0x302 | 0x303)
+            && (location >> 8) & 0xff == 9 { 0x800 | (location & 0xff) } else { location };
+        let (kind, psv_type) = match (class, descriptor_location) {
             (0x300, 0x408 | 0x10508) if stage == 5 => (0, 3), // typed SRV
             // A four-dword buffer descriptor represents typed, raw or structured
             // views. PSV distinguishes those encodings, and FSSM gives the stride.

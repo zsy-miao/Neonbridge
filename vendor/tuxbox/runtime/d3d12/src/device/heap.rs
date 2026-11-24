@@ -640,6 +640,11 @@ unsafe fn place_gpu_target(
             (!formats.is_empty()).then_some(formats), &mut resource)? };
         let resource: ID3D12Resource = resource.ok_or(E_POINTER)?;
         unsafe { resource.SetPrivateDataInterface(&IMPORTED_HEAP, &heap)? };
+        if crate::diagnostics::display::enabled() && renderable && desc.Width >= 1920 {
+            crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+                "placed render image res={:#x} at {address:#x}+{:#x} {}x{} format={}",
+                windows::core::Interface::as_raw(&resource) as usize, allocation.SizeInBytes, desc.Width, desc.Height, desc.Format.0));
+        }
         if !renderable {
             static SAMPLED: std::sync::Once = std::sync::Once::new();
             crate::diagnostics::log_once(&SAMPLED, || format!(
@@ -720,6 +725,8 @@ pub(super) unsafe extern "system" fn committed_layout(
         let memory = match super::title_memory::GuestMemory::allocate(plane.size as usize, 0x3080_8000) {
             Ok(memory) => memory, Err(e) => { crate::diagnostics::recording_error(format_args!("display allocation {} bytes failed {:?}", plane.size, e.code())); return e.code(); },
         };
+        crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+            "display surface res={:#x} at {:#x}+{:#x}", native.as_raw() as usize, memory.address, plane.size));
         let address = super::views::TextureAddress::at(device, &native, memory.address, false, Some(memory));
         super::Backing::Addressed(address, *desc)
     } else if translated.is_some() {

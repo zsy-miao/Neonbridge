@@ -387,6 +387,22 @@ pub(crate) mod display {
     pub(crate) fn mark_null_pipeline(native: *mut core::ffi::c_void) {
         if enabled() { NULL_PIPELINES.lock().unwrap_or_else(|e| e.into_inner()).insert(native as usize); }
     }
+    static NULL_COMPUTE: LazyLock<Mutex<HashMap<usize, String>>> = LazyLock::new(Default::default);
+    static NULL_DISPATCHES: LazyLock<Mutex<HashSet<(usize, [u32; 3])>>> = LazyLock::new(Default::default);
+    /// Remember which untranslated compute shader a null pipeline stands in for.
+    pub(crate) fn mark_null_compute(native: *mut core::ffi::c_void, digest: String) {
+        if !enabled() { return; }
+        NULL_COMPUTE.lock().unwrap_or_else(|e| e.into_inner()).insert(native as usize, digest);
+    }
+    /// Report each distinct (null compute shader, group count) dispatch once.
+    pub(crate) fn null_dispatch(native: *mut core::ffi::c_void, groups: [u32; 3]) {
+        if !enabled() { return; }
+        let Some(digest) = NULL_COMPUTE.lock().unwrap_or_else(|e| e.into_inner()).get(&(native as usize)).cloned() else { return };
+        let mut seen = NULL_DISPATCHES.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 120 && seen.insert((native as usize, groups)) {
+            super::log_once(&std::sync::Once::new(), || format!("null compute dispatch CS={digest} groups=({},{},{})", groups[0], groups[1], groups[2]));
+        }
+    }
     pub(crate) fn is_null_pipeline(native: *mut core::ffi::c_void) -> bool {
         enabled() && NULL_PIPELINES.lock().unwrap_or_else(|e| e.into_inner()).contains(&(native as usize))
     }
