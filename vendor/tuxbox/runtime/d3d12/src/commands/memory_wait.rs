@@ -549,6 +549,14 @@ mod writers {
 /// lost 2 s on each of 7 frame-cell waits in a row.
 static DEAD: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
+fn wait_stacks_count() -> u64 {
+    crate::env_toggle!("TUXBOX_WAIT_STACKS").and_then(|v| v.trim().parse().ok()).unwrap_or(3)
+}
+
+fn wait_stacks_after() -> Duration {
+    Duration::from_millis(crate::env_toggle!("TUXBOX_WAIT_STACKS_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(1500))
+}
+
 fn dead_ms() -> u64 {
     static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MS.get_or_init(|| crate::env_toggle!("TUXBOX_WAIT_DEAD_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(100))
@@ -591,6 +599,7 @@ impl Worker {
                         // stall and release the queue after a watchdog period.
                         let started = std::time::Instant::now();
                         let mut warned = false;
+                        let mut dumped = false;
                         let was_dead = dead_ms() != 0 && dead(job.segment.address);
                         let mut released = false;
                         while !job.segment.word.reached(job.segment.target, job.segment.comparison) {
@@ -615,6 +624,17 @@ impl Worker {
                                         super::page_mapping::remapped_under_import(job.segment.address)));
                                 }
                                 break;
+                            }
+                            // five-star-recomp ad6e007: dump every thread's stack once a
+                            // wait stays pending 1.5 s, for the first three waits.
+                            // TUXBOX_WAIT_STACKS sets how many (0 off), TUXBOX_WAIT_STACKS_MS when.
+                            if !dumped && waited >= wait_stacks_after() {
+                                dumped = true;
+                                static DUMPS: AtomicU64 = AtomicU64::new(0);
+                                let n = DUMPS.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n <= wait_stacks_count() {
+                                    crate::diagnostics::crash::wait_stacks(job.segment.address, job.segment.target, job.queue, waited.as_millis(), n as u32);
+                                }
                             }
                             if !warned && waited >= Duration::from_secs(2) {
                                 warned = true;

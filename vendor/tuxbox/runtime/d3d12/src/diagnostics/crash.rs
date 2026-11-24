@@ -320,6 +320,18 @@ pub(crate) fn stacks_now() -> Vec<String> {
     lines
 }
 
+/// Every thread's stack while a GPU memory wait is pending (five-star-recomp
+/// ad6e007, GPL-3, ported): whoever should write the word is among them.
+pub(crate) fn wait_stacks(address: u64, target: u64, queue: usize, waited_ms: u128, n: u32) {
+    let lines = all_stacks();
+    super::log_line(format_args!(
+        "wait stacks #{n}: GPU memory wait {address:#x} >= {target:#x} on queue {queue:#x} pending {waited_ms} ms; {} threads' stacks follow (TUXBOX_WAIT_STACKS=0 off)",
+        lines.len()));
+    for line in lines {
+        super::log_line(format_args!("wait stacks #{n}: {line}"));
+    }
+}
+
 fn all_stacks() -> Vec<String> {
     let list = modules();
     let own = unsafe { GetCurrentThreadId() };
