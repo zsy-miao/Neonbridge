@@ -938,7 +938,16 @@ fn lower_wave_reductions(insns: &mut [Insn]) -> Result<Option<u32>, String> {
         at = end + 1;
     }
     // General DPP permutes read guest lanes directly, so the host wave must match wave64.
-    Ok(width.or(general.then_some(64)))
+    // Xbox2Windows 79226e74/5c599b99: a quad_perm with full row and bank masks
+    // reads only its own four lanes, which no host wave size splits, so a
+    // shader whose remaining DPP are all quad permutes runs at any wave size.
+    // TB_DPP_QUAD_ANY_WAVE=0 keeps wave64 for them.
+    let quad_only = std::env::var("TB_DPP_QUAD_ANY_WAVE").map_or(true, |v| v.trim() != "0")
+        && insns.iter().filter(|i| is_dpp(i)).all(|i| {
+            i.src.first() == Some(&Opnd::Raw(250))
+                && i.raw.get(1).is_some_and(|c| (c >> 8) & 0x1ff <= 0xff && (c >> 24) == 0xff && (c >> 20) & 15 == 0)
+        });
+    Ok(width.or((general && !quad_only).then_some(64)))
 }
 
 use crate::rdna2::{wide_bit_result, writes_scalar};
