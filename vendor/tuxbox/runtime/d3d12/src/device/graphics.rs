@@ -43,12 +43,12 @@ pub(super) unsafe extern "system" fn create_pipeline(
     native_desc.pRootSignature = ManuallyDrop::new(root.cloned());
     super::format::host_targets(&mut native_desc.RTVFormats, &mut native_desc.DSVFormat);
     let native = if native_desc.PrimitiveTopologyType.0 == rectangle::PIPELINE_TYPE {
-        unsafe { rectangle::create_pipeline(&this.native, &mut native_desc) }
+        crate::big_stack::run(|| unsafe { rectangle::create_pipeline(&this.native, &mut native_desc) })
     } else {
-        unsafe {
+        crate::big_stack::run(|| unsafe {
             this.native
                 .CreateGraphicsPipelineState::<ID3D12PipelineState>(&native_desc)
-        }
+        })
     };
     unsafe { ManuallyDrop::drop(&mut native_desc.pRootSignature) };
     unsafe {

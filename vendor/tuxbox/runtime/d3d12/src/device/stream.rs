@@ -623,7 +623,7 @@ unsafe fn null_pipeline(
     if !geometry.is_null() {
         unsafe { geometry.write(D3D12_SHADER_BYTECODE::default()) };
     }
-    let result = unsafe { host.CreatePipelineState::<ID3D12PipelineState>(desc) };
+    let result = crate::big_stack::run(|| unsafe { host.CreatePipelineState::<ID3D12PipelineState>(desc) });
     if let Ok(pipeline) = &result {
         background::mark_nulled();
         crate::diagnostics::display::mark_null_pipeline(pipeline.as_raw());

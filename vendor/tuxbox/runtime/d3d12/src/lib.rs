@@ -1,5 +1,6 @@
 //! Guest device-factory ABI for d3d12_xs.dll.
 
+mod big_stack;
 mod commands;
 mod device;
 mod diagnostics;

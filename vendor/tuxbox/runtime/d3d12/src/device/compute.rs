@@ -405,7 +405,7 @@ unsafe fn null_compute(
         Flags: desc.Flags,
         ..Default::default()
     };
-    let native = unsafe { this.native.CreateComputePipelineState::<ID3D12PipelineState>(&host) };
+    let native = crate::big_stack::run(|| unsafe { this.native.CreateComputePipelineState::<ID3D12PipelineState>(&host) });
     unsafe { ManuallyDrop::drop(&mut host.pRootSignature) };
     if native.is_err() { return None; }
     substituted("compute");

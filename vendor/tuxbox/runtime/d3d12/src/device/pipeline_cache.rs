@@ -88,6 +88,8 @@ fn load_or_make(
     load: impl FnOnce(&ID3D12PipelineLibrary1, &HSTRING) -> Result<ID3D12PipelineState>,
     make: impl FnOnce() -> Result<ID3D12PipelineState>,
 ) -> Result<ID3D12PipelineState> {
+    // Drivers that compile inside the call can recurse deeply (Proton).
+    let make = || crate::big_stack::run(make);
     let Some(name) = name.map(|n| HSTRING::from(n.as_str())) else {
         return make();
     };

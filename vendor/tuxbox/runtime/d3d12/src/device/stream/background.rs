@@ -355,8 +355,10 @@ fn send(job: Job) {
             let receiver = receiver.clone();
             let spawned = std::thread::Builder::new()
                 .name(format!("tuxbox-pipelines-{i}"))
+                .stack_size(crate::big_stack::STACK_BYTES)
                 .spawn(move || {
                     WORKER.with(|w| w.set(true));
+                    crate::big_stack::mark_big();
                     crate::device::shader_cache::wait_unbounded();
                     // Below the title's own loading and recording threads.
                     unsafe {
