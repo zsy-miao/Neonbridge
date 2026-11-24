@@ -60,19 +60,46 @@ pub(super) unsafe extern "system" fn cbv(
         }
         let address = value.BufferLocation;
         if address != 0 && value.SizeInBytes != 0 {
-            owner = buffer_at(device, address, u64::from(value.SizeInBytes), 1, false)
-                .unwrap_or_else(|e| fail_call(format_args!("CBV buffer {address:#x}, {} bytes: {:?}", value.SizeInBytes, e.code())));
-            if let Some(buffer) = &owner {
-                value.BufferLocation = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
+            let guest = unsafe { &*desc }.SizeInBytes.max(1);
+            match buffer_at(device, address, u64::from(value.SizeInBytes), 1, false) {
+                Ok(buffer) => {
+                    if let Some(buffer) = &buffer {
+                        value.BufferLocation = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
+                    }
+                    owner = buffer;
+                }
+                Err(e) if !cbv_fallback() => fail_call(format_args!("CBV buffer {address:#x}, {} bytes: {:?}", value.SizeInBytes, e.code())),
+                // A range over title pages no heap opens (two views that would
+                // not join): read it from a copy, which imports piece by piece.
+                Err(e) => match shadow::view(device, address, u64::from(guest)) {
+                    Ok(copy) => {
+                        cbv_fell_back(address, guest, e.code(), true);
+                        value.BufferLocation = unsafe { copy.native.GetGPUVirtualAddress() };
+                        owner = Some(copy);
+                    }
+                    Err(_) => {
+                        cbv_fell_back(address, guest, e.code(), false);
+                        value.BufferLocation = 0;
+                    }
+                },
             }
             // Xbox constant buffers sit on 16-byte boundaries; read one that
             // misses a 256-byte host boundary from a copy that starts on one.
-            if !value.BufferLocation.is_multiple_of(u64::from(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT)) {
-                let guest = unsafe { &*desc }.SizeInBytes.max(1);
-                let copy = shadow::view(device, address, u64::from(guest))
-                    .unwrap_or_else(|e| fail_call(format_args!("CBV copy {address:#x}, {guest} bytes: {:?}", e.code())));
-                value.BufferLocation = unsafe { copy.native.GetGPUVirtualAddress() };
-                owner = Some(copy);
+            if value.BufferLocation != 0
+                && !value.BufferLocation.is_multiple_of(u64::from(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT))
+            {
+                match shadow::view(device, address, u64::from(guest)) {
+                    Ok(copy) => {
+                        value.BufferLocation = unsafe { copy.native.GetGPUVirtualAddress() };
+                        owner = Some(copy);
+                    }
+                    Err(e) if !cbv_fallback() => fail_call(format_args!("CBV copy {address:#x}, {guest} bytes: {:?}", e.code())),
+                    Err(e) => {
+                        cbv_fell_back(address, guest, e.code(), false);
+                        value.BufferLocation = 0;
+                        owner = None;
+                    }
+                }
             }
         }
     }
@@ -91,6 +118,36 @@ pub(super) unsafe extern "system" fn cbv(
             .native
             .CreateConstantBufferView(aligned.as_ref().map(core::ptr::from_ref), handle)
     };
+}
+
+/// A CBV over a range that cannot be imported falls back to a copy, else a
+/// null CBV (reads zero), logged; never a fail-fast. TUXBOX_CBV_FALLBACK=0
+/// fails fast as before.
+fn cbv_fallback() -> bool {
+    crate::env_toggle!("TUXBOX_CBV_FALLBACK") != Some("0")
+}
+
+fn cbv_fell_back(address: u64, bytes: u32, code: windows::core::HRESULT, copied: bool) {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if logged_fallback(n) {
+        crate::diagnostics::log_line(format_args!(
+            "CBV {address:#x}+{bytes} not importable ({code:?}) from title RVA {:#x}: {} ({n} so far; TUXBOX_CBV_FALLBACK=0 fails fast)",
+            crate::survey::title_rva().unwrap_or(0),
+            if copied { "read from a copy" } else { "null CBV" }));
+    }
+}
+
+/// First 8, then powers of two.
+fn logged_fallback(n: u64) -> bool {
+    n <= 8 || n.is_power_of_two()
+}
+
+#[cfg(test)]
+#[test]
+fn cbv_fallback_logs_first_eight_then_powers_of_two() {
+    assert!(logged_fallback(1) && logged_fallback(8) && logged_fallback(16) && logged_fallback(1024));
+    assert!(!logged_fallback(9) && !logged_fallback(17) && !logged_fallback(1000));
 }
 
 // Desktop textures have no buffer GPU VA. Reserve address space on demand
