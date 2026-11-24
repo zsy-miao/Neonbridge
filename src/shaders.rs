@@ -42,6 +42,8 @@ pub struct Stats {
     pub cached: AtomicUsize,
     pub unsupported: AtomicUsize,
     pub failed: AtomicUsize,
+    /// Archived requests translated before the title started.
+    pub prewarmed: AtomicUsize,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -278,6 +280,61 @@ fn remove_request(path: &Path) {
     }
 }
 
+/// Keep a copy of a request the title made, so the next launch can translate it
+/// before the title asks (TuxBox's ProjectScarlett prewarm).
+fn archive_request(path: &Path, name: &str, archive: &Path) {
+    let dest = archive.join(name);
+    if fs::symlink_metadata(&dest).is_ok() {
+        return;
+    }
+    let tmp = archive.join(format!("{name}.{}.tmp", std::process::id()));
+    let copied = if fs::symlink_metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+        fs::create_dir_all(&tmp).and_then(|_| {
+            for f in ["producer.dxbc", "pixel.dxbc", "pixel.cso"] {
+                fs::copy(path.join(f), tmp.join(f))?;
+            }
+            Ok(())
+        })
+    } else {
+        fs::copy(path, &tmp).map(|_| ())
+    };
+    if copied.and_then(|_| fs::rename(&tmp, &dest)).is_err() {
+        remove_request(&tmp);
+    }
+}
+
+/// Translate every archived request into the cache before the title starts,
+/// so its pipelines load translations instead of waiting on the worker.
+fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats) {
+    let Ok(entries) = fs::read_dir(archive) else { return };
+    let jobs: Vec<(PathBuf, String, String)> = entries.flatten().filter_map(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let (key, ext) = valid_request(&name)?;
+        Some((e.path(), key.to_owned(), ext.to_owned()))
+    }).collect();
+    if jobs.is_empty() || fs::create_dir_all(scratch).is_err() {
+        return;
+    }
+    let next = AtomicUsize::new(0);
+    thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                while let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let counter = match compile(path, key, ext, tools, cache, scratch) {
+                        Outcome::Compiled => &stats.prewarmed,
+                        Outcome::Cached => &stats.cached,
+                        Outcome::Unsupported(_) => &stats.unsupported,
+                        Outcome::Failed(_) => &stats.failed,
+                    };
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    let _ = fs::remove_file(scratch.join(format!("{key}.cso")));
+                }
+            });
+        }
+    });
+    let _ = fs::remove_dir_all(scratch);
+}
+
 impl Worker {
     /// Create the session (`session_dir`, where the title publishes requests) and serve it.
     pub fn start(tools: Tools, cache_root: PathBuf, session_dir: PathBuf, log: impl Fn(String) + Send + Sync + 'static)
@@ -293,11 +350,14 @@ impl Worker {
             .map_err(|e| e.to_string())?;
         let stop = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Stats::default());
+        let workers = thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
+        let archive = cache_root.join("requests");
+        let _ = fs::create_dir_all(&archive);
+        prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats);
         let (s, st) = (stop.clone(), stats.clone());
         let log = Arc::new(log);
         let handle = thread::Builder::new().name("shader-worker".into()).spawn(move || {
             let tools = Arc::new(tools);
-            let workers = thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
             let busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>> = Default::default();
             let active = Arc::new(AtomicUsize::new(0));
             while !s.load(Ordering::Acquire) {
@@ -318,6 +378,7 @@ impl Worker {
                             thread::sleep(Duration::from_millis(5));
                         }
                         active.fetch_add(1, Ordering::AcqRel);
+                        archive_request(&path, &name, &archive);
                         let (tools, cache, session, st, log, busy, active) =
                             (tools.clone(), cache.clone(), session_dir.clone(), st.clone(), log.clone(), busy.clone(), active.clone());
                         thread::spawn(move || {

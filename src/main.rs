@@ -150,8 +150,8 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if let Some((w, _, session, log_path)) = worker {
         let st = w.stop();
         use std::sync::atomic::Ordering::Relaxed;
-        println!("[launch] shaders: {} compiled, {} from cache, {} unsupported, {} failed (log {})",
-            st.compiled.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        println!("[launch] shaders: {} prewarmed, {} compiled, {} from cache, {} unsupported, {} failed (log {})",
+            st.prewarmed.load(Relaxed), st.compiled.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
         let _ = fs::remove_dir_all(session);
     }
     result
