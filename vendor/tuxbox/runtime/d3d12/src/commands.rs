@@ -596,6 +596,7 @@ unsafe extern "system" fn reset(
         }
     }
     if hr.is_ok() {
+        memory_wait::list_reset(list.native.as_raw() as usize);
         device::alloc_swap::recorded(list as *const List as usize, allocator, &used, unsafe { list.native.GetType() });
         state.phase = ListState::Open;
         state.resources = allocator.state.clone();

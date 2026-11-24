@@ -265,6 +265,44 @@ mod writers {
         writes: HashMap<u64, (usize, u64)>,
         /// host list -> (queue, when).
         submits: HashMap<usize, (usize, Instant)>,
+        /// host list -> its current recording's word writes (first 16).
+        list_writes: HashMap<usize, Vec<(u64, u64)>>,
+    }
+
+    /// After a wait times out, the next TRACE_EVENTS waits and list
+    /// submissions are logged in queue order with their writes (rebox
+    /// 76f7a13, re-derived; TUXBOX_WAIT_ORDER=0 off), so a cross-queue cycle
+    /// reads straight from the log.
+    const TRACE_EVENTS: u32 = 24;
+    static TRACE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    fn order_on() -> bool {
+        on() && crate::env_toggle!("TUXBOX_WAIT_ORDER") != Some("0")
+    }
+
+    pub(super) fn arm() {
+        if order_on() {
+            TRACE.store(TRACE_EVENTS, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Take one trace event if armed.
+    fn traced() -> bool {
+        TRACE.try_update(std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed,
+            |n| n.checked_sub(1)).is_ok()
+    }
+
+    pub(super) fn reset(list: usize) {
+        if order_on() {
+            table().list_writes.remove(&list);
+        }
+    }
+
+    pub(super) fn wait_queued(queue: usize, address: u64, comparison: u32, target: u64) {
+        if order_on() && traced() {
+            crate::diagnostics::log_line(format_args!(
+                "wait order: queue {queue:#x} waits {address:#x} (comparison {comparison}) for {target:#x}"));
+        }
     }
 
     fn table() -> std::sync::MutexGuard<'static, Table> {
@@ -281,6 +319,15 @@ mod writers {
             t.writes.clear();
         }
         t.writes.insert(address & !7, (list, value));
+        if order_on() {
+            if t.list_writes.len() >= 1 << 12 {
+                t.list_writes.clear();
+            }
+            let writes = t.list_writes.entry(list).or_default();
+            if writes.len() < 16 {
+                writes.push((address, value));
+            }
+        }
     }
 
     pub(super) fn submitted(queue: usize, lists: &[*mut core::ffi::c_void]) {
@@ -294,6 +341,17 @@ mod writers {
         }
         for &list in lists {
             t.submits.insert(list as usize, (queue, now));
+        }
+        if order_on() && TRACE.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            for &list in lists {
+                let Some(writes) = t.list_writes.get(&(list as usize)).filter(|w| !w.is_empty()) else { continue };
+                if !traced() {
+                    break;
+                }
+                let text: Vec<String> = writes.iter().map(|(a, v)| format!("{a:#x}={v:#x}")).collect();
+                crate::diagnostics::log_line(format_args!(
+                    "wait order: queue {queue:#x} runs list {:#x} writing {}", list as usize, text.join(", ")));
+            }
         }
     }
 
@@ -349,6 +407,7 @@ impl Worker {
                                 warned = true;
                                 let slot = STALLED_COUNT.fetch_add(1, Ordering::Relaxed) as usize;
                                 if slot < 16 { STALLED[slot].store(job.segment.address, Ordering::Relaxed); }
+                                writers::arm();
                                 crate::diagnostics::log_line(format_args!(
                                     "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}",
                                     job.segment.address, job.segment.target, job.queue,
@@ -468,6 +527,10 @@ pub(super) mod slow {
 /// segment's prefix, which runs before the wait's fence, and each queue has
 /// its own wait worker, so a cross-queue write/wait pair cannot hold both
 /// queues (the cycle rebox 424eab7 fixes does not arise here).
+pub(super) fn list_reset(list: usize) {
+    writers::reset(list);
+}
+
 fn split_before(start: usize, index: usize) -> (core::ops::Range<usize>, usize) {
     (start..index.max(start), index.max(start))
 }
@@ -531,6 +594,7 @@ pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits)
         if let Some((prefix, _)) = &segment.prefix {
             run(&[prefix.as_raw()]);
         }
+        writers::wait_queued(queue.native.as_raw() as usize, segment.address, segment.comparison, segment.target);
         // Fence 1 retires the entire prefix before the CPU reads the guest word.
         // Fence 2 holds the suffix on the GPU without blocking the guest submission thread.
         unsafe {
