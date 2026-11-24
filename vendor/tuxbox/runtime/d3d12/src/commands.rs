@@ -31,6 +31,7 @@ mod ray_dispatch;
 mod raytracing;
 pub(crate) mod serialized_blas;
 mod stencil;
+mod table_drop;
 
 enum ListState {
     Fresh(ID3D12CommandAllocator, Option<ID3D12PipelineState>),
@@ -55,6 +56,7 @@ struct Recording {
     resources: device::MediaResources,
     scene_commands: Vec<raytracing::SceneCommand>,
     bindings: compute_bindings::Bindings,
+    unresolved_tables: table_drop::Unresolved,
     stencil_slot: Option<u32>,
     stencil_targets: Option<stencil::Targets>,
     dsv_bound: bool,
@@ -127,7 +129,8 @@ impl Recording {
             if let Err(error) = self.bindings.with_reflected_table::<true>(
                 table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(),
                 &mut self.sampled_heaps, &self.resources, dispatch,
-            ) {
+            ) && !table_drop::drops(error.code(), "dispatch")
+            {
                 self.error = error.code();
             }
             return;
@@ -136,8 +139,14 @@ impl Recording {
             self.error = E_NOTIMPL;
             return;
         }
+        if self.unresolved_tables.any(true) && table_drop::enabled() {
+            table_drop::note("dispatch");
+            return;
+        }
         if let Err(error) = self.bindings.refresh_inline_tables::<true>(self.descriptor_arena.as_deref()) {
-            self.error = error.code();
+            if !table_drop::drops(error.code(), "dispatch") {
+                self.error = error.code();
+            }
             return;
         }
         self.sample_tables::<true>();
@@ -235,6 +244,7 @@ impl Recording {
             if let Err(error) = self.bindings.with_reflected_table::<false>(
                 table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(), &mut self.sampled_heaps, &self.resources, draw,
             ) {
+                if table_drop::drops(error.code(), "draw") { return; }
                 self.error = error.code();
                 if crate::diagnostics::display::trace_views() {
                     crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
@@ -249,7 +259,12 @@ impl Recording {
             self.error = E_NOTIMPL;
             return;
         }
+        if self.unresolved_tables.any(false) && table_drop::enabled() {
+            table_drop::note("draw");
+            return;
+        }
         if let Err(error) = self.bindings.refresh_inline_tables::<false>(self.descriptor_arena.as_deref()) {
+            if table_drop::drops(error.code(), "draw") { return; }
             self.error = error.code();
             if crate::diagnostics::display::trace_views() {
                 crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
@@ -2398,6 +2413,7 @@ pub(crate) unsafe fn wrap_command_list(
             resources: allocator.state.clone(),
             scene_commands: Vec::new(),
             bindings: compute_bindings::Bindings::new(initial),
+            unresolved_tables: Default::default(),
             stencil_slot: initial.and_then(|p| device::compute::current(p).1.stencil_slot),
             stencil_targets: None,
             dsv_bound: false,

@@ -165,9 +165,17 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
         // Defer reading guest records until draw or dispatch.
         match arena.gpu_table(base.ptr, *length, &[], None) {
             Ok(handle) => handle,
+            Err(error) if super::table_drop::enabled() && super::table_drop::exhausted(error.code()) => {
+                // No host table: keep the title's binding for draw-time
+                // resolution, and drop draws that would use it unresolved.
+                state.unresolved_tables.set(COMPUTE, index, true);
+                state.bindings.table::<COMPUTE>(index, logical, logical);
+                return;
+            }
             Err(error) => { state.error = error.code(); return; }
         }
     } else { base };
+    state.unresolved_tables.set(COMPUTE, index, false);
     state.bindings.table::<COMPUTE>(index, base, logical);
     if COMPUTE {
         unsafe { list.native.SetComputeRootDescriptorTable(index, base) };
