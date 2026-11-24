@@ -168,10 +168,13 @@ impl Transfer {
             }
         }
         let mut changes = Vec::new();
+        let watch_site = crate::diagnostics::cost::site();
         let watch = super::watch::enabled().then(|| {
             self.watch.refresh(textures.iter().map(|t| t.watched_range()).collect());
             &self.watch
         });
+        drop(watch_site);
+        let read_site = crate::diagnostics::cost::site();
         let (mut skipped, mut mips) = (0, 0);
         let mut budget = super::refresh_read_budget();
         // test72 deferred 524288 levels: each refresh walked its textures in
@@ -202,6 +205,7 @@ impl Transfer {
                 stopped = Some(i);
             }
         }
+        drop(read_site);
         self.cursor = stopped.unwrap_or(start);
         self.refreshes += 1;
         if matches!(self.refreshes, 1 | 100 | 1000 | 10000 | 100000) {
@@ -225,7 +229,9 @@ impl Transfer {
                 }
             }
         }
+        let record_site = crate::diagnostics::cost::site();
         let upload = Upload::record(device, &changes, &mut self.pool, &mut self.pool_bytes)?;
+        drop(record_site);
         for mips in changes.chunk_by(|a, b| Arc::ptr_eq(&a.texture, &b.texture)) {
             // A guest may use a different queue on each submission. Order
             // replacement writes after every outstanding reader of this texture.

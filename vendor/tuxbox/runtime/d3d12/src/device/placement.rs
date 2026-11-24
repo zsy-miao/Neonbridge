@@ -947,7 +947,35 @@ struct PlacementMemory {
 // flush can visit each live device without extending its lifetime.
 static FLUSH_DEVICES: Mutex<Vec<Weak<PlacementMemory>>> = Mutex::new(Vec::new());
 
+/// Pending GPU writes each submit scans: logged each time the most seen doubles.
+fn pending_writes_note(n: usize) {
+    static MOST: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(32);
+    if n >= MOST.load(Ordering::Relaxed) * 2 {
+        MOST.store(n, Ordering::Relaxed);
+        crate::diagnostics::log_line(format_args!("placed textures: {n} unpublished GPU writes scanned per submit"));
+    }
+}
+
+static FLUSHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FLUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// D3DFlushEntireCpuCache refreshes every live placed texture under the
+/// submit lock: its calls and average cost are logged at 1, 10, 100, ...
 pub(crate) fn flush_cpu_writes() {
+    let started = std::time::Instant::now();
+    let _site = crate::diagnostics::cost::site();
+    flush_cpu_writes_inner();
+    let spent = started.elapsed().as_nanos() as u64;
+    let n = FLUSHES.fetch_add(1, Ordering::Relaxed) + 1;
+    let ns = FLUSH_NS.fetch_add(spent, Ordering::Relaxed) + spent;
+    if matches!(n, 1 | 10 | 100 | 1000 | 10000 | 100000) {
+        crate::diagnostics::log_line(format_args!(
+            "D3DFlushEntireCpuCache: {n} calls, {:.1} ms on average (refreshes every live placed texture under the submit lock)",
+            ns as f64 / n as f64 / 1e6));
+    }
+}
+
+fn flush_cpu_writes_inner() {
     unsafe { windows::Win32::System::Threading::FlushProcessWriteBuffers() };
     let live: Vec<_> = {
         let mut registry = lock(&FLUSH_DEVICES);
@@ -1248,8 +1276,12 @@ pub(crate) unsafe fn submit(
         overlap_note("a written placed texture overlaps another texture of its batch");
     }
     let _refresh_site = crate::diagnostics::cost::site();
-
+    // test109: this block cost 12.7 ms/frame for refreshes of about 7 mips.
+    // Sub-sites split it: the lock wait (a D3DFlushEntireCpuCache flush holds
+    // it over every live texture), the pending-write scan, and the refresh.
+    let lock_site = crate::diagnostics::cost::site();
     let mut slot = lock(&placements.memory.submissions);
+    drop(lock_site);
     HRESULT(placements.memory.failed.load(Ordering::Acquire)).ok()?;
     let submission = match slot.as_mut() {
         Some(s) => s,
@@ -1260,9 +1292,11 @@ pub(crate) unsafe fn submit(
         }),
     };
     let reader = access.reader(&device.native)?;
+    let scan_site = crate::diagnostics::cost::site();
     submission
         .writes
         .retain(|w| unsafe { w.published.GetCompletedValue() } < w.tick);
+    pending_writes_note(submission.writes.len());
     let mut refresh = Vec::new();
     refresh
         .try_reserve(textures.len())
@@ -1301,6 +1335,7 @@ pub(crate) unsafe fn submit(
             refresh.push(texture.clone());
         }
     }
+    drop(scan_site);
 
     let transfer = if upload_per_queue() {
         match submission.per_queue.entry(windows::core::Interface::as_raw(queue) as usize) {
@@ -1310,7 +1345,10 @@ pub(crate) unsafe fn submit(
     } else {
         &mut submission.transfer
     };
-    if let Err(error) = oom_retry(device, "refresh", || transfer.refresh(&device.native, &refresh, Some(reader))) {
+    let transfer_site = crate::diagnostics::cost::site();
+    let refreshed = oom_retry(device, "refresh", || transfer.refresh(&device.native, &refresh, Some(reader)));
+    drop(transfer_site);
+    if let Err(error) = refreshed {
         if !oom_skip(&error) {
             return Err(error);
         }
