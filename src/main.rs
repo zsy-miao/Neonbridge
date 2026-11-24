@@ -49,6 +49,10 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
   --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
   --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
   ctl <command>  control the running game over a local pipe (neonbridge ctl help)
+Game feed (NEONBRIDGE_FEED=1): watch the game in a browser on 127.0.0.1:8788 and over
+  Tailscale (tools/tsproxy.exe, else tools/cloudflared.exe), behind a site password set
+  on this PC; needs ffmpeg. NEONBRIDGE_FEED_PORT, _HOST (Tailscale name, neonbridge),
+  _LINK (tailscale|cloudflared|none), _FPS (30), _WIDTH (1280), _KBPS (4000).
 Building needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target;
 a release with a prebuilt tuxbox folder needs neither.";
 
@@ -773,6 +777,14 @@ q
         println!("[launch] debugger log: {}", cdb_log.display());
     }
     println!("[launch] starting {}", argv.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "));
+    // NEONBRIDGE_FEED=1: the game's picture on 127.0.0.1 and over Tailscale
+    // (crates/feed); the game gets the frame tap (TUXBOX_FEED=1).
+    let feed_env = if neonbridge_feed::enabled() {
+        neonbridge_feed::start(neonbridge_feed::Settings::from_env());
+        neonbridge_feed::game_env()
+    } else {
+        Vec::new()
+    };
     let t = Instant::now();
     let mut child = Command::new(&argv[0])
         .current_dir(game)
@@ -782,6 +794,7 @@ q
         .env("TUXBOX_LOG_FILE", &log)
         // One readback every 120 presents: cheap, and every summary gets lit= samples.
         .env("TUXBOX_TRACE_PRESENT", std::env::var("TUXBOX_TRACE_PRESENT").unwrap_or_else(|_| "120".into()))
+        .envs(feed_env)
         .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

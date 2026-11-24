@@ -103,6 +103,15 @@ name = "neonbridge"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "neonbridge-feed",
+ "sha2",
+ "windows-sys",
+]
+
+[[package]]
+name = "neonbridge-feed"
+version = "0.1.0"
+dependencies = [
  "sha2",
  "windows-sys",
 ]

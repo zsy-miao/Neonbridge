@@ -1,2 +1,5 @@
 /target
 /vendor/tuxbox/target
+# The game feed's link helpers: RuneLink's Go tsproxy and cloudflared builds, never committed
+/tools/tsproxy.exe
+/tools/cloudflared.exe

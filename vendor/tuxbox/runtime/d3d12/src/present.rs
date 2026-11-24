@@ -8,6 +8,7 @@
 //! default showed no picture through it); off, or on a failure to build it,
 //! the HWND swap chain is stretched to the client area.
 
+mod feed;
 mod overlay;
 mod window;
 use window::OutputWindow;
@@ -361,6 +362,7 @@ impl SwapChain {
                 WINDOW_SAMPLES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 sampler::record(&frame.list, &buffer, D3D12_RESOURCE_STATE_PRESENT)
             }).flatten();
+            let feed = feed::record(&frame.list, &buffer);
             frame.list.Close()?;
             frame.source = Some(source.clone());
             queue.ExecuteCommandLists(&[Some(ID3D12CommandList::clone(&frame.list))]);
@@ -370,6 +372,9 @@ impl SwapChain {
                 return Err(error);
             }
             frame.retire = self.next;
+            if let Some(feed) = feed {
+                feed.submit(&self.fence, self.next);
+            }
             crate::diagnostics::gpu_clock::track(&self.fence, self.next);
             if let Some(sample) = sample {
                 wait_for(&self.fence, self.next)?;
