@@ -62,7 +62,19 @@ unsafe extern "system" fn unsupported_slot<const NUMBER: usize>() -> i32 {
         crate::survey::unsupported_slot(NUMBER);
         return windows::Win32::Foundation::E_NOTIMPL.0;
     }
-    fail_call(format_args!("unsupported D3D12.x vtable slot {NUMBER}"));
+    // Neonbridge: log the slot (once each) and answer 0 (S_OK, null, no-op),
+    // as xcl does for unknown extension slots. TUXBOX_UNMAPPED=failfast
+    // restores the fail-fast that names the slot and its caller.
+    if crate::env_toggle!("TUXBOX_UNMAPPED") == Some("failfast") {
+        fail_call(format_args!("unsupported D3D12.x vtable slot {NUMBER}"));
+    }
+    static SEEN: [std::sync::atomic::AtomicBool; 192] = [const { std::sync::atomic::AtomicBool::new(false) }; 192];
+    if !SEEN[NUMBER % 192].swap(true, std::sync::atomic::Ordering::Relaxed) {
+        crate::diagnostics::log_line(format_args!(
+            "unsupported D3D12.x vtable slot {NUMBER} answered 0 (title RVA {:#x}); TUXBOX_UNMAPPED=failfast to stop here",
+            crate::survey::title_rva().unwrap_or(0)));
+    }
+    0
 }
 
 macro_rules! missing_slots {
