@@ -98,7 +98,31 @@ fn find(insns: &[Insn]) -> Option<(usize, usize, usize)> {
 
 /// Returns how many stubs moved.
 pub(super) fn inline(insns: &mut Vec<Insn>) -> usize {
+    if std::env::var("TB_ENDPGM_BRANCH_EXIT").map_or(true, |v| v.trim() != "0") {
+        endpgm_exits(insns);
+    }
     if enabled() { inline_all(insns) } else { 0 }
+}
+
+/// A backward branch to an `s_endpgm` leaves the program, which the emitters already
+/// express as a branch to the end (an early `s_endpgm` is `j{end} = true`). Taken as a
+/// back edge, it made 60310787 look like a loop from that `s_endpgm` to the branch,
+/// overlapping its real loops, and the program went to the tb_pc dispatcher (71 s at
+/// dxc -O1). Point it at the end of the program instead. TB_ENDPGM_BRANCH_EXIT=0 off.
+fn endpgm_exits(insns: &mut [Insn]) -> usize {
+    let Some(last) = insns.last() else { return 0 };
+    let end = (last.offset + last.dwords * 4) as i64;
+    let endpgm: std::collections::HashSet<usize> =
+        insns.iter().filter(|i| i.enc == Enc::Sopp && i.op == 1).map(|i| i.offset).collect();
+    let mut n = 0;
+    for ins in insns.iter_mut().filter(|i| is_branch(i)) {
+        let t = target(ins);
+        if t <= ins.offset as i64 && usize::try_from(t).is_ok_and(|t| endpgm.contains(&t)) {
+            ins.aux.imm = (end - ins.offset as i64 - 4) / 4;
+            n += 1;
+        }
+    }
+    n
 }
 
 fn inline_all(insns: &mut Vec<Insn>) -> usize {
@@ -151,6 +175,19 @@ mod tests {
         assert_eq!(inline_all(&mut code), 1);
         let order: Vec<usize> = code.iter().map(|i| i.offset).collect();
         assert_eq!(order, [0x00, 0x04, 0x08, 0x18, 0x14, 0x0c, 0x10, 0x1c]);
+    }
+
+    #[test]
+    fn backward_branch_to_endpgm_leaves_the_program() {
+        let mut code = vec![
+            alu(0x00),
+            op(0x04, "s_endpgm", Enc::Sopp, 1, 0, vec![], vec![]),
+            alu(0x08),
+            branch(0x0c, "s_cbranch_scc1", 5, 0x04),
+            op(0x10, "s_endpgm", Enc::Sopp, 1, 0, vec![], vec![]),
+        ];
+        assert_eq!(endpgm_exits(&mut code), 1);
+        assert_eq!(target(&code[3]), 0x14);
     }
 
     #[test]
