@@ -1522,6 +1522,95 @@ unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64
     if let Err(error) = result { state.error = error.code(); }
 }
 
+/// Newer-layout list slot 80, DispatchX(x, y, z, flags): a Dispatch whose
+/// console flags have no host meaning (rebox d907249).
+unsafe extern "system" fn dispatch_x(list: &List, x: u32, y: u32, z: u32, flags: u32) {
+    if flags != 0 {
+        static FLAGS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FLAGS, || format!("DispatchX flags {flags:#x} ignored"));
+    }
+    unsafe { compute::dispatch(list, x, y, z) }
+}
+
+/// FillMemoryWith{32,64,128}BitValueX (newer-layout list slots 63-65): the
+/// pattern repeated over `size` bytes at a title GPU address. Up to 1 KiB is
+/// written as immediate words; larger fills copy from an upload buffer of the
+/// pattern that the list retains.
+fn fill_memory(list: &List, address: u64, size: u64, pattern: [u8; 16], unit: u64) {
+    let mut state = recording(list);
+    if !state.ensure_open(&list.native) { return; }
+    static WARN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if address == 0 || size == 0 || !size.is_multiple_of(unit) || !address.is_multiple_of(4) || size > 1 << 30 {
+        if WARN.fetch_add(1, Ordering::Relaxed) < 8 {
+            crate::diagnostics::log_line(format_args!("memory fill {address:#x} ({size:#x} bytes, unit {unit}) skipped"));
+        }
+        return;
+    }
+    memory_wait::note_write(list, &mut state, "memory fill", address, u64::from_le_bytes(pattern[..8].try_into().unwrap()));
+    let result = (|| -> windows::core::Result<()> {
+        let (resource, dest) = unsafe { device::command_buffer_address(parent(&list.parent), address, size)? };
+        let Some(resource) = resource else {
+            if WARN.fetch_add(1, Ordering::Relaxed) < 8 {
+                crate::diagnostics::log_line(format_args!("memory fill {address:#x} ({size:#x} bytes) is not GPU memory; skipped"));
+            }
+            return Ok(());
+        };
+        raytracing::retain(&state, &[&resource])?;
+        if size <= 1024 {
+            for at in (0..size).step_by(4) {
+                let i = (at % 16) as usize;
+                let value = u32::from_le_bytes(pattern[i..i + 4].try_into().unwrap());
+                let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest + at, Value: value };
+                state.prefix.push(&list.native, memory_wait::Packet::Marker(write))?;
+            }
+            return Ok(());
+        }
+        let mut device: Option<ID3D12Device> = None;
+        unsafe { list.native.GetDevice(&mut device)? };
+        let device = device.ok_or(E_INVALIDARG)?;
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: size, Height: 1, DepthOrArraySize: 1, MipLevels: 1,
+            Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            ..Default::default()
+        };
+        let mut upload: Option<ID3D12Resource> = None;
+        unsafe { device.CreateCommittedResource(&D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_UPLOAD, ..Default::default() },
+            D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, None, &mut upload)? };
+        let upload = upload.ok_or(E_INVALIDARG)?;
+        unsafe {
+            let mut mapped = ptr::null_mut();
+            upload.Map(0, None, Some(&mut mapped))?;
+            for chunk in core::slice::from_raw_parts_mut(mapped.cast::<u8>(), size as usize).chunks_mut(16) {
+                chunk.copy_from_slice(&pattern[..chunk.len()]);
+            }
+            upload.Unmap(0, None);
+            raytracing::retain(&state, &[&upload])?;
+            let offset = dest - resource.GetGPUVirtualAddress();
+            list.native.CopyBufferRegion(&resource, offset, &upload, 0, size);
+        }
+        Ok(())
+    })();
+    if let Err(error) = result { state.error = error.code(); }
+}
+
+fn repeat(bytes: &[u8]) -> [u8; 16] {
+    core::array::from_fn(|i| bytes[i % bytes.len()])
+}
+
+unsafe extern "system" fn fill32(list: &List, address: u64, size: u64, value: u32) {
+    fill_memory(list, address, size, repeat(&value.to_le_bytes()), 4);
+}
+
+unsafe extern "system" fn fill64(list: &List, address: u64, size: u64, value: u64) {
+    fill_memory(list, address, size, repeat(&value.to_le_bytes()), 8);
+}
+
+unsafe extern "system" fn fill128(list: &List, address: u64, size: u64, value: *const [u8; 16]) {
+    if value.is_null() || !accessible(value as usize, 16, false) { return; }
+    fill_memory(list, address, size, unsafe { value.read_unaligned() }, 16);
+}
+
 static LIST_SLOTS: Slots<149> = {
     let mut slots = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
     slots[8] = crate::slot!(get_type);
@@ -1637,6 +1726,13 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     slots[132] = crate::slot!(extended_cache_barrier);
     // GTA VI (test10, title RVA 0x9796a0): CopyMemoryToMemoryX, older #60.
     slots[62] = crate::slot!(copy_memory);
+    // Newer layout, older #61-#63 shifted by two (xcl NEWER_LIST_SLOTS).
+    slots[63] = crate::slot!(fill32);
+    slots[64] = crate::slot!(fill64);
+    slots[65] = crate::slot!(fill128);
+    // Older #78 DispatchX and #84 CopyResourceX (rebox d907249).
+    slots[80] = crate::slot!(dispatch_x);
+    slots[86] = crate::slot!(copy_resource);
     slots[70] = crate::slot!(graphics::depth_bounds);
     slots[75] = crate::slot!(graphics::force_shader_depth_order);
     slots[142] = crate::slot!(graphics::sample_mask);
