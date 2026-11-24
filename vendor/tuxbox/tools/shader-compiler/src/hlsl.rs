@@ -95,6 +95,7 @@ mod reflection_far;
 mod sampler_heap;
 mod lane_reads;
 mod heap_offsets;
+mod heap_origins;
 use sampler_heap::DirectSampler;
 mod reflection_probe;
 mod wave_scan;
@@ -3253,6 +3254,17 @@ impl<'a> Emitter<'a> {
 
         // Both passes read the same decoded program. Snapshot it once for all blocks.
         let program = self.insns.clone();
+        // Direct branches have explicit graph edges. Preserve the previous
+        // behavior for other control transfers, not modeled by this graph.
+        let track_heap_origin = (self.resource_heap_base.is_some() || self.sampler_heap_base.is_some())
+            && program.iter().enumerate().all(|(i, ins)| {
+            if ins.enc == Enc::Sopp && Self::branch_cond(ins.op).is_some() {
+                tgt.contains_key(&i)
+            } else {
+                !["branch", "setpc", "swappc", "call", "rfe", "trap"]
+                    .iter().any(|name| ins.mnemonic.contains(name))
+            }
+        }) && n <= (usize::MAX >> 17);
         // Fixpoint (analysis only: recordings are rolled back afterwards).
         let saved = (
             self.res.clone(),
@@ -3296,7 +3308,7 @@ impl<'a> Emitter<'a> {
             }
             budget -= 1;
             let (mut sym, mut written) = states[b].clone().unwrap();
-            if let Err(e) = self.res_block(&program, &mut sym, &mut written, ranges[b].clone()) {
+            if let Err(e) = self.res_block(&program, &mut sym, &mut written, ranges[b].clone(), track_heap_origin) {
                 if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) {
                     eprintln!("block {b} analysis error: {e}");
                 }
@@ -3309,14 +3321,23 @@ impl<'a> Emitter<'a> {
             for &s in &succs[b] {
                 let changed = match &mut states[s] {
                     slot @ None => {
-                        *slot = Some((sym.clone(), written.clone()));
+                        let mut next = sym.clone();
+                        if track_heap_origin {
+                            heap_origins::canonicalize(&mut next, s);
+                        }
+                        *slot = Some((next, written.clone()));
                         true
                     }
                     Some((osym, owr)) => {
                         let before = (osym.clone(), owr.len());
+                        let heap = track_heap_origin.then(|| heap_origins::intersection(osym, &sym, s));
                         let keys: Vec<u16> = osym.keys().copied().collect();
                         for k in keys {
                             let a = osym[&k];
+                            if track_heap_origin && heap_origins::tracked(a) {
+                                osym.remove(&k);
+                                continue;
+                            }
                             match sym.get(&k).copied() {
                                 Some(b) if a == b => {}
                                 Some(b) => match self.join_desc(a, b) {
@@ -3347,6 +3368,9 @@ impl<'a> Emitter<'a> {
                                 osym.insert(*k, *v);
                             }
                         }
+                        if let Some(heap) = heap {
+                            osym.extend(heap);
+                        }
                         owr.extend(written.iter().copied());
                         before != (osym.clone(), owr.len())
                     }
@@ -3375,7 +3399,7 @@ impl<'a> Emitter<'a> {
         // Recording pass with the converged entry states.
         for (b, r) in ranges.iter().enumerate() {
             if let Some((mut sym, mut written)) = states[b].clone() {
-                self.res_block(&program, &mut sym, &mut written, r.clone()).map_err(|e| first_err.clone().unwrap_or(e))?;
+                self.res_block(&program, &mut sym, &mut written, r.clone(), track_heap_origin).map_err(|e| first_err.clone().unwrap_or(e))?;
             }
         }
         Ok(())
@@ -4061,16 +4085,11 @@ impl<'a> Emitter<'a> {
         sym: &mut HashMap<u16, Sym>,
         written: &mut BTreeSet<u16>,
         range: std::ops::Range<usize>,
+        track_heap_origin: bool,
     ) -> Result<(), String> {
         let dbg_reg = std::env::var("TB_DFDEBUG").ok().and_then(|v| v.parse::<u16>().ok());
         let mut dbg_prev: Option<Sym> = dbg_reg.and_then(|r| sym.get(&r).copied());
         let block_start = range.start;
-        // Only a single straight-line region gives each static load site
-        // one unambiguous execution. Keep the previous join policy for
-        // branches/loops until correlated descriptor joins are modeled.
-        let track_heap_origin = range.start == 0 && range.end == insns.len()
-            && !insns.iter().any(|i| ["branch", "setpc", "swappc", "call", "rfe", "trap"]
-                .iter().any(|name| i.mnemonic.contains(name)));
         let inline_samplers = self.resource_heap_base.is_some()
             || (self.ex.root_sig.is_none() && self.ex.resources.iter().any(|r| r.res_type == 1))
             // Literal sampler words can name any static sampler with identical state.
@@ -4117,7 +4136,7 @@ impl<'a> Emitter<'a> {
                 dbg_prev = cur;
             }
             let ins = &insns[idx];
-            let heap_origin = track_heap_origin.then_some(ins.offset);
+            let heap_origin = track_heap_origin.then_some(idx);
             // Read reaching sources before invalidating every result word.
             // In-place copies/selects must see the old value, while multiword
             // image/buffer results must not leave stale offset proofs behind.
@@ -4240,6 +4259,29 @@ impl<'a> Emitter<'a> {
                             self.vdsel_moves.insert(idx, (*v, s));
                         }
                         sym.insert(2000 + *v as u16, value);
+                    }
+                }
+                Enc::Sop2 if matches!(ins.mnemonic.as_str(), "s_xor_b32" | "s_or_b32" | "s_and_b32")
+                    && ins.src.len() == 2 && ins.src.iter().any(|o| matches!(o, Opnd::ConstInt(_) | Opnd::Literal(_)))
+                    && ins.src.iter().any(|o| matches!(sg(o).and_then(|s| sym.get(&s)), Some(Sym::HeapOffset | Sym::HeapSamplerOffset))) =>
+                {
+                    if let Some(d) = ins.dst.first().and_then(sg) {
+                        let known = |o: &Opnd| sg(o).and_then(|s| sym.get(&s).copied());
+                        let literal = |o: &Opnd| match o {
+                            Opnd::ConstInt(v) => Some(*v as u32),
+                            Opnd::Literal(v) => Some(*v),
+                            _ => None,
+                        };
+                        let result = [(0, 1), (1, 0)].into_iter().find_map(|(a,b)| {
+                            let kind = known(&ins.src[a])?;
+                            let mask = match kind { Sym::HeapOffset => 31, Sym::HeapSamplerOffset => 15, _ => return None };
+                            let value = literal(&ins.src[b])?;
+                            (ins.mnemonic == "s_and_b32" || value & mask == 0).then_some(kind)
+                        });
+                        // The ordinary scalar write invalidates all other facts.
+                        sym.remove(&d);
+                        written.insert(d);
+                        if let Some(kind) = result { sym.insert(d, kind); }
                     }
                 }
                 Enc::Sop2 if self.resource_heap_base.is_some() && ins.mnemonic == "s_lshl_b32" && ins.src.get(1) == Some(&Opnd::ConstInt(5)) => {
@@ -8457,7 +8499,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let (x, y) = (name(&d)?, name(&s[0])?);
             let t = self.tmp;
             self.tmp += 1;
-            self.line(&format!("if (exec_lo & 1u) {{ uint t{t} = {x}; {x} = {y}; {y} = t{t}; }}"));
+            // Xbox2Windows f018831b (MIT): both registers are written; under the
+            // resolved wave32 form this lane's EXEC bit is tb_lane_bit, not bit 0.
+            self.touch(&d);
+            self.touch(&s[0]);
+            let bit = if self.resolve_wave32 { "tb_lane_bit" } else { "1u" };
+            self.line(&format!("if ((exec_lo & {bit}) != 0u) {{ uint t{t} = {x}; {x} = {y}; {y} = t{t}; }}"));
             return Ok(());
         }
         if m == "v_permlanex16_b32" && (self.pixel_wave || self.portable_wave64) {

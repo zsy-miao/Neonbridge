@@ -593,6 +593,60 @@ mod tests {
     }
 
     #[test]
+    fn branch_must_not_hide_mixed_texture_words() {
+        let mut words = vec![SAMPLE[0],SAMPLE[1],0x8f02850b,0xf40c0607,0x04000000];
+        words.extend(&SAMPLE[2..6]);
+        // Unconditional branch to the next instruction, then mixed word.
+        words.extend([0xbf820000,0xbe850319,SAMPLE[6],SAMPLE[7],SAMPLE[8]]);
+        assert!(refusal(&pixel(&words)).contains("not an image descriptor"));
+    }
+
+    #[test]
+    fn branch_can_select_complete_texture_descriptors() {
+        // SCC from s1 = s11 << 4. If SCC=0 skip A; otherwise use A.
+        // Each branch loads all eight words at the same destination.
+        let words = [SAMPLE[0],0x8f02850b,SAMPLE[1],0xbf840003,
+            SAMPLE[2],SAMPLE[3],0xbf820002,0xf40c0107,0x04000000,
+            SAMPLE[4],SAMPLE[5],SAMPLE[6],SAMPLE[7],SAMPLE[8]];
+        assert!(super::super::translate(&pixel(&words)).is_ok());
+    }
+
+    #[test]
+    fn branch_must_not_mix_only_on_one_path() {
+        let mut words = vec![SAMPLE[0],SAMPLE[1],0x8f02850b,0xf40c0607,0x04000000];
+        words.extend(&SAMPLE[2..6]);
+        words.extend([0xbf840001,0xbe850319,SAMPLE[6],SAMPLE[7],SAMPLE[8]]);
+        assert!(refusal(&pixel(&words)).contains("not an image descriptor"));
+    }
+
+    #[test]
+    fn loop_reloads_must_not_keep_previous_generation_words() {
+        let mut words = SAMPLE[..6].to_vec();
+        // Save old word 1, reload the complete texture descriptor, decrement
+        // a counter and loop to the save. At exit graft the previous word.
+        words.extend([0xbe830382,0xbe990305,0x8900a000,SAMPLE[2],SAMPLE[3],
+                      0x80838103,0xbf068003,0xbf84fff9,
+                      0xbe850319,SAMPLE[6],SAMPLE[7],SAMPLE[8]]);
+        assert!(refusal(&pixel(&words)).contains("not an image descriptor"));
+        words.remove(words.len()-4);
+        assert!(super::super::translate(&pixel(&words)).is_ok());
+    }
+
+    #[test]
+    fn scalar_bitwise_offset_alignment_is_preserved_only_when_proven() {
+        for op in [0x8900a000, 0x8800a000, 0x87008100] {
+            let mut words = SAMPLE.to_vec();
+            words.insert(2, op);
+            assert!(super::super::translate(&pixel(&words)).is_ok(), "{op:#x}");
+        }
+        for op in [0x89008100, 0x88008100] {
+            let mut words = SAMPLE.to_vec();
+            words.insert(2, op);
+            assert!(refusal(&pixel(&words)).contains("dynamic soffset unsupported"));
+        }
+    }
+
+    #[test]
     fn root_less_constants_must_agree_everywhere() {
         let ex = pixel(&SAMPLE);
         let (start, key) = rootless_constants(&ex).unwrap();

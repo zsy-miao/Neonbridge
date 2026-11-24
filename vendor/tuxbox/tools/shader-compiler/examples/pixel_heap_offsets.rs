@@ -3,7 +3,7 @@ use tuxbox_xshader::{ShaderExtract, Stage, hlsl};
 mod fixture { include!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/support/wave_guard_fixture.rs")); }
 
 fn main() {
-    let variant = std::env::args().nth(1).expect("variant: copy, inplace, scalar");
+    let variant = std::env::args().nth(1).expect("variant: copy, inplace, scalar, branch, loop");
     let (mut ex, _, _) = fixture::shader(32);
     ex.stage = Stage::Pixel;
     ex.shader_model = (6,6);
@@ -29,13 +29,24 @@ fn main() {
     ex.fssm=fssm;
     let mut words=vec![0x8f00850au32]; // s0 = texture index << 5
     match variant.as_str() {
-        "scalar" => words.push(0x8f01840b),
+        "scalar" | "branch" | "loop" => words.push(0x8f01840b),
         "copy" => words.extend([0x7e0a020b,0x340c0a84,0x7e0e0306,0x7e020507]),
         "inplace" => words.extend([0x7e0a020b,0x340c0a84,0x7e0c0306,0x7e020506]),
         _ => panic!("unknown variant"),
     }
     // Fetch both descriptors, sample at normalized (0.375,0.375), export RGBA.
-    words.extend([0xf40c0107,0x00000000,0xf4080508,0x02000000,
+    if variant == "branch" {
+        // Select the texture index or the sampler index using SCC from
+        // the sampler shift; both paths fetch a complete descriptor.
+        words.extend([0x8f02850b,0x8f01840b,0xbf840003,
+                      0xf40c0107,0x04000000,0xbf820002,0xf40c0107,0x00000000]);
+    } else if variant == "loop" {
+        // Two fresh executions of the same descriptor load site, with distinct indices.
+        words.extend([0xbe830382,0xf40c0107,0x00000000,0x8900a000,0x80838103,0xbf068003,0xbf84fffa]);
+    } else {
+        words.extend([0xf40c0107,0x00000000]);
+    }
+    words.extend([0xf4080508,0x02000000,
                   0x7e0802ff,0x3ec00000,0x7e0a02ff,0x3ec00000,0xf0800f08,0x00a10704,
                   0xf800080f,0x0a090807,0xbf810000]);
     ex.isa=words.iter().flat_map(|w|w.to_le_bytes()).collect();
