@@ -21,9 +21,7 @@ The Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own dump)
 
 ## Where we are stuck
 
-The run stops on a D3D12 `OpenExistingHeapFromAddress` failure when the title's CPU (xmem) memory is imported as a GPU heap. Nothing is drawn after that.
-
-Suspects, not yet confirmed: the call may be a console device slot forwarded to the PC device by number (console slot 48 creates a command queue, while PC slot 48 is `OpenExistingHeapFromAddress`), or the range may break D3D12's import rules (fully committed, one allocation, at most 4095 MB at a 4 GiB-aligned address). Other projects get past this by importing per-page slices, or by keeping host-side shadow copies of title memory and copying only the pages the title wrote.
+The title presents its first frame (a black clear at 3840x2160), then loading crawls: each new pipeline waits on the out-of-sandbox shader worker to translate its shader (`shader_cache::compile::on_demand`), and the render thread blocks on it while the other submit threads queue behind its lock. Heap imports, slot 48 (command queue) and slot 133 (placed resource at a VA) are not failing.
 
 No game files, keys or binaries are in this repository. Bring your own copy of the game. Not affiliated with Rockstar, Take-Two or Microsoft.
 
