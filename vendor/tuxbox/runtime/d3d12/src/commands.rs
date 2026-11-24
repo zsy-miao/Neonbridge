@@ -2507,7 +2507,8 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
         return;
     }
     if lists.is_null() {
-        reject(queue, E_INVALIDARG);
+        // Only this call: a latched error would drop every later batch.
+        drop_batch(queue, E_INVALIDARG);
         return;
     }
     let guest = unsafe { slice::from_raw_parts(lists, count as usize) };

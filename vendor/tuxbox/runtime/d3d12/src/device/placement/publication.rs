@@ -13,6 +13,32 @@ struct Job {
     tick: u64,
 }
 
+/// Whether a failed publication means the queue cannot go on. Any error was
+/// remembered for good, and a remembered error makes the queue drop every
+/// later ExecuteCommandLists and fence signal unseen (commands.rs checks
+/// `placement.error`): one write-back that ran out of memory over the
+/// device-local budget, or met a guarded title page (E_ACCESSDENIED), stopped
+/// the title's GPU work for the rest of the run and left it waiting on fences
+/// (five-star a654736, GPL-3.0: a refused texture fill fails without throwing).
+/// Only a lost device poisons the queue now; any other failure is logged and
+/// that write-back is skipped, its title bytes stale until the next one.
+/// TUXBOX_PUBLICATION_STRICT=1 remembers every failure as before.
+fn queue_lost(error: &windows::core::Error) -> bool {
+    use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_DEVICE_HUNG, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET, DXGI_ERROR_DRIVER_INTERNAL_ERROR};
+    crate::env_toggle!("TUXBOX_PUBLICATION_STRICT") == Some("1")
+        || [DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_HUNG, DXGI_ERROR_DEVICE_RESET, DXGI_ERROR_DRIVER_INTERNAL_ERROR].contains(&error.code())
+}
+
+fn skipped(error: &windows::core::Error) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "placed texture write-back failed {:#010x}: skipped, the queue goes on ({n} so far; TUXBOX_PUBLICATION_STRICT=1 stops the queue)",
+            error.code().0));
+    }
+}
+
 pub(super) struct Worker {
     pub(super) published: ID3D12Fence,
     sender: mpsc::Sender<Job>,
@@ -97,13 +123,17 @@ impl QueueAccess {
                         remember(Err(E_FAIL.into()));
                     } else {
                         let result = job.readback.complete();
-                        if result.is_ok() {
-                            static FIRST_PUBLICATION: std::sync::Once = std::sync::Once::new();
-                            crate::diagnostics::log_once(&FIRST_PUBLICATION, || {
-                                "completed GPU writeback for a guest-backed placed texture".into()
-                            });
+                        match &result {
+                            Ok(()) => {
+                                static FIRST_PUBLICATION: std::sync::Once = std::sync::Once::new();
+                                crate::diagnostics::log_once(&FIRST_PUBLICATION, || {
+                                    "completed GPU writeback for a guest-backed placed texture".into()
+                                });
+                                remember(result);
+                            }
+                            Err(cause) if !queue_lost(cause) => skipped(cause),
+                            Err(_) => remember(result),
                         }
-                        remember(result);
                     }
                     // Release this queue's GPU gate even after failed mapping or
                     // publication, so guest fence waiters can observe its error.
