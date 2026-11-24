@@ -158,7 +158,18 @@ pub(super) fn inline_sampler(ex: &ShaderExtract, literal: [u32; 4]) -> Option<(u
     // The title's compiler inlines a static sampler's state whether or not the
     // shader's resource list names it; any root static sampler with the same
     // state binds identically. Prefer a declared one.
-    let samplers = &ex.root_sig.as_ref()?.static_samplers;
+    let Some(root) = ex.root_sig.as_ref() else {
+        // Root-less programs: the title's own root signature supplies the static
+        // sampler, so bind the inline words to the one sampler PSV declares. Only
+        // accept words shaped like a static sampler (word 1 = MAX_LOD 12, no bias).
+        let mut declared = ex.resources.iter().filter(|r| r.res_type == 1);
+        let sampler = declared.next()?;
+        if declared.next().is_some() || sampler.lower != sampler.upper || literal[1] != 0x00c00000 {
+            return None;
+        }
+        return Some((sampler.lower, sampler.space));
+    };
+    let samplers = &root.static_samplers;
     let matching = || samplers.iter().filter(|s| {
         let vis = s[12];
         (vis == 0 || (vis == 5 && ex.stage == Stage::Pixel)) && static_sampler_words(s) == Some(literal)
