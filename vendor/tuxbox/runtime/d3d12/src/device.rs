@@ -521,7 +521,39 @@ unsafe extern "system" fn create_allocator(
     }
 }
 
+/// leonida-ce 1403e90e: a refused descriptor heap is logged with its
+/// description, the host increment and the step that refused it.
+/// TUXBOX_HEAP_FAIL_LOG=0 off.
 unsafe extern "system" fn create_heap(
+    this: &Device,
+    desc: *const D3D12_DESCRIPTOR_HEAP_DESC,
+    iid: *const GUID,
+    out: Out,
+) -> HRESULT {
+    let result = unsafe { create_heap_logged(this, desc, iid, out) };
+    if result.is_err() && crate::env_toggle!("TUXBOX_HEAP_FAIL_LOG") != Some("0") {
+        static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 16 || n.is_power_of_two() {
+            match unsafe { desc.as_ref() } {
+                Some(d) => {
+                    let increment = if d.Type.0 <= D3D12_DESCRIPTOR_HEAP_TYPE_DSV.0 && d.Type.0 >= 0 {
+                        unsafe { this.native.GetDescriptorHandleIncrementSize(d.Type) }
+                    } else { 0 };
+                    crate::diagnostics::log_line(format_args!(
+                        "CreateDescriptorHeap failed {:#010x}: type {} count {} flags {:#x} mask {:#x} (increment {increment}, {} bytes; {n} so far)",
+                        result.0 as u32, d.Type.0, d.NumDescriptors, d.Flags.0, d.NodeMask,
+                        d.NumDescriptors as u64 * increment as u64));
+                }
+                None => crate::diagnostics::log_line(format_args!(
+                    "CreateDescriptorHeap failed {:#010x}: no description ({n} so far)", result.0 as u32)),
+            }
+        }
+    }
+    result
+}
+
+unsafe fn create_heap_logged(
     this: &Device,
     desc: *const D3D12_DESCRIPTOR_HEAP_DESC,
     iid: *const GUID,
