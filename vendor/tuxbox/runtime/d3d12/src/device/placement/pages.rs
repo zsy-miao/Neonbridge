@@ -141,7 +141,12 @@ struct Pages {
     pool_used: Vec<std::time::Instant>,
     pool_evicted: Vec<bool>,
     pool_system: Vec<bool>,
+    /// evicted because none of its tiles is in use (`trim_empty`)
+    pool_empty: Vec<bool>,
 }
+
+static EMPTY_EVICTED: AtomicU64 = AtomicU64::new(0);
+static EMPTY_RESIDENT: AtomicU64 = AtomicU64::new(0);
 
 // D3D12 objects are free-threaded
 unsafe impl Send for Pages {}
@@ -177,7 +182,52 @@ impl Pages {
             pool_used: Vec::new(),
             pool_evicted: Vec::new(),
             pool_system: Vec::new(),
+            pool_empty: Vec::new(),
         })
+    }
+
+    /// Over budget, page pools none of whose tiles is in use are evicted,
+    /// keeping one such pool resident; their tiles go to the bottom of the
+    /// free list so resident pools are used first, and a pool is made resident
+    /// again when its tile is taken (`take_tile`). test91b held 3712 MiB of
+    /// pools for 2607 MiB of pages in use, at device local 7748 of 7188 MiB.
+    /// Nothing maps an empty pool, so unlike a demoted one it cannot be
+    /// sampled while evicted. TUXBOX_PAGES_TRIM_EMPTY=0 off.
+    unsafe fn trim_empty(&mut self, dev: &ID3D12Device) {
+        if crate::env_toggle!("TUXBOX_PAGES_TRIM_EMPTY") == Some("0") {
+            return;
+        }
+        while self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) {
+            if let Some((t, _)) = self.cooling.pop_front() {
+                self.free.push(t);
+            }
+        }
+        let mut free = vec![0u32; self.pools.len()];
+        for t in &self.free {
+            free[t.0 as usize] += 1;
+        }
+        let empty: Vec<usize> = (0..self.pools.len()).filter(|&h| free[h] >= POOL_PAGES).collect();
+        let resident: Vec<usize> = empty.iter().copied().filter(|&h| !self.pool_empty[h]).collect();
+        let kept = usize::from(empty.len() == resident.len());
+        let cold: Vec<usize> = resident.into_iter().skip(kept).collect();
+        if !cold.is_empty() {
+            let list: Vec<Option<ID3D12Pageable>> = cold.iter().map(|&h| self.pools[h].cast().ok()).collect();
+            match dev.Evict(&list) {
+                Ok(()) => {
+                    for &h in &cold {
+                        self.pool_empty[h] = true;
+                    }
+                    let n = EMPTY_EVICTED.fetch_add(cold.len() as u64, Relaxed) + cold.len() as u64;
+                    crate::diagnostics::log_line(format_args!(
+                        "placed textures: evicted {} empty page pools ({} MiB; {n} so far, {} made resident again; TUXBOX_PAGES_TRIM_EMPTY=0 off)",
+                        cold.len(), cold.len() * POOL_PAGES as usize * PAGE >> 20, EMPTY_RESIDENT.load(Relaxed)));
+                }
+                Err(e) => crate::diagnostics::log_line(format_args!("placed textures: Evict of {} empty page pools failed {e}", cold.len())),
+            }
+        }
+        // Evicted pools' tiles are taken last.
+        let pool_empty = &self.pool_empty;
+        self.free.sort_by_key(|t| !pool_empty[t.0 as usize]);
     }
 
     /// Pages no resource used for `IDLE` go back to the pools.
@@ -186,11 +236,24 @@ impl Pages {
     }
 
     unsafe fn take_tile(&mut self, dev: &ID3D12Device, system_ok: bool) -> Option<Tile> {
-        if let Some(t) = self.free.pop() {
+        let reused = match self.free.pop() {
+            Some(t) => Some(t),
+            None if self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) => self.cooling.pop_front().map(|(t, _)| t),
+            None => None,
+        };
+        if let Some(t) = reused {
+            // A pool evicted while empty is made resident before its first tile is used again.
+            if self.pool_empty[t.0 as usize] {
+                let list = [self.pools[t.0 as usize].cast::<ID3D12Pageable>().ok()];
+                if let Err(e) = dev.MakeResident(&list) {
+                    crate::diagnostics::log_line(format_args!("placed textures: MakeResident of an empty page pool failed {e}"));
+                    self.free.push(t);
+                    return None;
+                }
+                self.pool_empty[t.0 as usize] = false;
+                EMPTY_RESIDENT.fetch_add(1, Relaxed);
+            }
             return Some(t);
-        }
-        if self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) {
-            return self.cooling.pop_front().map(|(t, _)| t);
         }
         let system = system_ok && system_pools(dev);
         let desc = D3D12_HEAP_DESC {
@@ -215,6 +278,7 @@ impl Pages {
         self.pool_used.push(std::time::Instant::now());
         self.pool_evicted.push(false);
         self.pool_system.push(system);
+        self.pool_empty.push(false);
         if system {
             SYSTEM_POOLS.fetch_add(1, Relaxed);
         }
@@ -945,6 +1009,7 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
         due
     };
     if due && super::alias::over_budget(device) {
+        unsafe { pages.trim_empty(device) };
         evict(pages, &keep, after, None);
     }
     Ok(())
