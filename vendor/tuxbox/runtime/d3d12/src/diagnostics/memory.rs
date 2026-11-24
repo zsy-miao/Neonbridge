@@ -159,6 +159,7 @@ fn line(local: (u64, u64), non_local: (u64, u64), private: u64, free_commit: u64
 
 /// Starts the stats thread once, for the adapter with this LUID.
 pub(crate) fn start(luid: LUID) {
+    commit_guard();
     static ONCE: std::sync::Once = std::sync::Once::new();
     let every = interval_ms();
     if every == 0 { return; }
@@ -199,6 +200,41 @@ pub(crate) fn start(luid: LUID) {
                     crate::diagnostics::log_line(format_args!("{}", commit_breakdown()));
                 }
             }
+        });
+    });
+}
+
+/// OpenScarlett-OCE 3da6373 (the idea; AGPL, nothing copied): at the system
+/// commit limit every allocation of every process fails, so other programs
+/// die and remote sessions cannot start a command. test137 ended with 1062
+/// MiB of system commit free (18452 MiB process private). Every 250 ms, once
+/// less than TUXBOX_MIN_COMMIT_MB (2048; 0 off) can still be committed, the
+/// memory line is logged and the process ends itself with
+/// STATUS_COMMITMENT_LIMIT before the system runs out.
+fn commit_guard() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let floor = crate::env_toggle!("TUXBOX_MIN_COMMIT_MB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(2048) << 20;
+        if floor == 0 {
+            return;
+        }
+        let _ = std::thread::Builder::new().name("TuxBox commit guard".into()).spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let mut status = windows::Win32::System::SystemInformation::MEMORYSTATUSEX {
+                dwLength: size_of::<windows::Win32::System::SystemInformation::MEMORYSTATUSEX>() as u32, ..Default::default()
+            };
+            if unsafe { windows::Win32::System::SystemInformation::GlobalMemoryStatusEx(&mut status) }.is_err()
+                || status.ullAvailPageFile >= floor
+            {
+                continue;
+            }
+            crate::diagnostics::log_line(format_args!(
+                "commit guard: the system can commit only {} MiB more (limit {} MiB; this process holds {} MiB private): ending the process before allocations fail everywhere (TUXBOX_MIN_COMMIT_MB={}; 0 off)",
+                mib(status.ullAvailPageFile), mib(status.ullTotalPageFile), mib(private_bytes()), floor >> 20));
+            crate::diagnostics::log_line(format_args!("{}", line((0, 0), (0, 0), private_bytes(), status.ullAvailPageFile, status.ullTotalPageFile, &[(0, 0, 0, 0); N])));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            const STATUS_COMMITMENT_LIMIT: u32 = 0xC000_012D;
+            let _ = unsafe { windows::Win32::System::Threading::TerminateProcess(windows::Win32::System::Threading::GetCurrentProcess(), STATUS_COMMITMENT_LIMIT) };
         });
     });
 }
