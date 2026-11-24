@@ -37,5 +37,6 @@ EXPORTS
     TuxBoxJoinPageRange PRIVATE
     TuxBoxUncloakWindows PRIVATE
     TuxBoxTakeWriteWatch PRIVATE
+    TuxBoxBinkState PRIVATE
     TuxBoxWritePhysicalPages PRIVATE
     TuxBoxReadPhysicalPages PRIVATE

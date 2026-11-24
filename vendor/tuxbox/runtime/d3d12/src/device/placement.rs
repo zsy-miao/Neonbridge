@@ -122,6 +122,45 @@ pub(super) fn video_plane(desc: &D3D12_RESOURCE_DESC, mips: usize) -> bool {
         && crate::env_toggle!("TUXBOX_PLANE_UNBUDGETED") != Some("0")
 }
 
+type BinkState = unsafe extern "system" fn(*mut u64) -> u32;
+
+/// xmem's Bink hooks: (decodes in flight, decodes completed).
+pub(super) fn bink_state() -> Option<(u32, u64)> {
+    static F: std::sync::OnceLock<Option<BinkState>> = std::sync::OnceLock::new();
+    let f = (*F.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxBinkState")).map(|f| core::mem::transmute::<_, BinkState>(f))
+    }))?;
+    let mut done = 0;
+    let busy = unsafe { f(&mut done) };
+    Some((busy, done))
+}
+
+/// For the plane trace: Bink's decode state now.
+pub(super) fn bink_note() -> String {
+    bink_state().map_or(String::new(), |(busy, done)| format!(", Bink {} ({done} decodes done)", if busy != 0 { "decoding" } else { "idle" }))
+}
+
+/// test112: Bink macroblock residue on the intro. A video plane is not read
+/// while Bink decodes (xmem TuxBoxBinkState), so a half-written frame is
+/// never uploaded. The plane stays owed and is read at the next refresh;
+/// a decode in flight over 250 ms no longer holds it back.
+/// TUXBOX_BINK_PLANE_GATE=0 reads regardless.
+fn bink_gate() -> bool {
+    if crate::env_toggle!("TUXBOX_BINK_PLANE_GATE") == Some("0") {
+        return false;
+    }
+    let Some((busy, _)) = bink_state() else { return false };
+    static SINCE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let mut since = SINCE.lock().unwrap_or_else(|e| e.into_inner());
+    if busy == 0 {
+        *since = None;
+        return false;
+    }
+    since.get_or_insert_with(std::time::Instant::now).elapsed() < std::time::Duration::from_millis(250)
+}
+
 pub(super) fn refresh_read_budget() -> u64 {
     static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MB.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(32)) << 20
@@ -832,6 +871,18 @@ impl Texture {
                 skipped += 1;
                 continue;
             }
+            if video_plane(&self.desc, self.mips.len()) && bink_gate() {
+                static GATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = GATED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "placed textures: video plane at {:#x} not read while Bink decodes, read next refresh ({n} so far; TUXBOX_BINK_PLANE_GATE=0 reads it)",
+                        self.address));
+                }
+                contents.previous[level] = None;
+                skipped += 1;
+                continue;
+            }
             let size = mip.source.end - mip.source.start;
             if too_big(size, &self.desc, level) {
                 skipped += 1;
@@ -854,6 +905,12 @@ impl Texture {
                 // Spent: the rest of this refresh defers, and the next one
                 // starts at this texture (upload.rs refresh).
                 *budget = 0;
+                // The write watch was reset this refresh: without a snapshot
+                // the level is read next time even if no page is written again
+                // (it stayed stale until its next write; TUXBOX_DEFER_OWED=0).
+                if crate::env_toggle!("TUXBOX_DEFER_OWED") != Some("0") {
+                    contents.previous[level] = None;
+                }
                 skipped += 1;
                 continue;
             }

@@ -170,6 +170,40 @@ fn lead_frames() -> f64 {
 /// The title's BinkDoFrameAsyncMulti not yet completed by its BinkDoFrameAsyncWait.
 static IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Synchronous decodes running (BinkDoFrame, the catch-up's decodes).
+static SYNC_DECODES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Decodes completed so far.
+static DECODED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// test112: the intro showed Bink macroblock residue. d3d12 reads the video
+/// planes back from title memory each submission, unordered against Bink's
+/// decode, so a plane could be read half-decoded. d3d12 asks this before
+/// reading a plane: the decodes in flight (0: none), and the completed count.
+#[unsafe(export_name = "TuxBoxBinkState")]
+pub unsafe extern "system" fn tuxbox_bink_state(decoded: *mut u64) -> u32 {
+    if !decoded.is_null() {
+        unsafe { *decoded = DECODED.load(Ordering::Acquire) };
+    }
+    SYNC_DECODES.load(Ordering::Acquire) + u32::from(IN_FLIGHT.load(Ordering::Acquire))
+}
+
+/// The first calls of the decode cycle, in order, with frame and thread
+/// (TUXBOX_BINK_CALL_TRACE, default 48; 0 none).
+fn trace_call(index: usize, movie: u64, phase: &str) {
+    static LEFT: std::sync::OnceLock<AtomicUsize> = std::sync::OnceLock::new();
+    let left = LEFT.get_or_init(|| AtomicUsize::new(std::env::var("TUXBOX_BINK_CALL_TRACE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(48)));
+    if left.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_err() {
+        return;
+    }
+    unsafe extern "system" {
+        fn GetCurrentThreadId() -> u32;
+    }
+    let frame = header(movie).map_or(String::from("-"), |h| h[3].to_string());
+    log(&format!("bink call: {} {phase} (frame {frame}, thread {}, decodes done {}, in flight {})",
+        NAMES[index], unsafe { GetCurrentThreadId() }, DECODED.load(Ordering::Relaxed),
+        SYNC_DECODES.load(Ordering::Relaxed) + u32::from(IN_FLIGHT.load(Ordering::Relaxed))));
+}
+
 /// The smallest lead of the movie over its clock since the last record, in ms
 /// (negative: behind), measured after each catch-up.
 static MIN_LEAD: Mutex<Option<f64>> = Mutex::new(None);
@@ -220,10 +254,18 @@ unsafe fn catch_up(movie: u64) {
         }
         match multi {
             Some((b, c, d)) if REAL[ASYNC_MULTI].load(Ordering::Relaxed) != 0 && REAL[ASYNC_WAIT].load(Ordering::Relaxed) != 0 => unsafe {
+                SYNC_DECODES.fetch_add(1, Ordering::AcqRel);
                 real(ASYNC_MULTI)(movie, b, c, d);
                 real(ASYNC_WAIT)(movie, u64::from(u32::MAX), 0, 0);
+                DECODED.fetch_add(1, Ordering::AcqRel);
+                SYNC_DECODES.fetch_sub(1, Ordering::AcqRel);
             },
-            _ => unsafe { real(DO_FRAME)(movie, 0, 0, 0); },
+            _ => unsafe {
+                SYNC_DECODES.fetch_add(1, Ordering::AcqRel);
+                real(DO_FRAME)(movie, 0, 0, 0);
+                DECODED.fetch_add(1, Ordering::AcqRel);
+                SYNC_DECODES.fetch_sub(1, Ordering::AcqRel);
+            },
         }
         unsafe { real(NEXT_FRAME)(movie, 0, 0, 0) };
         done += 1;
@@ -243,9 +285,31 @@ unsafe fn catch_up(movie: u64) {
 
 unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
     let real: F4 = unsafe { std::mem::transmute(REAL[index].load(Ordering::Acquire)) };
+    // The decode is in flight from before Bink starts it until it completes.
+    match index {
+        DO_FRAME => { SYNC_DECODES.fetch_add(1, Ordering::AcqRel); }
+        ASYNC_MULTI => IN_FLIGHT.store(true, Ordering::Release),
+        _ => {}
+    }
+    if matches!(index, DO_FRAME | NEXT_FRAME | ASYNC_MULTI | ASYNC_WAIT) {
+        trace_call(index, a, "start");
+    }
     let start = Instant::now();
     let result = unsafe { real(a, b, c, d) };
     let us = start.elapsed().as_micros() as u64;
+    match index {
+        DO_FRAME => {
+            DECODED.fetch_add(1, Ordering::AcqRel);
+            SYNC_DECODES.fetch_sub(1, Ordering::AcqRel);
+        }
+        ASYNC_WAIT if result as u32 != 0 && IN_FLIGHT.swap(false, Ordering::AcqRel) => {
+            DECODED.fetch_add(1, Ordering::AcqRel);
+        }
+        _ => {}
+    }
+    if matches!(index, DO_FRAME | ASYNC_WAIT) {
+        trace_call(index, a, if index == ASYNC_WAIT && result as u32 == 0 { "returned 0 (not done)" } else { "done" });
+    }
     match index {
         SOUND_SYSTEM => log(&format!("bink: BinkSetSoundSystem(open {}, param {b:#x}) = {result:#x}", module_of(a))),
         OPEN => log(&format!("bink: BinkOpenWithOptions = {result:#x} in {:.1} ms{}", us as f64 / 1e3,
@@ -254,11 +318,7 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
         _ => record(index, a, result, us),
     }
     match index {
-        ASYNC_MULTI => {
-            note_multi(a, b, c, d);
-            IN_FLIGHT.store(true, Ordering::Relaxed);
-        }
-        ASYNC_WAIT if result as u32 != 0 => IN_FLIGHT.store(false, Ordering::Relaxed),
+        ASYNC_MULTI => note_multi(a, b, c, d),
         NEXT_FRAME => unsafe { catch_up(a) },
         WAIT if !IN_FLIGHT.load(Ordering::Relaxed) && std::env::var_os("TUXBOX_BINK_WAIT_CATCHUP").is_none_or(|v| v != "0") => unsafe { catch_up(a) },
         _ => {}

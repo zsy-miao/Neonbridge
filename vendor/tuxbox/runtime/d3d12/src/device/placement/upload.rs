@@ -113,9 +113,9 @@ fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget:
     let mips = texture.mips.len();
     let read = if skipped == 0 { "full".to_string() } else { format!("{skipped} of {mips} mips skipped") };
     crate::diagnostics::log_line(format_args!(
-        "plane texture at title {:#x} ({}x{} format {}): refresh {read}, {changed} changed{} (line {})",
+        "plane texture at title {:#x} ({}x{} format {}): refresh {read}, {changed} changed{}{} (line {})",
         texture.address, desc.Width, desc.Height, desc.Format.0,
-        if out_of_budget { ", read budget spent" } else { "" }, n + 1));
+        if out_of_budget { ", read budget spent" } else { "" }, super::bink_note(), n + 1));
 }
 
 impl Transfer {
