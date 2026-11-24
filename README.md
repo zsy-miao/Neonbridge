@@ -4,7 +4,7 @@
 
 **In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6Launch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
 
-It's an early work in progress: the GTA VI Xbox build starts and draws frames, but the screen is still black, it currently crashes about 4 seconds in, and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
+It's an early work in progress: the GTA VI Xbox build starts and draws frames, and now runs for minutes without crashing (300+ frames in a test run), but every frame is still black and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -31,6 +31,10 @@ Runtime fixes in the vendored TuxBox provider:
   - A GPU memory wait after rendering commands is skipped, instead of rejecting the list.
   - Placed textures over unmapped pages upload zero-filled, instead of never refreshing.
 - **Presentation:** the swap chain resizes when the title changes its output size or format.
+- **Startup crash fixed:** the title's list slot 131 call is a cache barrier but was routed to the ray-tracing build path, which read garbage memory; it now records a cache barrier. A host list whose `Close` fails is rebuilt instead of failing every later `Reset`.
+- **Root views:** root CBV/SRV/UAV binds import up to 64 KiB of committed title memory (they imported 1 byte before); an uncommitted address binds null.
+- **Queues and lists:** queue slot 29 (`CopyPageMappingsBatchX`) on the older table, queries and split barriers closed out before `Close`, a copy-list timestamp heap, and extended `Reset` options ignored instead of refused.
+- **Shader sampler lookup:** a run-time descriptor table (FNV-1a hash of the shader's sampler words) gives translated shaders host samplers for samplers written into the shader code.
 - **Command allocators:** a list reset on an allocator another list is still recording from gets an extra host allocator (Xbox allows this; desktop D3D12 returns E_INVALIDARG).
 - **Views D3D12 rejected:**
   - Null UAVs on a depth image's stencil plane drop the plane slice.
@@ -39,15 +43,15 @@ Runtime fixes in the vendored TuxBox provider:
 - **Memory D3D12 can't import:** buffers and placed buffers that span separately mapped title pages use device-local copies.
 - **Shader translator (`xshader`):** legacy FMA keeps `c` for 0×inf and 0×NaN; `v_movrelsd_2_b32`, `v_swaprel_b32`, `v_sat_pk_u8_i16` and `image_gather4_l` on 2D images translate.
 - **Shader compiler:** the launcher stages the SDK's `dxcompiler.dll` and `dxil.dll` beside the game for rectangle-list pipelines.
-- **Diagnostics:**
+- **Diagnostics:** `--debug` dumps registers, stacks, the memory region and code around a fault. The launcher prints a one-line run summary; `--timeout S` stops a run cleanly and `--summary LOG` summarises an old log. `TUXBOX_LIST_RING=1` logs the last list calls when a host `Close` fails. Each crash theory has its own `TUXBOX_*` switch, so variants can run from one build.
+- **Earlier diagnostics:**
   - A PresentX heartbeat every 300 frames.
   - The log names the view call that removed the device.
   - `--debug` no longer logs the title's illegal-instruction CPU probes.
 
 ## Open
 
-- **Startup crash:** with `TUXBOX_PREWARM=0`, one of the title's command lists records a call the desktop runtime rejects, so the host `Close` fails with E_INVALIDARG. That list's host command list is now rebuilt, which gets past the title's `int 3` on the next `Reset`, but the run then hits an access violation about 4.5 s in (stack not captured yet). The rejected call itself is still unknown (finding it needs the D3D12 debug layer).
-- **Compute-heap support:** upstream TuxBox's compute-heap code is being ported, so `xshader` can then take its typed heap stores.
+- **Black frames:** the host `Close` of title command lists fails with E_INVALIDARG almost every frame (1,000+ in a 2-minute run), so their rendering never executes. Every failing list contains slot 146 (enhanced barriers); the D3D12 runtime is fixing those barrier calls next.
 - **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Also ported: private samplers for root-less roots, literal sampler matching, raw SRVs behind root descriptors, and compute descriptors the runtime appends from FSSM/PSV records. `--build-shaders` ranks refusals by construct and reason, and dxc retries at `-O0` when `-O1` times out.
 - **No window on screen:** the game presents, but no window appears on the desktop.
 - **Early exit:** some runs exit with code 1 after about 40 s, without an exception.
@@ -57,7 +61,7 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Roadmap
 
-1. **Get past the startup crash, then see the frames.** Capture the 4.5 s access violation and find the call that breaks the command list. Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
+1. **See the frames.** Make the enhanced barriers (list slot 146) valid on desktop D3D12 so command lists close and execute. Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
 2. **Stay running.** Find what calls process exit in the early-exit runs (`--debug` records the exit stack).
 3. **Correct colour.** Pack 5551 in the shader, or substitute B5G5R5A1 UAV and render-target images with R8G8B8A8.
 4. **Speed.** Back each XMem pool with one section and join in-order page runs, so GPU imports span them without copies.
