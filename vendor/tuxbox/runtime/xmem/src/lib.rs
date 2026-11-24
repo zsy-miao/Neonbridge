@@ -12,6 +12,7 @@ mod physical_pages;
 mod pools;
 mod shared_pages;
 mod virtual_memory;
+mod xaudio;
 
 use core::{ffi::c_void, mem::size_of, ptr};
 use std::sync::{LazyLock, RwLock};

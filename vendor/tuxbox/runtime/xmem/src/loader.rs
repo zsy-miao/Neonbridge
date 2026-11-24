@@ -133,6 +133,7 @@ pub(crate) unsafe fn install() {
         );
         log(&format!("{patched} LoadLibrary import(s) redirected; console libraries load from {}", String::from_utf16_lossy(&full[..cut])));
         crate::paths::install();
+        crate::xaudio::install();
         crate::net::install();
     }
 }
