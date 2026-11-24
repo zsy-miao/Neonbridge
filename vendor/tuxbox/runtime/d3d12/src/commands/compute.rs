@@ -151,7 +151,21 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
             crate::survey::title_rva().unwrap_or(0)));
         return Some(0);
     }
-    let end = region.BaseAddress as u64 + region.RegionSize as u64;
+    // TuxBox 5c73bee (Apache-2.0, idea): the window is the 64 KiB the shader
+    // can read. It stopped at the first region boundary, so committed pages
+    // past a protection change were left out of a short import; adjoining
+    // committed regions now extend it (TUXBOX_ROOT_SPAN_REGIONS=0 one region).
+    let mut end = region.BaseAddress as u64 + region.RegionSize as u64;
+    while end < guest.saturating_add(0x10000) && crate::env_toggle!("TUXBOX_ROOT_SPAN_REGIONS") != Some("0") {
+        let mut next = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(end as _), &mut next, size_of_val(&next)) } == 0
+            || next.State != MEM_COMMIT
+            || next.AllocationBase != region.AllocationBase
+        {
+            break;
+        }
+        end = next.BaseAddress as u64 + next.RegionSize as u64;
+    }
     let span = end.saturating_sub(guest).min(0x10000).max(1);
     let result = unsafe { device::command_buffer_address(parent(&list.parent), guest, span) }
         .or_else(|_| unsafe { device::command_buffer_address(parent(&list.parent), guest, 1) })
