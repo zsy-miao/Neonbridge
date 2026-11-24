@@ -81,7 +81,7 @@ No game files, keys or binaries are in this repository. Bring your own copy of t
 - **[Xbox2Windows](https://github.com/R0Y00/Xbox2Windows)** by R0Y00: sampler-heap bounds and shader-translation cross-checks.
 - **[xbox-emulator](https://github.com/omonkeyz/xbox-emulator)** by omonkeyz: fence handling on device removal.
 - **[OpenScarlett](https://github.com/californiaAlmonds/OpenScarlett)** by californiaAlmonds: rendering fixes.
-- **[leonida-anyp5](https://github.com/tibzejoker/leonida-anyp5)** by tibzejoker: lowering lane reads and writes to subgroup shuffles in `xshader`.
+- ~~**[leonida-anyp5](https://github.com/tibzejoker/leonida-anyp5)** by tibzejoker: lowering lane reads and writes to subgroup shuffles in `xshader`.~~
 - **[Leonida](https://github.com/LeonidaReforge/Leonida)** by LeonidaReforge: the retail boot chain that sized the device table.
 
 ## Licence
