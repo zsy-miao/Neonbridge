@@ -1291,7 +1291,16 @@ static LIST_SLOTS: Slots<149> = {
 };
 
 unsafe extern "system" fn reset_extended(list: &List, allocator: *mut c_void, initial: *mut c_void, options: usize) -> HRESULT {
-    if options != 0 { return E_NOTIMPL; }
+    // The console options have no desktop equivalent; reset as plain Reset does
+    // (leonida-ce does the same). Log the first few distinct values only.
+    if options != 0 {
+        use std::sync::{LazyLock, Mutex};
+        static SEEN: LazyLock<Mutex<std::collections::BTreeSet<usize>>> = LazyLock::new(Default::default);
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 8 && seen.insert(options) {
+            crate::diagnostics::log_once(&std::sync::Once::new(), || format!("ResetX options={options:#x} ignored"));
+        }
+    }
     unsafe { reset(list, allocator, initial) }
 }
 
