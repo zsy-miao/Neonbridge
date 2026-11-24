@@ -12,6 +12,8 @@ pub mod xdat;
 pub mod compute_table;
 #[cfg(feature = "native-bindings")]
 pub mod inline_sampler;
+#[cfg(feature = "native-bindings")]
+pub mod mesh_table;
 mod raster;
 pub mod ray;
 pub mod rootsig;

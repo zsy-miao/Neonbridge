@@ -8,6 +8,9 @@
 //! the view observes CPU writes and earlier GPU work. GPU writes recorded
 //! earlier in the same submission are not observed.
 //!
+//! An unordered access view's copy is written back to the title pages after
+//! each submission, which replaces any other write to those bytes in it.
+//!
 //! Constant buffers use the same copies: Xbox places them on 16-byte
 //! boundaries, desktop D3D12 needs 256 and removes the device otherwise.
 use super::TextureAddress;
@@ -23,6 +26,7 @@ struct Entry {
     source: ID3D12Resource,
     offset: u64,
     bytes: u64,
+    writable: bool,
     view: Weak<TextureAddress>,
 }
 
@@ -38,7 +42,7 @@ struct Recorder {
 
 #[derive(Default)]
 pub(crate) struct Shadows {
-    entries: Mutex<HashMap<(u64, u64), Entry>>,
+    entries: Mutex<HashMap<(u64, u64, bool), Entry>>,
     recorders: Mutex<Vec<Recorder>>,
 }
 
@@ -56,9 +60,18 @@ fn buffer(width: u64) -> D3D12_RESOURCE_DESC {
 
 /// A view of `bytes` at `address` whose resource begins exactly at `address`.
 pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
+    copy_of(device, address, bytes, false)
+}
+
+/// Like [`view`], for unordered access: the copy is written back.
+pub(super) fn writable_view(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
+    copy_of(device, address, bytes, true)
+}
+
+fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<Arc<TextureAddress>> {
     let shadows = &device.state.shadows;
     let mut entries = lock(&shadows.entries);
-    if let Some(view) = entries.get(&(address, bytes)).and_then(|e| e.view.upgrade()) {
+    if let Some(view) = entries.get(&(address, bytes, writable)).and_then(|e| e.view.upgrade()) {
         return Ok(view);
     }
     let page = address & !0xffff;
@@ -68,7 +81,10 @@ pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<Text
     let mut copy: Option<ID3D12Resource> = None;
     unsafe {
         // Whole 256-byte units, so a constant buffer view of it is valid.
-        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(bytes.next_multiple_of(256)),
+        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &D3D12_RESOURCE_DESC {
+                Flags: if writable { D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS } else { D3D12_RESOURCE_FLAG_NONE },
+                ..buffer(bytes.next_multiple_of(256))
+            },
             D3D12_RESOURCE_STATE_COMMON, None, &mut copy)?;
     }
     let copy = copy.ok_or(E_POINTER)?;
@@ -76,7 +92,7 @@ pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<Text
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     entries.retain(|_, e| e.view.strong_count() > 0);
-    entries.insert((address, bytes), Entry { source, offset: address - page, bytes, view: Arc::downgrade(&view) });
+    entries.insert((address, bytes, writable), Entry { source, offset: address - page, bytes, writable, view: Arc::downgrade(&view) });
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("shadowed buffer view at {address:#x}, {bytes} bytes"));
     Ok(view)
@@ -84,6 +100,15 @@ pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<Text
 
 /// Copy every live shadow from title memory ahead of this queue's work.
 pub(crate) unsafe fn refresh(device: &Device, queue: &ID3D12CommandQueue) -> Result<()> {
+    unsafe { transfer(device, queue, false) }
+}
+
+/// Copy every writable shadow back to title memory after this queue's work.
+pub(crate) unsafe fn write_back(device: &Device, queue: &ID3D12CommandQueue) -> Result<()> {
+    unsafe { transfer(device, queue, true) }
+}
+
+unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> Result<()> {
     let shadows = &device.state.shadows;
     let kind = unsafe { queue.GetDesc() }.Type;
     if kind != D3D12_COMMAND_LIST_TYPE_DIRECT && kind != D3D12_COMMAND_LIST_TYPE_COMPUTE {
@@ -93,7 +118,7 @@ pub(crate) unsafe fn refresh(device: &Device, queue: &ID3D12CommandQueue) -> Res
     {
         let mut entries = lock(&shadows.entries);
         entries.retain(|_, e| e.view.strong_count() > 0);
-        for entry in entries.values() {
+        for entry in entries.values().filter(|e| !back || e.writable) {
             if let Some(view) = entry.view.upgrade() {
                 copies.push((entry.source.clone(), entry.offset, entry.bytes, view));
             }
@@ -120,13 +145,17 @@ pub(crate) unsafe fn refresh(device: &Device, queue: &ID3D12CommandQueue) -> Res
         },
     };
     for (source, offset, bytes, view) in &copies {
-        unsafe { recorder.list.CopyBufferRegion(&view.native, 0, source, *offset, *bytes) };
+        if back {
+            unsafe { recorder.list.CopyBufferRegion(source, *offset, &view.native, 0, *bytes) };
+        } else {
+            unsafe { recorder.list.CopyBufferRegion(&view.native, 0, source, *offset, *bytes) };
+        }
         recorder.held.push((source.clone(), view.native.clone()));
     }
     unsafe {
         recorder.list.Close()?;
         queue.ExecuteCommandLists(&[Some(recorder.list.cast()?)]);
-        crate::dred::check(queue, "shadow refresh");
+        crate::dred::check(queue, if back { "shadow write-back" } else { "shadow refresh" });
         recorder.value += 1;
         queue.Signal(&recorder.fence, recorder.value)?;
     }

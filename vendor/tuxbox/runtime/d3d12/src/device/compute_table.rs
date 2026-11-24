@@ -10,8 +10,7 @@ pub(crate) struct ComputeTable {
     pub(crate) native: ID3D12RootSignature,
     pub(crate) original: RootSource,
     pub(crate) layout: RootSource,
-    // At most two resource tables in the validated FSSM ABI (s4 and s5).
-    pub(crate) lengths: [u32; 2],
+    pub(crate) lengths: Vec<u32>,
     pub(crate) accessed_views: Vec<(usize, std::ops::Range<u32>)>,
     pub(crate) index_map: Option<IndexMapBinding>,
 }
@@ -44,6 +43,7 @@ pub(super) fn reflected(
         return Ok(TableLayout::Unsupported);
     };
     let mut scalar_index = None;
+    let mut resolve_constants = None;
     let mut corroborated_raster = false;
     let mut recovered_samplers = Vec::new();
     let bindings = match (program, signature.params.as_slice()) {
@@ -59,7 +59,12 @@ pub(super) fn reflected(
                 recovered_samplers = tuxbox_dxbc::inline_sampler::private(shader, 5).unwrap_or_default();
             }
             if tables.len() == 2 {
-                tuxbox_dxbc::compute_table::root_bindings(shader, 5, &signature)
+                tuxbox_dxbc::compute_table::compute_root_bindings(shader, &signature).map(
+                    |(bindings, constants)| {
+                        resolve_constants = constants;
+                        bindings
+                    },
+                )
             } else {
                 tuxbox_dxbc::compute_table::bindings(shader, 5)
             }
@@ -148,7 +153,11 @@ pub(super) fn reflected(
         });
         rewrite[index] |= !covered;
     }
-    if !rewrite.contains(&true) && scalar_index.is_none() && recovered_samplers.is_empty() {
+    let rewrite_constants = resolve_constants.filter(|c| {
+        !matches!(signature.params[2].kind, RootParamKind::Constants { register, space, .. }
+            if (register, space) == (c.register, c.space))
+    });
+    if !rewrite.contains(&true) && scalar_index.is_none() && rewrite_constants.is_none() && recovered_samplers.is_empty() {
         return Ok(TableLayout::Original);
     }
 
@@ -182,7 +191,7 @@ pub(super) fn reflected(
                 let flags = if let Some(first) = matched.next() {
                     if matched.any(|r| r.Flags != first.Flags) { return Ok(TableLayout::Unsupported); }
                     first.Flags
-                } else if corroborated_raster || !recovered_samplers.is_empty() {
+                } else if corroborated_raster || resolve_constants.is_some() || !recovered_samplers.is_empty() {
                     // This table ABI omits some native resource classes in the stream root.
                     D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE
                 } else { return Ok(TableLayout::Unsupported); };
@@ -197,6 +206,13 @@ pub(super) fn reflected(
             }
             parameter.Anonymous.DescriptorTable = D3D12_ROOT_DESCRIPTOR_TABLE1 {
                 NumDescriptorRanges: ranges.len() as u32, pDescriptorRanges: ranges.as_ptr(),
+            };
+        }
+        if let Some(constants) = rewrite_constants {
+            parameters[2].Anonymous.Constants = D3D12_ROOT_CONSTANTS {
+                ShaderRegister: constants.register,
+                RegisterSpace: constants.space,
+                Num32BitValues: 4,
             };
         }
         let index_map = scalar_index.map(|(scalar_word, scalar_mask)| IndexMapBinding {
@@ -244,7 +260,7 @@ pub(super) fn reflected(
             native,
             original: original.clone(),
             layout: RootSource::new(bytes),
-            lengths,
+            lengths: lengths.into(),
             accessed_views,
             index_map,
         })))

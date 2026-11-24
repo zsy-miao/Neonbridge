@@ -19,6 +19,7 @@ pub(crate) mod blas;
 pub(crate) mod compute;
 mod compute_scene;
 mod compute_table;
+mod mesh_table;
 pub(crate) mod depth;
 mod descriptor_copy;
 pub(crate) mod descriptor_paging;
@@ -43,7 +44,7 @@ pub(crate) mod stencil;
 mod stream;
 mod title_memory;
 mod views;
-pub(crate) use views::{clear_buffer_alias, command_buffer_address, is_constant_buffer, refresh_shadows};
+pub(crate) use views::{clear_buffer_alias, command_buffer_address, is_constant_buffer, refresh_shadows, write_back_shadows};
 
 type Device = Proxy<ID3D12Device, dxgi::DxgiDevice>;
 pub(crate) enum Backing {

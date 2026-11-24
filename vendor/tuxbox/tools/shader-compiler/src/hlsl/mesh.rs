@@ -38,8 +38,21 @@ pub(super) fn translate(
     {
         return Err("mesh stage requires a full position and no incoming vertex signature".into());
     }
+    let mut clip = ex.output_sig.iter().filter(|e| e.sysval == 2);
+    let clip_mask = match (clip.next(), clip.next()) {
+        (None, None) => None,
+        (Some(e), None)
+            if e.name.eq_ignore_ascii_case("SV_ClipDistance")
+                && e.index == 0
+                && e.comp_type == 3
+                && (1..=15).contains(&e.mask) =>
+        {
+            Some(e.mask)
+        }
+        _ => return Err("unsupported mesh clip-distance signature".into()),
+    };
     let mut body = disassemble(&ex.isa);
-    let exports = mesh_exports::recognize(&body, info.vertices)?;
+    let exports = mesh_exports::recognize(&body, info.vertices, clip_mask)?;
     let has_primitive_attributes = ex.primitive_sig.iter().any(|element| element.sysval == 0);
     let has_attribute_exports = !exports.primitive_exports.is_empty();
     if has_primitive_attributes != has_attribute_exports {
@@ -50,7 +63,7 @@ pub(super) fn translate(
     validate_launch(&body, group_shift, exports.lane_index)?;
     let root = ex.root_sig.as_ref().ok_or("mesh root signature missing")?;
     let bindings = if info.vertices == 128 {
-        Some(mesh_bindings::MeshBindings::read(ex).ok_or("unverified mesh shader bindings")?)
+        Some(mesh_bindings::read(ex).ok_or("unverified mesh shader bindings")?)
     } else {
         for (parameter, range_type) in [(9, 0), (10, 2)] {
             if !root.params.get(parameter).is_some_and(|p| {
@@ -63,8 +76,16 @@ pub(super) fn translate(
         }
         None
     };
-    validate_lane_ops(&body)?;
+    // Every invocation of a 128-vertex shader evaluates exactly once. Votes
+    // can rendezvous across both logical waves at forward branch boundaries.
+    let wave_control = info.vertices == 128
+        && body
+            .iter()
+            .any(|op| matches!(op.mnemonic.as_str(), "s_cbranch_vccz" | "s_cbranch_vccnz"));
+    validate_lane_ops(&body, wave_control)?;
     let mut em = Emitter::new(ex, body);
+    em.wave_cull = wave_control;
+    em.hoist_wave_exchanges = wave_control;
     // The decoder exposes an unused third operand (s0) on two-input VOP3 instructions.
     if let Some(reg) = em.live_in().into_iter().find(|reg| {
         if matches!(reg.as_str(), "s0" | "s3" | "v5") {
@@ -83,6 +104,18 @@ pub(super) fn translate(
     em.mesh_bindings = bindings;
     em.resolve_resources()?;
     em.resolve_structured_strides();
+    if let Some(mesh) = &em.mesh_bindings {
+        for &(slot, space, count) in mesh.constants.values() {
+            if em
+                .binding_spaces
+                .insert((2, slot), space)
+                .is_some_and(|prior| prior != space)
+            {
+                return Err(format!("mesh constant b{slot} is used in multiple spaces"));
+            }
+            em.cb_size.insert(slot, count);
+        }
+    }
     em.emit_body(false)?;
     em.touch(&exports.vertices);
     em.touch(&exports.primitives);
@@ -127,11 +160,17 @@ pub(super) fn translate(
         32,
     )?;
     let mut h = em.resource_decls()?;
+    if wave_control {
+        h.push_str(&super::page_waves::declarations([128, 1, 1], false));
+    }
     em.push_helpers(&mut h);
     signature(&mut h, "Vertex", &ex.output_sig, interpolation)?;
     signature(&mut h, "Primitive", &ex.primitive_sig, None)?;
     h.push_str("struct MeshLane { uint2 counts; Vertex vertex; Primitive primitive; uint3 indices; bool dropPrimitive; };\n");
     h.push_str("MeshLane evaluate(uint lane, uint group) {\n");
+    if wave_control {
+        h.push_str("    uint tb_wave_tid = lane;\n");
+    }
     h.push_str("    MeshLane result = (MeshLane)0;\n    uint exec_lo = 1u, exec_hi = 0u, vcc_lo = 0u, vcc_hi = 0u, scc = 0u, m0 = 0u, nul = 0u;\n");
     for register in ["s3", "v5"] {
         em.regs.insert(register.into());
@@ -142,6 +181,16 @@ pub(super) fn translate(
         "    s3 = (lane >> 6) << 24; v5 = group << {group_shift};"
     )
     .unwrap();
+    if let Some(mesh) = &em.mesh_bindings {
+        for (&base, &(slot, _, count)) in &mesh.constants {
+            for (offset, channel) in super::XYZW.iter().take(count as usize).enumerate() {
+                let reg = format!("s{}", usize::from(base) + offset);
+                if em.regs.contains(&reg) {
+                    writeln!(h, "    {reg} = cb{slot}[0].{channel};").unwrap();
+                }
+            }
+        }
+    }
     h.push_str(&em.body);
     h.push_str("    return result;\n}\n");
     h.push_str(
@@ -277,9 +326,9 @@ fn validate_launch(body: &[Insn], group_shift: i64, lane_index: Opnd) -> Result<
 
 /// The logical 64-lane wave is split across desktop invocations. A first-lane
 /// broadcast can be scalarized only when its source is already uniform.
-fn validate_lane_ops(body: &[Insn]) -> Result<(), String> {
+fn validate_lane_ops(body: &[Insn], wave_control: bool) -> Result<(), String> {
     let mut uniform = BTreeSet::from([5u8]); // the packed dispatch group identifier
-    for ins in body {
+    for (index, ins) in body.iter().enumerate() {
         let m = ins.mnemonic.as_str();
         if m == "v_nop" {
             continue;
@@ -289,30 +338,40 @@ fn validate_lane_ops(body: &[Insn]) -> Result<(), String> {
             Opnd::Sgpr(_) | Opnd::ConstInt(_) | Opnd::ConstF32(_) | Opnd::Literal(_) => true,
             _ => false,
         };
-        if m == "v_readfirstlane_b32" && !ins.src.first().is_some_and(uniform_source) {
+        if !wave_control
+            && m == "v_readfirstlane_b32"
+            && !ins.src.first().is_some_and(uniform_source)
+            && !uniform_reciprocal(body, index)
+        {
             return Err(format!(
                 "mesh broadcast of a lane-dependent value at {:#x}",
                 ins.offset
             ));
         }
-        if matches!(
-            ins.enc,
-            Enc::Ds | Enc::Exp | Enc::Flat | Enc::Mimg | Enc::Mtbuf
-        ) || (ins.enc == Enc::Mubuf && !m.starts_with("buffer_load"))
+        if matches!(ins.enc, Enc::Ds | Enc::Exp | Enc::Flat | Enc::Mimg)
+            || (ins.enc == Enc::Mtbuf && ins.op >= 4)
+            || (ins.enc == Enc::Mubuf && !m.starts_with("buffer_load"))
             || (ins.enc == Enc::Vop1 && m.contains("lane") && m != "v_readfirstlane_b32")
+            || (ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && ins.aux.imm < 0)
+            || (wave_control && !wave_mask_operands(ins))
             || (ins.enc == Enc::Sopp
                 && !matches!(
                     m,
                     "s_nop"
                         | "s_waitcnt"
                         | "s_inst_prefetch"
+                        | "s_branch"
+                        | "s_cbranch_scc0"
                         | "s_cbranch_scc1"
                         | "s_cbranch_execz"
-                ))
+                )
+                && !(wave_control && matches!(m, "s_cbranch_vccz" | "s_cbranch_vccnz")))
             || (matches!(ins.enc, Enc::Vop2 | Enc::Vop3) && m.contains("lane"))
             || ins.aux.sdwa.is_some_and(|mode| {
-                // An unsigned high-word conversion only reads the current lane.
-                m != "v_cvt_f32_u32" || mode & !0xff != 0x0005_0600
+                !matches!(
+                    (m, mode & !0xff),
+                    ("v_cvt_f32_u32", 0x0005_0600) | ("v_and_b32", 0x0604_0600)
+                )
             })
             || ins.src.iter().any(|op| matches!(op, Opnd::Raw(_)))
         {
@@ -334,6 +393,8 @@ fn validate_lane_ops(body: &[Insn]) -> Result<(), String> {
                 uniform.insert(*dst);
             }
             let words = match m {
+                _ if ins.enc == Enc::Mtbuf => ins.op as u8 + 1,
+                "buffer_load_dwordx4" => 4,
                 "buffer_load_dwordx3" => 3,
                 "buffer_load_dwordx2" => 2,
                 _ => 1,
@@ -348,6 +409,77 @@ fn validate_lane_ops(body: &[Insn]) -> Result<(), String> {
     Ok(())
 }
 
+fn wave_mask_operands(ins: &Insn) -> bool {
+    if ins
+        .src
+        .iter()
+        .chain(&ins.dst)
+        .any(|op| matches!(op, Opnd::ExecHi | Opnd::VccHi))
+    {
+        return false;
+    }
+    if ins
+        .src
+        .iter()
+        .any(|op| matches!(op, Opnd::ExecLo | Opnd::VccLo))
+    {
+        // Each invocation stores one bit of a guest mask. These instructions
+        // can use that bit directly. Numeric reads of a mask need both words.
+        return matches!(
+            ins.mnemonic.as_str(),
+            "s_cselect_b64" | "s_mov_b64" | "s_and_b64" | "s_andn2_b64" | "v_cndmask_b32"
+        );
+    }
+    ins.mnemonic != "s_mov_b32" || ins.dst != [Opnd::ExecLo]
+}
+
+// The guest builds a division seed from a scalar divisor through four VALU
+// operations. Prove every lane actually produced the same value at the read.
+fn uniform_reciprocal(body: &[Insn], index: usize) -> bool {
+    let Some(start) = index.checked_sub(5) else {
+        return false;
+    };
+    let [convert, scalar, reciprocal, multiply, to_integer, read] = &body[start..=index] else {
+        return false;
+    };
+    use Opnd::{ConstInt, ExecHi, ExecLo, Literal, Sgpr, Vgpr};
+    let ([lane @ Vgpr(_)], [divisor @ Sgpr(_)]) = (convert.dst.as_slice(), convert.src.as_slice())
+    else {
+        return false;
+    };
+    if convert.mnemonic != "v_cvt_f32_u32"
+        || scalar.mnemonic != "s_sub_i32"
+        || scalar.src != [ConstInt(0), *divisor]
+        || reciprocal.mnemonic != "v_rcp_iflag_f32"
+        || reciprocal.src != [*lane]
+        || multiply.mnemonic != "v_mul_legacy_f32"
+        || multiply.src != [Literal(0x4f7ffffe), *lane]
+        || to_integer.mnemonic != "v_cvt_u32_f32"
+        || to_integer.src != [*lane]
+        || read.src != [*lane]
+        || [reciprocal, multiply, to_integer]
+            .iter()
+            .any(|op| op.dst != [*lane])
+        || [convert, reciprocal, multiply, to_integer, read]
+            .iter()
+            .any(|op| !matches!(op.enc, Enc::Vop1 | Enc::Vop2) || op.aux.sdwa.is_some())
+    {
+        return false;
+    }
+    !body[..index].iter().any(|op| {
+        let name = op.mnemonic.as_str();
+        let full_exec = name == "s_mov_b64" && op.dst == [ExecLo] && op.src == [ConstInt(-1)];
+        (!full_exec && (op.dst.contains(&ExecLo) || op.dst.contains(&ExecHi)))
+            || name.starts_with("v_cmpx_")
+            || name.contains("_saveexec_")
+            || name.contains("_wrexec_")
+            || (op.enc == Enc::Sopp
+                && Emitter::branch_cond(op.op).is_some()
+                && (convert.offset as i64 + 1..=read.offset as i64)
+                    .contains(&(op.offset as i64 + 4 + op.aux.imm * 4)))
+    })
+}
+
 fn signature(
     h: &mut String,
     name: &str,
@@ -357,7 +489,7 @@ fn signature(
     writeln!(h, "struct {name} {{").unwrap();
     for (i, e) in elements.iter().enumerate() {
         if !matches!(e.comp_type, 1..=3)
-            || !matches!(e.sysval, 0 | 1)
+            || !(matches!(e.sysval, 0 | 1) || name == "Vertex" && e.sysval == 2)
             || e.mask == 0
             || e.mask > 15
             || !e
@@ -393,14 +525,16 @@ fn write_exports(
     first_param: i64,
 ) -> Result<(), String> {
     for (i, e) in elements.iter().enumerate() {
-        let target = if e.sysval == 1 {
-            12
-        } else {
-            first_param
-                + registers
-                    .iter()
-                    .position(|r| *r == e.register)
-                    .ok_or("unmapped mesh parameter")? as i64
+        let target = match e.sysval {
+            1 => 12,
+            2 => 13,
+            _ => {
+                first_param
+                    + registers
+                        .iter()
+                        .position(|r| *r == e.register)
+                        .ok_or("unmapped mesh parameter")? as i64
+            }
         };
         let export = exports
             .iter()
@@ -478,7 +612,7 @@ mod tests {
                 .iter()
                 .flat_map(|w| w.to_le_bytes())
                 .collect::<Vec<_>>();
-            validate_lane_ops(&disassemble(&bytes))
+            validate_lane_ops(&disassemble(&bytes), false)
         };
         // Entry v5 holds the same packed group identifier in every lane.
         assert!(validate(&[0x7e000505]).is_ok());

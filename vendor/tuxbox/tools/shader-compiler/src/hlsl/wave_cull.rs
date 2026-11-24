@@ -137,6 +137,13 @@ pub(super) fn lds_words(em: &Emitter<'_>) -> Option<u32> {
 
 /// Scalar EXEC/VCC branches test all lanes, including on a loop backedge.
 pub(super) fn branch_condition(em: &Emitter<'_>, i: &Insn, fallback: &str) -> String {
+    if em.resolve_wave32 {
+        return match i.op {
+            6 => "vcc_lo == 0u", 7 => "vcc_lo != 0u",
+            8 => "exec_lo == 0u", 9 => "exec_lo != 0u",
+            _ => fallback,
+        }.into();
+    }
     if !em.wave_cull || em.hoist_wave_exchanges { return fallback.into(); }
     let reg = match i.op {
         6 | 7 => "vcc_lo",
@@ -180,16 +187,17 @@ pub(super) fn emit(em: &mut Emitter<'_>, idx: usize, i: &Insn, target: Option<us
             em.line(&format!("uint2 exec_words{idx} = tb_page_ballot(tb_wave_tid, (exec_lo & 1u) != 0u);"));
             em.ws(&i.dst[0], &format!("(scc != 0u ? exec_words{idx}.y : exec_words{idx}.x)"))?;
         }
-        "s_cbranch_vccnz" => {
+        "s_cbranch_vccnz" | "s_cbranch_vccz" if op == "s_cbranch_vccnz" || em.ex.stage == Stage::Mesh => {
             let target = target.ok_or("backward VCC branch in instance cull")?;
             if em.hoist_wave_exchanges {
-                em.line(&format!("if (any(page_vcc{idx})) j{target} = true;"));
+                let invert = if op == "s_cbranch_vccz" { "!" } else { "" };
+                em.line(&format!("if ({invert}any(page_vcc{idx})) j{target} = true;"));
             } else {
                 em.line(&format!("if (any(tb_page_ballot(tb_wave_tid, (vcc_lo & 1u) != 0u))) j{target} = true;"));
             }
         }
         "v_readfirstlane_b32" => {
-            if !em.hoist_wave_exchanges { em.line(&first_read(idx, i)?); }
+            if !em.hoist_wave_exchanges { em.line(&first_read(idx, i, false)?); }
             em.ws(&i.dst[0], &format!("first_value{idx}"))?;
         }
         "s_mov_b32" if matches!(i.dst.first(), Some(Opnd::ExecLo | Opnd::ExecHi)) => {
@@ -222,20 +230,25 @@ pub(super) fn emit(em: &mut Emitter<'_>, idx: usize, i: &Insn, target: Option<us
 
 // Workgroup barriers must be reached by all four waves. Exchange register
 // values before applying each guest wave's forward branch to its writeback.
-pub(super) fn exchange(idx: usize, i: &Insn) -> Result<Option<String>, String> {
+pub(super) fn exchange(idx: usize, i: &Insn, mesh: bool) -> Result<Option<String>, String> {
     match i.mnemonic.as_str() {
-        "s_cbranch_vccnz" => Ok(Some(format!("uint2 page_vcc{idx} = tb_page_ballot(tb_wave_tid, (vcc_lo & 1u) != 0u);"))),
+        "s_cbranch_vccnz" | "s_cbranch_vccz" if i.op == 7 || mesh =>
+            Ok(Some(format!("uint2 page_vcc{idx} = tb_page_ballot(tb_wave_tid, (vcc_lo & 1u) != 0u);"))),
         "v_permlanex16_b32" => Ok(Some(cross_row(idx, i)?)),
-        "v_readfirstlane_b32" => Ok(Some(first_read(idx, i)?)),
+        "v_readfirstlane_b32" => Ok(Some(first_read(idx, i, mesh)?)),
         "v_add_nc_u32" | "v_max_u32" | "v_add_f32" if matches!(i.src.first(), Some(Opnd::Raw(233 | 250))) => Ok(Some(dpp_read(idx, i)?.0)),
         _ => super::page_waves::rendezvous(idx, i),
     }
 }
 
-fn first_read(idx: usize, i: &Insn) -> Result<String, String> {
+fn first_read(idx: usize, i: &Insn, empty_mask_reads_lane_zero: bool) -> Result<String, String> {
     let value = r(&i.src[0])?;
+    let upper = format!("32u + uint(firstbitlow(first_mask{idx}.y))");
+    let upper = if empty_mask_reads_lane_zero {
+        format!("first_mask{idx}.y != 0u ? {upper} : 0u")
+    } else { upper };
     Ok(format!("uint2 first_mask{idx} = tb_page_ballot(tb_wave_tid, (exec_lo & 1u) != 0u);
-uint first_lane{idx} = first_mask{idx}.x != 0u ? uint(firstbitlow(first_mask{idx}.x)) : 32u + uint(firstbitlow(first_mask{idx}.y));
+uint first_lane{idx} = first_mask{idx}.x != 0u ? uint(firstbitlow(first_mask{idx}.x)) : {upper};
 uint first_value{idx} = tb_page_read(tb_wave_tid, {value}, first_lane{idx});"))
 }
 

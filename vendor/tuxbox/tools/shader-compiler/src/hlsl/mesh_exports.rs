@@ -1,7 +1,7 @@
 //! Recognize the NGG allocation and export sequence before lowering it to
 //! SetMeshOutputCounts, triangle indices and vertex/primitive attributes.
 use crate::rdna2::{Enc, Insn, Opnd};
-use Opnd::{ConstInt as I, ExecLo, Literal, M0, Scc, Sgpr as S, VccLo, Vgpr as V};
+use Opnd::{ConstInt as I, ExecLo, Literal, Scc, Sgpr as S, VccLo, Vgpr as V, M0};
 
 pub(super) struct MeshExports {
     pub start: usize,
@@ -20,8 +20,19 @@ struct Sequence<'a> {
     at: usize,
 }
 
+fn is_wait(op: &Insn) -> bool {
+    op.enc == Enc::Sopp && op.mnemonic == "s_waitcnt" && op.aux.imm & 0x80 == 0
+}
+
 impl<'a> Sequence<'a> {
     fn next(&mut self, name: &str) -> Result<&'a Insn, String> {
+        // Native wait counters have no register side effects. The desktop
+        // emitter orders resource reads by their dependencies.
+        if name != "s_waitcnt" {
+            while self.code.get(self.at).is_some_and(is_wait) {
+                self.at += 1;
+            }
+        }
         let op = self
             .code
             .get(self.at)
@@ -224,23 +235,28 @@ fn allocation_128(seq: &mut Sequence<'_>) -> Result<(Opnd, Opnd, Opnd, [Opnd; 3]
     seq.arrive(restore)?;
     seq.imm("s_waitcnt", -241)?;
     seq.write(ExecLo, "s_mov_b64", &[S(0)])?;
-    if seq
-        .code
-        .get(seq.at)
-        .is_some_and(|op| op.mnemonic == "s_waitcnt")
-    {
-        seq.imm("s_waitcnt", 0x3f70)?;
-    }
     seq.imm("s_barrier", 0)?;
     Ok((vertices, primitives, invalid, temps))
 }
 
-pub(super) fn recognize(insns: &[Insn], max_vertices: u16) -> Result<MeshExports, String> {
+pub(super) fn recognize(
+    insns: &[Insn],
+    max_vertices: u16,
+    clip_mask: Option<u8>,
+) -> Result<MeshExports, String> {
     let compact = max_vertices == 128;
     let start = insns
         .iter()
         .position(|op| op.mnemonic == "s_sendmsg")
-        .and_then(|index| index.checked_sub(if compact { 29 } else { 28 }))
+        .and_then(|send| {
+            insns[..send]
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, op)| !is_wait(op))
+                .nth(if compact { 28 } else { 27 })
+                .map(|(index, _)| index)
+        })
         .ok_or("missing mesh allocation request")?;
     let mut seq = Sequence {
         code: insns,
@@ -347,10 +363,20 @@ pub(super) fn recognize(insns: &[Insn], max_vertices: u16) -> Result<MeshExports
         }
         let export = seq.next("exp")?;
         let target = export.aux.imm;
-        if !matches!(target, 12 | 32..64)
-            || (target == 12 && export.aux.mask != 15)
+        let valid_target = match target {
+            12 => {
+                export.aux.mask == 15 && export.aux.imm2 == if clip_mask.is_some() { 0 } else { 2 }
+            }
+            13 => {
+                clip_mask.is_some_and(|mask| mask & !export.aux.mask == 0)
+                    && targets & (1 << 12) != 0
+                    && export.aux.imm2 == 2
+            }
+            32..64 => export.aux.imm2 == 0,
+            _ => false,
+        };
+        if !valid_target
             || export.aux.mask == 0
-            || export.aux.imm2 != if target == 12 { 2 } else { 0 }
             || !export.src.iter().enumerate().all(|(channel, reg)| {
                 export.aux.mask & (1 << channel) == 0 || *reg == guarded || preserved(reg)
             })
@@ -375,7 +401,10 @@ pub(super) fn recognize(insns: &[Insn], max_vertices: u16) -> Result<MeshExports
     }
     seq.arrive(end_vertices)?;
     seq.imm("s_endpgm", 0)?;
-    if seq.at != insns.len() || targets & (1 << 12) == 0 {
+    if seq.at != insns.len()
+        || targets & (1 << 12) == 0
+        || clip_mask.is_some() && targets & (1 << 13) == 0
+    {
         return Err("missing mesh position export or unexpected trailing code".into());
     }
     let connectivity_without_primitive = if temps[2] == guarded {

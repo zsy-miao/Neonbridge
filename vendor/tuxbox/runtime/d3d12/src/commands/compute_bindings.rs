@@ -260,7 +260,8 @@ impl Bindings {
         if !layout.as_ref().is_some_and(|l| l.matches(&table.original)) {
             return Err(E_INVALIDARG.into());
         }
-        let mut bases = [None; 2];
+        let mut storage = [None; 64]; // no root signature can consume more than 64 DWORDs
+        let bases = storage.get_mut(..table.lengths.len()).ok_or(E_INVALIDARG)?;
         for (index, &length) in table.lengths.iter().enumerate().filter(|(_, len)| **len != 0) {
             let slot = index as u32;
             let bound = if COMPUTE {
@@ -294,14 +295,17 @@ impl Bindings {
                 list.SetComputeRootSignature(&table.native);
                 // Changing root signatures invalidates the native arguments. Replay
                 // constants and descriptors, then substitute each reflected table.
-                self.apply_compute_args(list, &bases);
+                self.apply_compute_args(list, bases);
                 dispatch();
                 list.SetComputeRootSignature(self.compute.as_ref());
                 self.apply_compute_args(list, &[]);
             } else {
                 list.SetGraphicsRootSignature(&table.native);
                 self.apply_graphics_arguments(list);
-                if let Some(base) = bases[0] { list.SetGraphicsRootDescriptorTable(0, base); }
+                for (&slot, bound) in &self.graphics_tables {
+                    let base = bases.get(slot as usize).copied().flatten().unwrap_or(bound.native);
+                    list.SetGraphicsRootDescriptorTable(slot, base);
+                }
                 if let Some((slot, address)) = index_map {
                     list.SetGraphicsRootShaderResourceView(slot, address);
                     static IDENTITY: std::sync::Once = std::sync::Once::new();
@@ -395,7 +399,7 @@ impl Bindings {
             let Some(base) = self.graphics_tables.get(&slot) else { return; };
             let native = match arena.filter(|arena| arena.contains(base.logical.ptr)) {
                 Some(arena) => {
-                    let length = self.reflected_table::<false>().map(|table| table.lengths[slot as usize])
+                    let length = self.reflected_table::<false>().and_then(|table| table.lengths.get(slot as usize).copied())
                         .or_else(|| self.paged_layout::<false>()?.get(slot as usize).copied().flatten());
                     let Some(handle) = length.and_then(|length| arena.resident_gpu(base.logical.ptr, length)) else { return; };
                     handle

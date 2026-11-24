@@ -153,6 +153,16 @@ pub(super) fn decode_operands(enc: Enc, raw: &[u32]) -> (Vec<Opnd>, Vec<Opnd>, I
                 vec![vgpr(second, 0), resource, source(second >> 24, 0)],
             )
         }
+        Enc::Mtbuf => {
+            aux.imm = i64::from(first & 0xfff);
+            aux.imm2 = i64::from((first >> 19) & 0x7f);
+            aux.mask = ((first >> 12) & 3) as u8; // OFFEN, IDXEN.
+            let resource = Opnd::Sgpr((((second >> 16) & 31) * 4) as u8);
+            (
+                vec![vgpr(second, 8)],
+                vec![vgpr(second, 0), resource, source(second >> 24, 0)],
+            )
+        }
         Enc::Mimg => {
             let extension_words = ((first >> 1) & 3) as usize;
             aux.imm = i64::from((first >> 3) & 7); // DIM.
@@ -222,7 +232,7 @@ pub(super) fn decode_operands(enc: Enc, raw: &[u32]) -> (Vec<Opnd>, Vec<Opnd>, I
             aux.imm2 = i64::from((first >> 10) & 7); // COMPR, DONE, VM.
             (Vec::new(), second.to_le_bytes().map(Opnd::Vgpr).to_vec())
         }
-        Enc::Mtbuf | Enc::Unknown => (Vec::new(), Vec::new()),
+        Enc::Unknown => (Vec::new(), Vec::new()),
     };
     (dest, src, aux)
 }
@@ -320,6 +330,16 @@ mod tests {
             assert_eq!(src, [Opnd::Vgpr(15), Opnd::Vgpr(0), Opnd::Null]);
             assert_eq!((aux.imm, aux.mask), (-8, 2));
         }
+    }
+
+    #[test]
+    fn decodes_typed_buffer_format_with_byte_offset() {
+        // tbuffer_load_format_xyzw v[9:12], v2, s[0:3], 0
+        // format:[BUF_FMT_8_8_8_8_UNORM] offen
+        let (dst, src, aux) = decode_operands(Enc::Mtbuf, &[0xe9c3_1000, 0x8000_0902]);
+        assert_eq!(dst, [Opnd::Vgpr(9)]);
+        assert_eq!(src, [Opnd::Vgpr(2), Opnd::Sgpr(0), Opnd::ConstInt(0)]);
+        assert_eq!((aux.imm, aux.mask, aux.imm2), (0, 1, 56));
     }
 
     #[test]

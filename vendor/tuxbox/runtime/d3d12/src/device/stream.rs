@@ -204,6 +204,16 @@ unsafe fn create(
         at += bytes;
     }
 
+    if let (Some((mesh, _)), Some(root), Some(field)) = (original[7], guest_root, root_record)
+        && original[2..7].iter().all(Option::is_none)
+        && original[0].is_none()
+        && let Some(table) = super::mesh_table::reflected(
+            &device.native, root, mesh, original[1].map(|(pixel, _)| pixel), node_mask,
+        )?
+    {
+        unsafe { field.write(table.native.as_raw()) };
+        pipeline.raster_table = Some(table);
+    }
     for (index, stage) in [(6, shader_cache::Stage::Amplification), (7, shader_cache::Stage::Mesh)] {
         let Some((code, _)) = original[index] else { continue };
         let compiled = shader_cache::mesh_stage(code, stage, guest_root.map(|root| root.payload()));

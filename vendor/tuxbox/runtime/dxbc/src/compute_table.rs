@@ -12,6 +12,12 @@ pub struct Binding {
     pub slot: u32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ResolveConstants {
+    pub register: u32,
+    pub space: u32,
+}
+
 fn word(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(*bytes.get(at..)?.first_chunk()?))
 }
@@ -61,16 +67,27 @@ fn table_rows(
 
 /// Returns the resource table ABI only when hardware reflection and PSV agree.
 pub fn bindings(bytes: &[u8], stage: u32) -> Option<Vec<Binding>> {
-    read_bindings(bytes, stage, None)
+    read_bindings(bytes, stage, None).map(|(bindings, _)| bindings)
 }
 
 /// Also require every descriptor to appear at the same SGPR and offset in
 /// the independently encoded user-data layout.
 pub fn root_bindings(bytes: &[u8], stage: u32, root: &crate::rootsig::RootSig) -> Option<Vec<Binding>> {
-    read_bindings(bytes, stage, Some(root))
+    read_bindings(bytes, stage, Some(root)).map(|(bindings, _)| bindings)
 }
 
-fn read_bindings(bytes: &[u8], stage: u32, root: Option<&crate::rootsig::RootSig>) -> Option<Vec<Binding>> {
+pub fn compute_root_bindings(
+    bytes: &[u8],
+    root: &crate::rootsig::RootSig,
+) -> Option<(Vec<Binding>, Option<ResolveConstants>)> {
+    read_bindings(bytes, 5, Some(root))
+}
+
+fn read_bindings(
+    bytes: &[u8],
+    stage: u32,
+    root: Option<&crate::rootsig::RootSig>,
+) -> Option<(Vec<Binding>, Option<ResolveConstants>)> {
     let dxbc = Dxbc::parse(bytes).ok()?;
     if dxbc.chunk(b"RTS0").is_some() {
         return None;
@@ -105,7 +122,7 @@ fn read_bindings(bytes: &[u8], stage: u32, root: Option<&crate::rootsig::RootSig
     // A resource-free raster stage shares its partner's descriptor table. PSV
     // omits the stride entirely for this case and starts the next field here.
     if count == 0 {
-        return Some(Vec::new());
+        return Some((Vec::new(), None));
     }
     let stride = word(psv_table, 4)? as usize;
     if stride < 16 {
@@ -119,6 +136,11 @@ fn read_bindings(bytes: &[u8], stage: u32, root: Option<&crate::rootsig::RootSig
     let user_layout = if root.is_some() {
         Some(table_rows(program, 0xe8, 0xf8)?.collect::<std::collections::BTreeSet<_>>())
     } else { None };
+    let resolve_register = root
+        .filter(|root| stage == 5 && root.flags & 0xc00 == 0xc00 && root.params.len() == 3
+            && compute_threads(psv) == Some([32, 1, 1]))
+        .and_then(|_| resolve_constants_register(program));
+    let mut resolve_constants = None;
     for [class, offset, register, shape, location] in records {
         let table = if stage == 5 { location >> 16 } else { 0 };
         let (kind, psv_type) = match (class, location) {
@@ -167,8 +189,13 @@ fn read_bindings(bytes: &[u8], stage: u32, root: Option<&crate::rootsig::RootSig
             if kind == 4 {
                 let param = root.params.get(table as usize)?;
                 let RootParamKind::Constants { register: reg, space: sp, num32 } = param.kind else { return None };
-                if (reg, sp, param.visibility) != (register, space, 0)
+                if param.visibility != 0
                     || !user_layout.contains(&[0, 0, num32, register, location >> 8]) {
+                    return None;
+                }
+                if resolve_register == Some(register) && location == 0x20604 && num32 == 4 {
+                    resolve_constants = Some(ResolveConstants { register, space });
+                } else if (reg, sp) != (register, space) {
                     return None;
                 }
             } else if kind < 3 && !user_layout.contains(&[3, offset, 1, register, location >> 8]) {
@@ -190,7 +217,30 @@ fn read_bindings(bytes: &[u8], stage: u32, root: Option<&crate::rootsig::RootSig
         });
     }
     bindings.sort_by_key(|b| (b.table, b.slot));
-    Some(bindings)
+    Some((bindings, resolve_constants))
+}
+
+/// Wave32 layout with two table pointers, four root constants and both heaps.
+/// GroupID follows in s12. Return the register encoded for those constants.
+pub fn resolve_constants_register(program: &[u8]) -> Option<u32> {
+    let mut tables = [false; 2];
+    let mut constants = None;
+    let mut heaps = [false; 2];
+    for [class, offset, width, reg, location] in user_data_records(program)? {
+        match (class, offset, width, location) {
+            (3, _, 1, 4) => tables[0] = true,
+            (3, _, 1, 0x105) => tables[1] = true,
+            (0, 0, 4, 0x206) if constants.is_none() => constants = Some(reg),
+            (5, 0, 1, 10) if reg == 0 && !heaps[0] => heaps[0] = true,
+            (6, 0, 1, 11) if reg == 0 && !heaps[1] => heaps[1] = true,
+            (4, _, _, _) => (),
+            _ => return None,
+        }
+    }
+    if tables != [true; 2] || heaps != [true; 2] {
+        return None;
+    }
+    constants
 }
 
 /// Two table pointers can be followed by a reserved resource-heap SGPR even

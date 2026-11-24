@@ -182,6 +182,11 @@ pub(crate) unsafe fn refresh_shadows(owner: &windows::core::IUnknown, queue: &ID
     unsafe { shadow::refresh(device, queue) }
 }
 
+pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    unsafe { shadow::write_back(device, queue) }
+}
+
 pub(crate) unsafe fn is_constant_buffer(owner: &windows::core::IUnknown, handle: usize) -> bool {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     matches!(device.state.imported_views.lookup(handle), Some(DescriptorBacking::ConstantBuffer { .. }))
@@ -277,6 +282,8 @@ fn rebase_view(window: (u64, u64), format: i32, structure_stride: u32, first: u6
 
 enum PlacedView<'a> {
     Elements(u64, Option<ID3D12Resource>),
+    /// A read-only view served from a device-local copy of the guest bytes.
+    Copied(u64, std::sync::Arc<TextureAddress>),
     Displaced(&'a AddressViews, u64, u32),
 }
 
@@ -299,9 +306,15 @@ fn placed_view<'a>(
     let base = address.base as u64;
     let heap = address.buffer_heap.as_ref().expect("placed buffer retains its imported heap");
     let heap_base = (base - address.buffer_offset) & !65535;
-    let (alias, extra) = heap.buffer_alias(&device.native, base - heap_base, width, element, flags)
-        .unwrap_or_else(|e| fail_call(format_args!("buffer view alias at {base:#x} width={width} stride={element}: {:?}", e.code())));
-    PlacedView::Elements(first + extra, Some(alias))
+    match heap.buffer_alias(&device.native, base - heap_base, width, element, flags) {
+        Ok((alias, extra)) => PlacedView::Elements(first + extra, Some(alias)),
+        // Cross-adapter placement pins aliases to 64 KiB; the view uses a
+        // copy of the same bytes that starts at the guest VA instead.
+        Err(_) => match if flags == D3D12_RESOURCE_FLAG_NONE { shadow::view(device, base, width) } else { shadow::writable_view(device, base, width) } {
+            Ok(copy) => PlacedView::Copied(first, copy),
+            Err(e) => fail_call(format_args!("buffer view copy at {base:#x} width={width} stride={element}: {:?}", e.code())),
+        },
+    }
 }
 
 pub(super) unsafe extern "system" fn address_srv(
@@ -397,6 +410,10 @@ pub(super) unsafe extern "system" fn srv(
                 b.FirstElement = first;
                 alias = native.map(|native| (native, address.clone()));
             }
+            PlacedView::Copied(first, copy) => {
+                b.FirstElement = first;
+                alias = Some((copy.native.clone(), copy));
+            }
             PlacedView::Displaced(mode, offset, stride) => byte_view = Some((mode, offset, stride)),
         }
         &adjusted
@@ -462,6 +479,10 @@ pub(super) unsafe extern "system" fn uav(
                 PlacedView::Elements(first, alias) => {
                     b.FirstElement = first;
                     uav_alias = alias.map(|alias| (alias, address.clone()));
+                }
+                PlacedView::Copied(first, copy) => {
+                    b.FirstElement = first;
+                    uav_alias = Some((copy.native.clone(), copy));
                 }
                 PlacedView::Displaced(mode, offset, stride) => byte_view = Some((mode, offset, stride)),
             }
