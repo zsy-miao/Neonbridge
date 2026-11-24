@@ -1150,6 +1150,41 @@ mod split_retry {
 /// Neonbridge: the range a join is remapping. A title access to it during the
 /// join (a few unmaps and one map) waits in the handler below and retries.
 static JOINING: [std::sync::atomic::AtomicUsize; 2] = [const { std::sync::atomic::AtomicUsize::new(0) }; 2];
+/// Bumped as each join starts and ends.
+static JOIN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    /// (page, join generation) this thread last retried after a finished join.
+    static JOIN_RETRIED: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((usize::MAX, u64::MAX)) };
+}
+
+/// Whether a fault at `page` may be retried once more for join generation
+/// `generation`: once per thread, page and generation, so a real fault
+/// still reaches the next handler.
+fn join_retry_once(last: &std::cell::Cell<(usize, u64)>, page: usize, generation: u64) -> bool {
+    if last.get() == (page, generation) { return false; }
+    last.set((page, generation));
+    true
+}
+
+#[cfg(test)]
+#[test]
+fn a_finished_join_retries_a_page_once_per_generation() {
+    let last = std::cell::Cell::new((usize::MAX, u64::MAX));
+    assert!(join_retry_once(&last, 0x1_0000, 2));
+    assert!(!join_retry_once(&last, 0x1_0000, 2));
+    assert!(join_retry_once(&last, 0x1_0000, 4));
+    assert!(join_retry_once(&last, 0x2_0000, 4));
+}
+
+/// Committed memory at `at` that allows the faulting access (write = 1).
+fn now_accessible(at: usize, write: bool) -> bool {
+    use windows_sys::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READWRITE, PAGE_GUARD, PAGE_NOACCESS, PAGE_READWRITE, VirtualQuery};
+    let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    let found = unsafe { VirtualQuery(at as _, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) };
+    found != 0 && info.State == MEM_COMMIT && info.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0 && info.Protect != 0
+        && (!write || info.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE) != 0)
+}
 
 unsafe extern "system" fn joining_fault(info: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS) -> i32 {
     use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
@@ -1165,6 +1200,17 @@ unsafe extern "system" fn joining_fault(info: *mut windows_sys::Win32::System::D
         lo != 0 && lo <= at && at < hi
     };
     if !inside(at) {
+        // The join may have finished between the fault and this check
+        // (test43: a read AV at an address the crash record found mapped).
+        // Retry once if the page is back. TUXBOX_JOIN_LATE_RETRY=0 off.
+        static LATE: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_JOIN_LATE_RETRY").map_or(true, |v| v.trim() != "0"));
+        let generation = JOIN_GEN.load(Ordering::Acquire);
+        let write = record.ExceptionInformation[0] == 1;
+        if *LATE && generation != 0 && now_accessible(at, write)
+            && JOIN_RETRIED.with(|last| join_retry_once(last, at & !(PAGE - 1), generation))
+        {
+            return CONTINUE_EXECUTION;
+        }
         return CONTINUE_SEARCH;
     }
     while inside(at) {
@@ -1202,6 +1248,7 @@ impl Pool {
             pieces.push((at, end));
             at = end;
         }
+        JOIN_GEN.fetch_add(1, Ordering::AcqRel);
         JOINING[1].store(hi, Ordering::Release);
         JOINING[0].store(lo, Ordering::Release);
         let joined = (|| -> Result<(), u32> {
@@ -1229,6 +1276,7 @@ impl Pool {
             Ok(())
         })();
         JOINING[0].store(0, Ordering::Release);
+        JOIN_GEN.fetch_add(1, Ordering::AcqRel);
         {
             static JOINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = JOINS.fetch_add(1, Ordering::Relaxed) + 1;
