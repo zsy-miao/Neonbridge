@@ -4,7 +4,7 @@
 
 **In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6Launch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
 
-It's an early work in progress: the GTA VI Xbox build starts and draws frames, and now reaches the lit player-selection prompt (Account Picker / Screen Narration / TuxBox), but it runs at under 3 fps and isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
+It's an early work in progress: the GTA VI Xbox build starts and draws frames, and now reaches the lit player-selection prompt (Account Picker / Screen Narration / TuxBox), but test runs reach only 2.4 fps (mostly our own diagnostics) and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -49,7 +49,7 @@ Runtime fixes in the vendored TuxBox provider:
 - **Memory D3D12 can't import:** buffers and placed buffers that span separately mapped title pages use device-local copies.
 - **Shader translator (`xshader`):** legacy FMA keeps `c` for 0×inf and 0×NaN; `v_movrelsd_2_b32`, `v_swaprel_b32`, `v_sat_pk_u8_i16` and `image_gather4_l` on 2D images translate.
 - **Shader compiler:** the launcher stages the SDK's `dxcompiler.dll` and `dxil.dll` beside the game for rectangle-list pipelines.
-- **Diagnostics:** `--debug` dumps registers, stacks, the memory region and code around a fault. The launcher prints a one-line run summary; `--timeout S` stops a run cleanly and `--summary LOG` summarises an old log. `TUXBOX_LIST_RING=1` logs the last list calls when a host `Close` fails. Each crash theory has its own `TUXBOX_*` switch, so variants can run from one build.
+- **Diagnostics:** `--debug` dumps registers, stacks, the memory region and code around a fault. The launcher prints a one-line run summary; `--timeout S` stops a run cleanly and `--summary LOG` summarises an old log. `TUXBOX_LIST_RING=1` logs the last list calls when a host `Close` fails, and `TUXBOX_BARRIER_PROBE=1` closes each barrier alone to name a field the host rejects. The present heartbeat logs fps every 10 s, split into record, close, submit, present, pipeline-wait and memory-wait time. `TUXBOX_TRACE_PRESENT=60` samples whether frames are lit. Under `--debug`, title `int 3` asserts are logged and stepped over, and GameInput logs gamepad reads and pressed buttons. Each crash theory has its own `TUXBOX_*` switch, so variants can run from one build.
 - **Earlier diagnostics:**
   - A PresentX heartbeat every 300 frames.
   - The log names the view call that removed the device.
@@ -58,7 +58,9 @@ Runtime fixes in the vendored TuxBox provider:
 ## Open
 
 - **Black frames fixed:** the end-of-frame barrier that sends the display surface to present used layout 31, which desktop D3D12 rejects, so every frame's `Close` failed. Layouts outside the desktop range are now recorded as COMMON (= PRESENT), Close no longer fails, and the player-selection prompt draws.
-- **Frame rate:** test runs (under the debugger, with on-demand shader compiles and the barrier probe on) reach under 3 fps.
+- **Frame rate:** a 5-minute run under the debugger reached 2.4 fps with lit frames and no Close failures. Most of the cost was `TUXBOX_LIST_RING` (a stack walk on every recording call, plus a scratch `Close` for every barrier), which is now cheaper, with the probe split out. A clean baseline (no `--debug`, no ring) hasn't been measured yet.
+- **Title assert:** a release-build size check at game+0x4ffd879 hits `int 3` and then falls through. The runtime steps over it (ported from upstream TuxBox), and so does the `--debug` script.
+- **Input:** keyboard and mouse drive a virtual pad (see [Controls](#controls)). It's not confirmed yet that the title reads it at the player-selection prompt.
 - **Later screens:** according to other projects, screens after the start screen go black again until blend state is read from the pipeline's render-state block.
 - **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Also ported: private samplers for root-less roots, literal sampler matching, raw SRVs behind root descriptors, and compute descriptors the runtime appends from FSSM/PSV records. `--build-shaders` ranks refusals by construct and reason, and dxc retries at `-O0` when `-O1` times out.
 - **No window on screen:** the game presents, but no window appears on the desktop.
