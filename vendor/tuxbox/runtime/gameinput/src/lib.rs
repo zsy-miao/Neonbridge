@@ -418,9 +418,30 @@ unsafe extern "system" fn gi_mouse(this: &Object, out: Option<&mut sample::Mouse
 #[unsafe(no_mangle)]
 unsafe extern "system" fn gi_pad(this: &Object, out: Option<&mut sample::Pad>) -> bool {
     if let (Sample::Pad(data), Some(out)) = (&this.reading().sample, out) {
+        note_pad(data.buttons);
         *out = *data;
         true
     } else {
         false
+    }
+}
+
+/// TUXBOX_LOG=stderr: that the title reads gamepad state at all, and each new
+/// button mask it sees (A = 0x4 is Enter/left click, B = 0x8 is Esc), so a run
+/// log shows whether input reached the title.
+fn note_pad(buttons: u32) {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    if std::env::var_os("TUXBOX_LOG").as_deref() != Some(std::ffi::OsStr::new("stderr")) {
+        return;
+    }
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() < 24 && !seen.contains(&buttons) {
+        seen.push(buttons);
+        if buttons == 0 {
+            eprintln!("TuxBox gameinput: title reads gamepad state");
+        } else {
+            eprintln!("TuxBox gameinput: title read gamepad buttons {buttons:#x}");
+        }
     }
 }

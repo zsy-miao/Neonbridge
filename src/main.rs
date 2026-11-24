@@ -461,7 +461,9 @@ fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug
         // The script runs at the initial break. First-chance exceptions are logged as
         // they happen; a first-chance AV gets the full fault dump (it may be handled,
         // so the run goes on); any break that stops the run (second-chance exception,
-        // int 3, fast-fail) gets the same dump plus every thread, then cdb quits.
+        // fast-fail) gets the same dump plus every thread, then cdb quits. A title
+        // int 3 is a release-build assert that falls through: log it, step over it
+        // and go on (without a debugger the title's own handler decides).
         // NtTerminateProcess is breakpointed so a title that kills itself (crash
         // handler, watchdog, anti-debug) leaves the caller's stack; no -G, so the exit
         // event itself is a break too and reports the exit code.
@@ -475,6 +477,7 @@ sxe -c \".exr -1;kn 25;gn\" e0000001
 sxe -c \".exr -1;kn 25;gn\" 40080201
 sxe -c \".echo ==== first-chance AV ====;{dump};gn\" av
 sxi ii
+sxe -c \".echo ==== int 3 (title assert, continued) ====;.lastevent;kn 12;.if (by(@rip) == 0xcc) {{r @rip=@rip+1}};gh\" bpe
 sxe -c \".echo ==== process exit ====;.lastevent;q\" epr
 bp ntdll!NtTerminateProcess \".echo ==== NtTerminateProcess ====;r rcx,rdx;kn 40;.echo ==== threads ====;~*kn 8;gc\"
 {extra}

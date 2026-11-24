@@ -36,7 +36,7 @@ pub struct Mouse {
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq)]
 pub struct Pad {
-    buttons: u32,
+    pub(crate) buttons: u32,
     lt: f32,
     rt: f32,
     lx: f32,
