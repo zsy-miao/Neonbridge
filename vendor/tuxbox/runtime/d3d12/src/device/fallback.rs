@@ -9,6 +9,16 @@
 //! The shaders bind no resources, so they are compatible with any root
 //! signature. The vertex shader emits a clipped position (w = 0); the pixel
 //! shader writes nothing.
+//!
+//! Per-shader controls (VIctory pipeline.rs:240, rebox console_compile.c:835):
+//! - `TUXBOX_FALLBACK=flat`: a rejected raster pipeline first keeps its own
+//!   vertex stages and gets a flat magenta pixel shader, so a refused pixel
+//!   shader shows where it draws; only if that fails is the whole pipeline nulled.
+//! - `TUXBOX_NULL_SHADERS=<digest prefix>,...`: pipelines with a stage whose
+//!   source digest starts with one of these are nulled even when they translate.
+//! - `TUXBOX_NULL_BISECT=<bits>:<hex value>`: null every raster pipeline with a
+//!   stage whose digest's low `bits` bits equal `value`; halving the range run
+//!   by run finds the shader behind a hang or corruption.
 use std::sync::{LazyLock, Mutex, OnceLock};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW};
 use windows::core::{Interface, s, w};
@@ -35,6 +45,57 @@ pub(super) fn shader(stage: Stage) -> Option<&'static [u8]> {
         Stage::Compute => (2, "[numthreads(1, 1, 1)] void main() { }", s!("cs_5_0")),
     };
     CODE[index].get_or_init(|| compile(source, profile)).as_deref()
+}
+
+/// A pixel shader that writes flat magenta to render target 0 (`TUXBOX_FALLBACK=flat`).
+pub(super) fn flat_pixel() -> Option<&'static [u8]> {
+    static CODE: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+    CODE.get_or_init(|| compile("float4 main() : SV_Target { return float4(1, 0, 1, 1); }", s!("ps_5_0"))).as_deref()
+}
+
+pub(super) fn flat_enabled() -> bool {
+    static FLAT: LazyLock<bool> =
+        LazyLock::new(|| std::env::var("TUXBOX_FALLBACK").is_ok_and(|v| v.trim().eq_ignore_ascii_case("flat")));
+    *FLAT
+}
+
+struct Rules {
+    prefixes: Vec<String>,
+    bisect: Option<(u32, u64)>,
+}
+
+static RULES: LazyLock<Option<Rules>> = LazyLock::new(|| {
+    let prefixes: Vec<String> = std::env::var("TUXBOX_NULL_SHADERS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|h| h.trim().to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect();
+    let bisect = std::env::var("TUXBOX_NULL_BISECT").ok().and_then(|v| {
+        let (bits, value) = v.trim().split_once(':')?;
+        let bits: u32 = bits.trim().parse().ok().filter(|b| (1..=60).contains(b))?;
+        let value = u64::from_str_radix(value.trim().trim_start_matches("0x"), 16).ok()?;
+        Some((bits, value))
+    });
+    (!prefixes.is_empty() || bisect.is_some()).then_some(Rules { prefixes, bisect })
+});
+
+/// Whether TUXBOX_NULL_SHADERS or TUXBOX_NULL_BISECT is set.
+pub(super) fn forcing() -> bool {
+    RULES.is_some()
+}
+
+/// The first of these source digests that TUXBOX_NULL_SHADERS or
+/// TUXBOX_NULL_BISECT selects.
+pub(super) fn forced_null<'a>(digests: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let rules = RULES.as_ref()?;
+    digests.into_iter().find(|d| {
+        rules.prefixes.iter().any(|p| d.starts_with(p.as_str()))
+            || rules.bisect.is_some_and(|(bits, value)| {
+                let mask = (1u64 << bits) - 1;
+                u64::from_str_radix(&d[d.len().saturating_sub(16)..], 16).is_ok_and(|h| h & mask == value & mask)
+            })
+    })
 }
 
 fn compile(source: &str, profile: windows::core::PCSTR) -> Option<Vec<u8>> {

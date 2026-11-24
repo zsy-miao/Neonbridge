@@ -509,6 +509,17 @@ unsafe fn create(
         SizeInBytes: size,
         pPipelineStateSubobjectStream: output.cast(),
     };
+    // TUXBOX_NULL_SHADERS / TUXBOX_NULL_BISECT: null chosen pipelines (see `fallback`).
+    if super::fallback::forcing() {
+        let digests: Vec<String> = original.iter().flatten().filter_map(|(code, _)| shader_cache::source_digest(code)).collect();
+        if let Some(hash) = super::fallback::forced_null(digests.iter().map(String::as_str)).map(str::to_owned)
+            && let Some(result) = unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, false) }
+        {
+            static FORCED: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&FORCED, || format!("forced a null pipeline for shader {hash} (TUXBOX_NULL_SHADERS / TUXBOX_NULL_BISECT; further ones are counted as substituted)"));
+            return result;
+        }
+    }
     // SAFETY: the stream storage, translated shaders, and guest-owned inputs
     // all stay alive throughout this synchronous call on the desktop Device2.
     let initial = unsafe { super::pipeline_cache::stream(host, &native_desc) };
@@ -609,26 +620,43 @@ unsafe fn create(
             Err(error) => crate::diagnostics::pipeline_stages(&hashes, error.code().0, true),
         }
         if retry.is_ok() { return retry; }
-        return unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record) }.unwrap_or(retry);
+        return unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, true) }.unwrap_or(retry);
     }
     crate::diagnostics::pipeline_stages(&hashes, status.0, false);
-    unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record) }.unwrap_or(initial)
+    unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, true) }.unwrap_or(initial)
 }
 
 /// Retry a rejected stream with resource-free shaders (see `fallback`). Mesh
-/// and stream-output pipelines keep their original failure.
+/// and stream-output pipelines keep their original failure. With `flat` and
+/// TUXBOX_FALLBACK=flat, a raster stream first keeps its own vertex stages and
+/// draws flat magenta.
 unsafe fn null_pipeline(
     host: &ID3D12Device2,
     desc: &D3D12_PIPELINE_STATE_STREAM_DESC,
     fields: &[Option<*mut D3D12_SHADER_BYTECODE>; 8],
     stream_output: bool,
     geometry: *mut D3D12_SHADER_BYTECODE,
+    flat: bool,
 ) -> Option<windows::core::Result<ID3D12PipelineState>> {
-    use super::fallback::{Stage, bytecode, enabled, shader, substituted};
+    use super::fallback::{Stage, bytecode, enabled, flat_enabled, flat_pixel, shader, substituted};
     if !enabled() || stream_output || fields[6].is_some() || fields[7].is_some() {
         return None;
     }
     let compute = fields[5].is_some();
+    if flat
+        && !compute
+        && flat_enabled()
+        && let (Some(pixel), Some(code)) = (fields[1], flat_pixel())
+    {
+        let kept = unsafe { pixel.read() };
+        unsafe { pixel.write(bytecode(code)) };
+        let result = crate::big_stack::run(|| unsafe { host.CreatePipelineState::<ID3D12PipelineState>(desc) });
+        if result.is_ok() {
+            substituted("flat-colour pixel");
+            return Some(result);
+        }
+        unsafe { pixel.write(kept) };
+    }
     let replacement = |index: usize| match index {
         0 => shader(Stage::Vertex).map(bytecode),
         1 => shader(Stage::Pixel).map(bytecode),
