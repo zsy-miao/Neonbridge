@@ -11,6 +11,7 @@
 
 mod awake;
 mod ctl;
+mod game_settings;
 mod picker;
 mod replay;
 mod shaders;
@@ -835,6 +836,7 @@ q
     if debug.is_some() {
         println!("[launch] debugger log: {}", cdb_log.display());
     }
+    game_settings::apply(game);
     println!("[launch] starting {}", argv.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "));
     // NEONBRIDGE_FEED=1: the game's picture on 127.0.0.1 and over Tailscale
     // (crates/feed); the game gets the frame tap (TUXBOX_FEED=1).
