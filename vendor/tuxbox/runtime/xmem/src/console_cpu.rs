@@ -5,9 +5,11 @@
 //!   loop `clzero; add rax,0x40; cmp rax,reg; jb -12` is done in one trap.
 //! - `monitorx` / `mwaitx` (0F 01 FA / FB) are wait hints; mwaitx yields.
 //! - `rdpru` (0F 01 FD) reads MPERF/APERF; both become the TSC.
+//! - SSE4a `extrq` / `insertq` (66|F2 0F 78|79, register forms) run on the
+//!   saved XMM registers (from VIctory's loader).
 use std::ffi::c_void;
 use windows_sys::Win32::Foundation::STATUS_ILLEGAL_INSTRUCTION;
-use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, CONTEXT, EXCEPTION_POINTERS};
+use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, CONTEXT, EXCEPTION_POINTERS, M128A};
 
 const CONTINUE_EXECUTION: i32 = -1;
 const CONTINUE_SEARCH: i32 = 0;
@@ -33,7 +35,13 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
         let context = &mut *(*info).ContextRecord;
         let code = std::slice::from_raw_parts(context.Rip as *const u8, 3);
         if code[0] != 0x0F || code[1] != 0x01 {
-            return CONTINUE_SEARCH;
+            return match sse4a(context.Rip as *const u8, &mut context.Anonymous.FltSave.XmmRegisters) {
+                Some(len) => {
+                    context.Rip += len as u64;
+                    CONTINUE_EXECUTION
+                }
+                None => CONTINUE_SEARCH,
+            };
         }
         match code[2] {
             0xFC => {
@@ -79,6 +87,48 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
         }
         CONTINUE_EXECUTION
     }
+}
+
+/// SSE4a's `extrq`/`insertq` (register forms, the only ones there are) on
+/// the saved XMM registers; returns the instruction's length.
+unsafe fn sse4a(code: *const u8, xmm: &mut [M128A; 16]) -> Option<usize> {
+    // SAFETY: the faulting instruction's bytes are readable to its end.
+    let b = |i: usize| unsafe { code.add(i).read() };
+    let prefix = b(0);
+    if !matches!(prefix, 0x66 | 0xF2) {
+        return None;
+    }
+    let (rex, at) = if b(1) & 0xF0 == 0x40 { (b(1), 2) } else { (0, 1) };
+    if b(at) != 0x0F || !matches!(b(at + 1), 0x78 | 0x79) {
+        return None;
+    }
+    let modrm = b(at + 2);
+    if modrm >> 6 != 3 {
+        return None;
+    }
+    let dst = usize::from((modrm >> 3) & 7 | (rex & 4) << 1);
+    let src = usize::from(modrm & 7 | (rex & 1) << 3);
+    let immediate = b(at + 1) == 0x78;
+    let (fields, len) = if immediate {
+        ((b(at + 3), b(at + 4)), at + 5)
+    } else {
+        // extrq reads its fields from src's low half, insertq from its high.
+        let f = if prefix == 0x66 { xmm[src].Low } else { xmm[src].High as u64 };
+        ((f as u8, (f >> 8) as u8), at + 3)
+    };
+    let (n, shift) = (u32::from(fields.0 & 63), u32::from(fields.1 & 63));
+    let mask = if n == 0 { u64::MAX } else { (1u64 << n) - 1 };
+    if prefix == 0x66 {
+        if immediate && (modrm >> 3) & 7 != 0 {
+            return None;
+        }
+        let target = if immediate { src } else { dst };
+        xmm[target].Low = (xmm[target].Low >> shift) & mask;
+    } else {
+        let value = (xmm[src].Low & mask) << shift;
+        xmm[dst].Low = xmm[dst].Low & !(mask << shift) | value;
+    }
+    Some(len)
 }
 
 pub(crate) unsafe fn install() {
