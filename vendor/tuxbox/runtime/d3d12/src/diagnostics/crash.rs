@@ -494,6 +494,70 @@ mod waits {
         out
     }
 
+    /// The object type of a handle, or None when it is not one.
+    fn kind(handle: isize) -> Option<String> {
+        let query = ntdll().query_object?;
+        let mut buf = [0u64; 128];
+        let mut len = 0u32;
+        if unsafe { query(handle, 2, buf.as_mut_ptr().cast(), size_of_val(&buf) as u32, &mut len) } < 0 {
+            return None;
+        }
+        let bytes = (buf[0] & 0xffff) as usize;
+        let chars = buf[1] as *const u16;
+        let base = buf.as_ptr() as usize;
+        ((chars as usize) >= base && (chars as usize) + bytes <= base + size_of_val(&buf))
+            .then(|| String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(chars, bytes / 2) }))
+    }
+
+    fn waitable(handle: isize) -> bool {
+        handle > 0 && handle < 1 << 24 && handle & 3 == 0 && kind(handle).is_some_and(|k| matches!(k.as_str(),
+            "Event" | "Semaphore" | "Mutant" | "Thread" | "Process" | "Timer" | "IRTimer" | "IoCompletion" | "WaitCompletionPacket"))
+    }
+
+    /// Up to `words` readable qwords at the thread's stack pointer.
+    fn stack(c: &CONTEXT, words: usize) -> Vec<isize> {
+        use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQuery};
+        let at = c.Rsp as usize;
+        let mut info = MEMORY_BASIC_INFORMATION::default();
+        if at == 0 || unsafe { VirtualQuery(Some(at as _), &mut info, size_of_val(&info)) } == 0 || info.State != MEM_COMMIT {
+            return Vec::new();
+        }
+        let words = words.min((info.BaseAddress as usize + info.RegionSize - at) / 8);
+        // SAFETY: committed stack memory of a suspended thread of this process.
+        unsafe { std::slice::from_raw_parts(at as *const isize, words) }.to_vec()
+    }
+
+    /// test134: a thread suspended inside the wait syscall does not keep its
+    /// volatile registers, so R10 (the handle) and RDX (the array) read as
+    /// garbage. The nonvolatile registers are saved, and kernelbase's wait
+    /// keeps the handle in one of them or in its frame (WaitForMultipleObjectsEx
+    /// copies the array onto its stack), so those are searched for handles of
+    /// waitable objects, the registers first.
+    fn single_handle(c: &CONTEXT) -> Option<isize> {
+        let registers = [c.R10, c.Rbx, c.Rsi, c.Rdi, c.Rbp, c.R12, c.R13, c.R14, c.R15];
+        registers.iter().map(|&r| r as isize).chain(stack(c, 48)).find(|&h| waitable(h))
+    }
+
+    /// The longest run of waitable handles among the first 256 stack words.
+    fn handle_run(c: &CONTEXT) -> Vec<isize> {
+        let words = stack(c, 256);
+        let (mut best, mut start) = ((0, 0), None);
+        for (i, &w) in words.iter().enumerate() {
+            match (waitable(w), start) {
+                (true, None) => start = Some(i),
+                (false, Some(s)) => {
+                    if i - s > best.1 - best.0 { best = (s, i) }
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(s) = start && words.len() - s > best.1 - best.0 {
+            best = (s, words.len());
+        }
+        words[best.0..best.1].iter().take(64).copied().collect()
+    }
+
     pub(super) fn describe(c: &CONTEXT) -> String {
         if crate::env_toggle!("TUXBOX_HANG_WAITS") == Some("0") {
             return String::new();
@@ -502,22 +566,18 @@ mod waits {
         let rip = c.Rip as usize;
         let near = |stub: usize| stub != 0 && rip >= stub && rip < stub + 0x40;
         if near(n.single) {
-            return format!(" [NtWaitForSingleObject {}]", object(c.R10 as isize));
+            return match single_handle(c) {
+                Some(handle) => format!(" [NtWaitForSingleObject {}]", object(handle)),
+                None => " [NtWaitForSingleObject, handle not found]".into(),
+            };
         }
         if near(n.multiple) {
-            let count = (c.R10 as usize).min(64);
-            let array = c.Rdx as *const isize;
-            let mut info = windows::Win32::System::Memory::MEMORY_BASIC_INFORMATION::default();
-            let readable = !array.is_null()
-                && unsafe { windows::Win32::System::Memory::VirtualQuery(Some(array.cast()), &mut info, size_of_val(&info)) } != 0
-                && info.State == windows::Win32::System::Memory::MEM_COMMIT
-                && (array as usize) + count * 8 <= info.BaseAddress as usize + info.RegionSize;
-            if !readable {
-                return format!(" [NtWaitForMultipleObjects {count} objects]");
+            let handles = handle_run(c);
+            if handles.is_empty() {
+                return " [NtWaitForMultipleObjects, handles not found]".into();
             }
-            let handles = unsafe { std::slice::from_raw_parts(array, count) };
             let names: Vec<String> = handles.iter().map(|&h| object(h)).collect();
-            return format!(" [NtWaitForMultipleObjects {}: {}]", if c.R8 == 0 { "all" } else { "any" }, names.join(", "));
+            return format!(" [NtWaitForMultipleObjects {} from its stack: {}]", handles.len(), names.join(", "));
         }
         String::new()
     }
