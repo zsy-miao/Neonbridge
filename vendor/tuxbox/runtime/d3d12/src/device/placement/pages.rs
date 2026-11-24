@@ -727,13 +727,15 @@ fn signal_each() -> bool {
     crate::env_toggle!("TUXBOX_PAGES_SIGNAL_EACH") == Some("1")
 }
 
-/// New pools for sampled textures go to system memory while device-local
-/// usage is over TUXBOX_PAGES_SYSTEM_PCT (default 80) percent of its budget
+/// With TUXBOX_PAGES_SYSTEM_PCT=N, new pools for sampled textures go to
+/// system memory while device-local usage is over N percent of its budget
 /// (test58: device local 11403 of 7177 MiB, 7154 MiB of it pages; non-local
 /// 3734 of 7437). Render targets, depth and UAV textures keep device pools.
-/// TUXBOX_PAGES_SYSTEM_PCT=0 keeps every pool in device memory.
+/// Off by default (0): in test59 76 such pools (about 4.8 GiB) were charged
+/// to system commit, which was down to 1 GiB free when the device was
+/// removed.
 fn system_pools(device: &ID3D12Device) -> bool {
-    let pct: u64 = crate::env_toggle!("TUXBOX_PAGES_SYSTEM_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(80);
+    let pct: u64 = crate::env_toggle!("TUXBOX_PAGES_SYSTEM_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     if pct == 0 {
         return false;
     }
@@ -752,9 +754,15 @@ fn system_pools(device: &ID3D12Device) -> bool {
 /// TUXBOX_SPAN_EVICT_S seconds (default 10; 0 evicts none), as alias.rs does
 /// for spans. A pool's tiles handed to a new texture are made resident by
 /// that texture's first submission.
+///
+/// Off unless TUXBOX_PAGES_EVICT=1: a submission names only the textures it
+/// tracks, not those a shader reaches through the descriptor heap, and a
+/// pool holds tiles of many textures, so an evicted pool can still be
+/// sampled (a GPU page fault). test59 removed the device (nvlddmkm event
+/// 153) after 104 pool evictions.
 pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'a Texture>) -> windows::core::Result<()> {
     let after = super::alias::evict_after();
-    if !enabled() || after <= 0.0 {
+    if !enabled() || after <= 0.0 || crate::env_toggle!("TUXBOX_PAGES_EVICT") != Some("1") {
         return Ok(());
     }
     let now = std::time::Instant::now();

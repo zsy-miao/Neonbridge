@@ -695,9 +695,13 @@ pub(super) unsafe extern "system" fn address_srv(
 fn report_bad_view(kind: &str, device: &ID3D12Device, resource: Option<&ID3D12Resource>, view: Option<&D3D12_SHADER_RESOURCE_VIEW_DESC>) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static REPORTED: AtomicBool = AtomicBool::new(false);
-    if REPORTED.load(Ordering::Relaxed) || unsafe { device.GetDeviceRemovedReason() }.is_ok() || REPORTED.swap(true, Ordering::Relaxed) {
+    let reason = unsafe { device.GetDeviceRemovedReason() };
+    if REPORTED.load(Ordering::Relaxed) || reason.is_ok() || REPORTED.swap(true, Ordering::Relaxed) {
         return;
     }
+    // The removal is usually asynchronous (a GPU fault or hang) and this view
+    // merely the first call to notice it.
+    let reason = reason.err().map(|e| e.code().0 as u32).unwrap_or(0);
     let res = resource.map(|r| unsafe { r.GetDesc() });
     let view = view.map(|v| {
         let detail = match v.ViewDimension {
@@ -711,7 +715,7 @@ fn report_bad_view(kind: &str, device: &ID3D12Device, resource: Option<&ID3D12Re
         format!("format={} dimension={} mapping={:#x} {detail}", v.Format.0, v.ViewDimension.0, v.Shader4ComponentMapping)
     });
     crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
-        "{kind} creation removed the device: view {view:?}; resource {:?}",
+        "{kind} creation found the device removed (reason {reason:#x}; TUXBOX_DRED=1 for breadcrumbs and the faulting address): view {view:?}; resource {:?}",
         res.map(|r| format!("dimension={} {}x{}x{} mips={} format={} flags={:#x} layout={}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.MipLevels, r.Format.0, r.Flags.0, r.Layout.0))));
 }
 
