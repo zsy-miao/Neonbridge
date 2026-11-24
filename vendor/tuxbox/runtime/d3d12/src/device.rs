@@ -1230,8 +1230,9 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
     let mut adapter = chosen.as_ref().map_or(adapter, |a| a.as_raw());
     let make = |adapter: *mut c_void| -> windows::core::Result<Option<ID3D12Device>> {
         // SAFETY: The public factory validated its arguments; the adapter stays borrowed.
-        if let Some(created) = crate::dred::debug_device(unsafe { IUnknown::from_raw_borrowed(&adapter) }) {
-            return created.map(Some);
+        // A failed debug device falls through to the normal one (test88).
+        if let Some(Ok(created)) = crate::dred::debug_device(unsafe { IUnknown::from_raw_borrowed(&adapter) }) {
+            return Ok(Some(created));
         }
         let mut native = None;
         unsafe { D3D12CreateDevice::<_, ID3D12Device>(IUnknown::from_raw_borrowed(&adapter), D3D_FEATURE_LEVEL_12_0, &mut native)? };

@@ -5,7 +5,6 @@ use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
 use windows::core::Interface;
-use std::os::windows::ffi::OsStrExt;
 
 fn enabled() -> bool {
     std::env::var_os("TUXBOX_DRED").is_some_and(|v| v == "1")
@@ -155,21 +154,31 @@ unsafe fn report(device: &ID3D12Device) {
 /// With TUXBOX_D3D12_SDK=<directory holding D3D12Core.dll and
 /// d3d12SDKLayers.dll>, create the device through that Agility runtime with
 /// the debug layer on, and log each error message it reports. Diagnosis only.
+///
+/// test88: a failed try left the normal device failing too (0x887A002D). It is
+/// tried once per process; on failure the caller makes the normal device. The
+/// version is read from the file (TUXBOX_D3D12_SDK_VERSION overrides), never
+/// by loading it: a D3D12Core.dll we load ourselves is what the system d3d12
+/// finds by name afterwards, which mismatches it.
 pub(crate) fn debug_device(adapter: Option<&windows::core::IUnknown>) -> Option<windows::core::Result<ID3D12Device>> {
     use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_12_0;
+    static TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let path = std::env::var("TUXBOX_D3D12_SDK").ok()?;
+    if TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    log(&format!("debug layer: D3D12Core.dll already loaded before the factory: {}", loaded_core()));
     let created = (|| unsafe {
         let mut config: Option<ID3D12SDKConfiguration1> = None;
         D3D12GetInterface(&CLSID_D3D12SDKConfiguration, &mut config)?;
         let config = config.ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
         let dir = std::ffi::CString::new(path.clone()).map_err(|_| windows::Win32::Foundation::E_INVALIDARG)?;
         // The factory must ask for the SDK version the directory's D3D12Core.dll exports.
-        let version = {
-            use windows::Win32::System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LoadLibraryExW};
-            let core: Vec<u16> = std::path::Path::new(&path).join("D3D12Core.dll").as_os_str().encode_wide().chain([0]).collect();
-            let module = LoadLibraryExW(windows::core::PCWSTR(core.as_ptr()), None, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)?;
-            let export = GetProcAddress(module, windows::core::s!("D3D12SDKVersion")).ok_or(windows::Win32::Foundation::E_NOINTERFACE)?;
-            *(export as *const u32)
+        let version = match std::env::var("TUXBOX_D3D12_SDK_VERSION").ok().and_then(|v| v.trim().parse().ok()) {
+            Some(v) => v,
+            None => std::fs::read(std::path::Path::new(&path).join("D3D12Core.dll")).ok()
+                .and_then(|image| pe_export_u32(&image, b"D3D12SDKVersion"))
+                .ok_or(windows::Win32::Foundation::E_NOINTERFACE)?,
         };
         log(&format!("debug layer SDK version {version}"));
         let factory: ID3D12DeviceFactory = config.CreateDeviceFactory(version, windows::core::PCSTR(dir.as_ptr().cast()))?;
@@ -186,8 +195,55 @@ pub(crate) fn debug_device(adapter: Option<&windows::core::IUnknown>) -> Option<
         }
         Ok(device)
     })();
-    log(&format!("debug layer device from {path}: {:?}", created.as_ref().map(|_| ())));
+    log(&format!("debug layer device from {path}: {:?}{}", created.as_ref().map(|_| ()),
+        if created.is_err() { "; making the normal device instead" } else { "" }));
     Some(created)
+}
+
+/// Which D3D12Core.dll the process holds, if any.
+fn loaded_core() -> String {
+    use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+    let Ok(module) = (unsafe { GetModuleHandleW(windows::core::w!("D3D12Core.dll")) }) else { return "none".into() };
+    let mut name = [0u16; 520];
+    let n = unsafe { GetModuleFileNameW(Some(module), &mut name) } as usize;
+    String::from_utf16_lossy(&name[..n])
+}
+
+/// The u32 a PE image exports under `wanted`, read from the file bytes.
+fn pe_export_u32(image: &[u8], wanted: &[u8]) -> Option<u32> {
+    let u16_at = |o: usize| image.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |o: usize| image.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let pe = u32_at(0x3c)? as usize;
+    if image.get(pe..pe + 4)? != b"PE\0\0" { return None; }
+    let sections = u16_at(pe + 6)? as usize;
+    let optional = pe + 24;
+    let optional_size = u16_at(pe + 20)? as usize;
+    let data_dirs = match u16_at(optional)? { 0x20b => optional + 112, 0x10b => optional + 96, _ => return None };
+    let export_rva = u32_at(data_dirs)? as usize;
+    let table = optional + optional_size;
+    let to_file = |rva: usize| -> Option<usize> {
+        (0..sections).find_map(|i| {
+            let s = table + i * 40;
+            let va = u32_at(s + 12)? as usize;
+            let size = (u32_at(s + 8)? as usize).max(u32_at(s + 16)? as usize);
+            let raw = u32_at(s + 20)? as usize;
+            (rva >= va && rva < va + size).then(|| rva - va + raw)
+        })
+    };
+    let dir = to_file(export_rva)?;
+    let names = u32_at(dir + 24)? as usize;
+    let functions = to_file(u32_at(dir + 28)? as usize)?;
+    let name_table = to_file(u32_at(dir + 32)? as usize)?;
+    let ordinals = to_file(u32_at(dir + 36)? as usize)?;
+    for i in 0..names {
+        let at = to_file(u32_at(name_table + i * 4)? as usize)?;
+        if image.get(at..at + wanted.len() + 1)? == [wanted, b"\0"].concat().as_slice() {
+            let ordinal = u16_at(ordinals + i * 2)? as usize;
+            let rva = u32_at(functions + ordinal * 4)? as usize;
+            return u32_at(to_file(rva)?);
+        }
+    }
+    None
 }
 
 unsafe extern "system" fn on_message(
