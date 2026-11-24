@@ -446,35 +446,42 @@ fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug
         fs::create_dir_all(p)?;
     }
     let file = fs::OpenOptions::new().create(true).append(true).open(&log)?;
+    // The log is appended to; the summary reads only what this run wrote.
+    let log_start = file.metadata().map(|m| m.len()).unwrap_or(0);
     let cdb_log = log.with_extension("cdb.txt");
     let mut argv: Vec<OsString> = vec![exe.as_os_str().into()];
     argv.extend(args.iter().cloned());
     if let Some(extra) = &debug {
         let cdb = find_cdb().ok_or("--debug needs cdb.exe (Windows SDK 'Debugging Tools for Windows')")?;
         let _ = fs::remove_file(&cdb_log);
-        // -g/-G: skip the initial and final breaks; first-chance exceptions are logged
-        // as they happen; at the fatal event print it, registers, stack and modules.
+        // The script runs at the initial break. First-chance exceptions are logged as
+        // they happen; a first-chance AV gets the full fault dump (it may be handled,
+        // so the run goes on); any break that stops the run (second-chance exception,
+        // int 3, fast-fail) gets the same dump plus every thread, then cdb quits.
+        // NtTerminateProcess is breakpointed so a title that kills itself (crash
+        // handler, watchdog, anti-debug) leaves the caller's stack; no -G, so the exit
+        // event itself is a break too and reports the exit code.
         // Commands go in a script file: Sandboxie's Start.exe re-splits a quoted -c argument.
         let script = log.with_extension("cdb.cmd");
-        // Trace every C++ (e06d7363), msxml/app (e0000001) and WinRT-originate (40080201)
-        // exception with its record and stack, then dump the fatal event. Illegal
-        // instructions are the title's CPU feature probes: not logged.
+        // Illegal instructions are the title's CPU feature probes: not logged; module
+        // loads are not dumped (lm) since ModLoad lines already list them.
+        let dump = ".echo ==== FAULT ====;.lastevent;.exr -1;r;.echo ==== code at rip ====;ub @rip L8;u @rip L4;.echo ==== stack ====;kn 40";
         fs::write(&script, format!("sxe -c \".exr -1;kn 25;gn\" e06d7363
 sxe -c \".exr -1;kn 25;gn\" e0000001
 sxe -c \".exr -1;kn 25;gn\" 40080201
-sxe -c \".exr -1;kn 25;gn\" av
+sxe -c \".echo ==== first-chance AV ====;{dump};gn\" av
 sxi ii
+sxe -c \".echo ==== process exit ====;.lastevent;q\" epr
+bp ntdll!NtTerminateProcess \".echo ==== NtTerminateProcess ====;r rcx,rdx;kn 40;.echo ==== threads ====;~*kn 8;gc\"
 {extra}
 g
-.lastevent
-r
-kn 60
-.ecxr
-kn 60
+{dump}
+.echo ==== threads ====
+~*kn 8
 q
 "))?;
         // -hd: the debug heap that cdb otherwise turns on serializes every allocation.
-        let mut d: Vec<OsString> = vec![cdb.into(), "-G".into(), "-hd".into(), "-logo".into(), cdb_log.clone().into(), "-cf".into(), script.into()];
+        let mut d: Vec<OsString> = vec![cdb.into(), "-hd".into(), "-logo".into(), cdb_log.clone().into(), "-cf".into(), script.into()];
         d.extend(argv);
         argv = d;
     }
@@ -528,11 +535,7 @@ q
             Ok(text) => {
                 let mut f = file;
                 let _ = writeln!(f, "---- cdb ----\n{text}");
-                for l in text.lines().filter(|l| l.contains("chance") || l.starts_with("Subcode") || l.starts_with("Last event")).take(12) {
-                    println!("[launch:debug] {l}");
-                }
-                let stack: Vec<_> = text.lines().filter(|l| l.len() > 3 && l.as_bytes()[2] == b' ' && l[..2].chars().all(|c| c.is_ascii_hexdigit())).take(12).collect();
-                for l in stack {
+                for l in debug_report(&text) {
                     println!("[launch:debug] {l}");
                 }
             }
@@ -540,7 +543,59 @@ q
         }
     }
     println!("[launch] log: {}", log.display());
+    let mut text = String::new();
+    if let Ok(mut f) = fs::File::open(&log) {
+        use std::io::{Read, Seek, SeekFrom};
+        let _ = f.seek(SeekFrom::Start(log_start));
+        let mut bytes = Vec::new();
+        let _ = f.read_to_end(&mut bytes);
+        text = String::from_utf8_lossy(&bytes).into_owned();
+    }
+    let text = text.split("\n---- cdb ----\n").next().unwrap_or("");
+    println!("{}", run_summary(text, status.code()));
     Ok(())
+}
+
+/// The lines of a cdb log worth printing: the last fault dump (or, failing that,
+/// the last NtTerminateProcess stack), the exit event and the first-chance codes.
+fn debug_report(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    // Headers are .echo output, so they start the line (the command echoes start "0:000>").
+    let block = |marker: &str| -> Option<&[&str]> {
+        let start = lines.iter().rposition(|l| l.starts_with(marker))?;
+        let sub = |l: &&str| l.starts_with("==== code at rip") || l.starts_with("==== stack");
+        let end = lines[start + 1..].iter().position(|l| l.starts_with("====") && !sub(l)).map_or(lines.len(), |i| start + 1 + i);
+        Some(&lines[start..end.min(start + 80)])
+    };
+    let mut out: Vec<&str> = Vec::new();
+    let mut codes: Vec<&str> = lines.iter().copied().filter(|l| l.contains("- code ") && l.contains("chance")).collect();
+    codes.dedup();
+    out.extend(codes.into_iter().rev().take(6).rev());
+    if let Some(b) = block("==== FAULT ====").or_else(|| block("==== NtTerminateProcess ====")) {
+        out.extend_from_slice(b);
+    }
+    out.extend(lines.iter().copied().filter(|l| l.starts_with("Last event:") && l.contains("Exit process")).take(1));
+    out
+}
+
+/// One line from this run's game log: exit code, how far it got, first fatal line
+/// and the counts of the diagnostics that say what broke.
+fn run_summary(text: &str, code: Option<i32>) -> String {
+    let count = |needle: &str| text.lines().filter(|l| l.contains(needle)).count();
+    let presents = text.lines().filter_map(|l| l.split("completed PresentX #").nth(1))
+        .filter_map(|r| r.split(|c: char| !c.is_ascii_digit()).next()?.parse::<u64>().ok()).max().unwrap_or(0);
+    let lits: Vec<&str> = text.lines().filter_map(|l| l.split(" lit=").nth(1)?.split(' ').next()).collect();
+    let fatal = text.lines().find(|l| {
+        let l = l.to_ascii_lowercase();
+        ["panicked", "presentx failed", "device removed", "0x887a0005", "0x887a0006", "fatal", "access violation", "stack overflow"].iter().any(|k| l.contains(k))
+    });
+    let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
+    format!(
+        "[launch] summary: exit={exit} presents={presents} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} first-fatal={}",
+        lits.len(), lits.last().unwrap_or(&"-"), count("host list Close failed"), count("rebuilt host list"),
+        count("dropped a command-list batch"), count("unresolved inline descriptor"), count("PresentX failed"),
+        fatal.map(|l| format!("{:?}", l.trim())).unwrap_or_else(|| "none".into())
+    )
 }
 
 fn find_cdb() -> Option<PathBuf> {
