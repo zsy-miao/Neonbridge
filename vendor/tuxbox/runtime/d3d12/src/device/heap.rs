@@ -316,6 +316,10 @@ pub(super) fn import_buffer_with_heap(
     crate::diagnostics::watch("imported buffer", address, info.SizeInBytes, || format!(
         "width={:#x} flags={:#x} state={:#x}", desc.Width, desc.Flags.0, state.0));
     let pin = GPU_APERTURE.pin(base, size)?;
+    // The GPU reads and writes these pages: commit lazy title views (xmem
+    // lazy_commit.rs) before the committed-pages check, which refused them
+    // (test135: placed buffer at 0x19d100000 E_INVALIDARG).
+    commit_title_range(base, size);
     validate_shared_range(base, base.checked_add(size).ok_or(E_INVALIDARG)?)?;
     // A guest can place thousands of tiny resources in one multi-GiB XMem
     // reservation. Pin only the pages needed by this resource on the adapter.
@@ -1426,7 +1430,7 @@ unsafe fn place_gpu_target(
         crate::diagnostics::watch("device-memory image", address, allocation.SizeInBytes, || format!(
             "{}x{}x{} format={} flags={:#x}", desc.Width, desc.Height, desc.DepthOrArraySize, desc.Format.0, desc.Flags.0));
         let end = address.checked_add(allocation.SizeInBytes).ok_or(E_INVALIDARG)?;
-        if let Err(e) = validate_shared_range(address, end) {
+        if let Err(e) = validate_title_range(address, end, true) {
             // The image lives in device memory and the guest range is only
             // its key, so pages not (yet) committed read-write there do not
             // stop it (test36: 512x512 format 29 at 0xaf5300000);
@@ -1581,12 +1585,28 @@ fn import_failure(call: &'static str, base: u64, size: u64, error: &windows::cor
 }
 
 fn validate_shared_range(start: u64, end: u64) -> windows::core::Result<()> {
-    use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_READWRITE, VirtualQuery};
+    validate_title_range(start, end, false)
+}
+
+/// Every page of `[start, end)` is committed read-write, or, with `lazy`, may
+/// also be a reserved page of a read-write section view: xmem maps title views
+/// of physical pages without committing them (lazy_commit.rs, xcl 38b05b7) and
+/// commits each on first use. The GPU page pool is only registered as a range
+/// here and its pages back video memory, so committing its 6.2 GB to pass the
+/// check would undo that; test135 asserted at game+0x1e6c2c5 on the
+/// E_INVALIDARG this check gave the reserved pool.
+fn validate_title_range(start: u64, end: u64, lazy: bool) -> windows::core::Result<()> {
+    use windows::Win32::System::Memory::{MEM_COMMIT, MEM_MAPPED, MEM_RESERVE, MEMORY_BASIC_INFORMATION, PAGE_READWRITE, VirtualQuery};
     let mut cursor = start;
     while cursor < end {
         let mut region = MEMORY_BASIC_INFORMATION::default();
-        if unsafe { VirtualQuery(Some(cursor as _), &mut region, size_of_val(&region)) } == 0
-            || region.State != MEM_COMMIT || region.Protect != PAGE_READWRITE {
+        if unsafe { VirtualQuery(Some(cursor as _), &mut region, size_of_val(&region)) } == 0 {
+            return Err(E_INVALIDARG.into());
+        }
+        let committed = region.State == MEM_COMMIT && region.Protect == PAGE_READWRITE;
+        let reserved_view = lazy && region.State == MEM_RESERVE && region.Type == MEM_MAPPED
+            && region.AllocationProtect == PAGE_READWRITE;
+        if !committed && !reserved_view {
             return Err(E_INVALIDARG.into());
         }
         cursor = (region.BaseAddress as u64).checked_add(region.RegionSize as u64).ok_or(E_INVALIDARG)?;
@@ -1602,7 +1622,7 @@ pub(super) unsafe extern "system" fn register_pages(
     if address == 0 || !address.is_multiple_of(65536) || count == 0 { return E_INVALIDARG; }
     let bytes = u64::from(count) * 65536;
     let Some(end) = address.checked_add(bytes) else { return E_INVALIDARG; };
-    if let Err(e) = validate_shared_range(address, end) { return e.code(); }
+    if let Err(e) = validate_title_range(address, end, true) { return e.code(); }
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("registered Xbox GPU page pool: {count} pages at {address:#x}"));
     let token = device.state.page_pools.register(address, end);
