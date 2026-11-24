@@ -364,6 +364,9 @@ impl Pool {
         let first = &self.pages[&self.mappings[&lo]];
         let section = first.section.clone();
         let offset = first.offset;
+        // Between this unmap and the fragments' remap the view's surviving
+        // pages are briefly gone: a title access there waits and retries.
+        let _gap = split_retry::Gap::open(lo, hi);
         shared_pages::unmap(lo)?;
         let mut restored = Vec::new();
         let resize = (|| {
@@ -979,6 +982,129 @@ unsafe fn map_scatter_inner(
         }
     }
     1
+}
+
+/// The split/rejoin gap: while an unmap takes a shared view apart, the pages
+/// either side of the unmapped interval are unmapped and mapped again. A
+/// title access to them in that window faults; the vectored handler waits
+/// for the split to finish and retries the access only inside the view that
+/// unmap took apart, only when the page is covered again, and once per
+/// thread, page and unmap (an access that faults again is left to the next
+/// handler). TUXBOX_XMEM_FAULT_RETRY=0 off.
+mod split_retry {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    static LO: AtomicUsize = AtomicUsize::new(0);
+    static HI: AtomicUsize = AtomicUsize::new(0);
+    /// Unmap generation; odd while a split is in progress.
+    static GEN: AtomicU64 = AtomicU64::new(0);
+    static RETRIES: AtomicU64 = AtomicU64::new(0);
+
+    thread_local! {
+        /// (page, generation) this thread last retried.
+        static LAST: Cell<(usize, u64)> = const { Cell::new((usize::MAX, u64::MAX)) };
+    }
+
+    pub(super) fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("TUXBOX_XMEM_FAULT_RETRY").map_or(true, |v| v.trim() != "0"))
+    }
+
+    pub(super) struct Gap(bool);
+
+    impl Gap {
+        pub(super) fn open(lo: usize, hi: usize) -> Self {
+            if !enabled() {
+                return Self(false);
+            }
+            install();
+            // Even -> odd: readers see the new range only with an odd generation.
+            GEN.fetch_add(1, Ordering::AcqRel);
+            LO.store(lo, Ordering::Release);
+            HI.store(hi, Ordering::Release);
+            Self(true)
+        }
+    }
+
+    impl Drop for Gap {
+        fn drop(&mut self) {
+            if self.0 {
+                GEN.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+    }
+
+    fn install() {
+        static HANDLER: std::sync::Once = std::sync::Once::new();
+        HANDLER.call_once(|| unsafe {
+            windows_sys::Win32::System::Diagnostics::Debug::AddVectoredExceptionHandler(1, Some(fault));
+        });
+    }
+
+    /// Whether a retry is allowed for `page` in unmap `generation` given the
+    /// thread's last retry; records it when allowed.
+    pub(super) fn first_retry(last: &Cell<(usize, u64)>, page: usize, generation: u64) -> bool {
+        if last.get() == (page, generation) {
+            return false;
+        }
+        last.set((page, generation));
+        true
+    }
+
+    fn covered(at: usize) -> bool {
+        use windows_sys::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
+        let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+        let n = unsafe { VirtualQuery(at as *const _, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) };
+        n != 0 && info.State == MEM_COMMIT && info.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0 && info.Protect != 0
+    }
+
+    unsafe extern "system" fn fault(info: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS) -> i32 {
+        use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
+        const CONTINUE_EXECUTION: i32 = -1;
+        const CONTINUE_SEARCH: i32 = 0;
+        let record = unsafe { &*(*info).ExceptionRecord };
+        if record.ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record.NumberParameters < 2 {
+            return CONTINUE_SEARCH;
+        }
+        let at = record.ExceptionInformation[1];
+        let mut generation = GEN.load(Ordering::Acquire);
+        let (lo, hi) = (LO.load(Ordering::Acquire), HI.load(Ordering::Acquire));
+        // The last split's view only (in progress, or just finished when the
+        // fault raced its end).
+        if generation == 0 || !(lo <= at && at < hi) {
+            return CONTINUE_SEARCH;
+        }
+        while generation % 2 == 1 {
+            std::thread::yield_now();
+            let now = GEN.load(Ordering::Acquire);
+            if now != generation {
+                generation = now;
+                break;
+            }
+        }
+        let page = at & !(super::PAGE - 1);
+        let unmap = generation | 1;
+        if !covered(at) || !LAST.with(|last| first_retry(last, page, unmap)) {
+            return CONTINUE_SEARCH;
+        }
+        let n = RETRIES.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::loader::log(&format!(
+                "xmem: access at {at:#x} during the split of view {lo:#x}..{hi:#x} retried ({n} so far; TUXBOX_XMEM_FAULT_RETRY=0 off)"));
+        }
+        CONTINUE_EXECUTION
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn a_page_is_retried_once_per_thread_and_unmap() {
+        let last = Cell::new((usize::MAX, u64::MAX));
+        assert!(first_retry(&last, 0x1_0000, 1));
+        assert!(!first_retry(&last, 0x1_0000, 1));
+        assert!(first_retry(&last, 0x2_0000, 1));
+        assert!(first_retry(&last, 0x2_0000, 3));
+    }
 }
 
 /// Neonbridge: the range a join is remapping. A title access to it during the
