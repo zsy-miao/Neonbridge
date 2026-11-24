@@ -831,10 +831,12 @@ impl RenderHeaps {
         // image. Cover every overlapping heap's range with a new heap so later
         // placements here alias each other. Earlier images keep their heap.
         let (mut start, mut stop) = (address, end);
+        let mut covered: Vec<(std::sync::Weak<RenderHeap>, u64)> = Vec::new();
         for (&base, entry) in heaps.range(..end) {
             if let Some(heap) = entry.upgrade() && heap.end > address {
                 start = start.min(base);
                 stop = stop.max(heap.end);
+                covered.push((entry.clone(), heap.end - base));
             }
         }
         if !(address - start).is_multiple_of(alignment) {
@@ -864,6 +866,8 @@ impl RenderHeaps {
         let heap = Arc::new(RenderHeap { native: native.ok_or(E_POINTER)?, end: stop,
             _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes) });
         heaps.insert(start, Arc::downgrade(&heap));
+        drop(heaps);
+        note_shadowed(covered, desc.SizeInBytes);
         Ok((heap, address - start))
     }
 }
@@ -883,6 +887,30 @@ fn union_fits(union: u64, own: u64) -> bool {
 
 fn union_fits_cap(union: u64, own: u64, cap: Option<u64>) -> bool {
     cap.is_none_or(|cap| union <= cap.max(own.saturating_mul(2)))
+}
+
+/// Live render heaps a newer heap covers: images still holding an older heap
+/// keep its memory while the newer heap backs the same guest range again (on
+/// the console both alias one allocation). Logged every power of two of new
+/// heaps from 64 on: how many such heaps are still alive and their MiB.
+fn note_shadowed(covered: Vec<(std::sync::Weak<RenderHeap>, u64)>, size: u64) {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static SHADOWED: std::sync::Mutex<Vec<(std::sync::Weak<RenderHeap>, u64)>> = std::sync::Mutex::new(Vec::new());
+    static MADE: AtomicU64 = AtomicU64::new(0);
+    static MADE_BYTES: AtomicU64 = AtomicU64::new(0);
+    let n = MADE.fetch_add(1, Relaxed) + 1;
+    MADE_BYTES.fetch_add(size, Relaxed);
+    let mut shadowed = SHADOWED.lock().unwrap_or_else(|e| e.into_inner());
+    shadowed.extend(covered);
+    if n >= 64 && n.is_power_of_two() {
+        shadowed.retain(|(heap, _)| heap.strong_count() != 0);
+        shadowed.sort_by_key(|(heap, _)| heap.as_ptr() as usize);
+        shadowed.dedup_by(|a, b| std::sync::Weak::ptr_eq(&a.0, &b.0));
+        let bytes: u64 = shadowed.iter().map(|(_, b)| b).sum();
+        crate::diagnostics::log_line(format_args!(
+            "render heaps: {n} made ({} MiB); {} still alive under a newer heap over their range ({} MiB held twice)",
+            MADE_BYTES.load(Relaxed) >> 20, shadowed.len(), bytes >> 20));
+    }
 }
 
 fn note_own_heap(bytes: u64) {
