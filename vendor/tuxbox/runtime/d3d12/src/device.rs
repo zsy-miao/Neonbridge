@@ -900,8 +900,10 @@ unsafe extern "system" fn release_device(this: *mut Device) -> u32 {
     }) }
 }
 
-static DEVICE: Slots<160> = {
-    let mut slots = object_slots::<ID3D12Device, dxgi::DxgiDevice, 160>();
+// 192 slots, past the title's highest device slot (Leonida's retail boot chain):
+// a shorter table hands the title a null pointer instead of a logged E_NOTIMPL.
+static DEVICE: Slots<192> = {
+    let mut slots = object_slots::<ID3D12Device, dxgi::DxgiDevice, 192>();
     slots[0] = crate::slot!(dxgi::query);
     slots[2] = crate::slot!(release_device);
     slots[8] = crate::slot!(create_queue);
