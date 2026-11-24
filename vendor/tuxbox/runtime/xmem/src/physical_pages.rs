@@ -230,7 +230,8 @@ impl Pool {
         page.has_section_data = true;
         page.aliases += 1;
         let aliases = page.aliases;
-        self.mappings.insert(at, token);
+        let previous = self.mappings.insert(at, token);
+        imports::moved(at, previous, Some(token));
         if aliases > 1 {
             self.note_alias(token, at, aliases);
         }
@@ -282,7 +283,8 @@ impl Pool {
             p.aliases += 1;
             p.has_section_data = true;
             let aliases = p.aliases;
-            self.mappings.insert(start + i * PAGE, token);
+            let previous = self.mappings.insert(start + i * PAGE, token);
+            imports::moved(start + i * PAGE, previous, Some(token));
             if aliases > 1 {
                 self.note_alias(token, start + i * PAGE, aliases);
             }
@@ -451,6 +453,7 @@ impl Pool {
         self.views.extend(restored);
         for a in (at..end).step_by(PAGE) {
             let t = self.mappings.remove(&a).unwrap();
+            imports::moved(a, Some(t), None);
             self.pages.get_mut(&t).unwrap().aliases -= 1;
         }
         let live = &mut self.apertures.get_mut(&base).unwrap().1;
@@ -559,7 +562,8 @@ impl Pool {
             self.apertures.get_mut(&base).unwrap().1 -= 1;
         }
         self.pages.get_mut(&token).unwrap().aliases -= 1;
-        self.mappings.remove(&at);
+        let previous = self.mappings.remove(&at);
+        imports::moved(at, previous, None);
         Ok(())
     }
 
@@ -702,7 +706,8 @@ impl Pool {
                 page.saved = Vec::new();
             }
             page.mapped = true;
-            self.mappings.insert(at, *token);
+            let previous = self.mappings.insert(at, *token);
+            imports::moved(at, previous, Some(*token));
         }
         Ok(())
     }
@@ -1431,6 +1436,119 @@ mod imports {
             entry.0 = entry.0.saturating_sub(1);
             if entry.0 == 0 {
                 ranges.remove(&key);
+                drop(ranges);
+                stale::released(key);
+            }
+        }
+    }
+
+    /// Every page-table change (CopyPageMappingsBatchX included, which does
+    /// not pass through `changed`): the page at `at` held `previous`, now `now`.
+    pub(super) fn moved(at: usize, previous: Option<u64>, now: Option<u64>) {
+        if !enabled() || previous == now || !stale::enabled() {
+            return;
+        }
+        let range = {
+            let ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner());
+            if ranges.is_empty() {
+                None
+            } else {
+                // Ranges are keyed by start; an import is at most a few GiB, so
+                // the nearest starts at or below the page are enough.
+                ranges.range(..=(at, usize::MAX)).rev().take(64).find(|(k, _)| at < k.1).map(|(k, _)| *k)
+            }
+        };
+        stale::changed(at, range, previous, now);
+    }
+
+    /// five-star-recomp fad0b7f (GPL-3.0, StaleGpuPages.cs by marquezini),
+    /// ported: per GPU-imported range and page, the token (frame) the imported
+    /// heap was made over. Each remap or unmap under it is counted, and so is
+    /// a held token mapped again at another address, where GPU writes through
+    /// the import now change that memory. The first 16 of each are logged in
+    /// full. TUXBOX_STALE_GPU_PAGES=0 off.
+    mod stale {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        const DETAILED: u64 = 16;
+        const MAX_FRAMES: usize = 1 << 16;
+
+        #[derive(Default)]
+        struct Held {
+            /// (range, page) -> the token the import holds there (0: none).
+            pages: HashMap<((usize, usize), usize), u64>,
+            /// held token -> (page, range) it is held at.
+            frames: HashMap<u64, (usize, (usize, usize))>,
+        }
+
+        static HELD: Mutex<Option<Held>> = Mutex::new(None);
+        static REMAPPED: AtomicU64 = AtomicU64::new(0);
+        static REUSED: AtomicU64 = AtomicU64::new(0);
+
+        pub(super) fn enabled() -> bool {
+            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *ON.get_or_init(|| std::env::var("TUXBOX_STALE_GPU_PAGES").map_or(true, |v| v.trim() != "0"))
+        }
+
+        fn say(line: String) {
+            let line = format!("TuxBox xmem: {line}
+ ");
+            unsafe { windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringA(line.as_ptr()) };
+            if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
+                eprint!("{}", line.trim_end_matches(' '));
+            }
+        }
+
+        fn total(count: u64) {
+            if count > DETAILED && count.is_power_of_two() {
+                say(format!("gpu pages: {} remaps under GPU-imported heaps so far; tokens they still hold were mapped again elsewhere {} times (TUXBOX_STALE_GPU_PAGES=0 off)",
+                    REMAPPED.load(Ordering::Relaxed), REUSED.load(Ordering::Relaxed)));
+            }
+        }
+
+        pub(super) fn changed(at: usize, range: Option<(usize, usize)>, previous: Option<u64>, now: Option<u64>) {
+            let mut guard = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            let held = guard.get_or_insert_with(Default::default);
+            if let Some(range) = range {
+                // The first change since the import: the token before it is the one it was made over.
+                let token = *held.pages.entry((range, at)).or_insert(previous.unwrap_or(0));
+                if token != 0 {
+                    if now == Some(token) {
+                        held.pages.remove(&(range, at));
+                        held.frames.remove(&token);
+                    } else {
+                        if held.frames.len() < MAX_FRAMES {
+                            held.frames.entry(token).or_insert((at, range));
+                        }
+                        let n = REMAPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                        if n <= DETAILED {
+                            let change = now.map_or("unmapped".to_string(), |t| format!("now token {t:#x}"));
+                            say(format!("gpu pages: {at:#x} ({change}): the GPU-imported heap {:#x}..{:#x} still reaches token {token:#x} there ({n} so far)", range.0, range.1));
+                        }
+                        total(n);
+                    }
+                }
+            }
+            if let Some(token) = now
+                && let Some(&(page, range)) = held.frames.get(&token)
+                && page != at
+            {
+                let n = REUSED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= DETAILED {
+                    say(format!("gpu pages: token {token:#x} mapped again at {at:#x} while the GPU-imported heap {:#x}..{:#x} still holds it at {page:#x}: GPU writes there change the memory at {at:#x} ({n} so far)", range.0, range.1));
+                }
+                total(n);
+            }
+        }
+
+        /// The last import of `range` is gone: what it held no longer matters.
+        pub(super) fn released(range: (usize, usize)) {
+            let mut guard = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(held) = guard.as_mut() {
+                held.pages.retain(|k, _| k.0 != range);
+                held.frames.retain(|_, v| v.1 != range);
             }
         }
     }
