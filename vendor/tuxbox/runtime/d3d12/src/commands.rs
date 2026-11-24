@@ -2321,6 +2321,16 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     // Older #78 DispatchX and #84 CopyResourceX (rebox d907249).
     slots[80] = crate::slot!(dispatch_x);
     slots[86] = crate::slot!(copy_resource);
+    // TuxBox b6647ec (brcly, Apache-2.0): GDK d3d12_xs.h puts DXR at 119-123
+    // and DispatchMesh at 129, two above the older layout (117-121, 127).
+    // GTA VI tail-calls slot 129 as (list, x, 1, 1) at game+0x555e789, logged
+    // "unmapped slot 129" in test133-137, so its mesh dispatches never ran.
+    slots[119] = crate::slot!(build_raytracing::single);
+    slots[120] = crate::slot!(raytracing::postbuild);
+    slots[121] = crate::slot!(raytracing::copy);
+    slots[122] = crate::slot!(ray_dispatch::pipeline);
+    slots[123] = crate::slot!(ray_dispatch::dispatch);
+    slots[129] = crate::slot!(graphics::dispatch_mesh);
     slots[148] = crate::slot!(allocate_embedded);
     slots[70] = crate::slot!(graphics::depth_bounds);
     slots[75] = crate::slot!(graphics::force_shader_depth_order);
