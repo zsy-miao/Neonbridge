@@ -184,6 +184,19 @@ enum Res {
 
 const XYZW: [&str; 4] = ["x", "y", "z", "w"];
 
+/// Float min/max for the DPP and wave reductions: the helpers that order -0
+/// below +0 as RDNA2 does (a wrong -0 turns a following rsq's +inf into -inf),
+/// or plain HLSL min/max with TB_MINMAX_FAST=1 (VIctory bf84134, re-derived).
+fn minmax_fn(op: &str) -> &'static str {
+    let fast = std::env::var("TB_MINMAX_FAST").is_ok_and(|v| v.trim() == "1");
+    match (op, fast) {
+        ("min", false) => "tb_fmin",
+        ("max", false) => "tb_fmax",
+        ("min", true) => "min",
+        _ => "max",
+    }
+}
+
 /// RDNA2 cube-map helpers. v_cube{ma,sc,tc,id}_f32 follow the ISA definition (major axis ×2,
 /// face-local S/T, face index 0..5 = +X,-X,+Y,-Y,+Z,-Z). Hardware cube sampling takes
 /// (s, t, face) with s,t = sc/|ma| + 1.5 (so each is in [1, 2]); `tb_cube_dir` inverts that
@@ -5742,8 +5755,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 "v_min_u32" => format!("min({partner}, {acc})"),
                 "v_max_u32" => format!("max({partner}, {acc})"),
                 "v_add_f32" => format!("asuint(asfloat({partner}) + asfloat({acc}))"),
-                "v_min_f32" => format!("asuint(min(asfloat({partner}), asfloat({acc})))"),
-                "v_max_f32" => format!("asuint(max(asfloat({partner}), asfloat({acc})))"),
+                "v_min_f32" => format!("asuint({}(asfloat({partner}), asfloat({acc})))", minmax_fn("min")),
+                "v_max_f32" => format!("asuint({}(asfloat({partner}), asfloat({acc})))", minmax_fn("max")),
                 _ => return Err("invalid DPP reduction operation".into()),
             };
             self.line(&format!("uint t{t} = {combined};"));
@@ -5785,8 +5798,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         "v_min_u32" => format!("min(hr{region}lo, hr{region}hi)"),
                         "v_max_u32" => format!("max(hr{region}lo, hr{region}hi)"),
                         "v_add_f32" => format!("asuint(asfloat(hr{region}lo) + asfloat(hr{region}hi))"),
-                        "v_min_f32" => format!("asuint(min(asfloat(hr{region}lo), asfloat(hr{region}hi)))"),
-                        "v_max_f32" => format!("asuint(max(asfloat(hr{region}lo), asfloat(hr{region}hi)))"),
+                        "v_min_f32" => format!("asuint({}(asfloat(hr{region}lo), asfloat(hr{region}hi)))", minmax_fn("min")),
+                        "v_max_f32" => format!("asuint({}(asfloat(hr{region}lo), asfloat(hr{region}hi)))", minmax_fn("max")),
                         _ => return Err("divergent wave64 reduction lacks its upper-half combine".into()),
                     }
                 }
@@ -5810,13 +5823,24 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // See `lower_wave_reductions`. Every invocation computes the same value; lanes
             // that were inactive contribute the identity.
             let f = if m == "tb_wave_min_f32" { "WaveActiveMin" } else { "WaveActiveMax" };
-            let e = format!(
-                "asuint({f}((({} & 1u) != 0u) ? asfloat({}) : asfloat({:#x}u)))",
-                r(&s[1])?,
-                r(&s[0])?,
-                ins.aux.imm as u32
-            );
-            return self.ws(&d, &e);
+            if minmax_fn("min") == "min" {
+                let e = format!(
+                    "asuint({f}((({} & 1u) != 0u) ? asfloat({}) : asfloat({:#x}u)))",
+                    r(&s[1])?,
+                    r(&s[0])?,
+                    ins.aux.imm as u32
+                );
+                return self.ws(&d, &e);
+            }
+            // Reduce an order-preserving integer key so -0 sorts below +0 as on
+            // RDNA2 (a float WaveActiveMin/Max may treat the zeros as equal). A NaN
+            // lane contributes the identity, as v_min/v_max return the other operand.
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("uint t{t}b = (({} & 1u) != 0u && (({} & 0x7fffffffu) <= 0x7f800000u)) ? {} : {:#x}u;",
+                r(&s[1])?, r(&s[0])?, r(&s[0])?, ins.aux.imm as u32));
+            self.line(&format!("uint t{t}k = {f}((t{t}b & 0x80000000u) ? ~t{t}b : (t{t}b | 0x80000000u));"));
+            return self.ws(&d, &format!("((t{t}k & 0x80000000u) ? (t{t}k & 0x7fffffffu) : ~t{t}k)"));
         }
         // ---- half-float arithmetic: operands are f16 in the low 16 bits (inline float
         // constants denote the half-float of that value); the result is written as f16.
