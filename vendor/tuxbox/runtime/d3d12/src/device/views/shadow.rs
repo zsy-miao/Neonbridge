@@ -38,6 +38,63 @@ struct Entry {
     /// Refresh number at which a descriptor last bound this shadow (or its
     /// title bytes last changed), for aging.
     bound: u64,
+    /// Pieces over title pages no heap opens: (mapped upload buffer, title
+    /// address, bytes), filled from title memory by the CPU before the
+    /// piece's GPU copy (see cpu_piece).
+    cpu: Vec<(usize, u64, u64, ID3D12Resource)>,
+}
+
+/// test108/109 bound over 8192 small address SRVs (32 B to 12 KiB, title RVA
+/// 0x4ecc821) as null views: their 64 KiB title pages failed to import with
+/// E_INVALIDARG and so did the shadow's import. A read-only view of committed,
+/// readable title memory now reads it through an upload buffer the CPU fills
+/// before each refresh's copy (rebox 55f1d49's idea, re-derived: the CPU
+/// address behind the view, else empty). TUXBOX_SHADOW_CPU=0 binds null again.
+fn cpu_pieces_on() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_CPU") != Some("0")
+}
+
+/// Whether [address, address + bytes) is committed and readable.
+fn readable(address: u64, bytes: u64) -> bool {
+    use windows::Win32::System::Memory::*;
+    let end = address + bytes;
+    let mut at = address;
+    while at < end {
+        let mut r = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(at as _), &mut r, size_of_val(&r)) } == 0 || r.State != MEM_COMMIT {
+            return false;
+        }
+        let p = r.Protect.0;
+        if p & (PAGE_NOACCESS.0 | PAGE_GUARD.0) != 0 || p == 0 {
+            return false;
+        }
+        at = r.BaseAddress as u64 + r.RegionSize as u64;
+    }
+    true
+}
+
+/// An upload buffer standing in for title pages that will not import, mapped
+/// for good, and filled now.
+fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resource, usize)> {
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_UPLOAD, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
+    let mut staging: Option<ID3D12Resource> = None;
+    unsafe {
+        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(bytes.next_multiple_of(256)),
+            D3D12_RESOURCE_STATE_GENERIC_READ, None, &mut staging)?;
+    }
+    let staging = staging.ok_or(E_POINTER)?;
+    let mut mapped = core::ptr::null_mut();
+    let nothing_read = D3D12_RANGE { Begin: 0, End: 0 };
+    unsafe { staging.Map(0, Some(&nothing_read), Some(&mut mapped))? };
+    unsafe { core::ptr::copy_nonoverlapping(address as *const u8, mapped.cast::<u8>(), bytes as usize) };
+    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowImport, bytes);
+    static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "shadow at {address:#x} ({bytes} bytes): title pages not importable, read through a CPU-filled upload buffer ({n} so far; TUXBOX_SHADOW_CPU=0 binds null)"));
+    }
+    Ok((staging, mapped as usize))
 }
 
 /// Refreshes so far (one per queue submission).
@@ -376,6 +433,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     let held = if lockfree { drop(entries); None } else { Some(entries) };
     let page = address & !0xffff;
     let width = (address - page + bytes).next_multiple_of(65536);
+    let mut cpu: Vec<(usize, u64, u64, ID3D12Resource)> = Vec::new();
     let pieces = match import_source(device, page, width) {
         Ok(source) => vec![(source, address - page, 0, bytes)],
         // The range spans separately mapped title pages that no single heap can
@@ -385,8 +443,10 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG => {
             let mut pieces = Vec::new();
             let end = (address + bytes).next_multiple_of(65536);
-            split_import(device, address, bytes, page, (page + width / 2).next_multiple_of(65536).min(end), &mut pieces)?;
-            split_import(device, address, bytes, (page + width / 2).next_multiple_of(65536).min(end), end, &mut pieces)?;
+            let mut cpu_vec = (!writable && cpu_pieces_on()).then(Vec::new);
+            split_import(device, address, bytes, page, (page + width / 2).next_multiple_of(65536).min(end), &mut pieces, cpu_vec.as_mut())?;
+            split_import(device, address, bytes, (page + width / 2).next_multiple_of(65536).min(end), end, &mut pieces, cpu_vec.as_mut())?;
+            cpu = cpu_vec.unwrap_or_default();
             pieces
         }
         Err(e) => return Err(e),
@@ -415,7 +475,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
-    let replaced = entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None,
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -453,6 +513,7 @@ fn split_import(
     from: u64,
     to: u64,
     pieces: &mut Vec<(ID3D12Resource, u64, u64, u64)>,
+    cpu: Option<&mut Vec<(usize, u64, u64, ID3D12Resource)>>,
 ) -> Result<()> {
     if from >= to {
         return Ok(());
@@ -467,8 +528,23 @@ fn split_import(
         }
         Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG && to - from > 65536 => {
             let middle = (from + (to - from) / 2).next_multiple_of(65536);
-            split_import(device, address, bytes, from, middle, pieces)?;
-            split_import(device, address, bytes, middle, to, pieces)
+            let mut cpu = cpu;
+            split_import(device, address, bytes, from, middle, pieces, cpu.as_deref_mut())?;
+            split_import(device, address, bytes, middle, to, pieces, cpu)
+        }
+        Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG && cpu.is_some() => {
+            let Some(cpu) = cpu else { return Err(e) };
+            let (start, end) = (address.max(from), (address + bytes).min(to));
+            if start >= end {
+                return Ok(());
+            }
+            if !readable(start, end - start) {
+                return Err(e);
+            }
+            let (staging, mapped) = cpu_piece(device, start, end - start)?;
+            cpu.push((mapped, start, end - start, staging.clone()));
+            pieces.push((staging, 0, start - address, end - start));
+            Ok(())
         }
         Err(e) => Err(e),
     }
@@ -512,6 +588,9 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         return Ok(());
     }
     let mut copies = Vec::new();
+    // CPU fills of upload pieces: (mapped, title address, bytes, the upload
+    // buffer, held until filled).
+    let mut fills: Vec<(usize, u64, u64, ID3D12Resource)> = Vec::new();
     {
         // test79 froze 15 s with four title threads waiting on this lock: it
         // was held while hashing title memory, whose reads can fault into the
@@ -553,6 +632,11 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                     entry.bound = now;
                 }
             }
+            if !back {
+                fills.extend(entry.cpu.iter().map(|(m, a, b, r)| (*m, *a, *b, r.clone())));
+            } else if !entry.cpu.is_empty() {
+                continue;
+            }
             for (source, offset, at, bytes) in &entry.pieces {
                 copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
             }
@@ -571,6 +655,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 if aged_check {
                     entry.bound = now;
                 }
+                fills.extend(entry.cpu.iter().map(|(m, a, b, r)| (*m, *a, *b, r.clone())));
                 for (source, offset, at, bytes) in &entry.pieces {
                     copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
                 }
@@ -587,6 +672,11 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 if back { "write-back" } else { "refresh" }, n + 1, copies.len()));
         }
     }
+    // Outside the lock: title reads can fault into the title's handlers (test79).
+    for (mapped, address, bytes, _staging) in &fills {
+        unsafe { core::ptr::copy_nonoverlapping(*address as *const u8, *mapped as *mut u8, *bytes as usize) };
+    }
+    drop(fills);
     if copies.is_empty() {
         return Ok(());
     }
