@@ -109,6 +109,19 @@ struct Contents {
 /// froze the same way with no level over 64 MiB, and its write watch skipped
 /// no level in any refresh, so each refresh also reads back at most
 /// TUXBOX_REFRESH_READ_MB (32) of levels; the rest wait for a later one.
+/// test111: the Bink video's 1920x1080 format-61 planes were refreshed as
+/// "1 of 1 mips skipped, read budget spent", so the YUV->RGB draw sampled one
+/// plane from the previous frame against fresh others (the datamosh). A
+/// single-level R8/R8G8 plane of 256+ texels is now read every refresh,
+/// past the byte and time budgets. TUXBOX_PLANE_UNBUDGETED=0 defers it again.
+pub(super) fn video_plane(desc: &D3D12_RESOURCE_DESC, mips: usize) -> bool {
+    mips == 1
+        && matches!(desc.Format.0, 49 | 61)
+        && desc.Width >= 256
+        && desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        && crate::env_toggle!("TUXBOX_PLANE_UNBUDGETED") != Some("0")
+}
+
 pub(super) fn refresh_read_budget() -> u64 {
     static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MB.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(32)) << 20
@@ -831,7 +844,7 @@ impl Texture {
             // The first level of a refresh always reads (progress); later ones
             // stop at the budget (0: unlimited) and are read next time.
             let limit = refresh_read_budget();
-            if limit != 0 && *budget != limit && size > *budget {
+            if limit != 0 && *budget != limit && size > *budget && !video_plane(&self.desc, self.mips.len()) {
                 static DEFERRED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = DEFERRED.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 4 || n.is_power_of_two() {
