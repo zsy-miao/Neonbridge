@@ -75,6 +75,8 @@ pub(crate) struct Arena {
 struct Tables {
     used: u32,
     ranges: BTreeMap<(u32, u32), u32>,
+    /// The longest range in `ranges`, bounding which can hold a slot.
+    longest: u32,
     direct: index_map::Direct,
     resident_records: BTreeMap<usize, InlineDescriptor>,
 }
@@ -253,9 +255,14 @@ impl Arena {
             return;
         }
         let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
-        let Tables { direct, used, ranges, resident_records } = &mut *tables;
+        let Tables { direct, used, ranges, longest, resident_records } = &mut *tables;
         direct.publish(self, first..end, used);
-        for (&(start, length), &resident) in ranges.iter() {
+        // test86: a title thread spent most of its time here and waiting on
+        // this lock: every descriptor write walked every resident table. Only
+        // tables starting within the longest table's length before `first`
+        // can hold these slots. TUXBOX_PUBLISH_SCAN_ALL=1 walks them all.
+        let lower = if crate::env_toggle!("TUXBOX_PUBLISH_SCAN_ALL") == Some("1") { 0 } else { first.saturating_sub(*longest) };
+        for (&(start, length), &resident) in ranges.range((lower, 0)..(end, 0)) {
             if self.inline && self.stride != INLINE_BYTES {
                 let offset = (first as usize).saturating_sub(start as usize) * self.stride / INLINE_BYTES;
                 if first >= start && offset < length as usize {
@@ -348,6 +355,7 @@ impl Arena {
                 self.copy(first, index, length);
             }
             tables.ranges.insert(key, index);
+            tables.longest = tables.longest.max(length);
             tables.used = end;
             index
         };

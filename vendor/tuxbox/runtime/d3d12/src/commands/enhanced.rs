@@ -509,12 +509,23 @@ fn probe(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
 }
 
 /// One-field variants of a rejected texture barrier, tried by the probe.
-const VARIANTS: [&str; 12] = [
+const VARIANTS: [&str; 14] = [
     "SyncAfter DEPTH_STENCIL", "SyncAfter ALL_SHADING", "SyncAfter ALL", "SyncBefore ALL",
     "AccessAfter DEPTH_STENCIL_READ", "AccessAfter SHADER_RESOURCE", "AccessBefore SHADER_RESOURCE",
     "all subresources", "LayoutBefore COMMON", "LayoutAfter SHADER_RESOURCE",
     "LayoutAfter DEPTH_STENCIL_WRITE", "LayoutAfter COMMON",
+    "LayoutBefore UNDEFINED (no sync, no access before)", "no layout change",
 ];
+/// Learned for a barrier no variant fixes: it is left out.
+const SKIP: usize = usize::MAX;
+/// Resources whose barriers no variant fixed (test86); their barriers are
+/// left out. TUXBOX_BARRIER_SKIP=0 records them (and Close fails).
+static BAD: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+static ANY_BAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn skip_on() -> bool {
+    crate::env_toggle!("TUXBOX_BARRIER_SKIP") != Some("0")
+}
 
 fn variant(b: &mut D3D12_TEXTURE_BARRIER, v: usize) {
     match v {
@@ -529,7 +540,13 @@ fn variant(b: &mut D3D12_TEXTURE_BARRIER, v: usize) {
         8 => b.LayoutBefore = D3D12_BARRIER_LAYOUT_COMMON,
         9 => b.LayoutAfter = D3D12_BARRIER_LAYOUT_SHADER_RESOURCE,
         10 => b.LayoutAfter = D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_WRITE,
-        _ => b.LayoutAfter = D3D12_BARRIER_LAYOUT_COMMON,
+        11 => b.LayoutAfter = D3D12_BARRIER_LAYOUT_COMMON,
+        12 => {
+            b.LayoutBefore = D3D12_BARRIER_LAYOUT_UNDEFINED;
+            b.SyncBefore = D3D12_BARRIER_SYNC_NONE;
+            b.AccessBefore = D3D12_BARRIER_ACCESS_NO_ACCESS;
+        }
+        _ => b.LayoutAfter = b.LayoutBefore,
     }
 }
 
@@ -564,7 +581,9 @@ unsafe fn bisect(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCom
         };
         if ok { passed.push(v); }
     }
-    if let Some(&first) = passed.first()
+    let resource_note = if passed.is_empty() { unsafe { probe_resource(allocator, scratch, failed) } } else { String::new() };
+    let learn = passed.first().copied().or_else(|| skip_on().then_some(SKIP));
+    if let Some(first) = learn
         && crate::env_toggle!("TUXBOX_BARRIER_LEARN") != Some("0")
     {
         let key = learn_key(failed, &desc);
@@ -573,16 +592,94 @@ unsafe fn bisect(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCom
             learned.push((key, first));
             ANY_LEARNED.store(true, Ordering::Release);
         }
+        if first == SKIP {
+            let raw = failed.pResource.as_ref().map_or(0, |r| r.as_raw() as usize);
+            let mut bad = BAD.lock().unwrap_or_else(|e| e.into_inner());
+            if raw != 0 && bad.len() < 256 && !bad.contains(&raw) {
+                bad.push(raw);
+                ANY_BAD.store(true, Ordering::Release);
+            }
+        }
     }
     let names: Vec<&str> = passed.iter().map(|&v| VARIANTS[v]).collect();
-    format!("; host accepts it with: {}", if names.is_empty() { "no single-field change".to_string() } else { names.join(", ") })
+    format!("; host accepts it with: {}{resource_note}", if names.is_empty() {
+        format!("no single-field change{}", if skip_on() { "; its barriers are left out from now on (TUXBOX_BARRIER_SKIP=0 records them)" } else { "" })
+    } else { names.join(", ") })
 }
 
-/// Applies a learned variant to a barrier the host rejected before.
-fn apply_learned(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
-    if !ANY_LEARNED.load(Ordering::Acquire) { return; }
+/// test86: a barrier no variant fixed. Is it the resource? Tries a legacy
+/// transition and a global barrier on the scratch list and says how the
+/// resource was made.
+unsafe fn probe_resource(allocator: &ID3D12CommandAllocator, scratch: &ID3D12GraphicsCommandList7, failed: &D3D12_TEXTURE_BARRIER) -> String {
+    let Some(resource) = failed.pResource.as_ref() else { return "; no resource".into() };
+    let close = |record: &dyn Fn()| -> &'static str {
+        unsafe {
+            if allocator.Reset().is_err() || scratch.Reset(allocator, None).is_err() { return "not run"; }
+            record();
+            if scratch.Close().is_ok() { "passes" } else { "fails" }
+        }
+    };
+    let legacy = close(&|| unsafe {
+        let mut barrier = D3D12_RESOURCE_BARRIER {
+            Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+            Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
+            Anonymous: D3D12_RESOURCE_BARRIER_0 { Transition: mem::ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
+                pResource: mem::ManuallyDrop::new(None),
+                Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                StateBefore: D3D12_RESOURCE_STATE_DEPTH_READ,
+                StateAfter: D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            }) },
+        };
+        // Borrow the COM pointer without a reference (desktop semantics).
+        ptr::from_mut(&mut (*barrier.Anonymous.Transition).pResource).cast::<*mut c_void>().write(resource.as_raw());
+        scratch.ResourceBarrier(&[barrier]);
+    });
+    let global = close(&|| unsafe {
+        let g = D3D12_GLOBAL_BARRIER { SyncBefore: D3D12_BARRIER_SYNC_ALL, SyncAfter: D3D12_BARRIER_SYNC_ALL,
+            AccessBefore: D3D12_BARRIER_ACCESS_COMMON, AccessAfter: D3D12_BARRIER_ACCESS_COMMON };
+        scratch.Barrier(&[D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_GLOBAL, NumBarriers: 1,
+            Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: &g } }]);
+    });
+    let mut props = D3D12_HEAP_PROPERTIES::default();
+    let mut flags = D3D12_HEAP_FLAGS::default();
+    let heap = match unsafe { resource.GetHeapProperties(Some(&mut props), Some(&mut flags)) } {
+        Ok(()) => format!("committed or placed (heap type {} flags {:#x})", props.Type.0, flags.0),
+        Err(e) => format!("reserved or unknown (GetHeapProperties {:#010x})", e.code().0),
+    };
+    let device = {
+        let mut a: Option<ID3D12Device> = None;
+        let mut b: Option<ID3D12Device> = None;
+        let _ = unsafe { resource.GetDevice(&mut a) };
+        let _ = unsafe { scratch.GetDevice(&mut b) };
+        if a.is_some() && a == b { "same device" } else { "another or no device" }
+    };
+    format!("; resource {:#x}: legacy DEPTH_READ->PIXEL_SHADER_RESOURCE transition {legacy}, a global barrier {global}, {heap}, {device}", resource.as_raw() as usize)
+}
+
+/// Whether barriers on this resource are left out (see BAD).
+fn bad_resource(item: &D3D12_TEXTURE_BARRIER) -> bool {
+    if !ANY_BAD.load(Ordering::Acquire) || !skip_on() { return false; }
+    let raw = item.pResource.as_ref().map_or(0, |r| r.as_raw() as usize);
+    BAD.lock().unwrap_or_else(|e| e.into_inner()).contains(&raw)
+}
+
+/// Applies a learned variant to a barrier the host rejected before; false
+/// when the barrier is to be left out.
+fn apply_learned(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) -> bool {
+    if bad_resource(item) {
+        static S: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = S.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!("enhanced texture barrier left out: the host rejected every variant of one on this resource ({n} so far; TUXBOX_BARRIER_SKIP=0 records it)"));
+        }
+        return false;
+    }
+    if !ANY_LEARNED.load(Ordering::Acquire) { return true; }
     let key = learn_key(item, desc);
     let found = LEARNED.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
+    if found == Some(SKIP) {
+        return !skip_on();
+    }
     if let Some(v) = found {
         variant(item, v);
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -591,6 +688,7 @@ fn apply_learned(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
             crate::diagnostics::log_line(format_args!("enhanced texture barrier the host rejected recorded with {} ({n} so far; TUXBOX_BARRIER_LEARN=0 off)", VARIANTS[v]));
         }
     }
+    true
 }
 
 fn note_rewrite(kind: &str, original: (i32, i32, i32, i32, i32, i32), fixed: (i32, i32, i32, i32, i32, i32)) {
@@ -772,7 +870,9 @@ unsafe fn record(
                     }
                     fit_host(&mut item, &desc);
                     fix_texture(&mut item, compute, simultaneous);
-                    apply_learned(&mut item, &desc);
+                    if !apply_learned(&mut item, &desc) {
+                        continue;
+                    }
                     device::committed_writeback::note_layout(&resource.native, item.LayoutAfter);
                     barriers.push(item);
                 }
