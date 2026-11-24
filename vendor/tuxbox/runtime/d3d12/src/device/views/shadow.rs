@@ -86,7 +86,7 @@ fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resourc
     let mut mapped = core::ptr::null_mut();
     let nothing_read = D3D12_RANGE { Begin: 0, End: 0 };
     unsafe { staging.Map(0, Some(&nothing_read), Some(&mut mapped))? };
-    unsafe { core::ptr::copy_nonoverlapping(address as *const u8, mapped.cast::<u8>(), bytes as usize) };
+    unsafe { fill(mapped as usize, address, bytes) };
     crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowImport, bytes);
     static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -95,6 +95,57 @@ fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resourc
             "shadow at {address:#x} ({bytes} bytes): title pages not importable, read through a CPU-filled upload buffer ({n} so far; TUXBOX_SHADOW_CPU=0 binds null)"));
     }
     Ok((staging, mapped as usize))
+}
+
+/// Copies title bytes into a CPU piece's upload buffer with ReadProcessMemory,
+/// which fails instead of faulting. test133 died here (memcpy at d3d12_xs+0x27c5ab
+/// under transfer, read at 0xc63080000): a piece's pages were readable when it
+/// was made, then the title decommitted them under the live view; the aged hash
+/// saw the change, and the refill read reserved memory. A 64 KiB chunk that
+/// fails is retried page by page, and pages that still fail read as zeros, as
+/// the title no longer has bytes there. No VirtualQuery on this path (each
+/// call walked 13,829 title regions in test132). TUXBOX_SHADOW_FILL_CHECKED=0
+/// copies directly as before.
+unsafe fn fill(mapped: usize, address: u64, bytes: u64) {
+    if crate::env_toggle!("TUXBOX_SHADOW_FILL_CHECKED") == Some("0") {
+        unsafe { core::ptr::copy_nonoverlapping(address as *const u8, mapped as *mut u8, bytes as usize) };
+        return;
+    }
+    use windows::Win32::System::{Diagnostics::Debug::ReadProcessMemory, Threading::GetCurrentProcess};
+    let read = |at: u64, dst: usize, n: u64| -> bool {
+        let mut copied = 0usize;
+        // SAFETY: ReadProcessMemory reports unreadable source pages as an error;
+        // the destination is the piece's mapped upload buffer, `bytes` long.
+        unsafe { ReadProcessMemory(GetCurrentProcess(), at as *const core::ffi::c_void, dst as *mut core::ffi::c_void, n as usize, Some(&mut copied)) }
+            .is_ok()
+            && copied as u64 == n
+    };
+    const CHUNK: u64 = 64 << 10;
+    const PAGE: u64 = 4 << 10;
+    static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let (mut at, end) = (address, address.saturating_add(bytes));
+    while at < end {
+        let n = (end - at).min(CHUNK);
+        if !read(at, mapped + (at - address) as usize, n) {
+            let mut p = at;
+            while p < at + n {
+                let q = ((p / PAGE + 1) * PAGE).min(at + n);
+                let dst = mapped + (p - address) as usize;
+                if !read(p, dst, q - p) {
+                    // SAFETY: inside the mapped upload buffer.
+                    unsafe { core::ptr::write_bytes(dst as *mut u8, 0, (q - p) as usize) };
+                    let z = ZEROED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if z < 4 || (z + 1).is_power_of_two() {
+                        crate::diagnostics::log_line(format_args!(
+                            "shadow fill: title page {p:#x} of {address:#x}+{bytes:#x} is not readable now (decommitted under a live view); it reads as zeros ({} so far; TUXBOX_SHADOW_FILL_CHECKED=0 copies directly)",
+                            z + 1));
+                    }
+                }
+                p = q;
+            }
+        }
+        at += n;
+    }
 }
 
 /// Refreshes so far (one per queue submission).
@@ -756,7 +807,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     }
     // Outside the lock: title reads can fault into the title's handlers (test79).
     for (mapped, address, bytes, _staging) in &fills {
-        unsafe { core::ptr::copy_nonoverlapping(*address as *const u8, *mapped as *mut u8, *bytes as usize) };
+        unsafe { fill(*mapped, *address, *bytes) };
     }
     drop(fills);
     if copies.is_empty() {
