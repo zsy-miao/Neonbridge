@@ -2872,6 +2872,29 @@ impl<'a> Emitter<'a> {
                         }
                     }
                 }
+                // Inline sampler words also arrive two at a time: `s_bfm_b64 s[N:N+1], 2, 54`
+                // (word 0 = 0, word 1 = 0x00c00000) and `s_mov_b64` of a constant.
+                Enc::Sop2 if inline_samplers && ins.mnemonic == "s_bfm_b64"
+                    && matches!(ins.src.get(..2), Some([Opnd::ConstInt(_), Opnd::ConstInt(_)])) =>
+                {
+                    if let (Some(d), [Opnd::ConstInt(width), Opnd::ConstInt(shift)]) = (ins.dst.first().and_then(sg), &ins.src[..2]) {
+                        let (width, shift) = ((*width as u32) & 63, (*shift as u32) & 63);
+                        let value = 1u64.checked_shl(width).map_or(u64::MAX, |v| v - 1).wrapping_shl(shift);
+                        for k in 0..2u16 {
+                            sym.insert(d + k, Sym::InlineWord((value >> (32 * k)) as u32));
+                            written.insert(d + k);
+                        }
+                    }
+                }
+                Enc::Sop1 if inline_samplers && ins.mnemonic == "s_mov_b64" && matches!(ins.src.first(), Some(Opnd::ConstInt(_))) => {
+                    if let (Some(d), Some(Opnd::ConstInt(v))) = (ins.dst.first().and_then(sg), ins.src.first()) {
+                        let value = *v as i64 as u64;
+                        for k in 0..2u16 {
+                            sym.insert(d + k, Sym::InlineWord((value >> (32 * k)) as u32));
+                            written.insert(d + k);
+                        }
+                    }
+                }
                 Enc::Sop1 if ins.mnemonic == "s_mov_b64" => {
                     // 64-bit moves copy descriptors two dwords at a time
                     // (`s_mov_b64 s44, s84` + `s_mov_b64 s46, s86` moves a 4-dword descriptor).
@@ -8202,6 +8225,7 @@ uint tb_heap_index(uint i) { return i; }
             // the descriptor-table ABI places group IDs after the root parameters.
             let [tx, ty_, tz] = compute_group(ex);
             let nparams = ex.root_sig.as_ref().map(|r| r.params.len()).unwrap_or(4);
+            let rsrc2 = if ex.stage == Stage::Compute { ex.isa_preamble[0] } else { 0 };
             let g = match self.packed.as_ref().map(|p| &p.abi) {
                 None if self.resolve_wave32 => ray_resolve::group_x_register(ex)
                     .ok_or("unverified resolve compute user-data layout")?,
@@ -8210,8 +8234,13 @@ uint tb_heap_index(uint i) { return i; }
                 Some(RootAbi::Ps09Raster) => 11,
                 None if ex.root_sig.as_ref().is_some_and(|r| r.flags & 0x400 != 0 && r.params.len() == 2 && r.params.iter().all(|p| matches!(p.kind, crate::meta::RootParamKind::Table(_))))
                     && tuxbox_dxbc::compute_table::two_tables_and_heap(&ex.fssm) => 7,
+                // COMPUTE_PGM_RSRC2 (FSSM preamble word 0): USER_SGPR [5:1] user-data
+                // registers, then the enabled TGID_X/Y/Z [9:7] in order.
+                None if rsrc2 != 0 => ((rsrc2 >> 1) & 31) as usize,
                 None => sampler_heap::constants(ex).map_or(4 + nparams, |(start, c)| usize::from(start) + c.count as usize),
             };
+            let from_rsrc2 = self.packed.is_none() && !self.resolve_wave32 && rsrc2 != 0 && g == ((rsrc2 >> 1) & 31) as usize;
+            let group_ids: Vec<usize> = if from_rsrc2 { (0..3).filter(|c| (rsrc2 >> (7 + c)) & 1 != 0).collect() } else { vec![0, 1, 2] };
             if self.compute_swizzle || self.indexed_lane {
                 writeln!(h, "groupshared uint tb_swizzle[{}];", tx * ty_ * tz).unwrap();
             }
@@ -8236,7 +8265,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             for r in ["v0", "v1", "v2"] {
                 self.regs.insert(r.to_string());
             }
-            for k in 0..3 {
+            for k in 0..group_ids.len() {
                 self.regs.insert(format!("s{}", g + k));
             }
             let _ = writeln!(h, "{}", self.reg_decls());
@@ -8251,7 +8280,8 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             } else {
                 writeln!(h, "    v0 = gtid.x; v1 = gtid.y; v2 = gtid.z;").unwrap();
             }
-            let _ = writeln!(h, "    s{} = gid.x; s{} = gid.y; s{} = gid.z;", g, g + 1, g + 2);
+            let ids: Vec<String> = group_ids.iter().enumerate().map(|(k, &c)| format!("s{} = gid.{};", g + k, XYZW[c])).collect();
+            let _ = writeln!(h, "    {}", ids.join(" "));
             sampler_heap::init_constants(ex, &self.regs, &mut h);
             if let Some(plan) = &self.packed { plan.init_args(&mut h); }
             h.push_str(&self.body);
