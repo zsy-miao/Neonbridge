@@ -17,8 +17,11 @@ static WAIT_BUDGET_MS: AtomicI64 = AtomicI64::new(60_000);
 const FRAME_BUDGET_MS: i64 = 500;
 
 /// A title frame was presented: grant the next frame its wait budget.
+/// TUXBOX_FRAME_WAIT_MS overrides it: lower trades dropped draws (pipelines
+/// still building) for frame time; 0 never waits after the first present.
 pub(crate) fn frame_presented() {
-    WAIT_BUDGET_MS.store(FRAME_BUDGET_MS, Ordering::Relaxed);
+    let budget = crate::env_toggle!("TUXBOX_FRAME_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(FRAME_BUDGET_MS);
+    WAIT_BUDGET_MS.store(budget, Ordering::Relaxed);
 }
 
 thread_local! {
