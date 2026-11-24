@@ -321,6 +321,45 @@ impl Pool {
         }
     }
 
+    /// Joins pages just mapped one view each at [address, address + bytes)
+    /// with their VA neighbours when they continue the same section at the
+    /// next offset (join_range checks the rest). The title maps one page per
+    /// call, so without this a GPU range stayed thousands of 64 KiB views
+    /// (test39: 73k, 4.6 GiB) that native D3D12 cannot import as one heap,
+    /// and every range was shadow-copied instead until device memory ran
+    /// out. A join remaps the whole view, so views stop growing at
+    /// TUXBOX_XMEM_EAGER_JOIN_PAGES (default 256, 16 MiB) and a range past
+    /// that is joined when d3d12 imports it. TUXBOX_XMEM_EAGER_JOIN=0 joins
+    /// only when d3d12 asks.
+    fn join_neighbours(&mut self, address: usize, bytes: usize) {
+        static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_XMEM_EAGER_JOIN").map_or(true, |v| v.trim() != "0"));
+        if !*ON || bytes == 0 { return; }
+        let follows = |pool: &Self, before: usize, after: usize| -> bool {
+            let (Some(a), Some(b)) = (pool.mappings.get(&before), pool.mappings.get(&after)) else { return false };
+            let (a, b) = (&pool.pages[a], &pool.pages[b]);
+            !a.mapped && !b.mapped && Arc::ptr_eq(&a.section, &b.section) && b.offset == a.offset + (after - before) as u64
+        };
+        let end = address + bytes;
+        static CAP: LazyLock<usize> = LazyLock::new(|| std::env::var("TUXBOX_XMEM_EAGER_JOIN_PAGES").ok()
+            .and_then(|v| v.trim().parse().ok()).filter(|&n: &usize| n >= 2).unwrap_or(256));
+        // The view a neighbour lies in, else the page itself.
+        let span = |pool: &Self, at: usize| pool.views.range(..=at).next_back()
+            .filter(|&(_, &b)| at < b).map_or((at, at + PAGE), |(&a, &b)| (a, b));
+        let mut lo = address;
+        if address >= PAGE && follows(self, address - PAGE, address) && end - span(self, address - PAGE).0 <= *CAP * PAGE {
+            lo = span(self, address - PAGE).0;
+        }
+        let mut hi = end;
+        if follows(self, end - PAGE, end) && span(self, end).1 - lo <= *CAP * PAGE {
+            hi = span(self, end).1;
+        }
+        if hi - lo <= PAGE || (lo == address && hi == end && bytes == PAGE) { return; }
+        install_joining_fault();
+        if let Err(e) = self.join_range(lo, hi) {
+            crate::loader::log(&format!("eager join {lo:#x}..{hi:#x} failed {e}; the pages stay as they were"));
+        }
+    }
+
     fn join_views(&mut self, lo: usize, mid: usize) -> bool {
         let hi = self.views[&mid];
         let (a, b) = (&self.pages[&self.mappings[&lo]], &self.pages[&self.mappings[&mid]]);
@@ -500,6 +539,7 @@ impl Pool {
                     return Err(result.err().unwrap_or(ERROR_INVALID_ADDRESS));
                 }
             }
+            self.join_neighbours(address, tokens.len() * PAGE);
             return Ok(());
         }
         self.validate_unmapped(tokens)?;
@@ -1189,7 +1229,13 @@ impl Pool {
             Ok(())
         })();
         JOINING[0].store(0, Ordering::Release);
-        crate::loader::log(&format!("join range {lo:#x}..{hi:#x} ({} views): {joined:?}", pieces.len()));
+        {
+            static JOINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = JOINS.fetch_add(1, Ordering::Relaxed) + 1;
+            if joined.is_err() || n <= 16 || n.is_power_of_two() {
+                crate::loader::log(&format!("join range {lo:#x}..{hi:#x} ({} views): {joined:?} ({n} joins so far)", pieces.len()));
+            }
+        }
         joined?;
         for (a, _) in pieces { self.views.remove(&a); }
         self.views.insert(lo, hi);
@@ -1356,12 +1402,16 @@ unsafe extern "system" fn read_physical_pages(tokens: *const u64, count: usize, 
 /// allow it, so the host GPU can import it as one heap. Returns 1 when the
 /// range is (now) one view, 0 when it cannot be, a negative Win32 error on a
 /// failed remap (the previous views are restored).
-#[unsafe(export_name = "TuxBoxJoinPageRange")]
-unsafe extern "system" fn join_page_range(base: usize, bytes: usize) -> i32 {
+fn install_joining_fault() {
     static HANDLER: std::sync::Once = std::sync::Once::new();
     HANDLER.call_once(|| unsafe {
         windows_sys::Win32::System::Diagnostics::Debug::AddVectoredExceptionHandler(1, Some(joining_fault));
     });
+}
+
+#[unsafe(export_name = "TuxBoxJoinPageRange")]
+unsafe extern "system" fn join_page_range(base: usize, bytes: usize) -> i32 {
+    install_joining_fault();
     let Some(end) = base.checked_add(bytes) else { return 0 };
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     match pool.join_range(base & !(PAGE - 1), end.next_multiple_of(PAGE)) {
