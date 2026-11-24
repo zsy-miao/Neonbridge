@@ -38,6 +38,8 @@ const USAGE: &str = "usage: 6launch --game <dir> [--tuxbox <TuxBox checkout>] [-
   --sandbox    run inside Sandboxie-Plus (box DefaultBox, or env SANDBOXIE_BOX); the
                game's writes stay in the box; with --debug the cdb log is fetched back
   --cdb FILE   extra cdb commands (breakpoints etc.) run before the game starts; implies --debug
+  --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
+  --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
 Needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target.";
 
 /// (cargo package, output DLL, export table relative to the TuxBox root, extra import libs, extra C++ sources)
@@ -72,7 +74,7 @@ enum Mode {
 
 fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
-    let (mut debug, mut sandbox, mut cdb_extra) = (false, false, None);
+    let (mut debug, mut sandbox, mut cdb_extra, mut timeout) = (false, false, None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().cloned().ok_or_else(|| format!("{n} needs a value\n{USAGE}"));
@@ -86,6 +88,8 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             Some("--build-shaders") => mode = Mode::BuildShaders,
             Some("--restore") => mode = Mode::Restore,
             Some("--debug") => debug = true,
+            Some("--timeout") => timeout = Some(val("--timeout")?.to_string_lossy().parse::<f64>().map_err(|e| format!("--timeout: {e}"))?),
+            Some("--summary") => return print_summary(Path::new(&val("--summary")?)),
             Some("--sandbox") => sandbox = true,
             Some("--cdb") => {
                 cdb_extra = Some(fs::read_to_string(val("--cdb")?)?);
@@ -186,7 +190,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
-    let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), sandbox, &env);
+    let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), sandbox, &env, timeout);
     if let Some((w, _, session, log_path)) = worker {
         let st = w.stop();
         use std::sync::atomic::Ordering::Relaxed;
@@ -436,7 +440,7 @@ fn restore(game: &Path) -> Result<(), Box<dyn Error>> {
 
 /// Start the exe from its folder (optionally under cdb and/or in Sandboxie);
 /// stdout+stderr go to the console and the log.
-fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, sandbox: bool, env: &[(String, String)]) -> Result<(), Box<dyn Error>> {
+fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, sandbox: bool, env: &[(String, String)], timeout: Option<f64>) -> Result<(), Box<dyn Error>> {
     let log = log.unwrap_or_else(|| {
         let base = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/logs");
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -520,7 +524,22 @@ q
     };
     let a = tee(Box::new(child.stdout.take().unwrap()), file.try_clone()?);
     let b = tee(Box::new(child.stderr.take().unwrap()), file.try_clone()?);
-    let status = child.wait()?;
+    // --timeout: the launcher stops the run itself, so the summary below still prints
+    // (an outside kill of the launcher loses it; `--summary LOG` recovers it then).
+    let status = loop {
+        if let Some(s) = child.try_wait()? {
+            break s;
+        }
+        if timeout.is_some_and(|limit| t.elapsed().as_secs_f64() >= limit) {
+            println!("[launch] --timeout: stopping the run after {:.0}s", t.elapsed().as_secs_f64());
+            let _ = child.kill();
+            if let Some(name) = exe.file_name() {
+                let _ = Command::new("taskkill").args(["/F", "/T", "/IM"]).arg(name).stdout(Stdio::null()).stderr(Stdio::null()).status();
+            }
+            break child.wait()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
     let _ = (a.join(), b.join());
     wait_for_image(exe);
     println!("[launch] exited with {status}{} after {:.1}s", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default(), t.elapsed().as_secs_f64());
@@ -551,9 +570,36 @@ q
         let _ = f.read_to_end(&mut bytes);
         text = String::from_utf8_lossy(&bytes).into_owned();
     }
-    let text = text.split("\n---- cdb ----\n").next().unwrap_or("");
-    println!("{}", run_summary(text, status.code()));
+    let (game_text, cdb_text) = text.split_once("\n---- cdb ----\n").unwrap_or((&text, ""));
+    // Under --debug the child is cdb: the game's own exit code is in cdb's exit event.
+    println!("{}", run_summary(game_text, cdb_exit_code(cdb_text).or(if debug.is_some() { None } else { status.code() })));
     Ok(())
+}
+
+/// `--summary LOG`: the end-of-run report of a log written earlier (or cut off).
+fn print_summary(log: &Path) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(log).map_err(|e| format!("{}: {e}", log.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let (game_text, cdb_text) = text.split_once("\n---- cdb ----\n").unwrap_or((&text, ""));
+    // A killed launcher never appended the cdb log; read it from beside the game log.
+    let side = if cdb_text.is_empty() {
+        fs::read(log.with_extension("cdb.txt")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let cdb_text = if cdb_text.is_empty() { side.as_str() } else { cdb_text };
+    for l in debug_report(cdb_text) {
+        println!("[launch:debug] {l}");
+    }
+    println!("{}", run_summary(game_text, cdb_exit_code(cdb_text)));
+    Ok(())
+}
+
+/// The debuggee's exit code from cdb's "Exit process 0:pid, code X" event.
+fn cdb_exit_code(cdb: &str) -> Option<i32> {
+    let line = cdb.lines().rev().find(|l| l.contains("Exit process") && l.contains(", code "))?;
+    let hex = line.rsplit(", code ").next()?.split_whitespace().next()?;
+    u32::from_str_radix(hex, 16).ok().map(|c| c as i32)
 }
 
 /// The lines of a cdb log worth printing: the last fault dump (or, failing that,
