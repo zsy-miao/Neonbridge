@@ -296,6 +296,11 @@ impl Bindings {
                 // Changing root signatures invalidates the native arguments. Replay
                 // constants and descriptors, then substitute each reflected table.
                 self.apply_compute_args(list, bases);
+                if let Some((slot, address)) = index_map {
+                    list.SetComputeRootShaderResourceView(slot, address);
+                    static ONCE: std::sync::Once = std::sync::Once::new();
+                    crate::diagnostics::log_once(&ONCE, || format!("bound resource descriptor index map at compute root slot {slot}"));
+                }
                 dispatch();
                 list.SetComputeRootSignature(self.compute.as_ref());
                 self.apply_compute_args(list, &[]);

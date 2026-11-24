@@ -852,7 +852,9 @@ fn heap_register(ex: &ShaderExtract) -> Option<u8> {
         Stage::Pixel | Stage::Vertex => 8,
         _ => return None,
     };
+    // The runtime appends the index map as a root SRV in space 32766; the guest never saw it.
     let words: u32 = root.params.iter().map(|p| match &p.kind {
+        RootParamKind::Descriptor { space: 32766, .. } => 0,
         RootParamKind::Table(_) => 1,
         RootParamKind::Descriptor { .. } => 2,
         RootParamKind::Constants { num32, .. } => *num32,
@@ -2818,8 +2820,10 @@ impl<'a> Emitter<'a> {
                     let dim = ins.aux.imm as u32;
                     let mut tex_res: Vec<(u32, Res)> = Vec::new();
                     if sym.get(&rs) == Some(&Sym::HeapDescriptor(8)) {
-                        if !ins.mnemonic.starts_with("image_sample") || !matches!(dim, 1 | 5) {
-                            return Err("unsupported direct heap texture operation".into());
+                        let load = matches!(ins.mnemonic.as_str(), "image_load" | "image_load_mip") && matches!(dim, 0 | 1 | 2 | 4 | 5);
+                        let resinfo = ins.mnemonic == "image_get_resinfo" && dim == 1;
+                        if !load && !resinfo && (!ins.mnemonic.starts_with("image_sample") || !matches!(dim, 1 | 5)) {
+                            return Err(format!("unsupported direct heap texture operation {} dim {dim}", ins.mnemonic));
                         }
                         tex_res.push((0, Res::HeapTexture(rs, dim)));
                     } else {
@@ -6379,10 +6383,30 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         };
         if atomic.is_some() || matches!(ins.mnemonic.as_str(), "image_load" | "image_load_mip" | "image_store" | "image_store_mip") {
             let with_mip = ins.mnemonic == "image_load_mip";
-            let (slot, dim, is_uav) = match rs.first() {
-                Some(Res::Tex(t, d)) => (*t, *d, false),
-                Some(Res::Uav(t, d)) => (*t, *d, true),
+            let (slot, dim, is_uav, heap) = match rs.first() {
+                Some(Res::Tex(t, d)) => (*t, *d, false, None),
+                Some(Res::Uav(t, d)) => (*t, *d, true, None),
+                // A shader-resource texture straight from the bindless heap, read as float4
+                // like the heap sample path.
+                Some(Res::HeapTexture(src, d)) if ins.mnemonic.starts_with("image_load") => (u32::MAX, *d, false, Some(*src)),
                 _ => return Err("unresolved image".into()),
+            };
+            let tex_name = match heap {
+                Some(src) => {
+                    let ty = match dim {
+                        0 => "Texture1D",
+                        1 => "Texture2D",
+                        2 => "Texture3D",
+                        4 => "Texture1DArray",
+                        5 => "Texture2DArray",
+                        _ => return Err(format!("heap image_load dim {dim} unsupported")),
+                    };
+                    let name = format!("tb_texture{idx}");
+                    self.regs.insert(format!("s{src}"));
+                    self.line(&format!("{ty}<float4> {name} = ResourceDescriptorHeap[NonUniformResourceIndex(s{src})];"));
+                    name
+                }
+                None => format!("tex{slot}"),
             };
             // Integer address `i`: a dword, or with A16 a 16-bit uint, two per VGPR.
             let addr = |em: &mut Self, i: usize| -> Result<String, String> {
@@ -6538,7 +6562,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     }
                     format!("uav{slot}[uint{ncoord}({})]", c.join(", "))
                 } else {
-                    format!("tex{slot}.Load(int{}({}, {mip}))", ncoord + 1, c.iter().map(|x| format!("(int){x}")).collect::<Vec<_>>().join(", "))
+                    format!("{tex_name}.Load(int{}({}, {mip}))", ncoord + 1, c.iter().map(|x| format!("(int){x}")).collect::<Vec<_>>().join(", "))
                 };
                 let ety = match ity {
                     Some(2) => "int4",

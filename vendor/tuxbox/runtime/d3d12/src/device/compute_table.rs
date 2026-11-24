@@ -22,6 +22,7 @@ pub(crate) struct IndexMapBinding {
     pub(crate) scalar_mask: u32,
 }
 
+#[derive(Clone, Copy)]
 pub(super) enum Program<'a> {
     Compute(&'a [u8]),
     Raster { vertex: &'a [u8], pixel: &'a [u8] },
@@ -34,6 +35,23 @@ pub(super) enum TableLayout {
 }
 
 pub(super) fn reflected(
+    device: &ID3D12Device,
+    original: &RootSource,
+    program: Program<'_>,
+    node: u32,
+) -> Result<TableLayout> {
+    let layout = reflected_tables(device, original, program, node)?;
+    // Translated heap-indexed compute shaders also need the index map.
+    if let (TableLayout::Original | TableLayout::Unsupported, Program::Compute(shader)) = (&layout, program)
+        && parse_rts0(original.payload()).is_ok_and(|s| s.flags & 0x400 != 0)
+        && heap_indexed(shader)
+    {
+        return heap_compute(device, original, node);
+    }
+    Ok(layout)
+}
+
+fn reflected_tables(
     device: &ID3D12Device,
     original: &RootSource,
     program: Program<'_>,
@@ -263,6 +281,60 @@ pub(super) fn reflected(
             lengths: lengths.into(),
             accessed_views,
             index_map,
+        })))
+    }
+}
+
+/// The shader indexes ResourceDescriptorHeap (SFI0 bit 25).
+fn heap_indexed(shader: &[u8]) -> bool {
+    let Ok(d) = tuxbox_dxbc::Dxbc::parse(shader) else { return false };
+    d.chunk(b"SFI0")
+        .and_then(|c| shader.get(c.offset..c.offset + c.size))
+        .and_then(|b| b.first_chunk::<8>())
+        .is_some_and(|b| u64::from_le_bytes(*b) & (1 << 25) != 0)
+}
+
+/// The guest signature plus a root SRV holding the resource index map, which
+/// translated compute shaders read as `t0, space32766` to turn guest heap
+/// indices into resident ones.
+fn heap_compute(device: &ID3D12Device, original: &RootSource, node: u32) -> Result<TableLayout> {
+    let bytes = original.serialized();
+    unsafe {
+        let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
+        D3D12CreateVersionedRootSignatureDeserializer(
+            bytes.as_ptr().cast(), bytes.len(),
+            &ID3D12VersionedRootSignatureDeserializer::IID, (&raw mut reader).cast(),
+        )?;
+        let reader = reader.ok_or(E_POINTER)?;
+        let mut desc = *reader.GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_1)?;
+        let source = desc.Anonymous.Desc_1_1;
+        let mut parameters = if source.NumParameters == 0 { Vec::new() } else {
+            if source.pParameters.is_null() { return Err(E_INVALIDARG.into()); }
+            std::slice::from_raw_parts(source.pParameters, source.NumParameters as usize).to_vec()
+        };
+        parameters.push(D3D12_ROOT_PARAMETER1 {
+            ParameterType: D3D12_ROOT_PARAMETER_TYPE_SRV,
+            ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+            Anonymous: D3D12_ROOT_PARAMETER1_0 {
+                Descriptor: D3D12_ROOT_DESCRIPTOR1 {
+                    ShaderRegister: 0, RegisterSpace: 32766, Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
+                },
+            },
+        });
+        desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
+        desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let mut blob = None;
+        D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
+        let blob = blob.ok_or(E_POINTER)?;
+        let layout = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
+        let native = device.CreateRootSignature(node, layout)?;
+        Ok(TableLayout::Reflected(Arc::new(ComputeTable {
+            native,
+            original: original.clone(),
+            layout: RootSource::new(layout),
+            lengths: Vec::new(),
+            accessed_views: Vec::new(),
+            index_map: Some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
         })))
     }
 }
