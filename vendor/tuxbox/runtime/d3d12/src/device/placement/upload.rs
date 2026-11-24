@@ -92,6 +92,32 @@ fn upload_buckets_are_pooled_by_size_under_the_cap() {
     assert_eq!(bytes, 64);
 }
 
+/// test105: the loading screen's Bink movie came out datamoshed. Its frames are
+/// 8-bit planes (Y, and Cr/Cb or CrCb) the CPU writes into placed textures, so
+/// a plane left unread by this refresh keeps an old frame under the new ones.
+/// Logs, for placed R8/R8G8 textures 256 wide or more, whether each refresh
+/// read every mip, skipped some (unwritten per the write watch, or deferred by
+/// the read budget) and how many changed: the first 64 lines, then every
+/// 1024th. TUXBOX_PLANE_TRACE=0 is quiet.
+fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget: bool) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let desc = &texture.desc;
+    if !matches!(desc.Format.0, 49 | 61) || desc.Width < 256 || crate::env_toggle!("TUXBOX_PLANE_TRACE") == Some("0") {
+        return;
+    }
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    if n >= 64 && n % 1024 != 0 {
+        return;
+    }
+    let mips = texture.mips.len();
+    let read = if skipped == 0 { "full".to_string() } else { format!("{skipped} of {mips} mips skipped") };
+    crate::diagnostics::log_line(format_args!(
+        "plane texture at title {:#x} ({}x{} format {}): refresh {read}, {changed} changed{} (line {})",
+        texture.address, desc.Width, desc.Height, desc.Format.0,
+        if out_of_budget { ", read budget spent" } else { "" }, n + 1));
+}
+
 impl Transfer {
     pub(super) fn new(device: &ID3D12Device) -> Result<Self> {
         let desc = D3D12_COMMAND_QUEUE_DESC {
@@ -167,8 +193,11 @@ impl Transfer {
             if limited && budget != 0 && ms != 0 && k != 0 && started.elapsed() >= std::time::Duration::from_millis(ms) {
                 budget = 0;
             }
-            skipped += textures[i].changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
+            let before = changes.len();
+            let skip = textures[i].changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
+            skipped += skip;
             mips += textures[i].mips.len();
+            plane_trace(&textures[i], skip, changes.len() - before, budget == 0 && limited);
             if limited && stopped.is_none() && budget == 0 {
                 stopped = Some(i);
             }
