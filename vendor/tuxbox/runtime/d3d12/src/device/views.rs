@@ -1270,6 +1270,57 @@ pub(super) struct AddressUav {
 }
 const _: () = assert!(std::mem::offset_of!(AddressUav, address) == 40);
 
+/// The D3D12 rules for a buffer UAV on `host`: the buffer allows unordered
+/// access and is not on an upload or readback heap; RAW views are
+/// R32_TYPELESS (UNKNOWN is fixed up) with no stride and a 16-byte
+/// aligned start; structured views have UNKNOWN format and a stride that
+/// is a multiple of 4; typed views have a format and no stride (and not a
+/// 96-bit format, which has no typed UAV); the elements are not empty and
+/// fit the host buffer.
+fn check_address_uav(host: &ID3D12Resource, view: &mut D3D12_UNORDERED_ACCESS_VIEW_DESC, element: u64) -> Result<(), String> {
+    let desc = unsafe { host.GetDesc() };
+    if desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER {
+        return Err("host resource is not a buffer".into());
+    }
+    if (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS).0 == 0 {
+        return Err(format!("host buffer lacks ALLOW_UNORDERED_ACCESS (flags {:#x})", desc.Flags.0));
+    }
+    let mut props = D3D12_HEAP_PROPERTIES::default();
+    if unsafe { host.GetHeapProperties(Some(&mut props), None) }.is_ok()
+        && (props.Type == D3D12_HEAP_TYPE_UPLOAD || props.Type == D3D12_HEAP_TYPE_READBACK)
+    {
+        return Err(format!("host buffer is on heap type {}", props.Type.0));
+    }
+    let buffer = unsafe { &mut view.Anonymous.Buffer };
+    if buffer.NumElements == 0 {
+        return Err("no elements".into());
+    }
+    if buffer.Flags == D3D12_BUFFER_UAV_FLAG_RAW {
+        if view.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN {
+            view.Format = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_TYPELESS;
+        }
+        if view.Format != windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_TYPELESS || buffer.StructureByteStride != 0 {
+            return Err(format!("RAW view with format {} and stride {}", view.Format.0, buffer.StructureByteStride));
+        }
+        if !(buffer.FirstElement * 4).is_multiple_of(16) {
+            return Err(format!("RAW view starts at byte {:#x}, not 16-byte aligned", buffer.FirstElement * 4));
+        }
+    } else if buffer.Flags.0 != 0 {
+        return Err(format!("buffer UAV flags {:#x}", buffer.Flags.0));
+    } else if buffer.StructureByteStride != 0 {
+        if view.Format != windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN || !buffer.StructureByteStride.is_multiple_of(4) {
+            return Err(format!("structured view with format {} and stride {}", view.Format.0, buffer.StructureByteStride));
+        }
+    } else if view.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN || (5..=8).contains(&view.Format.0) {
+        return Err(format!("typed view with format {}", view.Format.0));
+    }
+    let end = buffer.FirstElement.checked_add(u64::from(buffer.NumElements)).and_then(|e| e.checked_mul(element));
+    if end.is_none_or(|end| end > desc.Width) {
+        return Err(format!("elements {}+{} x {element} bytes outside the {:#x}-byte host buffer", buffer.FirstElement, buffer.NumElements, desc.Width));
+    }
+    Ok(())
+}
+
 pub(super) unsafe extern "system" fn address_uav(
     device: &Device,
     resource_desc: &D3D12_RESOURCE_DESC,
@@ -1296,11 +1347,13 @@ pub(super) unsafe extern "system" fn address_uav(
                 desc.address, resource_desc.Width, view.Format.0, view.ViewDimension.0, desc.counter));
         }
         device.state.imported_views.store(handle.ptr, None);
-        let mut null = *view;
-        if null.ViewDimension != D3D12_UAV_DIMENSION_BUFFER {
-            null = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: view.Format, ViewDimension: D3D12_UAV_DIMENSION_BUFFER, ..Default::default() };
-        }
-        null.Anonymous.Buffer.CounterOffsetInBytes = 0;
+        // A typed R32_UINT buffer view: the title's own description may be
+        // the invalid part (RAW with UNKNOWN, a stride with a format).
+        let null = D3D12_UNORDERED_ACCESS_VIEW_DESC {
+            Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_UINT,
+            ViewDimension: D3D12_UAV_DIMENSION_BUFFER,
+            ..Default::default()
+        };
         unsafe { device.native.CreateUnorderedAccessView(None, None, Some(&null), handle) };
     };
     if resource_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || view.ViewDimension != D3D12_UAV_DIMENSION_BUFFER {
@@ -1342,6 +1395,16 @@ pub(super) unsafe extern "system" fn address_uav(
             Err(e) => return null(&format!("no host buffer or copy ({:?})", e.code()), &view),
         },
     };
+    // test118: the first address UAV served was followed at once by
+    // DEVICE_REMOVED (INVALID_CALL). The view is checked against the
+    // debug layer's rules for the host buffer it lands on; any failure
+    // binds a null view (logged), never an invalid one.
+    // TUXBOX_ADDRESS_UAV_CHECKS=0 creates the view unchecked, as 0173b3f did.
+    if crate::env_toggle!("TUXBOX_ADDRESS_UAV_CHECKS") != Some("0") {
+        if let Err(why) = check_address_uav(&entry.native, &mut view, element) {
+            return null(&why, &view);
+        }
+    }
     shadow::mark_written(device, entry.native.as_raw());
     unsafe { device.native.CreateUnorderedAccessView(Some(&entry.native), None, Some(&view), handle) };
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
