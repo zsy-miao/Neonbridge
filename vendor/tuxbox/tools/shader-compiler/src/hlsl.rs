@@ -80,6 +80,7 @@ mod sampler_heap;
 use sampler_heap::DirectSampler;
 mod reflection_probe;
 mod wave_scan;
+mod exit_stubs;
 use packed_root::{PackedRoot, RootAbi};
 
 pub struct Translated {
@@ -1753,6 +1754,10 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     let indexed_lane = !resolve_wave32 && (group_extrema || ex.stage == Stage::Compute && (indexed_lane::constant_reads(compute_group(ex), &mut insns)
         || indexed_lane::prepare(compute_group(ex), &mut insns)));
     if !wave_cull && !page_waves { lower_lane_spills(&mut insns, resolve_wave32)?; }
+    // Loop exits placed past the end of the program branch back to mid-program and look
+    // like overlapping loops, which forced a64767c5 into the tb_pc dispatcher (34 s at
+    // dxc -O1). Move each one before the code it rejoins. TB_INLINE_EXIT_STUBS=0 off.
+    exit_stubs::inline(&mut insns);
     let mut em = Emitter::new(ex, insns);
     em.lane_masks = lane_masks;
     em.page_waves = page_waves;
