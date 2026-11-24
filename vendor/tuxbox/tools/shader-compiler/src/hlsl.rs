@@ -184,6 +184,14 @@ enum Res {
 
 const XYZW: [&str; 4] = ["x", "y", "z", "w"];
 
+/// TB_FMT_STORE_STRICT=1: a buffer_store_format whose UAV element type is not
+/// known (no integer use inferred, or a heap view) is refused instead of
+/// stored as float4, so a 32_UINT target cannot take float-converted values.
+/// Inferred uint/int views already store the raw dwords.
+fn fmt_store_strict() -> bool {
+    std::env::var("TB_FMT_STORE_STRICT").is_ok_and(|v| v.trim() == "1")
+}
+
 /// Plain image loads, including the packed RGBA8 forms (image_load_pck,
 /// _pck_sgn, _mip_pck, _mip_pck_sgn: DMASK channels, one byte per dword,
 /// addressed as image_load; Xbox2Windows 580299da). TB_IMAGE_PCK=0 leaves the
@@ -7038,6 +7046,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             _ => return Err(format!("unsupported typed heap store {}", ins.mnemonic)),
         };
         let Opnd::Vgpr(vd) = ins.dst[0] else { return Err("bad vdata".into()) };
+        if fmt_store_strict() {
+            return Err("typed heap store: the view's element format is not known here (TB_FMT_STORE_STRICT)".into());
+        }
         let index = r(&ins.src[0])?;
         let buf = self.bind_heap(HeapView::TypedRw, src);
         let mut value = Vec::new();
@@ -7496,6 +7507,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         }
                         let ctor = if *t == 2 { "int4" } else { "uint4" };
                         self.line(&format!("if (exec_lo & 1u) {nm}[{index}] = {ctor}({});", c.join(", ")));
+                    }
+                    None if fmt_store_strict() => {
+                        return Err("typed-buffer store: element format not inferred (TB_FMT_STORE_STRICT)".into());
                     }
                     None => self.line(&format!("if (exec_lo & 1u) {nm}[{index}] = float4({});", c.join(", "))),
                 }
