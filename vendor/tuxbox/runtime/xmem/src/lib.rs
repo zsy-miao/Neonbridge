@@ -13,6 +13,7 @@ mod options;
 mod partitions;
 mod paths;
 mod timer;
+mod title_patches;
 mod window;
 mod physical_pages;
 mod pools;

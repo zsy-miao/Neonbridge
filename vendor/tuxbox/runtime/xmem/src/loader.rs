@@ -185,6 +185,7 @@ pub(crate) unsafe fn install() {
         crate::net::install();
         crate::window::install();
         crate::console_mode::install();
+        crate::title_patches::install();
     }
 }
 
