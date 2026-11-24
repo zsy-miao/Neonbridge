@@ -33,7 +33,7 @@ static PRESENTS: AtomicU64 = AtomicU64::new(0);
 static PREVIOUS_FILTER: AtomicUsize = AtomicUsize::new(0);
 static RECORDED: AtomicBool = AtomicBool::new(false);
 
-/// Log line plus a copy in %LOCALAPPDATA%ixpack\logs\crash_<pid>.log, so a
+/// Log line plus a copy in %LOCALAPPDATA%\6ixpack\logs\crash_<pid>.log, so a
 /// run started without the launcher (no log capture) still leaves the record.
 fn record(text: std::fmt::Arguments<'_>) {
     super::log_line(text);
