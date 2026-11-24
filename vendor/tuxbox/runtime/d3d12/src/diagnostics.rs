@@ -553,6 +553,7 @@ pub(crate) mod gpu_clock {
 /// CPU time per frame of every thread in the process (title and ours), from
 /// GetThreadTimes deltas between heartbeats: says whether a title thread is
 /// CPU-bound or the frame is spent waiting.
+pub(crate) mod audio;
 pub(crate) mod sampler;
 
 pub(crate) mod threads {

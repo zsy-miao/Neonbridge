@@ -2256,6 +2256,9 @@ unsafe fn present_planes(
                 for line in hot {
                     crate::diagnostics::log_line(format_args!("{line}"));
                 }
+                if let Some(line) = crate::diagnostics::audio::engine_report() {
+                    crate::diagnostics::log_line(format_args!("{line}"));
+                }
             }
         }
     }

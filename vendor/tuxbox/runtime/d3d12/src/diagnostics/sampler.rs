@@ -122,6 +122,7 @@ fn run() {
     let mut list: Vec<Module> = Vec::new();
     let mut refreshed: Option<std::time::Instant> = None;
     let mut audio_modules = 0usize;
+    let mut audio_threads: Vec<u32> = Vec::new();
     loop {
         std::thread::sleep(std::time::Duration::from_millis(2));
         if refreshed.is_none_or(|at| at.elapsed().as_secs() >= 2) {
@@ -130,14 +131,28 @@ fn run() {
             // Which host audio path the title opened (it has no audio provider of ours in its output).
             let sound: Vec<&str> = list.iter().map(|m| m.name.as_str())
                 .filter(|n| ["audio", "mmdevapi", "avrt", "dsound", "winmm", "mfplat", "bink"].iter().any(|k| n.contains(k))).collect();
+            audio_threads = audio_thread_ids(&list);
             if sound.len() != audio_modules {
                 audio_modules = sound.len();
                 super::log_line(format_args!("audio modules loaded: {}", sound.join(", ")));
+                if sound.contains(&"xaudio2_9") {
+                    super::audio::install();
+                }
+                if sound.contains(&"audioses") {
+                    super::audio::install_wasapi();
+                }
             }
             let mut shared = MODULES.lock().unwrap_or_else(|e| e.into_inner());
             *shared = list.iter().map(|m| Module { base: m.base, end: m.end, name: m.name.clone(), title: m.title }).collect();
         }
-        let targets: Vec<u32> = TARGETS.iter().map(|t| t.load(Ordering::Relaxed)).filter(|&t| t != 0 && t != own).collect();
+        let mut targets: Vec<u32> = TARGETS.iter().map(|t| t.load(Ordering::Relaxed)).filter(|&t| t != 0 && t != own).collect();
+        // Threads started inside the host audio modules are sampled too: they
+        // show whether the audio engine waits on the title.
+        for &tid in &audio_threads {
+            if !targets.contains(&tid) {
+                targets.push(tid);
+            }
+        }
         handles.retain(|(tid, handle)| {
             let keep = targets.contains(tid);
             if !keep {
@@ -237,7 +252,8 @@ pub(crate) fn report() -> Vec<String> {
             *via.entry([chain[1], chain[2], chain[3]]).or_insert(0u32) += n;
             total += n;
         }
-        let name = names.iter().find(|n| n.0 == tid).map_or("?", |n| n.1.as_str());
+        let audio = AUDIO_NAMES.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|n| n.0 == tid).map(|n| n.1.clone());
+        let name = names.iter().find(|n| n.0 == tid).map(|n| n.1.clone()).or(audio).unwrap_or_else(|| "?".into());
         format!("hot thread {name}({tid}): {total} samples; leaf: {}; via: {}",
             top(leaf, total, 6, |&a| label(&list, a)),
             top(via, total, 6, |c| {
@@ -245,4 +261,44 @@ pub(crate) fn report() -> Vec<String> {
                 if callers.is_empty() { "(no title caller on the stack)".into() } else { callers.join(" < ") }
             }))
     }).collect()
+}
+
+static AUDIO_NAMES: Mutex<Vec<(u32, String)>> = Mutex::new(Vec::new());
+
+/// Up to 3 threads of this process whose start address is in xaudio2_9,
+/// audioses or the audio engine modules, named "start module" for the report.
+fn audio_thread_ids(list: &[Module]) -> Vec<u32> {
+    use windows::Win32::System::Diagnostics::ToolHelp::{TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next};
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    type Query = unsafe extern "system" fn(HANDLE, u32, *mut usize, u32, *mut u32) -> i32;
+    let Ok(ntdll) = (unsafe { GetModuleHandleW(windows::core::w!("ntdll.dll")) }) else { return Vec::new() };
+    let Some(query) = (unsafe { GetProcAddress(ntdll, windows::core::s!("NtQueryInformationThread")) }) else { return Vec::new() };
+    let query: Query = unsafe { std::mem::transmute(query) };
+    let mut found: Vec<(u32, String)> = Vec::new();
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return Vec::new() };
+        let pid = windows::Win32::System::Threading::GetCurrentProcessId();
+        let mut entry = THREADENTRY32 { dwSize: size_of::<THREADENTRY32>() as u32, ..Default::default() };
+        let mut more = Thread32First(snap, &mut entry).is_ok();
+        while more && found.len() < 3 {
+            if entry.th32OwnerProcessID == pid
+                && let Ok(thread) = OpenThread(THREAD_QUERY_INFORMATION, false, entry.th32ThreadID)
+            {
+                let mut start = 0usize;
+                // ThreadQuerySetWin32StartAddress
+                if query(thread, 9, &mut start, 8, std::ptr::null_mut()) >= 0
+                    && let Some(module) = module_of(list, start)
+                    && ["xaudio2_9", "audioses", "mmdevapi"].contains(&module.name.as_str())
+                {
+                    found.push((entry.th32ThreadID, format!("{} thread", module.name)));
+                }
+                let _ = CloseHandle(thread);
+            }
+            more = Thread32Next(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    let ids = found.iter().map(|f| f.0).collect();
+    *AUDIO_NAMES.lock().unwrap_or_else(|e| e.into_inner()) = found;
+    ids
 }
