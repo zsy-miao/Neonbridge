@@ -8713,6 +8713,16 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
                 if is_ps && !interp.is_empty() && e.sysval != 1 {
                     self.ps_in_interp.0.push((semantic(e), interp.trim_end().to_string()));
                 }
+                // Flat parameters as uint (Xbox2Windows 588e8777): a float copy of an
+                // integer word can be flushed as a denormal (FXC folds asfloat() of a
+                // constant). Every read goes through asuint(), which accepts both types.
+                // TB_FLAT_UINT=1 at translation enables it; off, the float copy stays (the
+                // producer stage still writes float, so the PSO links by register).
+                let ty = if flat_p0 && !pulled && e.comp_type == 3 && std::env::var_os("TB_FLAT_UINT").is_some_and(|v| v == "1") {
+                    ty.replace("float", "uint")
+                } else {
+                    ty
+                };
                 let _ = writeln!(h, "    {interp}{ty} i{ei} : {};", semantic(e));
             }
         }
