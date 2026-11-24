@@ -59,6 +59,29 @@ impl Drop for Live {
     }
 }
 
+const LIVE_MARKER: windows::core::GUID = windows::core::GUID::from_u128(0x5b0e8a3c_7d41_4f2a_9c6e_1a2b3c4d5e6f);
+
+/// `live` for a native resource or heap with no owner of ours to hold the
+/// count: a private-data marker on it holds it, so it is counted until the
+/// object's last release. test137 read 8041 MiB of device-local use with page
+/// pools (3968) and render heaps (3134) the only live categories; committed
+/// placed-texture copies, their upload and readback buffers, device buffers
+/// and descriptor tables were counted only as created. Falls back to `note`.
+pub(crate) fn live_on(object: &impl Interface, category: Category, bytes: u64) {
+    use windows::Win32::Graphics::Direct3D12::{ID3D12Device, ID3D12DeviceChild};
+    static MARKER: crate::proxy::Slots<8> = crate::proxy::child_slots::<ID3D12Device, Live, 8>();
+    let Ok(child) = object.cast::<ID3D12DeviceChild>() else { return note(category, bytes) };
+    let mut device: Option<ID3D12Device> = None;
+    let Some(device) = unsafe { child.GetDevice(&mut device) }.ok().and(device) else { return note(category, bytes) };
+    let mut out = core::ptr::null_mut();
+    // A failed allocation drops the Live at once: counted as created only.
+    if unsafe { crate::proxy::allocate(&MARKER, &[], device, None, live(category, bytes), &mut out) }.is_err() || out.is_null() {
+        return;
+    }
+    let marker = unsafe { windows::core::IUnknown::from_raw(out) };
+    let _ = unsafe { child.SetPrivateDataInterface(&LIVE_MARKER, &marker) };
+}
+
 /// Device-local (usage, budget) at the last stats reading, and bytes freed
 /// since by idle unmaps (placement.rs `unmap_idle`), which read this.
 static LOCAL: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];

@@ -358,7 +358,9 @@ fn create_heap(device: &ID3D12Device, size: u64, system: bool) -> Option<ID3D12H
         }
         return None;
     }
-    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::PlacedSpanHeap, desc.SizeInBytes);
+    if let Some(heap) = &heap {
+        crate::diagnostics::memory::live_on(heap, crate::diagnostics::memory::Category::PlacedSpanHeap, desc.SizeInBytes);
+    }
     SPAN_COUNT.fetch_add(1, Relaxed);
     SPAN_BYTES.fetch_add(desc.SizeInBytes, Relaxed);
     if system {

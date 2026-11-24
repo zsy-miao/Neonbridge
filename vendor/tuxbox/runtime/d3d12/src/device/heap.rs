@@ -471,7 +471,7 @@ fn device_buffer(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC)
     let mut native: Option<ID3D12Resource> = None;
     unsafe { device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &host, D3D12_RESOURCE_STATE_COMMON, None, &mut native)? };
     let native = native.ok_or(E_POINTER)?;
-    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::DeviceBuffer, host.Width);
+    crate::diagnostics::memory::live_on(&native, crate::diagnostics::memory::Category::DeviceBuffer, host.Width);
     let buffer = super::views::TextureAddress::at(device, &native, address as usize, false, None);
     Ok((native, buffer))
 }

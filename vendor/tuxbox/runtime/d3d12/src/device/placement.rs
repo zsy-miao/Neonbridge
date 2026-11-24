@@ -66,8 +66,9 @@ fn committed(
         D3D12_HEAP_TYPE_READBACK => Category::PlacedReadback,
         _ => Category::PlacedTexture,
     };
-    crate::diagnostics::memory::note(category, if bytes == u64::MAX { 0 } else { bytes });
-    native.ok_or_else(|| E_POINTER.into())
+    let native: ID3D12Resource = native.ok_or(E_POINTER)?;
+    crate::diagnostics::memory::live_on(&native, category, if bytes == u64::MAX { 0 } else { bytes });
+    Ok(native)
 }
 
 struct Mip {
