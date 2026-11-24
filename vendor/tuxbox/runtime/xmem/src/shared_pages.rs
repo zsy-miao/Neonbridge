@@ -253,7 +253,38 @@ fn fallback_note(what: std::fmt::Arguments) {
     }
 }
 
+/// test82: 256 unmaps failed with error 87 at the base of a lone or
+/// recorded view, both keeping and not keeping its placeholder, with no live
+/// GPU import over the page. A released imported heap's kernel allocation can
+/// hold the view until the GPU passes it, and test82's queues were stalled.
+/// An unmap failing with 87 is retried after 1, 2, 4, 8 and 16 ms (31 ms at
+/// most), logged; TUXBOX_XMEM_UNMAP_RETRY=0 fails at once.
 pub(super) fn unmap(address: usize) -> Result<(), u32> {
+    let first = unmap_once(address);
+    if first != Err(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER)
+        || std::env::var("TUXBOX_XMEM_UNMAP_RETRY").is_ok_and(|v| v.trim() == "0")
+    {
+        return first;
+    }
+    let step = LAST_OS_ERROR.with(|e| e.get());
+    let started = std::time::Instant::now();
+    let mut result = first;
+    for ms in [1u64, 2, 4, 8, 16] {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        result = unmap_once(address);
+        if result != Err(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER) { break; }
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 16 || n.is_power_of_two() {
+        crate::loader::log(&format!(
+            "xmem: unmapping view {address:#x} failed with error 87 at {step:?}; retried for {} ms: {} ({n} so far; TUXBOX_XMEM_UNMAP_RETRY=0 off)",
+            started.elapsed().as_millis(), match result { Ok(()) => "unmapped".to_string(), Err(e) => format!("still error {e}") }));
+    }
+    result
+}
+
+fn unmap_once(address: usize) -> Result<(), u32> {
     let view = MEMORY_MAPPED_VIEW_ADDRESS {
         Value: address as _,
     };

@@ -708,7 +708,11 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         ListState::Open => {
             if let Err(error) = state.prefix.finish(&list.native) { state.error = error.code(); }
             state.balance(&list.native);
-            if let Err(error) = unsafe { list.native.Close() } {
+            let closed = unsafe { list.native.Close() };
+            if closed.is_ok() {
+                enhanced::closed_ok(list);
+            }
+            if let Err(error) = closed {
                 static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 8 || n.is_power_of_two() {
@@ -718,6 +722,7 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
                     ));
                 }
                 state.error = error.code();
+                enhanced::close_failed(list);
             }
         }
     }

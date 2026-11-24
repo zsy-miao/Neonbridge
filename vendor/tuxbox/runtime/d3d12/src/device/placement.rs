@@ -89,6 +89,8 @@ struct Contents {
     // commit grew from 3 to 11 GB in blocks of a few MiB.
     previous: Vec<Option<u64>>,
     uploaded: u64,
+    /// The upload fence `uploaded` counts on (None: never uploaded).
+    uploaded_on: Option<ID3D12Fence>,
     readers: Vec<(ID3D12Fence, u64)>,
     /// When each large level was last read back from guest memory (see
     /// `big_snapshot`).
@@ -941,6 +943,7 @@ impl PlacementMemory {
             None if textures.is_empty() => return Ok(()),
             None => slot.insert(Submissions {
                 transfer: upload::Transfer::new(device)?,
+                per_queue: Default::default(),
                 writes: Vec::new(),
             }),
         };
@@ -1034,7 +1037,18 @@ struct PendingWrite {
 
 struct Submissions {
     transfer: upload::Transfer,
+    /// test82 froze with queues held 2 s behind the one upload copy queue:
+    /// an upload waited there on its submitting queue's reader, that queue
+    /// sat in a GPU memory wait, and every other queue's later upload queued
+    /// behind it, including the one writing the awaited word. Each guest
+    /// queue now uploads on its own copy queue, keyed by the guest queue;
+    /// TUXBOX_UPLOAD_PER_QUEUE=0 shares one as before.
+    per_queue: std::collections::HashMap<usize, upload::Transfer>,
     writes: Vec<PendingWrite>,
+}
+
+fn upload_per_queue() -> bool {
+    crate::env_toggle!("TUXBOX_UPLOAD_PER_QUEUE") != Some("0")
 }
 
 impl Texture {
@@ -1148,6 +1162,7 @@ pub(crate) unsafe fn submit(
         Some(s) => s,
         None => slot.insert(Submissions {
             transfer: upload::Transfer::new(&device.native)?,
+            per_queue: Default::default(),
             writes: Vec::new(),
         }),
     };
@@ -1194,21 +1209,36 @@ pub(crate) unsafe fn submit(
         }
     }
 
-    let transfer = &mut submission.transfer;
+    let transfer = if upload_per_queue() {
+        match submission.per_queue.entry(windows::core::Interface::as_raw(queue) as usize) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(upload::Transfer::new(&device.native)?),
+        }
+    } else {
+        &mut submission.transfer
+    };
     if let Err(error) = oom_retry(device, "refresh", || transfer.refresh(&device.native, &refresh, Some(reader))) {
         if !oom_skip(&error) {
             return Err(error);
         }
         oom_log(format_args!("placed texture refresh of {} textures skipped on E_OUTOFMEMORY: the batch runs with their previous bytes (TUXBOX_PLACED_OOM_STRICT=1 drops it)", refresh.len()));
     }
-    let required = textures
-        .iter()
-        .map(|t| lock(&t.contents).uploaded)
-        .max()
-        .unwrap_or(0);
-    if unsafe { transfer.fence.GetCompletedValue() } < required {
-        unsafe { queue.Wait(&transfer.fence, required)? };
-        crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture upload", &transfer.fence, required);
+    // Each upload fence this batch's textures were last uploaded on, with
+    // the highest tick needed from it.
+    let mut required: Vec<(ID3D12Fence, u64)> = Vec::new();
+    for t in textures.iter() {
+        let contents = lock(&t.contents);
+        let Some(fence) = contents.uploaded_on.as_ref() else { continue };
+        match required.iter_mut().find(|(f, _)| f == fence) {
+            Some((_, v)) => *v = (*v).max(contents.uploaded),
+            None => required.push((fence.clone(), contents.uploaded)),
+        }
+    }
+    for (fence, value) in &required {
+        if unsafe { fence.GetCompletedValue() } < *value {
+            unsafe { queue.Wait(fence, *value)? };
+            crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture upload", fence, *value);
+        }
     }
     for texture in writes.iter() {
         for (fence, value) in &lock(&texture.contents).readers {

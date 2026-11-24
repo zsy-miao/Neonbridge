@@ -413,7 +413,11 @@ impl Pool {
         // Between this unmap and the fragments' remap the view's surviving
         // pages are briefly gone: a title access there waits and retries.
         let _gap = split_retry::Gap::open(lo, hi);
-        shared_pages::unmap(lo)?;
+        if let Err(e) = shared_pages::unmap(lo) {
+            // test82: this failure (unmap:256 at a recorded view's base) had no log.
+            Self::fallback_log(format_args!("page {at:#x}: unmapping its recorded view {lo:#x}..{hi:#x} to split it failed with error {e}"));
+            return Err(e);
+        }
         let mut restored = Vec::new();
         let resize = (|| {
             for (a, b) in [(lo, at), (end, hi)] {

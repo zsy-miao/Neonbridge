@@ -234,6 +234,7 @@ impl Transfer {
             let mut state = lock(&change.texture.contents);
             state.previous[change.level] = Some(change.hash);
             state.uploaded = tick;
+            state.uploaded_on = Some(self.fence.clone());
             state.readers.clear();
             drop(state);
             let held: usize = self.spare.iter().map(Vec::capacity).sum();

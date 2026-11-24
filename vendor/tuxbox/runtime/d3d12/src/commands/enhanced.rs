@@ -296,12 +296,137 @@ fn fit_host(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
 
 type Scratch = (D3D12_COMMAND_LIST_TYPE, ID3D12CommandAllocator, ID3D12GraphicsCommandList7);
 
+/// One recorded host barrier, kept for the Close failure dump.
+#[derive(Clone, Copy)]
+struct Kept {
+    kind: i32,
+    fields: (i32, i32, i32, i32, i32, i32),
+    range: (u32, u32, u32, u32, u32, u32),
+    resource: (usize, i32, i32, u16, i32),
+}
+
+/// test82: 9 host lists failed Close with E_INVALIDARG and no recorded
+/// error. Each thread keeps the last 8 host barriers of the lists it records,
+/// dumped with any rule they break when the list's Close fails, and a failure
+/// arms the per-barrier probe for the next 256 barrier groups (4 times at
+/// most). TUXBOX_BARRIER_RING=0 off.
+fn ring_on() -> bool {
+    crate::env_toggle!("TUXBOX_BARRIER_RING") != Some("0")
+}
+
+type Ring = std::collections::HashMap<usize, std::collections::VecDeque<Kept>>;
+thread_local! {
+    static RING: std::cell::RefCell<Ring> = std::cell::RefCell::new(Ring::new());
+}
+static AUTO_PROBE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static AUTO_ARMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn remember(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
+    if !ring_on() { return; }
+    let key = native.as_raw() as usize;
+    let count = group.NumBarriers as usize;
+    let start = count.saturating_sub(8);
+    let mut items = Vec::with_capacity(count - start);
+    for i in start..count {
+        let kept = unsafe {
+            match group.Type {
+                D3D12_BARRIER_TYPE_GLOBAL => {
+                    let b = &*group.Anonymous.pGlobalBarriers.add(i);
+                    Kept { kind: 0, fields: (b.SyncBefore.0, b.SyncAfter.0, b.AccessBefore.0, b.AccessAfter.0, 0, 0), range: Default::default(), resource: (0, 0, 0, 0, 0) }
+                }
+                D3D12_BARRIER_TYPE_BUFFER => {
+                    let b = &*group.Anonymous.pBufferBarriers.add(i);
+                    let raw = b.pResource.as_ref().map_or(0, |r| r.as_raw() as usize);
+                    Kept { kind: 1, fields: (b.SyncBefore.0, b.SyncAfter.0, b.AccessBefore.0, b.AccessAfter.0, 0, 0), range: Default::default(), resource: (raw, 0, 0, 0, 0) }
+                }
+                _ => {
+                    let b = &*group.Anonymous.pTextureBarriers.add(i);
+                    let desc = b.pResource.as_ref().map(|r| r.GetDesc()).unwrap_or_default();
+                    let raw = b.pResource.as_ref().map_or(0, |r| r.as_raw() as usize);
+                    let r = b.Subresources;
+                    Kept { kind: 2, fields: (b.SyncBefore.0, b.SyncAfter.0, b.AccessBefore.0, b.AccessAfter.0, b.LayoutBefore.0, b.LayoutAfter.0),
+                        range: (r.IndexOrFirstMipLevel, r.NumMipLevels, r.FirstArraySlice, r.NumArraySlices, r.FirstPlane, r.NumPlanes),
+                        resource: (raw, desc.Format.0, desc.Flags.0, desc.MipLevels, desc.Dimension.0) }
+                }
+            }
+        };
+        items.push(kept);
+    }
+    RING.with(|ring| {
+        let mut ring = ring.borrow_mut();
+        if ring.len() > 4096 { ring.clear(); }
+        let kept = ring.entry(key).or_default();
+        for item in items {
+            if kept.len() >= 8 { kept.pop_front(); }
+            kept.push_back(item);
+        }
+    });
+}
+
+/// Rules a recorded barrier breaks (D3D12 enhanced barrier spec), as text.
+fn broken(k: &Kept, compute: bool) -> String {
+    let (sb, sa, ab, aa, lb, la) = k.fields;
+    let mut out = Vec::new();
+    let none = D3D12_BARRIER_ACCESS_NO_ACCESS.0;
+    for (half, s, a, l) in [("before", sb, ab, lb), ("after", sa, aa, la)] {
+        if s & !D3D12_BARRIER_SYNC_SPLIT.0 == 0 && a != none { out.push(format!("{half}: NONE sync with access {a:#x}")); }
+        if a != none && s & D3D12_BARRIER_SYNC_ALL.0 == 0 && !sync_covers(s, a) { out.push(format!("{half}: sync {s:#x} cannot perform access {a:#x}")); }
+        if s & !KNOWN_SYNC != 0 { out.push(format!("{half}: unknown sync bits {:#x}", s & !KNOWN_SYNC)); }
+        if a != none && a & !KNOWN_ACCESS != 0 { out.push(format!("{half}: unknown access bits {:#x}", a & !KNOWN_ACCESS)); }
+        if compute && (s & GRAPHICS_SYNC != 0 || (a != none && a & GRAPHICS_ACCESS != 0)) { out.push(format!("{half}: graphics stage or access on a compute list")); }
+        if k.kind == 2 {
+            if l == D3D12_BARRIER_LAYOUT_UNDEFINED.0 && a != none { out.push(format!("{half}: UNDEFINED layout with access {a:#x}")); }
+            if a != none && let Some(allowed) = layout_access(D3D12_BARRIER_LAYOUT(l)) && a & !allowed != 0 {
+                out.push(format!("{half}: layout {l} does not allow access {:#x}", a & !allowed));
+            }
+            if l > 29 || (12..=17).contains(&l) { out.push(format!("{half}: layout {l} invalid on graphics and compute lists")); }
+            if compute && (l == 2 || l == 4 || l == 5 || (18..=23).contains(&l)) { out.push(format!("{half}: layout {l} invalid on a compute list")); }
+        }
+    }
+    if out.is_empty() { "no rule broken".into() } else { out.join("; ") }
+}
+
+/// A list closed: its barriers no longer matter.
+pub(super) fn closed_ok(list: &List) {
+    if ring_on() && let Some(Some(native)) = list.state.enhanced_barriers.get() {
+        RING.with(|ring| { ring.borrow_mut().remove(&(native.as_raw() as usize)); });
+    }
+}
+
+/// Logs the failed list's last host barriers and arms the probe.
+pub(super) fn close_failed(list: &List) {
+    if !ring_on() { return; }
+    let compute = unsafe { list.native.GetType() } != D3D12_COMMAND_LIST_TYPE_DIRECT;
+    let key = match list.state.enhanced_barriers.get() { Some(Some(native)) => native.as_raw() as usize, _ => 0 };
+    let kept: Vec<Kept> = RING.with(|ring| ring.borrow_mut().remove(&key).map(Vec::from).unwrap_or_default());
+    static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if LOGGED.fetch_add(1, Ordering::Relaxed) < 16 {
+        if kept.is_empty() {
+            crate::diagnostics::log_line(format_args!("host list Close failure: the list recorded no enhanced barriers on this thread"));
+        }
+        for (i, k) in kept.iter().enumerate() {
+            let (sb, sa, ab, aa, lb, la) = k.fields;
+            let kind = ["global", "buffer", "texture"][k.kind as usize];
+            crate::diagnostics::log_line(format_args!(
+                "host list Close failure, barrier {}/{} before Close: {kind} sync {sb:#x}->{sa:#x} access {ab:#x}->{aa:#x} layout {lb}->{la} range {:x?} resource {:#x} format {} flags {:#x} mips {} dim {}: {}",
+                i + 1, kept.len(), k.range, k.resource.0, k.resource.1, k.resource.2, k.resource.3, k.resource.4, broken(k, compute)));
+        }
+    }
+    if AUTO_ARMS.fetch_add(1, Ordering::Relaxed) < 4 {
+        AUTO_PROBE.store(256, Ordering::Relaxed);
+        crate::diagnostics::log_line(format_args!("host list Close failure: probing the next 256 barrier groups one barrier at a time"));
+    }
+}
+
 /// TUXBOX_BARRIER_PROBE=1: record each barrier of a group alone on a scratch list
 /// and Close it, then log the first 16 the host rejects with all fields.
 fn probe(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
+    remember(native, group);
     // Its own switch now: a scratch Close per barrier cost frame rate under
-    // TUXBOX_LIST_RING (test6).
-    if crate::env_toggle!("TUXBOX_BARRIER_PROBE") != Some("1") { return; }
+    // TUXBOX_LIST_RING (test6). A host Close failure arms it for a while.
+    let auto = AUTO_PROBE.load(Ordering::Relaxed) > 0
+        && AUTO_PROBE.fetch_sub(1, Ordering::Relaxed) > 0;
+    if !auto && crate::env_toggle!("TUXBOX_BARRIER_PROBE") != Some("1") { return; }
     use std::cell::RefCell;
     thread_local! {
         static SCRATCH: RefCell<Vec<Scratch>> = const { RefCell::new(Vec::new()) };
