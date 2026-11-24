@@ -26,6 +26,14 @@ unsafe impl Interface for VulkanInterop {
 impl AddressViews {
     pub(super) fn get(device: &Device) -> &Self {
         device.state.byte_offset_views.get_or_init(|| {
+            let mode = Self::detect(device);
+            crate::diagnostics::log_line(format_args!("buffer views off an element boundary: {}", mode.name()));
+            mode
+        })
+    }
+
+    fn detect(device: &Device) -> Self {
+        {
             let mut options = [0u32; 4]; // D3D12_FEATURE_DATA_D3D12_OPTIONS22
             if unsafe {
                 device.native.CheckFeatureSupport(
@@ -45,7 +53,7 @@ impl AddressViews {
             } else {
                 Self::Elements
             }
-        })
+        }
     }
 
     pub(super) fn supports(
@@ -102,7 +110,9 @@ impl AddressViews {
             }
         }
         let b = unsafe { &mut view.Anonymous.Buffer };
+        let structured = b.StructureByteStride;
         (b.FirstElement, b.NumElements, b.StructureByteStride) = bytes.storage_elements(stride)?;
+        restrided(structured, b.StructureByteStride, bytes.offset, self.name());
         unsafe {
             device
                 .native
@@ -146,7 +156,9 @@ impl AddressViews {
             };
         }
         let b = unsafe { &mut view.Anonymous.Buffer };
+        let structured = b.StructureByteStride;
         (b.FirstElement, b.NumElements, b.StructureByteStride) = bytes.storage_elements(stride)?;
+        restrided(structured, b.StructureByteStride, bytes.offset, self.name());
         unsafe {
             device
                 .native
@@ -221,6 +233,25 @@ const _: () = {
     assert!(core::mem::offset_of!(BufferUavByteOffsetDesc, counter_offset) == 32);
     assert!(size_of::<BufferUavByteOffsetDesc>() == 48);
 };
+
+/// five-star 955a679 (C#, idea): a structured view off an element boundary
+/// in shared title memory corrupted the title's pools on their side. Here a
+/// structured view without byte-offset descriptors is made with the common
+/// divisor of its offset and stride as its stride, which the shader's
+/// declared stride does not match: indexed reads and writes land elsewhere
+/// in the view. Logged (first 8, then powers of two) to show whether the
+/// title makes such views.
+fn restrided(structured: u32, made: u32, offset: u64, mode: &str) {
+    if structured == 0 || structured == made {
+        return;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "structured buffer view at byte offset {offset} made with stride {made}, not its {structured} ({mode}; {n} so far): the shader indexes it by {structured}"));
+    }
+}
 
 struct ByteRange {
     offset: u64,
