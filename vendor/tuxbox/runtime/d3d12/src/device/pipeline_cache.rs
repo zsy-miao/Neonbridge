@@ -37,6 +37,8 @@ use windows::core::{HSTRING, Interface, Result};
 
 const LIBRARY_FILE: &str = "pipelines.d3d12lib";
 const USED_FILE: &str = "used-pipelines.txt";
+/// Names of every pipeline stored in the library, for the miss split below.
+const NAMES_FILE: &str = "pipeline-names.txt";
 
 struct Library {
     library: ID3D12PipelineLibrary1,
@@ -58,6 +60,31 @@ enum State {
 static LIBRARY: Mutex<State> = Mutex::new(State::Unknown);
 static LOADED: AtomicU64 = AtomicU64::new(0);
 static STORED: AtomicU64 = AtomicU64::new(0);
+/// Library misses whose name no run ever stored (the host description
+/// changed between runs: a translation or record that differs) and misses
+/// whose name an earlier run stored (the driver refused the description, or
+/// the library holding it was started afresh).
+static MISSED_NEW: AtomicU64 = AtomicU64::new(0);
+static MISSED_KNOWN: AtomicU64 = AtomicU64::new(0);
+
+struct Names {
+    known: HashSet<String>,
+    new: Vec<String>,
+}
+
+static NAMES: OnceLock<Option<Mutex<Names>>> = OnceLock::new();
+
+fn names() -> Option<&'static Mutex<Names>> {
+    NAMES
+        .get_or_init(|| {
+            let dir = folder()?;
+            let known = std::fs::read_to_string(dir.join(NAMES_FILE))
+                .map(|text| text.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect())
+                .unwrap_or_default();
+            Some(Mutex::new(Names { known, new: Vec::new() }))
+        })
+        .as_ref()
+}
 
 pub(in crate::device) fn folder() -> Option<&'static Path> {
     let build = super::shader_cache::runtime_dir()?;
@@ -138,6 +165,11 @@ fn load_or_make(
         LOADED.fetch_add(1, Ordering::Relaxed);
         return Ok(pipeline);
     }
+    let text = name.to_string();
+    if let Some(names) = names() {
+        let names = names.lock().unwrap_or_else(|e| e.into_inner());
+        if names.known.contains(&text) { &MISSED_KNOWN } else { &MISSED_NEW }.fetch_add(1, Ordering::Relaxed);
+    }
     // The driver compiles outside the lock.
     let made = make()?;
     with_library(host, |l| {
@@ -145,6 +177,12 @@ fn load_or_make(
         if unsafe { l.library.StorePipeline(&name, &made) }.is_ok() {
             l.dirty = true;
             STORED.fetch_add(1, Ordering::Relaxed);
+            if let Some(names) = names() {
+                let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
+                if names.known.insert(text.clone()) {
+                    names.new.push(text);
+                }
+            }
         }
     });
     Ok(made)
@@ -307,9 +345,23 @@ fn save(dir: &Path) {
     if let Some(blob) = blob {
         write_atomic(&dir.join(LIBRARY_FILE), &blob);
         let (loaded, stored) = (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed));
+        let (new, known) = (MISSED_NEW.load(Ordering::Relaxed), MISSED_KNOWN.load(Ordering::Relaxed));
         crate::diagnostics::log_once(&std::sync::Once::new(), || {
-            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes", blob.len())
+            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library)", blob.len())
         });
+    }
+    if let Some(names) = names() {
+        let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
+        if !names.new.is_empty() {
+            names.new.clear();
+            let mut text = String::with_capacity(names.known.len() * 65);
+            for name in &names.known {
+                text.push_str(name);
+                text.push('\n');
+            }
+            drop(names);
+            write_atomic(&dir.join(NAMES_FILE), text.as_bytes());
+        }
     }
     if let Some(used) = USED.get() {
         let mut used = used.lock().unwrap_or_else(|e| e.into_inner());

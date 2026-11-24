@@ -702,6 +702,24 @@ unsafe fn create(
             .copied()
             .unwrap_or_default()
     };
+    // A mesh pipeline's topology type, given when the guest stream has none:
+    // the host derives it from the mesh shader anyway, but a pipeline library
+    // compares descriptions with it and loads no mesh pipeline stored from a
+    // stream without it (VIctory 9c58a1c, GPL-3.0, with credit).
+    // TUXBOX_MESH_TOPOLOGY=0 off.
+    if fields[7].is_some()
+        && seen & (1 << 14) == 0
+        && crate::env_toggle!("TUXBOX_MESH_TOPOLOGY") != Some("0")
+    {
+        let (offset, bytes) = subobject::<D3D12_PRIMITIVE_TOPOLOGY_TYPE>();
+        // The storage reserves one extra subobject (a shader record's size).
+        debug_assert!(bytes <= gs_size);
+        let record = unsafe { output.add(size) };
+        unsafe { ptr::write_bytes(record, 0, bytes) };
+        unsafe { record.cast::<i32>().write(14) };
+        unsafe { record.add(offset).cast::<i32>().write(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE.0) };
+        size += bytes;
+    }
     let rectangle_geometry;
     if rectangles {
         if fields[2..].iter().any(Option::is_some) || stream_output {
