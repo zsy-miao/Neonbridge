@@ -4,7 +4,7 @@
 
 **In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6ixlaunch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
 
-It's an early work in progress: the GTA VI Xbox build starts and draws frames, but the screen is still black, it currently stops on an assert a few seconds in, and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
+It's an early work in progress: the GTA VI Xbox build starts and draws frames, but the screen is still black, it currently crashes about 4 seconds in, and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -46,8 +46,9 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Open
 
-- **Startup assert:** with `TUXBOX_PREWARM=0` the title stops on its own `int 3` about 4 s in, after its first frame. One of its command lists records a call the desktop runtime rejects, so the host `Close` fails with E_INVALIDARG and every later `Reset` of that list fails too. It also happens on code from before the black-frame fixes. Next: find the rejected call (needs the D3D12 debug layer), or rebuild the host list after a failed `Close`.
-- **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Refusal reasons are kept in `.unsupported` and tallied.
+- **Startup crash:** with `TUXBOX_PREWARM=0`, one of the title's command lists records a call the desktop runtime rejects, so the host `Close` fails with E_INVALIDARG. That list's host command list is now rebuilt, which gets past the title's `int 3` on the next `Reset`, but the run then hits an access violation about 4.5 s in (stack not captured yet). The rejected call itself is still unknown (finding it needs the D3D12 debug layer).
+- **Compute-heap support:** upstream TuxBox's compute-heap code is being ported, so `xshader` can then take its typed heap stores.
+- **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Also ported: private samplers for root-less roots, literal sampler matching, raw SRVs behind root descriptors, and compute descriptors the runtime appends from FSSM/PSV records. `--build-shaders` ranks refusals by construct and reason, and dxc retries at `-O0` when `-O1` times out.
 - **No window on screen:** the game presents, but no window appears on the desktop.
 - **Early exit:** some runs exit with code 1 after about 40 s, without an exception.
 - **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
@@ -56,7 +57,7 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Roadmap
 
-1. **Get past the startup assert, then see the frames.** Find the call that breaks the command list. Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
+1. **Get past the startup crash, then see the frames.** Capture the 4.5 s access violation and find the call that breaks the command list. Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
 2. **Stay running.** Find what calls process exit in the early-exit runs (`--debug` records the exit stack).
 3. **Correct colour.** Pack 5551 in the shader, or substitute B5G5R5A1 UAV and render-target images with R8G8B8A8.
 4. **Speed.** Back each XMem pool with one section and join in-order page runs, so GPU imports span them without copies.
