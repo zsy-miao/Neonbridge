@@ -399,6 +399,13 @@ impl Pool {
         let Some((&lo, &hi)) = self.views.range(..=at).next_back() else { return Ok(false); };
         let end = at + bytes;
         if at >= hi || end > hi { return Ok(false); }
+        if Self::unmap_fallback_on() && Self::os_view(at) != Some((lo, hi)) {
+            // test78: a recorded view the OS does not have made the unmap at
+            // its base fail with error 87; the page is handled as the OS has it.
+            self.views.remove(&lo);
+            Self::fallback_log(format_args!("recorded view {lo:#x}..{hi:#x} is {:x?} in the OS: record dropped", Self::os_view(at)));
+            return Ok(false);
+        }
         let (base, extent) = self.aperture(at).ok_or(ERROR_INVALID_ADDRESS)?;
         let first = &self.pages[&self.mappings[&lo]];
         let section = first.section.clone();
@@ -438,43 +445,69 @@ impl Pool {
         Ok(true)
     }
 
-    /// test77: unmaps of pages inside an OS view of two or more pages that
-    /// `views` did not record failed with error 87 (UnmapViewOfFile2 at a
-    /// page that is not a view base). Such a view, when its pages are mapped
-    /// here as one section run, is recorded, so the page is split out of it
-    /// like any joined view. TUXBOX_XMEM_UNMAP_FALLBACK=0 leaves it.
-    fn adopt_view(&mut self, at: usize) -> bool {
-        if std::env::var("TUXBOX_XMEM_UNMAP_FALLBACK").is_ok_and(|v| v.trim() == "0") { return false; }
-        let Ok(info) = shared_pages::region(at) else { return false };
-        if info.Type != windows_sys::Win32::System::Memory::MEM_MAPPED { return false; }
+    /// The OS view holding `at`: [its base, its end), walking regions of the
+    /// same allocation.
+    fn os_view(at: usize) -> Option<(usize, usize)> {
+        let mapped = windows_sys::Win32::System::Memory::MEM_MAPPED;
+        let info = shared_pages::region(at).ok()?;
+        if info.Type != mapped { return None; }
         let lo = info.AllocationBase.addr();
-        let Ok(whole) = shared_pages::region(lo) else { return false };
-        let hi = lo + whole.RegionSize;
-        if !lo.is_multiple_of(PAGE) || !hi.is_multiple_of(PAGE) || hi - lo <= PAGE || at < lo || at >= hi
-            || self.views.range(lo..hi).next().is_some()
-            || self.views.range(..lo).next_back().is_some_and(|(_, &end)| end > lo) { return false; }
-        let Some(first) = self.mappings.get(&lo).and_then(|t| self.pages.get(t)) else { return false };
-        let (section, offset) = (first.section.clone(), first.offset);
-        let run = (lo..hi).step_by(PAGE).all(|a| self.mappings.get(&a).and_then(|t| self.pages.get(t))
-            .is_some_and(|p| Arc::ptr_eq(&p.section, &section) && p.offset == offset + (a - lo) as u64 && !p.mapped));
-        if !run { return false; }
-        self.views.insert(lo, hi);
+        let mut hi = lo;
+        while let Ok(r) = shared_pages::region(hi) {
+            if r.AllocationBase.addr() != lo || r.Type != mapped || r.RegionSize == 0 { break; }
+            hi = r.BaseAddress.addr() + r.RegionSize;
+        }
+        (hi > at).then_some((lo, hi))
+    }
+
+    fn unmap_fallback_on() -> bool {
+        !std::env::var("TUXBOX_XMEM_UNMAP_FALLBACK").is_ok_and(|v| v.trim() == "0")
+    }
+
+    fn fallback_log(what: std::fmt::Arguments) {
         static N: AtomicU64 = AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed) + 1;
         if n <= 8 || n.is_power_of_two() {
-            crate::loader::log(&format!("xmem: page {at:#x} lies in an unrecorded {} KiB view at {lo:#x}: recorded, so the page is split out of it ({n} so far; TUXBOX_XMEM_UNMAP_FALLBACK=0 off)", (hi - lo) >> 10));
+            crate::loader::log(&format!("xmem: {what} ({n} so far; TUXBOX_XMEM_UNMAP_FALLBACK=0 off)"));
         }
-        true
+    }
+
+    /// test77/78: unmaps failed with error 87 where the OS view holding the
+    /// page did not match `views` (a page inside a 2-4 page view with no
+    /// record, or a recorded view the OS no longer has). Trusting the OS: the
+    /// whole OS view is unmapped to a placeholder and its other pages mapped
+    /// again one by one from their tokens, leaving `at` a lone placeholder.
+    /// Returns false (nothing changed) when the view is just `at` or a page
+    /// of it has no token here.
+    fn rebuild_view(&mut self, at: usize) -> Result<bool, u32> {
+        if !Self::unmap_fallback_on() { return Ok(false); }
+        let Some((lo, hi)) = Self::os_view(at) else { return Ok(false) };
+        if (lo, hi) == (at, at + PAGE) || !lo.is_multiple_of(PAGE) || !hi.is_multiple_of(PAGE) { return Ok(false); }
+        if !(lo..hi).step_by(PAGE).all(|a| self.mappings.get(&a).is_some_and(|t| self.pages.contains_key(t))) {
+            Self::fallback_log(format_args!("page {at:#x} lies in a {} KiB OS view at {lo:#x} with pages this pool does not map: left", (hi - lo) >> 10));
+            return Ok(false);
+        }
+        let stale: Vec<usize> = self.views.range(..hi).filter(|&(&a, &b)| a < hi && lo < b).map(|(&a, _)| a).collect();
+        if stale.iter().any(|&a| a < lo || self.views[&a] > hi) { return Ok(false); }
+        shared_pages::unmap(lo)?;
+        for a in stale { self.views.remove(&a); }
+        shared_pages::isolate_page(at, &shared_pages::region(at)?)?;
+        for a in (lo..hi).step_by(PAGE).filter(|&a| a != at) {
+            shared_pages::isolate_page(a, &shared_pages::region(a)?)?;
+            let page = &self.pages[&self.mappings[&a]];
+            page.section.map(page.offset, a)?;
+        }
+        Self::fallback_log(format_args!("page {at:#x} lay in a {} KiB OS view at {lo:#x} that did not match the recorded views: view rebuilt page by page without it", (hi - lo) >> 10));
+        Ok(true)
     }
 
     fn unmap_shared_page(&mut self, at: usize) -> Result<(), u32> {
         if self.unmap_view_range(at, PAGE)? { return Ok(()); }
-        if self.adopt_view(at) {
-            if self.unmap_view_range(at, PAGE)? { return Ok(()); }
-        }
         let (base, extent) = self.aperture(at).ok_or(ERROR_INVALID_ADDRESS)?;
         let token = *self.mappings.get(&at).ok_or(ERROR_INVALID_ADDRESS)?;
-        shared_pages::unmap(at)?;
+        if !self.rebuild_view(at)? {
+            shared_pages::unmap(at)?;
+        }
         if self.apertures[&base].1 == 1 {
             if let Err(error) = shared_pages::coalesce(base, extent) {
                 // The failed coalesce left the original placeholder intact.

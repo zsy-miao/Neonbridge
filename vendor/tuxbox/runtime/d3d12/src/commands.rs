@@ -1894,6 +1894,20 @@ fn reject(queue: &Queue, error: HRESULT) {
     };
 }
 
+thread_local! {
+    /// The submission step that failed last on this thread, for drop_batch.
+    static FAILED_STEP: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
+/// Notes which submission step returned an error (test78 dropped 8 batches
+/// with E_NOTIMPL and no reason).
+fn step<T>(name: &'static str, result: windows::core::Result<T>) -> windows::core::Result<T> {
+    if result.is_err() {
+        FAILED_STEP.with(|s| s.set(name));
+    }
+    result
+}
+
 /// A bad batch drops only itself: latching the error on the queue made every
 /// later submission return early, so the title kept presenting black frames.
 /// Device loss still latches, since nothing after it can run.
@@ -1907,7 +1921,9 @@ fn drop_batch(queue: &Queue, error: HRESULT) {
     static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = DROPPED.fetch_add(1, Ordering::Relaxed);
     if n < 4 || (n + 1).is_power_of_two() {
-        crate::diagnostics::log_line(format_args!("dropped a command-list batch: {error:?} ({} so far)", n + 1));
+        let step = FAILED_STEP.with(|s| s.replace(""));
+        crate::diagnostics::log_line(format_args!("dropped a command-list batch: {error:?} at {} ({} so far)",
+            if step.is_empty() { "placed texture submission" } else { step }, n + 1));
     }
 }
 
@@ -2034,7 +2050,22 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                 || state.error.is_err()
                 || unsafe { list.native.GetType() } != queue.state.kind
             {
-                return Err(E_INVALIDARG);
+                // test78: lists whose native Close failed (0x80070057) dropped
+                // their whole batch, and the title's later work read what that
+                // batch should have written. Only this list is left out, with
+                // its memory-wait prefix; TUXBOX_STRICT_LISTS=1 drops the batch.
+                if strict_lists() || unsafe { list.native.GetType() } != queue.state.kind {
+                    FAILED_STEP.with(|s| s.set("a list that is open, failed or of another type"));
+                    return Err(E_INVALIDARG);
+                }
+                static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "left a list out of its batch: {} (error {:#010x}); the batch's other lists run ({n} so far; TUXBOX_STRICT_LISTS=1 drops the batch)",
+                        if matches!(state.phase, ListState::Closed) { "its recording failed" } else { "not closed" }, state.error.0));
+                }
+                return Ok(std::ptr::null_mut());
             }
             // A descriptor write after Close can exhaust the map's native
             // heap. Never submit an indexed access with an unpublished entry.
@@ -2073,6 +2104,16 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
             let _site = crate::diagnostics::cost::site();
+            let kept: Vec<_>;
+            let host = if host.iter().any(|l| l.is_null()) {
+                kept = host.iter().copied().filter(|l| !l.is_null()).collect();
+                if kept.is_empty() {
+                    return Ok(());
+                }
+                &kept[..]
+            } else {
+                host
+            };
             unsafe {
                 placement::submit(
                     parent(&queue.parent),
@@ -2093,22 +2134,22 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                         for list in scene_lists {
                             let state = recording(list);
                             for command in &state.scene_commands {
-                                command.prepare(list)?;
+                                step("scene (BLAS) preparation", command.prepare(list))?;
                             }
                         }
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
-                            device::refresh_shadows(owner, &queue.native)?;
-                            device::flush_desc_table(owner, &queue.native)?;
+                            step("shadow refresh", device::refresh_shadows(owner, &queue.native))?;
+                            step("descriptor table flush", device::flush_desc_table(owner, &queue.native))?;
                         }
                         {
                             let _site = crate::diagnostics::cost::site();
-                            memory_wait::submit(queue, host, splits)?;
+                            step("GPU memory wait submission", memory_wait::submit(queue, host, splits))?;
                         }
                         device::committed_writeback::submitted(&queue.native);
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
-                            device::write_back_shadows(owner, &queue.native)?;
+                            step("shadow write-back", device::write_back_shadows(owner, &queue.native))?;
                         }
                         if !cpu_copies.borrow().is_empty() {
                             let mut device: Option<ID3D12Device> = None;

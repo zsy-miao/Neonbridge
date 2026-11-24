@@ -564,8 +564,9 @@ impl Worker {
                                         u64::from(unsafe { std::sync::atomic::AtomicU32::from_ptr(job.segment.word.mapped as *mut u32).load(Ordering::Acquire) })
                                     };
                                     crate::diagnostics::log_line(format_args!(
-                                        "GPU memory wait {:#x} >= {:#x} on queue {:#x} released after {} ms: the list writing {value:#x} there completed, yet the word reads {now:#x} ({n} so far; TUXBOX_WAIT_WRITER_RELEASE=0 waits)",
-                                        job.segment.address, job.segment.target, job.queue, waited.as_millis()));
+                                        "GPU memory wait {:#x} >= {:#x} on queue {:#x} released after {} ms: the list writing {value:#x} there completed, yet the word reads {now:#x}{} ({n} so far; TUXBOX_WAIT_WRITER_RELEASE=0 waits)",
+                                        job.segment.address, job.segment.target, job.queue, waited.as_millis(),
+                                        super::page_mapping::remapped_under_import(job.segment.address)));
                                 }
                                 break;
                             }
@@ -577,10 +578,11 @@ impl Worker {
                                 static STALLS: AtomicU64 = AtomicU64::new(0);
                                 if slow::per_address(slow::Kind::Stalled, job.segment.address, &STALLS).is_some() {
                                 crate::diagnostics::log_line(format_args!(
-                                    "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}{}",
+                                    "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}{}{}",
                                     job.segment.address, job.segment.target, job.queue,
                                     writers::describe(job.segment.address, job.queue, started),
-                                    writers::writer_queue(job.segment.address).map(crate::diagnostics::queue_waits::describe).unwrap_or_default()
+                                    writers::writer_queue(job.segment.address).map(crate::diagnostics::queue_waits::describe).unwrap_or_default(),
+                                    super::page_mapping::remapped_under_import(job.segment.address)
                                 ));
                                 }
                             }

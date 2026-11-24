@@ -256,7 +256,28 @@ fn pinned_remap() -> bool {
     crate::env_toggle!("TUXBOX_PINNED_REMAP") != Some("0")
 }
 
+/// GPU-imported ranges whose CPU pages were remapped while imported (the
+/// last 256), so a GPU memory wait can say its word has two backings.
+static PINNED: std::sync::Mutex<std::collections::VecDeque<(Range<u64>, std::time::Instant)>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// "; imported range X..Y had its CPU pages remapped N ms ago" when `address`
+/// lies in a range remapped while GPU-imported.
+pub(crate) fn remapped_under_import(address: u64) -> String {
+    let pinned = PINNED.lock().unwrap_or_else(|e| e.into_inner());
+    pinned.iter().rev().find(|(r, _)| r.contains(&address)).map_or_else(String::new, |(r, at)| format!(
+        "; the GPU-imported range {:#x}..{:#x} holding it had its CPU pages remapped {} ms ago (the GPU writes the old pages)",
+        r.start, r.end, at.elapsed().as_millis()))
+}
+
 fn pinned_remapped(import: &Range<u64>) {
+    {
+        let mut pinned = PINNED.lock().unwrap_or_else(|e| e.into_inner());
+        if pinned.len() >= 256 {
+            pinned.pop_front();
+        }
+        pinned.push_back((import.clone(), std::time::Instant::now()));
+    }
     static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     if remap_logged(n) {
