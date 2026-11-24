@@ -139,7 +139,7 @@ impl AutoStart {
             Self::Off | Self::Done => false,
             Self::Waiting { delay, since, tries } => {
                 if since.is_none() {
-                    if std::env::var_os("TUXBOX_SIGNED_IN").is_none() {
+                    if std::env::var_os("TUXBOX_SIGNED_IN").is_none_or(|v| v.is_empty()) {
                         return false;
                     }
                     *since = Some(now);
