@@ -202,8 +202,9 @@ fn minmax_fn(op: &str) -> &'static str {
 /// (s, t, face) with s,t = sc/|ma| + 1.5 (so each is in [1, 2]); `tb_cube_dir` inverts that
 /// to the direction vector HLSL TextureCube sampling expects.
 // v_fract_f32 stays below 1.0 (0x3f7fffff) and passes NaN through; HLSL frac
-// rounds tiny negative inputs up to exactly 1.0 (Xbox2Windows af36254c).
-const CUBE_HELPERS: &str = r#"float tb_fract(float x) { return isnan(x) ? x : min(frac(x), asfloat(0x3f7fffffu)); }
+// rounds tiny negative inputs up to exactly 1.0 (Xbox2Windows af36254c). NaN is
+// tested on the bits so the compiler cannot fold it away (Xbox2Windows bd558d64).
+const CUBE_HELPERS: &str = r#"float tb_fract(float x) { return (asuint(x) & 0x7fffffffu) > 0x7f800000u ? x : min(frac(x), asfloat(0x3f7fffffu)); }
 uint tb_perm_byte(uint hi, uint lo, uint sel) { if (sel >= 13u) return 0xffu; if (sel == 12u) return 0u; if (sel == 11u) return (hi >> 31) * 0xffu; if (sel == 10u) return ((hi >> 15) & 1u) * 0xffu; if (sel == 9u) return (lo >> 31) * 0xffu; if (sel == 8u) return ((lo >> 15) & 1u) * 0xffu; return sel >= 4u ? ((hi >> ((sel - 4u) * 8u)) & 0xffu) : ((lo >> (sel * 8u)) & 0xffu); }
 uint tb_perm(uint hi, uint lo, uint sel) { return tb_perm_byte(hi, lo, sel & 0xffu) | (tb_perm_byte(hi, lo, (sel >> 8) & 0xffu) << 8) | (tb_perm_byte(hi, lo, (sel >> 16) & 0xffu) << 16) | (tb_perm_byte(hi, lo, sel >> 24) << 24); }
 bool tb_cmp_class(uint b, uint mask, uint fractionBits, uint exponentMask) {
