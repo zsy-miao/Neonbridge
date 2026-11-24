@@ -157,7 +157,7 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
         };
         // The selected PSO may supply a more precise descriptor layout.
         // Defer reading guest records until draw or dispatch.
-        match arena.gpu_table(base.ptr, *length, &[]) {
+        match arena.gpu_table(base.ptr, *length, &[], None) {
             Ok(handle) => handle,
             Err(error) => { state.error = error.code(); return; }
         }

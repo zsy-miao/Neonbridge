@@ -109,6 +109,10 @@ impl Arena {
             ..*desc
         };
         let staging: ID3D12DescriptorHeap = unsafe { device.CreateDescriptorHeap(&cpu)? };
+        // Tables copy unwritten staging slots too; their host contents are undefined.
+        if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
+            super::null_kinds::fill(device, &staging, desc.NumDescriptors, false);
+        }
         let visible = if desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE {
             unsafe { device.CreateDescriptorHeap(&gpu)? }
         } else {
@@ -276,7 +280,7 @@ impl Arena {
         }
     }
     pub(crate) fn gpu(&self, address: u64, length: u32) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
-        self.gpu_table(address, length, &[0..length])
+        self.gpu_table(address, length, &[0..length], None)
     }
 
     pub(crate) fn resident_gpu(&self, address: u64, length: u32) -> Option<D3D12_GPU_DESCRIPTOR_HANDLE> {
@@ -292,7 +296,15 @@ impl Arena {
         D3D12_GPU_DESCRIPTOR_HANDLE { ptr: base + u64::from(slot) * self.stride as u64 }
     }
 
-    pub(crate) fn gpu_table(&self, address: u64, length: u32, active: &[std::ops::Range<u32>]) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
+    /// `kinds` gives the null descriptor each unwritten slot of this table
+    /// (root parameter) needs for the bound pipeline's shaders.
+    pub(crate) fn gpu_table(
+        &self,
+        address: u64,
+        length: u32,
+        active: &[std::ops::Range<u32>],
+        kinds: Option<(&super::null_kinds::NullKinds, usize)>,
+    ) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
         let offset = (address as usize)
             .checked_sub(self.base())
             .ok_or(E_INVALIDARG)?;
@@ -330,28 +342,29 @@ impl Arena {
                 let cell = address as usize + index * INLINE_BYTES;
                 let record = self.inline_record(cell);
                 let slot = resident as usize + index;
-                if tables.resident_records.get(&slot) == Some(&record) {
+                // An unwritten slot is resident as the null kind it was made as.
+                let null = (record == InlineDescriptor::default()).then(|| {
+                    kinds
+                        .and_then(|(kinds, parameter)| kinds.get(parameter, index as u32))
+                        .unwrap_or(super::null_kinds::NullKind::DEFAULT)
+                });
+                let resident_key = null.map_or(record, |kind| InlineDescriptor { reserved: [kind.code(), 0], ..record });
+                if tables.resident_records.get(&slot) == Some(&resident_key) {
                     continue;
                 }
                 let destination = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + slot * self.stride };
                 if let Some(source) = self.resolve_inline(record) {
                     self.copy_native_view(destination, source);
                     materialized += usize::from(record.source != cell || INLINE_BYTES != self.stride);
-                } else if record == InlineDescriptor::default() {
-                    // Inactive slots have no resource. Use a valid null SRV
-                    // rather than copying an uninitialized host descriptor.
-                    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
-                    let null = D3D12_SHADER_RESOURCE_VIEW_DESC {
-                        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-                        ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
-                        Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
-                        ..Default::default()
-                    };
+                } else if let Some(kind) = null {
+                    // Inactive slots have no resource. Use a null view of the
+                    // kind the shader reads there (VIctory 8c26061) rather
+                    // than copying an uninitialized host descriptor.
                     self.imported.copy_to(self.stride, destination.ptr, 0, 1);
                     self.placed.copy_to(self.stride, destination.ptr, 0, 1);
                     self.scenes.copy_to(self.stride, destination.ptr, 0, 1);
                     crate::diagnostics::display::texture_view(destination.ptr, None, None);
-                    unsafe { self.device.CreateShaderResourceView(None, Some(&null), destination) };
+                    kind.write(&self.device, destination);
                 } else {
                     if crate::diagnostics::display::trace_views() {
                         crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
@@ -361,7 +374,7 @@ impl Arena {
                     }
                     return Err(E_INVALIDARG.into());
                 }
-                tables.resident_records.insert(slot, record);
+                tables.resident_records.insert(slot, resident_key);
             }
             if materialized != 0 {
                 static FIRST: std::sync::Once = std::sync::Once::new();

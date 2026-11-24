@@ -41,6 +41,7 @@ pub(crate) mod rectangle;
 pub(crate) mod shader_cache;
 mod state_object;
 pub(crate) mod stencil;
+pub(crate) mod null_kinds;
 pub(crate) mod pipeline_cache;
 mod stream;
 mod title_memory;
@@ -482,7 +483,13 @@ unsafe extern "system" fn create_heap(
         }
     } else {
         match unsafe { this.native.CreateDescriptorHeap::<ID3D12DescriptorHeap>(desc) } {
-            Ok(native) => (native, None),
+            Ok(native) => {
+                // Host contents of unwritten slots are undefined.
+                if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
+                    null_kinds::fill(&this.native, &native, desc.NumDescriptors, desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);
+                }
+                (native, None)
+            }
             Err(error) => return error.code(),
         }
     };

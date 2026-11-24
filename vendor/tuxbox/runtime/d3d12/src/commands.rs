@@ -22,6 +22,7 @@ mod depth;
 mod enhanced;
 mod descriptors;
 mod graphics;
+mod indirect_clamp;
 mod media;
 mod memory_wait;
 pub(crate) mod page_mapping;
@@ -64,6 +65,8 @@ struct Recording {
     /// The bound pipeline is lazy and still being made: draws and
     /// dispatches are dropped until the list binds it again once it exists.
     pipeline_pending: bool,
+    /// This recording's indirect execution budget (see indirect_clamp).
+    clamp_budget: Option<ID3D12Resource>,
     media: Option<media::Recording>,
     placed_reads: Vec<Arc<Texture>>,
     placed_writes: Vec<Arc<Texture>>,
@@ -427,6 +430,7 @@ unsafe extern "system" fn reset(
         }
         state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
         state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
+        state.clamp_budget = None;
         if let Some(targets) = &mut state.stencil_targets {
             targets.unbind();
         }
@@ -1077,6 +1081,28 @@ unsafe extern "system" fn execute_indirect(
         (Some(&buffer.native), offset)
     };
     if !(argument_offset | count_offset).is_multiple_of(4) { state.error = E_INVALIDARG; return; }
+    if max_count != 0 && !state.pipeline_pending && clamp_enabled()
+        && let Some(host) = list.state.raytracing.as_ref()
+    {
+        let clamped = indirect_clamp::bound(
+            &list.native, &mut state.clamp_budget, signature.state.kind, signature.state.stride, max_count,
+            indirect_clamp::Region { buffer: &arguments.native, offset: argument_offset },
+            count.map(|buffer| indirect_clamp::Region { buffer, offset: count_offset }),
+        );
+        match clamped {
+            Ok((ran, made)) => {
+                if let Some(made) = made
+                    && let Err(error) = raytracing::retain(&state, &[&made])
+                {
+                    state.error = error.code();
+                    return;
+                }
+                // The clamp replaced the compute root and the pipeline.
+                if ran { unsafe { state.bindings.restore(host) }; }
+            }
+            Err(error) => { state.error = error.code(); return; }
+        }
+    }
     let execute = || unsafe {
         list.native.ExecuteIndirect(
             &signature.native,
@@ -1103,6 +1129,12 @@ unsafe extern "system" fn execute_indirect(
         let rasterizes = max_count != 0 && signature.state.kind != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
         state.draw(list, rasterizes, execute);
     }
+}
+
+/// TUXBOX_INDIRECT_CLAMP=0 executes indirect arguments as the title wrote them.
+fn clamp_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TUXBOX_INDIRECT_CLAMP").is_none_or(|v| v != "0"))
 }
 
 // Record the title's four-byte progress marker at the requested GPU address.
@@ -1632,6 +1664,7 @@ pub(crate) unsafe fn wrap_command_list(
             trace_samples: Vec::new(),
             null_pipeline: false,
             pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
+            clamp_budget: None,
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),
             bound_placed_targets: Vec::new(),

@@ -68,7 +68,13 @@ impl SceneCheck {
 }
 
 pub(super) enum Pipeline {
-    Regular(ID3D12PipelineState, Option<SceneRoot>, Option<Arc<ComputeTable>>, Option<Arc<ComputeTable>>),
+    Regular(
+        ID3D12PipelineState,
+        Option<SceneRoot>,
+        Option<Arc<ComputeTable>>,
+        Option<Arc<ComputeTable>>,
+        Option<Arc<crate::device::null_kinds::NullKinds>>,
+    ),
     Ray(ID3D12StateObject),
 }
 
@@ -109,7 +115,7 @@ pub(super) enum Argument {
 impl From<&GuestPipeline> for Pipeline {
     fn from(p: &GuestPipeline) -> Self {
         let (native, data, _) = crate::device::compute::current(p);
-        Self::Regular(native.clone(), data.scene_root.clone(), data.reflected.clone(), data.raster_table.clone())
+        Self::Regular(native.clone(), data.scene_root.clone(), data.reflected.clone(), data.raster_table.clone(), data.null_kinds.clone())
     }
 }
 
@@ -214,6 +220,14 @@ impl Bindings {
         }
     }
 
+    /// The bound pipeline's null descriptor kinds per table slot.
+    fn null_kinds(&self) -> Option<&crate::device::null_kinds::NullKinds> {
+        match &self.pipeline {
+            Some(Pipeline::Regular(_, _, _, _, kinds)) => kinds.as_deref(),
+            _ => None,
+        }
+    }
+
     pub(super) fn inline_ranges<const COMPUTE: bool>(&self, slot: usize) -> &[std::ops::Range<u32>] {
         let root = if COMPUTE { &self.layout } else { &self.graphics_layout };
         root.as_ref().map_or(&[], |root| root.inline_ranges(slot))
@@ -246,7 +260,7 @@ impl Bindings {
 
     pub(super) fn reflected_table<const COMPUTE: bool>(&self) -> Option<&ComputeTable> {
         match &self.pipeline {
-            Some(Pipeline::Regular(_, _, compute, raster)) => if COMPUTE { compute.as_deref() } else { raster.as_deref() },
+            Some(Pipeline::Regular(_, _, compute, raster, _)) => if COMPUTE { compute.as_deref() } else { raster.as_deref() },
             _ => None,
         }
     }
@@ -270,7 +284,7 @@ impl Bindings {
                 table
             } else { self.graphics_tables.get(&slot).ok_or(E_INVALIDARG)? };
             bases[index] = Some(match arena.filter(|a| a.contains(bound.logical.ptr)) {
-                Some(arena) => arena.gpu_table(bound.logical.ptr, length, table.layout.inline_ranges(index))?,
+                Some(arena) => arena.gpu_table(bound.logical.ptr, length, table.layout.inline_ranges(index), self.null_kinds().map(|k| (k, index)))?,
                 None => bound.native,
             });
         }
@@ -332,7 +346,7 @@ impl Bindings {
 
     pub(super) fn scene_root(&self) -> Option<&SceneRoot> {
         match self.pipeline.as_ref() {
-            Some(Pipeline::Regular(_, root, _, _)) => root.as_ref(),
+            Some(Pipeline::Regular(_, root, _, _, _)) => root.as_ref(),
             _ => None,
         }
     }
@@ -390,7 +404,7 @@ impl Bindings {
                 self.graphics_tables.get(&slot)
             };
             if let Some(bound) = bound.filter(|bound| arena.contains(bound.logical.ptr)) {
-                arena.gpu_table(bound.logical.ptr, *length, self.inline_ranges::<COMPUTE>(slot as usize))?;
+                arena.gpu_table(bound.logical.ptr, *length, self.inline_ranges::<COMPUTE>(slot as usize), self.null_kinds().map(|k| (k, slot as usize)))?;
             }
         }
         Ok(())
@@ -514,7 +528,7 @@ impl Bindings {
                 host.SetGraphicsRootDescriptorTable(slot, base.native);
             }
             match self.pipeline.as_ref() {
-                Some(Pipeline::Regular(pso, _, _, _)) => host.SetPipelineState(pso),
+                Some(Pipeline::Regular(pso, _, _, _, _)) => host.SetPipelineState(pso),
                 Some(Pipeline::Ray(pso)) => host.SetPipelineState1(pso),
                 None => {}
             }

@@ -25,6 +25,8 @@ pub(crate) struct PipelineData {
     pub(crate) scene_root: Option<SceneRoot>,
     pub(crate) reflected: Option<std::sync::Arc<ComputeTable>>,
     pub(crate) raster_table: Option<std::sync::Arc<ComputeTable>>,
+    /// The null descriptor each unwritten table slot needs for these shaders.
+    pub(crate) null_kinds: Option<std::sync::Arc<super::null_kinds::NullKinds>>,
     /// Filled by a background worker when this pipeline was created without
     /// its translation (see `stream::background`).
     pub(crate) upgrade: std::sync::OnceLock<std::sync::Arc<super::stream::Upgrade>>,
@@ -369,6 +371,11 @@ unsafe fn make_compute(
             "created compute pipeline with {} reflected FSSM descriptor slots", table.lengths.iter().map(|&v| u64::from(v)).sum::<u64>()
         ));
     }
+    // Registers of the translation follow the root it was made for.
+    let null_kinds = translation.as_deref().and_then(|code| {
+        let root = reflected.as_ref().map(|t| &t.layout).or(root.map(|p| &p.state))?;
+        super::null_kinds::reflect(root.payload(), [code])
+    });
     unsafe {
         wrap_pageable(
             native,
@@ -377,6 +384,7 @@ unsafe fn make_compute(
             PipelineData {
                 scene_root,
                 reflected,
+                null_kinds,
                 ..Default::default()
             },
             out,

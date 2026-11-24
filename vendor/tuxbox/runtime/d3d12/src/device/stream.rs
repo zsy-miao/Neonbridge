@@ -376,6 +376,8 @@ unsafe fn create(
         super::compute_table::capture_stage_root(pixel, root);
     }
     let mut rooted = [None, None];
+    // The root signature the stages' registers follow (for typed null views).
+    let mut binding_root: Option<Vec<u8>> = guest_root.map(|root| root.payload().to_vec());
     if let (Some(root), Some((vertex, _)), Some((pixel, _)), Some(field)) =
         (guest_root, original[0], original[1], root_record)
         && original[2..].iter().all(Option::is_none)
@@ -394,6 +396,7 @@ unsafe fn create(
         };
         // A native root table can combine descriptors from both raster stages.
         if let Some(root) = root {
+            binding_root = Some(root.payload().to_vec());
             for (i, source) in [vertex, pixel].into_iter().enumerate() {
                 rooted[i] = shader_cache::raster_with_root(source, root.payload());
             }
@@ -411,6 +414,9 @@ unsafe fn create(
         original[i] = Some((source, Some(stages.len())));
         stages.push(compiled);
     }
+    pipeline.null_kinds = binding_root.as_deref().and_then(|root| {
+        super::null_kinds::reflect(root, original.iter().filter_map(|stage| Some(stages[(*stage)?.1?].as_slice())))
+    });
     if let Some((code, Some(index))) = original[5]
         && let Some(root) =
             super::compute_scene::private_root(&device.native, code, &stages[index], guest_root, node_mask)?
