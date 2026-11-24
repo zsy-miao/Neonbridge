@@ -2166,6 +2166,9 @@ unsafe extern "system" fn queue_fence<const WAIT: bool>(
     };
     if WAIT {
         memory_wait::slow::queue_wait(queue.native.as_raw() as usize, fence, value);
+        unsignalled::waited(fence, value);
+    } else {
+        unsignalled::signalled(fence, value);
     }
     let status = unsafe { method(queue.native.as_raw(), fence.as_raw(), value) };
     if !WAIT && status.is_ok() {
@@ -2175,6 +2178,70 @@ unsafe extern "system" fn queue_fence<const WAIT: bool>(
         ));
     }
     status
+}
+
+/// A queue wait on a fence value no queue was told to signal (and the fence
+/// has not reached) is logged once per fence and value, first 32 (rebox
+/// 35b0eaf, re-derived): a wait that can only be met by a CPU Signal, or
+/// never. TUXBOX_UNSIGNALLED_WAITS=0 off.
+mod unsignalled {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex;
+    use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
+    use windows::core::Interface;
+
+    #[derive(Default)]
+    struct Seen {
+        /// fence -> highest value a queue was told to signal.
+        signalled: HashMap<usize, u64>,
+        logged: HashSet<(usize, u64)>,
+    }
+
+    static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
+
+    fn on() -> bool {
+        crate::env_toggle!("TUXBOX_UNSIGNALLED_WAITS") != Some("0")
+    }
+
+    pub(super) fn signalled(fence: &ID3D12Fence, value: u64) {
+        if !on() {
+            return;
+        }
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let top = seen.get_or_insert_with(Seen::default).signalled.entry(fence.as_raw() as usize).or_insert(0);
+        *top = (*top).max(value);
+    }
+
+    /// Whether a wait for `value` is one nothing queued will satisfy.
+    pub(super) fn unmet(value: u64, completed: u64, signalled: Option<u64>) -> bool {
+        value > completed && signalled.is_none_or(|top| value > top)
+    }
+
+    pub(super) fn waited(fence: &ID3D12Fence, value: u64) {
+        if !on() {
+            return;
+        }
+        let completed = unsafe { fence.GetCompletedValue() };
+        let key = fence.as_raw() as usize;
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let seen = seen.get_or_insert_with(Seen::default);
+        if !unmet(value, completed, seen.signalled.get(&key).copied()) || seen.logged.len() >= 32
+            || !seen.logged.insert((key, value)) {
+            return;
+        }
+        crate::diagnostics::log_line(format_args!(
+            "queue waits on fence {key:#x} for {value:#x}, which no queue was told to signal (highest {:?}, completed {completed:#x}) from title RVA {:#x}; TUXBOX_UNSIGNALLED_WAITS=0 off",
+            seen.signalled.get(&key), crate::survey::title_rva().unwrap_or(0)));
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn a_wait_is_unmet_only_past_both_completed_and_signalled() {
+        assert!(unmet(5, 3, Some(4)));
+        assert!(unmet(5, 3, None));
+        assert!(!unmet(4, 3, Some(4)));
+        assert!(!unmet(3, 3, None));
+    }
 }
 
 // Frosty's direct/compute path requests its flush before the fence and the
