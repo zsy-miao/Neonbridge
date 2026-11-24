@@ -73,17 +73,28 @@ pub fn close() {
 }
 
 /// Fits the windows of the game process `exe` into the primary monitor's work
-/// area from the moment they exist, and covers them with the loading screen
-/// until [`close`]. Runs on its own thread and polls every few milliseconds, so
+/// area from the moment they exist and for the rest of the run, and covers
+/// them with the loading screen until [`close`]. Runs on its own thread and polls every few milliseconds, so
 /// a window spanning both monitors moves before it is ever painted.
 pub fn watch(exe: &std::path::Path) {
     let Some(name) = exe.file_name().map(|n| n.to_string_lossy().to_lowercase()) else { return };
     let _ = std::thread::Builder::new().name("neonbridge window watch".into()).spawn(move || {
-        let start = std::time::Instant::now();
         let mut names: std::collections::HashMap<u32, bool> = std::collections::HashMap::new();
         let mut covered = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         let mut game: HWND = std::ptr::null_mut();
-        while WINDOW.load(Ordering::Acquire) != -2 && start.elapsed().as_secs() < 600 {
+        let mut focused = false;
+        // Runs for the whole game: the title stretches its window over every
+        // monitor again later, so it is pulled back onto one each time.
+        loop {
+            let closed = WINDOW.load(Ordering::Acquire) == -2;
+            if closed && !focused {
+                focused = true;
+                // The title only reads input while it has focus (the auto A press
+                // for its player-selection prompt included), so hand it the foreground.
+                if !game.is_null() {
+                    unsafe { SetForegroundWindow(game) };
+                }
+            }
             for hwnd in top_level_windows() {
                 let mut pid = 0;
                 unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
@@ -101,12 +112,7 @@ pub fn watch(exe: &std::path::Path) {
                     }
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(4));
-        }
-        // The title only reads input while it has focus (the auto A press for
-        // its player-selection prompt included), so hand it the foreground.
-        if !game.is_null() {
-            unsafe { SetForegroundWindow(game) };
+            std::thread::sleep(std::time::Duration::from_millis(if closed { 50 } else { 4 }));
         }
     });
 }
@@ -160,6 +166,10 @@ fn fit(hwnd: HWND) -> Option<RECT> {
             return None;
         }
         let visible = IsWindowVisible(hwnd) != 0;
+        // A maximised window overhangs its work area by its frame; leave it.
+        if IsZoomed(hwnd) != 0 {
+            return visible.then_some(current);
+        }
         let mut mine: MONITORINFO = std::mem::zeroed();
         mine.cbSize = size_of::<MONITORINFO>() as u32;
         if GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mine) != 0
