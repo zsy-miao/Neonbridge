@@ -591,6 +591,8 @@ struct Emitter<'a> {
     /// per instruction, for maintaining the run-time `tb_dsel<reg>` selectors.
     dsel_loads: HashMap<usize, (u16, u32)>,
     dsel_moves: HashMap<usize, (u16, u16)>,
+    /// s_cselect / s_cmov of descriptors: (dst, chosen when SCC is set, else).
+    dsel_selects: HashMap<usize, (u16, u16, u16)>,
     /// Registers read before written (entry ABI), from `live_in`.
     live: Vec<String>,
     /// Pixel shader needs its position within the 2x2 quad (ds_swizzle).
@@ -2083,6 +2085,7 @@ impl<'a> Emitter<'a> {
             bsel: HashMap::new(),
             dsel_loads: HashMap::new(),
             dsel_moves: HashMap::new(),
+            dsel_selects: HashMap::new(),
             live: Vec::new(),
             uses_quad: false,
             compute_swizzle: false,
@@ -3201,6 +3204,47 @@ impl<'a> Emitter<'a> {
                             sym.insert(d, Sym::MeshRawAddress { register, word: 2 });
                         }
                         written.insert(d);
+                    }
+                }
+                // A descriptor chosen without a branch (VIctory a3d3bc9, re-derived):
+                // s_cselect_b32/b64 (S0 when SCC is set, else S1) or s_cmov (S0, else
+                // the old destination) per dword. Two descriptors become one of
+                // several (Sym::Multi) whose run-time selector follows SCC; words
+                // that differ in anything else are unknown as before.
+                // TB_DESC_SELECT=0 leaves selections unknown.
+                Enc::Sop1 | Enc::Sop2
+                    if matches!(ins.mnemonic.as_str(), "s_cselect_b32" | "s_cselect_b64" | "s_cmov_b32" | "s_cmov_b64")
+                        && std::env::var("TB_DESC_SELECT").map_or(true, |v| v.trim() != "0") =>
+                {
+                    if let Some(d) = ins.dst.first().and_then(sg) {
+                        let n: u16 = if ins.mnemonic.ends_with("_b64") { 2 } else { 1 };
+                        let cmov = ins.mnemonic.starts_with("s_cmov");
+                        let a = ins.src.first().and_then(sg);
+                        let b = if cmov { Some(d) } else { ins.src.get(1).and_then(sg) };
+                        let mut chosen = Vec::new();
+                        for k in 0..n {
+                            let sa = a.and_then(|r| sym.get(&(r + k))).copied();
+                            let sb = b.and_then(|r| sym.get(&(r + k))).copied();
+                            chosen.push(match (sa, sb) {
+                                (Some(x), Some(y)) if x == y => Some(x),
+                                (Some(x), Some(y)) => self.join_desc(x, y),
+                                _ => None,
+                            });
+                        }
+                        for (k, v) in (0..n).zip(chosen) {
+                            match v {
+                                Some(v) => {
+                                    if let (0, Sym::Desc { k: 0, .. } | Sym::Multi { k: 0, .. }, Some(a), Some(b)) = (k, v, a, b) {
+                                        self.dsel_selects.insert(idx, (d, a, b));
+                                    }
+                                    sym.insert(d + k, v);
+                                }
+                                None => {
+                                    sym.remove(&(d + k));
+                                }
+                            }
+                            written.insert(d + k);
+                        }
                     }
                 }
                 Enc::Sop2 if self.resource_heap_base.is_some() && ins.mnemonic == "s_lshl_b32" && ins.src.get(1) == Some(&Opnd::ConstInt(5)) => {
@@ -4748,6 +4792,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.regs.insert(format!("tb_dsel{d}"));
                 self.regs.insert(format!("tb_dsel{s}"));
                 self.line(&format!("tb_dsel{d} = tb_dsel{s};"));
+            }
+            if let Some(&(d, a, b)) = self.dsel_selects.get(&idx) {
+                for r in [d, a, b] {
+                    self.regs.insert(format!("tb_dsel{r}"));
+                }
+                self.line(&format!("tb_dsel{d} = (scc != 0u) ? tb_dsel{a} : tb_dsel{b};"));
             }
         }
         if ins.enc == Enc::Mimg {
