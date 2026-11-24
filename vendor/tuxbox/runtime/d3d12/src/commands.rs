@@ -79,6 +79,11 @@ struct Recording {
     /// TUXBOX_LIST_RING=1: guest caller RVAs of the latest recording calls,
     /// dumped when the host Close rejects the list.
     ring: std::collections::VecDeque<usize>,
+    /// Queries begun and not yet ended, ended at Close: an open query makes
+    /// the host Close fail.
+    open_queries: Vec<(ID3D12QueryHeap, D3D12_QUERY_TYPE, u32)>,
+    /// BEGIN_ONLY transitions without their END_ONLY yet, finished at Close.
+    split_barriers: Vec<TransitionBarrier>,
     phase: ListState,
     error: HRESULT,
 }
@@ -266,6 +271,26 @@ impl Recording {
             trace(self);
         }
     }
+    /// End what the title left open: a begun query or a split barrier
+    /// without its end half makes the host Close fail.
+    fn balance(&mut self, native: &ID3D12GraphicsCommandList) {
+        if !self.open_queries.is_empty() || !self.split_barriers.is_empty() {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&ONCE, || format!(
+                "closing a list with {} open queries and {} unfinished split barriers; ended them",
+                self.open_queries.len(), self.split_barriers.len()));
+        }
+        for (heap, kind, index) in self.open_queries.drain(..) {
+            unsafe { native.EndQuery(&heap, kind, index) };
+        }
+        let ends: Vec<TransitionBarrier> = self.split_barriers.drain(..)
+            .map(|b| TransitionBarrier { flags: D3D12_RESOURCE_BARRIER_FLAG_END_ONLY, ..b })
+            .collect();
+        if !ends.is_empty() {
+            unsafe { (native.vtable().ResourceBarrier)(native.as_raw(), ends.len() as u32, ends.as_ptr().cast()) };
+        }
+    }
+
     fn sample_tables<const COMPUTE: bool>(&mut self) {
         if let Some(heap) = &self.resource_heap
             && self.bindings.sample_tables::<COMPUTE>(heap, &mut self.sampled_heaps).is_none()
@@ -527,6 +552,8 @@ unsafe extern "system" fn reset(
         state.scalar_descriptors.clear();
         state.sampled_heaps.clear();
         state.ring.clear();
+        state.open_queries.clear();
+        state.split_barriers.clear();
         state.error = S_OK;
     }
     if hr.is_err() {
@@ -589,6 +616,7 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         ListState::Fresh(..) => {} // The initial empty recording is already closed on the host.
         ListState::Open => {
             if let Err(error) = state.prefix.finish(&list.native) { state.error = error.code(); }
+            state.balance(&list.native);
             if let Err(error) = unsafe { list.native.Close() } {
                 crate::diagnostics::log_line(format_args!(
                     "host list Close failed {:#010x} (recorded error {:#010x}, list type {}, last guest callers {:x?})",
@@ -698,6 +726,7 @@ unsafe extern "system" fn transition(
     // only after checking the union tag.
     let guest = unsafe { slice::from_raw_parts(barriers, count as usize) };
     let kind = unsafe { list.native.GetType() };
+    let mut splits: Vec<TransitionBarrier> = Vec::new();
     let result = translate_batch(
         guest,
         Vec::new(),
@@ -870,11 +899,27 @@ unsafe extern "system" fn transition(
                 }
             }
             submit(&host[first..]);
+            for barrier in host {
+                let t = barrier.transition;
+                if barrier.kind == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && !t.resource.is_null()
+                    && t.flags != D3D12_RESOURCE_BARRIER_FLAG_NONE
+                {
+                    splits.push(t);
+                }
+            }
             Ok(())
         },
     );
     if let Err(error) = result {
         state.error = error;
+    }
+    for t in splits {
+        let same = |b: &TransitionBarrier| b.resource == t.resource && b.subresource == t.subresource;
+        if t.flags == D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY {
+            state.split_barriers.push(t);
+        } else if let Some(at) = state.split_barriers.iter().position(same) {
+            state.split_barriers.swap_remove(at);
+        }
     }
 }
 
@@ -1911,6 +1956,8 @@ pub(crate) unsafe fn wrap_command_list(
             scalar_descriptors: Default::default(),
             sampled_heaps: Vec::new(),
             ring: std::collections::VecDeque::new(),
+            open_queries: Vec::new(),
+            split_barriers: Vec::new(),
             media: compact.then(|| media::Recording::new(allocator)),
             phase: ListState::Fresh(allocator.native.clone(), initial.map(|p| p.native.clone())),
             error: S_OK,

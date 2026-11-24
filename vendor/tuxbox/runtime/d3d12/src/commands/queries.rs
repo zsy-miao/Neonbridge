@@ -35,14 +35,30 @@ pub(super) unsafe extern "system" fn query<const BEGIN: bool>(
             "dropped query type {} on a type {} list", kind.0, list_kind.0));
         return;
     }
+    // The core runtime refuses a nested Begin or an End without a Begin.
+    let open = state.open_queries.iter().position(|(h, k, i)| h == heap && *k == kind && *i == index);
     if BEGIN {
         if kind == D3D12_QUERY_TYPE_TIMESTAMP {
             state.error = E_INVALIDARG;
             return;
         }
+        if open.is_some() {
+            return;
+        }
+        if state.open_queries.try_reserve(1).is_err() {
+            state.error = windows::Win32::Foundation::E_OUTOFMEMORY;
+            return;
+        }
         unsafe { list.native.BeginQuery(heap, kind, index) };
-    } else {
+        state.open_queries.push((heap.clone(), kind, index));
+    } else if kind == D3D12_QUERY_TYPE_TIMESTAMP {
         unsafe { list.native.EndQuery(heap, kind, index) };
+    } else if let Some(at) = open {
+        state.open_queries.swap_remove(at);
+        unsafe { list.native.EndQuery(heap, kind, index) };
+    } else {
+        static UNMATCHED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&UNMATCHED, || format!("dropped EndQuery type {} index {index} with no Begin in this list", kind.0));
     }
 }
 
