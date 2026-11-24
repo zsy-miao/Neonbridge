@@ -79,7 +79,9 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     }
     let deferred = slot.deferred.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some((device, work)) = deferred {
-        send(Job { device, work, slot: slot.clone() });
+        send(Job { device, work, slot: slot.clone() }, true);
+    } else {
+        promote(slot);
     }
     let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::PipelineWait);
     let (lock, done) = &DONE;
@@ -365,19 +367,65 @@ pub(in crate::device) fn eager_on_title() -> bool {
 /// pipeline exists.
 pub(in crate::device) fn queue(device: IUnknown, work: Work) -> Arc<Upgrade> {
     let slot = Arc::new(Upgrade::default());
-    send(Job { device, work, slot: slot.clone() });
+    send(Job { device, work, slot: slot.clone() }, false);
     slot
 }
 
-fn send(job: Job) {
-    static SENDER: OnceLock<Option<Mutex<std::sync::mpsc::Sender<Job>>>> = OnceLock::new();
-    let sender = SENDER.get_or_init(|| {
-        let (sender, receiver) = std::sync::mpsc::channel::<Job>();
-        let receiver = Arc::new(Mutex::new(receiver));
+/// Jobs waiting for a worker: those a command list has bound (`bound`) go
+/// first. test64 queued some 1100 pipelines earlier runs had used at the
+/// intro, first in first out, and the few the title bound waited behind them
+/// while each bind spent the frame's budget waiting: 1.8 fps.
+/// TUXBOX_PIPELINE_PRIORITY=0 keeps one queue in creation order.
+#[derive(Default)]
+struct Jobs {
+    bound: std::collections::VecDeque<Job>,
+    created: std::collections::VecDeque<Job>,
+}
+
+static JOBS: (Mutex<Option<Jobs>>, std::sync::Condvar) = (Mutex::new(None), std::sync::Condvar::new());
+
+fn priority() -> bool {
+    crate::env_toggle!("TUXBOX_PIPELINE_PRIORITY") != Some("0")
+}
+
+/// A bound pipeline still in the creation-order queue moves to the front.
+fn promote(slot: &Arc<Upgrade>) {
+    if slot.built.get().is_some() || slot.failed.load(Ordering::Relaxed) || !priority() {
+        return;
+    }
+    let mut g = JOBS.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(jobs) = g.as_mut() else { return };
+    if let Some(at) = jobs.created.iter().position(|j| Arc::ptr_eq(&j.slot, slot))
+        && let Some(job) = jobs.created.remove(at)
+    {
+        jobs.bound.push_back(job);
+        static PROMOTED: AtomicU64 = AtomicU64::new(0);
+        let n = PROMOTED.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "background pipelines: a bound pipeline moved ahead of {at} queued ones ({n} so far; TUXBOX_PIPELINE_PRIORITY=0 off)"));
+        }
+    }
+}
+
+fn next_job() -> Job {
+    let (lock, ready) = &JOBS;
+    let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        let jobs = g.get_or_insert_with(Default::default);
+        if let Some(job) = jobs.bound.pop_front().or_else(|| jobs.created.pop_front()) {
+            return job;
+        }
+        g = ready.wait(g).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+fn send(job: Job, bound: bool) {
+    static STARTED: OnceLock<bool> = OnceLock::new();
+    let started = *STARTED.get_or_init(|| {
         let workers = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).clamp(2, 8));
         let mut any = false;
         for i in 0..workers {
-            let receiver = receiver.clone();
             let spawned = std::thread::Builder::new()
                 .name(format!("tuxbox-pipelines-{i}"))
                 .stack_size(crate::big_stack::STACK_BYTES)
@@ -391,23 +439,28 @@ fn send(job: Job) {
                         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
                     }
                     loop {
-                        let next = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                        let Ok(job) = next else { return };
-                        build(job);
+                        build(next_job());
                     }
                 });
             any |= spawned.is_ok();
         }
-        any.then(|| Mutex::new(sender))
+        any
     });
-    WAITING.fetch_add(1, Ordering::Relaxed);
-    let sent = sender
-        .as_ref()
-        .map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).send(job));
-    if !matches!(sent, Some(Ok(()))) {
+    if !started {
         // No worker: the pipeline is never made.
-        WAITING.fetch_sub(1, Ordering::Relaxed);
+        return;
     }
+    WAITING.fetch_add(1, Ordering::Relaxed);
+    let (lock, ready) = &JOBS;
+    let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let jobs = g.get_or_insert_with(Default::default);
+    if bound && priority() {
+        jobs.bound.push_back(job);
+    } else {
+        jobs.created.push_back(job);
+    }
+    drop(g);
+    ready.notify_one();
 }
 
 fn build(mut job: Job) {
