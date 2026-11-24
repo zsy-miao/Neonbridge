@@ -89,6 +89,9 @@ struct Recording {
     /// CopyMemoryToMemoryX into title memory that is not GPU memory:
     /// (destination, source, bytes), done on the CPU once the list has run.
     cpu_copies: Vec<(u64, u64, u64)>,
+    /// marker and 64-bit value writes in recorded order: (address, value,
+    /// bytes), written by the CPU if the list is left out of its batch
+    value_writes: Vec<(u64, u64, u8)>,
     /// The scratch buffer a same-buffer CopyMemoryToMemoryX goes through
     /// (buffer, bytes, used in this recording); see copy_through_scratch.
     copy_scratch: Option<(ID3D12Resource, u64, bool)>,
@@ -646,6 +649,7 @@ unsafe extern "system" fn reset(
         state.ring.clear();
         state.stalled_writes.clear();
         state.cpu_copies.clear();
+        state.value_writes.clear();
         // The allocator keeps it alive until the GPU is done with it.
         state.copy_scratch = None;
         state.open_queries.clear();
@@ -1524,6 +1528,9 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
         crate::diagnostics::log_once(&FLAGS, || format!("marker write flags {flags:#x} {reserved:#x} ignored"));
     }
     memory_wait::note_write(list, &mut state, "marker write", address, u64::from(value));
+    if state.value_writes.len() < 4096 {
+        state.value_writes.push((address, u64::from(value), 4));
+    }
     let result = (|| -> windows::core::Result<()> {
         // A marker to memory the GPU cannot address poisoned the list; it is
         // skipped and logged instead.
@@ -1657,16 +1664,43 @@ unsafe fn copy_through_scratch(list: &List, state: &mut Recording, buffer: &ID3D
 
 /// Runs the CPU memory copies of a submission once `fence` reaches 1, on a
 /// worker thread so the title's submitting thread does not wait.
+/// test96 hung with the title in its loading-screen wait (game+0x23cf6a0,
+/// "GPU Loc Sig" in five-star's notes) after a list was left out of its batch
+/// (its scene preparation failed): the progress markers it would have
+/// written never were. A left-out list's marker and 64-bit value writes are
+/// now made by the CPU, in recorded order, once the queue has run the rest
+/// of the batch. TUXBOX_ORPHAN_WRITES=0 leaves them unwritten.
+fn orphan_writes_on() -> bool {
+    crate::env_toggle!("TUXBOX_ORPHAN_WRITES") != Some("0")
+}
+
+fn orphan_writes_after(fence: ID3D12Fence, writes: Vec<(u64, u64, u8)>) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        let last = writes.last().copied().unwrap_or_default();
+        crate::diagnostics::log_line(format_args!(
+            "left-out list: {} value writes made by the CPU after the batch (last {:#x} = {:#x}; {n} so far; TUXBOX_ORPHAN_WRITES=0 off)",
+            writes.len(), last.0, last.1));
+    }
+    let jobs: Vec<(u64, u64, u64)> = Vec::new();
+    cpu_copy_after_with(fence, jobs, writes);
+}
+
 fn cpu_copy_after(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>) {
+    cpu_copy_after_with(fence, copies, Vec::new());
+}
+
+fn cpu_copy_after_with(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>, values: Vec<(u64, u64, u8)>) {
     use std::sync::mpsc;
-    struct Job(ID3D12Fence, Vec<(u64, u64, u64)>);
+    struct Job(ID3D12Fence, Vec<(u64, u64, u64)>, Vec<(u64, u64, u8)>);
     // SAFETY: D3D12 fences are free-threaded.
     unsafe impl Send for Job {}
     static WORKER: std::sync::OnceLock<std::sync::Mutex<mpsc::Sender<Job>>> = std::sync::OnceLock::new();
     let sender = WORKER.get_or_init(|| {
         let (sender, jobs) = mpsc::channel::<Job>();
         let _ = std::thread::Builder::new().name("TuxBox CPU memory copies".into()).spawn(move || {
-            for Job(fence, copies) in jobs {
+            for Job(fence, copies, values) in jobs {
                 if unsafe { fence.SetEventOnCompletion(1, windows::Win32::Foundation::HANDLE::default()) }.is_err() {
                     continue;
                 }
@@ -1675,11 +1709,23 @@ fn cpu_copy_after(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>) {
                     // keeps them for the list's lifetime.
                     unsafe { ptr::copy(source as *const u8, destination as *mut u8, size as usize) };
                 }
+                for (address, value, bytes) in values {
+                    if !accessible(address as usize, bytes as usize, true) {
+                        continue;
+                    }
+                    // SAFETY: checked committed and writable just now.
+                    unsafe {
+                        match bytes {
+                            8 => (*(address as *const std::sync::atomic::AtomicU64)).store(value, Ordering::Release),
+                            _ => (*(address as *const std::sync::atomic::AtomicU32)).store(value as u32, Ordering::Release),
+                        }
+                    }
+                }
             }
         });
         std::sync::Mutex::new(sender)
     });
-    let _ = sender.lock().unwrap_or_else(|e| e.into_inner()).send(Job(fence, copies));
+    let _ = sender.lock().unwrap_or_else(|e| e.into_inner()).send(Job(fence, copies, values));
 }
 
 /// Newer-layout list slot 80, DispatchX(x, y, z, flags): a Dispatch whose
@@ -2108,6 +2154,8 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     let mut list_index = 0;
     let trace_samples = std::cell::RefCell::new(Vec::new());
     let cpu_copies = std::cell::RefCell::new(Vec::new());
+    // Value writes of lists left out of the batch (orphan_writes).
+    let orphan_writes: std::cell::RefCell<Vec<(u64, u64, u8)>> = std::cell::RefCell::new(Vec::new());
     let swap_lists = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
@@ -2142,6 +2190,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                 if strict_lists() || unsafe { list.native.GetType() } != queue.state.kind {
                     FAILED_STEP.with(|s| s.set("a list that is open, failed or of another type"));
                     return Err(E_INVALIDARG);
+                }
+                if orphan_writes_on() {
+                    orphan_writes.borrow_mut().extend(state.value_writes.iter().copied());
                 }
                 static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
@@ -2236,6 +2287,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                                             error.code().0));
                                     }
                                     left_out.push(list.native.as_raw());
+                                    if orphan_writes_on() {
+                                        orphan_writes.borrow_mut().extend(state.value_writes.iter().copied());
+                                    }
                                     break;
                                 }
                                 step("scene (BLAS) preparation", prepared)?;
@@ -2248,6 +2302,14 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             let gone: Vec<usize> = host.iter().enumerate().filter(|(_, l)| left_out.contains(l)).map(|(i, _)| i).collect();
                             kept_host = host.iter().copied().filter(|l| !left_out.contains(l)).collect();
                             if kept_host.is_empty() {
+                                let writes = orphan_writes.take();
+                                if !writes.is_empty() {
+                                    let mut device: Option<ID3D12Device> = None;
+                                    queue.native.GetDevice(&mut device)?;
+                                    let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                                    queue.native.Signal(&fence, 1)?;
+                                    orphan_writes_after(fence, writes);
+                                }
                                 return Ok(());
                             }
                             let splits = splits.into_iter()
@@ -2276,6 +2338,13 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
                             queue.native.Signal(&fence, 1)?;
                             cpu_copy_after(fence, cpu_copies.take());
+                        }
+                        if !orphan_writes.borrow().is_empty() {
+                            let mut device: Option<ID3D12Device> = None;
+                            queue.native.GetDevice(&mut device)?;
+                            let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                            queue.native.Signal(&fence, 1)?;
+                            orphan_writes_after(fence, orphan_writes.take());
                         }
                         if !trace_samples.borrow().is_empty() {
                             let mut device: Option<ID3D12Device> = None;
@@ -2698,6 +2767,7 @@ pub(crate) unsafe fn wrap_command_list(
             ring: std::collections::VecDeque::new(),
             stalled_writes: Vec::new(),
             cpu_copies: Vec::new(),
+            value_writes: Vec::new(),
             copy_scratch: None,
             open_queries: Vec::new(),
             split_barriers: Vec::new(),

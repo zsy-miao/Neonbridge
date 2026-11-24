@@ -107,6 +107,9 @@ pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, val
         if mode & 3 == 0 && super::xargs_strict() { return Err(E_INVALIDARG.into()); }
         if mode & 3 == 0 {
             super::memory_wait::note_write(list, &mut state, "64-bit value write", address, value);
+            if state.value_writes.len() < 4096 {
+                state.value_writes.push((address, value, 8));
+            }
             let (resource, gpu) = unsafe { crate::device::command_buffer_address(parent(&list.parent), address, 8)? };
             if let Some(buffer) = &resource { super::raytracing::retain(&state, &[buffer])?; }
             for (dest, word) in [(gpu, value as u32), (gpu + 4, (value >> 32) as u32)] {
