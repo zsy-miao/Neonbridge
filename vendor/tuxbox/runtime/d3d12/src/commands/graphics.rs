@@ -44,7 +44,10 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
         Ok(Some(host)) => {
             // A pipeline made without its translation binds its background
             // rebuild once a worker has published it.
-            let (native, data, pending) = crate::device::compute::current(host);
+            let (mut native, mut data, mut pending) = crate::device::compute::current(host);
+            if pending && crate::device::compute::wait_pending_compute(host) {
+                (native, data, pending) = crate::device::compute::current(host);
+            }
             state.pipeline_pending = pending;
             state.stencil_slot = data.stencil_slot;
             state.null_pipeline = crate::diagnostics::display::is_null_pipeline(native.as_raw());

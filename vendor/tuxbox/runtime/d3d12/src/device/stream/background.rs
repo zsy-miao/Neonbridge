@@ -111,6 +111,29 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     slot.built.get()
 }
 
+/// Waits up to `limit` for a lazy pipeline's worker outside the frame's
+/// translator budget (a compute pipeline whose dispatches must not be lost).
+pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Option<&Built> {
+    if let Some(built) = ready(slot) {
+        return Some(built);
+    }
+    promote(slot);
+    hurry(slot);
+    let deadline = std::time::Instant::now() + limit;
+    let (lock, done) = &DONE;
+    let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
+    while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let step = (deadline - now).min(std::time::Duration::from_millis(5));
+        held = done.wait_timeout(held, step).unwrap_or_else(|e| e.into_inner()).0;
+    }
+    drop(held);
+    slot.built.get()
+}
+
 /// five-star-recomp 8fa5672 (GPL-3.0): a small compute pipeline (a culling
 /// or clear initialiser) is made on the title's thread at its first bind
 /// instead of losing to a frame budget already spent. Its translator wait still

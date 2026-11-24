@@ -65,6 +65,44 @@ pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, boo
     }
 }
 
+/// test105: the loading screen's Bink movie showed blocky, stale, colour-shifted
+/// tiles (a datamosh) while every dispatch of its pipelines was dropped as
+/// "pipeline still being made" for about 20 s: a decode step that is skipped
+/// leaves the next frames building on a wrong reference. A compute pipeline
+/// still being made at its bind is waited for, outside the frame's budget, up
+/// to TUXBOX_COMPUTE_PENDING_WAIT_MS (3000; 0 drops its dispatches as before).
+/// Returns whether the bind waited; logs each pipeline that waited (first 16,
+/// then powers of two) with its key, the wait and the caller.
+pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| {
+        crate::env_toggle!("TUXBOX_COMPUTE_PENDING_WAIT_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(3000)
+    });
+    let Some(key) = &p.state.key else { return false };
+    if limit == 0 || !p.state.lazy || !key.starts_with("compute:") {
+        return false;
+    }
+    let Some(slot) = p.state.upgrade.get() else { return false };
+    if super::stream::background::failed(slot) {
+        return false;
+    }
+    let started = std::time::Instant::now();
+    let built = super::stream::background::wait_for(slot, std::time::Duration::from_millis(limit)).is_some();
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 16 || n.is_power_of_two() {
+        let caller = match crate::survey::title_rva() {
+            Some(rva) => format!("title RVA {rva:#x}"),
+            None => "outside the title (a middleware module such as Bink)".into(),
+        };
+        crate::diagnostics::log_line(format_args!(
+            "compute pipeline {} still being made at its bind: waited {:.1} ms, {} ({caller}; {n} so far; TUXBOX_COMPUTE_PENDING_WAIT_MS=0 drops its dispatches)",
+            &key[..key.len().min(48)], started.elapsed().as_secs_f64() * 1e3,
+            if built { "made" } else { "not made, dispatches dropped" }));
+    }
+    true
+}
+
 const _: () = assert!(
     core::mem::offset_of!(Proxy<ID3D12PipelineState, PipelineData>, state)
         + core::mem::offset_of!(PipelineData, packets)
