@@ -252,7 +252,13 @@ pub(super) fn oversize_span(va: u64, pc_size: u64, xbox_size: u64) -> Option<(u6
     (xbox_size != 0 && pc_size > title).then(|| (va, va + title))
 }
 
-fn reservation(va: u64) -> Option<(u64, u64)> {
+/// rebox's idea (re-derived from 90b6578/a85c353): the walk starts at va's
+/// own region instead of the allocation base (every region between them is
+/// the same allocation), and stops once local_span can only clip to its window,
+/// past LOCAL_SPAN_CAP and a window beyond va + need. Walking from the base
+/// of a reservation of thousands of 64 KiB views cost a VirtualQuery per
+/// view on every fresh span. TUXBOX_RESERVATION_WALK_ALL=1 walks to its end.
+fn reservation(va: u64, need: u64) -> Option<(u64, u64)> {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
     let query = |a: u64| {
         let mut m = MEMORY_BASIC_INFORMATION::default();
@@ -263,12 +269,17 @@ fn reservation(va: u64) -> Option<(u64, u64)> {
         return None;
     }
     let base = first.AllocationBase as u64;
-    let (mut p, mut end) = (base, base);
+    let all = crate::env_toggle!("TUXBOX_RESERVATION_WALK_ALL") == Some("1");
+    let enough = (va & !(PLACEMENT_ALIGN - 1)).saturating_add(need.max(LOCAL_WINDOW)).max(base.saturating_add(LOCAL_SPAN_CAP + 1));
+    let (mut p, mut end) = if all { (base, base) } else { (first.BaseAddress as u64, first.BaseAddress as u64) };
     for _ in 0..65536 {
         match query(p) {
             Some(m) if m.AllocationBase as u64 == base && m.State.0 != MEM_FREE => {
                 end = m.BaseAddress as u64 + m.RegionSize as u64;
                 p = end;
+                if !all && end >= enough {
+                    break;
+                }
             }
             _ => break,
         }
@@ -464,7 +475,7 @@ fn place_locked(
             (Some((lo, hi)), _) => (fresh_span(&mut sp, lo, hi, size)?, true),
             (None, Some(k)) => (k, false),
             (None, None) => {
-                let (lo, hi) = local_span(va, size.max(xbox_size), reservation(va));
+                let (lo, hi) = local_span(va, size.max(xbox_size), reservation(va, size.max(xbox_size)));
                 (fresh_span(&mut sp, lo, hi, hi - lo)?, true)
             }
         };

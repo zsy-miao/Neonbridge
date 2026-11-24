@@ -605,6 +605,38 @@ fn one_allocation(base: u64, size: u64) -> bool {
     true
 }
 
+/// rebox's idea (re-derived from 19a69d0): a failed adoption is remembered by
+/// its first 64 KiB page for about a second in a fixed table (a collision
+/// overwrites), so retries at that address skip the lock, the list scan and
+/// the VirtualQuery walk. `record` adds it; otherwise it answers whether the
+/// page failed recently. TUXBOX_REFUSED_PAGES=0 off.
+pub(super) fn refused_page(address: u64, record: bool) -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    const SLOTS: usize = 4096;
+    static TABLE: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+    static STAMP: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    if crate::env_toggle!("TUXBOX_REFUSED_PAGES") == Some("0") { return false; }
+    let page = (address >> 16) + 1;
+    let slot = (page.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 52) as usize % SLOTS;
+    let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1;
+    if record {
+        TABLE[slot].store(page, Ordering::Relaxed);
+        STAMP[slot].store(now, Ordering::Relaxed);
+        return true;
+    }
+    let hit = TABLE[slot].load(Ordering::Relaxed) == page && now.saturating_sub(STAMP[slot].load(Ordering::Relaxed)) < 1000;
+    if hit {
+        static HITS: AtomicU64 = AtomicU64::new(0);
+        let n = HITS.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "heap import: {address:#x} failed adoption less than 1 s ago, not asked again ({n} so far; TUXBOX_REFUSED_PAGES=0 off)"));
+        }
+    }
+    hit
+}
+
 /// Opens title memory as a heap (the kernel call), joining split views first.
 fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
     use windows::Win32::Foundation::E_INVALIDARG;
@@ -613,9 +645,13 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     // fell back to its shadow copy. The window lets a remapped range in.
     static REFUSED: std::sync::Mutex<Vec<(u64, u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
     let refuse = || {
+        refused_page(base, true);
         let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
         if refused.len() < 4096 { refused.push((base, size, std::time::Instant::now())); }
     };
+    if refused_page(base, false) {
+        return Err(E_INVALIDARG.into());
+    }
     {
         let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
         refused.retain(|(.., at)| at.elapsed() < std::time::Duration::from_secs(5));

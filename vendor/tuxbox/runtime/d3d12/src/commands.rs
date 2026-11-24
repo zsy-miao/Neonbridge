@@ -87,6 +87,9 @@ struct Recording {
     /// CopyMemoryToMemoryX into title memory that is not GPU memory:
     /// (destination, source, bytes), done on the CPU once the list has run.
     cpu_copies: Vec<(u64, u64, u64)>,
+    /// The scratch buffer a same-buffer CopyMemoryToMemoryX goes through
+    /// (buffer, bytes, used in this recording); see copy_through_scratch.
+    copy_scratch: Option<(ID3D12Resource, u64, bool)>,
     /// Queries begun and not yet ended, ended at Close: an open query makes
     /// the host Close fail.
     open_queries: Vec<(ID3D12QueryHeap, D3D12_QUERY_TYPE, u32)>,
@@ -640,6 +643,8 @@ unsafe extern "system" fn reset(
         state.ring.clear();
         state.stalled_writes.clear();
         state.cpu_copies.clear();
+        // The allocator keeps it alive until the GPU is done with it.
+        state.copy_scratch = None;
         state.open_queries.clear();
         state.split_barriers.clear();
         state.error = S_OK;
@@ -1582,11 +1587,69 @@ unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64
         unsafe {
             let dst_offset = dst_va - dst.GetGPUVirtualAddress();
             let src_offset = src_va - src.GetGPUVirtualAddress();
+            if dst == src && copy_through_scratch(list, &mut state, &dst, dst_offset, src_offset, size) {
+                return Ok(());
+            }
             list.native.CopyBufferRegion(&dst, dst_offset, &src, src_offset, size);
         }
         Ok(())
     })();
     if let Err(error) = result { state.error = error.code(); }
+}
+
+/// xcl's idea (re-derived from 21bc548/392dc0c): a copy whose source and
+/// destination are the same host buffer has it as COPY_SOURCE and COPY_DEST
+/// at once, which D3D12 leaves undefined (debug layer id 538). It goes in two
+/// copies through a scratch buffer of the list, retained by its allocator
+/// until the GPU is done, and reused with a barrier within the recording. A
+/// list's scratch is at most TUXBOX_COPY_SCRATCH_MB (64; 0 off); a larger copy
+/// is recorded as one copy, as before.
+unsafe fn copy_through_scratch(list: &List, state: &mut Recording, buffer: &ID3D12Resource, dst_offset: u64, src_offset: u64, size: u64) -> bool {
+    static CAP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let cap = *CAP.get_or_init(|| std::env::var("TUXBOX_COPY_SCRATCH_MB").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(64u64) << 20);
+    if size > cap {
+        return false;
+    }
+    let Ok(barriers) = list.native.cast::<ID3D12GraphicsCommandList7>() else { return false };
+    if state.copy_scratch.as_ref().is_none_or(|(_, bytes, _)| *bytes < size) {
+        let bytes = size.next_power_of_two().max(1 << 20).min(cap);
+        let mut device: Option<ID3D12Device> = None;
+        if unsafe { list.native.GetDevice(&mut device) }.is_err() { return false }
+        let Some(device) = device else { return false };
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: bytes, Height: 1, DepthOrArraySize: 1, MipLevels: 1,
+            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR, ..Default::default()
+        };
+        let mut made: Option<ID3D12Resource> = None;
+        if unsafe { device.CreateCommittedResource(&D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() },
+            D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut made) }.is_err() { return false }
+        let Some(made) = made else { return false };
+        if raytracing::retain(state, &[&made]).is_err() { return false }
+        crate::dred::name(&made, "tuxbox copy scratch");
+        state.copy_scratch = Some((made, bytes, false));
+    }
+    let Some((scratch, _, used)) = state.copy_scratch.as_mut() else { return false };
+    let order = |access_before: D3D12_BARRIER_ACCESS, access_after: D3D12_BARRIER_ACCESS| {
+        let g = D3D12_GLOBAL_BARRIER { SyncBefore: D3D12_BARRIER_SYNC_COPY, SyncAfter: D3D12_BARRIER_SYNC_COPY,
+            AccessBefore: access_before, AccessAfter: access_after };
+        unsafe { barriers.Barrier(&[D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_GLOBAL, NumBarriers: 1,
+            Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: &g } }]) };
+    };
+    if *used {
+        // The last copy out of the scratch is done before it is written again.
+        order(D3D12_BARRIER_ACCESS_COPY_SOURCE, D3D12_BARRIER_ACCESS_COPY_DEST);
+    }
+    unsafe { list.native.CopyBufferRegion(&*scratch, 0, buffer, src_offset, size) };
+    order(D3D12_BARRIER_ACCESS_COPY_DEST, D3D12_BARRIER_ACCESS_COPY_SOURCE);
+    unsafe { list.native.CopyBufferRegion(buffer, dst_offset, &*scratch, 0, size) };
+    *used = true;
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "CopyMemoryToMemoryX within one host buffer ({size:#x} bytes) copied through a scratch buffer ({n} so far; TUXBOX_COPY_SCRATCH_MB=0 off)"));
+    }
+    true
 }
 
 /// Runs the CPU memory copies of a submission once `fence` reaches 1, on a
@@ -2617,6 +2680,7 @@ pub(crate) unsafe fn wrap_command_list(
             ring: std::collections::VecDeque::new(),
             stalled_writes: Vec::new(),
             cpu_copies: Vec::new(),
+            copy_scratch: None,
             open_queries: Vec::new(),
             split_barriers: Vec::new(),
             media: compact.then(|| media::Recording::new(allocator)),
