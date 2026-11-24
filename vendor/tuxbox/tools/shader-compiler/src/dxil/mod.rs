@@ -8,4 +8,5 @@
 //! the container parts, the IR and module writer, the HLSL front end and the
 //! compute lowering. The launcher keeps dxc as the fallback.
 pub mod bitstream;
+pub mod container;
 pub mod hash;
