@@ -7038,7 +7038,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let m = ins.mnemonic.as_str();
         let flags = (ins.raw[0] >> 11) & 0xf;
         let clamp = ins.raw[0] & 0x8000 != 0;
-        let unsupported = flags & 0xc != 0 || ins.aux.mask != 0 || ins.aux.imm != 0 || ins.aux.imm2 != 0
+        // op_sel[0] = FI, op_sel[1] = BOUND_CTRL; op_sel[2..3] carry nothing and are
+        // ignored (leonida 86da7be4). TB_PERMLANE_FI=0 treats them as unsupported.
+        let spare_bits = std::env::var("TB_PERMLANE_FI").is_ok_and(|v| v.trim() == "0") && flags & 0xc != 0;
+        let unsupported = spare_bits || ins.aux.mask != 0 || ins.aux.imm != 0 || ins.aux.imm2 != 0
             || clamp || !matches!(s[0], Opnd::Vgpr(_));
         if unsupported {
             let what = format!("{m} with unsupported modifiers or source at {:#x}", ins.offset);
