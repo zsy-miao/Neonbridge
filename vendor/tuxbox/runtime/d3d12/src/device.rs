@@ -1085,23 +1085,34 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
     crate::diagnostics::crash::install();
     // Audio endpoint probe as early as we run: the title may open its endpoint before the first frame.
     let _ = std::thread::Builder::new().name("TuxBox audio probe".into()).spawn(crate::diagnostics::audio::install_wasapi);
-    let mut native = None;
-    // SAFETY: The public factory validated its arguments. A null adapter
-    // selects D3D12's default, otherwise it remains borrowed for this call.
-    if let Some(created) = crate::dred::debug_device(unsafe { IUnknown::from_raw_borrowed(&adapter) }) {
-        match created {
-            Ok(device) => native = Some(device),
-            Err(error) => return error.code(),
+    // A null adapter picks the high-performance GPU (or TUXBOX_ADAPTER), not
+    // D3D12's adapter 0, which is the integrated GPU on many laptops.
+    let chosen = if adapter.is_null() { adapters::choose() } else { None };
+    let mut adapter = chosen.as_ref().map_or(adapter, |a| a.as_raw());
+    let make = |adapter: *mut c_void| -> windows::core::Result<Option<ID3D12Device>> {
+        // SAFETY: The public factory validated its arguments; the adapter stays borrowed.
+        if let Some(created) = crate::dred::debug_device(unsafe { IUnknown::from_raw_borrowed(&adapter) }) {
+            return created.map(Some);
         }
-    } else if let Err(error) = unsafe {
-        D3D12CreateDevice::<_, ID3D12Device>(
-            IUnknown::from_raw_borrowed(&adapter),
-            D3D_FEATURE_LEVEL_12_0,
-            &mut native,
-        )
-    } {
-        return error.code();
-    }
+        let mut native = None;
+        unsafe { D3D12CreateDevice::<_, ID3D12Device>(IUnknown::from_raw_borrowed(&adapter), D3D_FEATURE_LEVEL_12_0, &mut native)? };
+        Ok(native)
+    };
+    let warp;
+    let native = match make(adapter) {
+        Ok(native) => native,
+        // No usable hardware device: the WARP software rasterizer, slow but
+        // running (TUXBOX_WARP=0 fails as before).
+        Err(error) => match adapters::warp() {
+            Some(software) => {
+                crate::diagnostics::log_line(format_args!("D3D12CreateDevice failed {:?}; falling back to WARP", error.code()));
+                warp = software;
+                adapter = warp.as_raw();
+                match make(adapter) { Ok(native) => native, Err(_) => return error.code() }
+            }
+            None => return error.code(),
+        },
+    };
     let Some(native) = native else {
         return E_POINTER;
     };
@@ -1215,4 +1226,41 @@ pub(crate) fn title_window_alloc(bytes: usize) -> usize {
         VirtualAlloc2(Some(GetCurrentProcess()), None, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE.0, Some(&mut [param]))
     };
     base as usize
+}
+
+mod adapters {
+    use windows::Win32::Graphics::Dxgi::*;
+    use windows::core::Interface;
+
+    /// TUXBOX_ADAPTER=<index> or a name substring; otherwise the
+    /// high-performance preference. None leaves D3D12's default.
+    pub(super) fn choose() -> Option<IDXGIAdapter1> {
+        let factory: IDXGIFactory6 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.ok()?;
+        let wanted = std::env::var("TUXBOX_ADAPTER").ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        let list: Vec<IDXGIAdapter1> = (0..16)
+            .map_while(|i| unsafe { factory.EnumAdapterByGpuPreference::<IDXGIAdapter1>(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE) }.ok())
+            .filter(|a| unsafe { a.GetDesc1() }.is_ok_and(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0))
+            .collect();
+        let name = |a: &IDXGIAdapter1| unsafe { a.GetDesc1() }.map(|d| {
+            let n = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+            String::from_utf16_lossy(&d.Description[..n])
+        }).unwrap_or_default();
+        let pick = match &wanted {
+            Some(w) if w.parse::<usize>().is_ok() => list.get(w.parse::<usize>().unwrap()).cloned(),
+            Some(w) => list.iter().find(|a| name(a).to_lowercase().contains(&w.to_lowercase())).cloned(),
+            None => list.first().cloned(),
+        };
+        let all: Vec<String> = list.iter().map(name).collect();
+        crate::diagnostics::log_line(format_args!("adapters by performance {all:?}; using {:?}{}",
+            pick.as_ref().map(name), wanted.map(|w| format!(" (TUXBOX_ADAPTER={w})")).unwrap_or_default()));
+        pick
+    }
+
+    pub(super) fn warp() -> Option<IDXGIAdapter> {
+        if std::env::var("TUXBOX_WARP").is_ok_and(|v| v.trim() == "0") {
+            return None;
+        }
+        let factory: IDXGIFactory4 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.ok()?;
+        unsafe { factory.EnumWarpAdapter::<IDXGIAdapter>() }.ok().map(|a| a.cast().unwrap_or(a))
+    }
 }
