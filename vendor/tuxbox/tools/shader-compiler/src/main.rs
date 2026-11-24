@@ -99,6 +99,13 @@ fn run() -> Result<(), Error> {
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.to_string_lossy()))?;
         let ex = tuxbox_xshader::extract(&bytes)?;
         println!("stage {:?} features {:?} root {:#?}", ex.stage, ex.required_features, ex.root_sig);
+        if let Some(rows) = tuxbox_dxbc::compute_table::records(&ex.fssm) {
+            for r in rows { println!("fssm resource {:#x} pos {} reg {} {:#x} loc {:#x}", r[0], r[1], r[2], r[3], r[4]); }
+        }
+        if let Some(rows) = tuxbox_dxbc::compute_table::user_data_records(&ex.fssm) {
+            for r in rows { println!("fssm user {:#x} {} {} {:#x} {:#x}", r[0], r[1], r[2], r[3], r[4]); }
+        }
+        for r in &ex.resources { println!("psv type {} space {} regs {}..={}", r.res_type, r.space, r.lower, r.upper); }
         for i in tuxbox_xshader::rdna2::disassemble(&ex.isa) {
             println!("{:#06x} {:<28} {:?} <- {:?} imm={} {:08x?}", i.offset, i.mnemonic, i.dst, i.src, i.aux.imm, i.raw);
         }
