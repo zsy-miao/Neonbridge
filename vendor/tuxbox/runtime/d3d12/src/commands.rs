@@ -1223,6 +1223,18 @@ unsafe extern "system" fn clear_rtv(
         state.error = E_INVALIDARG;
         return;
     }
+    // palmetto cf825083 (GPL-3): a clear of a view created from a null resource
+    // clears nothing on the console; it is not recorded here either.
+    // TUXBOX_NULL_RTV_CLEAR=1 records it again.
+    if crate::device::is_null_rtv(handle.ptr) && crate::env_toggle!("TUXBOX_NULL_RTV_CLEAR") != Some("1") {
+        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 2 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "render target clear on a null view skipped: rtv {:#x} was created from a null resource ({n} so far; palmetto cf825083; TUXBOX_NULL_RTV_CLEAR=1 records it)", handle.ptr));
+        }
+        return;
+    }
     crate::diagnostics::display::clear(handle.ptr);
     if let Some(target) = unsafe { placement::render_target(parent(&list.parent), handle.ptr) }
         && let Err(error) = Recording::track_texture(&mut state.placed_writes, &target)

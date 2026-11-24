@@ -1078,6 +1078,7 @@ pub(super) unsafe extern "system" fn rtv(
     // A null RTV has no host resource to match, so give it the host format a
     // real one would get (B4G4R4A4 is not renderable on desktop) and plane 0.
     let null = resource.is_none();
+    null_rtv(handle.ptr, null);
     let substitute = null || proxy.is_some_and(|p| p.state.translated().is_some());
     let mut translated;
     let desc = match unsafe { desc.as_ref() } {
@@ -1108,6 +1109,25 @@ pub(super) unsafe extern "system" fn rtv(
             .native
             .CreateRenderTargetView(resource, Some(desc), handle)
     };
+}
+
+/// palmetto cf825083 (GPL-3): the title clears render-target views it created
+/// from a null resource (the console clears nothing there). Handles last
+/// written as null views are kept so the clear can be skipped.
+fn null_rtvs() -> &'static std::sync::Mutex<std::collections::HashSet<usize>> {
+    static SET: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<usize>>> = std::sync::OnceLock::new();
+    SET.get_or_init(Default::default)
+}
+
+fn null_rtv(handle: usize, null: bool) {
+    let mut set = null_rtvs().lock().unwrap_or_else(|e| e.into_inner());
+    if null { set.insert(handle); } else if !set.is_empty() { set.remove(&handle); }
+}
+
+/// Whether the RTV at `handle` was last created from a null resource.
+pub(crate) fn is_null_rtv(handle: usize) -> bool {
+    let set = null_rtvs().lock().unwrap_or_else(|e| e.into_inner());
+    !set.is_empty() && set.contains(&handle)
 }
 
 pub(super) unsafe extern "system" fn dsv(

@@ -868,6 +868,32 @@ unsafe fn record(
                 for item in
                     unsafe { slice::from_raw_parts(group.Anonymous.pTextureBarriers, count) }
                 {
+                    // palmetto cf825083 (GPL-3): a texture entry without a resource is the
+                    // console's "every texture"; desktop D3D12 refuses it, which refused the
+                    // whole call. It becomes a global barrier with the same sync and access
+                    // (a superset); its layouts have no encoding without a resource and are
+                    // dropped. TUXBOX_NULL_TEXTURE_BARRIER=0 refuses the call again.
+                    if item.pResource.is_none() && crate::env_toggle!("TUXBOX_NULL_TEXTURE_BARRIER") != Some("0") {
+                        static SHAPES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                        if SHAPES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                            crate::diagnostics::log_line(format_args!(
+                                "enhanced texture barrier without a resource recorded as a global barrier: sync {:#x}->{:#x}, access {:#x}->{:#x}, layout {}->{} dropped (palmetto cf825083; TUXBOX_NULL_TEXTURE_BARRIER=0 off)",
+                                item.SyncBefore.0, item.SyncAfter.0, item.AccessBefore.0, item.AccessAfter.0, item.LayoutBefore.0, item.LayoutAfter.0));
+                        }
+                        let mut global = D3D12_GLOBAL_BARRIER {
+                            SyncBefore: item.SyncBefore, SyncAfter: item.SyncAfter,
+                            AccessBefore: item.AccessBefore, AccessAfter: item.AccessAfter,
+                        };
+                        fix_half(&mut global.SyncBefore, &mut global.AccessBefore, compute);
+                        fix_half(&mut global.SyncAfter, &mut global.AccessAfter, compute);
+                        texture_group(native, &barriers);
+                        barriers.clear();
+                        let group = D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_GLOBAL, NumBarriers: 1,
+                            Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: &global } };
+                        probe(native, &group);
+                        unsafe { native.Barrier(&[group]) };
+                        continue;
+                    }
                     let resource =
                         unsafe { device::resource_proxy(guest_pointer(&item.pResource)?, owner) }
                             .ok_or(E_INVALIDARG)?;
