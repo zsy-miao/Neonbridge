@@ -1052,6 +1052,8 @@ pub(crate) const DEVICE_INTERFACES: &[GUID] = &[
 pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> HRESULT {
     crate::dred::configure();
     crate::diagnostics::crash::install();
+    // Audio endpoint probe as early as we run: the title may open its endpoint before the first frame.
+    let _ = std::thread::Builder::new().name("TuxBox audio probe".into()).spawn(crate::diagnostics::audio::install_wasapi);
     let mut native = None;
     // SAFETY: The public factory validated its arguments. A null adapter
     // selects D3D12's default, otherwise it remains borrowed for this call.

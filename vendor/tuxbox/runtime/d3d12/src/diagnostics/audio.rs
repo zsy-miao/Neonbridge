@@ -315,6 +315,12 @@ unsafe fn install_wasapi_now() -> windows::core::Result<String> {
     let render: IAudioRenderClient = unsafe { client.GetService()? };
     let slot = |object: *mut c_void, i: usize| unsafe { (*object.cast::<*mut usize>()).add(i) };
     let (client_table, render_table) = (slot(client.as_raw(), 0), slot(render.as_raw(), 0));
+    // Who opens an endpoint, and with what format and buffer: IMMDevice::Activate and IAudioClient::Initialize.
+    let device_table = slot(device.as_raw(), 0);
+    ORIGINAL_ACTIVATE.store(unsafe { *slot(device.as_raw(), 3) }, Ordering::Relaxed);
+    ORIGINAL_INITIALIZE.store(unsafe { *slot(client.as_raw(), 3) }, Ordering::Relaxed);
+    let _ = unsafe { patch(device_table, 3, activate as *const () as usize) };
+    let _ = unsafe { patch(client_table, 3, initialize as *const () as usize) };
     ORIGINAL_PADDING.store(unsafe { *slot(client.as_raw(), PADDING) }, Ordering::Relaxed);
     ORIGINAL_RELEASE.store(unsafe { *slot(render.as_raw(), RELEASE) }, Ordering::Relaxed);
     let ok = unsafe {
@@ -385,4 +391,36 @@ pub(crate) fn engine_report() -> Option<String> {
         "xaudio2 engine: {new} new glitches ({glitches} since start), audio thread busy {:.0}% of its cycles, latency {} samples, source voices {} active / {} total, submix {} active; title calls since last line: create source {}, create submix {}, commit {}, performance {}",
         if total == 0 { 0.0 } else { audio as f64 * 100.0 / total as f64 }, u32_at(28),
         u32_at(36), u32_at(40), u32_at(44), calls[0], calls[1], calls[2], calls[3]))
+}
+
+static ORIGINAL_ACTIVATE: AtomicUsize = AtomicUsize::new(0);
+static ORIGINAL_INITIALIZE: AtomicUsize = AtomicUsize::new(0);
+
+fn callers() -> String {
+    let mut frames = [std::ptr::null_mut(); 8];
+    let n = unsafe { windows::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace(2, &mut frames, None) } as usize;
+    let list = super::sampler::modules();
+    frames[..n].iter().map(|&f| super::sampler::label(&list, f as usize)).collect::<Vec<_>>().join(" < ")
+}
+
+unsafe extern "system" fn activate(device: *mut c_void, iid: *const windows::core::GUID, context: u32, params: *const c_void, out: *mut *mut c_void) -> windows::core::HRESULT {
+    type F = unsafe extern "system" fn(*mut c_void, *const windows::core::GUID, u32, *const c_void, *mut *mut c_void) -> windows::core::HRESULT;
+    let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_ACTIVATE.load(Ordering::Relaxed))(device, iid, context, params, out) };
+    let iid = if iid.is_null() { "null".into() } else { format!("{:?}", unsafe { *iid }) };
+    super::log_line(format_args!("audio endpoint: IMMDevice::Activate {iid} -> {:#x}; callers {}", hr.0, callers()));
+    hr
+}
+
+unsafe extern "system" fn initialize(client: *mut c_void, mode: i32, flags: u32, duration: i64, period: i64, format: *const u8, session: *const c_void) -> windows::core::HRESULT {
+    type F = unsafe extern "system" fn(*mut c_void, i32, u32, i64, i64, *const u8, *const c_void) -> windows::core::HRESULT;
+    let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_INITIALIZE.load(Ordering::Relaxed))(client, mode, flags, duration, period, format, session) };
+    let fmt = if format.is_null() { "null".into() } else {
+        let w = |o: usize| u16::from_le_bytes(unsafe { [*format.add(o), *format.add(o + 1)] });
+        let d = |o: usize| u32::from_le_bytes(unsafe { [*format.add(o), *format.add(o + 1), *format.add(o + 2), *format.add(o + 3)] });
+        format!("tag {:#x} {} ch {} Hz {} bits", w(0), w(2), d(4), w(14))
+    };
+    super::log_line(format_args!(
+        "audio endpoint: IAudioClient::Initialize {} flags {flags:#x} buffer {:.1} ms period {:.1} ms format {fmt} -> {:#x}; callers {}",
+        if mode == 1 { "exclusive" } else { "shared" }, duration as f64 / 1e4, period as f64 / 1e4, hr.0, callers()));
+    hr
 }
