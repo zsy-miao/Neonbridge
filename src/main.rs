@@ -37,6 +37,8 @@ const USAGE: &str = "usage: 6launch --game <dir> [--tuxbox <TuxBox checkout>] [-
                crash event, registers, stack and loaded modules go to the log
   --sandbox    run inside Sandboxie-Plus (box DefaultBox, or env SANDBOXIE_BOX); the
                game's writes stay in the box; with --debug the cdb log is fetched back
+  --debug-full like --debug, plus every first-chance C++/WinRT exception with its stack
+               (each one stalls the game for the stack walk: slow, use to chase a throw)
   --cdb FILE   extra cdb commands (breakpoints etc.) run before the game starts; implies --debug
   --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
   --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
@@ -74,7 +76,7 @@ enum Mode {
 
 fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
-    let (mut debug, mut sandbox, mut cdb_extra, mut timeout) = (false, false, None, None);
+    let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().cloned().ok_or_else(|| format!("{n} needs a value\n{USAGE}"));
@@ -88,6 +90,10 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             Some("--build-shaders") => mode = Mode::BuildShaders,
             Some("--restore") => mode = Mode::Restore,
             Some("--debug") => debug = true,
+            Some("--debug-full") => {
+                debug = true;
+                trace_throws = true;
+            }
             Some("--timeout") => timeout = Some(val("--timeout")?.to_string_lossy().parse::<f64>().map_err(|e| format!("--timeout: {e}"))?),
             Some("--summary") => return print_summary(Path::new(&val("--summary")?)),
             Some("--sandbox") => sandbox = true,
@@ -190,7 +196,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
-    let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), sandbox, &env, timeout);
+    let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), trace_throws, sandbox, &env, timeout);
     if let Some((w, _, session, log_path)) = worker {
         let st = w.stop();
         use std::sync::atomic::Ordering::Relaxed;
@@ -440,7 +446,7 @@ fn restore(game: &Path) -> Result<(), Box<dyn Error>> {
 
 /// Start the exe from its folder (optionally under cdb and/or in Sandboxie);
 /// stdout+stderr go to the console and the log.
-fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, sandbox: bool, env: &[(String, String)], timeout: Option<f64>) -> Result<(), Box<dyn Error>> {
+fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, trace_throws: bool, sandbox: bool, env: &[(String, String)], timeout: Option<f64>) -> Result<(), Box<dyn Error>> {
     let log = log.unwrap_or_else(|| {
         let base = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/logs");
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -472,9 +478,18 @@ fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug
         // Illegal instructions are the title's CPU feature probes: not logged; module
         // loads are not dumped (lm) since ModLoad lines already list them.
         let dump = ".echo ==== FAULT ====;.lastevent;.exr -1;r;!vprot @rip;.echo ==== code at rip ====;ub @rip L8;u @rip L4;.echo ==== stack ====;kn 40";
-        fs::write(&script, format!("sxe -c \".exr -1;kn 25;gn\" e06d7363
+        // Plain --debug ignores C++/WinRT throws: each traced one costs a debugger
+        // round trip and a stack walk, and the title throws many while running.
+        let throws = if trace_throws {
+            "sxe -c \".exr -1;kn 25;gn\" e06d7363
 sxe -c \".exr -1;kn 25;gn\" e0000001
-sxe -c \".exr -1;kn 25;gn\" 40080201
+sxe -c \".exr -1;kn 25;gn\" 40080201"
+        } else {
+            "sxi e06d7363
+sxi e0000001
+sxi 40080201"
+        };
+        fs::write(&script, format!("{throws}
 sxe -c \".echo ==== first-chance AV ====;{dump};gn\" av
 sxi ii
 sxe -c \".echo ==== int 3 (title assert, continued) ====;.lastevent;kn 12;.if (by(@rip) == 0xcc) {{r @rip=@rip+1}};gh\" bpe
@@ -512,6 +527,8 @@ q
         .current_dir(game)
         .args(&argv[1..])
         .env("TUXBOX_LOG", std::env::var("TUXBOX_LOG").unwrap_or_else(|_| "stderr".into()))
+        // One readback every 120 presents: cheap, and every summary gets lit= samples.
+        .env("TUXBOX_TRACE_PRESENT", std::env::var("TUXBOX_TRACE_PRESENT").unwrap_or_else(|_| "120".into()))
         .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -576,6 +593,15 @@ q
     let (game_text, cdb_text) = text.split_once("\n---- cdb ----\n").unwrap_or((&text, ""));
     // Under --debug the child is cdb: the game's own exit code is in cdb's exit event.
     println!("{}", run_summary(game_text, cdb_exit_code(cdb_text).or(if debug.is_some() { None } else { status.code() })));
+    // The fps above is not the game's own while these run: say which were on.
+    let mut costly: Vec<String> = ["TUXBOX_LIST_RING", "TUXBOX_SURVEY", "TUXBOX_TRACE_RASTER_INPUTS", "TUXBOX_STRICT_LISTS"].iter()
+        .filter(|k| std::env::var(k).is_ok_and(|v| !v.is_empty() && v != "0")).map(|k| k.to_string()).collect();
+    if debug.is_some() {
+        costly.push(if trace_throws { "--debug-full".into() } else { "--debug".into() });
+    }
+    if !costly.is_empty() {
+        println!("[launch] fps measured with diagnostics on: {}", costly.join(" "));
+    }
     Ok(())
 }
 
