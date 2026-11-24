@@ -81,6 +81,9 @@ struct Recording {
     ring: std::collections::VecDeque<usize>,
     /// Writes this list records to the page of a stalled GPU memory wait.
     stalled_writes: Vec<u64>,
+    /// CopyMemoryToMemoryX into title memory that is not GPU memory:
+    /// (destination, source, bytes), done on the CPU once the list has run.
+    cpu_copies: Vec<(u64, u64, u64)>,
     /// Queries begun and not yet ended, ended at Close: an open query makes
     /// the host Close fail.
     open_queries: Vec<(ID3D12QueryHeap, D3D12_QUERY_TYPE, u32)>,
@@ -600,6 +603,7 @@ unsafe extern "system" fn reset(
         state.sampled_heaps.clear();
         state.ring.clear();
         state.stalled_writes.clear();
+        state.cpu_copies.clear();
         state.open_queries.clear();
         state.split_barriers.clear();
         state.error = S_OK;
@@ -1502,12 +1506,21 @@ unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64
     memory_wait::note_write(list, &mut state, "memory copy", destination, size);
     let owner = parent(&list.parent);
     let result = (|| -> windows::core::Result<()> {
-        let (Some(dst), dst_va) = (unsafe { device::command_buffer_address(owner, destination, size)? }) else {
-            warn(format_args!("destination is not GPU memory, skipped"));
-            return Ok(());
-        };
-        let (Some(src), src_va) = (unsafe { device::command_buffer_address(owner, source, size)? }) else {
-            warn(format_args!("source is not GPU memory, skipped"));
+        let (dst, dst_va) = unsafe { device::command_buffer_address(owner, destination, size)? };
+        let (src, src_va) = unsafe { device::command_buffer_address(owner, source, size)? };
+        let (Some(dst), Some(src)) = (dst, src) else {
+            // Either side is title memory the GPU cannot address: copy on the
+            // CPU once the list has run (rebox d907249).
+            if accessible(destination as usize, size as usize, true) && accessible(source as usize, size as usize, false)
+                && state.cpu_copies.len() < 4096
+            {
+                state.cpu_copies.push((destination, source, size));
+                static CPU: std::sync::Once = std::sync::Once::new();
+                crate::diagnostics::log_once(&CPU, || format!(
+                    "CopyMemoryToMemoryX {source:#x} -> {destination:#x} ({size:#x} bytes) copied on the CPU after the list runs"));
+            } else {
+                warn(format_args!("not GPU memory and not accessible, skipped"));
+            }
             return Ok(());
         };
         raytracing::retain(&state, &[&dst, &src])?;
@@ -1520,6 +1533,33 @@ unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64
         Ok(())
     })();
     if let Err(error) = result { state.error = error.code(); }
+}
+
+/// Runs the CPU memory copies of a submission once `fence` reaches 1, on a
+/// worker thread so the title's submitting thread does not wait.
+fn cpu_copy_after(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>) {
+    use std::sync::mpsc;
+    struct Job(ID3D12Fence, Vec<(u64, u64, u64)>);
+    // SAFETY: D3D12 fences are free-threaded.
+    unsafe impl Send for Job {}
+    static WORKER: std::sync::OnceLock<std::sync::Mutex<mpsc::Sender<Job>>> = std::sync::OnceLock::new();
+    let sender = WORKER.get_or_init(|| {
+        let (sender, jobs) = mpsc::channel::<Job>();
+        let _ = std::thread::Builder::new().name("TuxBox CPU memory copies".into()).spawn(move || {
+            for Job(fence, copies) in jobs {
+                if unsafe { fence.SetEventOnCompletion(1, windows::Win32::Foundation::HANDLE::default()) }.is_err() {
+                    continue;
+                }
+                for (destination, source, size) in copies {
+                    // SAFETY: both ranges were committed when recorded; the title
+                    // keeps them for the list's lifetime.
+                    unsafe { ptr::copy(source as *const u8, destination as *mut u8, size as usize) };
+                }
+            }
+        });
+        std::sync::Mutex::new(sender)
+    });
+    let _ = sender.lock().unwrap_or_else(|e| e.into_inner()).send(Job(fence, copies));
 }
 
 /// Newer-layout list slot 80, DispatchX(x, y, z, flags): a Dispatch whose
@@ -1867,6 +1907,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     let guest = unsafe { slice::from_raw_parts(lists, count as usize) };
     let mut list_index = 0;
     let trace_samples = std::cell::RefCell::new(Vec::new());
+    let cpu_copies = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
@@ -1925,6 +1966,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             writes.extend(state.placed_writes.iter().cloned());
             shader_views.extend(state.sampled_heaps.iter().cloned());
             trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
+            cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
             Ok(list.native.as_raw())
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
@@ -1964,6 +2006,13 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
                             device::write_back_shadows(owner, &queue.native)?;
+                        }
+                        if !cpu_copies.borrow().is_empty() {
+                            let mut device: Option<ID3D12Device> = None;
+                            queue.native.GetDevice(&mut device)?;
+                            let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                            queue.native.Signal(&fence, 1)?;
+                            cpu_copy_after(fence, cpu_copies.take());
                         }
                         if !trace_samples.borrow().is_empty() {
                             let mut device: Option<ID3D12Device> = None;
@@ -2298,6 +2347,7 @@ pub(crate) unsafe fn wrap_command_list(
             sampled_heaps: Vec::new(),
             ring: std::collections::VecDeque::new(),
             stalled_writes: Vec::new(),
+            cpu_copies: Vec::new(),
             open_queries: Vec::new(),
             split_barriers: Vec::new(),
             media: compact.then(|| media::Recording::new(allocator)),
