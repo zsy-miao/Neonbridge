@@ -53,7 +53,7 @@ fn translate(
     }.map_err(Error::Unsupported)?;
     let model = if translated.required_wave_size.is_some()
         || translated.typed_int64_atomics
-        || matches!(translated.profile, "ps_6_6" | "cs_6_6")
+        || matches!(translated.profile, "ps_6_6" | "cs_6_6" | "ms_6_6")
     {
         "6_6"
     } else if shader.stage == Stage::Mesh || translated.profile == "cs_6_5" {

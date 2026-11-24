@@ -86,20 +86,31 @@ pub(super) fn translate(
     let mut em = Emitter::new(ex, body);
     em.wave_cull = wave_control;
     em.hoist_wave_exchanges = wave_control;
+    // Class 5 is the resource-heap base. It is not one of the table, raw, or
+    // constant SGPRs `MeshLayout` already accepts.
+    let heap = super::mesh_heap_base(ex);
+    let live = em.live_in();
     // The decoder exposes an unused third operand (s0) on two-input VOP3 instructions.
-    if let Some(reg) = em.live_in().into_iter().find(|reg| {
+    if let Some(reg) = live.iter().find(|reg| {
         if matches!(reg.as_str(), "s0" | "s3" | "v5") {
             return false;
         }
         match &bindings {
-            Some(mesh) => !reg
-                .strip_prefix('s')
-                .and_then(|n| n.parse().ok())
-                .is_some_and(|sgpr| mesh.takes_sgpr(sgpr)),
+            Some(mesh) => {
+                let sgpr = reg.strip_prefix('s').and_then(|n| n.parse::<u8>().ok());
+                !sgpr.is_some_and(|sgpr| mesh.takes_sgpr(sgpr) || heap == Some(sgpr))
+            }
             None => !matches!(reg.as_str(), "s25" | "s26"),
         }
     }) {
         return Err(format!("unsupported mesh launch register {reg}"));
+    }
+    if let Some(sgpr) = heap.filter(|sgpr| {
+        bindings.as_ref().is_some_and(|mesh| !mesh.takes_sgpr(*sgpr))
+            && live.iter().any(|reg| reg == &format!("s{sgpr}"))
+    }) {
+        em.resource_heap_base = Some(sgpr);
+        em.compute_heap = true;
     }
     em.mesh_bindings = bindings;
     em.resolve_resources()?;
@@ -240,7 +251,7 @@ void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
     Ok(Translated {
         hlsl: h,
         entry: "main",
-        profile: "ms_6_5",
+        profile: if em.compute_heap { "ms_6_6" } else { "ms_6_5" },
         needs_barycentrics: false,
         packed_dot_product: false,
         typed_int64_atomics: false,
@@ -572,6 +583,97 @@ fn write_exports(
 }
 
 #[cfg(test)]
+fn fssm_rows(rows: &[[u32; 5]]) -> Vec<u8> {
+    let mut program = vec![0; 0x100];
+    program[..8].copy_from_slice(b"FSSM\x01\x01\0\0");
+    let offset = (program.len() - 16) as u64;
+    program[0xe8..0xe8 + 8].copy_from_slice(&offset.to_le_bytes());
+    program[0xf8..0xf8 + 4].copy_from_slice(&(rows.len() as u32).to_le_bytes());
+    program.extend(rows.iter().flatten().copied().flat_map(u32::to_le_bytes));
+    let size = (program.len() - 16) as u32;
+    program[8..12].copy_from_slice(&size.to_le_bytes());
+    program
+}
+
+#[cfg(test)]
+fn heap_extract(rows: &[[u32; 5]], flags: u32, isa: &[u8]) -> crate::ShaderExtract {
+    crate::ShaderExtract {
+        stage: crate::Stage::Mesh,
+        shader_model: (6, 5),
+        required_features: Some(1 << 25),
+        entry: None,
+        isa: isa.to_vec(),
+        isa_data: isa.to_vec(),
+        isa_offset_in_fssm: 0,
+        isa_preamble: [0; 4],
+        fssm: fssm_rows(rows),
+        bitcode_stripped: true,
+        fspx_config: None,
+        ps09_pixel_inputs: None,
+        psv_threads: None,
+        input_sig: Vec::new(),
+        output_sig: Vec::new(),
+        primitive_sig: Vec::new(),
+        has_input_sig: false,
+        has_output_sig: false,
+        has_root_sig: true,
+        has_psv0: false,
+        resources: Vec::new(),
+        gs_info: None,
+        mesh_info: None,
+        root_sig: Some(tuxbox_dxbc::rootsig::RootSig {
+            version: 1,
+            flags,
+            params: Vec::new(),
+            num_static_samplers: 0,
+            static_samplers: Vec::new(),
+        }),
+    }
+}
+
+#[cfg(test)]
+fn assert_class5_mesh_pointer() {
+    let row = [5, 0, 1, 0, 0x0e];
+    let ex = heap_extract(&[row], 0x400, &[]);
+    assert_eq!(super::mesh_heap_base(&ex), Some(22));
+    let mut compute = ex.clone();
+    compute.stage = crate::Stage::Compute;
+    assert_eq!(super::mesh_heap_base(&compute), None);
+    assert_eq!(super::mesh_heap_base(&heap_extract(&[row], 0, &[])), None);
+    assert_eq!(super::mesh_heap_base(&heap_extract(&[row, row], 0x400, &[])), None);
+    let wide = [5, 0, 2, 0, 0x0e];
+    assert_eq!(super::mesh_heap_base(&heap_extract(&[wide], 0x400, &[])), None);
+}
+
+#[cfg(test)]
+fn assert_class5_descriptor_load() {
+    // s4 = s4 << 5; s[4:7] = s[22:23][s4]; s8 = buffer[s4][0].
+    let words = [0x8f048504, 0xf408010b, 0x08000000, 0xf4200202, 0xfa000000];
+    let isa: Vec<u8> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+    let ex = heap_extract(&[[5, 0, 1, 0, 0x0e]], 0x400, &isa);
+    let insns = disassemble(&ex.isa);
+    assert_eq!(
+        insns.iter().map(|ins| ins.mnemonic.as_str()).collect::<Vec<_>>(),
+        vec!["s_lshl_b32", "s_load_dwordx4", "s_buffer_load_dword"]
+    );
+    let mut em = Emitter::new(&ex, insns.clone());
+    em.resource_heap_base = super::mesh_heap_base(&ex);
+    em.compute_heap = true;
+    em.resolve_resources().unwrap();
+    assert!(matches!(em.res.get(&1).map(Vec::as_slice), Some([super::Res::HeapLoad(4)])));
+    assert!(matches!(em.res.get(&2).map(Vec::as_slice), Some([super::Res::HeapBuffer(4)])));
+    for (idx, ins) in insns.iter().enumerate() {
+        em.emit_insn(idx, ins, false, None).unwrap();
+    }
+    assert!(em.body.contains("s4 = tb_heap_index(s4 >> 5)"));
+    assert!(em.body.contains("ResourceDescriptorHeap[NonUniformResourceIndex(s4)]"));
+    assert!(em.body.contains("ByteAddressBuffer"));
+    let decls = em.resource_decls().unwrap();
+    assert!(decls.contains("uint tb_heap_index(uint i) { return i; }"));
+    assert!(!decls.contains("space32766"));
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -622,5 +724,15 @@ mod tests {
         assert!(validate(&[0x7e0a0281, 0x7e000505]).is_ok());
         // Shared memory would require synchronization among logical Xbox waves.
         assert!(validate(&[0xd8380100, 0x00020100]).is_err());
+    }
+
+    #[test]
+    fn class5_mesh_pointer_is_eight_above_the_user_location() {
+        assert_class5_mesh_pointer();
+    }
+
+    #[test]
+    fn class5_descriptor_load_uses_the_guest_heap_index() {
+        assert_class5_descriptor_load();
     }
 }
