@@ -405,6 +405,24 @@ pub(super) unsafe extern "system" fn place_virtual(
 
 // The layout-based Xbox placement API uses UNDEFINED for a buffer. On the
 // legacy host buffer path this starts in COMMON, independent of any texture layout.
+/// A committed device buffer standing in for title pages that neither open
+/// as a heap nor copy.
+fn device_buffer(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC)
+    -> windows::core::Result<(ID3D12Resource, Arc<super::views::TextureAddress>)> {
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
+    let host = D3D12_RESOURCE_DESC {
+        Width: desc.Width.max(1).next_multiple_of(256),
+        Flags: D3D12_RESOURCE_FLAGS(desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0),
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR, Alignment: 0, Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN,
+        ..*desc
+    };
+    let mut native: Option<ID3D12Resource> = None;
+    unsafe { device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &host, D3D12_RESOURCE_STATE_COMMON, None, &mut native)? };
+    let native = native.ok_or(E_POINTER)?;
+    let buffer = super::views::TextureAddress::at(device, &native, address as usize, false, None);
+    Ok((native, buffer))
+}
+
 pub(super) unsafe extern "system" fn place_virtual_layout(
     device: &Device, address: u64, desc: *const D3D12_RESOURCE_DESC,
     layout: D3D12_BARRIER_LAYOUT, clear: *const D3D12_CLEAR_VALUE,
@@ -506,6 +524,26 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
             }
             let (native, buffer) = match super::views::shadow_buffer(device, address, desc.Width) {
                 Ok(shadow) => shadow,
+                // Neither an import nor a copy of the title pages: a device
+                // buffer of the size asked, not tied to the title pages, so
+                // the title still gets its resource (test37: 4745040 bytes
+                // failed 0x80070057 just before a crash in title code).
+                // TUXBOX_BUFFER_DEVICE_FALLBACK=0 fails it as before.
+                Err(e) if crate::env_toggle!("TUXBOX_BUFFER_DEVICE_FALLBACK") != Some("0") => {
+                    match device_buffer(device, address, desc) {
+                        Ok(made) => {
+                            static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                            let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            if n <= 8 || n.is_power_of_two() {
+                                crate::diagnostics::log_line(format_args!(
+                                    "placed buffer at {address:#x} ({} bytes): no import or copy ({:?}); a device buffer not tied to the title pages stands in ({n} so far; TUXBOX_BUFFER_DEVICE_FALLBACK=0 fails it)",
+                                    desc.Width, e.code()));
+                            }
+                            made
+                        }
+                        Err(_) => return e.code(),
+                    }
+                }
                 Err(e) => return e.code(),
             };
             static SHADOWED: std::sync::Once = std::sync::Once::new();
