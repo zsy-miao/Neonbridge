@@ -543,6 +543,31 @@ mod writers {
     }
 }
 
+/// five-star-recomp efcc782 (GPL-3.0): a word the watchdog had to release
+/// once is waited on briefly afterwards (TUXBOX_WAIT_DEAD_MS, 100; 0 waits the
+/// full release each time), until a wait on it completes on its own. test111
+/// lost 2 s on each of 7 frame-cell waits in a row.
+static DEAD: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+fn dead_ms() -> u64 {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| crate::env_toggle!("TUXBOX_WAIT_DEAD_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(100))
+}
+
+fn dead(address: u64) -> bool {
+    DEAD.lock().unwrap_or_else(|e| e.into_inner()).contains(&address)
+}
+
+fn mark_dead(address: u64, on: bool) {
+    let mut d = DEAD.lock().unwrap_or_else(|e| e.into_inner());
+    let at = d.iter().position(|&a| a == address);
+    match (on, at) {
+        (true, None) => { if d.len() >= 4096 { d.remove(0); } d.push(address); }
+        (false, Some(i)) => { d.swap_remove(i); }
+        _ => {}
+    }
+}
+
 struct Job {
     queue: usize,
     fence: ID3D12Fence,
@@ -566,6 +591,8 @@ impl Worker {
                         // stall and release the queue after a watchdog period.
                         let started = std::time::Instant::now();
                         let mut warned = false;
+                        let was_dead = dead_ms() != 0 && dead(job.segment.address);
+                        let mut released = false;
                         while !job.segment.word.reached(job.segment.target, job.segment.comparison) {
                             unsafe {
                                 job.device.GetDeviceRemovedReason()?;
@@ -609,7 +636,10 @@ impl Worker {
                             // overrides (the old 10 s was most of a frame budget per stall).
                             let release = Duration::from_millis(crate::env_toggle!("TUXBOX_WAIT_RELEASE_MS")
                                 .and_then(|v| v.parse().ok()).unwrap_or(2000));
+                            let release = if was_dead { release.min(Duration::from_millis(dead_ms())) } else { release };
                             if waited >= release {
+                                released = true;
+                                mark_dead(job.segment.address, true);
                                 static RELEASED: AtomicU64 = AtomicU64::new(0);
                                 if slow::per_address(slow::Kind::Released, job.segment.address, &RELEASED).is_some() {
                                     crate::diagnostics::log_line(format_args!(
@@ -620,6 +650,9 @@ impl Worker {
                                 break;
                             }
                             std::thread::sleep(Duration::from_millis(1));
+                        }
+                        if !released && was_dead {
+                            mark_dead(job.segment.address, false);
                         }
                         slow::memory_wait(job.segment.address, job.segment.target, job.queue, started.elapsed());
                         crate::diagnostics::cost::add(
