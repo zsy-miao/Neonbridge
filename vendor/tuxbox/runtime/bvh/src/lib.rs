@@ -70,9 +70,9 @@ unsafe extern "system" fn tuxbox_bvh_prebuild(
     };
     *out = Sizes::default();
     let Some(device) = &this.device else { return };
-    if !stream.is_null() && unsafe { stream.read_unaligned() } != 0 {
-        return;
-    }
+    // The XDXR stream is a console-driver hint; the host sizes from the
+    // inputs alone. Zero sizes here made the title allocate empty buffers.
+    let _ = stream;
     let device = device.as_raw();
     let query: unsafe extern "system" fn(Object, *const Inputs, *mut Sizes) =
         unsafe { core::mem::transmute(slot(device, 102)) };
@@ -103,13 +103,17 @@ unsafe extern "system" fn tuxbox_bvh_batch(
         return;
     }
     if !entries.is_null() {
+        // extra = {postbuild count (u32), postbuild pointer, stream bytes,
+        // stream pointer}. The postbuild requests pass through (the list
+        // validates them); the XDXR stream is a console hint and is ignored.
         let entries = unsafe { core::slice::from_raw_parts(entries, count as usize) };
-        if entries.iter().all(|entry| entry.extra == [0; 4]) {
-            for entry in entries {
-                unsafe { tuxbox_bvh_build(this, list, &entry.build, 0, core::ptr::null()) };
-            }
-            return;
+        for entry in entries {
+            let posts = entry.extra[0] as u32;
+            let post = entry.extra[1] as *const Post;
+            let (posts, post) = if posts == 0 || post.is_null() { (0, core::ptr::null()) } else { (posts, post) };
+            unsafe { tuxbox_bvh_build(this, list, &entry.build, posts, post) };
         }
+        return;
     }
     // A void recording call reports unsupported inputs at Close.
     unsafe { tuxbox_bvh_build(this, list, core::ptr::null(), 0, core::ptr::null()) };

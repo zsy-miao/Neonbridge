@@ -828,6 +828,12 @@ pub(super) unsafe extern "system" fn sampler_x(
 ) {
     if words.is_null() { fail_call(format_args!("null extended sampler")); }
     let w = unsafe { core::slice::from_raw_parts(words, 21) };
+    // The raw words of the first calls settle the layout against the reading
+    // as a desktop D3D12_SAMPLER_DESC (leonida PR 7115) in one run.
+    static TRACED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if TRACED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+        crate::diagnostics::log_line(format_args!("device slot 61 sampler words {w:08x?}"));
+    }
     let comparison = w[16] != D3D12_COMPARISON_FUNC_NEVER.0 as u32 && w[16] != 0;
     let reduction = if comparison { 1 } else { match w[5] { 0 => 0, 1 => 2, 2 => 3, other => fail_call(format_args!("unsupported sampler reduction {other}")) } };
     let linear = |filter: u32| match filter { 0 | 1 => 0, 2 => 1, other => fail_call(format_args!("unsupported sampler filter {other}")) };

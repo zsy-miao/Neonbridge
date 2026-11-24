@@ -281,6 +281,38 @@ pub(super) unsafe extern "system" fn single(
     unsafe { record_builds(list, 1, &entry, outputs) };
 }
 
+/// Postbuild requests the host can serve, with their guest destinations
+/// translated to host GPU addresses. Unsupported kinds (the console's offline
+/// statistics, 0x10; tools and serialization) are dropped and logged once each,
+/// instead of failing the whole build.
+fn host_outputs(
+    list: &List,
+    state: &Recording,
+    descs: &[D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC],
+) -> Vec<D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC> {
+    let mut out = Vec::new();
+    for desc in descs {
+        if super::raytracing::validate_size_output(desc).is_err() {
+            static SEEN: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            if !seen.contains(&desc.InfoType.0) {
+                seen.push(desc.InfoType.0);
+                crate::diagnostics::log_line(format_args!(
+                    "raytracing postbuild request type {:#x} at {:#x} dropped", desc.InfoType.0, desc.DestBuffer));
+            }
+            continue;
+        }
+        let Ok((resource, dest)) = (unsafe { crate::device::command_buffer_address(super::parent(&list.parent), desc.DestBuffer, 8) }) else {
+            continue;
+        };
+        if let Some(buffer) = &resource && retain(state, &[buffer]).is_err() {
+            continue;
+        }
+        out.push(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC { DestBuffer: dest, ..*desc });
+    }
+    out
+}
+
 pub(super) unsafe extern "system" fn batch(list: &List, count: u32, entries: *const Entry) {
     unsafe { record_builds(list, count, entries, &[]) };
 }
@@ -303,20 +335,9 @@ unsafe fn record_builds(
         state.error = E_INVALIDARG;
         return;
     }
-    if let Err(error) = outputs
-        .iter()
-        .try_for_each(super::raytracing::validate_size_output)
-    {
-        state.error = error.code();
-        return;
-    }
     let entries = unsafe { core::slice::from_raw_parts(entries, count as usize) };
     let alignment = u64::from(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT);
     for e in entries {
-        if e.extension != [0; 4] {
-            state.error = E_NOTIMPL;
-            return;
-        }
         let b = &e.build;
         let update = b
             .Inputs
@@ -352,7 +373,32 @@ unsafe fn record_builds(
         state.error = E_INVALIDARG;
         return;
     };
+    let shared = host_outputs(list, &state, outputs);
     for entry in entries {
+        // extension = {postbuild count (u32), postbuild pointer, XDXR stream
+        // bytes, stream pointer}: the requests are honoured, the stream (a
+        // console-driver hint) is ignored. Refusing any non-zero extension
+        // dropped every such build (E_NOTIMPL).
+        let own;
+        let outputs: &[D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC] = if entry.extension == [0; 4] {
+            &shared
+        } else {
+            if entry.extension[2] != 0 {
+                static STREAM: std::sync::Once = std::sync::Once::new();
+                crate::diagnostics::log_once(&STREAM, || format!(
+                    "raytracing build XDXR stream ({:#x} bytes at {:#x}) ignored", entry.extension[2], entry.extension[3]));
+            }
+            let count = entry.extension[0] as u32 as usize;
+            let at = entry.extension[1] as usize;
+            let size = size_of::<D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC>();
+            own = if count == 0 || count > 64 || !super::accessible(at, count * size, false) {
+                Vec::new()
+            } else {
+                // SAFETY: checked readable above; the title keeps it for the call.
+                host_outputs(list, &state, unsafe { core::slice::from_raw_parts(at as *const _, count) })
+            };
+            &own
+        };
         // One build can need a late-bound instance table, an update-source
         // check, and a destination publication, in that command order.
         if state.scene_commands.try_reserve(3).is_err() {
@@ -373,7 +419,7 @@ unsafe fn record_builds(
             });
         }
         unsafe {
-            host.BuildRaytracingAccelerationStructure(&build, Some(outputs));
+            host.BuildRaytracingAccelerationStructure(&build, (!outputs.is_empty()).then_some(outputs));
             let guest_va = entry.build.DestAccelerationStructureData;
             let native_va = build.DestAccelerationStructureData;
             let command =
