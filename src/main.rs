@@ -668,7 +668,13 @@ fn run_summary(text: &str, code: Option<i32>) -> String {
         let l = l.to_ascii_lowercase();
         ["panicked", "presentx failed", "device removed", "0x887a0005", "0x887a0006", "fatal", "access violation", "stack overflow"].iter().any(|k| l.contains(k))
     });
-    let fps = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split(" (").nth(1)?.strip_suffix(" fps)").map(str::to_owned)).unwrap_or_else(|| "-".into());
+    // Heartbeat: "completed PresentX #N (x fps)" or "(x fps; ms/frame: record a, close b, ...)".
+    let beat = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split_once(" (").map(|(_, r)| r.trim_end().trim_end_matches(')').to_owned()));
+    let (fps, split) = match beat.as_deref().map(|b| b.split_once("; ms/frame: ").unwrap_or((b, ""))) {
+        Some((f, s)) => (f.trim_end_matches(" fps").to_owned(), s.replace(", ", ",").replace(" (worker)", "").replace(' ', "-")),
+        None => ("-".into(), String::new()),
+    };
+    let fps = if split.is_empty() { fps } else { format!("{fps} ms/frame={split}") };
     let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
     format!(
         "[launch] summary: exit={exit} presents={presents} fps={fps} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \
