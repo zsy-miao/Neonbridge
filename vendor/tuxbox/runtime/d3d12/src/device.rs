@@ -14,6 +14,7 @@ use crate::commands::{wrap_command_list, wrap_command_queue};
 use crate::proxy::{Proxy, Slot, Slots, allocate, check_output, child_slots, object_slots, unwrap};
 
 mod allocation;
+mod cb_blend;
 pub(crate) mod alloc_swap;
 mod fallback;
 pub(crate) mod blas;
@@ -1127,11 +1128,11 @@ static DEVICE: Slots<192> = {
     slots[48] = crate::slot!(create_queue_x);
     // Precompiled graphics PSO with separate driver metadata and GPU shader addresses.
     slots[55] = crate::slot!(derived_pipeline);
-    slots[57] = crate::slot!(compute::deserialize_pipeline_x);
+    slots[57] = crate::slot!(compute::deserialize_pipeline_x::<57>);
     slots[60] = crate::slot!(graphics::create_pipeline);
     slots[61] = crate::slot!(views::sampler_x);
     slots[62] = crate::slot!(compute::create_pipeline_x);
-    slots[67] = crate::slot!(compute::deserialize_pipeline_x);
+    slots[67] = crate::slot!(compute::deserialize_pipeline_x::<67>);
     slots[69] = crate::slot!(set_driver_hint);
     slots[70] = crate::slot!(views::address_srv);
     slots[73] = crate::slot!(create_list_x);

@@ -61,6 +61,13 @@ static DONE: (Mutex<()>, std::sync::Condvar) = (Mutex::new(()), std::sync::Condv
 /// the workers on its first bind, and waited for while the title's frame
 /// has translator budget left (VIctory's `make::ready`). `None` while it is
 /// still being made: the list drops its draws and dispatches.
+/// An upgrade that is never built: a pipeline holding it stays the shared
+/// placeholder and command lists drop its draws and dispatches.
+pub(crate) fn never() -> Arc<Upgrade> {
+    let slot = Upgrade { built: OnceLock::new(), deferred: Mutex::new(None), failed: std::sync::atomic::AtomicBool::new(true) };
+    Arc::new(slot)
+}
+
 pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     if let Some(built) = slot.built.get() {
         return Some(built);

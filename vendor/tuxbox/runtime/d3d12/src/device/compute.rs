@@ -162,24 +162,93 @@ pub(super) unsafe extern "system" fn create_root_signature(
 
 // Slot 67 receives a serialized console PSO. FidelityFX retries slot 62 with a
 // shader descriptor if its precompiled ACO pipeline cannot be deserialized.
-pub(super) unsafe extern "system" fn deserialize_pipeline_x(
-    _this: &Device,
-    _desc: *const c_void,
+/// Device slots 57 and 67 (desc, riid, ppv): a pipeline described by console
+/// state blocks (Xbox2Windows d3d12_xs_device.cpp, MIT). The description's
+/// shader stages are not decoded yet, so the title gets a placeholder
+/// pipeline whose draws and dispatches command lists drop, S_OK instead of
+/// E_NOTIMPL. The first calls log 96 description bytes, dump 0x300 of them
+/// to %TEMP%\tuxbox-slotN-K.bin, and decode state block A's blend words
+/// (cb_blend). TUXBOX_SLOT57=stub answers E_NOTIMPL as before.
+pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
+    this: &Device,
+    desc: *const c_void,
     iid: *const GUID,
     out: Out,
 ) -> HRESULT {
     // SAFETY: the guest supplies a readable IID and writable output slot.
     let hr = unsafe { check_output::<ID3D12PipelineState>(iid, out) };
-    // Xbox2Windows builds pipelines from this slot's state blocks (blend from
-    // CB_BLENDn_CONTROL at state block A + 0xD0, e0b2e867); ours is not
-    // built yet. Log the first calls so a run shows whether the title uses it.
     static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    if CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let stub = crate::env_toggle!("TUXBOX_SLOT57") == Some("stub");
+    if call < 2 {
+        unsafe { describe_state_blocks(N, call, desc) };
+    }
+    if hr.is_err() {
+        return hr;
+    }
+    if stub {
+        return E_NOTIMPL;
+    }
+    let Some(placeholder) = super::stream::background::placeholder(this) else {
+        return E_NOTIMPL;
+    };
+    let state = PipelineData { lazy: true, ..Default::default() };
+    let _ = state.upgrade.set(super::stream::background::never());
+    if call < 4 {
         crate::diagnostics::log_line(format_args!(
-            "device slot 57 (pipeline from state blocks) called, desc {_desc:p}, from title RVA {:#x}: E_NOTIMPL (not built yet)",
+            "device slot {N} pipeline from state blocks at title RVA {:#x}: placeholder (its draws are dropped; TUXBOX_SLOT57=stub answers E_NOTIMPL)",
             crate::survey::title_rva().unwrap_or(0)));
     }
-    if hr.is_err() { hr } else { E_NOTIMPL }
+    unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) }
+}
+
+/// Whether [address, address + bytes) is committed readable memory.
+fn readable(address: usize, bytes: usize) -> bool {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
+    let Some(end) = address.checked_add(bytes) else { return false };
+    let mut at = address;
+    while at < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if address == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0
+            || region.State != MEM_COMMIT || region.Protect.0 & (PAGE_NOACCESS.0 | PAGE_GUARD.0) != 0 || region.Protect.0 == 0
+        {
+            return false;
+        }
+        at = region.BaseAddress as usize + region.RegionSize;
+    }
+    true
+}
+
+/// Logs and dumps one slot 57/67 description and its state block A blend.
+unsafe fn describe_state_blocks(slot: u32, call: u32, desc: *const c_void) {
+    let address = desc as usize;
+    let have = [0x300usize, 0x60, 0x28].into_iter().find(|&n| readable(address, n)).unwrap_or(0);
+    let bytes = if have == 0 { &[][..] } else { unsafe { slice::from_raw_parts(desc.cast::<u8>(), have) } };
+    let hex: String = bytes.iter().take(96).map(|b| format!("{b:02x} ")).collect();
+    let dumped = (have == 0x300).then(|| {
+        let path = std::env::temp_dir().join(format!("tuxbox-slot{slot}-{call}.bin"));
+        std::fs::write(&path, bytes).ok().map(|()| path.display().to_string())
+    }).flatten();
+    // words[1], words[2]: state block A and its size.
+    let blend = (bytes.len() >= 0x28).then(|| {
+        let word = |n: usize| u64::from_le_bytes(bytes[n * 8..n * 8 + 8].try_into().unwrap()) as usize;
+        let (block, size) = (word(1), word(2));
+        if size == 0 || size > 0x1000 || !readable(block, size) {
+            return format!("state block A {block:#x}+{size:#x} unreadable");
+        }
+        let block = unsafe { slice::from_raw_parts(block as *const u8, size) };
+        if !super::cb_blend::enabled() {
+            return "blend decode off (TUXBOX_SLOT57_CB_BLEND=0)".into();
+        }
+        match super::cb_blend::state_block_blend(block) {
+            Ok(blend) => format!("blend enabled on targets {:?}",
+                (0..8).filter(|&n| blend.RenderTarget[n].BlendEnable.as_bool()).collect::<Vec<_>>()),
+            Err((target, reason)) => format!("blend refused on target {target}: {reason}; unblended"),
+        }
+    }).unwrap_or_else(|| "no state block words".into());
+    crate::diagnostics::log_line(format_args!(
+        "device slot {slot} call {call}: desc {address:#x} [{hex}] ({have} bytes readable, dump {}); {blend}",
+        dumped.as_deref().unwrap_or("none")));
 }
 
 /// What identifies a guest compute pipeline across runs (see `pipeline_cache`).
