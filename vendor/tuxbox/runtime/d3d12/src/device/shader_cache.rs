@@ -3,6 +3,7 @@
 //! in the original guest shader. Portable input never opens the cache.
 use std::collections::HashSet;
 mod compile;
+pub(crate) use compile::frame_presented;
 
 use std::fmt::Write as _;
 use std::fs::File;

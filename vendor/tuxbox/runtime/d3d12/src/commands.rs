@@ -1522,6 +1522,7 @@ unsafe fn present_planes(
     // Frame pacing must advance even if the host present failed; the title
     // otherwise waits forever for this token's flip.
     unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
+    crate::device::shader_cache::frame_presented();
     if result == S_OK {
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         static EARLY: [std::sync::Once;4] = [const { std::sync::Once::new() };4];

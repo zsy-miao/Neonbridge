@@ -38,7 +38,7 @@ pub(crate) mod ray_build;
 mod ray_compile;
 mod ray_pipeline;
 pub(crate) mod rectangle;
-mod shader_cache;
+pub(crate) mod shader_cache;
 mod state_object;
 pub(crate) mod stencil;
 mod stream;

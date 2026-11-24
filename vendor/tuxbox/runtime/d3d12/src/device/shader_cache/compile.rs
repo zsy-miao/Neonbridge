@@ -3,9 +3,23 @@ use super::{Stage, read_portable_file, source_digest};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+/// How long the title's threads may still wait on the translator, in
+/// milliseconds (VIctory's per-frame budget). Loading before the first present
+/// may wait 60 s in all; each present then grants half a second. A pipeline
+/// whose translation misses the budget is created without it and its draws are
+/// dropped, while the worker finishes and caches it for the next launch's
+/// prewarm. The title's threads never block on the translator past the budget.
+static WAIT_BUDGET_MS: AtomicI64 = AtomicI64::new(60_000);
+const FRAME_BUDGET_MS: i64 = 500;
+
+/// A title frame was presented: grant the next frame its wait budget.
+pub(crate) fn frame_presented() {
+    WAIT_BUDGET_MS.store(FRAME_BUDGET_MS, Ordering::Relaxed);
+}
 
 fn session() -> Option<&'static PathBuf> {
     static SESSION: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -173,6 +187,16 @@ fn request(
             return Some(bytes);
         }
         if failed.exists() || start.elapsed() >= Duration::from_secs(90) {
+            return None;
+        }
+        if WAIT_BUDGET_MS.fetch_sub(25, Ordering::Relaxed) <= 0 {
+            static DROPPED: AtomicUsize = AtomicUsize::new(0);
+            let dropped = DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
+            if dropped.is_power_of_two() {
+                crate::diagnostics::log_once(&std::sync::Once::new(), || {
+                    format!("shader wait budget spent: {dropped} pipelines created without their translation")
+                });
+            }
             return None;
         }
         std::thread::sleep(Duration::from_millis(25));
