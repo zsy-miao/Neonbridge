@@ -203,7 +203,34 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     }
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
     splash::status(0.6, "Starting the game");
-    let result = start(&game, &target, &game_args, log, debug.then(|| cdb_extra.unwrap_or_default()), trace_throws, sandbox, &env, timeout);
+    commit_preflight();
+    // XLaunchNewGame: the title writes a request and exits; start what it asked
+    // for in its place (at most 8 times in a row). TUXBOX_RELAUNCH=0 in the
+    // title ignores the request, so no file appears.
+    let request = relaunch_request(&target);
+    if let Some(r) = &request {
+        let _ = fs::remove_file(r);
+    }
+    let (mut target, mut game_args, mut log) = (target, game_args, log);
+    let mut relaunches = 0;
+    let result = loop {
+        let result = start(&game, &target, &game_args, log.take(), debug.then(|| cdb_extra.clone().unwrap_or_default()), trace_throws, sandbox, &env, timeout);
+        let Some(text) = request.as_ref().and_then(|r| fs::read_to_string(r).ok()) else { break result };
+        let _ = fs::remove_file(request.as_ref().unwrap());
+        relaunches += 1;
+        if relaunches > 8 {
+            println!("[launch] relaunch request ignored: 8 relaunches in a row");
+            break result;
+        }
+        let (exe, args) = text.split_once('\n').unwrap_or((&text, ""));
+        let named = Path::new(exe.trim());
+        let candidate = if named.is_absolute() { named.to_path_buf() } else { game.join(named) };
+        if !exe.trim().is_empty() && candidate.is_file() && is_x64_exe(&candidate) {
+            target = candidate;
+        }
+        game_args = split_args(args.trim());
+        println!("[launch] the title asked to launch {} {}; relaunching ({relaunches})", target.display(), args.trim());
+    };
     if let Some((w, _, session, log_path)) = worker {
         let st = w.stop();
         use std::sync::atomic::Ordering::Relaxed;
@@ -212,6 +239,58 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         let _ = fs::remove_dir_all(session);
     }
     result
+}
+
+/// Where the title's xgameruntime writes an XLaunchNewGame request.
+fn relaunch_request(exe: &Path) -> Option<PathBuf> {
+    Some(env_path("LOCALAPPDATA")?.join("TuxBox").join("relaunch").join(format!("{}.txt", exe.file_stem()?.to_string_lossy())))
+}
+
+/// Command-line split on spaces, keeping double-quoted runs together.
+fn split_args(s: &str) -> Vec<OsString> {
+    let (mut out, mut cur, mut quoted, mut any) = (Vec::new(), String::new(), false, false);
+    for c in s.chars() {
+        match c {
+            '"' => { quoted = !quoted; any = true; }
+            c if c.is_whitespace() && !quoted => {
+                if any || !cur.is_empty() { out.push(OsString::from(std::mem::take(&mut cur))); }
+                any = false;
+            }
+            c => cur.push(c),
+        }
+    }
+    if any || !cur.is_empty() { out.push(cur.into()); }
+    out
+}
+
+/// Pre-flight: Windows commit (RAM plus page file) available for the title.
+/// Translation layers commit about 15 GB at the menu; when commit runs out
+/// allocations fail with error 1455 and the title crashes. Warns below
+/// TUXBOX_MIN_COMMIT_GB (default 20); NEONBRIDGE_COMMIT_CHECK=0 skips it.
+fn commit_preflight() {
+    #[repr(C)]
+    struct MemoryStatusEx { length: u32, load: u32, total_phys: u64, avail_phys: u64, total_page_file: u64, avail_page_file: u64, total_virtual: u64, avail_virtual: u64, avail_extended: u64 }
+    unsafe extern "system" {
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
+    }
+    if std::env::var("NEONBRIDGE_COMMIT_CHECK").as_deref() == Ok("0") {
+        return;
+    }
+    let need = std::env::var("TUXBOX_MIN_COMMIT_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(20);
+    let mut m: MemoryStatusEx = unsafe { std::mem::zeroed() };
+    m.length = size_of::<MemoryStatusEx>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut m) } == 0 {
+        return;
+    }
+    let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let (limit, free, ram) = (gb(m.total_page_file), gb(m.avail_page_file), gb(m.total_phys));
+    if free < need as f64 {
+        let msg = format!("only {free:.1} GB of Windows commit is free (limit {limit:.1} GB = {ram:.1} GB RAM + page file); the game needs about {need} GB and crashes with error 1455 when it runs out. Raise the page file (System > About > Advanced system settings > Performance > Advanced > Virtual memory: system managed, or at least {:.0} GB) or close other programs", (need as f64 - ram + 4.0).max(16.0));
+        println!("[launch] WARNING: {msg}");
+        splash::status(0.55, "Low memory: raise the Windows page file (see the log)");
+    } else {
+        println!("[launch] commit: {free:.1} GB free of {limit:.1} GB (RAM {ram:.1} GB); need about {need} GB");
+    }
 }
 
 /// Build the vendored TuxBox shader translator (tools/shader-compiler -> xshader.exe).
