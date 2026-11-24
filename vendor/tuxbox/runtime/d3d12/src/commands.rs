@@ -1606,6 +1606,10 @@ unsafe extern "system" fn execute_indirect(
         }
     }
     let execute = || unsafe {
+        let order = fresh_arguments_buffer(&list.native);
+        if let Some(b) = &order {
+            list.native.ResourceBarrier(&[indirect_clamp::transition(b, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)]);
+        }
         list.native.ExecuteIndirect(
             &signature.native,
             max_count,
@@ -1614,6 +1618,9 @@ unsafe extern "system" fn execute_indirect(
             count,
             count_offset,
         );
+        if let Some(b) = &order {
+            list.native.ResourceBarrier(&[indirect_clamp::transition(b, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COMMON)]);
+        }
         static FIRST_DRAW: std::sync::Once = std::sync::Once::new();
         static FIRST_COMPUTE: std::sync::Once = std::sync::Once::new();
         let site = if signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH { &FIRST_COMPUTE } else { &FIRST_DRAW };
@@ -1639,6 +1646,55 @@ unsafe extern "system" fn execute_indirect(
         let rasterizes = max_count != 0 && signature.state.kind != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
         state.draw(list, rasterizes, execute);
     }
+}
+
+/// A buffer of our own whose COMMON -> INDIRECT_ARGUMENT transition goes before
+/// each ExecuteIndirect (and back after), on a list that is not a bundle.
+/// Ported from ivall/xcl 9486494 (wondercrash, GPL-2.0-only): the console orders
+/// a dispatch that writes indirect arguments before the ExecuteIndirect reading
+/// them with a barrier that reaches the PC as a UAV barrier, and NVIDIA's driver
+/// fetches the arguments without waiting for it, so the ExecuteIndirect ran the
+/// count the memory held before the list (40 of 40 tries there), also when the
+/// writes went through another resource over the same memory, as translated
+/// shaders write through placed and imported views. A transition to
+/// INDIRECT_ARGUMENT, of any buffer, makes the driver wait; the title's own
+/// buffer stays in the title's state. TUXBOX_INDIRECT_ORDER=0 off.
+fn fresh_arguments_buffer(list: &ID3D12GraphicsCommandList) -> Option<ID3D12Resource> {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_ORDER") != Some("0")) {
+        return None;
+    }
+    if unsafe { list.GetType() } == D3D12_COMMAND_LIST_TYPE_BUNDLE {
+        return None;
+    }
+    static BUFFER: Mutex<Option<(usize, ID3D12Resource)>> = Mutex::new(None);
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { list.GetDevice(&mut device) }.ok()?;
+    let device = device?;
+    let mut held = BUFFER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, b)) = held.as_ref().filter(|(d, _)| *d == device.as_raw() as usize) {
+        return Some(b.clone());
+    }
+    let desc = D3D12_RESOURCE_DESC {
+        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+        Width: 256,
+        Height: 1,
+        DepthOrArraySize: 1,
+        MipLevels: 1,
+        SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        ..Default::default()
+    };
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() };
+    let mut b: Option<ID3D12Resource> = None;
+    if let Err(e) = unsafe { device.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut b) } {
+        static FAILED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FAILED, || format!("ExecuteIndirect: no buffer to order its arguments after the writes before it ({e}); it may read old ones"));
+        return None;
+    }
+    let b = b?;
+    *held = Some((device.as_raw() as usize, b.clone()));
+    Some(b)
 }
 
 /// TUXBOX_INDIRECT_CLAMP=0 executes indirect arguments as the title wrote them.
