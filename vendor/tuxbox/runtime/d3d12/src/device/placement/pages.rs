@@ -103,6 +103,10 @@ struct Target {
     mapped: bool,
     used: Vec<usize>,
     used_extra: Vec<(usize, usize)>,
+    /// the pool heaps its tiles are in (residency, `touch`)
+    heaps: Vec<u32>,
+    /// a sampled texture, whose new pools may go to system memory
+    system_ok: bool,
 }
 
 /// The title's pages of video memory for tiled textures (see the module's comment).
@@ -126,6 +130,13 @@ struct Pages {
     targets: std::collections::HashMap<usize, Target>,
     /// queue → the fence value it last waited for
     waited: std::collections::HashMap<usize, u64>,
+    /// the fence value last signalled: mappings signal once, before the next
+    /// title work that waits for them (test58: a Signal per placed texture)
+    signaled: u64,
+    /// per pool heap: last submission using it, evicted, in system memory
+    pool_used: Vec<std::time::Instant>,
+    pool_evicted: Vec<bool>,
+    pool_system: Vec<bool>,
 }
 
 // D3D12 objects are free-threaded
@@ -158,6 +169,10 @@ impl Pages {
             idle: std::collections::VecDeque::new(),
             targets: std::collections::HashMap::new(),
             waited: std::collections::HashMap::new(),
+            signaled: 0,
+            pool_used: Vec::new(),
+            pool_evicted: Vec::new(),
+            pool_system: Vec::new(),
         })
     }
 
@@ -166,16 +181,23 @@ impl Pages {
         sweep_idle(&mut self.idle, &mut self.pages, &mut self.extra_pages, &mut self.cooling, now);
     }
 
-    unsafe fn take_tile(&mut self, dev: &ID3D12Device) -> Option<Tile> {
+    unsafe fn take_tile(&mut self, dev: &ID3D12Device, system_ok: bool) -> Option<Tile> {
         if let Some(t) = self.free.pop() {
             return Some(t);
         }
         if self.cooling.front().is_some_and(|(_, at)| at.elapsed() >= COOL) {
             return self.cooling.pop_front().map(|(t, _)| t);
         }
+        let system = system_ok && system_pools(dev);
         let desc = D3D12_HEAP_DESC {
             SizeInBytes: POOL_PAGES as u64 * PAGE as u64,
-            Properties: D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() },
+            Properties: if system {
+                // GPU-only system memory: the GPU reads it over PCIe.
+                D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_CUSTOM, CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE,
+                    MemoryPoolPreference: D3D12_MEMORY_POOL_L0, CreationNodeMask: 1, VisibleNodeMask: 1 }
+            } else {
+                D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() }
+            },
             Alignment: 0,
             // every kind of texture (resource heap tier 2: the only flags for both)
             Flags: D3D12_HEAP_FLAG_NONE,
@@ -186,6 +208,12 @@ impl Pages {
             return None;
         }
         self.pools.push(heap?);
+        self.pool_used.push(std::time::Instant::now());
+        self.pool_evicted.push(false);
+        self.pool_system.push(system);
+        if system {
+            SYSTEM_POOLS.fetch_add(1, Relaxed);
+        }
         let h = self.pools.len() as u32 - 1;
         self.free.extend((1..POOL_PAGES).rev().map(|t| (h, t)));
         Some((h, 0))
@@ -216,8 +244,16 @@ impl Pages {
                 D3D12_TILE_MAPPING_FLAG_NONE,
             );
         }
+        self.mapped();
+    }
+
+    /// A mapping was queued: title work after it waits for it.
+    unsafe fn mapped(&mut self) {
         self.value += 1;
-        let _ = self.queue.Signal(&self.fence, self.value);
+        if signal_each() {
+            let _ = self.queue.Signal(&self.fence, self.value);
+            self.signaled = self.value;
+        }
     }
 
     /// Unmap every tile of `res` (`D3D12_TILE_RANGE_FLAG_NULL`) so its unshared tiles can return
@@ -238,8 +274,7 @@ impl Pages {
             Some(&total),
             D3D12_TILE_MAPPING_FLAG_NONE,
         );
-        self.value += 1;
-        let _ = self.queue.Signal(&self.fence, self.value);
+        self.mapped();
     }
 
     fn release_tiles(&mut self, used: Vec<usize>, used_extra: Vec<(usize, usize)>, now: std::time::Instant, immediate_cool: bool) {
@@ -276,7 +311,7 @@ impl Pages {
     }
 
     /// Acquire/share all `total` tiles for `res` at `va` and map them on the `Pages` queue.
-    unsafe fn bind(&mut self, dev: &ID3D12Device, res: &ID3D12Resource, va: usize, console_bytes: Option<u64>, total: u32) -> Option<(Vec<usize>, Vec<(usize, usize)>)> {
+    unsafe fn bind(&mut self, dev: &ID3D12Device, res: &ID3D12Resource, va: usize, console_bytes: Option<u64>, total: u32, system_ok: bool) -> Option<(Vec<usize>, Vec<(usize, usize)>, Vec<u32>)> {
         let (first, own) = (total > 0).then(|| owned_pages(va, console_bytes, total as usize)).flatten()?;
         let now = std::time::Instant::now();
         self.sweep(now);
@@ -292,7 +327,7 @@ impl Pages {
                         p.idle_since = None;
                         Some(p.tile)
                     }
-                    None => self.take_tile(dev).inspect(|&t| {
+                    None => self.take_tile(dev, system_ok).inspect(|&t| {
                         self.pages.insert(a, Page { tile: t, users: 1, idle_since: None });
                     }),
                 };
@@ -308,7 +343,7 @@ impl Pages {
                         p.idle_since = None;
                         Some(p.tile)
                     }
-                    None => self.take_tile(dev).inspect(|&t| {
+                    None => self.take_tile(dev, system_ok).inspect(|&t| {
                         self.extra_pages.insert(k, Page { tile: t, users: 1, idle_since: None });
                     }),
                 };
@@ -325,7 +360,10 @@ impl Pages {
             return None;
         }
         self.map(res, &tiles);
-        Some((used, used_extra))
+        let mut heaps: Vec<u32> = tiles.iter().map(|t| t.0).collect();
+        heaps.sort_unstable();
+        heaps.dedup();
+        Some((used, used_extra, heaps))
     }
 }
 
@@ -392,18 +430,19 @@ pub(super) unsafe fn remap_if_unmapped(res: &ID3D12Resource) -> bool {
     let key = res.as_raw() as usize;
     let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
     let Some(Some(pages)) = g.get_mut(&(dev.as_raw() as usize)) else { return false };
-    let Some((va, console_bytes, total, mapped)) = pages.targets.get(&key).map(|t| (t.va, t.console_bytes, t.total, t.mapped)) else {
+    let Some((va, console_bytes, total, mapped, system_ok)) = pages.targets.get(&key).map(|t| (t.va, t.console_bytes, t.total, t.mapped, t.system_ok)) else {
         return false;
     };
     if mapped {
         return true;
     }
-    let Some((used, used_extra)) = pages.bind(&dev, res, va, console_bytes, total) else {
+    let Some((used, used_extra, heaps)) = pages.bind(&dev, res, va, console_bytes, total, system_ok) else {
         return false;
     };
     if let Some(t) = pages.targets.get_mut(&key) {
         t.used = used;
         t.used_extra = used_extra;
+        t.heaps = heaps;
         t.mapped = true;
     }
     true
@@ -432,6 +471,10 @@ pub(super) unsafe fn before_execute(queue: &ID3D12CommandQueue) {
     let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
     let Some(Some(pages)) = g.get_mut(&(dev.as_raw() as usize)) else { return };
     let key = queue.as_raw() as usize;
+    if pages.signaled < pages.value {
+        let _ = pages.queue.Signal(&pages.fence, pages.value);
+        pages.signaled = pages.value;
+    }
     if pages.waited.get(&key).copied().unwrap_or(0) < pages.value {
         let _ = queue.Wait(&pages.fence, pages.value);
         pages.waited.insert(key, pages.value);
@@ -461,7 +504,7 @@ pub(super) fn enabled() -> bool {
 /// A texture of this desktop description at guest va (console size
 /// `console_bytes`) as a reserved resource on the title's pages; None: it
 /// can't be (tier < 2, a desc the driver won't make reserved, no pages).
-pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, console_bytes: u64, clear: Option<&D3D12_CLEAR_VALUE>) -> Option<(ID3D12Resource, u64)> {
+pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, console_bytes: u64, clear: Option<&D3D12_CLEAR_VALUE>) -> Option<(ID3D12Resource, u64, Readers)> {
     if !enabled() || !super::alias::enabled() || host.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D || host.SampleDesc.Count > 1 {
         return None;
     }
@@ -469,8 +512,14 @@ pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, 
         let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
         let pages = g.entry(device.as_raw() as usize).or_insert_with(|| Pages::new(device)).as_mut()?;
         let tiled = D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE, Alignment: 0, ..*host };
-        let mut res: Option<ID3D12Resource> = None;
-        if let Err(e) = device.CreateReservedResource(&tiled, D3D12_RESOURCE_STATE_COMMON, clear.map(core::ptr::from_ref), &mut res) {
+        let system_ok = (host.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)).0 == 0;
+        let (mut res, readers) = match recycled(device, &tiled) {
+            Some((res, readers)) => (Some(res), readers),
+            None => (None, Vec::new()),
+        };
+        if res.is_some() {
+            RECYCLED.fetch_add(1, Relaxed);
+        } else if let Err(e) = device.CreateReservedResource(&tiled, D3D12_RESOURCE_STATE_COMMON, clear.map(core::ptr::from_ref), &mut res) {
             if REFUSED.fetch_add(1, Relaxed) < 4 {
                 crate::diagnostics::log_line(format_args!("placed textures: {}x{} format {} flags {:#x} not reserved ({e}): in a span",
                     host.Width, host.Height, host.Format.0, host.Flags.0));
@@ -480,10 +529,10 @@ pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, 
         let res = res?;
         let mut total = 0u32;
         device.GetResourceTiling(&res, Some(&mut total), None, None, None, 0, std::ptr::null_mut());
-        let (used, used_extra) = pages.bind(device, &res, va as usize, Some(console_bytes), total)?;
-        pages.targets.insert(res.as_raw() as usize, Target { va: va as usize, console_bytes: Some(console_bytes), total, mapped: true, used, used_extra });
+        let (used, used_extra, heaps) = pages.bind(device, &res, va as usize, Some(console_bytes), total, system_ok)?;
+        pages.targets.insert(res.as_raw() as usize, Target { va: va as usize, console_bytes: Some(console_bytes), total, mapped: true, used, used_extra, heaps, system_ok });
         PLACED.fetch_add(1, Relaxed);
-        Some((res, u64::from(total) * PAGE as u64))
+        Some((res, u64::from(total) * PAGE as u64, readers))
     }
 }
 
@@ -558,16 +607,184 @@ pub(super) fn forget(resource: usize) {
 }
 
 /// A texture on pages is gone.
-pub(super) fn gone(texture: &Texture) {
+pub(super) fn gone(texture: &Texture, readers: Readers) {
     let key = texture.native.as_raw() as usize;
     if !is_mapped(texture) && PAGES.lock().unwrap_or_else(|e| e.into_inner()).values().flatten().any(|p| p.targets.contains_key(&key)) {
         UNMAPPED.fetch_sub(1, Relaxed);
         UNMAPPED_BYTES.fetch_sub(texture.bytes, Relaxed);
     }
     forget_pages(key);
+    recycle(&texture.native, readers);
+}
+
+type Readers = Vec<(ID3D12Fence, u64)>;
+
+/// Released reserved resources by device and description, oldest first, for
+/// the next placement of that description: test58 spent 16% of the render
+/// thread making ~400 reserved resources a second in the kernel. A recycled
+/// one has every tile mapped again before use, and its last readers are
+/// waited on before its first upload, as pool.rs does for committed copies.
+/// TUXBOX_PAGES_RECYCLE caps how many are kept (default 4096; 0 keeps none).
+struct Recycled {
+    device: usize,
+    desc: D3D12_RESOURCE_DESC,
+    native: ID3D12Resource,
+    readers: Readers,
+}
+unsafe impl Send for Recycled {}
+
+static RECYCLE: Mutex<std::collections::VecDeque<Recycled>> = Mutex::new(std::collections::VecDeque::new());
+static RECYCLED: AtomicU64 = AtomicU64::new(0);
+static SYSTEM_POOLS: AtomicU64 = AtomicU64::new(0);
+static POOL_EVICTIONS: AtomicU64 = AtomicU64::new(0);
+static POOL_RESIDENCIES: AtomicU64 = AtomicU64::new(0);
+
+fn recycle_cap() -> usize {
+    crate::env_toggle!("TUXBOX_PAGES_RECYCLE").and_then(|v| v.trim().parse().ok()).unwrap_or(4096)
+}
+
+fn recycle(native: &ID3D12Resource, readers: Readers) {
+    let cap = recycle_cap();
+    if cap == 0 {
+        return;
+    }
+    let mut device: Option<ID3D12Device> = None;
+    if unsafe { native.GetDevice(&mut device) }.is_err() {
+        return;
+    }
+    let Some(device) = device else { return };
+    // Keyed as place() asks: the runtime may report the 64 KiB alignment.
+    let desc = D3D12_RESOURCE_DESC { Alignment: 0, ..unsafe { native.GetDesc() } };
+    let mut r = RECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+    r.push_back(Recycled { device: device.as_raw() as usize, desc, native: native.clone(), readers });
+    while r.len() > cap {
+        r.pop_front();
+    }
+}
+
+fn recycled(device: &ID3D12Device, desc: &D3D12_RESOURCE_DESC) -> Option<(ID3D12Resource, Readers)> {
+    let id = device.as_raw() as usize;
+    let mut r = RECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+    let at = r.iter().rposition(|e| e.device == id && e.desc == *desc)?;
+    r.remove(at).map(|e| (e.native, e.readers))
+}
+
+/// Every mapping signals the fence on its own (TUXBOX_PAGES_SIGNAL_EACH=1),
+/// instead of once before the next title work.
+fn signal_each() -> bool {
+    crate::env_toggle!("TUXBOX_PAGES_SIGNAL_EACH") == Some("1")
+}
+
+/// New pools for sampled textures go to system memory while device-local
+/// usage is over TUXBOX_PAGES_SYSTEM_PCT (default 80) percent of its budget
+/// (test58: device local 11403 of 7177 MiB, 7154 MiB of it pages; non-local
+/// 3734 of 7437). Render targets, depth and UAV textures keep device pools.
+/// TUXBOX_PAGES_SYSTEM_PCT=0 keeps every pool in device memory.
+fn system_pools(device: &ID3D12Device) -> bool {
+    let pct: u64 = crate::env_toggle!("TUXBOX_PAGES_SYSTEM_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(80);
+    if pct == 0 {
+        return false;
+    }
+    let over = super::alias::segment(device, true).is_some_and(|(usage, budget)| usage.saturating_mul(100) > budget.saturating_mul(pct));
+    static WAS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if WAS.swap(over, Relaxed) != over {
+        crate::diagnostics::log_line(format_args!("placed textures: device local {} {pct}% of its budget; new page pools for sampled textures go to {} memory (TUXBOX_PAGES_SYSTEM_PCT)",
+            if over { "over" } else { "back under" }, if over { "system" } else { "device" }));
+    }
+    over
+}
+
+/// Before a submission: marks the pool heaps its textures on pages use,
+/// makes the evicted ones resident again, and, at most once a second over
+/// budget (TUXBOX_SPAN_EVICT_PCT), evicts the pools no submission used for
+/// TUXBOX_SPAN_EVICT_S seconds (default 10; 0 evicts none), as alias.rs does
+/// for spans. A pool's tiles handed to a new texture are made resident by
+/// that texture's first submission.
+pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'a Texture>) -> windows::core::Result<()> {
+    let after = super::alias::evict_after();
+    if !enabled() || after <= 0.0 {
+        return Ok(());
+    }
+    let now = std::time::Instant::now();
+    let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(Some(pages)) = g.get_mut(&(device.as_raw() as usize)) else { return Ok(()) };
+    let mut keep = vec![false; pages.pools.len()];
+    let mut resident = Vec::new();
+    for t in textures {
+        let Some(target) = pages.targets.get(&(t.native.as_raw() as usize)) else { continue };
+        for &h in &target.heaps {
+            let h = h as usize;
+            if keep[h] {
+                continue;
+            }
+            keep[h] = true;
+            pages.pool_used[h] = now;
+            if pages.pool_evicted[h] {
+                pages.pool_evicted[h] = false;
+                resident.push(h);
+            }
+        }
+    }
+    let evict = |pages: &mut Pages, keep: &[bool], idle: f64, need: Option<usize>| -> usize {
+        let mut cold: Vec<usize> = (0..pages.pools.len())
+            .filter(|&h| !keep[h] && !pages.pool_evicted[h] && now.duration_since(pages.pool_used[h]).as_secs_f64() >= idle)
+            .collect();
+        cold.sort_by_key(|&h| pages.pool_used[h]);
+        if let Some(n) = need {
+            cold.truncate(n);
+        }
+        if cold.is_empty() {
+            return 0;
+        }
+        let list: Vec<Option<ID3D12Pageable>> = cold.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
+        if let Err(e) = unsafe { device.Evict(&list) } {
+            crate::diagnostics::log_line(format_args!("placed textures: Evict of {} page pools failed {e}", cold.len()));
+            return 0;
+        }
+        for &h in &cold {
+            pages.pool_evicted[h] = true;
+        }
+        let n = POOL_EVICTIONS.fetch_add(cold.len() as u64, Relaxed);
+        if n < 8 || (n + cold.len() as u64).ilog2() != (n + 1).ilog2() {
+            crate::diagnostics::log_line(format_args!("placed textures: evicted {} page pools ({} MiB) unused for {idle:.0} s (TUXBOX_SPAN_EVICT_S)",
+                cold.len(), cold.len() * POOL_PAGES as usize * PAGE >> 20));
+        }
+        cold.len()
+    };
+    if !resident.is_empty() {
+        let list: Vec<Option<ID3D12Pageable>> = resident.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
+        let mut made = unsafe { device.MakeResident(&list) };
+        if made.is_err() {
+            evict(pages, &keep, 1.0, Some(resident.len()));
+            made = unsafe { device.MakeResident(&list) };
+        }
+        POOL_RESIDENCIES.fetch_add(resident.len() as u64, Relaxed);
+        if let Err(e) = made {
+            crate::diagnostics::log_line(format_args!("placed textures: MakeResident of {} page pools failed {e}", resident.len()));
+            return Err(e);
+        }
+    }
+    static PASS: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let due = {
+        let mut pass = PASS.lock().unwrap_or_else(|e| e.into_inner());
+        let due = pass.is_none_or(|at| now.duration_since(at).as_secs_f64() >= 1.0);
+        if due {
+            *pass = Some(now);
+        }
+        due
+    };
+    if due && super::alias::over_budget(device) {
+        evict(pages, &keep, after, None);
+    }
+    Ok(())
 }
 
 pub(crate) struct Stats {
+    pub(crate) recycled: u64,
+    pub(crate) system_pools: u64,
+    pub(crate) evicted_pools: u64,
+    pub(crate) pool_evictions: u64,
+    pub(crate) pool_residencies: u64,
     pub(crate) placed: u64,
     pub(crate) in_use: u64,
     pub(crate) pools: u64,
@@ -580,7 +797,14 @@ pub(crate) struct Stats {
 
 pub(crate) fn stats() -> Stats {
     let (in_use, pools) = page_bytes();
+    let evicted_pools = PAGES.lock().unwrap_or_else(|e| e.into_inner()).values().flatten()
+        .map(|p| p.pool_evicted.iter().filter(|&&e| e).count() as u64).sum();
     Stats {
+        recycled: RECYCLED.load(Relaxed),
+        system_pools: SYSTEM_POOLS.load(Relaxed),
+        evicted_pools,
+        pool_evictions: POOL_EVICTIONS.load(Relaxed),
+        pool_residencies: POOL_RESIDENCIES.load(Relaxed),
         placed: PLACED.load(Relaxed),
         in_use: in_use as u64,
         pools: pools as u64,

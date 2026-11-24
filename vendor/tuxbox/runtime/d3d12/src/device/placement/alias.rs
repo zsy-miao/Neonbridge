@@ -298,7 +298,7 @@ fn adapter(device: &ID3D12Device) -> Option<&'static windows::Win32::Graphics::D
 }
 
 /// A memory segment group's usage and budget.
-fn segment(device: &ID3D12Device, local: bool) -> Option<(u64, u64)> {
+pub(super) fn segment(device: &ID3D12Device, local: bool) -> Option<(u64, u64)> {
     use windows::Win32::Graphics::Dxgi::{DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO};
     let mut info = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
     let group = if local { DXGI_MEMORY_SEGMENT_GROUP_LOCAL } else { DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL };
@@ -511,7 +511,7 @@ fn place_locked(
 
 /// Seconds a span goes unused before it may be evicted under memory
 /// pressure: TUXBOX_SPAN_EVICT_S (default 10; 0 evicts none).
-fn evict_after() -> f64 {
+pub(super) fn evict_after() -> f64 {
     use std::sync::OnceLock;
     static S: OnceLock<f64> = OnceLock::new();
     *S.get_or_init(|| crate::env_toggle!("TUXBOX_SPAN_EVICT_S").and_then(|v| v.trim().parse().ok()).unwrap_or(10.0))
@@ -519,7 +519,7 @@ fn evict_after() -> f64 {
 
 /// Device-local or non-local usage over TUXBOX_SPAN_EVICT_PCT (default 90)
 /// percent of its budget.
-fn over_budget(device: &ID3D12Device) -> bool {
+pub(super) fn over_budget(device: &ID3D12Device) -> bool {
     let pct: u64 = crate::env_toggle!("TUXBOX_SPAN_EVICT_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(90);
     [true, false].into_iter().filter_map(|local| segment(device, local))
         .any(|(usage, budget)| usage.saturating_mul(100) > budget.saturating_mul(pct))

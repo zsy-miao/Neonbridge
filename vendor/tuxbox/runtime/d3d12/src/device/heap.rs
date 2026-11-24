@@ -1066,7 +1066,38 @@ impl PagePools {
         token
     }
 
+    /// A range a live import already covers exactly reuses that heap: test58
+    /// spent 10% of the render thread opening heaps from addresses in the
+    /// kernel, one per imported buffer. Only heaps something still holds are
+    /// reused, so the title's memory there is the memory they map.
+    /// TUXBOX_IMPORT_REUSE=0 opens every range again.
     fn import(&self, device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
+        use std::collections::HashMap;
+        use std::sync::{Mutex, Weak};
+        static LIVE: Mutex<Option<HashMap<(usize, u64, u64), Weak<ImportedHeap>>>> = Mutex::new(None);
+        static REUSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if crate::env_toggle!("TUXBOX_IMPORT_REUSE") == Some("0") {
+            return self.import_uncached(device, base, size, pin);
+        }
+        let key = (device.as_raw() as usize, base, size);
+        if let Some(heap) = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)).and_then(Weak::upgrade) {
+            let n = REUSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n.is_power_of_two() && n >= 64 {
+                crate::diagnostics::log_line(format_args!("imported heaps reused for a range a live import covers: {n} (TUXBOX_IMPORT_REUSE=0 off)"));
+            }
+            return Ok(heap);
+        }
+        let heap = self.import_uncached(device, base, size, pin)?;
+        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let map = live.get_or_insert_with(HashMap::new);
+        if map.len() >= 1 << 16 {
+            map.retain(|_, h| h.strong_count() != 0);
+        }
+        map.insert(key, Arc::downgrade(&heap));
+        Ok(heap)
+    }
+
+    fn import_uncached(&self, device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
         // A range the host refused is refused again for 5 s without asking:
         // each retry cost an OpenExistingHeapFromAddress1 before the caller
         // fell back to its shadow copy. The window lets a remapped range in.

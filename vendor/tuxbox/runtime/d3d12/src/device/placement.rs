@@ -206,7 +206,7 @@ impl Drop for Texture {
             }
             None if self.on_pages => {
                 pool::forget(self.bytes);
-                pages::gone(self);
+                pages::gone(self, readers);
             }
             None => pool::release(&self.native, host_desc(&self.desc), self.bytes, readers),
         }
@@ -398,8 +398,8 @@ impl Texture {
                 }
             }
         }
-        let mut unplace = Unplace(paged.as_ref().map(|(n, _)| windows::core::Interface::as_raw(n) as usize));
-        let (native, bytes, readers, span) = match paged.map(|(n, b)| (n, b, Vec::new(), None)).ok_or(()).or_else(|()| alias::place(device, address, &host, size, clear).map(|(n, b, p)| (n, b, Vec::new(), Some(p))).ok_or(())) {
+        let mut unplace = Unplace(paged.as_ref().map(|(n, _, _)| windows::core::Interface::as_raw(n) as usize));
+        let (native, bytes, readers, span) = match paged.map(|(n, b, r)| (n, b, r, None)).ok_or(()).or_else(|()| alias::place(device, address, &host, size, clear).map(|(n, b, p)| (n, b, Vec::new(), Some(p))).ok_or(())) {
             Ok(found) => found,
             Err(()) => match pool::take(device, &host) {
             Some((native, bytes, readers)) => (native, bytes, readers, None),
@@ -803,6 +803,7 @@ pub(crate) unsafe fn submit(
     unique(textures);
     unsafe { pages::before_execute(queue) };
     alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref()))?;
+    pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t))?;
     for writer in writes.iter() {
         if textures
             .iter()
