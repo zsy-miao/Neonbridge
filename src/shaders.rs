@@ -704,6 +704,14 @@ impl Worker {
                             busy.lock().unwrap().remove(&name);
                             break;
                         }
+                        if first.contains(&key) {
+                            // test111 had no line showing whether urgent requests were served.
+                            static SERVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                            let n = SERVED.fetch_add(1, Ordering::Relaxed) + 1;
+                            if n <= 8 || n.is_power_of_two() {
+                                log(format!("urgent Xbox shader {key}: a title thread waits on it, served ahead of the queue ({n} so far; NEONBRIDGE_URGENT_SHADERS=0 off)"));
+                            }
+                        }
                         active.fetch_add(1, Ordering::AcqRel);
                         archive_request(&path, &name, &archive);
                         let (tools, cache, session, st, log, busy, active) =
