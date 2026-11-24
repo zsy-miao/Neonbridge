@@ -60,6 +60,8 @@ impl ResourceHeap {
         Ok(address)
     }
 
+    pub(super) fn table_stride(&self) -> usize { self.stride }
+
     pub(super) fn table(&self, base: u64, slots: &Range<u32>) -> Option<Range<usize>> {
         let offset = usize::try_from(base.checked_sub(self.gpu)?).ok()?;
         if self.stride == 0 || !offset.is_multiple_of(self.stride) { return None; }
@@ -153,7 +155,9 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
             state.error = windows::Win32::Foundation::E_NOTIMPL;
             return;
         };
-        match arena.gpu(base.ptr, *length) {
+        // The selected PSO may supply a more precise descriptor layout.
+        // Defer reading guest records until draw or dispatch.
+        match arena.gpu_table(base.ptr, *length, &[]) {
             Ok(handle) => handle,
             Err(error) => { state.error = error.code(); return; }
         }

@@ -74,6 +74,19 @@ impl Transfer {
         if changes.is_empty() {
             return Ok(());
         }
+        if crate::diagnostics::display::trace_views() {
+            for change in &changes {
+                let desc = change.texture.desc;
+                if desc.Height == 1 && desc.Width <= 1024 {
+                    use windows::core::Interface;
+                    crate::diagnostics::recording_error(format_args!(
+                        "uploading changed narrow texture {:p}, guest {:#x}, {}x{} format {} subresource {}",
+                        change.texture.native.as_raw(), change.texture.address, desc.Width,
+                        desc.Height, desc.Format.0, change.level,
+                    ));
+                }
+            }
+        }
         let upload = Upload::record(device, &changes)?;
         for mips in changes.chunk_by(|a, b| Arc::ptr_eq(&a.texture, &b.texture)) {
             // A guest may use a different queue on each submission. Order

@@ -47,6 +47,8 @@ struct Recording {
     stencil_targets: Option<stencil::Targets>,
     dsv_bound: bool,
     display_bound: bool,
+    trace_target: Option<ID3D12Resource>,
+    trace_samples: Vec<(String, crate::present::sampler::Sample)>,
     null_pipeline: bool,
     media: Option<media::Recording>,
     placed_reads: Vec<Arc<Texture>>,
@@ -100,6 +102,10 @@ impl Recording {
             self.error = E_NOTIMPL;
             return;
         }
+        if let Err(error) = self.bindings.refresh_inline_tables::<true>(self.descriptor_arena.as_deref()) {
+            self.error = error.code();
+            return;
+        }
         self.sample_tables::<true>();
         let Some(root) = self.bindings.scene_root() else {
             dispatch();
@@ -149,10 +155,18 @@ impl Recording {
                 }
             }
         }
-        let trace = self.bindings.draw_trace.clone();
-        let draw = || {
-            draw();
-            if let Some(trace) = trace { trace.recorded(); }
+        let trace = |state: &mut Self| {
+            if let Some(trace) = &state.bindings.draw_trace {
+                trace.recorded(|| state.bindings.raster_inputs(state.resource_heap.as_ref(), state.descriptor_arena.as_deref(), state.display_bound));
+                if let Some(target) = &state.trace_target
+                    && let Some(label) = trace.sample_label()
+                    && let Some(sample) = crate::present::sampler::record(
+                        &list.native, target, D3D12_RESOURCE_STATE_RENDER_TARGET,
+                    )
+                {
+                    state.trace_samples.push((label, sample));
+                }
+            }
         };
         if let Some(table) = self.bindings.reflected_table::<false>() {
             if self.stencil_slot.is_some() { self.error = E_NOTIMPL; return; }
@@ -182,11 +196,29 @@ impl Recording {
             }
             if let Err(error) = self.bindings.with_reflected_table::<false>(
                 table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(), &mut self.sampled_heaps, &self.resources, draw,
-            ) { self.error = error.code(); }
+            ) {
+                self.error = error.code();
+                if crate::diagnostics::display::trace_views() {
+                    crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+                        "reflected raster binding failed {:#010x} guest RVA {:#x}", self.error.0,
+                        crate::survey::title_rva().unwrap_or(0),
+                    ));
+                }
+            } else { trace(self); }
             return;
         }
         if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<false>() {
             self.error = E_NOTIMPL;
+            return;
+        }
+        if let Err(error) = self.bindings.refresh_inline_tables::<false>(self.descriptor_arena.as_deref()) {
+            self.error = error.code();
+            if crate::diagnostics::display::trace_views() {
+                crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+                    "original raster binding failed {:#010x} guest RVA {:#x}", self.error.0,
+                    crate::survey::title_rva().unwrap_or(0),
+                ));
+            }
             return;
         }
         self.sample_tables::<false>();
@@ -200,9 +232,10 @@ impl Recording {
                 .and_then(|t| t.draw(&list.native, slot, draw));
             if let Err(e) = status {
                 self.error = e.code();
-            }
+            } else { trace(self); }
         } else {
             draw();
+            trace(self);
         }
     }
     fn sample_tables<const COMPUTE: bool>(&mut self) {
@@ -375,6 +408,8 @@ unsafe extern "system" fn reset(
             targets.unbind();
         }
         state.dsv_bound = false;
+        state.trace_target = None;
+        state.trace_samples.clear();
         state.placed_reads.clear();
         state.placed_writes.clear();
         state.bound_placed_targets.clear();
@@ -401,6 +436,12 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         }
     }
     state.phase = ListState::Closed;
+    if state.error.is_err() && crate::diagnostics::display::trace_views() {
+        crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+            "graphics command list Close rejected {:#010x} (list {list:p}, guest caller {:#x})",
+            state.error.0, crate::survey::title_rva().unwrap_or(0),
+        ));
+    }
     state.error
 }
 
@@ -1197,6 +1238,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     }
     let guest = unsafe { slice::from_raw_parts(lists, count as usize) };
     let mut list_index = 0;
+    let trace_samples = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
@@ -1245,6 +1287,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                 .map_err(|_| E_OUTOFMEMORY)?;
             writes.extend(state.placed_writes.iter().cloned());
             shader_views.extend(state.sampled_heaps.iter().cloned());
+            trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
             Ok(list.native.as_raw())
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
@@ -1272,6 +1315,17 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             }
                         }
                         memory_wait::submit(queue, host, splits)?;
+                        if !trace_samples.borrow().is_empty() {
+                            let mut device: Option<ID3D12Device> = None;
+                            queue.native.GetDevice(&mut device)?;
+                            let device = device.ok_or(E_INVALIDARG)?;
+                            let fence: ID3D12Fence = device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                            queue.native.Signal(&fence, 1)?;
+                            fence.SetEventOnCompletion(1, windows::Win32::Foundation::HANDLE::default())?;
+                            for (label, sample) in trace_samples.borrow().iter() {
+                                sample.report(label);
+                            }
+                        }
                         if let Some(submission) = submission {
                             submission.commit();
                         }
@@ -1542,6 +1596,8 @@ pub(crate) unsafe fn wrap_command_list(
             stencil_targets: None,
             dsv_bound: false,
             display_bound: false,
+            trace_target: None,
+            trace_samples: Vec::new(),
             null_pipeline: false,
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),

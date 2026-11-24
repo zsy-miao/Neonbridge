@@ -43,6 +43,7 @@ pub(super) unsafe extern "system" fn cbv(
     mut handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 ) {
     let _write = super::descriptor_paging::Write::new(&device.state.descriptor_arenas, &mut handle);
+    crate::diagnostics::display::texture_view(handle.ptr, None, None);
     check_destination(handle);
     device.state.placements.views.set(handle.ptr, None, false);
     device.state.blas.views.store(handle.ptr, None);
@@ -325,6 +326,7 @@ pub(super) unsafe extern "system" fn address_srv(
     device.state.blas.views.store(handle.ptr, None);
     device.state.placements.views.set(handle.ptr, placed.as_ref(), false);
     let native = existing.as_ref().map(|e| &e.native).or_else(|| placed.as_ref().map(|p| &p.native)).or_else(|| imported.as_ref().map(|e| &e.native));
+    crate::diagnostics::display::texture_view(handle.ptr, native, Some(view.Format.0));
     if let Some((mode, offset, stride)) = byte_view {
         mode.create_srv(device, native.expect("buffer import retained"), view, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("byte-offset SRV at {:#x} offset={offset} stride={stride}: {:?}", desc.address, e.code())));
@@ -376,6 +378,7 @@ pub(super) unsafe extern "system" fn srv(
         }
         _ => desc,
     };
+    crate::diagnostics::display::texture_view(handle.ptr, resource, unsafe { desc.as_ref() }.map(|view| view.Format.0));
     let texture = proxy.and_then(|resource| resource.state.placed());
     let scene = device.state.blas.scene_view(proxy, unsafe { desc.as_ref() });
     device.state.blas.views.store(handle.ptr, scene);
@@ -397,6 +400,7 @@ pub(super) unsafe extern "system" fn uav(
     mut handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 ) {
     let _write = super::descriptor_paging::Write::new(&device.state.descriptor_arenas, &mut handle);
+    crate::diagnostics::display::texture_view(handle.ptr, None, None);
     let owner = identity(device).as_raw();
     let proxy = unsafe { super::resource_proxy(object, owner) };
     let placed = proxy.and_then(|p| p.state.placed());
@@ -531,6 +535,7 @@ pub(super) unsafe extern "system" fn rtv(
 ) {
     let resource = unsafe { view_resource(device, object, desc, handle) };
     let proxy = unsafe { super::resource_proxy(object, identity(device).as_raw()) };
+    crate::diagnostics::display::capture_target(handle.ptr, resource);
     crate::diagnostics::display::rtv(handle.ptr, proxy.map(|p| p.native.as_raw()));
     device.state.placements.targets.set(handle.ptr, proxy.and_then(|p| p.state.placed()));
     let substitute = proxy.is_some_and(|p| p.state.translated().is_some());

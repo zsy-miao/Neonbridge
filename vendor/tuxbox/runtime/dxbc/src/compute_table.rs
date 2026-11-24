@@ -27,6 +27,12 @@ pub fn records(program: &[u8]) -> Option<impl ExactSizeIterator<Item = [u32; 5]>
     table_rows(program, 0xf0, 0xfc)
 }
 
+/// FSSM 1.1 root argument records, separate from the used-resource table.
+pub fn user_data_records(program: &[u8]) -> Option<impl ExactSizeIterator<Item = [u32; 5]> + '_> {
+    let _ = records(program)?;
+    table_rows(program, 0xe8, 0xf8)
+}
+
 fn table_rows(
     program: &[u8],
     offset_field: usize,

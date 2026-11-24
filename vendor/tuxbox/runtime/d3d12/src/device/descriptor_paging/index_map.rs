@@ -163,6 +163,7 @@ pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Resul
         direct,
         used,
         ranges,
+        ..
     } = &mut *tables;
     if direct.exhausted {
         return Err(E_OUTOFMEMORY.into());

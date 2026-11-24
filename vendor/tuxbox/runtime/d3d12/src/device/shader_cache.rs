@@ -285,11 +285,27 @@ fn with_root(shader: &[u8], root: &[u8]) -> Option<Vec<u8>> {
 
 /// Console mesh stages always use a DXIL container. Resolve stripped programs
 /// before the host call and require portable replacements to match the stage.
-pub(super) fn mesh_stage(shader: &[u8], expected: Stage) -> Result<Option<Vec<u8>>, HRESULT> {
+pub(super) fn mesh_stage(
+    shader: &[u8],
+    expected: Stage,
+    root: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>, HRESULT> {
     match shader_code(shader) {
         Some((stage, ShaderCode::Portable)) if stage == expected => Ok(None),
         Some((stage, ShaderCode::Xbox)) if stage == expected => {
-            translate(shader, stage).map(Some).ok_or(E_NOTIMPL)
+            let rooted = root.and_then(|root| with_root(shader, root));
+            let Some(rooted) = rooted else {
+                return translate(shader, stage).map(Some).ok_or(E_NOTIMPL);
+            };
+            // Preserve explicit precompiled replacements indexed by the
+            // original bytecode. On-demand answers include the pipeline root.
+            if let Some(source) = source_digest(shader)
+                && let Some(compiled) = read_portable("by_source", &source, stage)
+            {
+                stage.report(&source, true);
+                return Ok(Some(compiled));
+            }
+            translate(&rooted, stage).map(Some).ok_or(E_NOTIMPL)
         }
         _ => Err(E_INVALIDARG),
     }

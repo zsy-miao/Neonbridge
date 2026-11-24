@@ -296,7 +296,9 @@ pub(super) fn import_buffer_with_heap(
             return Err(E_NOTIMPL.into());
         }
         let host: ID3D12Device3 = device.native.cast()?;
-        Arc::new(ImportedHeap { native: unsafe { host.OpenExistingHeapFromAddress(region.AllocationBase)? }, _pin: pin })
+        let native = unsafe { host.OpenExistingHeapFromAddress(region.AllocationBase) }
+            .inspect_err(|e| import_failure("OpenExistingHeapFromAddress", base, size, e))?;
+        Arc::new(ImportedHeap { native, _pin: pin })
     };
     let mut resource = None;
     unsafe { device.native.CreatePlacedResource(&heap.native, offset, &host_desc, state, None, &mut resource)? };
@@ -585,6 +587,19 @@ unsafe fn place_gpu_target(
                 .unwrap_or_else(|| unsafe { api.GetResourceAllocationInfo2(0, 1, desc, None) })
         };
         let mut allocation = requirements(&host);
+        if desc.SampleDesc.Count == 1 && desc.Alignment == 0
+            && address.is_multiple_of(u64::from(D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT))
+            && allocation.Alignment > u64::from(D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT)
+            && !address.is_multiple_of(allocation.Alignment)
+        {
+            let mut small = host;
+            small.Alignment = u64::from(D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT);
+            let small_allocation = requirements(&small);
+            if small_allocation.SizeInBytes != u64::MAX && small_allocation.Alignment == small.Alignment {
+                host = small;
+                allocation = small_allocation;
+            }
+        }
         let small = u64::from(D3D12_SMALL_MSAA_RESOURCE_PLACEMENT_ALIGNMENT);
         if desc.SampleDesc.Count > 1 && desc.Alignment == 0 && address.is_multiple_of(small)
             && allocation.Alignment > small && !address.is_multiple_of(allocation.Alignment) {
@@ -704,6 +719,17 @@ pub(super) unsafe extern "system" fn committed_layout(
     unsafe { wrap_pageable(Ok(native), &RESOURCE, device, super::ResourceState::from(backing), out) }
 }
 
+/// 6ixlaunch: report a refused CPU-memory heap import with the region's VirtualQuery view
+/// (the host requires committed, private, read-write pages covering whole allocations).
+fn import_failure(call: &str, base: u64, size: u64, error: &windows::core::Error) {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
+    let mut r = MEMORY_BASIC_INFORMATION::default();
+    unsafe { VirtualQuery(Some(base as _), &mut r, size_of_val(&r)) };
+    crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+        "{call}({base:#x}, {size:#x}) failed {:#010x}: region base={:p} alloc={:p} size={:#x} state={:#x} protect={:#x} type={:#x}",
+        error.code().0, r.BaseAddress, r.AllocationBase, r.RegionSize, r.State.0, r.Protect.0, r.Type.0));
+}
+
 fn validate_shared_range(start: u64, end: u64) -> windows::core::Result<()> {
     use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_READWRITE, VirtualQuery};
     let mut cursor = start;
@@ -759,7 +785,8 @@ impl PagePools {
 
     fn import(&self, device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
         let open = || -> windows::core::Result<Arc<ImportedHeap>> {
-            let native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize)? };
+            let native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) }
+                .inspect_err(|e| import_failure("OpenExistingHeapFromAddress1", base, size, e))?;
             Ok(Arc::new(ImportedHeap { native, _pin: pin }))
         };
         if size == u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT) {

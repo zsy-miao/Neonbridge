@@ -112,6 +112,11 @@ pub(super) unsafe extern "system" fn targets(
         return;
     }
     state.dsv_bound = !dsv.is_null();
+    if crate::diagnostics::display::capture_draws() {
+        state.trace_target = if count == 1 {
+            crate::diagnostics::display::draw_target(unsafe { (*rtvs).ptr })
+        } else { None };
+    }
     if crate::diagnostics::display::enabled() {
         // Contiguous ranges: the display target is bound alone in practice.
         let handles: Vec<usize> = (0..count as usize)

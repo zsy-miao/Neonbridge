@@ -26,6 +26,7 @@ pub(crate) fn log_once(site: &Once, detail: impl FnOnce() -> String) {
 
 pub(crate) struct RasterDraw {
     first: Once,
+    samples: std::sync::atomic::AtomicUsize,
     vertex: String,
     pixel: String,
 }
@@ -37,12 +38,25 @@ impl RasterDraw {
         if !*ENABLED { return None; }
         Some(std::sync::Arc::new(Self {
             first: Once::new(),
+            samples: Default::default(),
             vertex: digest(vertex?)?,
             pixel: digest(pixel?)?,
         }))
     }
-    pub(crate) fn recorded(&self) {
-        log_once(&self.first, || format!("recorded raster draw VS={} PS={}", self.vertex, self.pixel));
+    pub(crate) fn sample_label(&self) -> Option<String> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static LIMIT: AtomicUsize = AtomicUsize::new(16);
+        let draw = self.samples.fetch_add(1, Ordering::Relaxed);
+        if !matches!(draw, 0 | 240 | 1000 | 2000)
+            || LIMIT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_err()
+        {
+            return None;
+        }
+        Some(format!("draw PS={} index={draw}", self.pixel))
+    }
+
+    pub(crate) fn recorded(&self, detail: impl FnOnce() -> String) {
+        log_once(&self.first, || format!("recorded raster draw VS={} PS={}{}", self.vertex, self.pixel, detail()));
     }
 }
 
@@ -220,6 +234,71 @@ pub(crate) mod display {
             std::env::var("TUXBOX_TRACE_PRESENT").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0) != 0
         });
         *ON
+    }
+
+    pub(crate) fn trace_views() -> bool {
+        static TRACE: LazyLock<bool> = LazyLock::new(|| std::env::var_os("TUXBOX_TRACE_RASTER_INPUTS").as_deref() == Some(std::ffi::OsStr::new("1")));
+        *TRACE
+    }
+
+    // Diagnostic metadata only. The descriptor owner and queue retain resources.
+    type TextureView = (usize, u64, u32, i32, i32);
+    static TEXTURE_VIEWS: LazyLock<Mutex<HashMap<usize, TextureView>>> = LazyLock::new(Default::default);
+
+    pub(crate) fn texture_view(handle: usize, resource: Option<&windows::Win32::Graphics::Direct3D12::ID3D12Resource>, format: Option<i32>) {
+        use windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        use windows::core::Interface;
+        if !trace_views() { return; }
+        let mut map = TEXTURE_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(resource) = resource {
+            let desc = unsafe { resource.GetDesc() };
+            if desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D {
+                map.insert(handle, (resource.as_raw() as usize, desc.Width, desc.Height, desc.Format.0, format.unwrap_or(desc.Format.0)));
+                return;
+            }
+        }
+        map.remove(&handle);
+    }
+
+    pub(crate) fn copy_texture_views(dst: usize, src: usize, count: u32, stride: usize) {
+        if !trace_views() { return; }
+        let mut map = TEXTURE_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+        for index in 0..count as usize {
+            let offset = index * stride;
+            if let Some(view) = map.get(&(src + offset)).copied() { map.insert(dst + offset, view); }
+            else { map.remove(&(dst + offset)); }
+        }
+    }
+
+    pub(crate) fn texture_views(range: std::ops::Range<usize>, stride: usize) -> Vec<TextureView> {
+        let map = TEXTURE_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+        range.step_by(stride).take(64).filter_map(|handle| map.get(&handle).copied()).collect()
+    }
+
+    pub(crate) fn capture_draws() -> bool {
+        static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("TUXBOX_CAPTURE_DRAW_READBACK").as_deref() == Some(std::ffi::OsStr::new("1")));
+        *ON
+    }
+    use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
+    static DRAW_TARGETS: LazyLock<Mutex<HashMap<usize, ID3D12Resource>>> = LazyLock::new(Default::default);
+    pub(crate) fn draw_target(handle: usize) -> Option<ID3D12Resource> {
+        DRAW_TARGETS.lock().unwrap_or_else(|e| e.into_inner()).get(&handle).cloned()
+    }
+
+    pub(crate) fn capture_target(handle: usize, resource: Option<&ID3D12Resource>) {
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
+        if !capture_draws() { return; }
+        let mut targets = DRAW_TARGETS.lock().unwrap_or_else(|e| e.into_inner());
+        targets.remove(&handle);
+        if let Some(resource) = resource {
+            let desc = unsafe { resource.GetDesc() };
+            if targets.len() < 256 && desc.Width >= 512 && desc.Height >= 256
+                && desc.MipLevels == 1 && desc.DepthOrArraySize == 1 && desc.SampleDesc.Count == 1
+                && desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM
+            {
+                targets.insert(handle, resource.clone());
+            }
+        }
     }
 
     static RESOURCES: LazyLock<Mutex<HashSet<usize>>> = LazyLock::new(Default::default);

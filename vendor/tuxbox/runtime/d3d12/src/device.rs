@@ -228,7 +228,19 @@ unsafe extern "system" fn unmap_resource(
     written: *const D3D12_RANGE,
 ) {
     let host = &this.native;
-    if this.state.placed().is_some() {
+    if let Some(texture) = this.state.placed() {
+        if texture.guest_pointer(subresource).is_some()
+            && unsafe { written.as_ref() }.is_none_or(|range| range.End > range.Begin)
+            && let Some(parent) = &this.parent
+        {
+            // SAFETY: resource proxies are created with a retained guest device.
+            let device = unsafe { &*parent.as_raw().cast::<Device>() };
+            if device.state.device11_queue
+                && let Err(error) = device.state.placements.finish_cpu_write(texture)
+            {
+                crate::diagnostics::recording_error(format_args!("placed texture Unmap upload: {error}"));
+            }
+        }
         return;
     }
     let window;
@@ -460,7 +472,8 @@ unsafe extern "system" fn create_heap(
             (&raw mut options).cast(), size_of_val(&options) as u32) }
             .map_or(1_000_000, |_| options.MaxViewDescriptorHeapSize.max(1_000_000))
     } else { desc.NumDescriptors };
-    let (native, arena) = if desc.NumDescriptors > limit {
+    let needs_inline = this.state.device11_queue && desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    let (native, arena) = if desc.NumDescriptors > limit || needs_inline {
         match descriptor_paging::Arena::create(this, desc, limit) {
             Ok(arena) => (arena.visible().clone(), Some(arena)),
             Err(error) => return error.code(),

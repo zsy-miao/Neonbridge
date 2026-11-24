@@ -213,6 +213,11 @@ impl Bindings {
         }
     }
 
+    pub(super) fn inline_ranges<const COMPUTE: bool>(&self, slot: usize) -> &[std::ops::Range<u32>] {
+        let root = if COMPUTE { &self.layout } else { &self.graphics_layout };
+        root.as_ref().map_or(&[], |root| root.inline_ranges(slot))
+    }
+
     pub(super) fn paged_layout<const COMPUTE: bool>(&self) -> Option<&[Option<u32>]> {
         let root = if COMPUTE { &self.layout } else { &self.graphics_layout };
         root.as_ref()?.paged_tables.as_deref()
@@ -263,7 +268,7 @@ impl Bindings {
                 table
             } else { self.graphics_tables.get(&slot).ok_or(E_INVALIDARG)? };
             bases[index] = Some(match arena.filter(|a| a.contains(bound.logical.ptr)) {
-                Some(arena) => arena.gpu(bound.logical.ptr, length)?,
+                Some(arena) => arena.gpu_table(bound.logical.ptr, length, table.layout.inline_ranges(index))?,
                 None => bound.native,
             });
         }
@@ -354,6 +359,63 @@ impl Bindings {
             scene: backing,
             geometry,
         })
+    }
+
+    pub(super) fn refresh_inline_tables<const COMPUTE: bool>(
+        &self, arena: Option<&crate::device::descriptor_paging::Arena>,
+    ) -> Result<()> {
+        let Some(arena) = arena.filter(|arena| arena.uses_inline_records()) else {
+            return Ok(());
+        };
+        let Some(lengths) = self.paged_layout::<COMPUTE>() else { return Ok(()); };
+        for (slot, length) in lengths.iter().enumerate() {
+            let Some(length) = length else { continue; };
+            let slot = slot as u32;
+            let bound = if COMPUTE {
+                match self.compute_args.get(&slot) {
+                    Some(Argument::Table(bound)) => Some(bound),
+                    _ => None,
+                }
+            } else {
+                self.graphics_tables.get(&slot)
+            };
+            if let Some(bound) = bound.filter(|bound| arena.contains(bound.logical.ptr)) {
+                arena.gpu_table(bound.logical.ptr, *length, self.inline_ranges::<COMPUTE>(slot as usize))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn raster_inputs(&self, heap: Option<&super::descriptors::ResourceHeap>, arena: Option<&crate::device::descriptor_paging::Arena>, display: bool) -> String {
+        use crate::diagnostics::display;
+        if !display::trace_views() { return String::new(); }
+        let mut views = Vec::new();
+        let mut describe = |slot: u32, offsets: &std::ops::Range<u32>| {
+            let Some(heap) = heap else { return; };
+            let Some(base) = self.graphics_tables.get(&slot) else { return; };
+            let native = match arena.filter(|arena| arena.contains(base.logical.ptr)) {
+                Some(arena) => {
+                    let length = self.reflected_table::<false>().map(|table| table.lengths[slot as usize])
+                        .or_else(|| self.paged_layout::<false>()?.get(slot as usize).copied().flatten());
+                    let Some(handle) = length.and_then(|length| arena.resident_gpu(base.logical.ptr, length)) else { return; };
+                    handle
+                },
+                None => base.native,
+            };
+            if let Some(cpu) = heap.table(native.ptr, offsets) {
+                views.extend(display::texture_views(cpu, heap.table_stride()).into_iter().map(|view| (slot, view)));
+            }
+        };
+        if let Some(table) = self.reflected_table::<false>() {
+            for (slot, offsets) in &table.accessed_views {
+                describe(*slot as u32, offsets);
+            }
+        } else if let Some(ranges) = self.graphics_layout.as_ref().and_then(|layout| layout.placed_tables.as_ref()) {
+            for (slot, offsets) in ranges.iter() {
+                describe(*slot, offsets);
+            }
+        }
+        format!(" display={display} texture views {views:?}")
     }
 
     pub(super) fn sample_tables<const COMPUTE: bool>(

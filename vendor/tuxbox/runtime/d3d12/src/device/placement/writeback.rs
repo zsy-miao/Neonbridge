@@ -2,12 +2,25 @@
 use super::{Texture, committed, lock};
 use core::{mem::ManuallyDrop, ops::Range};
 use std::sync::Arc;
-use windows::Win32::Foundation::{E_ACCESSDENIED, E_FAIL, E_INVALIDARG, E_OUTOFMEMORY};
+use windows::Win32::Foundation::{
+    E_ACCESSDENIED, E_FAIL, E_INVALIDARG, E_OUTOFMEMORY, HANDLE, NTSTATUS,
+};
 use windows::Win32::Graphics::{Direct3D12::*, Dxgi::Common::DXGI_SAMPLE_DESC};
 use windows::Win32::System::{
     Diagnostics::Debug::WriteProcessMemory, Memory::*, Threading::GetCurrentProcess,
 };
 use windows::core::{Interface, Result};
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtWriteVirtualMemory(
+        process: HANDLE,
+        address: *mut core::ffi::c_void,
+        buffer: *const core::ffi::c_void,
+        size: usize,
+        written: *mut usize,
+    ) -> NTSTATUS;
+}
 
 pub(super) struct Readback {
     pub(super) list: ID3D12CommandList,
@@ -122,40 +135,54 @@ impl Readback {
                 let mip = &texture.mips[level];
                 let size = (mip.source.end - mip.source.start) as usize;
                 let element = mip.element_bytes as usize;
+                let address = (texture.address + mip.source.start) as usize;
+                let mut region = query_region(address)?;
+                // There are no guest bytes to publish if a single unmapped
+                // region covers this mip. Recheck on every publication, since
+                // the guest can commit backing after creating the texture.
+                if region.0 - address >= size && !mapped_region(&region.1) {
+                    state.previous[level].clear();
+                    continue;
+                }
                 tiled.clear();
                 tiled.try_reserve_exact(size).map_err(|_| E_OUTOFMEMORY)?;
                 tiled.resize(size, 0u8);
-                valid.clear();
-                valid
-                    .try_reserve_exact(size.div_ceil(element))
-                    .map_err(|_| E_OUTOFMEMORY)?;
-                valid.resize(size.div_ceil(element), false);
+                let elements = size.div_ceil(element);
+                let dense = u64::from(mip.elements)
+                    * u64::from(mip.rows)
+                    * u64::from(mip.footprint.Footprint.Depth)
+                    * u64::from(mip.element_bytes)
+                    == size as u64;
+                if !dense {
+                    valid.clear();
+                    let words = elements.div_ceil(64);
+                    valid.try_reserve_exact(words).map_err(|_| E_OUTOFMEMORY)?;
+                    valid.resize(words, 0u64);
+                }
                 let linear = data
                     .get(offset as usize..(offset + mip.bytes) as usize)
                     .ok_or(E_INVALIDARG)?;
                 texture.layout_runs(level, |target, source| {
-                    valid
-                        .get_mut(target.start / element..target.end / element)
-                        .ok_or(E_INVALIDARG)?
-                        .fill(true);
                     tiled
-                        .get_mut(target)
+                        .get_mut(target.clone())
                         .ok_or(E_INVALIDARG)?
                         .copy_from_slice(linear.get(source).ok_or(E_INVALIDARG)?);
+                    if !dense {
+                        mark_valid(&mut valid, target.start / element..target.end / element);
+                    }
                     Ok(())
                 })?;
-                let address = (texture.address + mip.source.start) as usize;
                 // Coalesce adjacent texels in physical address order. Never
                 // write row padding, partial-tile holes or neighbouring mips.
-                let mut index = 0;
-                while let Some(skip) = valid[index..].iter().position(|&present| present) {
-                    let first = index + skip;
-                    index = first
-                        + valid[first..]
-                            .iter()
-                            .position(|&present| !present)
-                            .unwrap_or(valid.len() - first);
-                    write_mapped(address, &tiled, first * element..index * element)?;
+                if dense {
+                    write_mapped(address, &tiled, 0..size, &mut region)?;
+                } else {
+                    let mut first = next_bit(&valid, 0, elements, true);
+                    while first < elements {
+                        let end = next_bit(&valid, first, elements, false);
+                        write_mapped(address, &tiled, first * element..end * element, &mut region)?;
+                        first = next_bit(&valid, end, elements, true);
+                    }
                 }
                 // Include padding from guest memory in the comparison baseline:
                 // upload::refresh compares the entire physical mip snapshot.
@@ -169,36 +196,73 @@ impl Readback {
     }
 }
 
+fn mark_valid(valid: &mut [u64], mut range: Range<usize>) {
+    while range.start < range.end {
+        let bit = range.start % 64;
+        let count = range.len().min(64 - bit);
+        valid[range.start / 64] |= (u64::MAX >> (64 - count)) << bit;
+        range.start += count;
+    }
+}
+
+fn next_bit(valid: &[u64], mut at: usize, limit: usize, set: bool) -> usize {
+    while at < limit {
+        let word = valid[at / 64];
+        let matches = if set { word } else { !word };
+        let bit = at % 64;
+        let next = (matches & (u64::MAX << bit)).trailing_zeros() as usize;
+        at = at - bit + next;
+        if next < 64 {
+            break;
+        }
+    }
+    at.min(limit)
+}
+
+fn query_region(address: usize) -> Result<(usize, MEMORY_BASIC_INFORMATION)> {
+    let mut info = MEMORY_BASIC_INFORMATION::default();
+    // SAFETY: VirtualQuery probes the address and fills a local structure.
+    if unsafe {
+        VirtualQuery(
+            Some(address as *const _),
+            &mut info,
+            size_of::<MEMORY_BASIC_INFORMATION>(),
+        )
+    } == 0
+    {
+        return Err(E_FAIL.into());
+    }
+    let end = (info.BaseAddress as usize)
+        .checked_add(info.RegionSize)
+        .filter(|&end| end > address)
+        .ok_or(E_INVALIDARG)?;
+    Ok((end, info))
+}
+
+fn mapped_region(info: &MEMORY_BASIC_INFORMATION) -> bool {
+    info.State == MEM_COMMIT && info.Protect.0 & 0xff != PAGE_NOACCESS.0
+}
+
 /// Xbox can reserve a GPU address with no accessible CPU backing. Preserve its
 /// native texture until pages are supplied. Never change guest page protection.
-fn write_mapped(base: usize, bytes: &[u8], range: Range<usize>) -> Result<()> {
+fn write_mapped(
+    base: usize,
+    bytes: &[u8],
+    range: Range<usize>,
+    region: &mut (usize, MEMORY_BASIC_INFORMATION),
+) -> Result<()> {
     let mut at = range.start;
     while at < range.end {
         let addr = base.checked_add(at).ok_or(E_INVALIDARG)?;
-        let mut info = MEMORY_BASIC_INFORMATION::default();
-        // SAFETY: VirtualQuery probes the address and fills a local structure.
-        if unsafe {
-            VirtualQuery(
-                Some(addr as *const _),
-                &mut info,
-                size_of::<MEMORY_BASIC_INFORMATION>(),
-            )
-        } == 0
-        {
-            return Err(E_FAIL.into());
+        // Runs visit increasing physical addresses. Reuse the protection scan
+        // for the spans in this region until crossing into a different one.
+        if addr >= region.0 {
+            *region = query_region(addr)?;
         }
-        let region_end = (info.BaseAddress as usize)
-            .checked_add(info.RegionSize)
-            .ok_or(E_INVALIDARG)?;
-        let end = region_end
-            .checked_sub(base)
-            .ok_or(E_INVALIDARG)?
-            .min(range.end);
-        if end <= at {
-            return Err(E_INVALIDARG.into());
-        }
-        let access = PAGE_PROTECTION_FLAGS(info.Protect.0 & 0xff);
-        if info.State == MEM_COMMIT && access != PAGE_NOACCESS {
+        let end = (region.0 - base).min(range.end);
+        let info = &region.1;
+        if mapped_region(info) {
+            let access = PAGE_PROTECTION_FLAGS(info.Protect.0 & 0xff);
             if info.Protect.contains(PAGE_GUARD)
                 || !matches!(
                     access,
@@ -212,16 +276,32 @@ fn write_mapped(base: usize, bytes: &[u8], range: Range<usize>) -> Result<()> {
             }
             let block = &bytes[at..end];
             let mut written = 0;
-            // SAFETY: read from an owned initialized slice. The OS checks the
-            // guest mapping instead of constructing a Rust reference to it.
+            // SAFETY: the source is an owned initialized slice. Guest mappings
+            // remain owned by the guest until the submission fence completes.
+            // Use the native write for data pages so Wine doesn't repeat its
+            // region scan for every run. Keep the instruction-cache flush for
+            // executable mappings.
             unsafe {
-                WriteProcessMemory(
-                    GetCurrentProcess(),
-                    addr as *const _,
-                    block.as_ptr().cast(),
-                    block.len(),
-                    Some(&mut written),
-                )?
+                if matches!(access, PAGE_READWRITE | PAGE_WRITECOPY) {
+                    let status = NtWriteVirtualMemory(
+                        GetCurrentProcess(),
+                        addr as *mut _,
+                        block.as_ptr().cast(),
+                        block.len(),
+                        &mut written,
+                    );
+                    if status.0 < 0 {
+                        return Err(E_FAIL.into());
+                    }
+                } else {
+                    WriteProcessMemory(
+                        GetCurrentProcess(),
+                        addr as *const _,
+                        block.as_ptr().cast(),
+                        block.len(),
+                        Some(&mut written),
+                    )?;
+                }
             };
             if written != block.len() {
                 return Err(E_FAIL.into());

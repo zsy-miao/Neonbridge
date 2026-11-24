@@ -147,11 +147,7 @@ unsafe fn create(
                     };
                     fields[index] = Some(ptr::from_mut(shader));
                     let compiled = match tag {
-                        AMPLIFICATION_X => {
-                            shader_cache::mesh_stage(code, shader_cache::Stage::Amplification)?
-                        }
-                        MESH_X => shader_cache::mesh_stage(code, shader_cache::Stage::Mesh)?,
-                        1 | 2 => None, // Resolve these together after reading the root subobject.
+                        1 | 2 | AMPLIFICATION_X | MESH_X => None,
                         _ => shader_cache::prepared(code),
                     };
                     original[index] = Some((code, compiled.as_ref().map(|_| stages.len())));
@@ -208,8 +204,32 @@ unsafe fn create(
         at += bytes;
     }
 
+    for (index, stage) in [(6, shader_cache::Stage::Amplification), (7, shader_cache::Stage::Mesh)] {
+        let Some((code, _)) = original[index] else { continue };
+        let compiled = shader_cache::mesh_stage(code, stage, guest_root.map(|root| root.payload()));
+        if compiled.is_err() && let Some(root) = guest_root {
+            super::compute_table::capture_stage_root(code, root);
+        }
+        if let Some(compiled) = compiled? {
+            let field = fields[index].ok_or(E_INVALIDARG)?;
+            unsafe { field.write(rectangle::bytecode(&compiled)) };
+            original[index] = Some((code, Some(stages.len())));
+            stages.push(compiled);
+        }
+    }
+
     let guest_pixel = original[1].map(|(pixel, _)| pixel);
     pipeline.draw_trace = crate::diagnostics::RasterDraw::trace(original[0].map(|(vertex, _)| vertex), guest_pixel, shader_cache::source_digest);
+    if let Some(pixel) = guest_pixel
+        && let Some(vertex) = original[0].map(|(code, _)| code)
+        && let Some(root) = guest_root
+        && let Some(filter) = std::env::var_os("TUXBOX_CAPTURE_RASTER_PAIR")
+        && let Some(filter) = filter.to_str()
+        && shader_cache::source_digest(pixel).is_some_and(|digest| filter.split(',').any(|prefix| !prefix.is_empty() && digest.starts_with(prefix)))
+    {
+        super::compute_table::capture_stage_root(vertex, root);
+        super::compute_table::capture_stage_root(pixel, root);
+    }
     let mut rooted = [None, None];
     if let (Some(root), Some((vertex, _)), Some((pixel, _)), Some(field)) =
         (guest_root, original[0], original[1], root_record)

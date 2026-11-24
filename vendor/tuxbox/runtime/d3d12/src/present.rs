@@ -185,7 +185,7 @@ impl SwapChain {
             frame.allocator.Reset()?;
             frame.list.Reset(&frame.allocator, None)?;
             record_copy(&frame.list, source, &buffer);
-            let sample = sampler::due().then(|| sampler::record(&frame.list, source)).flatten();
+            let sample = sampler::due().then(|| sampler::record(&frame.list, source, D3D12_RESOURCE_STATE_COMMON)).flatten();
             frame.list.Close()?;
             frame.source = Some(source.clone());
             queue.ExecuteCommandLists(&[Some(ID3D12CommandList::clone(&frame.list))]);
@@ -196,7 +196,7 @@ impl SwapChain {
             frame.retire = self.next;
             if let Some(sample) = sample {
                 wait_for(&self.fence, self.next)?;
-                sample.report();
+                sample.report("present");
             }
             self.next = next_value;
             // Return DXGI status codes such as DXGI_STATUS_OCCLUDED to the guest.
@@ -299,7 +299,7 @@ fn record_copy(list: &ID3D12GraphicsCommandList, source: &ID3D12Resource, buffer
 
 /// `TUXBOX_TRACE_PRESENT=<n>`: every n-th presented source is read back and
 /// summarized (share of non-black pixels, mean, coarse 4x4 brightness grid).
-mod sampler {
+pub(crate) mod sampler {
     use std::sync::atomic::{AtomicU64, Ordering};
     use windows::Win32::Graphics::Direct3D12::*;
     use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
@@ -313,7 +313,8 @@ mod sampler {
         *EVERY != 0 && n % *EVERY == 0
     }
 
-    pub(super) struct Sample {
+    #[derive(Clone)]
+    pub(crate) struct Sample {
         buffer: ID3D12Resource,
         layout: D3D12_PLACED_SUBRESOURCE_FOOTPRINT,
         index: u64,
@@ -321,7 +322,7 @@ mod sampler {
 
     /// Record a copy of subresource 0 into a readback buffer, after
     /// record_copy has returned `source` to COMMON.
-    pub(super) fn record(list: &ID3D12GraphicsCommandList, source: &ID3D12Resource) -> Option<Sample> {
+    pub(crate) fn record(list: &ID3D12GraphicsCommandList, source: &ID3D12Resource, previous: D3D12_RESOURCE_STATES) -> Option<Sample> {
         static INDEX: AtomicU64 = AtomicU64::new(0);
         let device: ID3D12Device = unsafe {
             let mut device = None;
@@ -355,7 +356,7 @@ mod sampler {
             },
         };
         unsafe {
-            let mut to = [barrier(D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE)];
+            let mut to = [barrier(previous, D3D12_RESOURCE_STATE_COPY_SOURCE)];
             list.ResourceBarrier(&to);
             let dst = D3D12_TEXTURE_COPY_LOCATION {
                 pResource: std::mem::ManuallyDrop::new(Some(buffer.clone())),
@@ -368,7 +369,7 @@ mod sampler {
                 Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { SubresourceIndex: 0 },
             };
             list.CopyTextureRegion(&dst, 0, 0, 0, &src, None);
-            let mut back = [barrier(D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON)];
+            let mut back = [barrier(D3D12_RESOURCE_STATE_COPY_SOURCE, previous)];
             list.ResourceBarrier(&back);
             for b in to.iter_mut().chain(back.iter_mut()) {
                 std::mem::ManuallyDrop::drop(&mut (*b.Anonymous.Transition).pResource);
@@ -382,7 +383,7 @@ mod sampler {
 
     impl Sample {
         /// Called after the GPU has finished this frame's commands.
-        pub(super) fn report(&self) {
+        pub(crate) fn report(&self, name: &str) {
             let f = self.layout.Footprint;
             let mut mapped = std::ptr::null_mut();
             if unsafe { self.buffer.Map(0, None, Some(&mut mapped)) }.is_err() || mapped.is_null() {
@@ -404,11 +405,13 @@ mod sampler {
             let cells: Vec<String> = grid.iter().map(|row| row.iter()
                 .map(|&v| format!("{:3}", v / (n / 16).max(1) / 3)).collect::<Vec<_>>().join(" ")).collect();
             unsafe { self.buffer.Unmap(0, None) };
-            let line = format!("present sample #{} {}x{} format={} lit={:.3} mean=({},{},{}) grid=[{}]",
+            let line = format!("{name} sample #{} {}x{} format={} lit={:.3} mean=({},{},{}) grid=[{}]",
                 self.index, w, h, f.Format.0, lit as f64 / n as f64, sum[0] / n, sum[1] / n, sum[2] / n, cells.join(" | "));
             crate::diagnostics::log_once(&std::sync::Once::new(), || line);
-            let summary = crate::diagnostics::display::summary();
-            crate::diagnostics::log_once(&std::sync::Once::new(), || summary);
+            if name == "present" {
+                let summary = crate::diagnostics::display::summary();
+                crate::diagnostics::log_once(&std::sync::Once::new(), || summary);
+            }
         }
     }
 }

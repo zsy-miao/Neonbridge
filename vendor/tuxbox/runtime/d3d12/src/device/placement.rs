@@ -407,14 +407,18 @@ pub(crate) fn flush_cpu_writes() {
 
 impl PlacementMemory {
     fn flush(&self) -> Result<()> {
-        let Some(device) = self.device.get() else {
-            return Ok(());
-        };
-        let mut textures: Vec<_> = lock(&self.images.0)
+        let textures: Vec<_> = lock(&self.images.0)
             .values()
             .flatten()
             .filter_map(|alias| alias.texture.upgrade())
             .collect();
+        self.flush_textures(textures)
+    }
+
+    fn flush_textures(&self, mut textures: Vec<Arc<Texture>>) -> Result<()> {
+        let Some(device) = self.device.get() else {
+            return Ok(());
+        };
         let mut slot = lock(&self.submissions);
         HRESULT(self.failed.load(Ordering::Acquire)).ok()?;
         let submissions = match slot.as_mut() {
@@ -438,6 +442,10 @@ impl PlacementMemory {
 }
 
 impl Placements {
+    pub(super) fn finish_cpu_write(&self, texture: &Arc<Texture>) -> Result<()> {
+        self.memory.flush_textures(vec![texture.clone()])
+    }
+
     fn find_texture(images: &BTreeMap<u64, Vec<Alias>>, address: u64, desc: &D3D12_RESOURCE_DESC) -> Option<Arc<Texture>> {
         images.get(&address)?.iter().filter(|alias| alias.desc == *desc)
             .find_map(|alias| alias.texture.upgrade())
