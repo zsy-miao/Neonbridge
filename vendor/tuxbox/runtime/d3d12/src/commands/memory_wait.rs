@@ -497,6 +497,13 @@ mod writers {
         (unsafe { fence.GetCompletedValue() } >= done).then_some(value)
     }
 
+    /// The queue the recorded writer of `address` was last submitted on.
+    pub(super) fn writer_queue(address: u64) -> Option<usize> {
+        let t = table();
+        let &(list, ..) = t.writes.get(&(address & !7))?;
+        t.submits.get(&list).map(|&(queue, _)| queue)
+    }
+
     pub(super) fn describe(address: u64, waiting_queue: usize, since: Instant) -> String {
         if !on() {
             return String::new();
@@ -570,9 +577,10 @@ impl Worker {
                                 static STALLS: AtomicU64 = AtomicU64::new(0);
                                 if slow::per_address(slow::Kind::Stalled, job.segment.address, &STALLS).is_some() {
                                 crate::diagnostics::log_line(format_args!(
-                                    "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}",
+                                    "GPU memory wait {:#x} >= {:#x} on queue {:#x} stalled 2 s{}{}",
                                     job.segment.address, job.segment.target, job.queue,
-                                    writers::describe(job.segment.address, job.queue, started)
+                                    writers::describe(job.segment.address, job.queue, started),
+                                    writers::writer_queue(job.segment.address).map(crate::diagnostics::queue_waits::describe).unwrap_or_default()
                                 ));
                                 }
                             }
@@ -817,6 +825,7 @@ pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits)
             .map_err(|_| E_FAIL)?;
         unsafe {
             queue.native.Wait(&fence, 2)?;
+            crate::diagnostics::queue_waits::note(queue.native.as_raw() as usize, "GPU memory wait", &fence, 2);
         }
     }
     run(&host[start..]);

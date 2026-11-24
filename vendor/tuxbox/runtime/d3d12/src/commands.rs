@@ -2187,6 +2187,7 @@ unsafe extern "system" fn queue_fence<const WAIT: bool>(
     };
     if WAIT {
         memory_wait::slow::queue_wait(queue.native.as_raw() as usize, fence, value);
+        crate::diagnostics::queue_waits::note(queue.native.as_raw() as usize, "title", fence, value);
         unsignalled::waited(fence, value);
     } else {
         unsignalled::signalled(fence, value);

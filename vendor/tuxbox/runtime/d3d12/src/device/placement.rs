@@ -309,6 +309,8 @@ pub(crate) struct Texture {
     last_used: AtomicU64,
     /// Unmapped by `unmap_idle`; mapped again at its next use.
     idle_unmapped: std::sync::atomic::AtomicBool,
+    /// `now_ms` when it was last mapped again after an idle unmap (0: never).
+    remapped_at: AtomicU64,
 }
 
 use std::sync::atomic::AtomicU64;
@@ -346,14 +348,22 @@ fn unmap_idle(images: &Images) {
         return;
     }
     let cutoff = now.saturating_sub(idle * 1000);
+    static MIN_KB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let min_bytes = *MIN_KB.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_IDLE_MIN_KB").and_then(|v| v.trim().parse().ok()).unwrap_or(1024)) << 10;
     // Upgrade under the lock, filter after it: a filtered-out texture whose
     // last reference this was runs Drop, which takes the image locks.
     let all: Vec<Arc<Texture>> = lock(&images.0).values().flatten().filter_map(|alias| alias.texture.upgrade()).collect();
     let mut cold: Vec<Arc<Texture>> = all.into_iter()
         .filter(|t| t.on_pages && !t.idle_unmapped.load(Ordering::Relaxed) && !t.superseded.load(Ordering::Relaxed)
-            && t.last_used.load(Ordering::Relaxed) <= cutoff)
+            && t.last_used.load(Ordering::Relaxed) <= cutoff
+            // test75 unmapped mostly 17x17 and 16x9 textures, mapped 2048+
+            // of them again and freed nothing: only textures of 1 MiB or more
+            // (TUXBOX_PAGES_IDLE_MIN_KB, 1024) count, the largest first, and
+            // one mapped again in the last 60 s is left alone.
+            && t.bytes >= min_bytes
+            && (t.remapped_at.load(Ordering::Relaxed) == 0 || t.remapped_at.load(Ordering::Relaxed) <= now.saturating_sub(60_000)))
         .collect();
-    cold.sort_unstable_by_key(|t| t.last_used.load(Ordering::Relaxed));
+    cold.sort_unstable_by_key(|t| std::cmp::Reverse(t.bytes));
     let (mut freed, mut count) = (0u64, 0u64);
     for texture in cold.iter().take(512) {
         if freed >= over {
@@ -388,6 +398,7 @@ fn remap_used(textures: &[Arc<Texture>]) {
     for texture in textures.iter().filter(|t| t.on_pages) {
         texture.last_used.store(now, Ordering::Relaxed);
         if texture.idle_unmapped.swap(false, Ordering::Relaxed) && pages::remap(texture) {
+            texture.remapped_at.store(now, Ordering::Relaxed);
             lock(&texture.contents).previous.iter_mut().for_each(|p| *p = None);
             let n = REMAPPED.fetch_add(1, Ordering::Relaxed) + 1;
             if n <= 4 || n.is_power_of_two() {
@@ -684,6 +695,7 @@ impl Texture {
             seq: SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             last_used: AtomicU64::new(now_ms()),
             idle_unmapped: Default::default(),
+            remapped_at: AtomicU64::new(0),
         }))
         .inspect(|_| unplace.0 = None)
     }
@@ -1129,6 +1141,7 @@ pub(crate) unsafe fn submit(
             // CPU bytes still contain the old version. The native image contains
             // the ordered GPU write and can be read directly by the next batch.
             unsafe { queue.Wait(&write.published, write.tick)? };
+            crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture write-back publication", &write.published, write.tick);
             pending = true;
         }
         if !pending {
@@ -1145,11 +1158,13 @@ pub(crate) unsafe fn submit(
         .unwrap_or(0);
     if unsafe { transfer.fence.GetCompletedValue() } < required {
         unsafe { queue.Wait(&transfer.fence, required)? };
+        crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture upload", &transfer.fence, required);
     }
     for texture in writes.iter() {
         for (fence, value) in &lock(&texture.contents).readers {
             if fence != reader && unsafe { fence.GetCompletedValue() } < *value {
                 unsafe { queue.Wait(fence, *value)? };
+                crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture reader", fence, *value);
             }
         }
     }
@@ -1193,6 +1208,7 @@ pub(crate) unsafe fn submit(
         }
         // A guest fence signaled after this operation must include the CPU
         // publication. The submitting CPU thread remains free to signal fences.
+        crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture write-back", &worker.published, tick);
         if let Err(error) = unsafe { queue.Wait(&worker.published, tick) } {
             transfer.failed = Some(error.code());
             return Err(error);

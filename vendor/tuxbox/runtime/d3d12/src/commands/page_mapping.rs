@@ -463,6 +463,7 @@ pub(super) unsafe extern "system" fn copy(
             let _ = unsafe { fence.Signal(2) };
             return Err(E_FAIL.into());
         }
+        crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(&queue.native) as usize, "page mapping", &fence, 2);
         unsafe { queue.native.Wait(&fence, 2) }
     })();
     if let Err(e) = result {

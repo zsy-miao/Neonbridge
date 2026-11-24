@@ -595,6 +595,7 @@ mod exe_sha;
 pub(crate) mod null_causes;
 pub(crate) mod sampler;
 pub(crate) mod memory;
+pub(crate) mod queue_waits;
 pub(crate) mod frame_work;
 
 pub(crate) mod threads {

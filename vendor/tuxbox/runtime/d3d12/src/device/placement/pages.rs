@@ -487,6 +487,7 @@ pub(super) unsafe fn before_execute(queue: &ID3D12CommandQueue) {
     }
     if pages.waited.get(&key).copied().unwrap_or(0) < pages.value {
         let _ = queue.Wait(&pages.fence, pages.value);
+        crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "tile mapping", &pages.fence, pages.value);
         pages.waited.insert(key, pages.value);
     }
 }
