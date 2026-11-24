@@ -669,11 +669,21 @@ pub(super) unsafe extern "system" fn rtv(
     crate::diagnostics::display::capture_target(handle.ptr, resource);
     crate::diagnostics::display::rtv(handle.ptr, proxy.map(|p| p.native.as_raw()));
     device.state.placements.targets.set(handle.ptr, proxy.and_then(|p| p.state.placed()));
-    let substitute = proxy.is_some_and(|p| p.state.translated().is_some());
-    let translated;
+    // A null RTV has no host resource to match, so give it the host format a
+    // real one would get (B4G4R4A4 is not renderable on desktop) and plane 0.
+    let null = resource.is_none();
+    let substitute = null || proxy.is_some_and(|p| p.state.translated().is_some());
+    let mut translated;
     let desc = match unsafe { desc.as_ref() } {
-        Some(view) if super::format::view_format(substitute, view.Format) != view.Format => {
+        Some(view) if null || super::format::view_format(substitute, view.Format) != view.Format => {
             translated = D3D12_RENDER_TARGET_VIEW_DESC { Format: super::format::view_format(substitute, view.Format), ..*view };
+            if null {
+                match translated.ViewDimension {
+                    D3D12_RTV_DIMENSION_TEXTURE2D => translated.Anonymous.Texture2D.PlaneSlice = 0,
+                    D3D12_RTV_DIMENSION_TEXTURE2DARRAY => translated.Anonymous.Texture2DArray.PlaneSlice = 0,
+                    _ => {}
+                }
+            }
             &raw const translated
         }
         _ => desc,

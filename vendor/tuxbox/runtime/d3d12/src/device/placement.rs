@@ -310,11 +310,43 @@ impl Texture {
                 Some(&mut copied),
             )
         };
-        if result.is_err() || copied != size {
-            return Ok(false);
+        if result.is_ok() && copied == size {
+            unsafe { output.set_len(size) };
+            return Ok(true);
         }
-        unsafe { output.set_len(size) };
-        Ok(true)
+        // A mip spanning a decommitted page would otherwise never upload and
+        // stay black. Read it page by page and zero-fill what is unmapped
+        // (xcl's page-split copy). Skip it only if no page is readable.
+        output.resize(size, 0);
+        const PAGE: u64 = 0x1000;
+        let base = self.address + mip.source.start;
+        let mut readable = false;
+        let mut offset = 0usize;
+        while offset < size {
+            let address = base + offset as u64;
+            let chunk = ((PAGE - address % PAGE) as usize).min(size - offset);
+            let mut got = 0;
+            // SAFETY: as above; the destination slice is initialized and in bounds.
+            let ok = unsafe {
+                ReadProcessMemory(
+                    GetCurrentProcess(),
+                    address as *const _,
+                    output[offset..].as_mut_ptr().cast(),
+                    chunk,
+                    Some(&mut got),
+                )
+            };
+            if ok.is_ok() && got == chunk {
+                readable = true;
+            } else {
+                output[offset..offset + chunk].fill(0);
+            }
+            offset += chunk;
+        }
+        if !readable {
+            output.clear();
+        }
+        Ok(readable)
     }
 
     fn changed(
