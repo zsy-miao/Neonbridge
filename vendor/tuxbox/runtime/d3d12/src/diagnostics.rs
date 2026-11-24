@@ -555,6 +555,7 @@ pub(crate) mod gpu_clock {
 /// CPU-bound or the frame is spent waiting.
 pub(crate) mod audio;
 pub(crate) mod crash;
+mod crash_detail;
 pub(crate) mod sampler;
 
 pub(crate) mod threads {
@@ -620,7 +621,7 @@ pub(crate) mod threads {
         let mut rows: Vec<(f64, u32)> = now.iter()
             .map(|(tid, t)| ((t - old.get(tid).copied().unwrap_or(0).min(*t)) as f64 / 1e4 / frames, *tid))
             .collect();
-        rows.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        rows.sort_unstable_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let total: f64 = rows.iter().map(|r| r.0).sum();
         let busy = rows.iter().filter(|r| r.0 > frame_ms * 0.5).count();
         // The next interval samples where the busiest threads execute.
@@ -713,7 +714,7 @@ pub(crate) mod cost {
                 // SAFETY: keys are only ever 'static Location pointers.
                 (dns > 0).then(|| (dns, dcalls, unsafe { &*key }))
             }).collect();
-            rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            rows.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| (a.2.file(), a.2.line()).cmp(&(b.2.file(), b.2.line()))));
             rows.iter().take(count).map(|(ns, calls, site)| {
                 let file = site.file().rsplit(['/', '\\']).next().unwrap_or(site.file());
                 format!("{file}:{} {:.2} ({:.0} calls)", site.line(), *ns as f64 / 1e6 / frames, *calls as f64 / frames)

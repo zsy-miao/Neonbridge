@@ -93,11 +93,15 @@ unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
             let record = unsafe { &*info.ExceptionRecord };
             let context = unsafe { &*info.ContextRecord };
             let mut reason = format!("unhandled exception {:#010x}", record.ExceptionCode.0 as u32);
+            let mut fault_address = None;
             if record.ExceptionCode.0 as u32 == 0xc000_0005 && record.NumberParameters >= 2 {
                 let op = match record.ExceptionInformation[0] { 0 => "read", 1 => "write", 8 => "execute", _ => "access" };
                 reason += &format!(" ({op} at {:#x})", record.ExceptionInformation[1]);
+                fault_address = Some(record.ExceptionInformation[1]);
             }
-            write(&reason, context, unsafe { GetCurrentThreadId() });
+            if write(&reason, context, unsafe { GetCurrentThreadId() }) {
+                detail(context, fault_address);
+            }
         }
     }
     let previous = PREVIOUS_FILTER.load(Ordering::Relaxed);
@@ -115,16 +119,45 @@ pub(crate) fn record_here(reason: &str) {
     }
     let mut context = Box::new(Aligned(CONTEXT::default()));
     unsafe { RtlCaptureContext(&mut context.0) };
-    write(reason, &context.0, unsafe { GetCurrentThreadId() });
+    if write(reason, &context.0, unsafe { GetCurrentThreadId() }) {
+        detail(&context.0, None);
+    }
 }
 
 #[repr(C, align(16))]
 struct Aligned(CONTEXT);
 
-fn write(reason: &str, context: &CONTEXT, thread: u32) {
+/// The faulting thread's extra detail (runs on that thread, so TEB reads are its own).
+fn detail(c: &CONTEXT, fault_address: Option<usize>) {
+    use super::crash_detail as d;
+    if !d::enabled() {
+        return;
+    }
+    let list = modules();
+    let rip = c.Rip as usize;
+    record(format_args!("crash record: bytes at rip: {}", d::instruction_bytes(rip)));
+    if let Some(address) = fault_address {
+        record(format_args!("crash record: fault address {address:#x} is {}", d::address_kind(&list, address)));
+    }
+    if let Some(export) = d::export_near(&list, rip) {
+        record(format_args!("crash record: inside export {export}"));
+    }
+    // A call through an unresolved or stubbed import: the return address is on top
+    // of the stack (execute fault) or a few words down (fault inside the stub).
+    for word in unsafe { scan(c.Rsp as usize) }.into_iter().take(8) {
+        if let Some(import) = d::import_called_before(&list, word) {
+            record(format_args!("crash record: called through import {import}"));
+            break;
+        }
+    }
+    record(format_args!("crash record: tls {}; rax={:#x} r10={:#x} r11={:#x}", d::tls_cells(), c.Rax, c.R10, c.R11));
+}
+
+/// Writes the record; false when one was already written.
+fn write(reason: &str, context: &CONTEXT, thread: u32) -> bool {
     if RECORDED.swap(true, Ordering::Relaxed) {
         record(format_args!("crash record: {reason} (thread {thread}; a record was already written)"));
-        return;
+        return false;
     }
     let list = modules();
     let c = context;
@@ -134,6 +167,7 @@ fn write(reason: &str, context: &CONTEXT, thread: u32) {
         c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.Rbp, c.Rsp, c.R8, c.R9, c.R10, c.R11, c.R12, c.R13, c.R14, c.R15));
     let stack = unsafe { scan(c.Rsp as usize) };
     record(format_args!("crash record: stack {}", stack_text(&list, c.Rip as usize, &stack)));
+    true
 }
 
 /// Copy up to SCAN_WORDS of committed stack from rsp.

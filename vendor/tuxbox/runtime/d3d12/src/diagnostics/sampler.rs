@@ -29,9 +29,9 @@ const STACK_WORDS: usize = 2048;
 type Chain = [usize; DEPTH];
 
 pub(crate) struct Module {
-    base: usize,
-    end: usize,
-    name: String,
+    pub(crate) base: usize,
+    pub(crate) end: usize,
+    pub(crate) name: String,
     /// The title's executable or a module beside it (the staged providers).
     title: bool,
 }
@@ -229,7 +229,7 @@ pub(crate) fn label(list: &[Module], address: usize) -> String {
 
 fn top<K: std::hash::Hash + Eq>(rows: HashMap<K, u32>, total: u32, count: usize, text: impl Fn(&K) -> String) -> String {
     let mut rows: Vec<(K, u32)> = rows.into_iter().collect();
-    rows.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    rows.sort_by_cached_key(|(key, n)| (std::cmp::Reverse(*n), text(key))); // ties by name: runs diff cleanly
     rows.iter().take(count).map(|(key, n)| format!("{} {:.0}%", text(key), f64::from(*n) * 100.0 / f64::from(total)))
         .collect::<Vec<_>>().join(", ")
 }
