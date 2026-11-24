@@ -15,6 +15,7 @@ use crate::proxy::{Proxy, Slot, Slots, allocate, check_output, child_slots, obje
 
 mod allocation;
 mod cb_blend;
+mod plane_size;
 pub(crate) mod alloc_swap;
 mod fallback;
 pub(crate) mod blas;

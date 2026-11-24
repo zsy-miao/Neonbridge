@@ -121,6 +121,9 @@ fn console_item(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_ALLOCATION_
     if super::placement::nv12_pitch(desc).is_some() {
         return None;
     }
+    if super::plane_size::enabled() && let Some(answer) = super::plane_size::console_size(desc) {
+        return Some(answer);
+    }
     if !matches!(desc.Layout.0, 0 | 1 | 0x100..=0x10a) {
         return None;
     }
@@ -144,6 +147,16 @@ pub(super) fn console_footprint(descs: &[D3D12_RESOURCE_DESC]) -> Option<D3D12_R
     Some(D3D12_RESOURCE_ALLOCATION_INFO { SizeInBytes: bytes.checked_next_multiple_of(alignment)?, Alignment: alignment })
 }
 
+/// A depth-stencil or multisampled description the desktop rejects keeps
+/// the desktop failure (nothing shows the console accepts it), except
+/// formats 118-120, which have no desktop form (Xbox2Windows 992116ec).
+fn desktop_accepts_planes(device: &Device, descs: &[D3D12_RESOURCE_DESC]) -> bool {
+    !super::plane_size::enabled() || descs.iter().all(|desc| {
+        super::plane_size::console_size(desc).is_none() || super::plane_size::answers_over_failure(desc)
+            || unsafe { device.native.GetResourceAllocationInfo(0, slice::from_ref(desc)) }.SizeInBytes != u64::MAX
+    })
+}
+
 pub(super) unsafe extern "system" fn info(
     out: *mut D3D12_RESOURCE_ALLOCATION_INFO,
     device: &Device,
@@ -163,7 +176,7 @@ pub(super) unsafe extern "system" fn info(
         return out;
     }
     let descs = unsafe { slice::from_raw_parts(descs, count as usize) };
-    if console_sizes() && let Some(answer) = console_footprint(descs) {
+    if console_sizes() && desktop_accepts_planes(device, descs) && let Some(answer) = console_footprint(descs) {
         *out = answer;
         return out;
     }
