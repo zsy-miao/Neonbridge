@@ -4727,7 +4727,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         self.regs.insert(value.clone());
                         let dst = d.ok_or("missing sampler descriptor destination")?;
                         self.touch(&dst);
-                        self.ws(&dst, &format!("({value} >> 4)"))?;
+                        // D3D12 sampler heaps hold at most 2048 descriptors; clamp a stray
+                        // guest offset onto the heap instead of faulting (VIctory #483).
+                        self.ws(&dst, &format!("min({value} >> 4, 2047u)"))?;
                         return Ok(());
                     }
                     if let Some(Res::HeapLoad(offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
@@ -8123,7 +8125,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 uint tb_heap_index(uint i) { return i; }
 ");
         } else if self.resource_heap_base.is_some() {
-            h.push_str("ByteAddressBuffer tb_heap_map : register(t0, space32766);\nstruct TBHeapConstants { uint4 data[4096]; };\nuint tb_heap_index(uint i) { return tb_heap_map.Load(0) == 0u ? i : tb_heap_map.Load(4u+i*4u); }\n");
+            // Map word 0: 0 = identity, 1 = mapped, 0x80000000 | count = mapped with
+            // `count` entries, so a stray guest index clamps onto the last entry
+            // instead of reading past the map (VIctory #483, Xbox2Windows a7ce0018).
+            h.push_str("ByteAddressBuffer tb_heap_map : register(t0, space32766);\nstruct TBHeapConstants { uint4 data[4096]; };\nuint tb_heap_index(uint i) { uint w = tb_heap_map.Load(0); if (w == 0u) return i; if ((w & 0x80000000u) != 0u) i = min(i, (w & 0x7fffffffu) - 1u); return tb_heap_map.Load(4u+i*4u); }\n");
         }
         for (slot, dwords) in &self.cb_size {
             let space = self.space_suffix(2, *slot);
