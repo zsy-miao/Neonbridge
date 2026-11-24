@@ -20,6 +20,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 mod code_table;
+mod mixed_mask;
+/// Comment the emitter writes at each mixed mask/number scalar op (`--refusals` counts it).
+pub const MIXED_MASK_MARK: &str = mixed_mask::MARK;
 mod wave_alloc;
 mod group_extrema;
 mod compare;
@@ -723,6 +726,9 @@ struct Emitter<'a> {
     declared_samplers: BTreeMap<usize, (u32, u32)>,
     /// Instructions reading a lane mask as wave data (see `lane_mask_reads`).
     lane_masks: BTreeSet<usize>,
+    /// Scalar bitwise ops mixing a lane mask with a number: index -> the mask's
+    /// source position (see `mixed_mask`).
+    mixed_masks: BTreeMap<usize, usize>,
     binding_spaces: BTreeMap<(u32, u32), u32>,
     mesh_bindings: Option<mesh_bindings::MeshBindings>,
     compute_derivatives: bool,
@@ -1505,8 +1511,9 @@ fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
     }
 }
 
-fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>) {
+fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>, mixed: &mut BTreeMap<usize, usize>) {
     let MaskState { masks, half } = state;
+    if let Some(k) = mixed_mask::mask_position(masks, ins) { mixed.insert(i, k); }
     let is_mask = is_lane_mask;
     let m = ins.mnemonic.as_str();
     match (m, ins.src.first()) {
@@ -1556,16 +1563,17 @@ fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, read
 /// edge (five-star-recomp b5fe3a7/48c08b8, GPL-3.0, ThatRecompDev: a register that
 /// is a mask on one path and an integer on another). A register that may be a mask
 /// on any path into a read is read as one. TB_MASK_CFG=0 follows program order.
-fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
+fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>) {
+    let mut mixed = BTreeMap::new();
     let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
     let mut reads = BTreeSet::new();
     let linear = std::env::var("TB_MASK_CFG").is_ok_and(|v| v.trim() == "0");
     if linear {
         let mut state = MaskState::default();
         for (i, ins) in insns.iter().enumerate() {
-            mask_step(&mut state, ins, i, half_pairs, &mut reads);
+            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed);
         }
-        return reads;
+        return (reads, mixed);
     }
     let index: HashMap<i64, usize> = insns.iter().enumerate().map(|(i, ins)| (ins.offset as i64, i)).collect();
     let successors = |i: usize| -> Vec<usize> {
@@ -1585,14 +1593,14 @@ fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
     };
     let mut before: Vec<Option<MaskState>> = vec![None; insns.len()];
     if insns.is_empty() {
-        return reads;
+        return (reads, mixed);
     }
     before[0] = Some(MaskState::default());
     let mut work = std::collections::VecDeque::from([0usize]);
     let mut scratch = BTreeSet::new();
     while let Some(i) = work.pop_front() {
         let mut state = before[i].clone().unwrap_or_default();
-        mask_step(&mut state, &insns[i], i, half_pairs, &mut scratch);
+        mask_step(&mut state, &insns[i], i, half_pairs, &mut scratch, &mut BTreeMap::new());
         for s in successors(i) {
             let joined = match &before[s] {
                 None => state.clone(),
@@ -1614,10 +1622,10 @@ fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
     for (i, ins) in insns.iter().enumerate() {
         if let Some(state) = &before[i] {
             let mut state = state.clone();
-            mask_step(&mut state, ins, i, half_pairs, &mut reads);
+            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed);
         }
     }
-    reads
+    (reads, mixed)
 }
 
 /// The user SGPR that carries the resource descriptor heap of a shader that
@@ -2139,7 +2147,11 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     } else { (false, false) };
     // Pixel shaders: whole-wave integer sums and exclusive prefixes (TuxBox 444066e).
     if ex.stage == Stage::Pixel && !wave_cull && !page_waves { wave_alloc::prepare(&mut insns); }
-    let lane_masks = if general_elections { lane_mask_reads(&insns) } else { BTreeSet::new() };
+    let (lane_masks, mixed_masks) = if general_elections || (!resolve_wave32 && mixed_mask::on()) {
+        let (reads, mixed) = lane_mask_reads(&insns);
+        (if general_elections { reads } else { BTreeSet::new() },
+         if !resolve_wave32 && mixed_mask::on() { mixed } else { BTreeMap::new() })
+    } else { (BTreeSet::new(), BTreeMap::new()) };
     let reflection = reflection_compact::prepare(ex, &mut insns);
     let group_extrema = group_extrema::prepare(ex, &mut insns);
     let straight_exchange = ex.stage == Stage::Compute && !lone_lane::on()
@@ -2183,6 +2195,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     exit_stubs::inline(&mut insns);
     let mut em = Emitter::new(ex, insns);
     em.lane_masks = lane_masks;
+    em.mixed_masks = mixed_masks;
     em.page_waves = page_waves;
     em.wave_cull = wave_cull;
     em.fspx_wave = fspx_wave;
@@ -2823,6 +2836,7 @@ impl<'a> Emitter<'a> {
                 .unwrap_or_default(),
             declared_samplers: declared_samplers(ex),
             lane_masks: BTreeSet::new(),
+            mixed_masks: BTreeMap::new(),
             binding_spaces: BTreeMap::new(),
             mesh_bindings: None,
             compute_derivatives: false,
@@ -6268,6 +6282,38 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     })
                 };
                 let opname = m.trim_start_matches("s_").trim_end_matches("_b32").trim_end_matches("_b64");
+                // A lane mask mixed with a number (xcl 438d420, see `mixed_mask`):
+                // the number gives bit `lane`, SCC is any bit of the whole result.
+                if let Some(&mi) = self.mixed_masks.get(&idx).filter(|_| is64 || self.required_wave_size != Some(64)) {
+                    let ni = 1 - mi;
+                    self.touch(&s[mi]);
+                    self.touch(&s[ni]);
+                    let mbit = format!("({} & 1u)", r(&s[mi])?);
+                    let nlo = r(&s[ni])?;
+                    let nhi = if is64 { self.touch(&hi(&s[ni])); r(&hi(&s[ni]))? } else { nlo.clone() };
+                    let nbit = format!("((((WaveGetLaneIndex() < 32u) ? {nlo} : {nhi}) >> (WaveGetLaneIndex() & 31u)) & 1u)");
+                    let t = self.tmp;
+                    self.tmp += 1;
+                    self.line(mixed_mask::MARK);
+                    self.line(&format!("uint4 t{t}b = WaveActiveBallot({mbit} != 0u);"));
+                    let (bx, by) = (format!("t{t}b.x"), if is64 { format!("t{t}b.y") } else { "0u".to_string() });
+                    let pick = |m: &str, n: &str| if mi == 0 { (m.to_string(), n.to_string()) } else { (n.to_string(), m.to_string()) };
+                    let (x, y) = pick(&mbit, &nbit);
+                    let lane = bit(opname, &x, &y).unwrap();
+                    let (lx, ly) = pick(&bx, &nlo);
+                    let low = bit(opname, &lx, &ly).unwrap();
+                    let high = if is64 { let (hx, hy) = pick(&by, &nhi); bit(opname, &hx, &hy).unwrap() } else { "0u".into() };
+                    self.line(&format!("uint t{t}l = {lane} & 1u; uint t{t}s = (({low} | {high}) != 0u) ? 1u : 0u;"));
+                    self.ws(&d, &format!("t{t}l"))?;
+                    if is64 {
+                        let dh = hi(&d);
+                        self.touch(&dh);
+                        let h = if d != Opnd::ExecLo && !self.one_word_vector_mask() && mask_high_shadow() { format!("WaveActiveBallot(t{t}l != 0u).y") } else { "0u".into() };
+                        self.ws(&dh, &h)?;
+                    }
+                    self.line(&format!("scc = t{t}s;"));
+                    return Ok(());
+                }
                 if let Some(lo) = bit(opname, &a, &b) {
                     if is64 {
                         self.touch(&hi(&s[0]));

@@ -314,6 +314,8 @@ fn refusal_census(dir: &Path, json: bool) -> Result<(), String> {
     // (outcome, stage, reason) -> programs
     let mut rows: BTreeMap<(&'static str, String, String), u32> = BTreeMap::new();
     let (mut ok, mut total) = (0u32, 0u32);
+    // Translated programs with a scalar op mixing a lane mask and a number (xcl 438d420).
+    let mut mixed = 0u32;
     for path in &files {
         let Ok(bytes) = fs::read(path) else { continue };
         total += 1;
@@ -333,7 +335,7 @@ fn refusal_census(dir: &Path, json: bool) -> Result<(), String> {
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| translate(&shader, None, None, None)));
             let _ = tx.send(match result {
-                Ok(Ok(_)) => None,
+                Ok(Ok(t)) => t.0.contains(tuxbox_xshader::hlsl::MIXED_MASK_MARK).then_some(("mixed", String::new())),
                 Ok(Err(Error::Unsupported(e))) => Some(("unsupported", e)),
                 Ok(Err(Error::Other(e))) => Some(("failed", e)),
                 Err(_) => Some(("crash", "translator panic".to_string())),
@@ -341,6 +343,7 @@ fn refusal_census(dir: &Path, json: bool) -> Result<(), String> {
         });
         match rx.recv_timeout(limit) {
             Ok(None) => ok += 1,
+            Ok(Some(("mixed", _))) => { ok += 1; mixed += 1; }
             Ok(Some((kind, reason))) => *rows.entry((kind, stage, normalize_refusal(&reason))).or_default() += 1,
             Err(_) => *rows.entry(("timeout", stage, format!("over {} s", limit.as_secs()))).or_default() += 1,
         }
@@ -351,9 +354,10 @@ fn refusal_census(dir: &Path, json: bool) -> Result<(), String> {
         let items: Vec<String> = sorted.iter().map(|((kind, stage, reason), n)| format!(
             "{{\"outcome\":{},\"stage\":{},\"reason\":{},\"programs\":{n}}}",
             json_string(kind), json_string(stage), json_string(reason))).collect();
-        println!("{{\"programs\":{total},\"translated\":{ok},\"refusals\":[{}]}}", items.join(","));
+        println!("{{\"programs\":{total},\"translated\":{ok},\"mixed_mask_programs\":{mixed},\"refusals\":[{}]}}", items.join(","));
     } else {
         println!("{total} programs, {ok} translated, {} refused (first site each)", total - ok);
+        println!("{mixed} translated programs mix a lane mask with a number in a scalar op (TB_MIXED_MASK)");
         println!("{:>8}  {:<11} {:<9} reason", "programs", "outcome", "stage");
         for ((kind, stage, reason), n) in &sorted {
             println!("{n:>8}  {kind:<11} {stage:<9} {reason}");
