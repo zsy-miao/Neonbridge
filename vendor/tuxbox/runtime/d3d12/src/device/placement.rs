@@ -237,31 +237,46 @@ fn a_range_covers_the_pages_it_touches() {
 /// The unmapped textures on pages that a texture going away covered and that
 /// no other live mapped texture newer than them covers, newest first (xcl
 /// title_textures.rs remove()).
+/// test98 hung with the title's submit thread blocked in a Texture's Drop
+/// inside another's: a reference upgraded here under the page index lock
+/// was the last one by the time it was dropped, and its Drop takes that
+/// lock again. Every reference upgraded under the lock is now kept in
+/// `held` and dropped after it is released.
 fn uncovered(images: &Images, gone: &Texture) -> Vec<Arc<Texture>> {
     let range = gone.range();
+    let mut held: Vec<Arc<Texture>> = Vec::new();
     let index = lock(&images.1);
-    let near = |r: &Range<u64>| {
+    let near = |r: &Range<u64>, held: &mut Vec<Arc<Texture>>| {
         let mut out: Vec<Arc<Texture>> = Vec::new();
         for page in pages(r) {
             for t in index.get(&page).into_iter().flatten().filter_map(Weak::upgrade) {
                 if !core::ptr::eq(Arc::as_ptr(&t), gone) && overlaps(&t.range(), r) && !out.iter().any(|o| Arc::ptr_eq(o, &t)) {
                     out.push(t);
+                } else {
+                    held.push(t);
                 }
             }
         }
         out
     };
-    let mut candidates: Vec<Arc<Texture>> = near(&range).into_iter().filter(|t| t.on_pages && !pages::is_mapped(t)).collect();
+    let (mut candidates, rest): (Vec<Arc<Texture>>, Vec<Arc<Texture>>) =
+        near(&range, &mut held).into_iter().partition(|t| t.on_pages && !pages::is_mapped(t));
+    held.extend(rest);
     candidates.sort_unstable_by_key(|t| std::cmp::Reverse(t.seq));
     let mut chosen: Vec<Arc<Texture>> = Vec::new();
     for c in candidates {
-        let covered = near(&c.range()).iter().any(|t| t.seq > c.seq
+        let around = near(&c.range(), &mut held);
+        let covered = around.iter().any(|t| t.seq > c.seq
             && (chosen.iter().any(|x| Arc::ptr_eq(x, t)) || (!t.on_pages || pages::is_mapped(t))));
-        if !covered {
+        held.extend(around);
+        if covered {
+            held.push(c);
+        } else {
             chosen.push(c);
         }
     }
     drop(index);
+    drop(held);
     chosen
 }
 
