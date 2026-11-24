@@ -1847,9 +1847,16 @@ impl<'a> Emitter<'a> {
                 return Ok((Some(range.range_type), register, range.space));
             }
         }
-        // The root ranges do not cover this physical slot: the pipeline root is
-        // rebuilt from the FSSM binding table (runtime compute_table), so bind the
-        // register that table names for it.
+        // The root table does not cover this 32-byte slot. The runtime appends the
+        // slot to compute roots when one FSSM user record, its used-resource row and
+        // PSV name the same register not declared elsewhere; bind that register.
+        if stride == 32 {
+            if let Some((kind, register, space)) = self.uncovered_fssm_descriptor(sgpr, offset) {
+                return Ok((Some(kind), register, space));
+            }
+        }
+        // Otherwise the pipeline root is rebuilt from the FSSM binding table
+        // (runtime compute_table), so bind the register that table names for it.
         self.fssm_binding(sgpr, offset, stride)
             .ok_or_else(|| format!("unmapped descriptor at s{sgpr} + {offset:#x}"))
     }
@@ -1859,6 +1866,16 @@ impl<'a> Emitter<'a> {
     /// the class, dword offset, register, shape and location (SGPR in bits 8..16);
     /// PSV gives the register space. These are the bindings the runtime builds
     /// reflected root tables from (tuxbox_dxbc::compute_table::bindings).
+    fn uncovered_fssm_descriptor(&self, sgpr: u8, offset: u32) -> Option<(u32, u32, u32)> {
+        if self.ex.stage != Stage::Compute {
+            return None;
+        }
+        let resources: Vec<[u32; 4]> = self.ex.resources.iter()
+            .map(|r| [r.res_type, r.space, r.lower, r.upper])
+            .collect();
+        tuxbox_dxbc::compute_table::uncovered_descriptor(&self.ex.fssm, &resources, 5, sgpr, offset, self.ex.root_sig.as_ref()?)
+    }
+
     fn fssm_binding(&self, sgpr: u8, offset: u32, stride: u32) -> Option<(Option<u32>, u32, u32)> {
         if stride != 32 || offset % 32 != 0 {
             return None;
