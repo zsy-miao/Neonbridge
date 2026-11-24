@@ -210,42 +210,57 @@ impl Stream {
         // The observed mono submit uses two finite unit gains, base-buffer I/O
         // and no envelope. Frequency coefficient packing for non-silent FFTs
         // and nonzero convolution responses still needs a console control.
-        if self.channels != 1
-            || self.flags != 0
-            || envelope != 0
-            || command.aux != 0
-            || !command.gains.iter().all(|v| *v == 1.0)
-        {
-            return NOT_IMPLEMENTED;
-        }
-        if ![command.input, command.output].into_iter().all(|p| {
+        // A transform not computed still completes at once with a silent
+        // output (reverb returns dry): the title reads the completed ticket
+        // one block later and treats a late one as an overrun (VIctory dsp.rs,
+        // re-derived). TUXBOX_CHAD_STRICT=1 refuses it as before.
+        let supported = self.channels == 1
+            && self.flags == 0
+            && envelope == 0
+            && command.aux == 0
+            && command.gains.iter().all(|v| *v == 1.0);
+        let words = self.block * self.channels.max(1);
+        let inside = |p: usize, n: usize| {
             p.is_multiple_of(4)
                 && p >= workspace.start
-                && p.checked_add(self.block * 4)
-                    .is_some_and(|end| end <= workspace.end)
-        }) {
+                && p.checked_add(n * 4).is_some_and(|end| end <= workspace.end)
+        };
+        if supported && ![command.input, command.output].into_iter().all(|p| inside(p, self.block)) {
             return INVALID;
         }
-        let input = unsafe { std::slice::from_raw_parts(command.input as *const f32, self.block) };
-        if !input
-            .iter()
-            .all(|&v| v.is_finite() && (v == 0.0 || self.zero_filter))
-        {
-            static FIRST: Once = Once::new();
-            FIRST.call_once(|| {
-                let msg = format!("TuxBox chad: non-silent CFPU2 transform type {} block {} requires coefficient layout\n\0",self.kind,self.block);
-                unsafe { OutputDebugStringA(msg.as_ptr()); }
-            });
-            return NOT_IMPLEMENTED;
+        let silent_input = supported && {
+            let input = unsafe { std::slice::from_raw_parts(command.input as *const f32, self.block) };
+            input.iter().all(|&v| v.is_finite() && (v == 0.0 || self.zero_filter))
+        };
+        if !silent_input {
+            if strict() {
+                if supported {
+                    static FIRST: Once = Once::new();
+                    FIRST.call_once(|| {
+                        let msg = format!("TuxBox chad: non-silent CFPU2 transform type {} block {} requires coefficient layout\n\0",self.kind,self.block);
+                        unsafe { OutputDebugStringA(msg.as_ptr()); }
+                    });
+                }
+                return NOT_IMPLEMENTED;
+            }
+            super::stats::dsp::SHORTCUT.fetch_add(1, Ordering::Relaxed);
+            // Zero the output where it lies inside the workspace; complete either way.
+            let n = if inside(command.output, words) { words } else if inside(command.output, self.block) { self.block } else { 0 };
+            unsafe { (command.output as *mut f32).write_bytes(0, n) };
+            return unsafe { self.complete(seq) };
         }
+        unsafe { (command.output as *mut f32).write_bytes(0, self.block) };
+        unsafe { self.complete(seq) }
+    }
+
+    /// Advance the completed ticket and hand it back.
+    unsafe fn complete(&self, seq: *mut u32) -> i32 {
         let sequence = self
             .status
             .submitted
             .fetch_add(1, Ordering::Relaxed)
             .wrapping_add(1);
-        unsafe {
-            (command.output as *mut f32).write_bytes(0, self.block);
-        }
+        self.status.result.store(0, Ordering::Relaxed);
         self.status.completed.store(sequence, Ordering::Release);
         if !seq.is_null() {
             unsafe {
@@ -254,6 +269,12 @@ impl Stream {
         }
         0
     }
+}
+
+/// TUXBOX_CHAD_STRICT=1: refuse transforms not computed (no ticket advance).
+fn strict() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_CHAD_STRICT").is_ok_and(|v| v.trim() == "1"))
 }
 
 #[repr(C)]
@@ -357,4 +378,25 @@ pub unsafe extern "system" fn XDspSubmitCommandWithEnvelope(
     };
     dsp::note();
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_transform_not_computed_completes_with_silence() {
+        let stream = Stream { status: Status::default(), kind: 2, flags: 0, block: 4, channels: 1, zero_filter: false };
+        let mut buffer = [1.0f32, 2.0, 3.0, 4.0, 9.0, 9.0, 9.0, 9.0];
+        let start = buffer.as_mut_ptr().addr();
+        let workspace = start..start + size_of_val(&buffer);
+        let command = Command { gains: [1.0, 1.0], input: start, output: start + 16, aux: 0 };
+        let mut seq = 0u32;
+        let status = unsafe { stream.process(&workspace, &command, 0, &mut seq) };
+        assert_eq!(status, 0);
+        assert_eq!(seq, 1);
+        assert_eq!(stream.status.completed.load(Ordering::Acquire), 1);
+        assert_eq!(&buffer[4..], &[0.0; 4]);
+        assert_eq!(&buffer[..4], &[1.0, 2.0, 3.0, 4.0]);
+    }
 }
