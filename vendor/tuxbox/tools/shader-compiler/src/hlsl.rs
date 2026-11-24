@@ -6382,7 +6382,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let scc = match m {
                     "s_add_i32" => Some(signed_add_overflow(&a, &b, &result)),
                     "s_sub_i32" => Some(format!("((({a} ^ {b}) & ({a} ^ {result})) >> 31)")),
-                    "s_lshl1_add_u32" | "s_lshl2_add_u32" | "s_lshl3_add_u32" | "s_lshl4_add_u32" => Some(format!("({result} < {b})")),
+                    // Carry of the wide sum (S0 << N) + S1: bits shifted out of S0 count
+                    // too (Xbox2Windows d2f0e1df / 85a2aa65, MIT).
+                    "s_lshl1_add_u32" | "s_lshl2_add_u32" | "s_lshl3_add_u32" | "s_lshl4_add_u32" => {
+                        let n = u32::from(m.as_bytes()[6] - b'0');
+                        Some(format!("((({a} >> {}u) != 0u) || ({result} < {b})) ? 1u : 0u", 32 - n))
+                    }
                     "s_add_u32" => Some(format!("(({a} + {b}) < {a}) ? 1u : 0u")),
                     "s_addc_u32" => Some(format!("((({a} + {b}) < {a}) || (({a} + {b} + (scc & 1u)) < ({a} + {b}))) ? 1u : 0u")),
                     "s_subb_u32" => Some(format!("(({b} > {a}) || ((scc & 1u) > ({a} - {b}))) ? 1u : 0u")),
