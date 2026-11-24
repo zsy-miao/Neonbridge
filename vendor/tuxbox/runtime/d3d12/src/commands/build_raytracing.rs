@@ -147,7 +147,6 @@ fn translate(
     Option<ID3D12Resource>,
     u64,
 )> {
-    let relocated = unsafe { blas::resolve(owner, desc.DestAccelerationStructureData) }?;
     let mut info = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO::default();
     let mut device = None::<ID3D12Device5>;
     unsafe { host.GetDevice(&mut device)? };
@@ -170,6 +169,15 @@ fn translate(
     {
         return Err(E_INVALIDARG.into());
     }
+    // A destination or scratch in a slot-133 buffer is a title address.
+    let relocated = match unsafe { blas::resolve(owner, desc.DestAccelerationStructureData) }? {
+        Some(target) => Some(target),
+        None => unsafe { blas::placed::destination(owner, desc.DestAccelerationStructureData, info.ResultDataMaxSizeInBytes) }?,
+    };
+    if let Some((buffer, host)) = unsafe { blas::placed::scratch(owner, desc.ScratchAccelerationStructureData, scratch) }? {
+        retain(state, &[&buffer])?;
+        desc.ScratchAccelerationStructureData = host;
+    }
     if let Some(target) = relocated {
         if info.ResultDataMaxSizeInBytes > unsafe { target.GetDesc() }.Width {
             return Err(E_NOTIMPL.into());
@@ -178,7 +186,10 @@ fn translate(
         desc.DestAccelerationStructureData = unsafe { target.GetGPUVirtualAddress() };
     }
     if desc.SourceAccelerationStructureData != 0
-        && let Some(source) = unsafe { blas::resolve(owner, desc.SourceAccelerationStructureData) }?
+        && let Some(source) = match unsafe { blas::resolve(owner, desc.SourceAccelerationStructureData) }? {
+            Some(source) => Some(source),
+            None => unsafe { blas::placed::existing(owner, desc.SourceAccelerationStructureData) },
+        }
     {
         retain(state, &[&source])?;
         desc.SourceAccelerationStructureData = unsafe { source.GetGPUVirtualAddress() };

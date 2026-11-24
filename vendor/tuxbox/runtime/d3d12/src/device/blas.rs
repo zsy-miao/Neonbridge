@@ -12,6 +12,7 @@ use windows::core::{IUnknown, Interface, Result};
 mod inline_geometry;
 pub(crate) mod instance_fixup;
 mod native_normals;
+pub(crate) mod placed;
 mod scene_view;
 pub(crate) use inline_geometry::{
     NativeBuild, copy_geometry, inline_geometry, set_inline_instances,
@@ -126,6 +127,7 @@ pub(super) struct Buffers {
     empty_instances: Mutex<Option<ID3D12Resource>>,
     mappings: Arc<Mutex<Mappings>>,
     submission: Mutex<()>,
+    placed: placed::Targets,
 }
 
 impl Buffers {
