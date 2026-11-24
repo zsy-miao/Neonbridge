@@ -919,10 +919,26 @@ unsafe fn record(
                     let simultaneous = resource.state.placed().is_some();
                     if simultaneous {
                         // Simultaneous-access textures share COMMON across all uses.
-                        if item.LayoutBefore != D3D12_BARRIER_LAYOUT_UNDEFINED {
+                        // leonida 37c5af12 (D3D-BARRIER-INTO-UNDEFINED, idea): on
+                        // the console UNDEFINED leaves memory as it is, and a placed
+                        // texture's contents are the title memory we uploaded and
+                        // re-upload only when its bytes change; passed through, the
+                        // driver may discard them. UNDEFINED becomes COMMON with no
+                        // access on that side (no discard); TUXBOX_PLACED_UNDEFINED=1
+                        // passes it through.
+                        let keep = crate::env_toggle!("TUXBOX_PLACED_UNDEFINED") != Some("1");
+                        if keep || item.LayoutBefore != D3D12_BARRIER_LAYOUT_UNDEFINED {
+                            if item.LayoutBefore == D3D12_BARRIER_LAYOUT_UNDEFINED {
+                                item.SyncBefore = D3D12_BARRIER_SYNC_NONE;
+                                item.AccessBefore = D3D12_BARRIER_ACCESS_NO_ACCESS;
+                            }
                             item.LayoutBefore = D3D12_BARRIER_LAYOUT_COMMON;
                         }
-                        if item.LayoutAfter != D3D12_BARRIER_LAYOUT_UNDEFINED {
+                        if keep || item.LayoutAfter != D3D12_BARRIER_LAYOUT_UNDEFINED {
+                            if item.LayoutAfter == D3D12_BARRIER_LAYOUT_UNDEFINED {
+                                item.SyncAfter = D3D12_BARRIER_SYNC_NONE;
+                                item.AccessAfter = D3D12_BARRIER_ACCESS_NO_ACCESS;
+                            }
                             item.LayoutAfter = D3D12_BARRIER_LAYOUT_COMMON;
                         }
                     }
