@@ -428,7 +428,20 @@ impl Recording {
                 self.phase = ListState::Open;
             }
             ListState::Open => {}
-            ListState::Closed => self.error = E_FAIL,
+            ListState::Closed => {
+                // palmetto 8dc42f40 reopens a closed list on the next recording
+                // call, as the console's allocator-owned recording allows. GTA
+                // resets its lists through our Reset (no such failure seen up to
+                // test100), so this only reports it if a title ever does it.
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "a recording call reached a closed list without a Reset from guest RVA {:#x} ({n} so far)",
+                        crate::survey::title_rva().unwrap_or(0)));
+                }
+                self.error = E_FAIL
+            }
         }
         self.error.is_ok()
     }
