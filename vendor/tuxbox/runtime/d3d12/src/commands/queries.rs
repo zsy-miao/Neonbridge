@@ -95,12 +95,24 @@ pub(super) unsafe extern "system" fn resolve(
 
 // A Series timestamp packet writes the queue clock directly to title memory.
 // Desktop D3D12 exposes the same clock through a timestamp query and resolve.
-pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, arg: u32, flags: u32, mode: u32) {
+// Write64BitValueBottomOfPipeX(address, value, flush, flags): flags bit 0 or
+// 1 writes the GPU clock, otherwise the 64-bit value (leonida-ce, rebox).
+pub(super) unsafe extern "system" fn timestamp_at(list: &List, address: u64, value: u64, _flush: u32, mode: u32) {
     const SLOTS: u32 = 256;
     let mut state = recording(list);
     if !state.ensure_open(&list.native) { return; }
     let result = (|| -> windows::core::Result<()> {
-        if arg != 0 || flags != 0 || mode != 1 || address == 0 || !address.is_multiple_of(8) { return Err(E_INVALIDARG.into()); }
+        if address == 0 || !address.is_multiple_of(4) { return Err(E_INVALIDARG.into()); }
+        if mode & 3 == 0 {
+            let (resource, gpu) = unsafe { crate::device::command_buffer_address(parent(&list.parent), address, 8)? };
+            if let Some(buffer) = &resource { super::raytracing::retain(&state, &[buffer])?; }
+            for (dest, word) in [(gpu, value as u32), (gpu + 4, (value >> 32) as u32)] {
+                let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest, Value: word };
+                state.prefix.push(&list.native, super::memory_wait::Packet::Marker(write))?;
+            }
+            return Ok(());
+        }
+        if !address.is_multiple_of(8) { return Err(E_INVALIDARG.into()); }
         let (resource, gpu) = unsafe { crate::device::command_buffer_address(parent(&list.parent), address, 8)? };
         let resource = resource.ok_or(E_INVALIDARG)?;
         let offset = gpu.checked_sub(unsafe { resource.GetGPUVirtualAddress() }).ok_or(E_INVALIDARG)?;

@@ -2,7 +2,7 @@
 use super::{List, parent, recording};
 use crate::device;
 use core::ffi::c_void;
-use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL};
+use windows::Win32::Foundation::E_INVALIDARG;
 use windows::Win32::Graphics::Direct3D12::{
     D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION, D3D12_RESOURCE_DIMENSION_BUFFER,
 
@@ -84,18 +84,20 @@ pub(super) unsafe extern "system" fn async_compute_budget(list: &List, budget: *
     if !state.can_record(&list.native) {
         return;
     }
-    // SAFETY: the Xbox caller supplies a readable 24-byte record for this call.
-    let Some(budget) = (unsafe { budget.as_ref() }) else {
-        state.error = E_INVALIDARG;
+    // The newer list layout may put RSSetDepthBiasX (floats, no pointer) at
+    // this slot, so check the record is readable before reading it.
+    if !super::accessible(budget as usize, 24, false) {
+        static NOT_POINTER: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&NOT_POINTER, || format!("list slot 96 argument {budget:p} is not a readable record; ignored"));
         return;
-    };
+    }
+    // SAFETY: checked readable above.
+    let budget = unsafe { &*budget };
     // SetAsyncComputeBudgetInternal passes six zero DWORDs at RVA 0x5765a97.
-    // Host queues already use their existing scheduling policy for this default.
+    // Host queues keep their own scheduling policy for any budget.
     if *budget != [0; 24] {
-        crate::diagnostics::recording_error(format_args!(
-            "nonzero asynchronous compute budget {budget:02x?}"
-        ));
-        state.error = E_NOTIMPL;
+        static NONZERO: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&NONZERO, || format!("nonzero asynchronous compute budget {budget:02x?} ignored"));
         return;
     }
     static FIRST: std::sync::Once = std::sync::Once::new();

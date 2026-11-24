@@ -343,7 +343,31 @@ impl Recording {
         self.can_record(native)
     }
 
+    /// A call our own checks refused (E_NOTIMPL / E_INVALIDARG) is dropped
+    /// alone: latching it silenced the rest of the list and the submission
+    /// dropped the whole batch, so frames stayed black. Draws and dispatches
+    /// wait for the next pipeline bind, in case the refused call was state
+    /// they depend on. TUXBOX_STRICT_LISTS=1 keeps the old latch.
+    fn forgive(&mut self) {
+        if !matches!(self.phase, ListState::Open)
+            || !matches!(self.error, E_NOTIMPL | E_INVALIDARG)
+            || strict_lists()
+        {
+            return;
+        }
+        static FORGIVEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FORGIVEN.fetch_add(1, Ordering::Relaxed);
+        if n < 8 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "dropped one refused recording call {:#010x}, list continues ({} so far)", self.error.0, n + 1
+            ));
+        }
+        self.error = S_OK;
+        self.pipeline_pending = true;
+    }
+
     fn ensure_open(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        self.forgive();
         if self.error.is_err() {
             return false;
         }
@@ -367,6 +391,11 @@ impl Recording {
         }
         self.error.is_ok()
     }
+}
+
+fn strict_lists() -> bool {
+    static STRICT: OnceLock<bool> = OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var_os("TUXBOX_STRICT_LISTS").is_some_and(|v| v != "0"))
 }
 
 fn ring_enabled() -> bool {
@@ -611,6 +640,7 @@ fn retire(old: ID3D12GraphicsCommandList) {
 
 unsafe extern "system" fn close(list: &List) -> HRESULT {
     let mut state = recording(list);
+    state.forgive();
     match state.phase {
         ListState::Closed => return E_FAIL,
         ListState::Fresh(..) => {} // The initial empty recording is already closed on the host.
@@ -1010,11 +1040,10 @@ unsafe extern "system" fn flush_texture_cache(list: &List, mask: u32, address: u
     // The mask selects the caches to flush. Both can use the same host
     // global memory barrier, which also covers subranges and empty ranges.
     if !matches!(mask, 0xc0_0000 | 0x3000) {
-        crate::diagnostics::recording_error(format_args!(
-            "texture cache flush mask {mask:#x} address {address:#x} bytes {bytes:#x}"
-        ));
-        state.error = E_NOTIMPL;
-        return;
+        // A global barrier covers every cache (rebox and xcl ignore the mask).
+        static OTHER: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&OTHER, || format!(
+            "texture cache flush mask {mask:#x} recorded as a global barrier"));
     }
     if address.checked_add(bytes).is_none() {
         crate::diagnostics::recording_error(format_args!(
@@ -1391,9 +1420,15 @@ fn clamp_enabled() -> bool {
 unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, flags: u32, reserved: u32) {
     let mut state = recording(list);
     if !state.ensure_open(&list.native) { return; }
-    if address == 0 || !address.is_multiple_of(4) || flags != 0 || reserved != 0 {
+    if address == 0 || !address.is_multiple_of(4) {
         state.error = E_INVALIDARG;
         return;
+    }
+    if flags != 0 || reserved != 0 {
+        // Cache-flush and engine selectors; the host write is ordered anyway
+        // (leonida-ce ignores them too).
+        static FLAGS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FLAGS, || format!("marker write flags {flags:#x} {reserved:#x} ignored"));
     }
     let result = (|| -> windows::core::Result<()> {
         let (resource, dest) = unsafe { device::command_buffer_address(parent(&list.parent), address, 4)? };

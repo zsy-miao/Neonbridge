@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 mod code_table;
+mod wave_alloc;
 mod group_extrema;
 mod compare;
 mod uniform_texel;
@@ -1059,6 +1060,21 @@ fn heap_register(ex: &ShaderExtract) -> Option<u8> {
     u8::try_from(base + words).ok().filter(|&r| r < 100)
 }
 
+/// Whether `ins` reads SGPR `n`, counting the register widths of memory
+/// descriptors and 64-bit scalar or VOP3 operands.
+fn reads_sgpr(ins: &Insn, n: u8) -> bool {
+    let m = ins.mnemonic.as_str();
+    let memory = if m.starts_with("image_") { 8 }
+        else if m.starts_with("s_buffer") || m.starts_with("buffer_") || m.starts_with("tbuffer_") { 4 }
+        else if m.starts_with("s_load") || m.starts_with("global_") { 2 } else { 0 };
+    ins.src.iter().enumerate().any(|(i, o)| {
+        let Opnd::Sgpr(k) = *o else { return false };
+        let width: u16 = if memory != 0 { memory } else if m.starts_with("s_") && (m.ends_with("64") || m.contains("saveexec_b64")) { 2 }
+            else if m.starts_with("v_") && i >= 2 { 2 } else { 1 };
+        u16::from(k) <= u16::from(n) && u16::from(n) < u16::from(k) + width
+    })
+}
+
 fn compute_group(ex: &ShaderExtract) -> [u32; 3] {
     if let Some(threads) = ex.psv_threads { return threads; }
     let [_, x, y, z] = ex.isa_preamble;
@@ -1170,6 +1186,8 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
     let (allocation_wave64, general_elections) = if !wave_cull && !page_waves {
         mark_wave_allocations(&mut insns)?
     } else { (false, false) };
+    // Pixel shaders: whole-wave integer sums and exclusive prefixes (TuxBox 444066e).
+    if ex.stage == Stage::Pixel && !wave_cull && !page_waves { wave_alloc::prepare(&mut insns); }
     let lane_masks = if general_elections { lane_mask_reads(&insns) } else { BTreeSet::new() };
     let reflection = reflection_compact::prepare(ex, &mut insns);
     let group_extrema = group_extrema::prepare(ex, &mut insns);
@@ -4388,6 +4406,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             _ => {}
         }
+        if wave_alloc::emit(self, ins)? { return Ok(()); }
         if hair_cluster::emit(self, ins) { return Ok(()); }
         if hair_cluster_export::emit(self, ins) { return Ok(()); }
         if m == "tb_hidden_instance" {

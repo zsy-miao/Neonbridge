@@ -195,9 +195,19 @@ pub(super) fn pipeline_stream(bytes: usize, error: Option<i32>) {
     }
 }
 
+/// Each distinct refusal is logged once (up to 64), with its guest caller:
+/// a single process-wide line hid every refusal after the first.
 pub(super) fn recording_error(reason: std::fmt::Arguments<'_>) {
-    static FIRST: Once = Once::new();
-    log_once(&FIRST, || format!("command list cannot record {reason}"));
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let text = reason.to_string();
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() < 64 && !seen.contains(&text) {
+        log_line(format_args!(
+            "command list cannot record {text} (guest RVA {:#x})", crate::survey::title_rva().unwrap_or(0)
+        ));
+        seen.push(text);
+    }
 }
 
 // Multiple pipelines can fail on worker threads during the same frame. Keep a

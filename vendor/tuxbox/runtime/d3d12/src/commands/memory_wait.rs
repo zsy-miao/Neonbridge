@@ -130,7 +130,11 @@ pub(super) unsafe extern "system" fn wait_value64(
         return;
     }
     let result = (|| -> Result<()> {
-        if comparison != 7 || flags > 1 {
+        // The fifth argument is stack junk on some callers (rebox), so only
+        // the comparison selects the wait.
+        let _ = flags;
+        if comparison != 7 {
+            crate::diagnostics::recording_error(format_args!("GPU memory wait comparison {comparison}"));
             return Err(E_NOTIMPL.into());
         }
         let word = Word::map(list, address)?;
