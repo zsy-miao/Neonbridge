@@ -118,6 +118,12 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let (game, target) = (game.unwrap(), target.unwrap());
+    // d3d12_xs compiles Xbox rectangle-list pipelines with DXC loaded from the
+    // game folder; stage the SDK's signed compiler beside it.
+    let mut dlls = dlls;
+    if let Some(dxc) = shaders::find_dxc() {
+        dlls.extend(["dxcompiler.dll", "dxil.dll"].map(|n| dxc.with_file_name(n)).into_iter().filter(|p| p.is_file()));
+    }
     stage(&game, &dlls)?;
     if mode == Mode::StageOnly {
         println!("[launch] staged {} providers beside {}; not started (--stage-only)", dlls.len(), target.display());
