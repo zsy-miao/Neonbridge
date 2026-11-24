@@ -7,6 +7,8 @@
 //! - `rdpru` (0F 01 FD) reads MPERF/APERF; both become the TSC.
 //! - SSE4a `extrq` / `insertq` (66|F2 0F 78|79, register forms) run on the
 //!   saved XMM registers (from VIctory's loader).
+//! - `clwb` (no-op), `rdpid` (processor number) and `mcommit` (CF=0) run
+//!   here too; TUXBOX_CPU_MISC=0 leaves them faulting.
 use std::ffi::c_void;
 use windows_sys::Win32::Foundation::STATUS_ILLEGAL_INSTRUCTION;
 use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, CONTEXT, EXCEPTION_POINTERS, M128A};
@@ -33,6 +35,10 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
             return CONTINUE_SEARCH;
         }
         let context = &mut *(*info).ContextRecord;
+        if let Some(len) = misc(context) {
+            context.Rip += len as u64;
+            return CONTINUE_EXECUTION;
+        }
         let code = std::slice::from_raw_parts(context.Rip as *const u8, 3);
         if code[0] != 0x0F || code[1] != 0x01 {
             return match sse4a(context.Rip as *const u8, &mut context.Anonymous.FltSave.XmmRegisters) {
@@ -86,6 +92,73 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
             _ => return CONTINUE_SEARCH,
         }
         CONTINUE_EXECUTION
+    }
+}
+
+fn misc_enabled() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("TUXBOX_CPU_MISC").map_or(true, |v| v.trim() != "0"));
+    *ON
+}
+
+/// Length of a ModRM memory operand (ModRM, SIB, displacement) at `code`.
+unsafe fn modrm_len(code: *const u8) -> usize {
+    // SAFETY: the faulting instruction's bytes are readable to its end.
+    let modrm = unsafe { code.read() };
+    let (md, rm) = (modrm >> 6, modrm & 7);
+    if md == 3 {
+        return 1;
+    }
+    let mut len = 1;
+    let mut base5 = rm == 5;
+    if rm == 4 {
+        base5 = unsafe { code.add(1).read() } & 7 == 5;
+        len += 1;
+    }
+    len + match md {
+        1 => 1,
+        2 => 4,
+        _ if base5 => 4,
+        _ => 0,
+    }
+}
+
+/// `clwb` (66 [REX] 0F AE /6, memory): a cache write-back hint, done as a
+/// no-op. `rdpid` (F3 [REX] 0F C7 /7, register): the processor number.
+/// `mcommit` (F3 0F 01 FA): nothing to commit, CF cleared (success).
+/// Returns the instruction's length. TUXBOX_CPU_MISC=0 leaves them faulting.
+unsafe fn misc(context: &mut CONTEXT) -> Option<usize> {
+    unsafe extern "system" {
+        fn GetCurrentProcessorNumber() -> u32;
+    }
+    if !misc_enabled() {
+        return None;
+    }
+    let code = context.Rip as *const u8;
+    // SAFETY: the faulting instruction's bytes are readable to its end.
+    let b = |i: usize| unsafe { code.add(i).read() };
+    let prefix = b(0);
+    if !matches!(prefix, 0x66 | 0xF3) {
+        return None;
+    }
+    let (rex, at) = if b(1) & 0xF0 == 0x40 { (b(1), 2) } else { (0, 1) };
+    if b(at) != 0x0F {
+        return None;
+    }
+    let modrm = b(at + 2);
+    let reg = (modrm >> 3) & 7;
+    match (prefix, b(at + 1)) {
+        (0x66, 0xAE) if reg == 6 && modrm >> 6 != 3 => Some(at + 2 + unsafe { modrm_len(code.add(at + 2)) }),
+        (0xF3, 0xC7) if reg == 7 && modrm >> 6 == 3 => {
+            let r = usize::from(modrm & 7 | (rex & 1) << 3);
+            registers(context)[r] = u64::from(unsafe { GetCurrentProcessorNumber() });
+            Some(at + 3)
+        }
+        (0xF3, 0x01) if at == 1 && modrm == 0xFA => {
+            context.EFlags &= !1;
+            Some(4)
+        }
+        _ => None,
     }
 }
 
