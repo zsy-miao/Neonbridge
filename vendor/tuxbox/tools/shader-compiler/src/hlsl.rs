@@ -8792,6 +8792,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
                 // the provoking vertex. Keep other attributes smoothly interpolated.
                 let attr = self.ps_attrs.iter().position(|&r| e.sysval == 0 && r == e.register);
                 let flat_p0 = is_ps && attr.is_some_and(|a| self.flat_attrs.contains(&a));
+                let per_sample = is_ps && crate::meta::pixel_persp_sample(&ex.fssm);
                 let pulled = is_ps && attr.is_some_and(|a| self.pulled_attrs.contains(&a));
                 let interp = if !is_ps {
                     ""
@@ -8801,6 +8802,10 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
                     "TB_VERTEX_INPUT "
                 } else if e.comp_type != 3 || flat_p0 {
                     "nointerpolation "
+                } else if per_sample && e.sysval == 0 {
+                    // PERSP_SAMPLE weights: the attribute is evaluated per sample, so the
+                    // pixel shader runs at sample frequency (PSV0 SampleFrequency).
+                    "sample "
                 } else if e.name.contains("_centroid") {
                     "centroid "
                 } else {
