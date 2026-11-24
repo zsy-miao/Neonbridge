@@ -712,14 +712,18 @@ pub(super) unsafe extern "system" fn create_pipeline(
         state.key = unsafe { guest_key(device, desc) }.map(Into::into);
     }
     // A pipeline no earlier run bound is made on its first bind (VIctory's
-    // lazy pipelines); the ones an earlier run bound are made now.
+    // lazy pipelines); the ones an earlier run bound are handed to the
+    // workers now (see `background::eager`).
+    let used_before = state.key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));
     if !worker
-        && state.key.as_deref().is_none_or(|key| super::pipeline_cache::used_before(key) != Some(true))
+        && (!used_before || !background::eager_on_title())
         && let Some(placeholder) = background::placeholder(device)
         && let Some(stream) = unsafe { background::OwnedStream::copy(desc) }
     {
         state.lazy = true;
-        let _ = state.upgrade.set(background::lazy((*identity(device)).clone(), background::Work::Stream(stream)));
+        let work = background::Work::Stream(stream);
+        let owner = (*identity(device)).clone();
+        let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });
         crate::diagnostics::pipeline_stream(desc.SizeInBytes, None);
         return unsafe { wrap_pageable(Ok(placeholder), &compute::PIPELINE, device, state, out) };
     }

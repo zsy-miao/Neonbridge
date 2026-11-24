@@ -349,6 +349,18 @@ pub(in crate::device) fn mark_nulled() {
     NULLED.with(|n| n.set(true));
 }
 
+/// Whether a pipeline an earlier run bound is made on the title's thread
+/// inside its Create call (TUXBOX_EAGER_ON_TITLE=1, the old way) instead of
+/// being handed to the workers at once behind the placeholder. Made on the
+/// title's thread, one pipeline whose driver compile never finished
+/// (nvgpucomp64 busy for minutes on tuxbox-pipeline) held the title's loader
+/// in its Create call: every run after the first, which had made it lazily,
+/// stayed black after sign-in. The first bind still waits for it within the
+/// frame's translator budget.
+pub(in crate::device) fn eager_on_title() -> bool {
+    crate::env_toggle!("TUXBOX_EAGER_ON_TITLE") == Some("1")
+}
+
 /// Hands a pipeline to the workers; the returned slot fills once its host
 /// pipeline exists.
 pub(in crate::device) fn queue(device: IUnknown, work: Work) -> Arc<Upgrade> {

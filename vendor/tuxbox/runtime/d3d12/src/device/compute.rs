@@ -291,9 +291,11 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     use super::stream::background;
     let worker = background::on_worker();
     let key = if worker { None } else { unsafe { compute_key(this, desc) } };
-    // As for streams: a pipeline no earlier run bound is made on first bind.
+    // As for streams: a pipeline no earlier run bound is made on first bind,
+    // one an earlier run bound is handed to the workers now.
+    let used_before = key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));
     if !worker
-        && key.as_deref().is_none_or(|key| super::pipeline_cache::used_before(key) != Some(true))
+        && (!used_before || !background::eager_on_title())
         && extension_count == 0
         && let Some(guest) = unsafe { desc.as_ref() }
         && guest.CachedPSO.CachedBlobSizeInBytes == 0
@@ -306,7 +308,8 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
         let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
         let work = background::Work::Compute(background::OwnedCompute::copy(guest, bytes));
         let state = PipelineData { key: key.map(Into::into), lazy: true, ..Default::default() };
-        let _ = state.upgrade.set(background::lazy((*identity(this)).clone(), work));
+        let owner = (*identity(this)).clone();
+        let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });
         return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
     }
     let _ = super::shader_cache::take_missed();
