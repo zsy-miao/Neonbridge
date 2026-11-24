@@ -5559,6 +5559,30 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
                         Ok(())
                     }
+                    // The active lane count of the guest wave (Xbox2Windows b7854f13 by
+                    // henriazz10, MIT; re-derived): one invocation holds only its own
+                    // exec bit, so countbits(exec_lo) read 1 for any wave, and a
+                    // wave-level allocation (count, then mbcnt for each lane's slot)
+                    // reserved one slot for 32 lanes. The ballot's 32-bit word that
+                    // holds this lane is its guest wave32's exec mask; unlike the
+                    // reference's static group-size word it also holds inside a
+                    // guarded region. TB_BCNT_EXEC_WAVE=0 counts the lane's own bit.
+                    "s_bcnt1_i32_b32"
+                        if s[0] == Opnd::ExecLo
+                            && !self.resolve_wave32
+                            && std::env::var("TB_BCNT_EXEC_WAVE").map_or(true, |v| v.trim() != "0") =>
+                    {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line("#if __SHADER_TARGET_MAJOR >= 6");
+                        self.line(&format!("uint4 t{t}b = WaveActiveBallot((exec_lo & 1u) != 0u); uint t{t} = countbits(t{t}b[WaveGetLaneIndex() >> 5]);"));
+                        self.line("#else");
+                        self.line(&format!("uint t{t} = countbits(exec_lo & 1u);"));
+                        self.line("#endif");
+                        self.ws(&d, &format!("t{t}"))?;
+                        self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
+                        Ok(())
+                    }
                     "s_bcnt1_i32_b32" => {
                         self.ws(&d, &format!("countbits({a})"))?;
                         self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
