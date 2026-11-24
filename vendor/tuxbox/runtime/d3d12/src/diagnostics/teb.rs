@@ -20,6 +20,9 @@ pub(crate) fn run() {
     if let Ok(list) = std::env::var("TUXBOX_BREAK_RVAS") {
         super::breaks::install(&list);
     }
+    if let Ok(value) = std::env::var("TUXBOX_STREAM_WATCH") && value != "0" {
+        super::streams::start(&value);
+    }
 }
 
 fn gs(offset: usize) -> usize {
