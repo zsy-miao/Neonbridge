@@ -202,6 +202,7 @@ pub(super) fn translate(
             }
         }
     }
+    h.push_str(&em.heap_handle_decls());
     h.push_str(&em.body);
     h.push_str("    return result;\n}\n");
     h.push_str(
@@ -666,8 +667,24 @@ fn assert_class5_descriptor_load() {
         em.emit_insn(idx, ins, false, None).unwrap();
     }
     assert!(em.body.contains("s4 = tb_heap_index(s4 >> 5)"));
-    assert!(em.body.contains("ResourceDescriptorHeap[NonUniformResourceIndex(s4)]"));
-    assert!(em.body.contains("ByteAddressBuffer"));
+    let binds = |body: &str| body.matches("ResourceDescriptorHeap[s4]").count();
+    assert_eq!(binds(&em.body), 1);
+    em.emit_insn(2, &insns[2], false, None).unwrap();
+    assert_eq!(binds(&em.body), 1, "unchanged s4 reuses the heap local");
+    em.ws(&Opnd::Sgpr(4), "s4 + 1u").unwrap();
+    em.emit_insn(2, &insns[2], false, None).unwrap();
+    assert_eq!(binds(&em.body), 2, "a write of s4 binds the descriptor again");
+    let mut open = true;
+    em.end_guard(&mut open);
+    em.emit_insn(2, &insns[2], false, None).unwrap();
+    assert_eq!(binds(&em.body), 3, "a skipped guard binds the descriptor again");
+    em.drop_heap_handles();
+    em.emit_insn(2, &insns[2], false, None).unwrap();
+    assert_eq!(binds(&em.body), 4, "a loop rebinds the descriptor");
+    assert!(!em.body.contains("NonUniformResourceIndex"));
+    let handles = em.heap_handle_decls();
+    assert_eq!(handles.matches("ByteAddressBuffer").count(), 1);
+    assert!(handles.contains("ByteAddressBuffer tb_heap_raw_4;"));
     let decls = em.resource_decls().unwrap();
     assert!(decls.contains("uint tb_heap_index(uint i) { return i; }"));
     assert!(!decls.contains("space32766"));

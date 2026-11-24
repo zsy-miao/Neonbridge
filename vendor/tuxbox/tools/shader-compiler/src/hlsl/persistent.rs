@@ -85,6 +85,7 @@ pub(super) fn translate(ex: &ShaderExtract) -> Result<Translated, String> {
         g + 2
     )
     .unwrap();
+    h.push_str(&em.heap_handle_decls());
     h.push_str(&em.body);
     h.push_str("}\n");
     Ok(Translated {
@@ -159,6 +160,7 @@ fn emit_blocks(em: &mut Emitter<'_>, code: &[Insn]) -> Result<(), String> {
         } else {
             em.line(&format!("if (tb_pc == {start}u) {{"));
         }
+        em.drop_heap_handles();
         for (i, op) in code.iter().enumerate().take(end).skip(start) {
             if condition(op).is_some() || op.mnemonic == "s_endpgm" {
                 continue;
