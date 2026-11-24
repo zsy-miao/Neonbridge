@@ -25,7 +25,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus and loading screens and now shows its picture, but the loading-screen videos are garbled into blocks. It runs for minutes at 15-30 fps, though some runs still lose the GPU device, and video memory runs over budget and slows it down.
+- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus, plays the intro videos cleanly and shows the story loading screen while it streams the world. It runs for minutes at 15-40 fps, but it still stalls waiting on shaders that take too long to compile, and some runs lose the GPU device.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and about 20 GB of free commit (RAM plus page file).
@@ -34,7 +34,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 
 ## Roadmap
 
-1. **Show the world:** clean loading-screen videos and the first mission drawn in full.
+1. **Show the world:** the first mission drawn in full, with shaders compiled fast enough that the game never waits on them.
 2. **Memory:** keep the game's ~8 GB of textures within the GPU's video-memory budget.
 3. **Speed:** hold 30 fps; it peaks at about 32 today and sinks to 15 once video memory overflows.
 4. **Correct pictures:** the remaining BCPack texture modes and 5551 colour.
