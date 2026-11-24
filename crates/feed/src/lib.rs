@@ -77,8 +77,16 @@ pub(crate) fn state_dir() -> PathBuf {
     base.join("6ixpack").join("feed")
 }
 
+/// A feed line on the launcher's stdout, and appended to feed.log in the state
+/// folder (test107 showed none on stdout, so the file says what happened).
 pub(crate) fn say(line: impl AsRef<str>) {
-    println!("[feed] {}", line.as_ref());
+    use std::io::Write;
+    let line = line.as_ref();
+    println!("[feed] {line}");
+    let _ = std::io::stdout().flush();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(state_dir().join("feed.log")) {
+        let _ = writeln!(f, "{} pid {} {line}", now_unix(), std::process::id());
+    }
 }
 
 /// Start the server and the link once per launcher; later calls do nothing.
@@ -86,6 +94,7 @@ pub fn start(settings: Settings) {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         let _ = std::fs::create_dir_all(state_dir());
+        say(format!("starting on 127.0.0.1:{} (link {}, {} fps, width {})", settings.port, settings.link, settings.fps, settings.width));
         frames::configure(settings.fps, settings.width);
         encoder::configure(&settings);
         match http::serve(settings.port) {

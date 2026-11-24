@@ -39,6 +39,7 @@ impl OutputWindow {
             title_window()
         };
         if !title.is_invalid() {
+            watch_title_close(title);
             fit_title_window(title, width, height)?;
             return Ok(Self {
                 handle: title.0 as usize,
@@ -106,6 +107,48 @@ fn cloaked(hwnd: HWND) -> Option<u32> {
         let mut value = 0u32;
         (get(hwnd, 14, (&mut value as *mut u32).cast(), 4) >= 0).then_some(value)
     }
+}
+
+/// test107 ended with exit code 1 and no "exit:" line (xmem's exit trace) and
+/// no "output window: close requested": since f623248 the picture is on the
+/// title's own window, whose close our window procedure never sees. The
+/// title's window procedure is wrapped to log WM_CLOSE, SC_CLOSE,
+/// WM_QUERYENDSESSION/WM_ENDSESSION and WM_DESTROY before the title handles
+/// them. TUXBOX_TITLE_CLOSE_LOG=0 leaves it alone.
+fn watch_title_close(hwnd: HWND) {
+    use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
+    static WATCHED: AtomicUsize = AtomicUsize::new(0);
+    static PREVIOUS: AtomicIsize = AtomicIsize::new(0);
+    unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+        let what = match msg {
+            WM_CLOSE => Some("WM_CLOSE (close button, Alt+F4 or a posted close)"),
+            WM_SYSCOMMAND if (w.0 & 0xfff0) as u32 == SC_CLOSE => Some("SC_CLOSE"),
+            WM_QUERYENDSESSION => Some("WM_QUERYENDSESSION"),
+            WM_ENDSESSION => Some("WM_ENDSESSION"),
+            WM_DESTROY => Some("WM_DESTROY"),
+            _ => None,
+        };
+        if let Some(what) = what {
+            crate::diagnostics::log_line(format_args!(
+                "title window {:#x}: {what} (thread {})", hwnd.0 as usize, unsafe { GetCurrentThreadId() }));
+        }
+        let previous: WNDPROC = unsafe { core::mem::transmute(PREVIOUS.load(Ordering::Acquire)) };
+        unsafe { CallWindowProcW(previous, hwnd, msg, w, l) }
+    }
+    if std::env::var("TUXBOX_TITLE_CLOSE_LOG").is_ok_and(|v| v.trim() == "0")
+        || WATCHED.compare_exchange(0, hwnd.0 as usize, Ordering::AcqRel, Ordering::Acquire).is_err()
+    {
+        return;
+    }
+    let previous = unsafe { GetWindowLongPtrW(hwnd, GWLP_WNDPROC) };
+    if previous == 0 {
+        return;
+    }
+    PREVIOUS.store(previous, Ordering::Release);
+    let ours: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT = proc;
+    unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, ours as usize as isize) };
+    crate::diagnostics::log_line(format_args!(
+        "title window {:#x}: its close and destroy messages are logged (TUXBOX_TITLE_CLOSE_LOG=0 off)", hwnd.0 as usize));
 }
 
 fn title_window() -> HWND {
