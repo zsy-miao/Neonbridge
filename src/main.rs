@@ -669,8 +669,8 @@ fn run_summary(text: &str, code: Option<i32>) -> String {
         ["panicked", "presentx failed", "device removed", "0x887a0005", "0x887a0006", "fatal", "access violation", "stack overflow"].iter().any(|k| l.contains(k))
     });
     // Heartbeat: "completed PresentX #N (x fps)" or "(x fps; ms/frame: record a, close b, ...)".
-    let beat = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split_once(" (").map(|(_, r)| r.trim_end().trim_end_matches(')').to_owned()));
-    let (beat, top) = match beat.as_deref().map(|b| b.split_once("; top record sites ms/frame: ").unwrap_or((b, ""))) {
+    let beat = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split_once(" (").map(|(_, r)| r.trim_end().strip_suffix(')').unwrap_or(r.trim_end()).to_owned()));
+    let (beat, top) = match beat.as_deref().map(|b| b.split_once("; top sites ms/frame: ").unwrap_or((b, ""))) {
         Some((b, t)) => (Some(b.to_owned()), t.to_owned()),
         None => (None, String::new()),
     };

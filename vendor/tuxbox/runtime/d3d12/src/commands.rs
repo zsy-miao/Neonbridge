@@ -1784,6 +1784,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             Ok(list.native.as_raw())
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
+            let _site = crate::diagnostics::cost::site();
             unsafe {
                 placement::submit(
                     parent(&queue.parent),
@@ -1808,11 +1809,16 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             }
                         }
                         if let Some(owner) = queue.parent.as_ref() {
+                            let _site = crate::diagnostics::cost::site();
                             device::refresh_shadows(owner, &queue.native)?;
                             device::flush_desc_table(owner, &queue.native)?;
                         }
-                        memory_wait::submit(queue, host, splits)?;
+                        {
+                            let _site = crate::diagnostics::cost::site();
+                            memory_wait::submit(queue, host, splits)?;
+                        }
                         if let Some(owner) = queue.parent.as_ref() {
+                            let _site = crate::diagnostics::cost::site();
                             device::write_back_shadows(owner, &queue.native)?;
                         }
                         if !trace_samples.borrow().is_empty() {

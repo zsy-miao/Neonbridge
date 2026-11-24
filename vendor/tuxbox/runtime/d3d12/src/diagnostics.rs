@@ -484,6 +484,13 @@ pub(crate) mod cost {
     #[track_caller]
     pub(crate) fn sited(bucket: Bucket) -> Timer { Timer(bucket, Instant::now(), Some(Location::caller())) }
     use std::panic::Location;
+    /// Charges only its call site (no bucket): splits a bucket such as submit.
+    pub(crate) struct Site(Instant, &'static Location<'static>);
+    impl Drop for Site {
+        fn drop(&mut self) { sites::add(self.1, self.0.elapsed().as_nanos() as u64); }
+    }
+    #[track_caller]
+    pub(crate) fn site() -> Site { Site(Instant::now(), Location::caller()) }
 
     /// Lock-free per-call-site totals: an open-addressed table keyed by the
     /// static Location pointer. Sites past its capacity go uncounted.
@@ -546,7 +553,8 @@ pub(crate) mod cost {
             format!("{} {:.2}", NAMES[i], delta as f64 / 1e6 / frames)
         }).collect::<Vec<_>>().join(", ");
         // Record is summed over every recording thread, so it can exceed the
-        // frame time; the top sites say which calls hold the list lock longest.
-        format!("{buckets}; top record sites ms/frame: {}", sites::top(frames, 6))
+        // frame time; the top sites say which calls hold the list lock longest,
+        // and the submit sub-steps (commands.rs execute_batch) split submit.
+        format!("{buckets}; top sites ms/frame: {}", sites::top(frames, 8))
     }
 }
