@@ -506,7 +506,7 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     order.sort_by_key(|f| !used.contains(&f.hash));
     let bound = order.iter().filter(|f| used.contains(&f.hash)).count();
     let floor = crate::env_toggle!("TUXBOX_PIPELINE_BUILD_FREE_GB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(6) << 30;
-    let cap = crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_MB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(256) << 20;
+    let cap = crate::device::pipeline_cache::library_cap_mb() << 20;
     crate::diagnostics::log_line(format_args!(
         "pipeline build: {} pipelines in {} ({bound} bound by a run, built first) on {threads} threads; waits while under {} GiB of commit is free",
         order.len(), path.display(), floor >> 30));

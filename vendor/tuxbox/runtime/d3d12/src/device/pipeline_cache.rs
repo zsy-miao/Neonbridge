@@ -22,7 +22,18 @@
 //! driver, so neither depends on the build: both now live beside the build
 //! folders (`runtime/`), shared by every build. The first shared list is the
 //! union of the builds' lists. TUXBOX_PIPELINE_CACHE_SHARED=0 keeps them per
-//! build; a library over TUXBOX_PIPELINE_LIBRARY_MB (256; the blob stays in memory) starts afresh.
+//! build; a library over TUXBOX_PIPELINE_LIBRARY_MB (16384) starts afresh.
+//!
+//! The library reads its entries from the loaded blob for its whole life,
+//! and serialising needs a buffer the library's size. Both used to be heap
+//! copies, so a library cost twice its size in private bytes and commit
+//! charge, and the cap had to stay at 256 MiB (about 2.7k of test140's 80k
+//! pipelines). Both are now views of the file itself: the loaded file is
+//! mapped read-only (opened with delete sharing, so a save can still rename
+//! over it while the old view lives on), and a save serialises straight into
+//! a mapped staging file. File-backed pages take no commit charge and the
+//! system may drop them under pressure. TUXBOX_PIPELINE_LIBRARY_MAPPED=0
+//! reads and serialises through the heap as before.
 //!
 //! All library calls are serialised: the interface does not promise that
 //! stores, loads and serialising may overlap. A saver thread writes both
@@ -43,7 +54,7 @@ const NAMES_FILE: &str = "pipeline-names.txt";
 struct Library {
     library: ID3D12PipelineLibrary1,
     /// The library reads its entries from this blob for its whole life.
-    _blob: Vec<u8>,
+    _blob: Blob,
     dirty: bool,
 }
 
@@ -58,6 +69,77 @@ enum State {
 }
 
 static LIBRARY: Mutex<State> = Mutex::new(State::Unknown);
+
+fn mapped() -> bool {
+    crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_MAPPED").as_deref() != Some("0")
+}
+
+/// A view of a whole file; unmapped when dropped.
+struct View {
+    at: *mut u8,
+    len: usize,
+}
+
+impl View {
+    /// Maps `path` read-only, or (with `len`) creates it that size and maps
+    /// it writable.
+    fn map(path: &Path, len: Option<usize>) -> Option<View> {
+        use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE};
+        use windows::Win32::Storage::FileSystem::*;
+        use windows::Win32::System::Memory::*;
+        let write = len.is_some();
+        let wide = HSTRING::from(path.as_os_str());
+        let access = if write { GENERIC_READ.0 | GENERIC_WRITE.0 } else { GENERIC_READ.0 };
+        let share = FILE_SHARE_READ | FILE_SHARE_DELETE;
+        let disposition = if write { CREATE_ALWAYS } else { OPEN_EXISTING };
+        let file = unsafe { CreateFileW(&wide, access, share, None, disposition, FILE_ATTRIBUTE_NORMAL, None) }.ok()?;
+        let len = len.unwrap_or_else(|| {
+            let mut size = 0i64;
+            let _ = unsafe { GetFileSizeEx(file, &mut size) };
+            size as usize
+        });
+        let view = (len != 0).then(|| unsafe {
+            let protect = if write { PAGE_READWRITE } else { PAGE_READONLY };
+            let mapping = CreateFileMappingW(file, None, protect, (len as u64 >> 32) as u32, len as u32, None).ok()?;
+            let view = MapViewOfFile(mapping, if write { FILE_MAP_WRITE } else { FILE_MAP_READ }, 0, 0, len);
+            // The view keeps the section, and the section the file.
+            let _ = CloseHandle(mapping);
+            (!view.Value.is_null()).then(|| View { at: view.Value.cast(), len })
+        }).flatten();
+        let _ = unsafe { CloseHandle(file) };
+        view
+    }
+
+    fn bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.at, self.len) }
+    }
+
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.at, self.len) }
+    }
+}
+
+impl Drop for View {
+    fn drop(&mut self) {
+        use windows::Win32::System::Memory::*;
+        let _ = unsafe { UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS { Value: self.at.cast() }) };
+    }
+}
+
+/// The blob a library was opened from.
+enum Blob {
+    Heap(Vec<u8>),
+    File(View),
+}
+
+impl Blob {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Blob::Heap(bytes) => bytes,
+            Blob::File(view) => view.bytes(),
+        }
+    }
+}
 static LOADED: AtomicU64 = AtomicU64::new(0);
 static STORED: AtomicU64 = AtomicU64::new(0);
 /// Library misses whose name no run ever stored (the host description
@@ -107,25 +189,31 @@ fn build_lists(shared: &Path) -> HashSet<String> {
 
 fn open(host: &ID3D12Device, dir: &Path) -> Option<Library> {
     let device = host.cast::<ID3D12Device1>().ok()?;
-    let cap = crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_MB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(256);
+    let cap = library_cap_mb();
     let path = dir.join(LIBRARY_FILE);
     let size = std::fs::metadata(&path).map_or(0, |m| m.len());
     let blob = if cap != 0 && size > cap << 20 {
         crate::diagnostics::log_line(format_args!(
             "pipeline library: {} MiB is over TUXBOX_PIPELINE_LIBRARY_MB={cap}; starting afresh", size >> 20));
-        Vec::new()
+        Blob::Heap(Vec::new())
+    } else if size != 0 && mapped() {
+        match View::map(&path, None) {
+            Some(view) => Blob::File(view),
+            None => Blob::Heap(std::fs::read(&path).unwrap_or_default()),
+        }
     } else {
-        std::fs::read(&path).unwrap_or_default()
+        Blob::Heap(std::fs::read(&path).unwrap_or_default())
     };
-    let opened = unsafe { device.CreatePipelineLibrary::<ID3D12PipelineLibrary1>(&blob) };
+    let opened = unsafe { device.CreatePipelineLibrary::<ID3D12PipelineLibrary1>(blob.bytes()) };
     let (library, blob) = match opened {
         Ok(library) => (library, blob),
         // Another adapter or driver, or a damaged file: start empty.
-        Err(_) => (unsafe { device.CreatePipelineLibrary(&[]) }.ok()?, Vec::new()),
+        Err(_) => (unsafe { device.CreatePipelineLibrary(&[]) }.ok()?, Blob::Heap(Vec::new())),
     };
-    let entries = !blob.is_empty();
+    let (len, file) = (blob.bytes().len(), matches!(blob, Blob::File(_)));
     crate::diagnostics::log_once(&std::sync::Once::new(), || {
-        format!("pipeline library: {} ({} bytes)", if entries { "loaded" } else { "new" }, blob.len())
+        format!("pipeline library: {} ({len} bytes{})", if len != 0 { "loaded" } else { "new" },
+            if file { ", mapped from the file" } else { "" })
     });
     saver();
     Some(Library { library, _blob: blob, dirty: false })
@@ -283,6 +371,26 @@ pub(super) fn note_used(key: &str) {
 /// Publishes `bytes` at `path` through a staging file of its own (process
 /// and a per-process counter, so two writers never share one), removed when
 /// writing or publishing fails (VIctory 7d73e2b).
+/// Serialises the library into a mapped staging file and renames it over
+/// `path`; None when the staging file could not be mapped (the caller then
+/// goes through the heap).
+fn serialize_mapped(library: &ID3D12PipelineLibrary1, path: &Path, size: usize) -> Option<bool> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let pending = path.with_extension(format!("{}.{n}.map.tmp", std::process::id()));
+    let Some(mut view) = View::map(&pending, Some(size)) else {
+        let _ = std::fs::remove_file(&pending);
+        return None;
+    };
+    let ok = unsafe { library.Serialize(view.bytes_mut()) }.is_ok();
+    drop(view);
+    let published = ok && std::fs::rename(&pending, path).is_ok();
+    if !published {
+        let _ = std::fs::remove_file(&pending);
+    }
+    Some(published)
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -313,6 +421,11 @@ mod staging_tests {
     }
 }
 
+/// TUXBOX_PIPELINE_LIBRARY_MB (16384; 0 no cap).
+pub(in crate::device) fn library_cap_mb() -> u64 {
+    crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_MB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(16384)
+}
+
 /// The library's serialized size now (the pipeline builder's cap).
 pub(in crate::device) fn library_bytes() -> u64 {
     let state = LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
@@ -330,24 +443,28 @@ pub(crate) fn build_journal(threads: u32) -> u32 {
 
 fn save(dir: &Path) {
     super::stream::background::journal::flush();
-    let blob = {
+    let written = {
         let mut state = LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
         match &mut *state {
             State::Ready(Some(library)) if library.dirty => {
-                let mut blob = vec![0u8; unsafe { library.library.GetSerializedSize() }];
-                let ok = unsafe { library.library.Serialize(&mut blob) }.is_ok();
+                let size = unsafe { library.library.GetSerializedSize() };
+                let path = dir.join(LIBRARY_FILE);
+                let ok = if mapped() { serialize_mapped(&library.library, &path, size) } else { None }
+                    .unwrap_or_else(|| {
+                        let mut blob = vec![0u8; size];
+                        unsafe { library.library.Serialize(&mut blob) }.is_ok() && write_atomic(&path, &blob)
+                    });
                 library.dirty = !ok;
-                ok.then_some(blob)
+                ok.then_some(size)
             }
             _ => None,
         }
     };
-    if let Some(blob) = blob {
-        write_atomic(&dir.join(LIBRARY_FILE), &blob);
+    if let Some(len) = written {
         let (loaded, stored) = (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed));
         let (new, known) = (MISSED_NEW.load(Ordering::Relaxed), MISSED_KNOWN.load(Ordering::Relaxed));
         crate::diagnostics::log_once(&std::sync::Once::new(), || {
-            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library)", blob.len())
+            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library)", len)
         });
     }
     if let Some(names) = names() {
