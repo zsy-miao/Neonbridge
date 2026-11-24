@@ -332,6 +332,9 @@ impl Pool {
     // Restore section-backed fragments around an unmapped interval. Guest
     // aliases retain their original bytes and file offsets on both sides.
     fn unmap_view_range(&mut self, at: usize, bytes: usize) -> Result<bool, u32> {
+        // An empty range changes nothing (it would otherwise split the view
+        // holding `at` in two; VIctory 02fcf72).
+        if bytes == 0 { return Ok(true); }
         let Some((&lo, &hi)) = self.views.range(..=at).next_back() else { return Ok(false); };
         let end = at + bytes;
         if at >= hi || end > hi { return Ok(false); }
@@ -425,6 +428,7 @@ impl Pool {
     }
 
     fn map(&mut self, address: usize, bytes: usize, tokens: &[u64]) -> Result<(), u32> {
+        if bytes == 0 { return Ok(()); }
         if tokens.iter().any(|t| !self.pages.contains_key(t)) {
             return Err(ERROR_INVALID_PARAMETER);
         }
@@ -532,6 +536,7 @@ impl Pool {
     }
 
     fn unmap(&mut self, address: usize, bytes: usize) -> Result<(), u32> {
+        if bytes == 0 { return Ok(()); }
         if self.unmap_view_range(address, bytes)? { return Ok(()); }
         if let Some((base, extent)) = self.aperture(address) {
             if address + bytes > base + extent {
