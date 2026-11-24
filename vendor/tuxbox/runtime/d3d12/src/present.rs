@@ -349,7 +349,9 @@ impl SwapChain {
                 .frames
                 .get_mut(index as usize)
                 .ok_or(DXGI_ERROR_INVALID_CALL)?;
+            let retire_started = std::time::Instant::now();
             wait_for(&self.fence, frame.retire)?;
+            let retire_wait = retire_started.elapsed();
             let buffer = self.chain.GetBuffer(index)?;
             frame.allocator.Reset()?;
             frame.list.Reset(&frame.allocator, None)?;
@@ -387,7 +389,9 @@ impl SwapChain {
             let present_number = self.next;
             self.next = next_value;
             // Return DXGI status codes such as DXGI_STATUS_OCCLUDED to the guest.
+            let present_started = std::time::Instant::now();
             let status = self.chain.Present(1, DXGI_PRESENT(0));
+            present_split(retire_wait, present_started.elapsed(), self.next);
             if let Some(window_sample) = window_sample {
                 let _ = wait_for(&self.fence, present_number);
                 window_sample.report("window back buffer");
@@ -445,6 +449,27 @@ impl Drop for Presentation {
                 std::mem::forget(chain);
             }
         }
+    }
+}
+
+/// Where a present's time goes: waiting for the back buffer's previous copy
+/// to retire (GPU work queued ahead of it) or inside DXGI's Present (vsync,
+/// compositor). Averages every 64 presents. test121-126 spent ~100 ms a
+/// frame in present with the GPU 1% busy and no queue waits; this tells the
+/// two apart. Diagnostic only.
+fn present_split(retire: std::time::Duration, present: std::time::Duration, number: u64) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static RETIRE: AtomicU64 = AtomicU64::new(0);
+    static PRESENT: AtomicU64 = AtomicU64::new(0);
+    static MAX: AtomicU64 = AtomicU64::new(0);
+    RETIRE.fetch_add(retire.as_micros() as u64, Ordering::Relaxed);
+    PRESENT.fetch_add(present.as_micros() as u64, Ordering::Relaxed);
+    MAX.fetch_max(present.as_micros() as u64, Ordering::Relaxed);
+    if number % 64 == 0 {
+        let (r, p, m) = (RETIRE.swap(0, Ordering::Relaxed), PRESENT.swap(0, Ordering::Relaxed), MAX.swap(0, Ordering::Relaxed));
+        crate::diagnostics::log_line(format_args!(
+            "present split over 64 presents (to #{number}): back-buffer retire wait {:.1} ms, DXGI Present {:.1} ms avg ({:.1} ms max)",
+            r as f64 / 64e3, p as f64 / 64e3, m as f64 / 1e3));
     }
 }
 
