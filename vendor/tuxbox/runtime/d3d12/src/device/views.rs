@@ -120,6 +120,11 @@ pub(super) unsafe extern "system" fn cbv(
     };
 }
 
+/// Releases dead shadow copies and unheld imports (see shadow::release_dead).
+pub(crate) fn release_dead_shadows(device: &Device) -> usize {
+    shadow::release_dead(&device.state.shadows)
+}
+
 /// TUXBOX_VIEW_LOCKFREE=0: shadow copies and single-page heap imports are
 /// made with their cache lock held, as before (rebox b077562).
 pub(crate) fn view_lockfree() -> bool {

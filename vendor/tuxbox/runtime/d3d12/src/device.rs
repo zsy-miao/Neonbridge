@@ -1337,7 +1337,28 @@ mod traced {
         device: &Device, address: u64, desc: *const D3D12_RESOURCE_DESC, layout: D3D12_BARRIER_LAYOUT,
         clear: *const D3D12_CLEAR_VALUE, iid: *const GUID, out: Out,
     ) -> HRESULT {
-        report(133, unsafe { heap::place_virtual_layout(device, address, desc, layout, clear, iid, out) }, layout.0, desc)
+        let place = || unsafe { heap::place_virtual_layout(device, address, desc, layout, clear, iid, out) };
+        report(133, retry_out_of_memory(device, 133, place), layout.0, desc)
+    }
+
+    /// Out of memory (test39: slot 133 1024x1024 format 98, then the title's
+    /// assert): release dead shadow copies and unheld imports and try once
+    /// more, logged. TUXBOX_OOM_RETRY=0 answers the first failure.
+    pub(super) fn retry_out_of_memory(device: &Device, slot: u32, call: impl Fn() -> HRESULT) -> HRESULT {
+        use windows::Win32::Foundation::E_OUTOFMEMORY;
+        let status = call();
+        if status != E_OUTOFMEMORY || crate::env_toggle!("TUXBOX_OOM_RETRY") == Some("0") {
+            return status;
+        }
+        let released = super::views::release_dead_shadows(device);
+        let again = call();
+        static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "resource slot {slot} out of memory: released {released} dead shadows/imports, retry {again:?} ({n} so far; TUXBOX_OOM_RETRY=0 off)"));
+        }
+        again
     }
 }
 

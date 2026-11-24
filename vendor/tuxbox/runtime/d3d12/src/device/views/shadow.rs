@@ -143,6 +143,23 @@ fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<HashMap
     }
 }
 
+/// Drops every dead shadow (its view gone) and every cached import no live
+/// shadow holds, so a creation that ran out of memory can retry. Returns how
+/// many entries and imports were released.
+pub(super) fn release_dead(shadows: &Shadows) -> usize {
+    let mut entries = lock(&shadows.entries);
+    let before = entries.len();
+    entries.retain(|_, e| e.view.strong_count() > 0);
+    let held: std::collections::HashSet<usize> = entries.values()
+        .flat_map(|e| e.pieces.iter().map(|p| p.0.as_raw() as usize)).collect();
+    let released = before - entries.len();
+    drop(entries);
+    let mut sources = lock(&shadows.sources);
+    let kept = sources.len();
+    sources.retain(|_, source| held.contains(&(source.as_raw() as usize)));
+    released + (kept - sources.len())
+}
+
 /// TUXBOX_SHADOW_IMPORT_CACHE=0: every new shadow imports its title pages
 /// again. On: a shadow at a new address over pages an earlier shadow imported
 /// (ring constant buffers advancing each frame) reuses that import; the
