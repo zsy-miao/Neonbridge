@@ -324,7 +324,9 @@ unsafe fn virtual_alloc_inner(
         return super::shared_pages::replace_aperture(address, bytes);
     }
     if profile == 7 && allocation_type == (MEM_RESERVE | windows_sys::Win32::System::Memory::MEM_RESERVE_PLACEHOLDER) && protect == PAGE_NOACCESS {
-        return super::shared_pages::reserve(address, bytes);
+        let base = super::shared_pages::reserve(address, bytes);
+        if !base.is_null() { super::physical_pages::register_root(base.addr(), bytes); }
+        return base;
     }
     if profile != 1 || !(plain || watched) {
         let description = format!(

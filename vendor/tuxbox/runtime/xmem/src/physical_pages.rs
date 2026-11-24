@@ -40,6 +40,23 @@ struct Pool {
     // Only split apertures with live views are retained. An empty original
     // reservation is coalesced and may be released directly by the guest.
     apertures: BTreeMap<usize, (usize, usize)>,
+    // 6ixlaunch: title placeholder reservations (base -> root). Fresh pages
+    // mapped inside one take storage at their VA offset in the root's
+    // section, so a VA-contiguous range is one view the host GPU can import.
+    roots: BTreeMap<usize, Root>,
+}
+
+struct Root {
+    bytes: usize,
+    section: Arc<Section>,
+    bound: HashMap<u64, u64>,
+}
+
+/// 6ixlaunch: record a title placeholder reservation (XMemVirtualAlloc profile 7).
+pub(crate) fn register_root(base: usize, bytes: usize) {
+    let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    pool.roots.retain(|&b, r| b + r.bytes <= base || base + bytes <= b);
+    pool.roots.insert(base, Root { bytes, section: Arc::new(Section::new(bytes / PAGE)), bound: HashMap::new() });
 }
 
 static POOL: LazyLock<Mutex<Pool>> = LazyLock::new(|| Mutex::new(Pool::default()));
@@ -241,7 +258,71 @@ impl Pool {
             p.has_section_data = true;
             self.mappings.insert(start + i * PAGE, token);
         }
+        self.merge_views(start);
         Ok(true)
+    }
+
+    fn rebind(&mut self, address: usize, tokens: &[u64]) {
+        let Some((&rb, root)) = self.roots.range_mut(..=address).next_back() else { return };
+        if address + tokens.len() * PAGE > rb + root.bytes { return; }
+        for (i, token) in tokens.iter().enumerate() {
+            let offset = (address - rb + i * PAGE) as u64;
+            if let Some(owner) = root.bound.get(&offset) && self.pages.contains_key(owner) { continue; }
+            let Some(page) = self.pages.get_mut(token) else { continue };
+            if page.mapped || page.aliases != 0 || page.has_section_data || !page.saved.is_empty()
+                || Arc::ptr_eq(&page.section, &root.section) { continue; }
+            page.section = Arc::clone(&root.section);
+            page.offset = offset;
+            root.bound.insert(offset, *token);
+        }
+    }
+
+    fn rooted(&self, section: &Arc<Section>) -> bool {
+        self.roots.values().any(|r| Arc::ptr_eq(&r.section, section))
+    }
+
+    // 6ixlaunch: native D3D12 imports a CPU range as a heap only when it is a
+    // single mapped view. Rejoin neighbouring views that continue the same
+    // section at matching offsets, as the console's contiguous GPU ranges do.
+    fn merge_views(&mut self, mut start: usize) {
+        while let Some(&end) = self.views.get(&start) {
+            if self.views.contains_key(&end) && self.join_views(start, end) { continue; }
+            break;
+        }
+        while let Some((&lo, _)) = self.views.range(..start).next_back().filter(|&(_, &hi)| hi == start) {
+            if !self.join_views(lo, start) { break; }
+            start = lo;
+        }
+    }
+
+    fn join_views(&mut self, lo: usize, mid: usize) -> bool {
+        let hi = self.views[&mid];
+        let (a, b) = (&self.pages[&self.mappings[&lo]], &self.pages[&self.mappings[&mid]]);
+        if !Arc::ptr_eq(&a.section, &b.section) || b.offset != a.offset + (mid - lo) as u64
+            || (self.aperture(lo) != self.aperture(mid) && !self.rooted(&a.section)) {
+            return false;
+        }
+        let (section, offset) = (a.section.clone(), a.offset);
+        let joined = (|| -> Result<(), u32> {
+            shared_pages::unmap(lo)?;
+            if let Err(e) = shared_pages::unmap(mid) {
+                section.map_range(offset, lo, mid - lo)?;
+                return Err(e);
+            }
+            let merged = shared_pages::coalesce_range(lo, hi - lo);
+            if let Err(e) = merged.and_then(|_| section.map_range(offset, lo, hi - lo)) {
+                if merged.is_ok() { shared_pages::split(lo, mid - lo)?; }
+                section.map_range(offset, lo, mid - lo)?;
+                section.map_range(offset + (mid - lo) as u64, mid, hi - mid)?;
+                return Err(e);
+            }
+            Ok(())
+        })();
+        crate::loader::log(&format!("join views {lo:#x}..{mid:#x}..{hi:#x}: {joined:?}"));
+        if joined.is_err() { return false; }
+        self.views.remove(&mid);
+        self.views.insert(lo, hi);
+        true
     }
 
     // Restore section-backed fragments around an unmapped interval. Guest
@@ -315,7 +396,15 @@ impl Pool {
         self.mappings
             .try_reserve(tokens.len())
             .map_err(|_| ERROR_NOT_ENOUGH_MEMORY)?;
+        if tokens.len() >= 16 {
+            let f = &self.pages[&tokens[0]];
+            crate::loader::log(&format!("map {address:#x} pages={} token0={:#x} offset={:#x} section={:p} region={:?}",
+                tokens.len(), tokens[0], f.offset, Arc::as_ptr(&f.section),
+                shared_pages::region(address).map(|i| (i.BaseAddress, i.AllocationBase, i.RegionSize, i.State, i.Type))));
+        }
+        self.rebind(address, tokens);
         if self.map_contiguous(address, tokens)? { return Ok(()); }
+        if tokens.len() >= 16 { crate::loader::log(&format!("map {address:#x}: not one contiguous view")); }
         if self.map_shared_page(address, tokens[0])? {
             let (base, extent) = self.aperture(address).unwrap();
             for (i, &token) in tokens.iter().enumerate().skip(1) {

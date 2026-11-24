@@ -185,3 +185,21 @@ pub(super) fn coalesce(base: usize, bytes: usize) -> Result<(), u32> {
         Ok(())
     }
 }
+
+// 6ixlaunch: join adjacent placeholders exactly covering [base, base+bytes).
+pub(super) fn coalesce_range(base: usize, bytes: usize) -> Result<(), u32> {
+    if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS) } == 0 {
+        Err(unsafe { GetLastError() })
+    } else {
+        Ok(())
+    }
+}
+
+// 6ixlaunch: split the leading `bytes` off a placeholder.
+pub(super) fn split(base: usize, bytes: usize) -> Result<(), u32> {
+    if unsafe { VirtualFree(base as _, bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) } == 0 {
+        Err(unsafe { GetLastError() })
+    } else {
+        Ok(())
+    }
+}
