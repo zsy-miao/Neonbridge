@@ -7255,6 +7255,35 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_mad_i32_i24" => format!("asuint((asint({a} << 8) >> 8) * (asint({b} << 8) >> 8) + asint({c}))"),
             "v_bfe_u32" => format!("(({a} >> ({b} & 31u)) & ((1u << ({c} & 31u)) - 1u))"),
             "v_bfi_b32" => format!("(({a} & {b}) | (~{a} & {c}))"),
+            // Sums of absolute differences, unsigned and modulo 2^32 (RDNA 2 ISA, VOP3 346 to
+            // 349 and 369); src1 is the reference, and v_msad_u8 skips each byte lane whose
+            // src1 byte is zero. Port of Xbox2Windows 87e48ad7 (MIT, rm-NoobInCoding) and its
+            // earlier sad_hi_u8/sad_u32/msad_u8 rows. TB_SAD=0 refuses them as before.
+            "v_sad_u8" | "v_sad_hi_u8" | "v_msad_u8" | "v_sad_u16" | "v_sad_u32"
+                if std::env::var("TB_SAD").map_or(true, |v| v.trim() != "0") =>
+            {
+                let t = self.tmp;
+                self.tmp += 1;
+                match m.as_str() {
+                    "v_sad_u32" => format!("((max({a}, {b}) - min({a}, {b})) + {c})"),
+                    "v_sad_u16" => {
+                        self.line(&format!("uint2 sa{t} = uint2({a} & 0xffffu, {a} >> 16u);"));
+                        self.line(&format!("uint2 sb{t} = uint2({b} & 0xffffu, {b} >> 16u);"));
+                        self.line(&format!("uint2 sd{t} = max(sa{t}, sb{t}) - min(sa{t}, sb{t});"));
+                        format!("(sd{t}.x + sd{t}.y + {c})")
+                    }
+                    _ => {
+                        self.line(&format!("uint4 sa{t} = (uint4({a}, {a}, {a}, {a}) >> uint4(0u, 8u, 16u, 24u)) & 0xffu;"));
+                        self.line(&format!("uint4 sb{t} = (uint4({b}, {b}, {b}, {b}) >> uint4(0u, 8u, 16u, 24u)) & 0xffu;"));
+                        self.line(&format!("uint4 sd{t} = max(sa{t}, sb{t}) - min(sa{t}, sb{t});"));
+                        if m == "v_msad_u8" {
+                            self.line(&format!("sd{t} *= (uint4)(sb{t} != 0u);"));
+                        }
+                        let sum = format!("(sd{t}.x + sd{t}.y + sd{t}.z + sd{t}.w)");
+                        if m == "v_sad_hi_u8" { format!("(({sum} << 16u) + {c})") } else { format!("({sum} + {c})") }
+                    }
+                }
+            }
             "v_lerp_u8" => {
                 let t = self.tmp;
                 self.tmp += 1;
