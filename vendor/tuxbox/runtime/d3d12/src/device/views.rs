@@ -685,6 +685,8 @@ pub(super) unsafe extern "system" fn address_srv(
         mode.create_srv(device, native.expect("buffer import retained"), view, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("byte-offset SRV at {:#x} offset={offset} stride={stride}: {:?}", desc.address, e.code())));
     } else {
+        let mut view = view;
+        super::placement::pages::clamp_view(native, &mut view);
         unsafe { device.native.CreateShaderResourceView(native, Some(&view), handle) };
         report_bad_view("address SRV", &device.native, native, Some(&view));
     }
@@ -779,6 +781,17 @@ pub(super) unsafe extern "system" fn srv(
             .unwrap_or_else(|e| fail_call(format_args!("placed SRV offset={offset} stride={stride}: {:?}", e.code())));
     } else {
         let target = alias.as_ref().map(|(native, _)| native).or(resource);
+        // A texture whose mip 0 was left unmapped is viewed from mip 1.
+        let clamped;
+        let desc = match unsafe { desc.as_ref() } {
+            Some(view) => {
+                let mut v = *view;
+                super::placement::pages::clamp_view(target, &mut v);
+                clamped = v;
+                &raw const clamped
+            }
+            None => desc,
+        };
         unsafe { device.native.CreateShaderResourceView(target, Some(desc), handle) };
         report_bad_view("SRV", &device.native, target, unsafe { desc.as_ref() });
     }

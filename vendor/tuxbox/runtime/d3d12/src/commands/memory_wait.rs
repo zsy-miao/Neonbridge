@@ -243,7 +243,24 @@ unsafe fn wait_value(
             crate::diagnostics::log_once(&ODD, || format!("GPU memory wait comparison {comparison} waits as >="));
             7
         } };
-        let word = Word::map(list, address, wide)?;
+        // test62: the word's heap import failed (0x8007000e, commit
+        // exhausted) and the error refused the whole list, so the writes it
+        // carried never ran and other queues' waits stalled 2 s each. Drop
+        // only this wait (ordering with the signalling queue loosens);
+        // TUXBOX_WAIT_MAP_STRICT=1 refuses the list again.
+        let word = match Word::map(list, address, wide) {
+            Ok(word) => word,
+            Err(e) if address != 0 && crate::env_toggle!("TUXBOX_WAIT_MAP_STRICT") != Some("1") => {
+                static DROPPED: AtomicU64 = AtomicU64::new(0);
+                let n = DROPPED.fetch_add(1, Ordering::Relaxed);
+                if n < 4 || (n + 1).is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "GPU memory wait {address:#x} dropped: its word could not be mapped ({:?}; {} so far)", e.code(), n + 1));
+                }
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
         if comparison == 8 || (comparison == 7 && target == 0) {
             return Ok(());
         }
