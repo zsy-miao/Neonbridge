@@ -2359,6 +2359,7 @@ static QUEUE_SLOTS: Slots<64> = {
     slots[15] = crate::slot!(queue_fence::<true>);
     slots[16] = crate::slot!(queries::frequency);
     slots[17] = crate::slot!(queries::calibrate);
+    slots[18] = crate::slot!(queries::queue_desc);
     slots[23] = crate::slot!(signal_x);
     // CopyPageMappingsBatchX: the Device11 table's slot 31 less this table's
     // two-slot shift (rebox maps it at 29 on the older queue table too).
@@ -2374,6 +2375,7 @@ static DEVICE11_QUEUE_SLOTS: Slots<64> = {
     slots[17] = crate::slot!(queue_fence::<true>);
     slots[18] = crate::slot!(queries::frequency);
     slots[19] = crate::slot!(queries::calibrate);
+    slots[20] = crate::slot!(queries::queue_desc);
     slots[25] = crate::slot!(signal_x);
     slots[31] = crate::slot!(page_mapping::copy);
     slots[32] = crate::slot!(present);

@@ -165,6 +165,25 @@ pub(super) unsafe extern "system" fn frequency(queue: &Queue, hz: *mut u64) -> H
     unsafe { (host.vtable().GetTimestampFrequency)(host.as_raw(), hz) }
 }
 
+/// GetDesc in the struct-return form the title calls: (queue, hidden out
+/// buffer), the buffer's address returned in rax (palmetto 4178c742,
+/// re-derived). Unmapped, the slot answered 0 and the title read the
+/// description through a null pointer. TUXBOX_QUEUE_GETDESC_SRET=0 answers
+/// 0 as before.
+pub(super) unsafe extern "system" fn queue_desc(
+    queue: &Queue,
+    out: *mut D3D12_COMMAND_QUEUE_DESC,
+) -> *mut D3D12_COMMAND_QUEUE_DESC {
+    if out.is_null() || crate::env_toggle!("TUXBOX_QUEUE_GETDESC_SRET") == Some("0") {
+        return core::ptr::null_mut();
+    }
+    let host = &queue.native;
+    unsafe { out.write(host.GetDesc()) };
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || "queue GetDesc answered in the struct-return form (TUXBOX_QUEUE_GETDESC_SRET=0 answers 0)".into());
+    out
+}
+
 pub(super) unsafe extern "system" fn calibrate(
     queue: &Queue,
     gpu: *mut u64,
