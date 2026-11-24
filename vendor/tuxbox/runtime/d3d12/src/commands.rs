@@ -432,14 +432,22 @@ unsafe extern "system" fn reset(
                 Err(error) => error.code(),
             };
         }
-        if hr == E_INVALIDARG {
-            // Still refused with an idle allocator: the host list may have
-            // been left open by a failed recording. Close it and retry once.
-            let closed = unsafe { native.Close() };
-            hr = host_reset(&allocator.native);
-            crate::diagnostics::log_line(format_args!(
-                "list reset retry after host Close ({:?}): {:#010x}", closed.as_ref().err().map(|e| e.code()), hr.0
-            ));
+        if hr == E_INVALIDARG && state.error.is_err() {
+            // A host Close that failed (an invalid call was recorded) leaves the
+            // list unresettable forever; the title asserts on the Reset. Swap in
+            // a fresh host list, already open on this allocator.
+            hr = match unsafe { rebuild_native(list, allocator, pipeline) } {
+                Ok(()) => S_OK,
+                Err(error) => error.code(),
+            };
+            static REBUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = REBUILT.fetch_add(1, Ordering::Relaxed);
+            if n < 4 || (n + 1).is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "rebuilt host list {list:p} after a failed Close ({:#010x}): {:#010x} ({} so far)",
+                    state.error.0, hr.0, n + 1
+                ));
+            }
         }
     }
     if hr.is_ok() {
@@ -478,6 +486,35 @@ unsafe extern "system" fn reset(
         ));
     }
     hr
+}
+
+/// Replace a list's host command list with a new one, open on `allocator`.
+/// The guest is inside Reset, so no other thread records on this list, and
+/// the old host list never executed (its Close failed).
+unsafe fn rebuild_native(list: &List, allocator: &device::Allocator, pipeline: *mut c_void) -> windows::core::Result<()> {
+    let old = &list.native;
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { old.GetDevice(&mut device)? };
+    let device = device.ok_or(E_FAIL)?;
+    let kind = unsafe { old.GetType() };
+    let pso = unsafe { ID3D12PipelineState::from_raw_borrowed(&pipeline) };
+    let fresh: ID3D12GraphicsCommandList = match unsafe { device.CreateCommandList(0, kind, &allocator.native, pso) } {
+        Ok(fresh) => fresh,
+        Err(_) => {
+            let extra = device::add_overflow_allocator(allocator, kind)?;
+            unsafe { device.CreateCommandList(0, kind, &extra, pso)? }
+        }
+    };
+    let raytracing = if list.state.raytracing.is_some() { Some(fresh.cast::<ID3D12GraphicsCommandList4>()?) } else { None };
+    // SAFETY: see above; these fields are only read by recording calls.
+    unsafe {
+        drop(ptr::replace(ptr::addr_of!(list.state.extended).cast_mut(), OnceLock::new()));
+        drop(ptr::replace(ptr::addr_of!(list.state.enhanced_barriers).cast_mut(), OnceLock::new()));
+        drop(ptr::replace(ptr::addr_of!(list.state.mesh).cast_mut(), OnceLock::new()));
+        drop(ptr::replace(ptr::addr_of!(list.state.raytracing).cast_mut(), raytracing));
+        drop(ptr::replace(ptr::addr_of!(list.native).cast_mut(), fresh));
+    }
+    Ok(())
 }
 
 unsafe extern "system" fn close(list: &List) -> HRESULT {
