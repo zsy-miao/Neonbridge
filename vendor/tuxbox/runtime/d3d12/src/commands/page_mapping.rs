@@ -178,15 +178,43 @@ impl Mappings {
                 checked.ok()?;
             }
         }
-        unsafe {
+        let whole = unsafe {
             (self.apply)(
                 batches.len() as u32,
                 batches.as_ptr(),
                 self.source,
                 self.pages,
             )
+        };
+        if whole != E_INVALIDARG || batches.len() < 2 || strict() {
+            return whole.ok();
         }
-        .ok()
+        // test43-76 refused about 30 calls a run with E_INVALIDARG (up to 881
+        // batches into the title's 6236 MiB pool) and xmem gave no reason; the
+        // whole call mapped nothing. Each batch is applied on its own, in
+        // order, so only the refused ones stay unmapped; they are logged.
+        // TUXBOX_PAGE_MAPPING_STRICT=1 refuses the whole call as before.
+        let mut refused = Vec::new();
+        for (i, batch) in batches.iter().enumerate() {
+            let one = unsafe { (self.apply)(1, batch, self.source, self.pages) };
+            if one.is_err() {
+                refused.push((i, batch.destination, batch.count, one));
+            }
+        }
+        static SPLITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SPLITS.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            let shown: Vec<String> = refused.iter().take(4)
+                .map(|(i, at, count, hr)| format!("#{i} at {at:#x} ({count} ranges): {:#x}", hr.0 as u32))
+                .collect();
+            crate::diagnostics::log_line(format_args!(
+                "CopyPageMappingsBatchX refused whole: applied its {} batches one by one, {} refused [{}] ({n} so far; TUXBOX_PAGE_MAPPING_STRICT=1 refuses)",
+                batches.len(), refused.len(), shown.join(", ")));
+        }
+        if refused.len() == batches.len() {
+            return Err(E_INVALIDARG.into());
+        }
+        Ok(())
     }
 }
 

@@ -1016,6 +1016,13 @@ impl Placements {
     }
 }
 
+/// Whether a queue waits on placed-texture fences of other queues (off unless
+/// TUXBOX_PLACED_CROSS_WAITS=1).
+fn cross_waits() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PLACED_CROSS_WAITS") == Some("1"))
+}
+
 struct PendingWrite {
     // The readback job owns the image only through native completion. An idle
     // queue need not keep its last frame's GPU allocations alive indefinitely.
@@ -1140,8 +1147,15 @@ pub(crate) unsafe fn submit(
             }
             // CPU bytes still contain the old version. The native image contains
             // the ordered GPU write and can be read directly by the next batch.
-            unsafe { queue.Wait(&write.published, write.tick)? };
-            crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture write-back publication", &write.published, write.tick);
+            // test76: this wait held the title's writer queue 2 s at 0 of 4761
+            // while the writing queue waited on the title. The writing queue
+            // already waits for its own publication, and the title orders its
+            // queues itself, so no queue waits here unless
+            // TUXBOX_PLACED_CROSS_WAITS=1.
+            if cross_waits() {
+                unsafe { queue.Wait(&write.published, write.tick)? };
+                crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture write-back publication", &write.published, write.tick);
+            }
             pending = true;
         }
         if !pending {
@@ -1162,7 +1176,9 @@ pub(crate) unsafe fn submit(
     }
     for texture in writes.iter() {
         for (fence, value) in &lock(&texture.contents).readers {
-            if fence != reader && unsafe { fence.GetCompletedValue() } < *value {
+            // Another queue's read: the title orders it (test76 held a queue
+            // 1.8 s on one), so it is waited on only with TUXBOX_PLACED_CROSS_WAITS=1.
+            if cross_waits() && fence != reader && unsafe { fence.GetCompletedValue() } < *value {
                 unsafe { queue.Wait(fence, *value)? };
                 crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture reader", fence, *value);
             }

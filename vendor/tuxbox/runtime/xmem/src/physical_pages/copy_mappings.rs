@@ -125,6 +125,19 @@ impl Pool {
             Ok(())
         })();
         if let Err(error) = apply {
+            // test43-76: about 30 calls a run failed 0x80070057 with no
+            // reason; name the page, its change and the OS error.
+            if let Some(entry) = updates.get(done) {
+                static FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    let region = crate::shared_pages::region(entry.at).ok();
+                    crate::loader::log(&format!(
+                        "page mappings: page {:#x} ({:?} -> {:?}, {} of {} done) failed error {error}; region {:?} ({n} so far)",
+                        entry.at, entry.old, entry.new, done, updates.len(),
+                        region.map(|r| (r.AllocationBase.addr(), r.BaseAddress.addr(), r.RegionSize, r.State, r.AllocationProtect, r.Type))));
+                }
+            }
             for entry in updates[..done].iter().rev() {
                 self.apply_alias(entry.at, entry.old)?;
             }
