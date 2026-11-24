@@ -133,10 +133,16 @@ impl AutoStart {
                 if *polls <= 4 || now - *since < 400_000 {
                     return true;
                 }
-                if A_READ.load(Relaxed) {
+                // Debug runs: TUXBOX_AUTO_PRESSES=N keeps pressing A every 3 s, N presses
+                // in all, to walk past the menus (default 1: one press the title read).
+                let wanted = std::env::var("TUXBOX_AUTO_PRESSES").ok().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(1);
+                if A_READ.load(Relaxed) && *tries < wanted {
+                    eprintln!("TuxBox gameinput: auto start: the title read the A; press {tries} of {wanted} (TUXBOX_AUTO_PRESSES)");
+                    *self = Self::Waiting { delay: 3_000_000, since: Some(now), tries: *tries };
+                } else if A_READ.load(Relaxed) {
                     eprintln!("TuxBox gameinput: auto start: the title read the A; no further presses");
                     *self = Self::Done;
-                } else if *tries >= TRIES {
+                } else if *tries >= TRIES.max(wanted) {
                     eprintln!("TuxBox gameinput: auto start: the title never read the A after {TRIES} tries; giving up");
                     *self = Self::Done;
                 } else {
