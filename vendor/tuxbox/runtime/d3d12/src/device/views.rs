@@ -1085,9 +1085,87 @@ pub(super) unsafe extern "system" fn uav(
     }
 }
 
+/// Whether this device can make a typed UAV in `format` and store through it
+/// (D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW and
+/// D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE), asked once per format.
+fn typed_store(device: &ID3D12Device, format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT) -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static KNOWN: [AtomicU8; 256] = [const { AtomicU8::new(0) }; 256];
+    let Some(slot) = KNOWN.get(format.0 as usize) else { return true };
+    match slot.load(Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
+    let mut support = D3D12_FEATURE_DATA_FORMAT_SUPPORT { Format: format, ..Default::default() };
+    let asked = unsafe {
+        device.CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, (&raw mut support).cast(), size_of_val(&support) as u32)
+    };
+    let yes = asked.is_err()
+        || (support.Support1.contains(D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW)
+            && support.Support2.contains(D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE));
+    slot.store(if yes { 1 } else { 2 }, Ordering::Relaxed);
+    yes
+}
+
+/// The typed format a UAV stores through, when it is typed: its own, or the
+/// resource's when it names none. Raw and structured buffer views are untyped.
+fn uav_typed_format(resource: Option<&ID3D12Resource>, view: &D3D12_UNORDERED_ACCESS_VIEW_DESC) -> Option<windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT> {
+    if view.ViewDimension == D3D12_UAV_DIMENSION_BUFFER {
+        let buffer = unsafe { view.Anonymous.Buffer };
+        if view.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN || buffer.StructureByteStride != 0
+            || buffer.Flags.contains(D3D12_BUFFER_UAV_FLAG_RAW)
+        {
+            return None;
+        }
+        return Some(view.Format);
+    }
+    let format = if view.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN { unsafe { resource?.GetDesc() }.Format } else { view.Format };
+    (format != windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN).then_some(format)
+}
+
+fn typed_uav_guard() -> bool {
+    crate::env_toggle!("TUXBOX_TYPED_UAV_GUARD") != Some("0")
+}
+
 /// CreateUnorderedAccessView that logs, once, the call that removes the device.
+///
+/// A typed UAV in a format this device cannot store through (B5G5R5A1, say,
+/// which the console stores and NVIDIA does not) is an invalid description
+/// whatever the resource's family or castable list, and NVIDIA removes the
+/// device at startup for it (VIctory-zhai ca168de and dbd4fc2, GPL-3.0, with
+/// credit). It is written as a null view of R32_UINT, and the first one of
+/// each format is logged with the resource: the shader's stores to it are
+/// lost until that format is given a storable host twin.
+/// TUXBOX_TYPED_UAV_GUARD=0 passes it to the driver.
 unsafe fn checked_uav(device: &Device, resource: Option<&ID3D12Resource>, counter: Option<&ID3D12Resource>,
     desc: *const D3D12_UNORDERED_ACCESS_VIEW_DESC, handle: D3D12_CPU_DESCRIPTOR_HANDLE) {
+    let mut refused = None;
+    if let Some(view) = unsafe { desc.as_ref() } && typed_uav_guard()
+        && let Some(format) = uav_typed_format(resource, view)
+        && !typed_store(&device.native, format)
+    {
+        static LOGGED: [std::sync::atomic::AtomicBool; 256] = [const { std::sync::atomic::AtomicBool::new(false) }; 256];
+        if LOGGED.get(format.0 as usize).is_some_and(|l| !l.swap(true, std::sync::atomic::Ordering::Relaxed)) {
+            let res = resource.map(|r| unsafe { r.GetDesc() });
+            crate::diagnostics::log_line(format_args!(
+                "typed UAV in format {} refused: this device cannot store through it; written null, so its stores are lost (view dimension {}; resource {:?}; TUXBOX_TYPED_UAV_GUARD=0 passes it on)",
+                format.0, view.ViewDimension.0,
+                res.map(|r| format!("dimension={} {}x{}x{} format={} flags={:#x}", r.Dimension.0, r.Width, r.Height, r.DepthOrArraySize, r.Format.0, r.Flags.0))));
+        }
+        let mut null = *view;
+        null.Format = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_UINT;
+        match null.ViewDimension {
+            D3D12_UAV_DIMENSION_TEXTURE2D => null.Anonymous.Texture2D.PlaneSlice = 0,
+            D3D12_UAV_DIMENSION_TEXTURE2DARRAY => null.Anonymous.Texture2DArray.PlaneSlice = 0,
+            _ => {}
+        }
+        refused = Some(null);
+    }
+    let (resource, counter, desc) = match &refused {
+        Some(null) => (None, None, core::ptr::from_ref(null)),
+        None => (resource, counter, desc),
+    };
     let before = unsafe { device.native.GetDeviceRemovedReason() }.is_ok();
     unsafe { device.native.CreateUnorderedAccessView(resource, counter, Some(desc), handle) };
     if before && unsafe { device.native.GetDeviceRemovedReason() }.is_err() {
