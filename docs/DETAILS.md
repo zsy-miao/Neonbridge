@@ -13,7 +13,7 @@ What the Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own 
 - **Saves:** XGameSave containers are stored under `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`, and the game loads its "Player" save on the next launch.
 - **Offline and contained:** the game's network calls fail as "no network", its `D:` drive is a local folder, and it runs in a job that ends with the launcher.
 - **Audio:** sound plays but comes in 3 s bursts. The game's Opus stream is fed at about 15% of real time; the console DSP (`chad`) no longer refuses commands, which is the likely cause, and the next run will confirm it.
-- **Menus:** dialogs, text entry, speech and relaunch requests are answered, so the menus no longer wait on missing console UI. After the settings screen the game starts loading the level; a memory-join fix for that point is in and not yet run.
+- **Menus:** dialogs, text entry, speech and relaunch requests are answered, so the menus no longer wait on missing console UI. The game now gets through the menus to the loading screen (the Leonida artwork); loading the world is next.
 - **Longest run:** 344 s, ending on a fail-fast exit (`0xc0000602`). Crash records now name the import or function a crash went through.
 
 ## Runtime fixes
@@ -112,7 +112,7 @@ These are in the vendored TuxBox provider:
 
 - **Audio:** plays in 3 s bursts. The `chad` fix is the likely cure and needs a run.
 - **Frame rate:** about 15-16 fps. Import caching for per-frame buffers is in and needs a run; placed-resource imports still re-open memory.
-- **After settings:** the level-loading memory fix needs a run. Other projects' next known stops are a stream-buffer overflow at about 98 s and a bad free at about 124 s.
+- **Loading screen:** the game reaches it; a GPU import at title RVA 0x4ecc821 still fails fast later in loading and is being given the CBV-style fallback. Other projects' next known stops are a stream-buffer overflow at about 98 s and a bad free at about 124 s.
 - **BCPack textures:** shown as grey blocks until a decoder is written (about 14% of textures).
 - **Later screens:** blend patches from derived pipelines are logged but not applied yet.
 - **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders.

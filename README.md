@@ -4,7 +4,7 @@
 
 **Neonbridge is an open-source GTA VI (GTA 6) launcher for Windows PC.** It runs the Xbox Series X|S build of Grand Theft Auto VI, dumped from a console you own, natively on Windows. It **isn't playable yet**. No game files are included or linked.
 
-![GTA 6 on PC progress: boot, intro and player select work; menus in progress](assets/progress.svg)
+![GTA 6 on PC progress: boot, intro, player select and menus work; it reaches the loading screen](assets/progress.svg)
 
 ![How Neonbridge runs the GTA 6 Xbox executable on Windows](assets/how-it-works.svg)
 
@@ -25,7 +25,7 @@ The game window must be in front. `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real p
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet. It gets into the menus but isn't playable.
+- **Can I play GTA 6 on PC with this?** Not yet. It gets through the menus to the loading screen but isn't playable.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and about 20 GB of free commit (RAM plus page file).
@@ -33,9 +33,9 @@ The game window must be in front. `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real p
 
 ## Roadmap
 
-1. **Through the menus:** fix the menu crash and draw later screens.
+1. **Load the world:** get past the loading screen.
 2. **Clean audio:** close the gaps in the game's sound stream.
-3. **Speed:** past 16 fps.
+3. **Speed:** hold 22 fps and beyond.
 4. **Correct pictures:** BCPack textures and 5551 colour.
 5. **Playable:** load into the world.
 
