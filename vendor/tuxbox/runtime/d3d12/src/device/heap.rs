@@ -788,6 +788,8 @@ fn tiled_alias(device: &Device, base: u64, host: &D3D12_RESOURCE_DESC) -> window
 pub(super) struct RenderHeap {
     native: ID3D12Heap,
     end: u64,
+    /// holds a render target or depth image (`rank`)
+    renderable: std::sync::atomic::AtomicBool,
     _live: crate::diagnostics::memory::Live,
 }
 
@@ -826,6 +828,9 @@ impl RenderHeaps {
             && heap.end > address
             && end <= heap.end
             && let Some(offset) = heap_offset(base, address, alignment) {
+            if renderable && !heap.renderable.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                rank(device, &heap.native, true, end - address);
+            }
             return Ok((heap, offset));
         }
         // The title reuses guest memory for a larger or differently placed
@@ -864,12 +869,47 @@ impl RenderHeaps {
         };
         let mut native = None;
         unsafe { device.CreateHeap(&desc, &mut native)? };
-        let heap = Arc::new(RenderHeap { native: native.ok_or(E_POINTER)?, end: stop,
+        let native = native.ok_or(E_POINTER)?;
+        rank(device, &native, renderable, desc.SizeInBytes);
+        let heap = Arc::new(RenderHeap { native, end: stop, renderable: renderable.into(),
             _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes) });
         heaps.insert(start, Arc::downgrade(&heap));
         drop(heaps);
         note_shadowed(covered, desc.SizeInBytes);
         Ok((heap, address - start))
+    }
+}
+
+/// test94 sat 730 MiB over the device-local budget with 2.6 GB of render
+/// heaps at the default priority, which leaves the video memory manager no
+/// hint about which heaps to demote. Nothing records which render heaps a
+/// submission uses, so evicting them (as page pools and spans are) could
+/// evict one in use (test59). Instead a heap of sampled images only gets
+/// LOW priority and one holding a render target or depth image HIGH, so
+/// sampled images go to system memory before the targets each frame
+/// writes. TUXBOX_RENDER_HEAP_PRIORITY=0 leaves the default.
+fn rank(device: &ID3D12Device, heap: &ID3D12Heap, renderable: bool, bytes: u64) {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static HIGH: AtomicU64 = AtomicU64::new(0);
+    static LOW: AtomicU64 = AtomicU64::new(0);
+    if crate::env_toggle!("TUXBOX_RENDER_HEAP_PRIORITY") == Some("0") {
+        return;
+    }
+    let Ok(device1) = device.cast::<ID3D12Device1>() else { return };
+    let Ok(pageable) = heap.cast::<ID3D12Pageable>() else { return };
+    let priority = if renderable { D3D12_RESIDENCY_PRIORITY_HIGH } else { D3D12_RESIDENCY_PRIORITY_LOW };
+    if let Err(e) = unsafe { device1.SetResidencyPriority(1, &Some(pageable), &priority) } {
+        static FAILED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FAILED, || format!("render heaps: SetResidencyPriority failed {e}"));
+        return;
+    }
+    let (counter, other) = if renderable { (&HIGH, &LOW) } else { (&LOW, &HIGH) };
+    let mib = counter.fetch_add(bytes, Relaxed) + bytes >> 20;
+    let before = mib.saturating_sub(bytes >> 20);
+    if mib >> 9 != before >> 9 {
+        crate::diagnostics::log_line(format_args!(
+            "render heaps: {} MiB ranked {} (and {} MiB {}); sampled-only heaps LOW, render or depth targets HIGH (TUXBOX_RENDER_HEAP_PRIORITY=0 off)",
+            mib, if renderable { "HIGH" } else { "LOW" }, other.load(Relaxed) >> 20, if renderable { "LOW" } else { "HIGH" }));
     }
 }
 
