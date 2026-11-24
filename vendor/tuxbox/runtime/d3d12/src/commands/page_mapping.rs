@@ -173,6 +173,8 @@ impl Mappings {
                 // logged; TUXBOX_PINNED_REMAP=0 refuses as before.
                 if checked == E_NOTIMPL && pinned_remap() {
                     pinned_remapped(import);
+                    // Later imports of this range must open the new pages.
+                    crate::device::retire_imports_over(import.start, import.end);
                     continue;
                 }
                 checked.ok()?;

@@ -194,6 +194,11 @@ pub(crate) fn release_shadows_over(lo: u64, hi: u64) -> usize {
     views::release_shadows_over(lo, hi)
 }
 
+/// Cached heap imports over [lo, hi), whose pages were remapped, dropped (heap.rs).
+pub(crate) fn retire_imports_over(lo: u64, hi: u64) -> usize {
+    heap::retire_imports_over(lo, hi)
+}
+
 pub(crate) fn overflow_allocators(guest: &Allocator) -> Vec<ID3D12CommandAllocator> {
     let key = guest as *const Allocator as usize;
     let table = OVERFLOW.lock().unwrap_or_else(|e| e.into_inner());

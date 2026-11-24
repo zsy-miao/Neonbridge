@@ -706,6 +706,42 @@ fn import_or_back(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC, sta
 }
 
 type ImportKey = (usize, u64, u64);
+
+/// TuxBox 45c7395 (Valdi320, Apache-2.0) checks that an import made after a
+/// queue-ordered XMem remap reads the new pages, with exactly one stale
+/// import retired. Ours did not retire it: CopyPageMappingsBatchX replacing
+/// pages under a live import (page_mapping.rs pinned_remapped; test137 did
+/// 512+ of them) leaves that heap on the old physical pages, and while a
+/// resource still held it, the live-import cache and a pool's last-page cache
+/// handed the same stale heap to every later import of the range, so new
+/// buffers read and wrote the pages the title had already replaced. Such a
+/// remap now drops the cached heaps over the range; resources made before it
+/// keep theirs, as on the console where they were created over the old pages.
+/// TUXBOX_IMPORT_RETIRE=0 keeps reusing them, as before.
+pub(crate) fn retire_imports_over(lo: u64, hi: u64) -> usize {
+    if crate::env_toggle!("TUXBOX_IMPORT_RETIRE") == Some("0") {
+        return 0;
+    }
+    RETIRED.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(map) = live.as_mut() else { return 0 };
+    let before = map.len();
+    map.retain(|&(_, base, size), _| !(base < hi && lo < base.saturating_add(size)));
+    let retired = before - map.len();
+    drop(live);
+    static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = TOTAL.fetch_add(retired as u64, std::sync::atomic::Ordering::Relaxed) + retired as u64;
+    static LINES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let line = LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if line <= 8 || line.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "heap import: pages under {lo:#x}..{hi:#x} remapped while imported: retired {retired} cached imports there, later imports open the new pages ({n} so far; TUXBOX_IMPORT_RETIRE=0 off)"));
+    }
+    retired
+}
+
+/// Bumped by each retirement: a pool's last-page cache from before it is stale.
+static RETIRED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Live imports by (device, base, size), reused while something holds them.
 static LIVE: std::sync::Mutex<Option<std::collections::HashMap<ImportKey, std::sync::Weak<ImportedHeap>>>> = std::sync::Mutex::new(None);
 /// Ranges being opened now (one opener each; see `PagePools::import`).
@@ -1681,7 +1717,8 @@ struct PagePool {
     id: u64,
     start: u64,
     end: u64,
-    last_page: Option<(u64, std::sync::Weak<ImportedHeap>)>,
+    /// The last single page opened, and the RETIRED count when it was.
+    last_page: Option<(u64, std::sync::Weak<ImportedHeap>, u64)>,
 }
 
 impl PagePools {
@@ -1763,13 +1800,14 @@ impl PagePools {
             if let Some(pool) = pools.values_mut().find(|pool| pool.start <= base && base + size <= pool.end) {
                 // Nearby suballocations often share one page. The resources
                 // keep their own heap references after this cache advances.
-                if let Some((cached, heap)) = &pool.last_page && *cached == base && let Some(heap) = heap.upgrade() {
+                let retired = RETIRED.load(std::sync::atomic::Ordering::Acquire);
+                if let Some((cached, heap, at)) = &pool.last_page && *cached == base && *at == retired && let Some(heap) = heap.upgrade() {
                     return Ok(heap);
                 }
                 let (key, id) = (core::ptr::from_ref(pool.as_ref()).addr(), pool.id);
                 if !super::views::view_lockfree() {
                     let heap = open()?;
-                    pool.last_page = Some((base, Arc::downgrade(&heap)));
+                    pool.last_page = Some((base, Arc::downgrade(&heap), retired));
                     return Ok(heap);
                 }
                 // Open without the pool lock (an import takes milliseconds and
@@ -1780,7 +1818,7 @@ impl PagePools {
                 // Only the pool the heap was opened for: one unregistered
                 // meanwhile and another allocated at its address is not it.
                 if let Some(pool) = pools.get_mut(&key).filter(|pool| pool.id == id) {
-                    pool.last_page = Some((base, Arc::downgrade(&heap)));
+                    pool.last_page = Some((base, Arc::downgrade(&heap), retired));
                 }
                 return Ok(heap);
             }
