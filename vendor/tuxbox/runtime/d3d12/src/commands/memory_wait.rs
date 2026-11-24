@@ -370,6 +370,7 @@ impl Worker {
                             }
                             std::thread::sleep(Duration::from_millis(1));
                         }
+                        slow::memory_wait(job.segment.address, job.segment.target, job.queue, started.elapsed());
                         crate::diagnostics::cost::add(
                             crate::diagnostics::cost::Bucket::MemoryWait, started.elapsed().as_nanos() as u64);
                         unsafe { job.fence.Signal(2)?; }
@@ -404,6 +405,66 @@ pub(super) type Splits = Vec<(usize, Arc<Segment>)>;
 /// The lists submitted before the wait of list `index` (from `start`), and
 /// where the rest begins: the batch splits before each waiting list, not
 /// once per batch.
+/// Wait diagnostics (rebox f65379f, re-derived; TUXBOX_WAIT_LOGS=0 off):
+/// a queue Wait on a fence value not yet signalled when it is queued, and a
+/// memory wait met only after TUXBOX_SLOW_WAIT_MS (default 50 ms).
+pub(super) mod slow {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+    use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
+
+    fn on() -> bool {
+        crate::env_toggle!("TUXBOX_WAIT_LOGS") != Some("0")
+    }
+
+    pub(crate) fn threshold() -> Duration {
+        Duration::from_millis(crate::env_toggle!("TUXBOX_SLOW_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(50))
+    }
+
+    /// Log the first 8, then at powers of two.
+    fn due(count: &AtomicU64) -> Option<u64> {
+        let n = count.fetch_add(1, Ordering::Relaxed) + 1;
+        (n <= 8 || n.is_power_of_two()).then_some(n)
+    }
+
+    pub(crate) fn queue_wait(queue: usize, fence: &ID3D12Fence, value: u64) {
+        if !on() {
+            return;
+        }
+        let now = unsafe { fence.GetCompletedValue() };
+        if now >= value {
+            return;
+        }
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        if let Some(n) = due(&COUNT) {
+            crate::diagnostics::log_line(format_args!(
+                "queue {queue:#x} waits on fence {:p} for {value} not yet signalled (now {now}; {n} such waits)",
+                windows::core::Interface::as_raw(fence)
+            ));
+        }
+    }
+
+    pub(crate) fn memory_wait(address: u64, target: u64, queue: usize, waited: Duration) {
+        if !on() || waited < threshold() {
+            return;
+        }
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        if let Some(n) = due(&COUNT) {
+            crate::diagnostics::log_line(format_args!(
+                "GPU memory wait {address:#x} >= {target:#x} on queue {queue:#x} met after {waited:?} ({n} slow waits)"
+            ));
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn logging_thins_out_after_eight() {
+        let c = AtomicU64::new(0);
+        let logged: Vec<u64> = (0..40).filter_map(|_| due(&c)).collect();
+        assert_eq!(logged, vec![1, 2, 3, 4, 5, 6, 7, 8, 16, 32]);
+    }
+}
+
 fn split_before(start: usize, index: usize) -> (core::ops::Range<usize>, usize) {
     (start..index.max(start), index.max(start))
 }

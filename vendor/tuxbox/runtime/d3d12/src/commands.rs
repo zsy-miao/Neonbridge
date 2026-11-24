@@ -2161,6 +2161,9 @@ unsafe extern "system" fn queue_fence<const WAIT: bool>(
     } else {
         queue.native.vtable().Signal
     };
+    if WAIT {
+        memory_wait::slow::queue_wait(queue.native.as_raw() as usize, fence, value);
+    }
     let status = unsafe { method(queue.native.as_raw(), fence.as_raw(), value) };
     if !WAIT && status.is_ok() {
         static FIRST: std::sync::Once = std::sync::Once::new();
