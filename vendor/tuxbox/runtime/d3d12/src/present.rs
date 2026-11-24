@@ -100,7 +100,7 @@ impl Frame {
 struct SwapChain {
     chain: IDXGISwapChain3,
     fence: ID3D12Fence,
-    frames: [Frame; 2],
+    frames: [Frame; 3],
     window: OutputWindow,
     width: u32,
     height: u32,
@@ -130,7 +130,9 @@ impl SwapChain {
                     Quality: 0,
                 },
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-                BufferCount: 2,
+                // Three buffers: the CPU's next present does not wait on the
+                // previous frame's copy and flip (xcl #674).
+                BufferCount: 3,
                 SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
                 Scaling: DXGI_SCALING_STRETCH,
                 AlphaMode: DXGI_ALPHA_MODE_IGNORE,
@@ -141,7 +143,7 @@ impl SwapChain {
             Ok(Self {
                 chain: base.cast()?,
                 fence: device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?,
-                frames: [Frame::new(device)?, Frame::new(device)?],
+                frames: [Frame::new(device)?, Frame::new(device)?, Frame::new(device)?],
                 window,
                 width: params.Width,
                 height: params.Height,
@@ -251,6 +253,11 @@ fn wait_for(fence: &ID3D12Fence, value: u64) -> Result<()> {
         }
         if completed < value {
             fence.SetEventOnCompletion(value, HANDLE::default())?;
+            // Device removal also ends the wait: the fence then reads the
+            // maximum value, which completes no frame (xbox-emulator #351).
+            if fence.GetCompletedValue() == u64::MAX {
+                return Err(DXGI_ERROR_DEVICE_REMOVED.into());
+            }
         }
     }
     Ok(())

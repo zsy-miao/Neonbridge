@@ -724,6 +724,18 @@ unsafe extern "system" fn create_queue(
     let Some(desc) = (unsafe { desc.as_ref() }) else {
         return E_INVALIDARG;
     };
+    // Console-only queue flags have no host meaning; the desktop's one flag
+    // (DISABLE_GPU_TIMEOUT) is kept (xbox-emulator #338).
+    let masked = D3D12_COMMAND_QUEUE_DESC {
+        Flags: D3D12_COMMAND_QUEUE_FLAGS(desc.Flags.0 & D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT.0),
+        ..*desc
+    };
+    if masked.Flags != desc.Flags {
+        static DROPPED: std::sync::Once = std::sync::Once::new();
+        let flags = desc.Flags.0;
+        crate::diagnostics::log_once(&DROPPED, || format!("queue flags {flags:#x}: console-only bits dropped"));
+    }
+    let desc = &masked;
     if !supported_queue_kind(desc.Type)
         || !matches!(
             D3D12_COMMAND_QUEUE_PRIORITY(desc.Priority),
