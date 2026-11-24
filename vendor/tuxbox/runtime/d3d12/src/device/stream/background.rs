@@ -40,6 +40,8 @@ pub(crate) struct Upgrade {
     deferred: Mutex<Option<(IUnknown, Work)>>,
     /// A worker found no translation for it: it stays a null pipeline.
     failed: std::sync::atomic::AtomicBool,
+    /// The thread id of the worker building it, 0 when none is.
+    running: std::sync::atomic::AtomicU32,
 }
 
 // SAFETY: D3D12 objects are free-threaded. The built state is published once
@@ -64,7 +66,7 @@ static DONE: (Mutex<()>, std::sync::Condvar) = (Mutex::new(()), std::sync::Condv
 /// An upgrade that is never built: a pipeline holding it stays the shared
 /// placeholder and command lists drop its draws and dispatches.
 pub(crate) fn never() -> Arc<Upgrade> {
-    let slot = Upgrade { built: OnceLock::new(), deferred: Mutex::new(None), failed: std::sync::atomic::AtomicBool::new(true) };
+    let slot = Upgrade { failed: std::sync::atomic::AtomicBool::new(true), ..Default::default() };
     Arc::new(slot)
 }
 
@@ -79,9 +81,17 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     }
     let deferred = slot.deferred.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some((device, work)) = deferred {
-        send(Job { device, work, slot: slot.clone() }, true);
+        let job = Job { device, work, slot: slot.clone() };
+        match small(&job) {
+            true => inline(job),
+            false => send(job, true),
+        }
+        if let Some(built) = slot.built.get() {
+            return Some(built);
+        }
     } else {
         promote(slot);
+        hurry(slot);
     }
     let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::PipelineWait);
     let (lock, done) = &DONE;
@@ -95,6 +105,74 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     }
     drop(held);
     slot.built.get()
+}
+
+/// five-star-recomp 8fa5672 (GPL-3.0): a small compute pipeline (a culling
+/// or clear initialiser) is made on the title's thread at its first bind
+/// instead of losing to a frame budget already spent. Its translator wait still
+/// counts against that budget; one that is not made goes to the workers.
+/// TUXBOX_SMALL_COMPUTE_BYTES (16384; 0 off) sets the shader size limit.
+fn small(job: &Job) -> bool {
+    static LIMIT: OnceLock<usize> = OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| std::env::var("TUXBOX_SMALL_COMPUTE_BYTES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(16384));
+    !on_worker() && matches!(&job.work, Work::Compute(c) if !c.code.is_empty() && c.code.len() <= limit)
+}
+
+fn inline(mut job: Job) {
+    static INLINE: AtomicU64 = AtomicU64::new(0);
+    static REQUEUED: AtomicU64 = AtomicU64::new(0);
+    let made = crate::big_stack::run(|| {
+        WORKER.with(|w| w.set(true));
+        NULLED.with(|n| n.set(false));
+        // SAFETY: a device proxy begins with its IUnknown identity, retained by the job.
+        let device = unsafe { &*job.device.as_raw().cast::<Device>() };
+        let iid = ID3D12PipelineState::IID;
+        let mut out = ptr::null_mut();
+        let Work::Compute(compute) = &mut job.work else { return None };
+        let desc = compute.desc();
+        let status = unsafe { create_pipeline_x(device, &desc, 0, ptr::null(), &iid, &mut out) };
+        WORKER.with(|w| w.set(false));
+        let nulled = NULLED.with(|n| n.replace(false));
+        let made = (status.is_ok() && !out.is_null()).then(|| unsafe { IUnknown::from_raw(out) });
+        made.filter(|_| !nulled)
+    });
+    match made {
+        Some(proxy) => {
+            let _ = job.slot.built.set(Built(proxy));
+            let n = INLINE.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "background pipelines: a small compute pipeline made at its first bind on the title's thread ({n} so far, {} sent on to the workers; TUXBOX_SMALL_COMPUTE_BYTES=0 off)",
+                    REQUEUED.load(Ordering::Relaxed)));
+            }
+        }
+        None => {
+            REQUEUED.fetch_add(1, Ordering::Relaxed);
+            send(job, true);
+        }
+    }
+}
+
+/// xcl's idea (re-derived): a pipeline the title is waiting on that a worker
+/// is already building gets that worker raised to normal priority; the
+/// worker drops back after the build. TUXBOX_PIPELINE_HURRY=0 off.
+fn hurry(slot: &Upgrade) {
+    let id = slot.running.load(Ordering::Acquire);
+    if id == 0 || slot.built.get().is_some() || crate::env_toggle!("TUXBOX_PIPELINE_HURRY") == Some("0") {
+        return;
+    }
+    use windows::Win32::System::Threading::*;
+    let Ok(thread) = (unsafe { OpenThread(THREAD_SET_LIMITED_INFORMATION, false, id) }) else { return };
+    let raised = unsafe { SetThreadPriority(thread, THREAD_PRIORITY_NORMAL) }.is_ok();
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(thread) };
+    static HURRIED: AtomicU64 = AtomicU64::new(0);
+    if raised {
+        let n = HURRIED.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "background pipelines: a worker building a pipeline the title waits on raised to normal priority ({n} so far; TUXBOX_PIPELINE_HURRY=0 off)"));
+        }
+    }
 }
 
 /// A pipeline the title created but no command list bound yet. Its proxy
@@ -471,6 +549,7 @@ fn build(mut job: Job) {
         let iid = ID3D12PipelineState::IID;
         let mut out = ptr::null_mut();
         NULLED.with(|n| n.set(false));
+        job.slot.running.store(unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }, Ordering::Release);
         // The ordinary entry points: on this thread nothing is deferred and
         // translator waits have no budget.
         let status = match &mut job.work {
@@ -483,6 +562,12 @@ fn build(mut job: Job) {
                 unsafe { create_pipeline_x(device, &desc, 0, ptr::null(), &iid, &mut out) }
             }
         };
+        job.slot.running.store(0, Ordering::Release);
+        // Back below the title after any hurry().
+        unsafe {
+            use windows::Win32::System::Threading::*;
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
         let nulled = NULLED.with(|n| n.replace(false));
         let made = (status.is_ok() && !out.is_null()).then(|| unsafe { IUnknown::from_raw(out) });
         let counter = match made {
