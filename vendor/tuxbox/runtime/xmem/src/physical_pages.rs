@@ -393,9 +393,54 @@ impl Pool {
         Ok(())
     }
 
+    /// Diagnostics: pages that are their own 64 KiB OS view (outside `views`),
+    /// and whether VA-neighbours among them could share one view. Native D3D12
+    /// imports a range as one heap only from a single view; every range it
+    /// cannot import is copied through a shadow buffer each submission.
+    fn single_view_stats(&self) -> String {
+        let in_view = |a: usize| self.views.range(..=a).next_back().is_some_and(|(_, &hi)| a < hi);
+        let mut singles: Vec<usize> = self.mappings.iter()
+            .filter(|&(&a, t)| !self.pages[t].mapped && !in_view(a)).map(|(&a, _)| a).collect();
+        singles.sort_unstable();
+        let (mut joinable, mut other_section, mut other_offset) = (0usize, 0usize, 0usize);
+        let (mut runs, mut run, mut longest) = (0usize, 0usize, 0usize);
+        let mut previous = None;
+        for &at in &singles {
+            if previous.is_some_and(|p: usize| p + PAGE == at) {
+                let (a, b) = (&self.pages[&self.mappings[&(at - PAGE)]], &self.pages[&self.mappings[&at]]);
+                if !Arc::ptr_eq(&a.section, &b.section) { other_section += 1 }
+                else if b.offset != a.offset + PAGE as u64 { other_offset += 1 }
+                else { joinable += 1 }
+                run += 1;
+            } else {
+                runs += 1;
+                run = 1;
+            }
+            longest = longest.max(run);
+            previous = Some(at);
+        }
+        let rooted = singles.iter().filter(|&&a| self.roots.range(..=a).next_back().is_some_and(|(&b, r)| a < b + r.bytes)).count();
+        format!("single-page views {} ({} MiB, {} inside a root) in {runs} VA runs, longest {longest} pages; neighbour pairs: {joinable} joinable (same section, next offset), {other_section} in different sections, {other_offset} same section other offset; shared views {}",
+            singles.len(), singles.len() * PAGE >> 20, rooted, self.views.len())
+    }
+
     fn map(&mut self, address: usize, bytes: usize, tokens: &[u64]) -> Result<(), u32> {
         if tokens.iter().any(|t| !self.pages.contains_key(t)) {
             return Err(ERROR_INVALID_PARAMETER);
+        }
+        // At most one stats line per 15 s of mapping activity.
+        {
+            use std::sync::atomic::AtomicU64;
+            static START: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
+            static NEXT: AtomicU64 = AtomicU64::new(15_000);
+            static CALLS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+            CALLS[usize::from(tokens.len() > 1)].fetch_add(1, Ordering::Relaxed);
+            let now = START.elapsed().as_millis() as u64;
+            if now >= NEXT.load(Ordering::Relaxed) {
+                NEXT.store(now + 15_000, Ordering::Relaxed);
+                crate::loader::log(&format!("map calls: {} single-page, {} multi-page; {}",
+                    CALLS[0].load(Ordering::Relaxed), CALLS[1].load(Ordering::Relaxed), self.single_view_stats()));
+            }
         }
         self.mappings
             .try_reserve(tokens.len())
