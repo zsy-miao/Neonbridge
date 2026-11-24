@@ -12,6 +12,25 @@ use crate::{
 };
 use std::{collections::BTreeSet, fmt::Write};
 
+/// A mesh shader may write at most 32 KiB of vertex and primitive output. DXC
+/// charges 16 bytes per packed signature row, a vertex row for every vertex,
+/// and for every primitive one row of indices plus one per primitive
+/// attribute. A 20-element vertex with 128 primitives passed at 96 vertices
+/// and failed at 97, which is exactly (32768 - 128 * 16) / (20 * 16).
+const MESH_OUTPUT_BYTES: usize = 32768;
+const MESH_PRIMITIVES: usize = 128;
+
+/// The most vertices a group may declare for `vertex_rows` output elements and
+/// `primitive_rows` primitive attributes, capped at the launch's vertex count.
+/// Counting one row per element is an upper bound on DXC's packing (22
+/// elements packed into 20 rows), so the result always validates. Zero means
+/// no vertex fits.
+fn mesh_vertex_budget(vertex_rows: usize, primitive_rows: usize, launch: usize) -> usize {
+    let primitive_bytes = MESH_PRIMITIVES * 16 * (1 + primitive_rows);
+    let per_vertex = vertex_rows.max(1) * 16;
+    (MESH_OUTPUT_BYTES.saturating_sub(primitive_bytes) / per_vertex).min(launch)
+}
+
 pub(super) fn translate(
     ex: &ShaderExtract,
     interpolation: Option<&InputInterp>,
@@ -207,6 +226,12 @@ pub(super) fn translate(
     let elements = ex.output_sig.len() + ex.primitive_sig.len() + 1;
     let cull = elements * 16 * usize::from(info.vertices.max(128)) <= 32768;
     let primitives = cull || !ex.primitive_sig.is_empty();
+    // Groups with more vertices than this are dropped by the size guard below.
+    let primitive_rows = if primitives { ex.primitive_sig.len() + usize::from(cull) } else { 0 };
+    let max_vertices = mesh_vertex_budget(ex.output_sig.len(), primitive_rows, usize::from(info.vertices));
+    if max_vertices == 0 {
+        return Err("mesh vertex outputs exceed the 32 KiB output limit".into());
+    }
     let mut h = em.resource_decls()?;
     if wave_control {
         h.push_str(&super::page_waves::declarations([128, 1, 1], false));
@@ -258,7 +283,7 @@ void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
     write!(
         h,
         "          out vertices Vertex vertices[{}], out indices uint3 triangles[128]{}) {{\n",
-        info.vertices,
+        max_vertices,
         if primitives { ",\n\n          out primitives Primitive attributes[128]" } else { "" }
     )
     .unwrap();
@@ -272,7 +297,7 @@ void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
     writeln!(
         h,
         "    if (any(sizes == 0) || any(sizes > uint2({},128))) sizes = 0;",
-        info.vertices
+        max_vertices
     )
     .unwrap();
     h.push_str(
@@ -285,7 +310,7 @@ void main(uint lane : SV_GroupIndex, uint3 group : SV_GroupID,
     if (lane < sizes.x) vertices[lane] = first.vertex;
 "#,
     );
-    if info.vertices > 128 {
+    if max_vertices > 128 {
         h.push_str("    if (lane + 128 < sizes.x) vertices[lane + 128] = evaluate(lane + 128, group.x).vertex;\n");
     }
     let mut store = String::new();
@@ -928,5 +953,38 @@ mod tests {
     #[test]
     fn class5_descriptor_load_uses_the_guest_heap_index() {
         assert_class5_descriptor_load();
+    }
+}
+
+#[cfg(test)]
+mod output_budget_tests {
+    use super::mesh_vertex_budget;
+
+    #[test]
+    fn budget_matches_the_measured_dxc_limit() {
+        // Twenty vertex elements passed DXC at 96 vertices and failed at 97.
+        assert_eq!(mesh_vertex_budget(20, 0, 128), 96);
+        // Twenty-two elements pack into twenty rows, so DXC accepts 96 as well.
+        // Counting one row per element gives a safe, lower bound.
+        assert_eq!(mesh_vertex_budget(22, 0, 128), 87);
+        assert!(mesh_vertex_budget(22, 0, 256) <= 96);
+    }
+
+    #[test]
+    fn small_vertices_keep_the_launch_count() {
+        assert_eq!(mesh_vertex_budget(8, 0, 128), 128);
+        assert_eq!(mesh_vertex_budget(8, 0, 256), 240);
+    }
+
+    #[test]
+    fn primitive_attributes_reduce_the_vertex_budget() {
+        // 128 primitives with indices plus 2 attributes: 6144 bytes, leaving
+        // 26624 bytes of 8-row (128 byte) vertices.
+        assert_eq!(mesh_vertex_budget(8, 2, 256), 208);
+    }
+
+    #[test]
+    fn nothing_fits_when_primitives_use_the_budget() {
+        assert_eq!(mesh_vertex_budget(8, 15, 128), 0);
     }
 }
