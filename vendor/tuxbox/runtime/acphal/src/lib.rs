@@ -1,5 +1,7 @@
 //! Rust provider for the Xbox audio processor heap and AcpHal entry points Frosty imports.
 
+mod probe;
+
 use core::{ffi::c_void, mem::size_of, ptr};
 use std::sync::{Mutex, OnceLock};
 use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
@@ -205,26 +207,24 @@ pub unsafe extern "system" fn acp_hal_allocate_shape_contexts(contexts: *mut u8)
             array as *mut c_void,
         );
     }
+    probe::contexts_allocated(array, xma as usize);
     S_OK
 }
 
 type HalMethod = unsafe extern "system" fn(*mut c_void, usize, usize, usize) -> i32;
 
-unsafe extern "system" fn inert_hal_method(
-    _this: *mut c_void,
-    _first: usize,
-    _second: usize,
-    _third: usize,
-) -> i32 {
-    S_OK
-}
 
 #[repr(C)]
 struct HalObject {
     vtable: *const HalMethod,
 }
 
-static HAL_VTABLE: [HalMethod; HAL_VTABLE_SLOTS] = [inert_hal_method; HAL_VTABLE_SLOTS];
+// Inert methods (S_OK) that count calls per slot for the XMA probe.
+macro_rules! hal_methods {
+    ($($n:literal),*) => { [$(probe::method::<$n> as HalMethod),*] };
+}
+static HAL_VTABLE: [HalMethod; HAL_VTABLE_SLOTS] =
+    hal_methods!(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31);
 static HAL_OBJECT: OnceLock<usize> = OnceLock::new();
 
 /// Return a process-lifetime inert IAcpHal object; SHAPE DSP is not implemented.
