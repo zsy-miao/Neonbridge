@@ -986,6 +986,87 @@ impl Pool {
     }
 }
 
+/// Neonbridge provider ABI (XCRDAPI physical-page destinations): copy `bytes`
+/// from `src` into the pages named by `tokens`, starting `offset` bytes into
+/// the first. A page mapped by copy gets the bytes at its address, an unmapped
+/// page with saved contents in those, otherwise its section (shared by every
+/// view of it). Returns 1 on success, 0 for an unknown token or short array,
+/// a negative Win32 error on a failed write.
+#[unsafe(export_name = "TuxBoxWritePhysicalPages")]
+unsafe extern "system" fn write_physical_pages(tokens: *const u64, count: usize, offset: usize, src: *const u8, bytes: usize) -> i32 {
+    if bytes == 0 {
+        return 1;
+    }
+    if tokens.is_null() || src.is_null() || offset.checked_add(bytes).is_none_or(|end| end.div_ceil(PAGE) > count) {
+        return 0;
+    }
+    let tokens = unsafe { slice::from_raw_parts(tokens, count) };
+    let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut done, mut within) = (0usize, offset % PAGE);
+    for &token in &tokens[offset / PAGE..] {
+        if done == bytes {
+            break;
+        }
+        let chunk = (PAGE - within).min(bytes - done);
+        let at = if pool.pages.get(&token).is_some_and(|p| p.mapped) {
+            pool.mappings.iter().find(|&(_, &t)| t == token).map(|(&a, _)| a)
+        } else { None };
+        let Some(page) = pool.pages.get_mut(&token) else { return 0 };
+        let from = unsafe { src.add(done) };
+        if let Some(at) = at {
+            unsafe { ptr::copy_nonoverlapping(from, (at + within) as *mut u8, chunk) };
+        } else if !page.saved.is_empty() {
+            unsafe { ptr::copy_nonoverlapping(from, page.saved.as_mut_ptr().add(within), chunk) };
+        } else {
+            if let Err(e) = page.section.write_from(page.offset + within as u64, from, chunk) {
+                return -(e as i32);
+            }
+            page.has_section_data = true;
+        }
+        done += chunk;
+        within = 0;
+    }
+    i32::from(done == bytes)
+}
+
+/// Neonbridge provider ABI (XCRDAPI physical-page sources): the read side of
+/// [`write_physical_pages`]; a page never written reads as zeros.
+#[unsafe(export_name = "TuxBoxReadPhysicalPages")]
+unsafe extern "system" fn read_physical_pages(tokens: *const u64, count: usize, offset: usize, dest: *mut u8, bytes: usize) -> i32 {
+    if bytes == 0 {
+        return 1;
+    }
+    if tokens.is_null() || dest.is_null() || offset.checked_add(bytes).is_none_or(|end| end.div_ceil(PAGE) > count) {
+        return 0;
+    }
+    let tokens = unsafe { slice::from_raw_parts(tokens, count) };
+    let pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut done, mut within) = (0usize, offset % PAGE);
+    for &token in &tokens[offset / PAGE..] {
+        if done == bytes {
+            break;
+        }
+        let chunk = (PAGE - within).min(bytes - done);
+        let Some(page) = pool.pages.get(&token) else { return 0 };
+        let to = unsafe { dest.add(done) };
+        let at = if page.mapped { pool.mappings.iter().find(|&(_, &t)| t == token).map(|(&a, _)| a) } else { None };
+        if let Some(at) = at {
+            unsafe { ptr::copy_nonoverlapping((at + within) as *const u8, to, chunk) };
+        } else if !page.saved.is_empty() {
+            unsafe { ptr::copy_nonoverlapping(page.saved.as_ptr().add(within), to, chunk) };
+        } else if page.has_section_data {
+            if let Err(e) = page.section.read_part(page.offset + within as u64, to, chunk) {
+                return -(e as i32);
+            }
+        } else {
+            unsafe { to.write_bytes(0, chunk) };
+        }
+        done += chunk;
+        within = 0;
+    }
+    i32::from(done == bytes)
+}
+
 /// Neonbridge provider ABI: make [base, base + bytes) one OS view if its pages
 /// allow it, so the host GPU can import it as one heap. Returns 1 when the
 /// range is (now) one view, 0 when it cannot be, a negative Win32 error on a

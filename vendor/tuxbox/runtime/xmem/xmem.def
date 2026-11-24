@@ -38,3 +38,4 @@ EXPORTS
     TuxBoxUncloakWindows PRIVATE
     TuxBoxTakeWriteWatch PRIVATE
     TuxBoxWritePhysicalPages PRIVATE
+    TuxBoxReadPhysicalPages PRIVATE

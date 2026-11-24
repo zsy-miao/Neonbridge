@@ -4,7 +4,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::{ERROR_INVALID_ADDRESS, GetLastError, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Memory::{
-    CreateFileMappingW, FILE_MAP_READ, MEM_COMMIT, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE,
+    CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MEM_COMMIT, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE,
     MEM_REPLACE_PLACEHOLDER, MEM_RESERVE, MEM_RESERVE_PLACEHOLDER, MEMORY_BASIC_INFORMATION,
     MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, MapViewOfFile3, PAGE_NOACCESS, PAGE_READWRITE,
     SEC_RESERVE, UnmapViewOfFile, UnmapViewOfFile2, VirtualAlloc, VirtualAlloc2, VirtualFree,
@@ -108,6 +108,47 @@ impl Section {
             let err = unsafe { GetLastError() };
             unmap(address)?;
             return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Copy `bytes` from `src` into the section at `offset` (within one page)
+    /// through a temporary view, committing the page first.
+    pub(super) fn write_from(&self, offset: u64, src: *const u8, bytes: usize) -> Result<(), u32> {
+        let page = offset & !(PAGE as u64 - 1);
+        let within = (offset - page) as usize;
+        if within + bytes > PAGE {
+            return Err(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER);
+        }
+        let view = unsafe { MapViewOfFile(self.handle()?, FILE_MAP_WRITE, (page >> 32) as u32, page as u32, PAGE) };
+        if view.Value.is_null() {
+            return Err(unsafe { GetLastError() });
+        }
+        let result = if unsafe { VirtualAlloc(view.Value, PAGE, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
+            Err(unsafe { GetLastError() })
+        } else {
+            unsafe { ptr::copy_nonoverlapping(src, view.Value.cast::<u8>().add(within), bytes) };
+            Ok(())
+        };
+        unsafe { UnmapViewOfFile(view) };
+        result
+    }
+
+    /// Copy `bytes` at `offset` (within one page) out of the section.
+    pub(super) fn read_part(&self, offset: u64, dest: *mut u8, bytes: usize) -> Result<(), u32> {
+        let page = offset & !(PAGE as u64 - 1);
+        let within = (offset - page) as usize;
+        if within + bytes > PAGE {
+            return Err(windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER);
+        }
+        let view = unsafe { MapViewOfFile(self.handle()?, FILE_MAP_READ, (page >> 32) as u32, page as u32, PAGE) };
+        if view.Value.is_null() {
+            return Err(unsafe { GetLastError() });
+        }
+        // Only pages with section data are read here (uncommitted ones fault).
+        unsafe {
+            ptr::copy_nonoverlapping(view.Value.cast::<u8>().add(within), dest, bytes);
+            UnmapViewOfFile(view);
         }
         Ok(())
     }

@@ -45,11 +45,58 @@ enum Entry {
 enum Source {
     File(FileRead, u64),
     Memory(usize),
+    /// A physical page array (bit 23).
+    Pages(Pages),
 }
+
+/// A `PULONG_PTR` array of xmem physical-page tokens, snapshotted at enqueue
+/// (titles pass arrays on the stack). An entry still 0 is read again when the
+/// request runs: titles fill their own page tables after EnqueueRequest.
+struct Pages {
+    array: usize,
+    tokens: Vec<u64>,
+    offset: usize,
+}
+
+impl Pages {
+    unsafe fn capture(array: *const c_void, offset: u16, bytes: usize) -> Result<Self, HRESULT> {
+        if array.is_null() {
+            return Err(E_INVALIDARG);
+        }
+        let count = (offset as usize + bytes).div_ceil(PHYSICAL_PAGE);
+        let mut tokens = Vec::new();
+        tokens.try_reserve_exact(count).map_err(|_| E_OUTOFMEMORY)?;
+        // SAFETY: the DirectStorage contract keeps the array readable at enqueue.
+        tokens.extend((0..count).map(|i| unsafe { array.cast::<u64>().add(i).read_unaligned() }));
+        Ok(Self { array: array as usize, tokens, offset: offset as usize })
+    }
+
+    fn resolved(&self) -> Vec<u64> {
+        let mut tokens = self.tokens.clone();
+        for (i, token) in tokens.iter_mut().enumerate() {
+            if *token == 0 {
+                // SAFETY: as at enqueue; the title owns its page table.
+                *token = unsafe { (self.array as *const u64).add(i).read_unaligned() };
+            }
+        }
+        tokens
+    }
+}
+
+const PHYSICAL_PAGE: usize = 0x10000;
+const ZLIB: u64 = 1;
+const BCPACK_SHIFT: u64 = 1;
+const SWIZZLE: u64 = 0xFFFF << 5;
+const DEST_PAGES: u64 = 1 << 21;
+const FROM_MEMORY: u64 = 1 << 22;
+const SOURCE_PAGES: u64 = 1 << 23;
+const KNOWN: u64 = (1 << 24) - 1;
 
 struct Read {
     source: Source,
     dest: usize,
+    /// Destination physical pages (bit 21); `dest` is then the array.
+    dest_pages: Option<Pages>,
     capacity: usize,
     size: usize,
     options: u64,
@@ -57,25 +104,54 @@ struct Read {
     cancelled: bool,
 }
 
+fn log(message: std::fmt::Arguments) {
+    if std::env::var_os("TUXBOX_LOG").is_some() {
+        eprintln!("TuxBox xcrdapi: {message}");
+    }
+}
+
+fn once(what: &'static str, message: std::fmt::Arguments) {
+    static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut seen = lock(&SEEN);
+    if !seen.contains(&what) {
+        seen.push(what);
+        log(message);
+    }
+}
+
+fn bcpack_mode(options: u64) -> u8 {
+    ((options >> BCPACK_SHIFT) & 0xF) as u8
+}
+
 // Borrowed process buffer addresses are valid until queue completion by the
 // DirectStorage contract. The file is retained independently of its COM object.
 unsafe fn capture(queue_type: u64, req: *const Request) -> Result<Read, HRESULT> {
     let req = unsafe { req.as_ref() }.ok_or(E_POINTER)?;
-    const FROM_MEMORY: u64 = 1 << 22;
-    if req.options & !(FROM_MEMORY | 1) != 0 {
+    if req.options & !KNOWN != 0 {
+        once("unknown", format_args!("unknown request option bits {:#x} ignored", req.options & !KNOWN));
+    }
+    if req.options & SWIZZLE != 0 {
+        // The console's hardware swizzle; the bytes are stored as read.
+        once("swizzle", format_args!("swizzle mode {:#x} not applied; data stored linear", (req.options & SWIZZLE) >> 5));
+    }
+    let bcpack = bcpack_mode(req.options);
+    if bcpack != 0 && std::env::var("TUXBOX_BCPACK").is_ok_and(|v| v.trim() == "refuse") {
         return Err(E_NOTIMPL);
     }
     let memory = req.options & FROM_MEMORY != 0;
     if memory != (queue_type == 1)
+        || (req.options & SOURCE_PAGES != 0 && !memory)
         || req.destination.is_null()
         || req.source.is_null()
         || req.size == 0
         || req.destination_size == 0
-        || (req.options & 1 == 0 && req.size > req.destination_size)
+        || (req.options & ZLIB == 0 && bcpack == 0 && req.size > req.destination_size)
     {
         return Err(E_INVALIDARG);
     }
-    let source = if memory {
+    let source = if memory && req.options & SOURCE_PAGES != 0 {
+        Source::Pages(unsafe { Pages::capture(req.source, req.offset as u16, req.size as usize)? })
+    } else if memory {
         Source::Memory(req.source as usize)
     } else {
         let file = unsafe { IUnknown::from_raw_borrowed(&req.source) }.ok_or(E_POINTER)?;
@@ -84,9 +160,15 @@ unsafe fn capture(queue_type: u64, req: *const Request) -> Result<Read, HRESULT>
             .map_err(|e| e.code())?;
         Source::File(object.backing.capture()?, req.offset)
     };
+    let dest_pages = if req.options & DEST_PAGES != 0 {
+        Some(unsafe { Pages::capture(req.destination.cast(), req.page_offset, req.destination_size as usize)? })
+    } else {
+        None
+    };
     Ok(Read {
         source,
         dest: req.destination as usize,
+        dest_pages,
         capacity: req.destination_size as usize,
         size: req.size as usize,
         options: req.options,
@@ -103,6 +185,8 @@ unsafe extern "system" {
         got: *mut u32,
         overlapped: *mut Overlapped,
     ) -> i32;
+    fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *const c_void;
 }
 
 #[repr(C)]
@@ -114,30 +198,66 @@ struct Overlapped {
     event: usize,
 }
 
-impl Read {
-    fn execute(&self) -> Result<(), HRESULT> {
-        if self.cancelled {
-            return Ok(());
+type PageCopy = unsafe extern "system" fn(*const u64, usize, usize, *mut u8, usize) -> i32;
+
+/// xmem's TuxBoxReadPhysicalPages / TuxBoxWritePhysicalPages.
+fn xmem_pages(write: bool) -> Option<PageCopy> {
+    static FUNCTIONS: OnceLock<[Option<PageCopy>; 2]> = OnceLock::new();
+    FUNCTIONS.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let find = |n: &[u8]| -> Option<PageCopy> {
+            let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, n.as_ptr()) };
+            (!f.is_null()).then(|| core::mem::transmute::<*const c_void, PageCopy>(f))
+        };
+        [find(b"TuxBoxReadPhysicalPages\0"), find(b"TuxBoxWritePhysicalPages\0")]
+    })[usize::from(write)]
+}
+
+fn page_copy(write: bool, pages: &Pages, buffer: *mut u8, bytes: usize) -> Result<(), HRESULT> {
+    let copy = xmem_pages(write).ok_or_else(|| {
+        once("xmem pages", format_args!("xmem has no physical-page copy exports; page-array requests fail"));
+        E_NOTIMPL
+    })?;
+    let tokens = pages.resolved();
+    let result = unsafe { copy(tokens.as_ptr(), tokens.len(), pages.offset, buffer, bytes) };
+    if result == 1 { Ok(()) } else { Err(HRESULT::from_win32(ERROR_INVALID_ADDRESS.0)) }
+}
+
+/// One block of each BCPack mode's BCn format in a neutral grey (normal maps
+/// flat): BC1, BC2, BC3, BC4, BC5, BC6H, BC7. Bit layouts from the BCn specs.
+fn bcpack_block(mode: u8) -> Option<Vec<u8>> {
+    // RGB565 grey 0x8410 in both endpoints, all indices 0.
+    const BC1: [u8; 8] = [0x10, 0x84, 0x10, 0x84, 0, 0, 0, 0];
+    const BC4_GREY: [u8; 8] = [0x80, 0x80, 0, 0, 0, 0, 0, 0];
+    const BC4_OPAQUE: [u8; 8] = [0xFF, 0xFF, 0, 0, 0, 0, 0, 0];
+    let join = |a: &[u8], b: &[u8]| [a, b].concat();
+    Some(match mode {
+        1 => BC1.to_vec(),
+        2 => join(&[0xFF; 8], &BC1),
+        3 => join(&BC4_OPAQUE, &BC1),
+        4 => BC4_GREY.to_vec(),
+        5 => join(&BC4_GREY, &BC4_GREY),
+        // BC6H mode 11 (00011): one region, 10-bit endpoints; 462 is 0.5 as
+        // unsigned half after unquantization. All indices 0.
+        6 => {
+            let v: u128 = 462;
+            (3 | v << 5 | v << 15 | v << 25 | v << 35 | v << 45 | v << 55).to_le_bytes().to_vec()
         }
-        let mut local = Vec::new();
-        let mut staging = (self.options & 1 != 0 && matches!(self.source, Source::File(..)))
-            .then(|| lock(&STAGING));
-        let compressed = match staging.as_deref_mut().and_then(Option::as_mut) {
-            Some((limit, _)) if self.size > *limit => return Err(E_OUTOFMEMORY),
-            Some((_, bytes)) => {
-                bytes.clear();
-                bytes
-            }
-            None => &mut local,
-        };
-        let target = if self.options & 1 != 0 {
-            compressed
-                .try_reserve_exact(self.size)
-                .map_err(|_| E_OUTOFMEMORY)?;
-            compressed.spare_capacity_mut().as_mut_ptr().cast::<u8>()
-        } else {
-            self.dest as *mut u8
-        };
+        // BC7 mode 6 (bit 6): 7-bit RGBA endpoints plus p-bits; rgb 64 and
+        // a 127 with p = 1 give (129, 129, 129, 255). All indices 0.
+        7 => {
+            let (c, a): (u128, u128) = (64, 127);
+            (1 << 6 | c << 7 | c << 14 | c << 21 | c << 28 | c << 35 | c << 42 | a << 49 | a << 56 | 1 << 63 | 1 << 64)
+                .to_le_bytes()
+                .to_vec()
+        }
+        _ => return None,
+    })
+}
+
+impl Read {
+    fn read_source(&self, target: *mut u8) -> Result<(), HRESULT> {
         match &self.source {
             Source::File(file, offset) => {
                 // A synchronous Win32 handle with an explicit 64-bit OVERLAPPED
@@ -171,33 +291,86 @@ impl Read {
                 let mut stats = storage_stats();
                 stats.pending_reads -= 1;
                 stats.read_errors = stats.read_errors.saturating_add(u32::from(result.is_err()));
-                result?;
+                result
             }
-            Source::Memory(p) => unsafe { core::ptr::copy(*p as *const u8, target, self.size) },
+            Source::Memory(p) => {
+                unsafe { core::ptr::copy(*p as *const u8, target, self.size) };
+                Ok(())
+            }
+            Source::Pages(pages) => page_copy(false, pages, target, self.size),
         }
-        if self.options & 1 != 0 {
-            // ReadFile or the copy above initialized every reported input byte.
-            unsafe { compressed.set_len(self.size) };
-            {
-                let mut stats = storage_stats();
-                stats.pending_decodes += 1;
-                stats.total_decodes = stats.total_decodes.saturating_add(1);
+    }
+
+    /// Write the request's output to its destination.
+    fn store(&self, bytes: &[u8]) -> Result<(), HRESULT> {
+        let bytes = &bytes[..bytes.len().min(self.capacity)];
+        match &self.dest_pages {
+            Some(pages) => page_copy(true, pages, bytes.as_ptr().cast_mut(), bytes.len()),
+            None => {
+                unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.dest as *mut u8, bytes.len()) };
+                Ok(())
             }
-            let output =
-                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, self.capacity);
-            {
-                let mut stats = storage_stats();
-                stats.pending_decodes -= 1;
-                stats.decode_errors = stats
-                    .decode_errors
-                    .saturating_add(u32::from(output.is_err()));
-            }
-            let output = output.map_err(|_| HRESULT::from_win32(ERROR_INVALID_DATA.0))?;
-            unsafe {
-                core::ptr::copy_nonoverlapping(output.as_ptr(), self.dest as *mut u8, output.len())
-            };
         }
-        Ok(())
+    }
+
+    fn execute(&self) -> Result<(), HRESULT> {
+        if self.cancelled {
+            return Ok(());
+        }
+        let bcpack = bcpack_mode(self.options);
+        if bcpack != 0 {
+            // No BCPack decoder yet: the destination gets solid blocks of the
+            // mode's format, so the texture shows flat grey instead of stale
+            // memory and the title's request succeeds (TUXBOX_BCPACK=refuse
+            // fails it instead).
+            let block = bcpack_block(bcpack).ok_or(HRESULT::from_win32(ERROR_INVALID_DATA.0))?;
+            let mut fill = Vec::new();
+            fill.try_reserve_exact(self.capacity).map_err(|_| E_OUTOFMEMORY)?;
+            fill.extend(block.iter().copied().cycle().take(self.capacity));
+            static FILLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = FILLED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                log(format_args!("BCPack mode {bcpack}{} request #{n}: {} bytes filled with solid blocks (no decoder)",
+                    if self.options & ZLIB != 0 { " after zlib" } else { "" }, self.capacity));
+            }
+            return self.store(&fill);
+        }
+        if self.options & ZLIB == 0 && self.dest_pages.is_none() {
+            return self.read_source(self.dest as *mut u8);
+        }
+        let mut local = Vec::new();
+        let mut staging = (self.options & ZLIB != 0 && matches!(self.source, Source::File(..)))
+            .then(|| lock(&STAGING));
+        let input = match staging.as_deref_mut().and_then(Option::as_mut) {
+            Some((limit, _)) if self.size > *limit => return Err(E_OUTOFMEMORY),
+            Some((_, bytes)) => {
+                bytes.clear();
+                bytes
+            }
+            None => &mut local,
+        };
+        input.try_reserve_exact(self.size).map_err(|_| E_OUTOFMEMORY)?;
+        self.read_source(input.spare_capacity_mut().as_mut_ptr().cast::<u8>())?;
+        // The read or copy above initialized every reported input byte.
+        unsafe { input.set_len(self.size) };
+        if self.options & ZLIB == 0 {
+            return self.store(input);
+        }
+        {
+            let mut stats = storage_stats();
+            stats.pending_decodes += 1;
+            stats.total_decodes = stats.total_decodes.saturating_add(1);
+        }
+        let output = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, self.capacity);
+        {
+            let mut stats = storage_stats();
+            stats.pending_decodes -= 1;
+            stats.decode_errors = stats
+                .decode_errors
+                .saturating_add(u32::from(output.is_err()));
+        }
+        let output = output.map_err(|_| HRESULT::from_win32(ERROR_INVALID_DATA.0))?;
+        self.store(&output)
     }
 }
 
@@ -219,6 +392,7 @@ fn signal_error(shared: &Shared, entry: &Entry, hr: HRESULT) {
                 match read.source {
                     Source::File(_, offset) => r.offset = offset,
                     Source::Memory(p) => r.source = p,
+                    Source::Pages(ref pages) => r.source = pages.array,
                 }
             }
             Entry::Invalid(_, kind) => r.kind = *kind,
