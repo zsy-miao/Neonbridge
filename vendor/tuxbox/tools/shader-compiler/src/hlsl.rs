@@ -202,6 +202,11 @@ fn heap_d16(m: &str, channels: u8) -> Result<(bool, bool), String> {
     Ok((true, high))
 }
 
+/// Image inc/dec/fmin/fmax/cmpswap/fcmpswap; TB_IMAGE_ATOMIC_EXT=0 leaves them unsupported.
+fn image_atomic_ext() -> bool {
+    std::env::var("TB_IMAGE_ATOMIC_EXT").map_or(true, |v| v.trim() != "0")
+}
+
 /// V_DIV_SCALE/FMAS/FIXUP_F32 lowerings; TB_DIV_OPS=0 leaves them unsupported.
 fn div_ops_on() -> bool {
     std::env::var("TB_DIV_OPS").map_or(true, |v| v.trim() != "0")
@@ -8446,6 +8451,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // Signed order: a compare-exchange loop (below).
             "image_atomic_smin" => Some("min"),
             "image_atomic_smax" => Some("max"),
+            // Compare-exchange loops (leonida-ce 367d91ef's fixture ops):
+            // inc/dec wrap at the operand, fmin/fmax order the texel as a float,
+            // cmpswap/fcmpswap take {data, compare} in two VGPRs (DMASK 3).
+            // TB_IMAGE_ATOMIC_EXT=0 leaves them unsupported.
+            "image_atomic_sub" if image_atomic_ext() => Some("sub"),
+            "image_atomic_inc" if image_atomic_ext() => Some("inc"),
+            "image_atomic_dec" if image_atomic_ext() => Some("dec"),
+            "image_atomic_fmin" if image_atomic_ext() => Some("fmin"),
+            "image_atomic_fmax" if image_atomic_ext() => Some("fmax"),
+            "image_atomic_cmpswap" if image_atomic_ext() => Some("cmpswap"),
+            "image_atomic_fcmpswap" if image_atomic_ext() => Some("fcmpswap"),
             _ => None,
         };
         if atomic.is_some() || is_image_load(&ins.mnemonic) || matches!(ins.mnemonic.as_str(), "image_store" | "image_store_mip" | "image_store_pck" | "image_store_mip_pck") {
@@ -8520,6 +8536,28 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if let Some(func) = atomic {
                 // Image atomics → Interlocked* on a RWTexture<uint> texel; vdata carries the
                 // operand in and the previous value out.
+                if func == "cmpswap" || func == "fcmpswap" {
+                    if ins.aux.mask != 3 || !as_uint {
+                        return Err("image compare-swap needs DMASK=3 on a uint UAV".into());
+                    }
+                    let (o, oc) = (Opnd::Vgpr(vd), Opnd::Vgpr(vd.checked_add(1).ok_or("VGPR pair overflows")?));
+                    self.touch(&o);
+                    self.touch(&oc);
+                    let (data, cmp) = (r(&o)?, r(&oc)?);
+                    let texel = format!("uav{slot}[uint{ncoord}({})]", c.join(", "));
+                    let t = self.tmp;
+                    self.tmp += 1;
+                    self.line(&format!("uint t{t} = 0u;"));
+                    if func == "cmpswap" {
+                        self.line(&format!("if (exec_lo & 1u) InterlockedCompareExchange({texel}, {cmp}, {data}, t{t});"));
+                    } else {
+                        self.line(&format!("if (exec_lo & 1u) {{ uint t{t}p; t{t} = {texel}; do {{ t{t}p = t{t}; InterlockedCompareExchange({texel}, t{t}p, (asfloat(t{t}p) == asfloat({cmp})) ? {data} : t{t}p, t{t}); }} while (t{t} != t{t}p); }}"));
+                    }
+                    if ins.raw[0] & (1 << 13) != 0 {
+                        self.wv(&o, &format!("t{t}"))?;
+                    }
+                    return Ok(());
+                }
                 if ins.aux.mask == 3 && as_uint && dim == 1 {
                     let visibility = match (self.ex.stage, ins.raw.as_slice()) {
                         (Stage::Pixel | Stage::Compute, [0xf05c1308, flags])
@@ -8545,9 +8583,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 let t = self.tmp;
                 self.tmp += 1;
                 self.line(&format!("uint t{t} = 0u;"));
-                if func == "min" || func == "max" {
+                if matches!(func, "min" | "max" | "sub" | "inc" | "dec" | "fmin" | "fmax") {
                     let texel = format!("uav{slot}[uint{ncoord}({})]", c.join(", "));
-                    self.line(&format!("if (exec_lo & 1u) {{ uint t{t}p; t{t} = {texel}; do {{ t{t}p = t{t}; InterlockedCompareExchange({texel}, t{t}p, asuint({func}(asint(t{t}p), asint({}))), t{t}); }} while (t{t} != t{t}p); }}", r(&o)?));
+                    let (p, x) = (format!("t{t}p"), r(&o)?);
+                    let new = match func {
+                        "sub" => format!("({p} - {x})"),
+                        "inc" => format!("(({p} >= {x}) ? 0u : {p} + 1u)"),
+                        "dec" => format!("(({p} == 0u || {p} > {x}) ? {x} : {p} - 1u)"),
+                        "fmin" => format!("asuint(tb_min(asfloat({p}), asfloat({x})))"),
+                        "fmax" => format!("asuint(tb_max(asfloat({p}), asfloat({x})))"),
+                        _ => format!("asuint({func}(asint({p}), asint({x})))"),
+                    };
+                    self.line(&format!("if (exec_lo & 1u) {{ uint t{t}p; t{t} = {texel}; do {{ t{t}p = t{t}; InterlockedCompareExchange({texel}, t{t}p, {new}, t{t}); }} while (t{t} != t{t}p); }}"));
                 } else {
                     self.line(&format!("if (exec_lo & 1u) {func}(uav{slot}[uint{ncoord}({})], {}, t{t});", c.join(", "), r(&o)?));
                 }
