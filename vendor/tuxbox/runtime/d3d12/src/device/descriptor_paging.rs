@@ -305,6 +305,21 @@ impl Arena {
         active: &[std::ops::Range<u32>],
         kinds: Option<(&super::null_kinds::NullKinds, usize)>,
     ) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
+        let result = self.gpu_table_inner(address, length, active, kinds);
+        if result.is_err() && self.inline {
+            let slots: u32 = active.iter().map(|r| r.end.min(length).saturating_sub(r.start)).sum();
+            crate::diagnostics::null_causes::note(crate::diagnostics::null_causes::Cause::Buffer, u64::from(slots));
+        }
+        result
+    }
+
+    fn gpu_table_inner(
+        &self,
+        address: u64,
+        length: u32,
+        active: &[std::ops::Range<u32>],
+        kinds: Option<(&super::null_kinds::NullKinds, usize)>,
+    ) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
         let offset = (address as usize)
             .checked_sub(self.base())
             .ok_or(E_INVALIDARG)?;
@@ -348,6 +363,9 @@ impl Arena {
                         .and_then(|(kinds, parameter)| kinds.get(parameter, index as u32))
                         .unwrap_or(super::null_kinds::NullKind::DEFAULT)
                 });
+                if null.is_some() {
+                    crate::diagnostics::null_causes::note(crate::diagnostics::null_causes::Cause::Entry, 1);
+                }
                 let resident_key = null.map_or(record, |kind| InlineDescriptor { reserved: [kind.code(), 0], ..record });
                 if tables.resident_records.get(&slot) == Some(&resident_key) {
                     continue;
@@ -373,6 +391,17 @@ impl Arena {
                     // leave the slot uncached so a later resolution replaces it.
                     static UNRESOLVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                     let n = UNRESOLVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    {
+                        use crate::diagnostics::null_causes::{Cause, note};
+                        let cause = if record.source == 0 || record.version == 0 {
+                            Cause::Entry
+                        } else if self.registry.find(record.source).is_none() {
+                            Cause::Token
+                        } else {
+                            Cause::Wrapper
+                        };
+                        note(cause, 1);
+                    }
                     if n < 4 || (n + 1).is_power_of_two() {
                         crate::diagnostics::log_line(format_args!(
                             "unresolved inline descriptor at {cell:#x}, source {:#x}, version {} (table entry {index}/{length}); bound null ({} so far)",

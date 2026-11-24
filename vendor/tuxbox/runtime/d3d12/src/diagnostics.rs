@@ -505,8 +505,8 @@ pub(crate) mod display {
     /// Counters since the previous summary (recorded, not necessarily executed).
     pub(crate) fn summary() -> String {
         let c: Vec<u64> = COUNTS.iter().map(|c| c.swap(0, Ordering::Relaxed)).collect();
-        format!("display writes recorded: draws={} (null pipeline {}) clears={} copies={} rtv-binds={} | all draws={} | display resources={}",
-            c[0], c[1], c[2], c[3], c[5], c[4], RESOURCES.lock().unwrap_or_else(|e| e.into_inner()).len())
+        format!("display writes recorded: draws={} (null pipeline {}) clears={} copies={} rtv-binds={} | all draws={} | display resources={}{}",
+            c[0], c[1], c[2], c[3], c[5], c[4], RESOURCES.lock().unwrap_or_else(|e| e.into_inner()).len(), super::null_causes::summary())
     }
 }
 
@@ -586,6 +586,7 @@ pub(crate) mod crash;
 pub(crate) mod ctl;
 mod crash_detail;
 pub(crate) mod teb;
+pub(crate) mod null_causes;
 pub(crate) mod sampler;
 
 pub(crate) mod threads {
