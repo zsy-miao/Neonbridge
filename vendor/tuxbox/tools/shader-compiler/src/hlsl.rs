@@ -6035,6 +6035,31 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             Enc::Ds
                 if self.is_cs
+                    && matches!(m, "ds_cmpst_b32" | "ds_cmpst_rtn_b32")
+                    && std::env::var("TB_DS_CMPST").map_or(true, |v| v.trim() != "0") =>
+            {
+                // LDS compare-and-store (RDNA2): MEM = (MEM == DATA0) ? DATA1 : MEM,
+                // the `_rtn` form returns the old word. DATA0 is the compare value
+                // and DATA1 the new one (reversed from the buffer cmpswap). test111's
+                // Bink-era compute 50cf2832 was refused on it. TB_DS_CMPST=0 refuses.
+                self.uses_lds = true;
+                if ins.raw[0] & (1 << 17) != 0 {
+                    return Err("global data store compare-store unsupported".into());
+                }
+                let off = ins.aux.imm as u32 & 0xffff;
+                let (addr, cmp, new) = (r(&s[0])?, r(&s[1])?, r(&s[2])?);
+                let t = self.tmp;
+                self.tmp += 1;
+                self.line(&format!(
+                    "uint t{t} = 0u; if (exec_lo & 1u) {{ InterlockedCompareExchange(tb_lds[(({addr} + {off:#x}u) >> 2) & 8191u], {cmp}, {new}, t{t}); }}"
+                ));
+                if m == "ds_cmpst_rtn_b32" {
+                    self.wv(&d.ok_or("no dst")?, &format!("t{t}"))?;
+                }
+                Ok(())
+            }
+            Enc::Ds
+                if self.is_cs
                     && (m == "ds_wrxchg_rtn_b32" || matches!(
                         m.replace("_rtn", "").as_str(),
                         "ds_add_u32" | "ds_min_u32" | "ds_max_u32" | "ds_and_b32" | "ds_or_b32" | "ds_xor_b32"
