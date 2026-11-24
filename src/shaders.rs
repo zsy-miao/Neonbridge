@@ -385,7 +385,11 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
         // unoptimised DXIL compiles in seconds and the driver optimises it again.
         let dxc_started = std::time::Instant::now();
-        let compiled = match dxc("-O1", 120) {
+        // test112: dxc was 98% of shader time (401 s for 252 compiles, one took
+        // 92 s), starving pipelines the title waited on. -O1 now gets
+        // NEONBRIDGE_DXC_O1_SECS (10) before the -O0 retry, not 120.
+        let o1_secs = std::env::var("NEONBRIDGE_DXC_O1_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0).unwrap_or(10);
+        let compiled = match dxc("-O1", o1_secs) {
             Err(ToolError::Other(msg)) if msg == "timed out" => {
                 let _ = fs::remove_file(&output);
                 dxc("-O0", 120)
