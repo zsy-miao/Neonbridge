@@ -4,7 +4,7 @@
 
 **In plain terms:** Xbox Series consoles and Windows PCs share the same kind of processor. Their games differ mainly in the system pieces they call into, like graphics, files, input and sound. 6Launch lets a PC start a game copied from your own Xbox. It swaps those console pieces for Windows versions, so the game runs directly, with no slow emulation of a whole console.
 
-It's an early work in progress: the GTA VI Xbox build starts and draws frames, and now runs for minutes without crashing (300+ frames in a test run), but every frame is still black and it isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
+It's an early work in progress: the GTA VI Xbox build starts and draws frames, and now reaches the lit player-selection prompt (Account Picker / Screen Narration / TuxBox), but it runs at under 3 fps and isn't playable yet (see [Status](#status) and [Roadmap](#roadmap)). You need your own legally dumped copy of a game. None is included.
 
 **Technical summary:** runs a dumped Xbox Series (Scarlett / GDK) executable on Windows. The game's x64 code runs natively; its console DLLs are replaced by TuxBox Rust providers built from `vendor/tuxbox` (source only, no binaries).
 
@@ -67,7 +67,9 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Open
 
-- **Black frames:** the host `Close` of title command lists fails with E_INVALIDARG almost every frame (1,000+ in a 2-minute run), so their rendering never executes. Every failing list contains slot 146 (enhanced barriers); the D3D12 runtime is fixing those barrier calls next.
+- **Black frames fixed:** the end-of-frame barrier that sends the display surface to present used layout 31, which desktop D3D12 rejects, so every frame's `Close` failed. Layouts outside the desktop range are now recorded as COMMON (= PRESENT), Close no longer fails, and the player-selection prompt draws.
+- **Frame rate:** test runs (under the debugger, with on-demand shader compiles and the barrier probe on) reach under 3 fps.
+- **Later screens:** according to other projects, screens after the start screen go black again until blend state is read from the pipeline's render-state block.
 - **Shader translation:** offline `--build-shaders` refused most programs, mainly descriptors without the title's root layout. `xshader` now binds those from the shader's own FSSM binding records and resolves inline samplers from PSV (ported from TuxBox cc752ba); in a 60-shader sample 15 former refusals now translate. Also ported: private samplers for root-less roots, literal sampler matching, raw SRVs behind root descriptors, and compute descriptors the runtime appends from FSSM/PSV records. `--build-shaders` ranks refusals by construct and reason, and dxc retries at `-O0` when `-O1` times out.
 - **No window on screen:** the game presents, but no window appears on the desktop.
 - **Early exit:** some runs exit with code 1 after about 40 s, without an exception.
@@ -77,7 +79,7 @@ Runtime fixes in the vendored TuxBox provider:
 
 ## Roadmap
 
-1. **See the frames.** Make the enhanced barriers (list slot 146) valid on desktop D3D12 so command lists close and execute. Find why the presentation window isn't on screen, then capture a frame to check what the title draws.
+1. **Get past the start screen.** Pick the profile, raise the frame rate, and take blend state from the pipeline's render-state block so later screens draw.
 2. **Stay running.** Find what calls process exit in the early-exit runs (`--debug` records the exit stack).
 3. **Correct colour.** Pack 5551 in the shader, or substitute B5G5R5A1 UAV and render-target images with R8G8B8A8.
 4. **Speed.** Back each XMem pool with one section and join in-order page runs, so GPU imports span them without copies.
