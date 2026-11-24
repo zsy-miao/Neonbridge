@@ -7,6 +7,9 @@
 //! queue submission first copies every live shadow from the title pages, so
 //! the view observes CPU writes and earlier GPU work. GPU writes recorded
 //! earlier in the same submission are not observed.
+//!
+//! Constant buffers use the same copies: Xbox places them on 16-byte
+//! boundaries, desktop D3D12 needs 256 and removes the device otherwise.
 use super::TextureAddress;
 use crate::device::Device;
 use std::collections::HashMap;
@@ -64,7 +67,8 @@ pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<Text
     let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
     let mut copy: Option<ID3D12Resource> = None;
     unsafe {
-        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(bytes),
+        // Whole 256-byte units, so a constant buffer view of it is valid.
+        device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(bytes.next_multiple_of(256)),
             D3D12_RESOURCE_STATE_COMMON, None, &mut copy)?;
     }
     let copy = copy.ok_or(E_POINTER)?;

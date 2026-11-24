@@ -64,6 +64,15 @@ pub(super) unsafe extern "system" fn cbv(
             if let Some(buffer) = &owner {
                 value.BufferLocation = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
             }
+            // Xbox constant buffers sit on 16-byte boundaries; read one that
+            // misses a 256-byte host boundary from a copy that starts on one.
+            if !value.BufferLocation.is_multiple_of(u64::from(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT)) {
+                let guest = unsafe { &*desc }.SizeInBytes.max(1);
+                let copy = shadow::view(device, address, u64::from(guest))
+                    .unwrap_or_else(|e| fail_call(format_args!("CBV copy {address:#x}, {guest} bytes: {:?}", e.code())));
+                value.BufferLocation = unsafe { copy.native.GetGPUVirtualAddress() };
+                owner = Some(copy);
+            }
         }
     }
     // A desktop runtime removes the device for an invalid CBV description.

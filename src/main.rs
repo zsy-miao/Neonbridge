@@ -430,7 +430,8 @@ kn 60
 lm o
 q
 "))?;
-        let mut d: Vec<OsString> = vec![cdb.into(), "-G".into(), "-logo".into(), cdb_log.clone().into(), "-cf".into(), script.into()];
+        // -hd: the debug heap that cdb otherwise turns on serializes every allocation.
+        let mut d: Vec<OsString> = vec![cdb.into(), "-G".into(), "-hd".into(), "-logo".into(), cdb_log.clone().into(), "-cf".into(), script.into()];
         d.extend(argv);
         argv = d;
     }
