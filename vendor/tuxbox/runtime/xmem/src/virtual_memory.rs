@@ -342,8 +342,11 @@ unsafe fn virtual_alloc_inner(
     // Large allocations in that routine also request top-down placement.
     // Frosty's physical-page pool reserves an aperture, then backs individual
     // 64 KiB pages as needed. The D3D12 placement uploader reads these CPU pages.
+    // A guarded window keeps PAGE_GUARD on its mapped pages (shared_pages).
+    let guard = super::shared_pages::guard_enabled() && protect & PAGE_GUARD != 0;
+    let window_protect = if guard { protect & !PAGE_GUARD } else { protect };
     if allocation_type == 0x2040_2000
-        && matches!((profile, protect), (3, 0x801) | (0x21, PAGE_READWRITE) | (0x23, 0x2004 | 0x2404 | 0x10404 | 0x22004))
+        && matches!((profile, window_protect), (3, 0x801) | (0x21, PAGE_READWRITE) | (0x23, 0x2004 | 0x2404 | 0x10404 | 0x22004))
     {
         // CPU physical pages and the GPU-only NOACCESS aperture both
         // acquire backing later. A Windows placeholder supports both.
@@ -351,6 +354,9 @@ unsafe fn virtual_alloc_inner(
             unsafe { SetLastError(windows_sys::Win32::Foundation::ERROR_NOT_ENOUGH_MEMORY) };
             return ptr::null_mut();
         };
+        if guard {
+            return super::shared_pages::reserve_guarded(address, extent);
+        }
         return super::shared_pages::reserve(address, extent);
     }
     if profile == 3 {

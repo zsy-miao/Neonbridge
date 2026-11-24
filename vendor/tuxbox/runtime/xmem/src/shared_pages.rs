@@ -15,7 +15,40 @@ use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 pub(super) const PAGE: usize = 65536;
 
+/// Physical-page windows the title reserved with PAGE_GUARD: pages mapped
+/// there keep the guard; only cache modifiers are dropped from a view's
+/// protection (leonida 8d4dd7a8 / 80ed5dd3, re-derived). Base -> end.
+static GUARDED: std::sync::Mutex<std::collections::BTreeMap<usize, usize>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn guarded() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<usize, usize>> {
+    GUARDED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// TUXBOX_XMEM_GUARD=0 refuses guarded windows, as before.
+pub(super) fn guard_enabled() -> bool {
+    std::env::var("TUXBOX_XMEM_GUARD").map_or(true, |v| v.trim() != "0")
+}
+
+/// Reserve a window whose title protection carries PAGE_GUARD.
+pub(super) fn reserve_guarded(address: *const c_void, bytes: usize) -> *mut c_void {
+    let base = reserve(address, bytes);
+    if !base.is_null() {
+        guarded().insert(base.addr(), base.addr().saturating_add(bytes));
+    }
+    base
+}
+
+fn is_guarded(address: usize) -> bool {
+    guarded().range(..=address).next_back().is_some_and(|(_, &end)| address < end)
+}
+
 pub(super) fn reserve(address: *const c_void, bytes: usize) -> *mut c_void {
+    // A new window at a released one's addresses starts unguarded.
+    if !address.is_null() {
+        let (start, end) = (address.addr(), address.addr().saturating_add(bytes));
+        guarded().retain(|&b, &mut e| e <= start || end <= b);
+    }
     if address.is_null() {
         // Neonbridge: keep placeholders inside the console GPU window.
         return unsafe { super::virtual_memory::host_alloc(address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, 0) };
@@ -108,6 +141,15 @@ impl Section {
             let err = unsafe { GetLastError() };
             unmap(address)?;
             return Err(err);
+        }
+        if is_guarded(address) {
+            let mut old = 0;
+            let guard = windows_sys::Win32::System::Memory::PAGE_GUARD;
+            if unsafe { windows_sys::Win32::System::Memory::VirtualProtect(view.Value, bytes, PAGE_READWRITE | guard, &mut old) } == 0 {
+                let err = unsafe { GetLastError() };
+                unmap(address)?;
+                return Err(err);
+            }
         }
         Ok(())
     }
