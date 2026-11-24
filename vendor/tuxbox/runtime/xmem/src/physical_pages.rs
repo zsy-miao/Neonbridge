@@ -451,6 +451,7 @@ impl Pool {
 
     fn map(&mut self, address: usize, bytes: usize, tokens: &[u64]) -> Result<(), u32> {
         if bytes == 0 { return Ok(()); }
+        imports::changed(address, bytes, "mapped");
         if tokens.iter().any(|t| !self.pages.contains_key(t)) {
             return Err(ERROR_INVALID_PARAMETER);
         }
@@ -559,6 +560,7 @@ impl Pool {
 
     fn unmap(&mut self, address: usize, bytes: usize) -> Result<(), u32> {
         if bytes == 0 { return Ok(()); }
+        imports::changed(address, bytes, "unmapped");
         if self.unmap_view_range(address, bytes)? { return Ok(()); }
         if let Some((base, extent)) = self.aperture(address) {
             if address + bytes > base + extent {
@@ -1075,6 +1077,80 @@ impl Pool {
 /// page with saved contents in those, otherwise its section (shared by every
 /// view of it). Returns 1 on success, 0 for an unknown token or short array,
 /// a negative Win32 error on a failed write.
+/// Title ranges the D3D12 provider imported as GPU heaps
+/// (OpenExistingHeapFromAddress): the GPU keeps the pages it saw at import,
+/// so physical pages mapped or unmapped inside one later diverge silently.
+/// Each such range is reported loudly once (TUXBOX_IMPORT_REMAP_CHECK=0 off).
+mod imports {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    /// (start, end) -> (live imports, already reported).
+    static RANGES: Mutex<BTreeMap<(usize, usize), (u32, bool)>> = Mutex::new(BTreeMap::new());
+
+    fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("TUXBOX_IMPORT_REMAP_CHECK").map_or(true, |v| v.trim() != "0"))
+    }
+
+    pub(super) fn note(start: usize, bytes: usize, add: bool) {
+        if !enabled() || bytes == 0 {
+            return;
+        }
+        let key = (start, start.saturating_add(bytes));
+        let mut ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner());
+        if add {
+            ranges.entry(key).or_insert((0, false)).0 += 1;
+        } else if let Some(entry) = ranges.get_mut(&key) {
+            entry.0 = entry.0.saturating_sub(1);
+            if entry.0 == 0 {
+                ranges.remove(&key);
+            }
+        }
+    }
+
+    pub(super) fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
+        a.0 < b.1 && b.0 < a.1
+    }
+
+    pub(super) fn changed(address: usize, bytes: usize, what: &str) {
+        if !enabled() {
+            return;
+        }
+        let span = (address, address.saturating_add(bytes));
+        let mut ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner());
+        if ranges.is_empty() {
+            return;
+        }
+        for (&(start, end), entry) in ranges.iter_mut() {
+            if !entry.1 && overlaps((start, end), span) {
+                entry.1 = true;
+                let line = format!(
+                    "TuxBox xmem: physical pages {what} at {address:#x}+{bytes:#x} inside GPU-imported range {start:#x}..{end:#x}: the imported heap keeps the old pages (TUXBOX_IMPORT_REMAP_CHECK=0 silences)\n\0");
+                unsafe { windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringA(line.as_ptr()) };
+                if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
+                    eprint!("{}", line.trim_end_matches('\0'));
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn ranges_overlap_only_when_they_share_bytes() {
+        assert!(overlaps((0x1000, 0x2000), (0x1fff, 0x3000)));
+        assert!(!overlaps((0x1000, 0x2000), (0x2000, 0x3000)));
+        assert!(!overlaps((0x1000, 0x2000), (0, 0x1000)));
+    }
+}
+
+/// D3D12 provider ABI: `add` != 0 notes a range imported as a GPU heap, 0
+/// drops one such note.
+#[unsafe(export_name = "TuxBoxNoteGpuImport")]
+extern "system" fn note_gpu_import(start: usize, bytes: usize, add: i32) {
+    imports::note(start, bytes, add != 0);
+}
+
 #[unsafe(export_name = "TuxBoxWritePhysicalPages")]
 unsafe extern "system" fn write_physical_pages(tokens: *const u64, count: usize, offset: usize, src: *const u8, bytes: usize) -> i32 {
     if bytes == 0 {

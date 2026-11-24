@@ -194,9 +194,26 @@ pub(crate) static GPU_APERTURE: LazyLock<Registry> = LazyLock::new(Registry::def
 
 pub(crate) struct ImportPin {
     key: usize,
+    range: Range<u64>,
 }
+
+/// Tells xmem a title range is (or no longer is) a GPU-imported heap, so a
+/// physical page remapped inside it is reported (TuxBoxNoteGpuImport).
+fn note_import(range: &Range<u64>, add: bool) {
+    type Note = unsafe extern "system" fn(usize, usize, i32);
+    static NOTE: std::sync::OnceLock<Option<Note>> = std::sync::OnceLock::new();
+    let note = NOTE.get_or_init(|| unsafe {
+        let module = GetModuleHandleW(w!("xmem.dll")).ok()?;
+        GetProcAddress(module, s!("TuxBoxNoteGpuImport")).map(|f| std::mem::transmute::<_, Note>(f))
+    });
+    if let Some(note) = note {
+        unsafe { note(range.start as usize, (range.end - range.start) as usize, i32::from(add)) };
+    }
+}
+
 impl Drop for ImportPin {
     fn drop(&mut self) {
+        note_import(&self.range, false);
         GPU_APERTURE
             .0
             .lock()
@@ -249,8 +266,10 @@ impl Registry {
         self.after_pending(address, bytes, |state| {
             let key = state.next_import;
             state.next_import = key.checked_add(1).ok_or(E_OUTOFMEMORY)?;
-            state.imports.insert(key, address..address + bytes);
-            Ok(ImportPin { key })
+            let range = address..address.saturating_add(bytes);
+            state.imports.insert(key, range.clone());
+            note_import(&range, true);
+            Ok(ImportPin { key, range })
         })
     }
     fn register(&self, mapping: &Arc<Pending>) {
