@@ -1018,8 +1018,20 @@ impl PagePools {
                 if let Some((cached, heap)) = &pool.last_page && *cached == base && let Some(heap) = heap.upgrade() {
                     return Ok(heap);
                 }
+                let key = core::ptr::from_ref(pool.as_ref()).addr();
+                if !super::views::view_lockfree() {
+                    let heap = open()?;
+                    pool.last_page = Some((base, Arc::downgrade(&heap)));
+                    return Ok(heap);
+                }
+                // Open without the pool lock (an import takes milliseconds and
+                // every recording thread's views wait on it; rebox b077562).
+                drop(pools);
                 let heap = open()?;
-                pool.last_page = Some((base, Arc::downgrade(&heap)));
+                let mut pools = self.0.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(pool) = pools.get_mut(&key) {
+                    pool.last_page = Some((base, Arc::downgrade(&heap)));
+                }
                 return Ok(heap);
             }
         }

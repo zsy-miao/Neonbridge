@@ -221,6 +221,20 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         entry.bound = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
         return Ok(view);
     }
+    let size = bytes.next_multiple_of(256);
+    let reused = if !writable && copy_reuse() {
+        let dead = entries.iter()
+            .find(|(k, e)| !k.2 && !e.written && e.view.strong_count() == 0
+                && unsafe { e.copy.GetDesc() }.Width == size)
+            .map(|(k, _)| *k);
+        dead.and_then(|k| entries.remove(&k)).map(|e| e.copy)
+    } else { None };
+    // The import and the copy's creation take milliseconds; with the lock
+    // held every recording thread making a view and every submission's
+    // refresh waited on them (rebox b077562, re-derived).
+    // TUXBOX_VIEW_LOCKFREE=0 holds the lock throughout as before.
+    let lockfree = super::view_lockfree();
+    let held = if lockfree { drop(entries); None } else { Some(entries) };
     let page = address & !0xffff;
     let width = (address - page + bytes).next_multiple_of(65536);
     let pieces = match import_source(device, page, width) {
@@ -238,14 +252,6 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         }
         Err(e) => return Err(e),
     };
-    let size = bytes.next_multiple_of(256);
-    let reused = if !writable && copy_reuse() {
-        let dead = entries.iter()
-            .find(|(k, e)| !k.2 && !e.written && e.view.strong_count() == 0
-                && unsafe { e.copy.GetDesc() }.Width == size)
-            .map(|(k, _)| *k);
-        dead.and_then(|k| entries.remove(&k)).map(|e| e.copy)
-    } else { None };
     let copy = match reused {
         Some(copy) => {
             COPY_REUSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -257,6 +263,14 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         }
     };
     note_cache();
+    let mut entries = match held { Some(entries) => entries, None => lock(&shadows.entries) };
+    // Another thread made the same shadow meanwhile: use that one.
+    if let Some(entry) = entries.get_mut(&(address, bytes, writable))
+        && let Some(view) = entry.view.upgrade()
+    {
+        entry.bound = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
+        return Ok(view);
+    }
     // Not registered by address: CBVs, UAVs and command arguments at this VA
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);

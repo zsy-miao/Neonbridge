@@ -120,6 +120,12 @@ pub(super) unsafe extern "system" fn cbv(
     };
 }
 
+/// TUXBOX_VIEW_LOCKFREE=0: shadow copies and single-page heap imports are
+/// made with their cache lock held, as before (rebox b077562).
+pub(crate) fn view_lockfree() -> bool {
+    crate::env_toggle!("TUXBOX_VIEW_LOCKFREE") != Some("0")
+}
+
 /// A CBV over a range that cannot be imported falls back to a copy, else a
 /// null CBV (reads zero), logged; never a fail-fast. TUXBOX_CBV_FALLBACK=0
 /// fails fast as before.
