@@ -222,7 +222,14 @@ impl Plane {
             mip.pitch_elements = pitch;
             mip.padded_rows = rows;
             mip.alignment = if tail { 256 } else { 65536 };
-            let tail_swizzle = if swizzle == 10 { 2 } else { 3 };
+            // Packed mips report the 256-byte mode of their family (1 for
+            // standard, 2 for display) and are addressed with the 64 KiB
+            // equation from their start, like tile zero.
+            let tail_swizzle = match swizzle {
+                9 => 1,
+                10 => 2,
+                _ => 3,
+            };
             mip.swizzle = if tail { tail_swizzle } else { swizzle };
             mip.packed_tail = u32::from(tail);
             if !tail && swizzle == 27 {
@@ -313,14 +320,19 @@ impl Plane {
         }
     }
 
-    /// 64 KiB display swizzle. The packed image factory can mark this layout sparse.
+    /// 64 KiB standard (265) or display (266) swizzle. The packed image factory
+    /// can mark this layout sparse. A 265 mip chain (e.g. nine-mip BC5/BC7
+    /// arrays) shares one layout between XG copies, tiling and placed textures:
+    /// standard mips from the largest at the top of each slice down to the tail
+    /// tile at zero, packed mips at 0x8000, 0x4000, … 0x800, 0x600 inside it,
+    /// slices one slice size apart, subresource = mip + slice * mips.
     pub fn compute_sparse_64k(desc: &Desc) -> Result<Self, i32> {
         if desc.dimension != 3
             || !matches!(desc.layout, 265 | 266 | 273 | 274)
             || desc.alignment != 0
             || desc.samples != 1
             || desc.quality != 0
-            || (desc.mips != 1 && desc.layout != 266)
+            || (desc.mips != 1 && !(desc.layout == 266 || (desc.layout == 265 && standard_64k_mips())))
             || !(1..=2048).contains(&desc.slices)
             || !(1..=16384).contains(&desc.width)
             || !(1..=16384).contains(&desc.height)
@@ -331,7 +343,7 @@ impl Plane {
         if desc.mips == 1 {
             Self::single_64k_plane(desc, desc.layout - 256)
         } else {
-            Self::tiled_64k_mips(desc, 10)
+            Self::tiled_64k_mips(desc, desc.layout - 256)
         }
     }
 
@@ -797,9 +809,10 @@ impl Plane {
             let tile = (y >> yb.len()) * (mip.pitch_elements >> xb.len()) + (x >> xb.len());
             return Some(origin + u64::from(tile) * 256 + u64::from(scatter(x, xb) | scatter(y, yb)));
         }
-        if matches!(mip.swizzle, 9 | 10 | 17 | 18) || (mip.swizzle == 2 && self.alignment == 65536) {
-            // Swizzle 9 (64 KiB standard) shares the S_X bit table without the bank XOR.
-            let table = if mip.swizzle == 9 { 17 } else { mip.swizzle };
+        if matches!(mip.swizzle, 9 | 10 | 17 | 18) || (matches!(mip.swizzle, 1 | 2) && self.alignment == 65536) {
+            // Swizzle 9 (64 KiB standard, and its packed mips reported as 1)
+            // shares the S_X bit table without the bank XOR.
+            let table = if matches!(mip.swizzle, 1 | 9) { 17 } else { mip.swizzle };
             let (xb, yb): (&[u8], &[u8]) = match (self.element_bytes, table) {
                 (1, 17) => (&[0, 1, 2, 3, 9, 11, 13, 15], &[4, 5, 6, 7, 8, 10, 12, 14]),
                 (1, _) => (&[0, 1, 2, 6, 9, 11, 13, 15], &[4, 3, 5, 7, 8, 10, 12, 14]),
@@ -1003,4 +1016,10 @@ fn scatter(value: u32, positions: &[u8]) -> u32 {
         .iter()
         .enumerate()
         .fold(0, |bits, (i, bit)| bits | (((value >> i) & 1) << bit))
+}
+
+/// TUXBOX_XG_64KS_MIPS=0: 64 KiB standard mip chains stay unsupported (E_NOTIMPL), as before.
+fn standard_64k_mips() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TUXBOX_XG_64KS_MIPS").is_none_or(|v| v != "0"))
 }

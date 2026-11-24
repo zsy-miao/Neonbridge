@@ -38,7 +38,8 @@ pub(super) unsafe extern "system" fn resource_tiling(
 ) -> i32 {
     let plane = &this.plane;
     let (_, _, swizzle) = plane.image_extent();
-    if !matches!(swizzle, 10 | 17 | 18 | 24 | 27)
+    // 9: 64 KiB standard, including its BC mip chains and arrays.
+    if !matches!(swizzle, 9 | 10 | 17 | 18 | 24 | 27)
         || this.depth_stencil.is_some_and(|d| d.depth_index() != 0)
     {
         return E_FAIL;
