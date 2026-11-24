@@ -262,8 +262,10 @@ pub unsafe extern "system" fn XApuDequeueResult(handle: usize, result: *mut u8) 
         return INVALID;
     };
     let Some(completion) = connection.results.pop_front() else {
+        stats::dequeued(true);
         return PENDING;
     };
+    stats::dequeued(false);
     let stream = &mut connection.streams[completion.stream()];
     stream.pending -= 1;
     if completion.kind() == 2 {

@@ -296,6 +296,7 @@ pub unsafe extern "system" fn XDspActivate(
     let id = (&raw mut *voice).addr();
     let address = (&raw const voice.status).addr();
     client.streams.insert(id, voice);
+    super::stats::dsp::ACTIVATES.fetch_add(1, Ordering::Relaxed);
     unsafe {
         status.write_unaligned(address);
         stream.write_unaligned(id);
@@ -309,6 +310,7 @@ pub extern "system" fn XDspDeactivate(stream: usize) -> i32 {
         .values_mut()
         .any(|c| c.streams.remove(&stream).is_some())
     {
+        super::stats::dsp::DEACTIVATES.fetch_add(1, Ordering::Relaxed);
         0
     } else {
         INVALID
@@ -339,12 +341,20 @@ pub unsafe extern "system" fn XDspSubmitCommandWithEnvelope(
     else {
         return INVALID;
     };
-    unsafe {
+    let status = unsafe {
         voice.process(
             &client.workspace,
             &command.read_unaligned(),
             envelope,
             sequence,
         )
-    }
+    };
+    use super::stats::dsp;
+    match status {
+        0 => dsp::SUBMITTED.fetch_add(1, Ordering::Relaxed),
+        s if s == NOT_IMPLEMENTED => dsp::REFUSED.fetch_add(1, Ordering::Relaxed),
+        _ => dsp::INVALID.fetch_add(1, Ordering::Relaxed),
+    };
+    dsp::note();
+    status
 }

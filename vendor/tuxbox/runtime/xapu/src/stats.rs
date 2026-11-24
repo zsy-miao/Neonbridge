@@ -22,6 +22,49 @@ struct Window {
 }
 
 static WINDOW: Mutex<Option<Window>> = Mutex::new(None);
+static DEQUEUED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static PENDING: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// XApuDequeueResult: a result handed back, or PENDING (nothing queued).
+pub(super) fn dequeued(pending: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if pending { PENDING.fetch_add(1, Relaxed); } else { DEQUEUED.fetch_add(1, Relaxed); }
+}
+
+fn take_dequeues() -> String {
+    use std::sync::atomic::Ordering::Relaxed;
+    format!("dequeued {}, PENDING returned {}", DEQUEUED.swap(0, Relaxed), PENDING.swap(0, Relaxed))
+}
+
+/// chad (XDsp) counters: one line per 10 s of submits.
+pub(super) mod dsp {
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
+    pub(crate) static ACTIVATES: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static DEACTIVATES: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static SUBMITTED: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static REFUSED: AtomicU32 = AtomicU32::new(0);
+    pub(crate) static INVALID: AtomicU32 = AtomicU32::new(0);
+    static STARTED: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn note() {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let started = STARTED.load(Relaxed);
+        if started == 0 {
+            STARTED.store(now, Relaxed);
+            return;
+        }
+        if now - started < 10_000 || STARTED.compare_exchange(started, now, Relaxed, Relaxed).is_err() {
+            return;
+        }
+        let line = format!(
+            "TuxBox chad: last {:.1} s: {} activates, {} deactivates, {} commands completed, {} refused (non-silent input, no transform), {} invalid",
+            (now - started) as f64 / 1e3, ACTIVATES.swap(0, Relaxed), DEACTIVATES.swap(0, Relaxed),
+            SUBMITTED.swap(0, Relaxed), REFUSED.swap(0, Relaxed), INVALID.swap(0, Relaxed));
+        if std::env::var_os("TUXBOX_LOG").is_some_and(|v| v == "stderr") {
+            eprintln!("{line}");
+        }
+    }
+}
 
 fn log(line: &str) {
     if std::env::var_os("TUXBOX_LOG").is_some_and(|v| v == "stderr") {
@@ -62,10 +105,10 @@ pub(super) fn note(handle: usize, stream: usize, kind: u32, ms: f64, frames: usi
     rates.sort_unstable_by(f64::total_cmp);
     let rate = |i: usize| rates.get(i).copied().unwrap_or(0.0);
     log(&format!(
-        "last {seconds:.1} s: {} decodes, {} starts, {} stops, {} resets, {} other; {} streams decoding, audio s per wall s: min {:.2}, median {:.2}, max {:.2}; decode {:.1} ms total, slowest {:.2} ms; longest gap between commands {:.0} ms, {} gaps over 40 ms; queue full {}, failed {}; calling threads {:?}",
+        "last {seconds:.1} s: {} decodes, {} starts, {} stops, {} resets, {} other; {} streams decoding, audio s per wall s: min {:.2}, median {:.2}, max {:.2}; decode {:.1} ms total, slowest {:.2} ms; longest gap between commands {:.0} ms, {} gaps over 40 ms; queue full {}, failed {}; {}; calling threads {:?}",
         window.commands[3], window.commands[1], window.commands[2], window.commands[5],
         window.commands[0] + window.commands[4], rates.len(), rate(0), rate(rates.len() / 2),
         rate(rates.len().saturating_sub(1)), window.decode_ms, window.slowest_ms, window.longest_gap_ms,
-        window.gaps_over_40, window.queue_full, window.failed, window.threads));
+        window.gaps_over_40, window.queue_full, window.failed, take_dequeues(), window.threads));
     *window = Window { last: Some(now), started: Some(now), ..Default::default() };
 }
