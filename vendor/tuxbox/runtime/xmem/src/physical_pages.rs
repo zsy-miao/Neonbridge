@@ -1425,6 +1425,12 @@ mod imports {
         }
     }
 
+    /// The GPU-imported ranges holding `at`, with their live import counts.
+    pub(super) fn covering(at: usize) -> Vec<(usize, usize, u32)> {
+        let ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner());
+        ranges.iter().filter(|(&(s, e), _)| s <= at && at < e).map(|(&(s, e), &(n, _))| (s, e, n)).take(4).collect()
+    }
+
     pub(super) fn overlaps(a: (usize, usize), b: (usize, usize)) -> bool {
         a.0 < b.1 && b.0 < a.1
     }

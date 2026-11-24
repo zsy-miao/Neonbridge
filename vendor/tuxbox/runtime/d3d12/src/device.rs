@@ -178,6 +178,11 @@ unsafe impl Send for Overflow {}
 static OVERFLOW: std::sync::Mutex<Vec<Overflow>> = std::sync::Mutex::new(Vec::new());
 
 /// Host allocators already added for `guest` beyond its primary one.
+/// Dead shadows and cached imports over [lo, hi) released (views.rs).
+pub(crate) fn release_shadows_over(lo: u64, hi: u64) -> usize {
+    views::release_shadows_over(lo, hi)
+}
+
 pub(crate) fn overflow_allocators(guest: &Allocator) -> Vec<ID3D12CommandAllocator> {
     let key = guest as *const Allocator as usize;
     let table = OVERFLOW.lock().unwrap_or_else(|e| e.into_inner());

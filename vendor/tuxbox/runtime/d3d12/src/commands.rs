@@ -2131,12 +2131,46 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             let owner = queue.parent.as_ref().ok_or(E_INVALIDARG)?;
                             Some(device::blas::begin_submission(owner))
                         };
+                        // test81 dropped two batches when one list's AS source
+                        // had moved since recording. Only that list is left out
+                        // (its AS work would read the old address); the batch's
+                        // other lists run. TUXBOX_STRICT_SCENE=1 drops the batch.
+                        let mut left_out: Vec<*mut c_void> = Vec::new();
                         for list in scene_lists {
                             let state = recording(list);
                             for command in &state.scene_commands {
-                                step("scene (BLAS) preparation", command.prepare(list))?;
+                                let prepared = command.prepare(list);
+                                if let Err(error) = &prepared
+                                    && crate::env_toggle!("TUXBOX_STRICT_SCENE") != Some("1")
+                                {
+                                    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if n <= 16 || n.is_power_of_two() {
+                                        crate::diagnostics::log_line(format_args!(
+                                            "left a list out of its batch: its scene (BLAS) preparation failed {:#010x}; the batch's other lists run ({n} so far; TUXBOX_STRICT_SCENE=1 drops the batch)",
+                                            error.code().0));
+                                    }
+                                    left_out.push(list.native.as_raw());
+                                    break;
+                                }
+                                step("scene (BLAS) preparation", prepared)?;
                             }
                         }
+                        let kept_host: Vec<*mut c_void>;
+                        let (host, splits) = if left_out.is_empty() {
+                            (host, splits)
+                        } else {
+                            let gone: Vec<usize> = host.iter().enumerate().filter(|(_, l)| left_out.contains(l)).map(|(i, _)| i).collect();
+                            kept_host = host.iter().copied().filter(|l| !left_out.contains(l)).collect();
+                            if kept_host.is_empty() {
+                                return Ok(());
+                            }
+                            let splits = splits.into_iter()
+                                .filter(|(i, _)| !gone.contains(i))
+                                .map(|(i, s)| (i - gone.iter().filter(|&&g| g < i).count(), s))
+                                .collect();
+                            (&kept_host[..], splits)
+                        };
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
                             step("shadow refresh", device::refresh_shadows(owner, &queue.native))?;

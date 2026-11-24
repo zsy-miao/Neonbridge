@@ -107,14 +107,63 @@ struct Recorder {
     held: Vec<(ID3D12Resource, ID3D12Resource)>,
 }
 
+type EntryMap = Mutex<HashMap<(u64, u64, bool), Entry>>;
+type SourceMap = Mutex<HashMap<(u64, u64), ID3D12Resource>>;
+
+/// Every device's shadow maps, for `release_over`.
+static REGISTRY: Mutex<Vec<(std::sync::Weak<EntryMap>, std::sync::Weak<SourceMap>)>> = Mutex::new(Vec::new());
+
+/// test81: xmem could not unmap (error 87, even without keeping a
+/// placeholder) pages that GPU-imported heaps still held; cached imports of
+/// dead shadows held many of them. Before a page mapping over such a range,
+/// dead shadows and cached imports over it are released (live shadows stay).
+/// TUXBOX_SHADOW_RELEASE_ON_REMAP=0 keeps them. Returns how many went.
+pub(super) fn release_over(lo: u64, hi: u64) -> usize {
+    if crate::env_toggle!("TUXBOX_SHADOW_RELEASE_ON_REMAP") == Some("0") {
+        return 0;
+    }
+    let maps: Vec<_> = {
+        let mut registry = lock(&REGISTRY);
+        registry.retain(|(e, s)| e.strong_count() > 0 && s.strong_count() > 0);
+        registry.iter().filter_map(|(e, s)| Some((e.upgrade()?, s.upgrade()?))).collect()
+    };
+    let mut released = 0;
+    for (entries, sources) in maps {
+        let mut entries = lock(&entries);
+        let dead: Vec<_> = entries.iter()
+            .filter(|(k, e)| e.view.strong_count() == 0 && k.0 < hi && lo < k.0 + k.1)
+            .map(|(k, _)| *k).collect();
+        let gone: Vec<Entry> = dead.iter().filter_map(|k| entries.remove(k)).collect();
+        let held: std::collections::HashSet<usize> = entries.values()
+            .flat_map(|e| e.pieces.iter().map(|p| p.0.as_raw() as usize)).collect();
+        drop(entries);
+        let mut sources = lock(&sources);
+        let unheld: Vec<_> = sources.iter()
+            .filter(|(k, s)| k.0 < hi && lo < k.0 + k.1 && !held.contains(&(s.as_raw() as usize)))
+            .map(|(k, _)| *k).collect();
+        let imports: Vec<ID3D12Resource> = unheld.iter().filter_map(|k| sources.remove(k)).collect();
+        drop(sources);
+        released += gone.len() + imports.len();
+        drop((gone, imports));
+    }
+    released
+}
+
 #[derive(Default)]
 pub(crate) struct Shadows {
-    entries: Mutex<HashMap<(u64, u64, bool), Entry>>,
+    entries: Arc<EntryMap>,
+    registered: std::sync::Once,
     /// Writable copies by resource pointer, to mark them written.
     by_copy: Mutex<HashMap<usize, (u64, u64, bool)>>,
     recorders: Mutex<Vec<Recorder>>,
     /// Imported title pages by (page, width), shared by every shadow over them.
-    sources: Mutex<HashMap<(u64, u64), ID3D12Resource>>,
+    sources: Arc<SourceMap>,
+}
+
+impl Shadows {
+    fn register(&self) {
+        self.registered.call_once(|| lock(&REGISTRY).push((Arc::downgrade(&self.entries), Arc::downgrade(&self.sources))));
+    }
 }
 
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -276,6 +325,7 @@ pub(super) fn writable_view(device: &Device, address: u64, bytes: u64) -> Result
 
 fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<Arc<TextureAddress>> {
     let shadows = &device.state.shadows;
+    shadows.register();
     let mut entries = lock(&shadows.entries);
     if let Some(entry) = entries.get_mut(&(address, bytes, writable)) {
         if let Some(view) = entry.view.upgrade() {

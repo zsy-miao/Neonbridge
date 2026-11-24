@@ -1063,6 +1063,37 @@ fn unique(textures: &mut Vec<Arc<Texture>>) {
 
 // Descriptor contents may change after command-list Close. Resolve SRVs in the
 // shader-visible heaps that actually participated in a draw or dispatch.
+/// test81 dropped a batch on E_OUTOFMEMORY in placed texture submission.
+/// A step that runs out of memory is retried once after dead shadows and
+/// their cached imports are released; TUXBOX_PLACED_OOM_RETRY=0 fails at once.
+fn oom_retry<T>(device: &Device, what: &str, mut f: impl FnMut() -> Result<T>) -> Result<T> {
+    match f() {
+        Err(e) if e.code() == E_OUTOFMEMORY && crate::env_toggle!("TUXBOX_PLACED_OOM_RETRY") != Some("0") => {
+            let released = super::views::release_dead_shadows(device);
+            let result = f();
+            oom_log(format_args!("placed texture {what} ran out of memory: released {released} dead shadows and imports, retry {}",
+                match &result { Ok(_) => "succeeded".to_string(), Err(e) => format!("failed {:#010x}", e.code().0) }));
+            result
+        }
+        result => result,
+    }
+}
+
+fn oom_log(line: std::fmt::Arguments) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 16 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("{line} ({n} so far)"));
+    }
+}
+
+/// After a failed retry, a refresh or write-back that cannot get memory is
+/// skipped (stale bytes) instead of dropping the batch;
+/// TUXBOX_PLACED_OOM_STRICT=1 drops it.
+fn oom_skip(error: &windows::core::Error) -> bool {
+    error.code() == E_OUTOFMEMORY && crate::env_toggle!("TUXBOX_PLACED_OOM_STRICT") != Some("1")
+}
+
 pub(crate) unsafe fn submit(
     device: *mut c_void,
     queue: &ID3D12CommandQueue,
@@ -1087,8 +1118,8 @@ pub(crate) unsafe fn submit(
     remap_used(textures);
     unmap_idle(&placements.memory.images);
     unsafe { pages::before_execute(queue) };
-    alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref()))?;
-    pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t))?;
+    oom_retry(device, "residency (spans)", || alias::touch(&device.native, textures.iter().filter_map(|t| t.span.as_ref())))?;
+    oom_retry(device, "residency (pages)", || pages::touch(&device.native, textures.iter().filter(|t| t.on_pages).map(|t| &**t)))?;
     // test63: refusing a batch whose written texture overlaps another of its
     // textures dropped five batches, with the lists in them that write GPU
     // memory wait words, and every queue then stalled on those words 2 s at
@@ -1164,7 +1195,12 @@ pub(crate) unsafe fn submit(
     }
 
     let transfer = &mut submission.transfer;
-    transfer.refresh(&device.native, &refresh, Some(reader))?;
+    if let Err(error) = oom_retry(device, "refresh", || transfer.refresh(&device.native, &refresh, Some(reader))) {
+        if !oom_skip(&error) {
+            return Err(error);
+        }
+        oom_log(format_args!("placed texture refresh of {} textures skipped on E_OUTOFMEMORY: the batch runs with their previous bytes (TUXBOX_PLACED_OOM_STRICT=1 drops it)", refresh.len()));
+    }
     let required = textures
         .iter()
         .map(|t| lock(&t.contents).uploaded)
@@ -1193,9 +1229,15 @@ pub(crate) unsafe fn submit(
             .try_reserve(writes.len())
             .map_err(|_| E_OUTOFMEMORY)?;
         let worker = access.worker(&device.native, &placements.memory.failed)?;
-        let readback =
-            writeback::Readback::record(&device.native, unsafe { queue.GetDesc() }.Type, writes)?;
-        Some((worker, readback))
+        let kind = unsafe { queue.GetDesc() }.Type;
+        match oom_retry(device, "write-back", || writeback::Readback::record(&device.native, kind, writes)) {
+            Ok(readback) => Some((worker, readback)),
+            Err(error) if oom_skip(&error) => {
+                oom_log(format_args!("placed texture write-back of {} textures skipped on E_OUTOFMEMORY: their CPU bytes stay stale (TUXBOX_PLACED_OOM_STRICT=1 drops the batch)", writes.len()));
+                None
+            }
+            Err(error) => return Err(error),
+        }
     };
     execute()?;
     if let Some((_, readback)) = &publication {

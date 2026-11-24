@@ -402,6 +402,25 @@ impl Registry {
         state.pending.push(Arc::downgrade(mapping));
     }
     fn apply(&self, mappings: &Mappings) -> Result<()> {
+        // Released before taking the registry lock: an import's pin drop takes it.
+        let pinned: Vec<Range<u64>> = {
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.imports.values()
+                .filter(|import| mappings.spans.iter().any(|r| r.start < import.end && import.start < r.end))
+                .cloned().collect()
+        };
+        if !pinned.is_empty() {
+            let released: usize = mappings.spans.iter().map(|r| crate::device::release_shadows_over(r.start, r.end)).sum();
+            if released != 0 {
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                if remap_logged(n) {
+                    crate::diagnostics::log_line(format_args!(
+                        "CopyPageMappingsBatchX over {} GPU-imported ranges: released {released} dead shadows and cached imports first ({n} so far; TUXBOX_SHADOW_RELEASE_ON_REMAP=0 keeps them)",
+                        pinned.len()));
+                }
+            }
+        }
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         mappings.apply(&state.imports)
     }

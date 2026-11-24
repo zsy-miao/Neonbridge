@@ -126,6 +126,11 @@ pub(crate) fn shadow_bytes() -> (u64, u64) {
     (shadow::LIVE_BYTES.load(Relaxed), shadow::DEAD_BYTES.load(Relaxed))
 }
 
+/// Releases dead shadows and cached imports over [lo, hi) (shadow::release_over).
+pub(crate) fn release_shadows_over(lo: u64, hi: u64) -> usize {
+    shadow::release_over(lo, hi)
+}
+
 /// Releases dead shadow copies and unheld imports (see shadow::release_dead).
 pub(crate) fn release_dead_shadows(device: &Device) -> usize {
     shadow::release_dead(&device.state.shadows)
