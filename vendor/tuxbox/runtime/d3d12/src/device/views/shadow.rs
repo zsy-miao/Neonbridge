@@ -27,6 +27,10 @@ struct Entry {
     pieces: Vec<(ID3D12Resource, u64, u64, u64)>,
     writable: bool,
     view: Weak<TextureAddress>,
+    /// The device copy, kept after its view dies so a view recreated at the
+    /// same address (ring constant buffers, every frame) revives it instead of
+    /// importing the title pages and creating a copy again.
+    copy: ID3D12Resource,
     /// A UAV or copy has targeted the copy: only then is it written back.
     written: bool,
     /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP=1).
@@ -87,6 +91,15 @@ fn buffer(width: u64) -> D3D12_RESOURCE_DESC {
     }
 }
 
+/// Dead entries (their view dropped) are kept for revival up to this many in all.
+const KEPT: usize = 8192;
+
+fn prune(entries: &mut HashMap<(u64, u64, bool), Entry>) {
+    if entries.len() > KEPT {
+        entries.retain(|_, e| e.view.strong_count() > 0);
+    }
+}
+
 /// A view of `bytes` at `address` whose resource begins exactly at `address`.
 pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
     copy_of(device, address, bytes, false)
@@ -100,7 +113,20 @@ pub(super) fn writable_view(device: &Device, address: u64, bytes: u64) -> Result
 fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<Arc<TextureAddress>> {
     let shadows = &device.state.shadows;
     let mut entries = lock(&shadows.entries);
-    if let Some(view) = entries.get(&(address, bytes, writable)).and_then(|e| e.view.upgrade()) {
+    if let Some(entry) = entries.get_mut(&(address, bytes, writable)) {
+        if let Some(view) = entry.view.upgrade() {
+            return Ok(view);
+        }
+    }
+    // TUXBOX_SHADOW_REVIVE=0: a dead entry is rebuilt (fresh import) instead,
+    // in case the title remapped its pages to other memory meanwhile.
+    let revive = crate::env_toggle!("TUXBOX_SHADOW_REVIVE") != Some("0");
+    if let Some(entry) = entries.get_mut(&(address, bytes, writable)) && revive {
+        // Not registered by address, like a new copy; refreshed before its
+        // next submission, as every live shadow is.
+        let view = TextureAddress::unlisted(device, &entry.copy, address as usize);
+        entry.view = Arc::downgrade(&view);
+        entry.hash = None;
         return Ok(view);
     }
     let page = address & !0xffff;
@@ -134,8 +160,8 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // Not registered by address: CBVs, UAVs and command arguments at this VA
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
-    entries.retain(|_, e| e.view.strong_count() > 0);
-    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), written: false, hash: None });
+    prune(&mut entries);
+    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
         by_copy.retain(|_, key| entries.contains_key(key));
@@ -216,11 +242,13 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     let mut copies = Vec::new();
     {
         let mut entries = lock(&shadows.entries);
-        entries.retain(|_, e| e.view.strong_count() > 0);
+        prune(&mut entries);
         let skip = !back && skip_unchanged();
         let (mut live, mut skipped) = (0u64, 0u64);
         let all = write_back_all();
         for (&(address, bytes, _), entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (e.written || all))) {
+            // Dead entries wait for revival; their title pages may be unmapped.
+            let Some(view) = entry.view.upgrade() else { continue };
             live += 1;
             if skip && !entry.writable {
                 let now = hash(address, bytes);
@@ -229,10 +257,8 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                     continue;
                 }
             }
-            if let Some(view) = entry.view.upgrade() {
-                for (source, offset, at, bytes) in &entry.pieces {
-                    copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
-                }
+            for (source, offset, at, bytes) in &entry.pieces {
+                copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
             }
         }
         static LOGGED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
