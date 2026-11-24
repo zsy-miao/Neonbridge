@@ -42,6 +42,7 @@ mod instance_cull_post;
 mod instance_cull_views;
 mod classify_materials;
 mod int16;
+mod norm16;
 mod indexed_lane;
 mod particle_sort;
 mod persistent;
@@ -3772,6 +3773,9 @@ impl<'a> Emitter<'a> {
         if self.insns.iter().any(|i| i.mnemonic.starts_with("v_cmp") && (i.mnemonic.ends_with("_f64") || i.mnemonic.ends_with("_f32") || i.mnemonic.ends_with("_f16"))) {
             h.push_str(compare::FLOAT_HELPERS);
         }
+        if self.insns.iter().any(|i| norm16::uses(&i.mnemonic)) {
+            h.push_str(norm16::HELPER);
+        }
         if self.insns.iter().any(|i| matches!(i.mnemonic.as_str(), "s_lshr_b64" | "s_ashr_i64" | "s_bfe_u64" | "s_bfe_i64")) {
             h.push_str(r#"
 uint2 tb_shr64(uint lo, uint hi, uint n, bool sign) {
@@ -5910,6 +5914,23 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if m == "v_cvt_i16_f16" {
             let x = r(&s[0])?;
             return self.wv(&d, &format!("((({x}) & 0x7fffu) > 0x7c00u ? 0u : (asuint((int)clamp({}, -32768.0, 32767.0)) & 0xffffu))", h16(&s[0])?));
+        }
+        if norm16::uses(&m) {
+            // Binary16 bits with the VOP3 abs/neg modifiers applied to the bits; an
+            // inline float constant denotes the half of that value.
+            let mut bits = match s[0] {
+                Opnd::ConstF32(_) => format!("tb_f16_rne(asfloat({}))", r(&s[0])?),
+                _ => format!("(({}) & 0xffffu)", r(&s[0])?),
+            };
+            if ins.enc == Enc::Vop3 {
+                if ins.aux.mask & 1 != 0 {
+                    bits = format!("({bits} & 0x7fffu)");
+                }
+                if ins.aux.mask & 8 != 0 {
+                    bits = format!("({bits} ^ 0x8000u)");
+                }
+            }
+            return self.wv(&d, &norm16::expression(&m, &bits, &h16(&s[0])?));
         }
         if matches!(m.as_str(), "v_fmaak_f16" | "v_fmamk_f16") {
             // The trailing literal dword carries the half-float constant K in its low bits.
