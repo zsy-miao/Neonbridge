@@ -73,3 +73,37 @@ fn a_dynamic_selector_from_a_vgpr_goes_through_tb_perm() {
     let hlsl = translate_valu_probe(&[0xd744_0000, 0x040a_0300], 4).unwrap();
     assert!(hlsl.contains("tb_perm(v0, v1, v2)"), "{hlsl}");
 }
+
+/// VOP3 `op v0, v0, s0, s1` with `word0_bits` OR'd in (op_sel at 11-14, abs at 8-10).
+fn permlane(op: u32, word0_bits: u32, word1: u32) -> String {
+    translate_valu_probe(&[0xd400_0000 | (op << 16) | word0_bits, word1], 2).unwrap()
+}
+
+#[test]
+fn permlane16_rows_fetch_inactive_and_bound_ctrl() {
+    const SGPR_SELECTS: u32 = 0x0004_0100;
+    let same = permlane(887, 0, SGPR_SELECTS);
+    assert!(same.contains("(t0lane & ~15u) | ") && !same.contains("^ 16u"), "{same}");
+    assert!(same.contains("WaveReadLaneAt(v0, t0src)") && same.contains("if (t0live)"), "{same}");
+    let cross = permlane(888, 0, SGPR_SELECTS);
+    assert!(cross.contains("((t0lane & ~15u) ^ 16u)"), "{cross}");
+    // FI: the source is read whether or not it is active.
+    let fi = permlane(887, 1 << 11, SGPR_SELECTS);
+    assert!(!fi.contains("WaveActiveBallot"), "{fi}");
+    // BOUND_CTRL: an inactive source writes 0.
+    let bound = permlane(888, 1 << 12, SGPR_SELECTS);
+    assert!(bound.contains("(t0live ? t0value : 0u)"), "{bound}");
+}
+
+#[test]
+fn permlane16_undefined_encodings_are_logged_not_decoded() {
+    for (op, bits, word1) in [
+        (887, 1 << 8, 0x0004_0100),  // abs
+        (888, 1 << 13, 0x0004_0100), // op_sel[2]
+        (887, 1 << 15, 0x0004_0100), // clamp
+        (888, 0, 0x0004_0002),       // SGPR source
+    ] {
+        let hlsl = permlane(op, bits, word1);
+        assert!(hlsl.contains("source passed through") && !hlsl.contains("WaveReadLaneAt"), "{op} {bits:#x}: {hlsl}");
+    }
+}

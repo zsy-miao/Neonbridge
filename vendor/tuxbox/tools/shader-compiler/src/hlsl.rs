@@ -6444,23 +6444,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.line(&format!("if (exec_lo & 1u) {{ uint t{t} = {x}; {x} = {y}; {y} = t{t}; }}"));
             return Ok(());
         }
-        if m == "v_permlanex16_b32" {
-            let flags = (ins.raw[0] >> 11) & 0xf;
-            if flags != 0 || ins.aux.mask != 0 || ins.aux.imm != 0 || ins.aux.imm2 != 0 {
-                return Err("permlanex16 modifiers unsupported".into());
-            }
-            let (value, lo, hi) = (r(&s[0])?, r(&s[1])?, r(&s[2])?);
-            let t = self.tmp;
-            self.tmp += 1;
-            self.line(&format!("uint t{t}lane = WaveGetLaneIndex(); uint t{t}sel = (t{t}lane & 8u) ? {hi} : {lo};"));
-            self.line(&format!("uint t{t}src = ((t{t}lane & ~15u) ^ 16u) | ((t{t}sel >> (4u * (t{t}lane & 7u))) & 15u);"));
-            self.line(&format!("uint t{t}value = WaveReadLaneAt({value}, t{t}src);"));
-            // FI=0, BOUND_CTRL=0: an inactive source preserves the destination.
-            self.line(&format!("uint4 t{t}active = WaveActiveBallot((exec_lo & 1u) != 0u);"));
-            self.line(&format!("if (t{t}active[t{t}src >> 5] & (1u << (t{t}src & 31u))) {{"));
-            self.wv(&d, &format!("t{t}value"))?;
-            self.line("}");
-            return Ok(());
+        if m == "v_permlanex16_b32" || m == "v_permlane16_b32" {
+            return self.permlane16(ins, &d, s);
         }
         if ins.enc == Enc::Vop3 && (ins.op == 0x360 || ins.op == 0x361) {
             return self.lane_access(ins);
@@ -6861,6 +6846,51 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let view = if store { HeapView::RawRw } else { HeapView::Raw };
         let buf = self.bind_heap(view, src);
         self.raw_transfer_on(ins, buf, store)
+    }
+
+    /// `v_permlane16_b32` / `v_permlanex16_b32 vD, vS, lo, hi` (RDNA2 ISA): lane i
+    /// reads lane sel[i] (4 bits per lane, lanes 0-7 from `lo`, 8-15 from `hi`) of
+    /// its own 16-lane row, or of the other row for the x16 form. op_sel[0] is FI
+    /// (read inactive lanes too) and op_sel[1] BOUND_CTRL (an inactive source gives
+    /// 0); with both clear an inactive source keeps the destination. Encodings the
+    /// ISA leaves undefined here (abs/neg, op_sel[3:2], clamp, omod, a non-VGPR
+    /// source) are logged and pass the source through unless TB_PERMLANE_STRICT=1.
+    fn permlane16(&mut self, ins: &Insn, d: &Opnd, s: &[Opnd]) -> Result<(), String> {
+        let m = ins.mnemonic.as_str();
+        let flags = (ins.raw[0] >> 11) & 0xf;
+        let clamp = ins.raw[0] & 0x8000 != 0;
+        let unsupported = flags & 0xc != 0 || ins.aux.mask != 0 || ins.aux.imm != 0 || ins.aux.imm2 != 0
+            || clamp || !matches!(s[0], Opnd::Vgpr(_));
+        if unsupported {
+            let what = format!("{m} with unsupported modifiers or source at {:#x}", ins.offset);
+            if std::env::var("TB_PERMLANE_STRICT").is_ok_and(|v| v.trim() == "1") {
+                return Err(what);
+            }
+            eprintln!("xshader: {what}: source passed through");
+            self.line(&format!("// ({what}: source passed through)"));
+            return self.wv(d, &r(&s[0])?);
+        }
+        let (fi, bound_ctrl) = (flags & 1 != 0, flags & 2 != 0);
+        let (value, lo, hi) = (r(&s[0])?, r(&s[1])?, r(&s[2])?);
+        let row = if m == "v_permlanex16_b32" { "((t{t}lane & ~15u) ^ 16u)" } else { "(t{t}lane & ~15u)" };
+        let t = self.tmp;
+        self.tmp += 1;
+        let row = row.replace("{t}", &t.to_string());
+        self.line(&format!("uint t{t}lane = WaveGetLaneIndex(); uint t{t}sel = (t{t}lane & 8u) ? {hi} : {lo};"));
+        self.line(&format!("uint t{t}src = {row} | ((t{t}sel >> (4u * (t{t}lane & 7u))) & 15u);"));
+        self.line(&format!("uint t{t}value = WaveReadLaneAt({value}, t{t}src);"));
+        if fi {
+            return self.wv(d, &format!("t{t}value"));
+        }
+        self.line(&format!("uint4 t{t}active = WaveActiveBallot((exec_lo & 1u) != 0u);"));
+        self.line(&format!("bool t{t}live = (t{t}active[t{t}src >> 5] & (1u << (t{t}src & 31u))) != 0u;"));
+        if bound_ctrl {
+            return self.wv(d, &format!("(t{t}live ? t{t}value : 0u)"));
+        }
+        self.line(&format!("if (t{t}live) {{"));
+        self.wv(d, &format!("t{t}value"))?;
+        self.line("}");
+        Ok(())
     }
 
     /// `buffer_load_format_*` with IDXEN through a heap descriptor: a typed view,
