@@ -187,7 +187,7 @@ impl Contexts {
         let Some(context) = self.context(index) else { return };
         let _slot = lock(&self.voices[index as usize]);
         let size = context.field(0, 22, 5).max(1);
-        context.set_field(9, 0, 5, (context.field(9, 0, 5) + blocks) % size);
+        context.set_field(9, 0, 5, advanced(context.field(9, 0, 5), blocks, size));
         if blocks > 0 {
             context.set_field(1, 31, 1, 1);
         }
@@ -201,6 +201,23 @@ impl Contexts {
             }
         }
     }
+}
+
+/// The read block after the title consumed `blocks` of a `size`-block ring.
+/// The count is reduced first: a count near u32::MAX would overflow the sum
+/// (VIctory 257d8bb, re-derived).
+fn advanced(read: u32, blocks: u32, size: u32) -> u32 {
+    let size = size.max(1);
+    (read % size + blocks % size) % size
+}
+
+#[cfg(test)]
+#[test]
+fn a_huge_read_advance_wraps_without_overflow() {
+    assert_eq!(advanced(3, 4, 8), 7);
+    assert_eq!(advanced(7, 2, 8), 1);
+    assert_eq!(advanced(31, u32::MAX, 32), (31 + u32::MAX % 32) % 32);
+    assert_eq!(advanced(5, 9, 0), 0);
 }
 
 fn pump(context: Context, voice: &mut Voice) {
