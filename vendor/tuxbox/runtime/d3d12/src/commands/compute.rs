@@ -199,6 +199,7 @@ pub(super) unsafe extern "system" fn copy_buffer(
         state.error = E_INVALIDARG;
         return;
     };
+    unsafe { device::note_shadow_write(owner, windows::core::Interface::as_raw(&dst.native)) };
     // SAFETY: both native buffers belong to the list and contain the requested range.
     unsafe {
         list.native

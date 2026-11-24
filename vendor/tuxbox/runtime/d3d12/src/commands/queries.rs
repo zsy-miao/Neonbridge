@@ -82,6 +82,7 @@ pub(super) unsafe extern "system" fn resolve(
         state.error = E_INVALIDARG;
         return;
     };
+    unsafe { crate::device::note_shadow_write(owner, windows::core::Interface::as_raw(&dst.native)) };
     let Some(offset) = super::compute::buffer_offset(dst, offset, u64::from(count) * stride) else {
         state.error = E_INVALIDARG;
         return;

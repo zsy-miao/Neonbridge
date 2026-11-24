@@ -27,6 +27,8 @@ struct Entry {
     pieces: Vec<(ID3D12Resource, u64, u64, u64)>,
     writable: bool,
     view: Weak<TextureAddress>,
+    /// A UAV or copy has targeted the copy: only then is it written back.
+    written: bool,
     /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP=1).
     hash: Option<u64>,
 }
@@ -68,6 +70,8 @@ struct Recorder {
 #[derive(Default)]
 pub(crate) struct Shadows {
     entries: Mutex<HashMap<(u64, u64, bool), Entry>>,
+    /// Writable copies by resource pointer, to mark them written.
+    by_copy: Mutex<HashMap<usize, (u64, u64, bool)>>,
     recorders: Mutex<Vec<Recorder>>,
 }
 
@@ -131,7 +135,12 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     entries.retain(|_, e| e.view.strong_count() > 0);
-    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), hash: None });
+    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), written: false, hash: None });
+    if writable {
+        let mut by_copy = lock(&shadows.by_copy);
+        by_copy.retain(|_, key| entries.contains_key(key));
+        by_copy.insert(copy.as_raw() as usize, (address, bytes, writable));
+    }
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("shadowed buffer view at {address:#x}, {bytes} bytes"));
     Ok(view)
@@ -167,6 +176,27 @@ fn split_import(
     }
 }
 
+/// A UAV, copy or clear may write `resource`: if it is a writable shadow's
+/// copy, it is written back from now on. Writable shadows nothing targets
+/// (most are placed buffers over split pages that are only read) were copied
+/// back every submission: ~640 MB each in test15.
+pub(crate) fn mark_written(device: &Device, resource: *mut core::ffi::c_void) {
+    let shadows = &device.state.shadows;
+    let Some(key) = lock(&shadows.by_copy).get(&(resource as usize)).copied() else { return };
+    if let Some(entry) = lock(&shadows.entries).get_mut(&key) && !entry.written {
+        entry.written = true;
+        static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+            crate::diagnostics::log_line(format_args!("shadow at {:#x} ({} bytes) is written; writing it back", key.0, key.1));
+        }
+    }
+}
+
+/// TUXBOX_SHADOW_WRITEBACK=all writes back every writable shadow, written or not.
+fn write_back_all() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_WRITEBACK") == Some("all")
+}
+
 /// Copy every live shadow from title memory ahead of this queue's work.
 pub(crate) unsafe fn refresh(device: &Device, queue: &ID3D12CommandQueue) -> Result<()> {
     unsafe { transfer(device, queue, false) }
@@ -189,7 +219,8 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         entries.retain(|_, e| e.view.strong_count() > 0);
         let skip = !back && skip_unchanged();
         let (mut live, mut skipped) = (0u64, 0u64);
-        for (&(address, bytes, _), entry) in entries.iter_mut().filter(|(_, e)| !back || e.writable) {
+        let all = write_back_all();
+        for (&(address, bytes, _), entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (e.written || all))) {
             live += 1;
             if skip && !entry.writable {
                 let now = hash(address, bytes);

@@ -210,6 +210,12 @@ pub(crate) unsafe fn desc_table_address(owner: &windows::core::IUnknown) -> wind
     device.state.desc_table.address(&device.native)
 }
 
+/// A command or view may write `resource` (a raw native resource).
+pub(crate) unsafe fn note_shadow_write(owner: *mut core::ffi::c_void, resource: *mut core::ffi::c_void) {
+    let device = unsafe { &*owner.cast::<Device>() };
+    shadow::mark_written(device, resource);
+}
+
 pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     unsafe { shadow::write_back(device, queue) }
@@ -591,6 +597,7 @@ pub(super) unsafe extern "system" fn uav(
         DescriptorBacking::BufferAlias { native: alias.clone(), original: original.clone() }));
     let buffer = unsafe { view_resource(device, object, desc, handle) };
     let buffer = uav_alias.as_ref().map(|(alias, _)| alias).or(buffer);
+    if let Some(resource) = buffer { shadow::mark_written(device, resource.as_raw()); }
     let counter = if counter.is_null() {
         None
     } else {

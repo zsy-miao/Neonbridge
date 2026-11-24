@@ -1276,6 +1276,7 @@ unsafe extern "system" fn copy_texture(
         return;
     }
     crate::diagnostics::display::copy(dst.resource);
+    unsafe { device::note_shadow_write(device, dst.resource as *mut c_void) };
     unsafe {
         (list.native.vtable().CopyTextureRegion)(
             list.native.as_raw(),
@@ -1318,6 +1319,7 @@ unsafe extern "system" fn copy_resource(
         return;
     };
     crate::diagnostics::display::copy(dst.native.as_raw());
+    unsafe { device::note_shadow_write(owner, windows::core::Interface::as_raw(&dst.native)) };
     let (d, s) = unsafe { (dst.native.GetDesc(), src.native.GetDesc()) };
     if dst.state.buffer_window().is_some() || src.state.buffer_window().is_some() {
         let (to, size) = dst.state.buffer_window().unwrap_or((0, d.Width));
