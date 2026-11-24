@@ -470,22 +470,83 @@ pub(crate) mod cost {
     static NS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
     static SEEN: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
-    pub(crate) struct Timer(Bucket, Instant);
+    pub(crate) struct Timer(Bucket, Instant, Option<&'static Location<'static>>);
     impl Drop for Timer {
         fn drop(&mut self) {
-            NS[self.0 as usize].fetch_add(self.1.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            let ns = self.1.elapsed().as_nanos() as u64;
+            NS[self.0 as usize].fetch_add(ns, Ordering::Relaxed);
+            if let Some(site) = self.2 { sites::add(site, ns); }
         }
     }
-    pub(crate) fn timer(bucket: Bucket) -> Timer { Timer(bucket, Instant::now()) }
+    pub(crate) fn timer(bucket: Bucket) -> Timer { Timer(bucket, Instant::now(), None) }
+    /// A timer that also charges its caller's call site (through any
+    /// `#[track_caller]` chain), so the heartbeat names the costliest calls.
+    #[track_caller]
+    pub(crate) fn sited(bucket: Bucket) -> Timer { Timer(bucket, Instant::now(), Some(Location::caller())) }
+    use std::panic::Location;
+
+    /// Lock-free per-call-site totals: an open-addressed table keyed by the
+    /// static Location pointer. Sites past its capacity go uncounted.
+    mod sites {
+        use std::panic::Location;
+        use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+        const N: usize = 256;
+        static KEYS: [AtomicPtr<Location<'static>>; N] = [const { AtomicPtr::new(core::ptr::null_mut()) }; N];
+        static NS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+        static CALLS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+        static SEEN_NS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+        static SEEN_CALLS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+
+        pub(super) fn add(site: &'static Location<'static>, ns: u64) {
+            let key = core::ptr::from_ref(site).cast_mut();
+            let start = (key as usize >> 3) % N;
+            for probe in 0..N {
+                let i = (start + probe) % N;
+                let held = KEYS[i].load(Ordering::Relaxed);
+                let ours = held == key || (held.is_null()
+                    && match KEYS[i].compare_exchange(core::ptr::null_mut(), key, Ordering::Relaxed, Ordering::Relaxed) {
+                        Ok(_) => true,
+                        Err(other) => other == key,
+                    });
+                if ours {
+                    NS[i].fetch_add(ns, Ordering::Relaxed);
+                    CALLS[i].fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+
+        /// "graphics.rs:169 80.12 (41 calls), ..." per frame since the previous call.
+        pub(super) fn top(frames: f64, count: usize) -> String {
+            let mut rows: Vec<(u64, u64, &'static Location<'static>)> = (0..N).filter_map(|i| {
+                let key = KEYS[i].load(Ordering::Relaxed);
+                if key.is_null() { return None; }
+                let ns = NS[i].load(Ordering::Relaxed);
+                let calls = CALLS[i].load(Ordering::Relaxed);
+                let dns = ns - SEEN_NS[i].swap(ns, Ordering::Relaxed);
+                let dcalls = calls - SEEN_CALLS[i].swap(calls, Ordering::Relaxed);
+                // SAFETY: keys are only ever 'static Location pointers.
+                (dns > 0).then(|| (dns, dcalls, unsafe { &*key }))
+            }).collect();
+            rows.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            rows.iter().take(count).map(|(ns, calls, site)| {
+                let file = site.file().rsplit(['/', '\\']).next().unwrap_or(site.file());
+                format!("{file}:{} {:.2} ({:.0} calls)", site.line(), *ns as f64 / 1e6 / frames, *calls as f64 / frames)
+            }).collect::<Vec<_>>().join(", ")
+        }
+    }
     pub(crate) fn add(bucket: Bucket, ns: u64) { NS[bucket as usize].fetch_add(ns, Ordering::Relaxed); }
 
     /// "record 3.1, close 0.4, ..." in ms per frame since the previous call.
     pub(crate) fn split(frames: usize) -> String {
         let frames = frames.max(1) as f64;
-        (0..6).map(|i| {
+        let buckets = (0..6).map(|i| {
             let now = NS[i].load(Ordering::Relaxed);
             let delta = now - SEEN[i].swap(now, Ordering::Relaxed);
             format!("{} {:.2}", NAMES[i], delta as f64 / 1e6 / frames)
-        }).collect::<Vec<_>>().join(", ")
+        }).collect::<Vec<_>>().join(", ");
+        // Record is summed over every recording thread, so it can exceed the
+        // frame time; the top sites say which calls hold the list lock longest.
+        format!("{buckets}; top record sites ms/frame: {}", sites::top(frames, 6))
     }
 }

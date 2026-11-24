@@ -449,8 +449,9 @@ impl core::ops::DerefMut for Held<'_> {
     fn deref_mut(&mut self) -> &mut Recording { &mut self.0 }
 }
 
+#[track_caller]
 fn recording(list: &List) -> Held<'_> {
-    let timer = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Record);
+    let timer = crate::diagnostics::cost::sited(crate::diagnostics::cost::Bucket::Record);
     Held(list.state.recording.lock().unwrap_or_else(|poison| poison.into_inner()), timer)
 }
 

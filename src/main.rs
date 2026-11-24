@@ -670,11 +670,16 @@ fn run_summary(text: &str, code: Option<i32>) -> String {
     });
     // Heartbeat: "completed PresentX #N (x fps)" or "(x fps; ms/frame: record a, close b, ...)".
     let beat = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split_once(" (").map(|(_, r)| r.trim_end().trim_end_matches(')').to_owned()));
+    let (beat, top) = match beat.as_deref().map(|b| b.split_once("; top record sites ms/frame: ").unwrap_or((b, ""))) {
+        Some((b, t)) => (Some(b.to_owned()), t.to_owned()),
+        None => (None, String::new()),
+    };
     let (fps, split) = match beat.as_deref().map(|b| b.split_once("; ms/frame: ").unwrap_or((b, ""))) {
         Some((f, s)) => (f.trim_end_matches(" fps").to_owned(), s.replace(", ", ",").replace(" (worker)", "").replace(' ', "-")),
         None => ("-".into(), String::new()),
     };
     let fps = if split.is_empty() { fps } else { format!("{fps} ms/frame={split}") };
+    let fps = if top.is_empty() { fps } else { format!("{fps} top-record=[{top}]") };
     let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
     format!(
         "[launch] summary: exit={exit} presents={presents} fps={fps} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \
