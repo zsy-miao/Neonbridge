@@ -1525,10 +1525,33 @@ unsafe extern "system" fn reset_extended(list: &List, allocator: *mut c_void, in
     unsafe { reset(list, allocator, initial) }
 }
 
+/// Slot 131 on the Device11 table: a batched acceleration-structure build
+/// (count, entries) or the extended cache barrier (cache, engines, address,
+/// bytes). A build's entry array is readable memory; the barrier's engine
+/// mask is not a pointer to `count` readable entries.
+unsafe extern "system" fn slot131(list: &List, a: u32, b: usize, c: u64, d: u64) {
+    let entries = b as *const build_raytracing::Entry;
+    let bytes = (a as usize).checked_mul(size_of::<build_raytracing::Entry>());
+    if a != 0 && b > 0xffff && bytes.is_some_and(|n| accessible(b, n, false)) {
+        unsafe { build_raytracing::batch(list, a, entries) };
+        return;
+    }
+    static BARRIER: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&BARRIER, || format!(
+        "list slot 131 recorded as cache barrier (cache {a:#x} engines {b:#x} address {c:#x} bytes {d:#x})"));
+    unsafe { extended_cache_barrier(list, a, b as u32, c, d) };
+}
+
 // Device11 titles use the new raster-state slots even when requesting the
 // base graphics-list IID. The List6-only cache barriers remain separate.
 static DEVICE11_LIST_SLOTS: Slots<149> = {
     let mut slots = LIST_SLOTS;
+    // GTA VI calls slot 131 on this table as the extended cache barrier
+    // (cache 0xc280, engines 0x20000, address 0, bytes 0xffffffffff00 at
+    // game+0x1560994); sending it to the batched AS build faulted reading
+    // 0xc280 "entries" at 0x20000. Slot 131 tells the two forms apart.
+    slots[131] = crate::slot!(slot131);
+    slots[132] = crate::slot!(extended_cache_barrier);
     slots[70] = crate::slot!(graphics::depth_bounds);
     slots[75] = crate::slot!(graphics::force_shader_depth_order);
     slots[142] = crate::slot!(graphics::sample_mask);
