@@ -94,6 +94,7 @@ mod screen_gather;
 mod reflection_far;
 mod sampler_heap;
 mod lane_reads;
+mod heap_offsets;
 use sampler_heap::DirectSampler;
 mod reflection_probe;
 mod wave_scan;
@@ -149,16 +150,16 @@ enum Sym {
     SamplerOffset(DirectSampler),
     HeapSampler(DirectSampler),
     HeapOffset,
-    HeapDescriptor(u32),
+    HeapDescriptor(u32, Option<usize>),
     /// A byte offset (`index << 4`) into the guest sampler heap, from shader data.
     SamplerHeapOffset,
     /// A sampler from the guest sampler heap whose index the s_load stored in this register.
     HeapSamplerAt,
     /// Dword 1 and up of a descriptor fetched at a run-time heap index. The index itself
     /// lives in dword 0, so a use is valid only while the others are still the loaded ones.
-    HeapWord(u8),
+    HeapWord(u8, Option<usize>),
     /// Guest sampler-heap index read at a run-time byte offset (compute sampler heap).
-    HeapSamplerIndex,
+    HeapSamplerIndex(Option<usize>),
     /// Byte offset of a 16-byte sampler descriptor: a scalar shifted left by four.
     HeapSamplerOffset,
     /// See `lane_reads`.
@@ -3287,7 +3288,7 @@ impl<'a> Emitter<'a> {
         // select per-lane values are not told apart from it, so it can be wrong.
         let speculate = std::env::var_os("TB_SPECULATE_DESCRIPTORS").is_some_and(|v| !v.is_empty());
         let optimistic = |v: &Sym| matches!(v, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_))
-            || speculate && matches!(v, Sym::InlineWord(_) | Sym::HeapOffset | Sym::HeapDescriptor(_)
+            || speculate && matches!(v, Sym::InlineWord(_) | Sym::HeapOffset | Sym::HeapDescriptor(..)
                 | Sym::SamplerHeapOffset | Sym::SamplerOffset(_) | Sym::DirectRaw(_));
         while let Some(b) = work.pop() {
             if budget == 0 {
@@ -4064,6 +4065,12 @@ impl<'a> Emitter<'a> {
         let dbg_reg = std::env::var("TB_DFDEBUG").ok().and_then(|v| v.parse::<u16>().ok());
         let mut dbg_prev: Option<Sym> = dbg_reg.and_then(|r| sym.get(&r).copied());
         let block_start = range.start;
+        // Only a single straight-line region gives each static load site
+        // one unambiguous execution. Keep the previous join policy for
+        // branches/loops until correlated descriptor joins are modeled.
+        let track_heap_origin = range.start == 0 && range.end == insns.len()
+            && !insns.iter().any(|i| ["branch", "setpc", "swappc", "call", "rfe", "trap"]
+                .iter().any(|name| i.mnemonic.contains(name)));
         let inline_samplers = self.resource_heap_base.is_some()
             || (self.ex.root_sig.is_none() && self.ex.resources.iter().any(|r| r.res_type == 1))
             // Literal sampler words can name any static sampler with identical state.
@@ -4110,18 +4117,11 @@ impl<'a> Emitter<'a> {
                 dbg_prev = cur;
             }
             let ins = &insns[idx];
-            // A compute-heap byte offset held in a VGPR (key 2000 + v) lasts until the
-            // VGPR is written again; `v_lshlrev_b32 v, 5, x` below re-marks it.
-            // v_nop writes nothing; its encoding can still carry stale VDST/SRC0 fields.
-            if self.compute_heap && ins.mnemonic != "v_nop" {
-                for d in &ins.dst {
-                    if let Opnd::Vgpr(v) = d {
-                        if sym.get(&(2000 + *v as u16)) == Some(&Sym::HeapOffset) {
-                            sym.remove(&(2000 + *v as u16));
-                        }
-                    }
-                }
-            }
+            let heap_origin = track_heap_origin.then_some(ins.offset);
+            // Read reaching sources before invalidating every result word.
+            // In-place copies/selects must see the old value, while multiword
+            // image/buffer results must not leave stale offset proofs behind.
+            let heap_value = heap_offsets::transfer(ins, sym, self.compute_heap, self.pixel_heap);
             // Judged before the instruction's own writes: a load may overwrite its SOFFSET.
             if self.pixel_heap {
                 lane_reads::step(ins, sym, self.one_word_vector_mask());
@@ -4379,34 +4379,9 @@ impl<'a> Emitter<'a> {
                 // `v_readfirstlane sBase, v` and `s_load [sBase]` is a constant-table lookup
                 // with a run-time index (ColorDeficiencyMain, cc45bda725a0f774). VGPRs are
                 // tracked under keys 2000+ for exactly this.
-                // A copy of, or a per-lane select between, heap byte offsets is still one.
-                Enc::Vop1 | Enc::Vop2 | Enc::Vop3
-                    if self.compute_heap
-                        && matches!(ins.mnemonic.as_str(), "v_mov_b32" | "v_cndmask_b32")
-                        && matches!(ins.dst.first(), Some(Opnd::Vgpr(_)))
-                        && {
-                            let n = if ins.mnemonic == "v_mov_b32" { 1 } else { 2 };
-                            ins.src.len() >= n && ins.src[..n].iter().all(|o| matches!(o, Opnd::Vgpr(v) if sym.get(&(2000 + *v as u16)) == Some(&Sym::HeapOffset)))
-                        } =>
-                {
+                Enc::Vop1 | Enc::Vop2 | Enc::Vop3 if heap_value.is_some() => {
                     if let Some(Opnd::Vgpr(v)) = ins.dst.first() {
-                        sym.insert(2000 + *v as u16, Sym::HeapOffset);
-                    }
-                }
-                Enc::Vop2 | Enc::Vop3
-                    if self.compute_heap && ins.mnemonic == "v_lshlrev_b32" && ins.src.first() == Some(&Opnd::ConstInt(5)) =>
-                {
-                    // Per-lane heap byte offset (32-byte descriptors), see v_readfirstlane.
-                    if let Some(Opnd::Vgpr(v)) = ins.dst.first() {
-                        sym.insert(2000 + *v as u16, Sym::HeapOffset);
-                    }
-                }
-                Enc::Vop2 | Enc::Vop3
-                    if self.pixel_heap && ins.mnemonic == "v_lshlrev_b32" && ins.src.first() == Some(&Opnd::ConstInt(4)) =>
-                {
-                    // Per-pixel sampler heap byte offset (16-byte descriptors).
-                    if let Some(Opnd::Vgpr(v)) = ins.dst.first() {
-                        sym.insert(2000 + *v as u16, Sym::HeapSamplerOffset);
+                        sym.insert(2000 + *v as u16, heap_value.unwrap());
                     }
                 }
                 Enc::Vop2 | Enc::Vop3
@@ -4538,10 +4513,10 @@ impl<'a> Emitter<'a> {
                             && (ins.aux.imm == 0 || (ins.aux.imm >= 0 && ins.aux.imm % 32 == 0 && sym.get(&soff) == Some(&Sym::HeapOffset)))
                             && heap_offset {
                             for k in 0..n as u16 {
-                                sym.insert(d + k, Sym::HeapWord(k as u8));
+                                sym.insert(d + k, Sym::HeapWord(k as u8, heap_origin));
                                 written.insert(d + k);
                             }
-                            sym.insert(d, Sym::HeapDescriptor(n));
+                            sym.insert(d, Sym::HeapDescriptor(n, heap_origin));
                             self.res.insert(idx, vec![Res::HeapLoad(soff)]);
                             continue;
                         }
@@ -4554,10 +4529,10 @@ impl<'a> Emitter<'a> {
                             && !matches!(sym.get(&soff), Some(Sym::SamplerOffset(_)))
                         {
                             for k in 0..4 {
-                                sym.insert(d + k, Sym::HeapWord(k as u8));
+                                sym.insert(d + k, Sym::HeapWord(k as u8, heap_origin));
                                 written.insert(d + k);
                             }
-                            sym.insert(d, Sym::HeapSamplerIndex);
+                            sym.insert(d, Sym::HeapSamplerIndex(heap_origin));
                             self.res.insert(idx, vec![Res::HeapSamplerLoad(soff)]);
                             continue;
                         }
@@ -4727,7 +4702,7 @@ impl<'a> Emitter<'a> {
                         self.res.insert(idx, vec![Res::Raw(*slot, false)]);
                         continue;
                     }
-                    if sym.get(&rs) == Some(&Sym::HeapDescriptor(4)) {
+                    if matches!(sym.get(&rs), Some(Sym::HeapDescriptor(4, _))) {
                         self.res.insert(idx, vec![Res::HeapMubuf(rs)]);
                         continue;
                     }
@@ -4777,7 +4752,7 @@ impl<'a> Emitter<'a> {
                         self.res.insert(idx, vec![Res::HeapRaw(rs)]);
                         continue;
                     }
-                    if sym.get(&rs) == Some(&Sym::HeapDescriptor(4)) {
+                    if matches!(sym.get(&rs), Some(Sym::HeapDescriptor(4, _))) {
                         self.res.insert(idx, vec![Res::HeapMubuf(rs)]);
                         continue;
                     }
@@ -4865,7 +4840,7 @@ impl<'a> Emitter<'a> {
                                 samp_res.push((((table as u32) << 24) | offset, Res::Samp(slot)));
                             }
                         } else if self.chosen_samplers.contains(&idx)
-                            || sym.get(&ss) == Some(&Sym::HeapSamplerIndex) && heap_words(sym, ss, 4)
+                            || matches!(sym.get(&ss), Some(Sym::HeapSamplerIndex(_))) && heap_words(sym, ss, 4)
                         {
                             self.uses_heap_sampler = true;
                             samp_res.push((0, Res::HeapSamplerDyn(ss)));
@@ -12048,12 +12023,17 @@ fn mesh_heap_base(ex: &ShaderExtract) -> Option<u8> {
 
 /// Whether dwords `1..n` of the heap descriptor at `base` are still the loaded ones.
 fn heap_words(sym: &HashMap<u16, Sym>, base: u16, n: u16) -> bool {
-    (1..n).all(|k| sym.get(&(base + k)) == Some(&Sym::HeapWord(k as u8)))
+    let origin = match sym.get(&base) {
+        Some(Sym::HeapDescriptor(_, origin) | Sym::HeapSamplerIndex(origin)) => *origin,
+        _ => return false,
+    };
+    (1..n).all(|k| sym.get(&(base + k)) == Some(&Sym::HeapWord(k as u8, origin)))
 }
 
 /// A complete `n`-dword resource descriptor fetched at a run-time heap index.
 fn heap_descriptor(sym: &HashMap<u16, Sym>, base: u16, n: u16) -> bool {
-    sym.get(&base) == Some(&Sym::HeapDescriptor(n.into())) && heap_words(sym, base, n)
+    matches!(sym.get(&base), Some(Sym::HeapDescriptor(words, _)) if *words == u32::from(n))
+        && heap_words(sym, base, n)
 }
 
 /// Root-less pixel shaders receive descriptor heap bases like compute: the user SGPR

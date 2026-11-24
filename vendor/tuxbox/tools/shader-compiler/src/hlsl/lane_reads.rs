@@ -52,8 +52,8 @@ pub(super) fn step(ins: &Insn, sym: &mut HashMap<u16, Sym>, one_word_masks: bool
         // Comparisons write a pair in wave64 and VOP3B names its carry outside the
         // operand list: neither leaves a heap symbol behind.
         for r in &written {
-            if matches!(sym.get(r), Some(Sym::HeapOffset | Sym::HeapSamplerOffset | Sym::HeapDescriptor(_)
-                | Sym::HeapWord(_) | Sym::HeapSamplerIndex)) {
+            if matches!(sym.get(r), Some(Sym::HeapOffset | Sym::HeapSamplerOffset | Sym::HeapDescriptor(_, _)
+                | Sym::HeapWord(_, _) | Sym::HeapSamplerIndex(_))) {
                 sym.remove(r);
             }
         }
@@ -136,7 +136,7 @@ mod tests {
     fn comparison_masks_are_per_lane_bits_and_drop_heap_symbols() {
         let isa: Vec<u8> = [0xd4030000u32, 0x00010016].into_iter().flat_map(u32::to_le_bytes).collect();
         let ins = crate::rdna2::disassemble(&isa); // s[0:1] = v_cmp_le_f32(s22, 0)
-        let mut sym = HashMap::from([(0, Sym::HeapOffset), (1, Sym::HeapWord(1)), (2, Sym::HeapOffset)]);
+        let mut sym = HashMap::from([(0, Sym::HeapOffset), (1, Sym::HeapWord(1, Some(0))), (2, Sym::HeapOffset)]);
         entry(&mut sym);
         step(&ins[0], &mut sym, false);
         assert!(clean(&sym, 0));
