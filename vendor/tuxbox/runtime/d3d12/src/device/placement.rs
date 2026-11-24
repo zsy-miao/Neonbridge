@@ -1,4 +1,5 @@
 //! Keep CPU-backed tiled Xbox textures coherent with their desktop images.
+pub(crate) mod alias;
 mod descriptors;
 pub(crate) mod pool;
 mod publication;
@@ -151,13 +152,22 @@ pub(crate) struct Texture {
     bytes: u64,
     /// A newer placement overlaps this one's memory.
     superseded: std::sync::atomic::AtomicBool,
+    /// Placed in a span heap shared with the textures over the same guest
+    /// bytes (alias.rs), rather than a committed copy of its own.
+    span: Option<alias::Placed>,
 }
 
 impl Drop for Texture {
     fn drop(&mut self) {
         crate::exports::profiling::mapping_released();
         let readers = std::mem::take(&mut self.contents.get_mut().unwrap_or_else(|e| e.into_inner()).readers);
-        pool::release(&self.native, host_desc(&self.desc), self.bytes, readers);
+        match &self.span {
+            Some(placed) => {
+                pool::forget(self.bytes);
+                alias::gone(placed);
+            }
+            None => pool::release(&self.native, host_desc(&self.desc), self.bytes, readers),
+        }
         if *self.superseded.get_mut() {
             pool::superseded(self.bytes, false);
         }
@@ -321,13 +331,18 @@ impl Texture {
         // A copy a dropped placement left with this description is reused
         // (test48: 38k committed copies in two minutes); its old readers are
         // waited on before the first upload overwrites it.
-        let (native, bytes, readers) = match pool::take(device, &host) {
-            Some(reused) => reused,
+        // Span heaps first (alias.rs): the textures over the same guest bytes
+        // share heap bytes, as on the console.
+        let (native, bytes, readers, span) = match alias::place(device, address, &host, size, clear) {
+            Some((native, bytes, placed)) => (native, bytes, Vec::new(), Some(placed)),
+            None => match pool::take(device, &host) {
+            Some((native, bytes, readers)) => (native, bytes, readers, None),
             None => {
                 let native = committed(device, D3D12_HEAP_TYPE_DEFAULT, &host, D3D12_RESOURCE_STATE_COMMON, clear)?;
                 let bytes = unsafe { device.GetResourceAllocationInfo(0, std::slice::from_ref(&host)) }.SizeInBytes;
-                (native, if bytes == u64::MAX { 0 } else { bytes }, Vec::new())
+                (native, if bytes == u64::MAX { 0 } else { bytes }, Vec::new(), None)
             }
+            },
         };
         pool::created(bytes);
         let mut mips = Vec::with_capacity(count as usize);
@@ -393,6 +408,7 @@ impl Texture {
             images: Arc::downgrade(images),
             bytes,
             superseded: Default::default(),
+            span,
         }))
     }
 
@@ -457,7 +473,20 @@ impl Texture {
         scratch: &mut Vec<u8>,
         watch: Option<&watch::Watch>,
     ) -> Result<usize> {
+        // Another texture over the same span bytes wrote them since this one
+        // did: wait for its readers and upload every level again.
+        let previous = self.span.as_ref().and_then(|placed| alias::claim(self, placed));
+        let mut inherited = Vec::new();
+        for other in previous.iter().flatten() {
+            inherited.extend(lock(&other.contents).readers.iter().cloned());
+        }
+        let lost = previous.is_some();
+        drop(previous);
         let mut contents = lock(&self.contents);
+        if lost {
+            contents.previous.iter_mut().for_each(Vec::clear);
+            contents.readers.extend(inherited);
+        }
         let mut skipped = 0;
         for (level, mip) in self.mips.iter().enumerate() {
             // No CPU write since the last compare: the snapshot would match.

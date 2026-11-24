@@ -115,6 +115,12 @@ pub(super) fn created(bytes: u64) {
     LIVE_BYTES.fetch_add(bytes, Relaxed);
 }
 
+/// A dropped span-placed texture (alias.rs): counted out, never pooled.
+pub(super) fn forget(bytes: u64) {
+    LIVE.fetch_sub(1, Relaxed);
+    LIVE_BYTES.fetch_sub(bytes, Relaxed);
+}
+
 /// A dropped texture's copy: pooled, or released with the last reference.
 pub(super) fn release(native: &ID3D12Resource, desc: D3D12_RESOURCE_DESC, bytes: u64, readers: Vec<(ID3D12Fence, u64)>) {
     LIVE.fetch_sub(1, Relaxed);
