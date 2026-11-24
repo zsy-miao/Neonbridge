@@ -19,17 +19,7 @@ Needs Visual Studio Build Tools (x64 C++), cargo, and the x86_64-pc-windows-msvc
 
 Keyboard and mouse drive a virtual Xbox pad (on by default; `TUXBOX_KEYBOARD_GAMEPAD=0` leaves only real XInput pads). The game window must be in front.
 
-| Pad | Keys |
-|---|---|
-| A | Enter, Z or left click |
-| B | Esc or X |
-| X / Y | C / V |
-| Start / Back | M / N |
-| D-pad up/down/left/right | I / K / J / L |
-| LB / RB | Q / E |
-| LT / RT | R / F (or hold right click to aim, left click to fire) |
-| Left stick | WASD |
-| Right stick | Arrow keys (or mouse while aiming) |
+![Keyboard and mouse to Xbox pad controls](assets/controls.svg)
 
 ## Status
 

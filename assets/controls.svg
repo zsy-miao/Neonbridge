@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1290 400" width="1290" height="400" role="img" aria-label="6Launch keyboard and mouse to Xbox pad controls">
+<style>.k{font:600 15px system-ui,sans-serif;fill:#e6edf3}.dim{fill:#6e7681}.p{font:700 16px system-ui,sans-serif}.s{font:12px system-ui,sans-serif;fill:#8b949e}.t{font:700 22px system-ui,sans-serif;fill:#e6edf3}</style>
+<rect width="1290" height="400" rx="16" fill="#0d1117"/>
+<text x="40" y="44" class="t">Keyboard + mouse → Xbox pad</text>
+<text x="900" y="200" class="s">right stick</text>
+<rect x="40" y="70" width="56" height="56" rx="8" fill="#f85149" fill-opacity="0.18" stroke="#f85149" stroke-width="2"/>
+<text x="48" y="90" class="k">Esc</text>
+<text x="68.0" y="116" class="p" fill="#f85149" text-anchor="middle">B</text>
+<rect x="40" y="150" width="56" height="56" rx="8" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="48" y="170" class="k">Q</text>
+<text x="68.0" y="196" class="p" fill="#f0883e" text-anchor="middle">LB</text>
+<rect x="102" y="150" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="110" y="170" class="k">W</text>
+<text x="130.0" y="196" class="p" fill="#a371f7" text-anchor="middle">L↑</text>
+<rect x="164" y="150" width="56" height="56" rx="8" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="172" y="170" class="k">E</text>
+<text x="192.0" y="196" class="p" fill="#f0883e" text-anchor="middle">RB</text>
+<rect x="226" y="150" width="56" height="56" rx="8" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="234" y="170" class="k">R</text>
+<text x="254.0" y="196" class="p" fill="#f0883e" text-anchor="middle">LT</text>
+<rect x="288" y="150" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="296" y="170" class="k dim">T</text>
+<rect x="350" y="150" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="358" y="170" class="k dim">Y</text>
+<rect x="412" y="150" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="420" y="170" class="k dim">U</text>
+<rect x="474" y="150" width="56" height="56" rx="8" fill="#39c5cf" fill-opacity="0.18" stroke="#39c5cf" stroke-width="2"/>
+<text x="482" y="170" class="k">I</text>
+<text x="502.0" y="196" class="p" fill="#39c5cf" text-anchor="middle">D↑</text>
+<rect x="536" y="150" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="544" y="170" class="k dim">O</text>
+<rect x="598" y="150" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="606" y="170" class="k dim">P</text>
+<rect x="60" y="212" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="68" y="232" class="k">A</text>
+<text x="88.0" y="258" class="p" fill="#a371f7" text-anchor="middle">L←</text>
+<rect x="122" y="212" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="130" y="232" class="k">S</text>
+<text x="150.0" y="258" class="p" fill="#a371f7" text-anchor="middle">L↓</text>
+<rect x="184" y="212" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="192" y="232" class="k">D</text>
+<text x="212.0" y="258" class="p" fill="#a371f7" text-anchor="middle">L→</text>
+<rect x="246" y="212" width="56" height="56" rx="8" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="254" y="232" class="k">F</text>
+<text x="274.0" y="258" class="p" fill="#f0883e" text-anchor="middle">RT</text>
+<rect x="308" y="212" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="316" y="232" class="k dim">G</text>
+<rect x="370" y="212" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="378" y="232" class="k dim">H</text>
+<rect x="432" y="212" width="56" height="56" rx="8" fill="#39c5cf" fill-opacity="0.18" stroke="#39c5cf" stroke-width="2"/>
+<text x="440" y="232" class="k">J</text>
+<text x="460.0" y="258" class="p" fill="#39c5cf" text-anchor="middle">D←</text>
+<rect x="494" y="212" width="56" height="56" rx="8" fill="#39c5cf" fill-opacity="0.18" stroke="#39c5cf" stroke-width="2"/>
+<text x="502" y="232" class="k">K</text>
+<text x="522.0" y="258" class="p" fill="#39c5cf" text-anchor="middle">D↓</text>
+<rect x="556" y="212" width="56" height="56" rx="8" fill="#39c5cf" fill-opacity="0.18" stroke="#39c5cf" stroke-width="2"/>
+<text x="564" y="232" class="k">L</text>
+<text x="584.0" y="258" class="p" fill="#39c5cf" text-anchor="middle">D→</text>
+<rect x="618" y="212" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="626" y="232" class="k dim">;</text>
+<rect x="680" y="212" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="688" y="232" class="k dim">'</text>
+<rect x="742" y="212" width="100" height="56" rx="8" fill="#3fb950" fill-opacity="0.18" stroke="#3fb950" stroke-width="2"/>
+<text x="750" y="232" class="k">Enter</text>
+<text x="792.0" y="258" class="p" fill="#3fb950" text-anchor="middle">A</text>
+<rect x="86" y="274" width="56" height="56" rx="8" fill="#3fb950" fill-opacity="0.18" stroke="#3fb950" stroke-width="2"/>
+<text x="94" y="294" class="k">Z</text>
+<text x="114.0" y="320" class="p" fill="#3fb950" text-anchor="middle">A</text>
+<rect x="148" y="274" width="56" height="56" rx="8" fill="#f85149" fill-opacity="0.18" stroke="#f85149" stroke-width="2"/>
+<text x="156" y="294" class="k">X</text>
+<text x="176.0" y="320" class="p" fill="#f85149" text-anchor="middle">B</text>
+<rect x="210" y="274" width="56" height="56" rx="8" fill="#58a6ff" fill-opacity="0.18" stroke="#58a6ff" stroke-width="2"/>
+<text x="218" y="294" class="k">C</text>
+<text x="238.0" y="320" class="p" fill="#58a6ff" text-anchor="middle">X</text>
+<rect x="272" y="274" width="56" height="56" rx="8" fill="#d29922" fill-opacity="0.18" stroke="#d29922" stroke-width="2"/>
+<text x="280" y="294" class="k">V</text>
+<text x="300.0" y="320" class="p" fill="#d29922" text-anchor="middle">Y</text>
+<rect x="334" y="274" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="342" y="294" class="k dim">B</text>
+<rect x="396" y="274" width="56" height="56" rx="8" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="404" y="294" class="k">N</text>
+<text x="424.0" y="320" class="p" fill="#f0883e" text-anchor="middle">Back</text>
+<rect x="458" y="274" width="56" height="56" rx="8" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="466" y="294" class="k">M</text>
+<text x="486.0" y="320" class="p" fill="#f0883e" text-anchor="middle">Start</text>
+<rect x="520" y="274" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="528" y="294" class="k dim">,</text>
+<rect x="582" y="274" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="590" y="294" class="k dim">.</text>
+<rect x="644" y="274" width="56" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+<text x="652" y="294" class="k dim">/</text>
+<rect x="962" y="212" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="970" y="232" class="k">↑</text>
+<text x="990.0" y="258" class="p" fill="#a371f7" text-anchor="middle">R↑</text>
+<rect x="900" y="274" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="908" y="294" class="k">←</text>
+<text x="928.0" y="320" class="p" fill="#a371f7" text-anchor="middle">R←</text>
+<rect x="962" y="274" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="970" y="294" class="k">↓</text>
+<text x="990.0" y="320" class="p" fill="#a371f7" text-anchor="middle">R↓</text>
+<rect x="1024" y="274" width="56" height="56" rx="8" fill="#a371f7" fill-opacity="0.18" stroke="#a371f7" stroke-width="2"/>
+<text x="1032" y="294" class="k">→</text>
+<text x="1052.0" y="320" class="p" fill="#a371f7" text-anchor="middle">R→</text>
+<rect x="1130" y="120" width="120" height="210" rx="60" fill="#161b22" stroke="#30363d" stroke-width="2"/>
+<path d="M1130 180 A60 60 0 0 1 1190 120 V210 H1130 Z" fill="#3fb950" fill-opacity="0.18" stroke="#3fb950" stroke-width="2"/>
+<path d="M1190 120 A60 60 0 0 1 1250 180 V210 H1190 Z" fill="#f0883e" fill-opacity="0.18" stroke="#f0883e" stroke-width="2"/>
+<text x="1160" y="175" class="p" fill="#3fb950" text-anchor="middle">A</text>
+<text x="1160" y="195" class="s" text-anchor="middle">RT*</text>
+<text x="1220" y="175" class="p" fill="#f0883e" text-anchor="middle">LT</text>
+<text x="1220" y="195" class="s" text-anchor="middle">aim</text>
+<text x="1190" y="280" class="s" text-anchor="middle">move = R stick</text>
+<text x="1190" y="296" class="s" text-anchor="middle">while aiming</text>
+<text x="40" y="372" class="s">Coloured keys map to pad inputs. *Left click fires (RT) while right click is held. The game window must be in front. TUXBOX_KEYBOARD_GAMEPAD=0 turns this off.</text>
+</svg>
