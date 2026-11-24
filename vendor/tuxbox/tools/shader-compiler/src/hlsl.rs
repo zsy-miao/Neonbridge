@@ -3966,10 +3966,20 @@ impl<'a> Emitter<'a> {
     fn live_in(&self) -> Vec<String> {
         let mut written: BTreeSet<String> = BTreeSet::new();
         let mut live: BTreeSet<(u8, u32)> = BTreeSet::new();
+        // leonida f05bc538: v_writelane_b32 writes one lane and keeps the
+        // others. Its destination's kept lanes are carried: they become live
+        // when something other than v_readlane_b32 reads the register before a
+        // full write (a lane spill read back by readlane stays a write).
+        // TB_WRITELANE_CARRY=0 counts the writelane as a full write again.
+        let carry = std::env::var("TB_WRITELANE_CARRY").map_or(true, |v| v.trim() != "0");
+        let mut carried: BTreeSet<String> = BTreeSet::new();
         for ins in &self.insns {
             if ins.mnemonic == "v_nop" {
                 continue;
             }
+            let lane_op = ins.enc == Enc::Vop3 && (ins.op == 0x360 || ins.op == 0x361);
+            let readlane = lane_op && ins.op == 0x360;
+            let writelane = carry && lane_op && ins.op == 0x361;
             // Packed FMAC accumulates in its destination. A subword FMA also
             // reads that register to preserve the half outside its write mask.
             let old_dst = matches!(ins.mnemonic.as_str(), "v_pk_fmac_f16" | "v_fma_f16" | "v_rcp_f16")
@@ -3977,6 +3987,9 @@ impl<'a> Emitter<'a> {
             for o in ins.src.iter().chain(old_dst) {
                 if let Opnd::Sgpr(n) | Opnd::Vgpr(n) = o {
                     let nm = name(o).unwrap_or_default();
+                    if readlane && carried.contains(&nm) {
+                        continue;
+                    }
                     if !written.contains(&nm) {
                         live.insert((if matches!(o, Opnd::Vgpr(_)) { 1 } else { 0 }, *n as u32));
                     }
@@ -4008,6 +4021,11 @@ impl<'a> Emitter<'a> {
             };
             for o in &ins.dst {
                 if let Ok(nm) = name(o) {
+                    if writelane && !written.contains(&nm) {
+                        carried.insert(nm);
+                        continue;
+                    }
+                    carried.remove(&nm);
                     written.insert(nm);
                 }
                 match o {
