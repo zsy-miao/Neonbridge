@@ -1664,6 +1664,67 @@ unsafe fn copy_through_scratch(list: &List, state: &mut Recording, buffer: &ID3D
 
 /// Runs the CPU memory copies of a submission once `fence` reaches 1, on a
 /// worker thread so the title's submitting thread does not wait.
+/// five-star-recomp cf12bd9 (GPL-3.0, RetireWaits.cs), opt-in with
+/// TUXBOX_RETIRE_WAITS_ALL=1: the title retires transient memory by a 64-bit
+/// value a list writes at its end, which on the PC waits only for that
+/// list's own queue. With this on, a batch holding such a write first makes
+/// its queue wait on the GPU for every other queue's work submitted so far.
+mod retire_waits {
+    use std::sync::Mutex;
+    use windows::Win32::Graphics::Direct3D12::*;
+    use windows::core::Interface;
+
+    /// (queue, its device, its fence, the last value signalled)
+    static QUEUES: Mutex<Vec<(usize, usize, ID3D12Fence, u64)>> = Mutex::new(Vec::new());
+
+    pub(super) fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RETIRE_WAITS_ALL") == Some("1"))
+    }
+
+    fn device(queue: &ID3D12CommandQueue) -> Option<ID3D12Device> {
+        let mut device: Option<ID3D12Device> = None;
+        unsafe { queue.GetDevice(&mut device) }.ok()?;
+        device
+    }
+
+    /// Makes `queue` wait for the work every other queue of its device has submitted.
+    pub(super) fn wait_others(queue: &ID3D12CommandQueue) {
+        let Some(device) = device(queue) else { return };
+        let (me, dev) = (queue.as_raw() as usize, device.as_raw() as usize);
+        let others: Vec<(ID3D12Fence, u64)> = QUEUES.lock().unwrap_or_else(|e| e.into_inner()).iter()
+            .filter(|q| q.0 != me && q.1 == dev && q.3 != 0).map(|q| (q.2.clone(), q.3)).collect();
+        for (fence, value) in &others {
+            let _ = unsafe { queue.Wait(fence, *value) };
+        }
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "retire waits: a batch with a 64-bit value write waits for {} other queues first ({n} so far; TUXBOX_RETIRE_WAITS_ALL=1 on)", others.len()));
+        }
+    }
+
+    /// Signals `queue`'s fence after a submission.
+    pub(super) fn submitted(queue: &ID3D12CommandQueue) {
+        if !enabled() {
+            return;
+        }
+        let me = queue.as_raw() as usize;
+        let mut queues = QUEUES.lock().unwrap_or_else(|e| e.into_inner());
+        if !queues.iter().any(|q| q.0 == me) {
+            let Some(device) = device(queue) else { return };
+            let Ok(fence) = (unsafe { device.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) }) else { return };
+            queues.push((me, device.as_raw() as usize, fence, 0));
+        }
+        if let Some(entry) = queues.iter_mut().find(|q| q.0 == me)
+            && unsafe { queue.Signal(&entry.2, entry.3 + 1) }.is_ok()
+        {
+            entry.3 += 1;
+        }
+    }
+}
+
 /// test96 hung with the title in its loading-screen wait (game+0x23cf6a0,
 /// "GPU Loc Sig" in five-star's notes) after a list was left out of its batch
 /// (its scene preparation failed): the progress markers it would have
@@ -2156,6 +2217,8 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     let cpu_copies = std::cell::RefCell::new(Vec::new());
     // Value writes of lists left out of the batch (orphan_writes).
     let orphan_writes: std::cell::RefCell<Vec<(u64, u64, u8)>> = std::cell::RefCell::new(Vec::new());
+    // A list of the batch writes a 64-bit value (retire_waits).
+    let retire_write = std::cell::Cell::new(false);
     let swap_lists = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
@@ -2170,6 +2233,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             .ok_or(E_INVALIDARG)?;
             let state = recording(list);
             placement::list_submitted(state.opened.elapsed());
+            if retire_waits::enabled() && state.value_writes.iter().any(|w| w.2 == 8) {
+                retire_write.set(true);
+            }
             if !state.stalled_writes.is_empty() {
                 static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 if LOGGED.fetch_add(1, Ordering::Relaxed) < 32 {
@@ -2323,10 +2389,14 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                             step("shadow refresh", device::refresh_shadows(owner, &queue.native))?;
                             step("descriptor table flush", device::flush_desc_table(owner, &queue.native))?;
                         }
+                        if retire_write.get() {
+                            retire_waits::wait_others(&queue.native);
+                        }
                         {
                             let _site = crate::diagnostics::cost::site();
                             step("GPU memory wait submission", memory_wait::submit(queue, host, splits))?;
                         }
+                        retire_waits::submitted(&queue.native);
                         device::committed_writeback::submitted(&queue.native);
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
