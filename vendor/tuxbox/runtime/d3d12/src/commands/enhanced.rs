@@ -688,6 +688,26 @@ fn plane_split(item: &D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) -> Opti
     Some([plane(0), plane(1)])
 }
 
+/// test90: every remaining rejected barrier (R32G8X24, per plane) had
+/// DEPTH_STENCIL_READ access with SyncAfter ALL_SHADING|DEPTH_STENCIL (0x1020);
+/// the host accepted each with SyncAfter DEPTH_STENCIL. On a depth-stencil
+/// texture, a side whose access is only depth-stencil gets DEPTH_STENCIL sync
+/// (ALL and NONE are kept). TUXBOX_DS_SYNC=0 off.
+fn ds_sync(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
+    if desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 == 0 || crate::env_toggle!("TUXBOX_DS_SYNC") == Some("0") {
+        return;
+    }
+    let depth = D3D12_BARRIER_ACCESS_DEPTH_STENCIL_READ.0 | D3D12_BARRIER_ACCESS_DEPTH_STENCIL_WRITE.0;
+    for (sync, access) in [(&mut item.SyncBefore, item.AccessBefore), (&mut item.SyncAfter, item.AccessAfter)] {
+        if access.0 != 0 && access.0 != D3D12_BARRIER_ACCESS_NO_ACCESS.0 && access.0 & !depth == 0
+            && *sync != D3D12_BARRIER_SYNC_ALL && *sync != D3D12_BARRIER_SYNC_NONE
+            && *sync != D3D12_BARRIER_SYNC_DEPTH_STENCIL
+        {
+            *sync = D3D12_BARRIER_SYNC_DEPTH_STENCIL;
+        }
+    }
+}
+
 /// Whether barriers on this resource are left out (see BAD).
 fn bad_resource(item: &D3D12_TEXTURE_BARRIER) -> bool {
     if !ANY_BAD.load(Ordering::Acquire) || !skip_on() { return false; }
@@ -902,6 +922,7 @@ unsafe fn record(
                     }
                     fit_host(&mut item, &desc);
                     fix_texture(&mut item, compute, simultaneous);
+                    ds_sync(&mut item, &desc);
                     if !apply_learned(&mut item, &desc) {
                         continue;
                     }

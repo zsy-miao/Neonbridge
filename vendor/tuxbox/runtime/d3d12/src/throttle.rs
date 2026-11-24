@@ -80,6 +80,12 @@ pub(crate) fn presented() {
         }).collect()
     };
     let n = PRESENTS.fetch_add(1, Ordering::Relaxed) + 1;
+    let tracked = pending.len();
+    // How many presents of work the furthest-behind queue still has queued.
+    let behind = pending.iter().map(|(fence, value)| {
+        let done = unsafe { fence.GetCompletedValue() };
+        (value + lag as u64).saturating_sub(done)
+    }).max().unwrap_or(0);
     for (fence, value) in pending {
         if unsafe { fence.GetCompletedValue() } >= value {
             continue;
@@ -95,7 +101,7 @@ pub(crate) fn presented() {
     }
     if n.is_power_of_two() && n >= 64 {
         crate::diagnostics::log_line(format_args!(
-            "present throttle: {n} presents, {} waits, {} gave up (lag {lag}; TUXBOX_PRESENT_LAG=0 off)",
+            "present throttle: {n} presents, {} waits, {} gave up, {tracked} queues, furthest queue {behind} presents behind (lag {lag}; TUXBOX_PRESENT_LAG=0 off)",
             WAITS.load(Ordering::Relaxed), GAVE_UP.load(Ordering::Relaxed)));
     }
 }
