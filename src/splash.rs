@@ -8,8 +8,8 @@
 //! [`watch`] stops the title's first, unpainted window flashing white across
 //! both monitors: titles create it at 3840x2160 and only the swap chain used
 //! to fit it. The watcher fits it into one monitor's work area as soon as it
-//! exists, and the loading screen becomes a dark curtain over it until the
-//! first frame.
+//! exists (xmem keeps it cloaked until the first frame, so no curtain is
+//! drawn over it).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -80,7 +80,6 @@ pub fn watch(exe: &std::path::Path) {
     let Some(name) = exe.file_name().map(|n| n.to_string_lossy().to_lowercase()) else { return };
     let _ = std::thread::Builder::new().name("neonbridge window watch".into()).spawn(move || {
         let mut names: std::collections::HashMap<u32, bool> = std::collections::HashMap::new();
-        let mut covered = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         let mut game: HWND = std::ptr::null_mut();
         let mut focused = false;
         // Runs for the whole game: the title stretches its window over every
@@ -101,15 +100,8 @@ pub fn watch(exe: &std::path::Path) {
                 if !*names.entry(pid).or_insert_with(|| image_name(pid).is_some_and(|n| n == name)) {
                     continue;
                 }
-                let Some(bounds) = fit(hwnd) else { continue };
-                game = hwnd;
-                let splash = WINDOW.load(Ordering::Acquire);
-                if splash > 0 && !rect_eq(&bounds, &covered) {
-                    covered = bounds;
-                    unsafe {
-                        SetWindowPos(splash as HWND, HWND_TOPMOST, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
-                        InvalidateRect(splash as HWND, std::ptr::null(), 0);
-                    }
+                if fit(hwnd).is_some() {
+                    game = hwnd;
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(if closed { 50 } else { 4 }));
