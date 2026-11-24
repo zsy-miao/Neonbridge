@@ -423,6 +423,22 @@ unsafe fn create(
         original[i] = Some((source, Some(stages.len())));
         stages.push(compiled);
     }
+    // Literal samplers a translated stage looks up in tb_desc_table: reserve
+    // their host samplers and add the table's root SRV.
+    let declaring: Vec<&[u8]> = original.iter().enumerate()
+        .filter(|(i, _)| *i != 5)
+        .filter_map(|(_, stage)| match *stage { Some((code, Some(index))) => Some((code, index)), _ => None })
+        .filter(|&(_, index)| super::desc_table::declared(&stages[index]))
+        .map(|(code, _)| code)
+        .collect();
+    if let (false, Some(root), Some(field)) = (declaring.is_empty(), guest_root, root_record) {
+        let words: Vec<_> = declaring.iter().flat_map(|code| tuxbox_dxbc::inline_sampler::literal_words(code)).collect();
+        device.state.desc_table.literals(&device.native, &words);
+        let table = super::compute_table::with_desc_table(&device.native, pipeline.raster_table.as_ref(), root, node_mask)?;
+        unsafe { field.write(table.native.as_raw()) };
+        binding_root = Some(table.layout.payload().to_vec());
+        pipeline.raster_table = Some(table);
+    }
     pipeline.null_kinds = binding_root.as_deref().and_then(|root| {
         super::null_kinds::reflect(root, original.iter().filter_map(|stage| Some(stages[(*stage)?.1?].as_slice())))
     });

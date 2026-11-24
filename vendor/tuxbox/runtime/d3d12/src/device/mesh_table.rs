@@ -124,6 +124,7 @@ pub(super) fn reflected(
             lengths,
             accessed_views,
             index_map: None,
+            desc_table: None,
         })))
     }
 }

@@ -195,6 +195,32 @@ pub fn literal_sites(isa: &[u8], visibility: u32) -> Option<InlineSamplers> {
 
 fn sites_where(isa: &[u8], visibility: u32, partial: bool) -> Option<InlineSamplers> {
     use std::collections::{BTreeMap, BTreeSet};
+    let states = states(isa, visibility, partial, partial)?;
+    let unique: BTreeSet<_> = states.values().copied().collect();
+    if unique.is_empty() || unique.len() > 128 {
+        return None;
+    }
+    let mut descriptors = Vec::new();
+    let mut slots = BTreeMap::new();
+    for words in unique {
+        let slot = descriptors.len() as u32;
+        descriptors.push(descriptor(words, slot, 32765, visibility)?);
+        slots.insert(words, slot);
+    }
+    Some(InlineSamplers {
+        descriptors,
+        sites: states
+            .into_iter()
+            .map(|(pc, words)| (pc, slots[&words]))
+            .collect(),
+    })
+}
+
+/// Literal sampler words by MIMG PC. `skip` drops samplers that are not
+/// literal instead of failing; `describable` fails on literal words that no
+/// static sampler expresses.
+fn states(isa: &[u8], visibility: u32, skip: bool, describable: bool) -> Option<std::collections::BTreeMap<usize, [u32; 4]>> {
+    use std::collections::{BTreeMap, BTreeSet};
     let ops = rdna2::disassemble(isa);
     if ops.len() > 32768 || !matches!(visibility, 0 | 5) {
         return None;
@@ -292,29 +318,30 @@ fn sites_where(isa: &[u8], visibility: u32, partial: bool) -> Option<InlineSampl
             Some(words)
         })();
         match words {
-            Some(words) if !partial || descriptor(words, 0, 0, visibility).is_some() => { states.insert(op.offset, words); }
-            None if partial => {}
+            Some(words) if !describable || descriptor(words, 0, 0, visibility).is_some() => { states.insert(op.offset, words); }
+            None if skip => {}
             _ => return None,
         }
     }
-    let unique: BTreeSet<_> = states.values().copied().collect();
-    if unique.is_empty() || unique.len() > 128 {
-        return None;
-    }
-    let mut descriptors = Vec::new();
-    let mut slots = BTreeMap::new();
-    for words in unique {
-        let slot = descriptors.len() as u32;
-        descriptors.push(descriptor(words, slot, 32765, visibility)?);
-        slots.insert(words, slot);
-    }
-    Some(InlineSamplers {
-        descriptors,
-        sites: states
-            .into_iter()
-            .map(|(pc, words)| (pc, slots[&words]))
-            .collect(),
-    })
+    Some(states)
+}
+
+/// Every literal S# at a sampling instruction, whether or not a static sampler
+/// can express it: the keys a translated stage may look up in tb_desc_table.
+pub fn literal_words(shader: &[u8]) -> Vec<[u32; 4]> {
+    let words = || {
+        let d = Dxbc::parse(shader).ok()?;
+        let c = d.chunk(b"DXIL")?;
+        let dxil = shader.get(c.offset..c.offset + c.size)?;
+        let programs = xdat::programs(dxil.get(24..)?).ok()?;
+        let [program] = programs.as_slice() else {
+            return None;
+        };
+        let states = states(&fssm::decode(program).ok()?.isa, 0, true, false)?;
+        let unique: std::collections::BTreeSet<_> = states.into_values().collect();
+        Some(unique.into_iter().collect())
+    };
+    words().unwrap_or_default()
 }
 
 /// Validate original static sampler declarations in both PSV and FSSM before

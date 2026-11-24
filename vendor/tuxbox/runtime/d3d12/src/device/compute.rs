@@ -319,6 +319,18 @@ unsafe fn make_compute(
     } else {
         None
     };
+    // Literal samplers the translation looks up in tb_desc_table: reserve
+    // their host samplers and add the table's root SRV.
+    let reflected = match (&translation, root) {
+        (Some(code), Some(root)) if scene_root.is_none() && super::desc_table::declared(code) => {
+            this.state.desc_table.literals(&this.native, &tuxbox_dxbc::inline_sampler::literal_words(bytes));
+            match super::compute_table::with_desc_table(&this.native, reflected.as_ref(), &root.state, desc.NodeMask) {
+                Ok(table) => Some(table),
+                Err(error) => return error.code(),
+            }
+        }
+        _ => reflected,
+    };
     let code = translation.as_deref().unwrap_or(bytes);
     let mut host = D3D12_COMPUTE_PIPELINE_STATE_DESC {
         pRootSignature: ManuallyDrop::new(

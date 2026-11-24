@@ -13,6 +13,9 @@ pub(crate) struct ComputeTable {
     pub(crate) lengths: Vec<u32>,
     pub(crate) accessed_views: Vec<(usize, std::ops::Range<u32>)>,
     pub(crate) index_map: Option<IndexMapBinding>,
+    /// Root slot of the root SRV holding xshader's literal sampler lookup
+    /// table (t1, space32766; see desc_table).
+    pub(crate) desc_table: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -316,6 +319,7 @@ fn reflected_tables(
             lengths: lengths.into(),
             accessed_views,
             index_map,
+            desc_table: None,
         })))
     }
 }
@@ -412,7 +416,61 @@ fn extend_root_from(
             lengths,
             accessed_views,
             index_map: index_map.then_some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
+            desc_table: None,
         })))
+    }
+}
+
+/// `table`'s root, or the guest root for a pipeline without one, plus a root
+/// SRV at t1, space32766 for translated stages that declare tb_desc_table.
+/// Existing parameters keep their slots.
+pub(super) fn with_desc_table(
+    device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
+) -> Result<Arc<ComputeTable>> {
+    if let Some(table) = table.filter(|t| t.desc_table.is_some()) {
+        return Ok(table.clone());
+    }
+    let bytes = table.map_or(guest, |t| &t.layout).serialized();
+    unsafe {
+        let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
+        D3D12CreateVersionedRootSignatureDeserializer(
+            bytes.as_ptr().cast(), bytes.len(),
+            &ID3D12VersionedRootSignatureDeserializer::IID, (&raw mut reader).cast(),
+        )?;
+        let reader = reader.ok_or(E_POINTER)?;
+        let mut desc = *reader.GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_1)?;
+        let source = desc.Anonymous.Desc_1_1;
+        let mut parameters = if source.NumParameters == 0 { Vec::new() } else {
+            if source.pParameters.is_null() { return Err(E_INVALIDARG.into()); }
+            std::slice::from_raw_parts(source.pParameters, source.NumParameters as usize).to_vec()
+        };
+        parameters.push(D3D12_ROOT_PARAMETER1 {
+            ParameterType: D3D12_ROOT_PARAMETER_TYPE_SRV,
+            ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+            Anonymous: D3D12_ROOT_PARAMETER1_0 {
+                Descriptor: D3D12_ROOT_DESCRIPTOR1 {
+                    ShaderRegister: super::desc_table::REGISTER,
+                    RegisterSpace: super::desc_table::SPACE,
+                    Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
+                },
+            },
+        });
+        desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
+        desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let mut blob = None;
+        D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
+        let blob = blob.ok_or(E_POINTER)?;
+        let layout = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
+        let native = device.CreateRootSignature(node, layout)?;
+        Ok(Arc::new(ComputeTable {
+            native,
+            original: table.map_or_else(|| guest.clone(), |t| t.original.clone()),
+            layout: RootSource::new(layout),
+            lengths: table.map(|t| t.lengths.clone()).unwrap_or_default(),
+            accessed_views: table.map(|t| t.accessed_views.clone()).unwrap_or_default(),
+            index_map: table.and_then(|t| t.index_map),
+            desc_table: Some(source.NumParameters),
+        }))
     }
 }
 
@@ -512,6 +570,7 @@ fn append_corroborated_ranges(
             lengths,
             accessed_views,
             index_map: None,
+            desc_table: None,
         })))
     }
 }

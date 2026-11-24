@@ -204,6 +204,12 @@ pub(crate) unsafe fn flush_desc_table(owner: &windows::core::IUnknown, queue: &I
     unsafe { device.state.desc_table.flush(&device.native, queue) }
 }
 
+/// The literal sampler lookup table's GPU address for a draw being recorded.
+pub(crate) unsafe fn desc_table_address(owner: &windows::core::IUnknown) -> windows::core::Result<u64> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    device.state.desc_table.address(&device.native)
+}
+
 pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     unsafe { shadow::write_back(device, queue) }

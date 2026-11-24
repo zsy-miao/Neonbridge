@@ -304,6 +304,13 @@ impl Bindings {
             }
             None
         };
+        let desc_table = match table.desc_table {
+            Some(slot) => {
+                let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+                Some((slot, unsafe { crate::device::desc_table_address(owner)? }))
+            }
+            None => None,
+        };
         let list = &guest.native;
         unsafe {
             if COMPUTE {
@@ -315,6 +322,9 @@ impl Bindings {
                     list.SetComputeRootShaderResourceView(slot, address);
                     static ONCE: std::sync::Once = std::sync::Once::new();
                     crate::diagnostics::log_once(&ONCE, || format!("bound resource descriptor index map at compute root slot {slot}"));
+                }
+                if let Some((slot, address)) = desc_table {
+                    list.SetComputeRootShaderResourceView(slot, address);
                 }
                 dispatch();
                 list.SetComputeRootSignature(self.compute.as_ref());
@@ -334,6 +344,9 @@ impl Bindings {
                     crate::diagnostics::log_once(site, || {
                         format!("bound {kind} resource descriptor index map at graphics root slot {slot}")
                     });
+                }
+                if let Some((slot, address)) = desc_table {
+                    list.SetGraphicsRootShaderResourceView(slot, address);
                 }
                 dispatch();
                 list.SetGraphicsRootSignature(self.graphics.as_ref());
