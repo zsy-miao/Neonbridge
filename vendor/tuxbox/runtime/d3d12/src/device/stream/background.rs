@@ -177,6 +177,14 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
         return Some(built);
     }
     promote(slot);
+    let Some(limit) = first_use::grant(limit) else { return None };
+    let started = std::time::Instant::now();
+    let built = wait_granted(slot, limit);
+    first_use::spend(started.elapsed());
+    built
+}
+
+fn wait_granted(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Option<&Built> {
     // test111: a steal that ran out of time was followed by a full new wait,
     // so one bind could block 2x its limit. Both now share one deadline.
     let deadline = std::time::Instant::now() + limit;
@@ -267,6 +275,30 @@ mod first_use {
                 if memory { "a compile waits for memory" } else { "first-use budget spent" }));
         }
         false
+    }
+
+    /// A bind wait on a title thread: `limit` cut to the bucket's time left,
+    /// or `None` with the bucket empty (the bind keeps its stand-in). test130
+    /// and test131: the five Subrender job threads each waited up to 750 ms
+    /// per pipeline outside the bucket, the loading frame never ended, and the
+    /// title's 30 s watchdog (game+0x2215a60, handler game+0x23cf620 "GPU Loc
+    /// Sig", five-star acd5260) wrote 0x4d8bd421 to address 0.
+    /// TUXBOX_BIND_WAIT_BUDGET=0 waits outside the bucket as before.
+    pub(super) fn grant(limit: Duration) -> Option<Duration> {
+        if !enabled() || crate::env_toggle!("TUXBOX_BIND_WAIT_BUDGET") == Some("0") {
+            return Some(limit);
+        }
+        let left = refill(&mut BUCKET.lock().unwrap_or_else(|e| e.into_inner())).0;
+        if left > 0.0 {
+            return Some(limit.min(Duration::from_secs_f64(left)));
+        }
+        static EMPTY: AtomicU64 = AtomicU64::new(0);
+        let n = EMPTY.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "background pipelines: a bind did not wait for its pipeline, the title threads' first-use budget is spent ({n} so far; TUXBOX_BIND_WAIT_BUDGET=0 off)"));
+        }
+        None
     }
 
     pub(super) fn spend(took: Duration) {
