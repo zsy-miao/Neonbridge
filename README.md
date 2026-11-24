@@ -30,6 +30,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively. It isn't a recompiler either: Xbox shaders are translated to DXIL as the game runs.
 - **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and at least 20 GB of free commit (RAM plus page file); the game grows to about 19 GB.
 - **Can I watch it from my phone?** Yes. With `NEONBRIDGE_FEED=1` the launcher streams the picture to a password-protected page on this PC (port 8788) and on your Tailscale network; the first run prints a sign-in link to approve the PC once. `neonbridge --feed-only` keeps the page up between games. The launcher keeps the displays on while the game runs, since with every display asleep Windows slows it to about 10 fps.
+- **Why does it run at 1080p?** Before each start the launcher sets the game to 1920x1080 with ray-traced shadows, motion blur, SSR water reflections and particle shadows off, since the game writes 4K and those effects back on exit. `NEONBRIDGE_SAFE_SETTINGS=0` keeps your own settings.
 - **Does it go online?** No. The game's crash handler would upload details of your PC, so it's blocked (`TUXBOX_NETWORK=1` lifts it).
 
 ## Roadmap
