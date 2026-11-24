@@ -2,14 +2,14 @@
 //! answers QueryApiImpl with an interface whose every method logs its slot,
 //! the first five integer arguments and the caller, then returns E_NOTIMPL.
 //! The identified classes (XUser, XGame, XPackage, XPersistentLocalStorage,
-//! XNetworking, XDisplay, XGameSave, XAccessibility, XGameUi) are served by `services` (slots it implements)
+//! XNetworking, XDisplay, XGameSave, XAccessibility, XGameUi, XStore) are served by `services` (slots it implements)
 //! by default; TUXBOX_RUNTIME_SERVICES=0 withholds them. TUXBOX_RUNTIME_PROBE=1
 //! also exposes the unidentified class.
 use super::{NOT_IMPLEMENTED, Object, Slot, report};
 use std::sync::atomic::AtomicU32;
 use windows_sys::core::GUID;
 
-pub(super) const CLASSES: [(GUID, &str); 11] = [
+pub(super) const CLASSES: [(GUID, &str); 12] = [
     (GUID::from_u128(0x01acd177_91f9_4763_a38e_ccbb55ce32e0), "XUser"),
     (GUID::from_u128(0x973a344e_24bf_4d0f_8457_56c534892b29), "XGame"),
     (GUID::from_u128(0xaf406016_e850_4aa8_a88d_2f3dcb9dac7e), "XPackage"),
@@ -22,12 +22,15 @@ pub(super) const CLASSES: [(GUID, &str); 11] = [
     // XUser's gamertag interface (IID cef4fac0); selected by IID, not class.
     (GUID::from_u128(0xcef4fac0_7676_4a94_a119_4c43f9eb5b74), "XUserGamertag"),
     (GUID::from_u128(0xdfcd4649_4ff8_4043_ba07_35d607df98b0), "XGameUi"),
+    // XStore; the title asks for IXStoreImpl6 (b09d803c), slots in XStore.h order.
+    (GUID::from_u128(0x0dd112ac_7c24_448c_b92b_3960fb5bd30c), "XStore"),
 ];
 
 /// Interfaces chosen by IID within a class.
 pub(super) const GAMERTAG: usize = 9;
 const ACCESSIBILITY: usize = 6;
 const GAME_UI: usize = 10;
+const STORE: usize = 11;
 
 pub(super) fn enabled() -> bool {
     std::env::var_os("TUXBOX_RUNTIME_PROBE").is_some_and(|v| v == "1")
@@ -68,9 +71,9 @@ macro_rules! service {
     ($f:path) => { Slot($f as *const ()) };
 }
 
-static TABLES: [[Slot; 64]; 11] = {
+static TABLES: [[Slot; 64]; 12] = {
     use super::services::*;
-    let mut t = [table!(0), table!(1), table!(2), table!(3), table!(4), table!(5), table!(6), table!(7), table!(8), table!(9), table!(10)];
+    let mut t = [table!(0), table!(1), table!(2), table!(3), table!(4), table!(5), table!(6), table!(7), table!(8), table!(9), table!(10), table!(11)];
     // XUser
     t[0][3] = service!(user_duplicate);
     t[0][4] = service!(user_close);
@@ -186,6 +189,18 @@ static TABLES: [[Slot; 64]; 11] = {
     t[4][16] = service!(network_register);
     // XDisplay
     t[5][4] = service!(display_try_hdr);
+    // XStore: offline, the game is licensed and owns no add-ons or updates.
+    t[11][3] = service!(store_create_context);
+    t[11][4] = service!(store_close_context);
+    t[11][22] = service!(store_is_license_valid);
+    t[11][28] = service!(store_game_license_async);
+    t[11][29] = service!(store_game_license_result);
+    t[11][30] = service!(store_empty_async);
+    t[11][31] = service!(store_zero_count);
+    t[11][32] = service!(store_empty_list_result);
+    t[11][55] = service!(store_empty_async);
+    t[11][56] = service!(store_zero_count);
+    t[11][57] = service!(store_empty_list_result);
     t
 };
 
@@ -198,12 +213,13 @@ pub(super) fn available(index: usize) -> bool {
         Ok(list) if list == "0" => false,
         Ok(list) => list.split(',').any(|name| name.trim() == CLASSES[index].1),
     };
-    (index < 6 || index == 8 || index == GAMERTAG || index == ACCESSIBILITY || index == GAME_UI) && selected || enabled()
+    let store = index == STORE && std::env::var("TUXBOX_STORE").map_or(true, |v| v.trim() != "0");
+    (index < 6 || index == 8 || index == GAMERTAG || index == ACCESSIBILITY || index == GAME_UI || store) && selected || enabled()
 }
-pub(super) static OBJECTS: [super::ProbeObject; 11] = {
+pub(super) static OBJECTS: [super::ProbeObject; 12] = {
     let mut i = 0;
-    let mut out = [const { super::ProbeObject { vtable: &TABLES[0], references: AtomicU32::new(0) } }; 11];
-    while i < 11 {
+    let mut out = [const { super::ProbeObject { vtable: &TABLES[0], references: AtomicU32::new(0) } }; 12];
+    while i < 12 {
         out[i] = super::ProbeObject { vtable: &TABLES[i], references: AtomicU32::new(0) };
         i += 1;
     }

@@ -1355,3 +1355,64 @@ pub(super) unsafe extern "system" fn user_age_group(o: &Object, user: *mut c_voi
 pub(super) unsafe extern "system" fn network_hint(o: &Object, out: *mut u8) -> i32 {
     unsafe { traced("XNetworkingGetConnectivityHint", &[("hint", out.cast_const(), 16)], || network_hint_impl(o, out)) }
 }
+
+// ---------------------------------------------------------------------------
+// XStore (class 0dd112ac, IXStoreImpl6 b09d803c). Offline stand-in: the game
+// license is active (not a trial, not a disc license), there are no add-on
+// licenses and no package updates. Ownership is answered, never purchased.
+// TUXBOX_STORE=0 withholds the class (the title then sees E_NOINTERFACE).
+
+static STORE_CONTEXT: u8 = 0;
+
+/// XStoreCreateContext(user, context*).
+pub(super) unsafe extern "system" fn store_create_context(_: &Object, _user: *mut c_void, out: *mut *mut c_void) -> i32 {
+    if out.is_null() { return POINTER; }
+    unsafe { out.write(core::ptr::from_ref(&STORE_CONTEXT).cast_mut().cast()) };
+    super::report(format_args!("XStore context created (offline: licensed, no add-ons)"));
+    OK
+}
+/// XStoreCloseContextHandle(context).
+pub(super) extern "system" fn store_close_context(_: &Object, _context: *mut c_void) {}
+/// XStoreIsLicenseValid(license): every license handle is valid.
+pub(super) extern "system" fn store_is_license_valid(_: &Object, _license: *mut c_void) -> bool {
+    true
+}
+/// XStoreQueryGameLicenseAsync(context, async).
+pub(super) unsafe extern "system" fn store_game_license_async(_: &Object, _context: *mut c_void, block: *mut c_void) -> i32 {
+    unsafe { complete(block, OK, STORE_LICENSE_SIZE, Payload::Empty) }
+}
+/// XStoreGameLicense: skuStoreId[18], isActive, isTrialOwnedByThisUser,
+/// isDiscLicense, isTrial (bool), trialTimeRemainingInSeconds (u32 at 24),
+/// trialUniqueId[64] (28), expirationDate (time_t at 96) = 104 bytes.
+const STORE_LICENSE_SIZE: usize = 104;
+/// XStoreQueryGameLicenseResult(async, license*).
+pub(super) unsafe extern "system" fn store_game_license_result(_: &Object, block: *mut c_void, out: *mut u8) -> i32 {
+    if out.is_null() { return POINTER; }
+    match take(block) {
+        Ok(_) => {
+            unsafe {
+                out.write_bytes(0, STORE_LICENSE_SIZE);
+                out.add(18).write(1); // isActive
+            }
+            OK
+        }
+        Err(status) => status,
+    }
+}
+/// XStoreQueryAddOnLicensesAsync / XStoreQueryGameAndDlcPackageUpdatesAsync(context, async).
+pub(super) unsafe extern "system" fn store_empty_async(_: &Object, _context: *mut c_void, block: *mut c_void) -> i32 {
+    unsafe { complete(block, OK, 0, Payload::Empty) }
+}
+/// ...ResultCount(async, count*): none. The operation stays for the result call.
+pub(super) unsafe extern "system" fn store_zero_count(_: &Object, _block: *mut c_void, count: *mut u32) -> i32 {
+    if count.is_null() { return POINTER; }
+    unsafe { count.write(0) };
+    OK
+}
+/// ...Result(async, count, items*): an empty list.
+pub(super) extern "system" fn store_empty_list_result(_: &Object, block: *mut c_void, _count: u32, _items: *mut c_void) -> i32 {
+    match take(block) {
+        Ok(_) => OK,
+        Err(status) => status,
+    }
+}
