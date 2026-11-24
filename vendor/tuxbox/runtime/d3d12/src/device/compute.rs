@@ -374,6 +374,12 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
         let bytes = unsafe { slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
         let work = background::Work::Compute(background::OwnedCompute::copy(desc, bytes));
         let _ = pipeline.state.upgrade.set(background::queue((*identity(this)).clone(), work));
+        // test110: such a pipeline was not marked lazy, so its binds never
+        // waited for the worker and dropped their dispatches (and label
+        // writes). Now it is waited on as a lazy one is
+        // (TUXBOX_COMPUTE_PENDING_WAIT_MS).
+        pipeline.state.lazy = true;
+        pipeline.state.compute = true;
     }
     status
 }

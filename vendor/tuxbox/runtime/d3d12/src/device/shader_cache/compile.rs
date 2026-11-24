@@ -293,6 +293,13 @@ fn request(
         return None;
     }
     let start = Instant::now();
+    // A title thread waiting with a deadline (a bind or a stolen build) puts
+    // its request ahead of background ones (the launcher reads urgent/).
+    if DEADLINE.with(|d| d.get()).is_some() {
+        let urgent = dir.join("urgent");
+        let _ = fs::create_dir_all(&urgent);
+        let _ = fs::write(urgent.join(key), b"");
+    }
     loop {
         if let Some(bytes) = read_portable_file(&result, stage) {
             return Some(bytes);

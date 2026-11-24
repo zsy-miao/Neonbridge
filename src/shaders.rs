@@ -648,10 +648,39 @@ impl Worker {
             let tools = Arc::new(tools);
             let busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>> = Default::default();
             let active = Arc::new(AtomicUsize::new(0));
+            // test110: a title thread waiting on one translation sat behind
+            // hundreds of background requests in directory order. A key the
+            // title waits on has a marker in urgent/ (d3d12_xs writes it);
+            // those requests go first, and a scan stops to start over as soon
+            // as one appears. NEONBRIDGE_URGENT_SHADERS=0 keeps directory order.
+            let urgent_dir = session_dir.join("urgent");
+            let urgent_on = std::env::var("NEONBRIDGE_URGENT_SHADERS").as_deref() != Ok("0");
+            let urgent_keys = |busy: &std::collections::HashSet<String>| -> Vec<String> {
+                if !urgent_on { return Vec::new(); }
+                // A marker whose request is gone (served before the marker was
+                // written) is removed, or it would stop every scan for good.
+                fs::read_dir(&urgent_dir).map(|d| d.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|k| {
+                        let pending = ["dxbc", "stencil", "link"].iter().any(|x| requests.join(format!("{k}.{x}")).exists());
+                        if !pending { let _ = fs::remove_file(urgent_dir.join(k)); }
+                        pending
+                    })
+                    .filter(|k| !busy.iter().any(|n| n.rsplit_once('.').is_some_and(|(b, _)| b == k)))
+                    .collect()).unwrap_or_default()
+            };
             while !s.load(Ordering::Acquire) {
                 let mut idle = true;
                 if let Ok(entries) = fs::read_dir(&requests) {
-                    for entry in entries.flatten() {
+                    let mut entries: Vec<_> = entries.flatten().collect();
+                    let first = urgent_keys(&busy.lock().unwrap());
+                    if !first.is_empty() {
+                        entries.sort_by_key(|e| {
+                            let name = e.file_name().to_string_lossy().into_owned();
+                            !first.iter().any(|k| name.rsplit_once('.').is_some_and(|(b, _)| b == k))
+                        });
+                    }
+                    for entry in entries {
                         let name = entry.file_name().to_string_lossy().into_owned();
                         let path = entry.path();
                         let Some((key, ext)) = valid_request(&name).map(|(k, e)| (k.to_owned(), e.to_owned())) else {
@@ -662,8 +691,18 @@ impl Worker {
                             continue;
                         }
                         idle = false;
+                        let mine = name.rsplit_once('.').map_or("", |(k, _)| k).to_owned();
+                        let mut rescan = false;
                         while active.load(Ordering::Acquire) >= workers {
                             thread::sleep(Duration::from_millis(5));
+                            if urgent_keys(&busy.lock().unwrap()).iter().any(|k| *k != mine) {
+                                rescan = true;
+                                break;
+                            }
+                        }
+                        if rescan {
+                            busy.lock().unwrap().remove(&name);
+                            break;
                         }
                         active.fetch_add(1, Ordering::AcqRel);
                         archive_request(&path, &name, &archive);
@@ -687,6 +726,7 @@ impl Worker {
                                 }
                             }
                             remove_request(&path);
+                            let _ = fs::remove_file(session.join("urgent").join(&key));
                             busy.lock().unwrap().remove(&name);
                             active.fetch_sub(1, Ordering::AcqRel);
                         });
