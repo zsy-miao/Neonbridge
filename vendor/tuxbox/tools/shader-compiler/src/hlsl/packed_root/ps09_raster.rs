@@ -184,10 +184,12 @@ pub(in crate::hlsl) fn emit_wide_image(em: &mut Emitter<'_>, ins: &Insn, image: 
     if !matches!(ins.raw[..], [0xf0001308 | 0xf05c1308, _]) {
         return Err("unsupported 64-bit image access flags".into());
     }
-    for n in [a, a + 1, d, d + 1] {
+    let a1 = a.checked_add(1).ok_or("64-bit image coordinate register overflow")?;
+    let d1 = d.checked_add(1).ok_or("64-bit image data register overflow")?;
+    for n in [a, a1, d, d1] {
         em.touch(&Opnd::Vgpr(n));
     }
-    let uv = format!("uint2(v{a}, v{})", a + 1);
+    let uv = format!("uint2(v{a}, v{a1})");
     let temp = em.tmp;
     em.tmp += 1;
     em.line("if (exec_lo & 1u) {");
@@ -195,12 +197,12 @@ pub(in crate::hlsl) fn emit_wide_image(em: &mut Emitter<'_>, ins: &Insn, image: 
         em.line(&format!("uint64_t val{temp} = {image}[{uv}];"));
         em.line(&format!(
             "v{d} = (uint)val{temp}; v{} = (uint)(val{temp} >> 32);",
-            d + 1
+            d1
         ));
     } else {
         em.line(&format!(
             "InterlockedMax({image}[{uv}], (uint64_t(v{}) << 32) | v{d});",
-            d + 1
+            d1
         ));
     }
     em.line("}");

@@ -28,6 +28,8 @@ mod pixel_quad;
 mod mubuf_offsets;
 #[cfg(test)]
 mod raw_width;
+#[cfg(test)]
+mod wide_atomic_test;
 mod fssm_bindings;
 mod micropoly;
 mod mesh;
@@ -495,6 +497,33 @@ fn distinct_regs<'s>(it: impl Iterator<Item = &'s SigElement>) -> Vec<u32> {
 
 fn semantic(e: &SigElement) -> String {
     format!("{}{}", e.name, e.index)
+}
+
+/// TuxBox d575b34 (s_ff1_i32_b64 on any operand, 16_16_16_16_UINT typed
+/// buffers). TB_FF1_FMT69=0 translates them as before.
+fn upstream_ff1_fmt69() -> bool {
+    std::env::var("TB_FF1_FMT69").map_or(true, |v| v.trim() != "0")
+}
+
+/// TuxBox 2a7fd48: verified wide image maxima in every pixel shader, not
+/// only HWRasterizePS. TB_WIDE_ATOMIC_ANY_PS=0 keeps the old restriction.
+fn wide_any_ps() -> bool {
+    std::env::var("TB_WIDE_ATOMIC_ANY_PS").map_or(true, |v| v.trim() != "0")
+}
+
+/// HLSL expression for one channel of a typed buffer element in format
+/// 16_16_16_16_UINT (69): 8 bytes, 4 x 16-bit unsigned channels.
+fn tbuf_16_16_16_16_uint_channel(channel: u32, packed: &str, packed1: &str) -> String {
+    let word = if channel >= 2 { packed1 } else { packed };
+    format!("(({word} >> {}u) & 65535u)", (channel % 2) * 16)
+}
+
+/// HLSL expression for `s_ff1_i32_b64`: first set bit of a 64-bit value read
+/// through its two 32-bit words.
+fn ff1_b64_expr(lo: &str, hi: &str) -> String {
+    format!(
+        "({lo} != 0u ? uint(firstbitlow({lo})) : {hi} != 0u ? 32u + uint(firstbitlow({hi})) : 0xffffffffu)"
+    )
 }
 
 struct Emitter<'a> {
@@ -1650,7 +1679,7 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         em.uav_uint.insert(1);
     }
     if let Some(program) = view_cull { program.resources(&mut em)?; }
-    if (ex.stage == Stage::Compute || (ex.stage == Stage::Pixel && ex.entry.as_deref() == Some("HWRasterizePS")))
+    if (ex.stage == Stage::Compute || (ex.stage == Stage::Pixel && (wide_any_ps() || ex.entry.as_deref() == Some("HWRasterizePS"))))
         && em.packed.is_none() && !em.uav_uint.is_empty() {
         em.resolve_wide_image_atomics()?;
     }
@@ -3883,6 +3912,19 @@ impl<'a> Emitter<'a> {
         for (&i, resources) in &self.res {
             let op = &self.insns[i];
             if op.enc != Enc::Mimg {
+                if let Some((_, candidates)) = self.bsel.get(&i) {
+                    for (_, resource) in candidates {
+                        if let Res::Raw(slot, true) | Res::Buf(slot, true) | Res::TBuf(slot, true) = resource {
+                            other.insert(*slot);
+                        }
+                    }
+                }
+                for resource in resources {
+                    if let Res::Uav(slot, _) | Res::Raw(slot, true) | Res::Buf(slot, true)
+                        | Res::TBuf(slot, true) = resource {
+                        other.insert(*slot);
+                    }
+                }
                 continue;
             }
             if let Some(selection) = self.msel.get(&i) {
@@ -3897,8 +3939,14 @@ impl<'a> Emitter<'a> {
                 continue;
             };
             if matches!(op.raw.as_slice(), [0xf05c1308, flags] if flags & 0xc000_0000 == 0)
+                && self.ex.resources.iter().filter(|r| {
+                    matches!(r.res_type, 6..=9)
+                        && r.space == self.binding_spaces.get(&(1, *slot)).copied().unwrap_or(0)
+                        && r.lower <= *slot && *slot <= r.upper
+                }).count() == 1
                 && self.ex.resources.iter().any(|r| {
-                    (r.res_type, r.space, r.lower, r.upper) == (6, 0, *slot, *slot)
+                    (r.res_type, r.space, r.lower, r.upper) ==
+                        (6, self.binding_spaces.get(&(1, *slot)).copied().unwrap_or(0), *slot, *slot)
                 })
             {
                 wide.insert(*slot);
@@ -5251,6 +5299,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         self.ws(&d, &format!("(t{t}h != 0u ? 31u - firstbithigh(t{t}h) : (t{t}l != 0u ? 63u - firstbithigh(t{t}l) : ~0u))"))
                     }
                     "s_ff1_i32_b32" => self.ws(&d, &format!("firstbitlow({a})")),
+                    // s_ff1_i32_b64 is firstbitlow over the 64-bit value: the low word
+                    // decides when it is nonzero, otherwise the high word.
+                    "s_ff1_i32_b64" if upstream_ff1_fmt69() => {
+                        self.touch(&hi(&s[0]));
+                        let ah = r(&hi(&s[0]))?;
+                        self.ws(&d, &ff1_b64_expr(&a, &ah))
+                    }
                     "s_sext_i32_i8" => self.ws(&d, &format!("asuint(asint({a} << 24) >> 24)")),
                     "s_sext_i32_i16" => self.ws(&d, &format!("asuint(asint({a} << 16) >> 16)")),
                     "s_abs_i32" => {
@@ -7269,13 +7324,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             return Err("invalid MTBUF destination".into());
         };
         let address = self.raw_address(ins)?;
+        // The supported formats consume one naturally aligned dword, except
+        // 16_16_16_16_UINT, whose element is 8 bytes. Read them before updating
+        // VGPRs in case VADDR overlaps the result.
         let packed = format!("t{}", self.tmp);
-        self.tmp += 1;
-        // The supported formats all consume one naturally aligned dword. Read
-        // it before updating VGPRs in case VADDR overlaps the result.
-        self.line(&format!(
-            "uint {packed} = 0u; if (exec_lo & 1u) {packed} = {buffer}.Load({address});"
-        ));
+        let packed1 = format!("t{}", self.tmp + 1);
+        self.tmp += 2;
+        if ins.aux.imm2 == 69 && upstream_ff1_fmt69() {
+            self.line(&format!(
+                "uint {packed} = 0u; uint {packed1} = 0u; if (exec_lo & 1u) {{ {packed} = {buffer}.Load({address}); {packed1} = {buffer}.Load({address} + 4u); }}"
+            ));
+        } else {
+            self.line(&format!(
+                "uint {packed} = 0u; if (exec_lo & 1u) {packed} = {buffer}.Load({address});"
+            ));
+        }
         for channel in 0..=ins.op {
             let value = match ins.aux.imm2 {
                 // BUFFER_FORMAT_16_16_SNORM.
@@ -7298,6 +7361,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 // BUFFER_FORMAT_16_FLOAT.
                 13 if channel == 0 => format!("asuint(f16tof32({packed}))"),
                 13 => (if channel == 3 { "asuint(1.0f)" } else { "0u" }).to_string(),
+                // BUFFER_FORMAT_16_16_16_16_UINT: four 16-bit unsigned channels.
+                69 if upstream_ff1_fmt69() => tbuf_16_16_16_16_uint_channel(channel, &packed, &packed1),
                 // BUFFER_FORMAT_16_16_UNORM / UINT / FLOAT.
                 23 | 27 | 29 if channel >= 2 => (if channel == 3 { if ins.aux.imm2 == 27 { "1u" } else { "asuint(1.0f)" } } else { "0u" }).to_string(),
                 23 => format!("asuint(float(({packed} >> {}u) & 65535u) / 65535.0f)", channel * 16),
@@ -8342,10 +8407,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 // operand in and the previous value out.
                 if ins.aux.mask == 3 && as_uint && dim == 1 {
                     let visibility = match (self.ex.stage, ins.raw.as_slice()) {
-                        (Stage::Pixel, [0xf05c1308, _]) =>
-                            self.ex.entry.as_deref() == Some("HWRasterizePS")
-                                && self.wide_visibility_uavs.contains(&slot),
-                        (Stage::Compute, [0xf05c1308, _]) => self.wide_visibility_uavs.contains(&slot),
+                        (Stage::Pixel | Stage::Compute, [0xf05c1308, flags])
+                            if flags & 0xc000_0000 == 0 =>
+                                (self.ex.stage == Stage::Compute || wide_any_ps() || self.ex.entry.as_deref() == Some("HWRasterizePS"))
+                                    && self.wide_visibility_uavs.contains(&slot),
                         _ => false,
                     };
                     if !visibility {
@@ -9797,6 +9862,37 @@ fn compute_user_sgpr(ex: &ShaderExtract, class: u32) -> Option<u8> {
         return None;
     }
     u8::try_from(loc & 0xff).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_buffer_16_16_16_16_uint_channels_read_16_bit_words_from_two_dwords() {
+        // 8-byte element: [lo: ch0, ch1] [hi: ch2, ch3].
+        assert_eq!(tbuf_16_16_16_16_uint_channel(0, "packed", "packed1"), "((packed >> 0u) & 65535u)");
+        assert_eq!(tbuf_16_16_16_16_uint_channel(1, "packed", "packed1"), "((packed >> 16u) & 65535u)");
+        assert_eq!(tbuf_16_16_16_16_uint_channel(2, "packed", "packed1"), "((packed1 >> 0u) & 65535u)");
+        assert_eq!(tbuf_16_16_16_16_uint_channel(3, "packed", "packed1"), "((packed1 >> 16u) & 65535u)");
+    }
+
+    #[test]
+    fn ff1_b64_points_into_low_word_when_it_is_set() {
+        assert_eq!(
+            ff1_b64_expr("s2", "s3"),
+            "(s2 != 0u ? uint(firstbitlow(s2)) : s3 != 0u ? 32u + uint(firstbitlow(s3)) : 0xffffffffu)"
+        );
+    }
+
+    #[test]
+    fn typed_buffer_extraction_masks_to_16_bits() {
+        // Each channel is masked with 0xffff: no channel may leak into a wider one.
+        for channel in 0..4u32 {
+            let expr = tbuf_16_16_16_16_uint_channel(channel, "a", "b");
+            assert!(expr.contains("& 65535u"), "channel {channel}: {expr}");
+        }
+    }
 }
 
 /// Mesh shaders index the resource descriptor heap through one FSSM class-5
