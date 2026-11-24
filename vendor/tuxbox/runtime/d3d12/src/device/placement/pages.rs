@@ -512,6 +512,9 @@ pub(super) fn place(device: &ID3D12Device, va: u64, host: &D3D12_RESOURCE_DESC, 
         let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
         let pages = g.entry(device.as_raw() as usize).or_insert_with(|| Pages::new(device)).as_mut()?;
         let tiled = D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE, Alignment: 0, ..*host };
+        if !reservable(device, &tiled) {
+            return None;
+        }
         let system_ok = (host.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)).0 == 0;
         let (mut res, readers) = match recycled(device, &tiled) {
             Some((res, readers)) => (Some(res), readers),
@@ -618,6 +621,55 @@ pub(super) fn gone(texture: &Texture, readers: Readers) {
 }
 
 type Readers = Vec<(ID3D12Fence, u64)>;
+
+// Copied from ivall/xcl crates/xcl/src/hle/d3d12x/vram.rs at 24d8b92 (with
+// 38ea451), GPL-2.0-only as the rest of this file; the answer is cached per
+// device, format and sample count, since place() runs hundreds of times a
+// second.
+
+/// A reserved texture needs TILED in the format's support (`support2`) and, multisampled, a
+/// tiled quality level at its sample count.
+fn can_reserve(support2: i32, samples: u32, tiled_msaa_levels: u32) -> bool {
+    support2 & D3D12_FORMAT_SUPPORT2_TILED.0 != 0 && (samples <= 1 || tiled_msaa_levels > 0)
+}
+
+/// Whether the device can make `desc` a reserved texture, asked before CreateReservedResource:
+/// refused, it is an error in the debug layer (#940: R32G8X24_TYPELESS depth, 1 and 4 samples).
+/// A query that fails says yes, and creation decides.
+unsafe fn reservable_uncached(dev: &ID3D12Device, desc: &D3D12_RESOURCE_DESC) -> bool {
+    let mut f = D3D12_FEATURE_DATA_FORMAT_SUPPORT { Format: desc.Format, ..Default::default() };
+    if dev.CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &mut f as *mut _ as *mut c_void, std::mem::size_of_val(&f) as u32).is_err() {
+        return true;
+    }
+    // a format without TILED is not reservable whatever the sample count's query says
+    if !can_reserve(f.Support2.0, 1, 0) {
+        return false;
+    }
+    let samples = desc.SampleDesc.Count;
+    let mut m = D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS { Format: desc.Format, SampleCount: samples, Flags: D3D12_MULTISAMPLE_QUALITY_LEVELS_FLAG_TILED_RESOURCE, NumQualityLevels: 0 };
+    if samples > 1 && dev.CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &mut m as *mut _ as *mut c_void, std::mem::size_of_val(&m) as u32).is_err() {
+        return true;
+    }
+    can_reserve(f.Support2.0, samples, m.NumQualityLevels)
+}
+
+/// reservable_uncached, once per (device, format, samples). TUXBOX_PAGES_TILED_CHECK=0 skips it.
+fn reservable(dev: &ID3D12Device, desc: &D3D12_RESOURCE_DESC) -> bool {
+    if crate::env_toggle!("TUXBOX_PAGES_TILED_CHECK") == Some("0") {
+        return true;
+    }
+    static KNOWN: Mutex<Option<HashMap<(usize, i32, u32), bool>>> = Mutex::new(None);
+    let key = (dev.as_raw() as usize, desc.Format.0, desc.SampleDesc.Count);
+    if let Some(&known) = KNOWN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+        return known;
+    }
+    let ok = unsafe { reservable_uncached(dev, desc) };
+    if !ok {
+        crate::diagnostics::log_line(format_args!("placed textures: format {} ({} samples) has no tiled support: in a span", desc.Format.0, desc.SampleDesc.Count));
+    }
+    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, ok);
+    ok
+}
 
 /// Released reserved resources by device and description, oldest first, for
 /// the next placement of that description: test58 spent 16% of the render
