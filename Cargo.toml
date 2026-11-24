@@ -16,3 +16,4 @@ opt-level = 3
 
 [dependencies]
 sha2 = "0.10"
+flate2 = "1"

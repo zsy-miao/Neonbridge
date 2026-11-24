@@ -303,6 +303,155 @@ fn archive_request(path: &Path, name: &str, archive: &Path) {
     }
 }
 
+/// DXBC parts as (fourcc, payload offset, payload length), or None if the
+/// container is malformed.
+fn dxbc_parts(data: &[u8]) -> Option<Vec<([u8; 4], usize, usize)>> {
+    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    if data.len() < 32 || &data[..4] != b"DXBC" || u32_at(24)? != data.len() {
+        return None;
+    }
+    let count = u32_at(28)?;
+    (0..count).map(|i| {
+        let o = u32_at(32 + i * 4)?;
+        let len = u32_at(o + 4)?;
+        (o + 8 + len <= data.len()).then(|| (data[o..o + 4].try_into().unwrap(), o + 8, len))
+    }).collect()
+}
+
+/// D3D12 program stage: high 16 bits of the DXIL part's program version.
+fn dxil_stage(data: &[u8], parts: &[([u8; 4], usize, usize)]) -> Option<u16> {
+    let &(_, o, len) = parts.iter().find(|p| &p.0 == b"DXIL")?;
+    (len >= 4).then(|| u16::from_le_bytes(data[o + 2..o + 4].try_into().unwrap()))
+}
+
+/// The program as d3d12_xs sends it when the pipeline supplies its root
+/// signature (`with_root` in runtime/d3d12/src/device/shader_cache.rs):
+/// hash cleared, one more part offset, RTS0 appended at a 4-byte boundary.
+fn with_root(shader: &[u8], count: usize, root: &[u8]) -> Vec<u8> {
+    let end = 32 + count * 4;
+    let root_offset = (shader.len() + 4).next_multiple_of(4);
+    let size = root_offset + 8 + root.len();
+    let mut out = Vec::with_capacity(size);
+    out.extend_from_slice(&shader[..24]);
+    out[4..20].fill(0);
+    out.extend_from_slice(&(size as u32).to_le_bytes());
+    out.extend_from_slice(&((count + 1) as u32).to_le_bytes());
+    for i in 0..count {
+        let o = u32::from_le_bytes(shader[32 + i * 4..36 + i * 4].try_into().unwrap());
+        out.extend_from_slice(&(o + 4).to_le_bytes());
+    }
+    out.extend_from_slice(&(root_offset as u32).to_le_bytes());
+    out.extend_from_slice(&shader[end..]);
+    out.resize(root_offset, 0);
+    out.extend_from_slice(b"RTS0");
+    out.extend_from_slice(&(root.len() as u32).to_le_bytes());
+    out.extend_from_slice(root);
+    out
+}
+
+/// Graphics stages whose pipelines share a few root signatures (pixel, vertex,
+/// geometry, hull, domain, mesh, amplification). Compute roots are per program.
+const SHARED_ROOT_STAGES: [u16; 7] = [0, 1, 2, 3, 4, 13, 14];
+const MAX_SHARED_ROOTS: usize = 4;
+
+fn write_request(archive: &Path, data: &[u8]) -> bool {
+    let name = format!("{}.dxbc", sha256(data));
+    let dest = archive.join(&name);
+    if fs::symlink_metadata(&dest).is_ok() {
+        return false;
+    }
+    let tmp = archive.join(format!("{name}.{}.tmp", std::process::id()));
+    if fs::write(&tmp, data).and_then(|_| fs::rename(&tmp, &dest)).is_err() {
+        let _ = fs::remove_file(&tmp);
+        return false;
+    }
+    true
+}
+
+pub struct Built { pub programs: usize, pub written: usize }
+
+/// Build every shader program in the title's `shaders.rpf` into the prewarm
+/// archive, as PC games do before the first frame.
+///
+/// The data area of shaders.rpf is not encrypted: after the `SGD5` index each
+/// program is a record `<name>_Wrapped\0`, a tag byte, u32 stored size, u32,
+/// u32 stored size again, u32 expanded size, then a raw deflate stream that
+/// inflates to the exact DXBC container the title hands d3d12_xs (its SHA-256
+/// is the request key). Records are found by scanning, so the encrypted TOC is
+/// not needed. Programs whose pipelines bring a root signature are requested
+/// with it appended; for graphics stages that use few roots, each program is
+/// also written with every root of its stage seen in archived requests.
+/// Skipped when the archive already holds this build of this shaders.rpf.
+pub fn build_requests(rpf: &Path, archive: &Path) -> Result<Option<Built>, String> {
+    let meta = fs::metadata(rpf).map_err(|e| format!("{}: {e}", rpf.display()))?;
+    fs::create_dir_all(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    let mut roots: std::collections::BTreeMap<u16, std::collections::BTreeMap<String, Vec<u8>>> = Default::default();
+    for entry in fs::read_dir(archive).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !matches!(valid_request(&name), Some((_, "dxbc"))) {
+            continue;
+        }
+        let Ok(data) = fs::read(entry.path()) else { continue };
+        let Some(parts) = dxbc_parts(&data) else { continue };
+        let (Some(stage), Some(&(_, o, len))) = (dxil_stage(&data, &parts), parts.iter().find(|p| &p.0 == b"RTS0")) else { continue };
+        if SHARED_ROOT_STAGES.contains(&stage) {
+            let root = data[o..o + len].to_vec();
+            roots.entry(stage).or_default().insert(sha256(&root), root);
+        }
+    }
+    roots.retain(|_, r| r.len() <= MAX_SHARED_ROOTS);
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let mut stamp = format!("shaders.rpf build v1\n{} {} {mtime}\n", rpf.display(), meta.len());
+    for (stage, r) in &roots {
+        for key in r.keys() {
+            stamp.push_str(&format!("root {stage} {key}\n"));
+        }
+    }
+    let marker = archive.join(".built");
+    if fs::read_to_string(&marker).is_ok_and(|s| s == stamp) {
+        return Ok(None);
+    }
+
+    let data = fs::read(rpf).map_err(|e| format!("{}: {e}", rpf.display()))?;
+    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    const TAG: &[u8] = b"_Wrapped\0";
+    let mut seen = std::collections::HashSet::new();
+    let mut built = Built { programs: 0, written: 0 };
+    let mut at = 0;
+    while let Some(i) = data[at..].windows(TAG.len()).position(|w| w == TAG) {
+        let p = at + i + TAG.len();
+        at = p;
+        let (Some(stored), Some(again), Some(size)) = (u32_at(p + 1), u32_at(p + 9), u32_at(p + 13)) else { break };
+        let start = p + 17;
+        if stored != again || size as u64 > MAX_SHADER_BYTES || start + stored > data.len() {
+            continue;
+        }
+        let mut program = Vec::with_capacity(size);
+        let mut inflate = flate2::Decompress::new(false);
+        if inflate.decompress_vec(&data[start..start + stored], &mut program, flate2::FlushDecompress::Finish).is_err()
+            || program.len() != size {
+            continue;
+        }
+        at = start + stored;
+        let Some(parts) = dxbc_parts(&program) else { continue };
+        if !seen.insert(sha256(&program)) {
+            continue;
+        }
+        built.programs += 1;
+        built.written += write_request(archive, &program) as usize;
+        if let Some(stage_roots) = dxil_stage(&program, &parts).and_then(|s| roots.get(&s)) {
+            for root in stage_roots.values() {
+                built.written += write_request(archive, &with_root(&program, parts.len(), root)) as usize;
+            }
+        }
+    }
+    if built.programs == 0 {
+        return Err(format!("no shader programs found in {}", rpf.display()));
+    }
+    fs::write(&marker, stamp).map_err(|e| e.to_string())?;
+    Ok(Some(built))
+}
+
 /// Translate every archived request into the cache before the title starts,
 /// so its pipelines load translations instead of waiting on the worker.
 fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats) {
@@ -424,3 +573,4 @@ impl Worker {
         self.stats.clone()
     }
 }
+

@@ -128,6 +128,16 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         match (build_xshader(&tuxbox, &out), shaders::find_dxc()) {
             (Ok(xshader), Some(dxc)) => {
                 let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
+                // Build every program in shaders.rpf into the prewarm archive (once per shaders.rpf).
+                let rpf = game.join("shaders.rpf");
+                if rpf.is_file() {
+                    println!("[launch] building shaders from {}", rpf.display());
+                    match shaders::build_requests(&rpf, &cache_root.join("requests")) {
+                        Ok(Some(b)) => println!("[launch] shaders.rpf: {} programs, {} new requests archived", b.programs, b.written),
+                        Ok(None) => println!("[launch] shaders.rpf already built"),
+                        Err(e) => println!("[launch] shaders.rpf not built: {e}"),
+                    }
+                }
                 let name = format!("run-{}", std::process::id());
                 let real = cache_root.join(&name);
                 let session = if sandbox { boxed_path(&real).unwrap_or(real) } else { real };
