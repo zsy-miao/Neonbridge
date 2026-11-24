@@ -76,6 +76,90 @@ unsafe fn voice_rate(voice: *mut H) -> u32 {
 static REAL_CREATE: AtomicUsize = AtomicUsize::new(0);
 static REAL_CREATE_VERSION: AtomicUsize = AtomicUsize::new(0);
 static REAL_MASTER: AtomicUsize = AtomicUsize::new(0);
+static REAL_RELEASE: AtomicUsize = AtomicUsize::new(0);
+const RELEASE_SLOT: usize = 2;
+const PERFORMANCE_SLOT: usize = 11;
+
+/// Engines with a mastering voice, and the module that made each, for the
+/// glitch report; an engine leaves on its last Release.
+static ENGINES: std::sync::Mutex<Vec<(usize, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn engines() -> std::sync::MutexGuard<'static, Vec<(usize, String)>> {
+    ENGINES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+unsafe extern "system" fn engine_release(engine: H) -> u32 {
+    let real: unsafe extern "system" fn(H) -> u32 = unsafe { std::mem::transmute(REAL_RELEASE.load(Ordering::Acquire)) };
+    let mut list = engines();
+    let left = unsafe { real(engine) };
+    if left == 0 {
+        list.retain(|(e, _)| *e != engine as usize);
+    }
+    left
+}
+
+/// The module of the code that called CreateMasteringVoice.
+fn caller_module() -> String {
+    use windows_sys::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace;
+    unsafe extern "system" {
+        fn GetModuleHandleExW(flags: u32, address: *const c_void, module: *mut H) -> i32;
+    }
+    let mut frames = [std::ptr::null_mut(); 6];
+    let n = unsafe { RtlCaptureStackBackTrace(2, 6, frames.as_mut_ptr(), std::ptr::null_mut()) } as usize;
+    let mine = caller_module as *const () as usize;
+    for &f in &frames[..n] {
+        let mut module: H = std::ptr::null_mut();
+        // FROM_ADDRESS | UNCHANGED_REFCOUNT
+        if unsafe { GetModuleHandleExW(0x4 | 0x2, f, &mut module) } == 0 {
+            continue;
+        }
+        let mut buf = [0u16; 260];
+        let len = unsafe { crate::loader::module_file_name(module, &mut buf) };
+        let name = String::from_utf16_lossy(&buf[..len]);
+        let base = name.rsplit(['\\', '/']).next().unwrap_or(&name).to_string();
+        let mut own: H = std::ptr::null_mut();
+        let ours = unsafe { GetModuleHandleExW(0x4 | 0x2, mine as *const c_void, &mut own) } != 0 && own == module;
+        if !ours && !base.to_ascii_lowercase().starts_with("xaudio2") {
+            return base;
+        }
+    }
+    "?".into()
+}
+
+/// Every TUXBOX_XAUDIO_REPORT_MS (default 10000; 0 off), each engine's
+/// XAUDIO2_PERFORMANCE_DATA: new glitches, voices and latency, so a run
+/// shows whether Bink's engine (intro gaps) underruns.
+fn start_report() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    let every = std::env::var("TUXBOX_XAUDIO_REPORT_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(10_000u64);
+    if every == 0 {
+        return;
+    }
+    ONCE.call_once(|| {
+        let _ = std::thread::Builder::new().name("TuxBox XAudio2 report".into()).spawn(move || {
+            let mut last: std::collections::HashMap<usize, u32> = std::collections::HashMap::new();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(every));
+                let list = engines();
+                for (engine, module) in list.iter() {
+                    let mut data = [0u8; 64];
+                    unsafe {
+                        let object = *engine as H;
+                        let get: unsafe extern "system" fn(H, *mut u8) = std::mem::transmute(*(*object.cast::<*const usize>()).add(PERFORMANCE_SLOT));
+                        get(object, data.as_mut_ptr());
+                    }
+                    let u64_at = |o: usize| u64::from_le_bytes(data[o..o + 8].try_into().unwrap());
+                    let u32_at = |o: usize| u32::from_le_bytes(data[o..o + 4].try_into().unwrap());
+                    let glitches = u32_at(32);
+                    let new = glitches.wrapping_sub(last.insert(*engine, glitches).unwrap_or(0));
+                    let (busy, total) = (u64_at(0), u64_at(8));
+                    log(&format!("xaudio2 engine {engine:#x} ({module}): {new} new glitches ({glitches} since start), audio thread busy {:.0}%, latency {} samples, source voices {} active / {} total, submix {} active",
+                        if total == 0 { 0.0 } else { busy as f64 * 100.0 / total as f64 }, u32_at(28), u32_at(36), u32_at(40), u32_at(44)));
+                }
+            }
+        });
+    });
+}
 
 fn enabled() -> bool {
     !std::env::var("TUXBOX_XAUDIO_FIX").is_ok_and(|v| v.trim() == "0")
@@ -168,6 +252,13 @@ unsafe fn hook_engine(engine: *mut H) {
         at.write(ours);
         let mut ignored = 0;
         VirtualProtect(at.cast(), 8, old, &mut ignored);
+        let release = (*object.cast::<*mut usize>()).add(RELEASE_SLOT);
+        let current = release.read();
+        if current != engine_release as *const () as usize && VirtualProtect(release.cast(), 8, 0x04, &mut old) != 0 {
+            REAL_RELEASE.store(current, Ordering::Release);
+            release.write(engine_release as *const () as usize);
+            VirtualProtect(release.cast(), 8, old, &mut ignored);
+        }
     }
 }
 
@@ -203,8 +294,18 @@ unsafe extern "system" fn create_master(
         how = "with the host format";
     }
     let got = if hr >= 0 { unsafe { voice_rate(voice) } } else { 0 };
+    let module = caller_module();
+    if hr >= 0 && REAL_RELEASE.load(Ordering::Acquire) != 0 {
+        let mut list = engines();
+        if !list.iter().any(|(e, _)| *e == engine as usize) {
+            list.push((engine as usize, module.clone()));
+        }
+        drop(list);
+        start_report();
+    }
     log(&format!("xaudio2: CreateMasteringVoice {channels} ch, asked {asked} Hz, requested {rate} Hz (TUXBOX_MASTER_RATE), got {got} Hz, flags {flags:#x} category {category}, console device id {} = {hr:#x} ({how})",
         if named { "ignored" } else { "none" }));
+    log(&format!("xaudio2: that mastering voice is engine {engine:p}'s, created from {module}"));
     hr
 }
 
@@ -286,7 +387,12 @@ pub(crate) unsafe fn patch_module(module: H, label: &str) -> usize {
 pub(crate) unsafe fn install() {
     // Bink2Scarlett is bound with the exe, before any late-load hook runs.
     let bink: Vec<u16> = "bink2scarlett.dll".encode_utf16().chain([0]).collect();
-    unsafe { patch_module(GetModuleHandleW(bink.as_ptr()), "Bink2Scarlett.dll") };
+    let bink_module = unsafe { GetModuleHandleW(bink.as_ptr()) };
+    unsafe { patch_module(bink_module, "Bink2Scarlett.dll") };
+    let n = unsafe { crate::affinity::patch_module(bink_module) };
+    if n > 0 {
+        log(&format!("affinity: {n} import(s) of Bink2Scarlett.dll wrapped"));
+    }
     let patched = unsafe {
         patch_imports(|d| d.starts_with("xaudio2_9"), &[
             ("XAudio2Create", create as *const () as usize),

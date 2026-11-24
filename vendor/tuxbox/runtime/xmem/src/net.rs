@@ -234,6 +234,10 @@ unsafe extern "system" fn get_proc_address(module: H, name: *const u8) -> *const
         log(&format!("xaudio2: GetProcAddress {dll}!{} -> wrapped", ansi(name)));
         return wrapped as *const c_void;
     }
+    if let Some(wrapped) = crate::affinity::lookup(dll, &ansi(name)) {
+        log(&format!("affinity: GetProcAddress {dll}!{} -> wrapped", ansi(name)));
+        return wrapped as *const c_void;
+    }
     match by_name(dll, &ansi(name)) {
         Some(block) => {
             log(&format!("network: GetProcAddress {dll}!{} -> blocked version", ansi(name)));

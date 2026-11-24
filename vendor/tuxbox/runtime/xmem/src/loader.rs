@@ -107,7 +107,7 @@ fn late_patch(module: Hmod, name: &str) {
     let base = name.rsplit(['\\', '/']).next().unwrap_or(name).to_ascii_lowercase();
     if in_exe_dir && !CONSOLE.contains(&base.as_str()) {
         let n = unsafe { crate::net::patch_module(module, name) + crate::console_mode::patch_module(module)
-            + crate::xaudio::patch_module(module.cast(), name) };
+            + crate::xaudio::patch_module(module.cast(), name) + crate::affinity::patch_module(module.cast()) };
         if n > 0 {
             log(&format!("late load {name}: {n} import(s) patched (TUXBOX_LATE_PATCH=0 skips this)"));
         }
@@ -178,11 +178,17 @@ pub(crate) unsafe fn install() {
         log(&format!("{patched} LoadLibrary import(s) redirected; console libraries load from {}", String::from_utf16_lossy(&full[..cut])));
         crate::paths::install();
         crate::xaudio::install();
+        crate::affinity::install();
         crate::write_watch::install();
         crate::net::install();
         crate::window::install();
         crate::console_mode::install();
     }
+}
+
+/// A module's file path into `buf`; returns its length.
+pub(crate) unsafe fn module_file_name(module: *mut core::ffi::c_void, buf: &mut [u16]) -> usize {
+    unsafe { GetModuleFileNameW(module.cast(), buf.as_mut_ptr(), buf.len() as u32) as usize }
 }
 
 /// Point the exe's imports named in `hooks` at the replacements, for every
