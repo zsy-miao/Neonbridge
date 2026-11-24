@@ -1459,7 +1459,7 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
     let mut state = recording(list);
     if !state.ensure_open(&list.native) { return; }
     if address == 0 || !address.is_multiple_of(4) {
-        state.error = E_INVALIDARG;
+        if xargs_strict() { state.error = E_INVALIDARG; }
         return;
     }
     if (flags != 0 || reserved != 0) && xargs_strict() {
@@ -1474,7 +1474,18 @@ unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, fl
     }
     memory_wait::note_write(list, &mut state, "marker write", address, u64::from(value));
     let result = (|| -> windows::core::Result<()> {
-        let (resource, dest) = unsafe { device::command_buffer_address(parent(&list.parent), address, 4)? };
+        // A marker to memory the GPU cannot address poisoned the list; it is
+        // skipped and logged instead.
+        let (resource, dest) = match unsafe { device::command_buffer_address(parent(&list.parent), address, 4) } {
+            Ok(found) => found,
+            Err(error) => {
+                static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                if SKIPPED.fetch_add(1, Ordering::Relaxed) < 4 {
+                    crate::diagnostics::log_line(format_args!("marker write to {address:#x} skipped: {:?}", error.code()));
+                }
+                return Ok(());
+            }
+        };
         if let Some(buffer) = &resource { raytracing::retain(&state, &[buffer])?; }
         let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest, Value: value };
         state.prefix.push(&list.native, memory_wait::Packet::Marker(write))
