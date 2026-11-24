@@ -345,6 +345,52 @@ fn rebase_view(window: (u64, u64), format: i32, structure_stride: u32, first: u6
     first + prefix / stride
 }
 
+/// TUXBOX_ADDRESS_VIEW_NULL=0: an address buffer SRV outside its bounds
+/// fails the call as before. On: it is logged and bound as a null view.
+fn null_bad_address_views() -> bool {
+    crate::env_toggle!("TUXBOX_ADDRESS_VIEW_NULL") != Some("0")
+}
+
+/// Why a buffer SRV made from a title GPU address is out of bounds (the raw
+/// view checks of Xbox2Windows ee730d22, MIT, re-stated): no elements, an
+/// unknown stride, elements past the resource width, or a raw view whose
+/// address is not dword aligned. A raw start off 16 bytes is not refused:
+/// the byte-offset path serves it.
+fn address_view_fault(address: u64, width: u64, format: i32, structure_stride: u32, first: u64, count: u32, raw: bool) -> Option<&'static str> {
+    if count == 0 {
+        return Some("no elements");
+    }
+    let raw_stride = raw.then_some(4);
+    let Some(stride) = raw_stride.or_else(|| element_stride(format, structure_stride)).map(u64::from) else {
+        return Some("unsupported stride");
+    };
+    if raw && !address.is_multiple_of(4) {
+        return Some("raw view address not dword aligned");
+    }
+    if first.checked_add(u64::from(count)).is_none_or(|end| end > width / stride) {
+        return Some("elements past the resource");
+    }
+    None
+}
+
+#[cfg(test)]
+mod address_view_tests {
+    use super::address_view_fault;
+
+    #[test]
+    fn address_buffer_views_stay_in_bounds() {
+        const R32_TYPELESS: i32 = 39;
+        assert_eq!(address_view_fault(0x1000, 64, R32_TYPELESS, 0, 0, 16, true), None);
+        assert_eq!(address_view_fault(0x1000, 64, R32_TYPELESS, 0, 0, 0, true), Some("no elements"));
+        assert_eq!(address_view_fault(0x1000, 64, R32_TYPELESS, 0, 1, 16, true), Some("elements past the resource"));
+        assert_eq!(address_view_fault(0x1002, 64, R32_TYPELESS, 0, 0, 4, true), Some("raw view address not dword aligned"));
+        assert_eq!(address_view_fault(0x1004, 64, R32_TYPELESS, 0, 0, 4, true), None);
+        assert_eq!(address_view_fault(0x1000, 64, 0, 0, 0, 1, false), Some("unsupported stride"));
+        assert_eq!(address_view_fault(0x1000, 64, 0, 16, 3, 1, false), None);
+        assert_eq!(address_view_fault(0x1000, 64, 0, 16, u64::MAX, 1, false), Some("elements past the resource"));
+    }
+}
+
 enum PlacedView<'a> {
     Elements(u64, Option<ID3D12Resource>),
     /// A read-only view served from a device-local copy of the guest bytes.
@@ -396,6 +442,25 @@ pub(super) unsafe extern "system" fn address_srv(
     let mut byte_view = None;
     let buffer_view = resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
         && view.ViewDimension == D3D12_SRV_DIMENSION_BUFFER;
+    if desc.address != 0 && buffer_view && null_bad_address_views() {
+        let buffer = unsafe { view.Anonymous.Buffer };
+        if let Some(fault) = address_view_fault(desc.address, resource_desc.Width, view.Format.0, buffer.StructureByteStride,
+            buffer.FirstElement, buffer.NumElements, buffer.Flags == D3D12_BUFFER_SRV_FLAG_RAW)
+        {
+            static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 8 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "address SRV at {:#x} ({} bytes, format {}, first {}, count {}) refused: {fault}; bound a null view ({n} so far; TUXBOX_ADDRESS_VIEW_NULL=0 fails the call)",
+                    desc.address, resource_desc.Width, view.Format.0, buffer.FirstElement, buffer.NumElements));
+            }
+            device.state.imported_views.store(handle.ptr, None);
+            device.state.blas.views.store(handle.ptr, None);
+            device.state.placements.views.set(handle.ptr, None, false);
+            unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
+            return;
+        }
+    }
     let imported = if desc.address != 0 && buffer_view {
         let stride = buffer_stride(&view).unwrap_or_else(|| fail_call(format_args!("unsupported address SRV format {}", view.Format.0)));
         let buffer = unsafe { view.Anonymous.Buffer };
