@@ -901,3 +901,105 @@ pub unsafe extern "system" fn map_scatter(
     }
     1
 }
+
+/// Neonbridge: the range a join is remapping. A title access to it during the
+/// join (a few unmaps and one map) waits in the handler below and retries.
+static JOINING: [std::sync::atomic::AtomicUsize; 2] = [const { std::sync::atomic::AtomicUsize::new(0) }; 2];
+
+unsafe extern "system" fn joining_fault(info: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS) -> i32 {
+    use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
+    const CONTINUE_EXECUTION: i32 = -1;
+    const CONTINUE_SEARCH: i32 = 0;
+    let record = unsafe { &*(*info).ExceptionRecord };
+    if record.ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record.NumberParameters < 2 {
+        return CONTINUE_SEARCH;
+    }
+    let at = record.ExceptionInformation[1];
+    let inside = |at: usize| {
+        let (lo, hi) = (JOINING[0].load(Ordering::Acquire), JOINING[1].load(Ordering::Acquire));
+        lo != 0 && lo <= at && at < hi
+    };
+    if !inside(at) {
+        return CONTINUE_SEARCH;
+    }
+    while inside(at) {
+        std::thread::yield_now();
+    }
+    CONTINUE_EXECUTION
+}
+
+impl Pool {
+    /// Neonbridge: make [lo, hi) one OS view when every page in it is mapped
+    /// from one section at consecutive offsets (the title maps one page per
+    /// call, so a GPU range is thousands of 64 KiB views that native D3D12
+    /// cannot import as one heap). Views straddling the ends widen the range.
+    fn join_range(&mut self, mut lo: usize, mut hi: usize) -> Result<bool, u32> {
+        if let Some((&a, &b)) = self.views.range(..=lo).next_back() && a < lo && lo < b { lo = a; }
+        if let Some((&a, &b)) = self.views.range(..hi).next_back() && a < hi && hi < b { hi = b; }
+        if lo >= hi || !lo.is_multiple_of(PAGE) || !hi.is_multiple_of(PAGE) { return Ok(false); }
+        if self.views.get(&lo) == Some(&hi) { return Ok(true); }
+        let first = self.pages.get(self.mappings.get(&lo).ok_or(ERROR_INVALID_ADDRESS)?).ok_or(ERROR_INVALID_ADDRESS)?;
+        let (section, offset) = (first.section.clone(), first.offset);
+        let aperture = self.aperture(lo);
+        if aperture.is_none_or(|(b, n)| hi > b + n) && !self.rooted(&section) { return Ok(false); }
+        for at in (lo..hi).step_by(PAGE) {
+            let Some(page) = self.mappings.get(&at).and_then(|t| self.pages.get(t)) else { return Ok(false) };
+            if page.mapped || !Arc::ptr_eq(&page.section, &section) || page.offset != offset + (at - lo) as u64 {
+                return Ok(false);
+            }
+            if self.aperture(at) != aperture && !self.rooted(&section) { return Ok(false); }
+        }
+        // The OS views in the range: shared views as recorded, other pages singly.
+        let mut pieces = Vec::new();
+        let mut at = lo;
+        while at < hi {
+            let end = self.views.get(&at).copied().unwrap_or(at + PAGE);
+            pieces.push((at, end));
+            at = end;
+        }
+        JOINING[1].store(hi, Ordering::Release);
+        JOINING[0].store(lo, Ordering::Release);
+        let joined = (|| -> Result<(), u32> {
+            let mut unmapped = 0;
+            let undo = |unmapped: usize| -> Result<(), u32> {
+                for &(a, b) in &pieces[..unmapped] { section.map_range(offset + (a - lo) as u64, a, b - a)?; }
+                Ok(())
+            };
+            for &(a, _) in &pieces {
+                if let Err(e) = shared_pages::unmap(a) { undo(unmapped)?; return Err(e); }
+                unmapped += 1;
+            }
+            if let Err(e) = shared_pages::coalesce_range(lo, hi - lo) { undo(unmapped)?; return Err(e); }
+            if let Err(e) = section.map_range(offset, lo, hi - lo) {
+                for &(a, b) in &pieces[..pieces.len() - 1] { shared_pages::split(a, b - a)?; }
+                undo(unmapped)?;
+                return Err(e);
+            }
+            Ok(())
+        })();
+        JOINING[0].store(0, Ordering::Release);
+        crate::loader::log(&format!("join range {lo:#x}..{hi:#x} ({} views): {joined:?}", pieces.len()));
+        joined?;
+        for (a, _) in pieces { self.views.remove(&a); }
+        self.views.insert(lo, hi);
+        Ok(true)
+    }
+}
+
+/// Neonbridge provider ABI: make [base, base + bytes) one OS view if its pages
+/// allow it, so the host GPU can import it as one heap. Returns 1 when the
+/// range is (now) one view, 0 when it cannot be, a negative Win32 error on a
+/// failed remap (the previous views are restored).
+#[unsafe(export_name = "TuxBoxJoinPageRange")]
+unsafe extern "system" fn join_page_range(base: usize, bytes: usize) -> i32 {
+    static HANDLER: std::sync::Once = std::sync::Once::new();
+    HANDLER.call_once(|| unsafe {
+        windows_sys::Win32::System::Diagnostics::Debug::AddVectoredExceptionHandler(1, Some(joining_fault));
+    });
+    let Some(end) = base.checked_add(bytes) else { return 0 };
+    let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    match pool.join_range(base & !(PAGE - 1), end.next_multiple_of(PAGE)) {
+        Ok(joined) => i32::from(joined),
+        Err(e) => -(e as i32),
+    }
+}

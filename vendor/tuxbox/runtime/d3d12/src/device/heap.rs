@@ -527,6 +527,29 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
         super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) }
 }
 
+/// Asks xmem to make the title range one OS view (TuxBoxJoinPageRange);
+/// true when it now is. TUXBOX_JOIN_PAGES=0 never asks.
+fn join_page_range(base: u64, size: u64) -> bool {
+    type Join = unsafe extern "system" fn(usize, usize) -> i32;
+    static JOIN: std::sync::OnceLock<Option<Join>> = std::sync::OnceLock::new();
+    if crate::env_toggle!("TUXBOX_JOIN_PAGES") == Some("0") {
+        return false;
+    }
+    let join = JOIN.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxJoinPageRange")).map(|f| core::mem::transmute::<_, Join>(f))
+    });
+    let Some(join) = join else { return false };
+    let result = unsafe { join(base as usize, size as usize) };
+    static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n < 16 || (n + 1).is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("join title pages {base:#x} ({size:#x} bytes): {result} (#{})", n + 1));
+    }
+    result == 1
+}
+
 /// One queue and fence per device for tile mappings, waited on the CPU so the
 /// mapping precedes every later use on any queue.
 static TILE_QUEUES: std::sync::Mutex<Vec<(usize, ID3D12CommandQueue, ID3D12Fence, u64)>> = std::sync::Mutex::new(Vec::new());
@@ -919,7 +942,16 @@ impl PagePools {
                     return Err(windows::Win32::Foundation::E_INVALIDARG.into());
                 }
             }
-            let native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) }
+            let mut native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
+            // The title maps one 64 KiB page per call, so a GPU range is many OS
+            // views and no heap spans it. xmem rejoins views of one section at
+            // consecutive offsets into one view on request; then retry once.
+            if let Err(e) = &native && e.code() == windows::Win32::Foundation::E_INVALIDARG
+                && size > u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT) && join_page_range(base, size)
+            {
+                native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
+            }
+            let native = native
                 .inspect_err(|e| {
                     import_failure("OpenExistingHeapFromAddress1", base, size, e);
                     if e.code() == windows::Win32::Foundation::E_INVALIDARG {
