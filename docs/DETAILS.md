@@ -187,7 +187,8 @@ These are in the vendored TuxBox provider:
 
 ## Diagnostics
 
-- **Shadow hashing:** a shadow copy's hash walks its span and hashes only committed, readable memory, so a span crossing a reserved page no longer crashes; skipped lengths still change the hash and are logged (`TUXBOX_SHADOW_HASH_COMMITTED=0` off).
+- **Shadow hashing:** a shadow copy's hash walks its span and hashes only committed, readable memory, so a span crossing a reserved page no longer crashes. It copies 64 KiB chunks with `ReadProcessMemory`, which fails rather than faults, and walks only a chunk that fails; skipped lengths still change the hash and are logged (`TUXBOX_SHADOW_HASH_COMMITTED=query` walks every span with `VirtualQuery`, which stalled submits behind the pipeline workers; `=0` reads directly).
+- **Pipeline workers:** 2 background threads make pipelines (`TUXBOX_PIPELINE_WORKERS=N`, `=auto` for one per core as before), so the driver's compiles don't starve submits and presents.
 - **Stale GPU pages:** each page remapped or unmapped under a GPU-imported heap is logged with the old frame the import still holds, and so is that frame when it is mapped again elsewhere, where GPU writes through the import would change the wrong memory (`TUXBOX_STALE_GPU_PAGES=0` off).
 - **Dead wait words:** once the watchdog has released a GPU memory wait's word, later waits on that word last at most `TUXBOX_WAIT_DEAD_MS` (100 ms, 0 off) until one completes by itself, so a cell its writer reaches late doesn't stall every frame.
 - **`--debug`:** runs under cdb and dumps registers, stacks, the memory region and code around a fault. Title `int 3` asserts are logged and stepped over.
