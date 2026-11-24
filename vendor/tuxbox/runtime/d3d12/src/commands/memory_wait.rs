@@ -604,6 +604,22 @@ struct Job {
 
 pub(super) struct Worker(mpsc::Sender<Job>);
 
+/// GPU memory waits the worker is holding right now (word not yet reached).
+/// The present throttle releases early while one is held (five-star bd100ba).
+static HELD: AtomicU64 = AtomicU64::new(0);
+
+/// Whether a GPU memory wait is holding a queue's work back.
+pub(super) fn held() -> bool {
+    HELD.load(Ordering::Relaxed) != 0
+}
+
+struct Holding;
+impl Drop for Holding {
+    fn drop(&mut self) {
+        HELD.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl Worker {
     fn new(error: Arc<AtomicI32>) -> Result<Self> {
         let (sender, jobs) = mpsc::channel::<Job>();
@@ -621,6 +637,8 @@ impl Worker {
                         let mut dumped = false;
                         let was_dead = dead_ms() != 0 && dead(job.segment.address);
                         let mut released = false;
+                        let _holding = (!job.segment.word.reached(job.segment.target, job.segment.comparison))
+                            .then(|| { HELD.fetch_add(1, Ordering::Relaxed); Holding });
                         while !job.segment.word.reached(job.segment.target, job.segment.comparison) {
                             unsafe {
                                 job.device.GetDeviceRemovedReason()?;

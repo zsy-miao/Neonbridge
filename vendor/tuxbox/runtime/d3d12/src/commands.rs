@@ -25,6 +25,11 @@ mod graphics;
 mod indirect_clamp;
 mod media;
 mod memory_wait;
+
+/// A GPU memory wait is holding queued work back (the present throttle).
+pub(crate) fn memory_wait_held() -> bool {
+    memory_wait::held()
+}
 pub(crate) mod page_mapping;
 mod queries;
 mod ray_dispatch;

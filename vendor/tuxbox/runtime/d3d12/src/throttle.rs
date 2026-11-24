@@ -9,6 +9,12 @@
 //! has so far). The present then waits, for at most TUXBOX_PRESENT_WAIT_MS per
 //! queue, until each queue's mark from LAG presents back is reached.
 //! TUXBOX_PRESENT_LAG=0 turns it off.
+//!
+//! five-star-recomp bd100ba (GPL-3.0): a present waiting on a queue whose
+//! work sits behind a GPU memory wait can deadlock, since the word is often
+//! written by the title only after this present returns. While a memory wait
+//! is held, the throttle goes on after TUXBOX_PRESENT_HELD_MS (250; 0 waits
+//! the full TUXBOX_PRESENT_WAIT_MS as before).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +38,12 @@ static QUEUES: Mutex<Vec<Tracked>> = Mutex::new(Vec::new());
 static WAITS: AtomicU64 = AtomicU64::new(0);
 static GAVE_UP: AtomicU64 = AtomicU64::new(0);
 static PRESENTS: AtomicU64 = AtomicU64::new(0);
+static HELD_RELEASES: AtomicU64 = AtomicU64::new(0);
+
+fn held_ms() -> u32 {
+    static MS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| std::env::var("TUXBOX_PRESENT_HELD_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(250))
+}
 
 fn lag() -> usize {
     static LAG: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -101,15 +113,43 @@ pub(crate) fn presented() {
     }
     if n.is_power_of_two() && n >= 64 {
         crate::diagnostics::log_line(format_args!(
-            "present throttle: {n} presents, {} waits, {} gave up, {tracked} queues, furthest queue {behind} presents behind (lag {lag}; TUXBOX_PRESENT_LAG=0 off)",
-            WAITS.load(Ordering::Relaxed), GAVE_UP.load(Ordering::Relaxed)));
+            "present throttle: {n} presents, {} waits, {} gave up, {} released at a held memory wait, {tracked} queues, furthest queue {behind} presents behind (lag {lag}; TUXBOX_PRESENT_LAG=0 off)",
+            WAITS.load(Ordering::Relaxed), GAVE_UP.load(Ordering::Relaxed), HELD_RELEASES.load(Ordering::Relaxed)));
     }
 }
 
 fn wait_on(fence: &ID3D12Fence, value: u64, ms: u32) -> bool {
     let Ok(event) = (unsafe { CreateEventW(None, false, false, None) }) else { return false };
-    let reached = unsafe { fence.SetEventOnCompletion(value, event) }.is_ok()
-        && unsafe { WaitForSingleObject(event, ms) } == WAIT_OBJECT_0;
+    let mut reached = false;
+    if unsafe { fence.SetEventOnCompletion(value, event) }.is_ok() {
+        let held = held_ms();
+        if held == 0 {
+            reached = unsafe { WaitForSingleObject(event, ms) } == WAIT_OBJECT_0;
+        } else {
+            // Waits in 10 ms slices: past held_ms with a memory wait held, go on.
+            let started = std::time::Instant::now();
+            loop {
+                let spent = started.elapsed().as_millis() as u32;
+                if spent >= ms {
+                    break;
+                }
+                if unsafe { WaitForSingleObject(event, (ms - spent).min(10)) } == WAIT_OBJECT_0 {
+                    reached = true;
+                    break;
+                }
+                if started.elapsed().as_millis() as u32 >= held && crate::commands::memory_wait_held() {
+                    let n = HELD_RELEASES.fetch_add(1, Ordering::Relaxed) + 1;
+                    if n <= 8 || n.is_power_of_two() {
+                        crate::diagnostics::log_line(format_args!(
+                            "present throttle: a queue's work is held at a GPU memory wait; going on after {held} ms ({n} so far; TUXBOX_PRESENT_HELD_MS=0 waits)"));
+                    }
+                    // Not a give-up: the caller counts this as reached.
+                    reached = true;
+                    break;
+                }
+            }
+        }
+    }
     let _ = unsafe { CloseHandle(event) };
     reached
 }
