@@ -67,6 +67,59 @@ struct Pool {
     scan_at: u64,
     pads: [Option<Pad>; PORTS],
     desktop: Option<DesktopPad>,
+    auto_start: AutoStart,
+}
+
+/// One injected A press so the title's player-selection prompt ("Account
+/// Picker / Screen Narration / <gamertag>"), which waits on A, passes without
+/// a key press. The title polls the pad from its first frames, well before the
+/// prompt is drawn, so the press waits until the pad has been polled for a
+/// while, then holds A across several polls and releases. It fires once per
+/// process, so it cannot confirm anything later.
+/// TUXBOX_AUTO_START=0 turns it off; a number sets the delay in seconds after
+/// the first pad poll (default 30).
+enum AutoStart {
+    Off,
+    Waiting { delay: u64, first: Option<u64>, polls: u32 },
+    Pressing { since: u64, polls: u32 },
+    Done,
+}
+
+impl AutoStart {
+    fn from_env() -> Self {
+        match std::env::var("TUXBOX_AUTO_START") {
+            Ok(v) if v.trim() == "0" => Self::Off,
+            Ok(v) => Self::Waiting { delay: v.trim().parse::<u64>().unwrap_or(30).max(1) * 1_000_000, first: None, polls: 0 },
+            Err(_) => Self::Waiting { delay: 30_000_000, first: None, polls: 0 },
+        }
+    }
+
+    /// Advance once per pad poll; true while A is held.
+    fn step(&mut self, now: u64) -> bool {
+        match self {
+            Self::Off | Self::Done => false,
+            Self::Waiting { delay, first, polls } => {
+                let start = *first.get_or_insert(now);
+                *polls += 1;
+                if now - start >= *delay && *polls >= 60 {
+                    eprintln!("TuxBox gameinput: auto start: pressing A for the player-selection prompt ({} s after the first pad poll, {polls} polls; TUXBOX_AUTO_START=0 turns this off)",
+                        (now - start) / 1_000_000);
+                    *self = Self::Pressing { since: now, polls: 1 };
+                    return true;
+                }
+                false
+            }
+            Self::Pressing { since, polls } => {
+                *polls += 1;
+                if *polls > 4 && now - *since >= 400_000 {
+                    eprintln!("TuxBox gameinput: auto start: released A after {polls} polls; no further presses");
+                    *self = Self::Done;
+                    return false;
+                }
+                true
+            }
+        }
+    }
 }
 
 fn kind(slot: usize) -> u32 {
@@ -98,6 +151,7 @@ impl Pool {
             // On by default, as documented; TUXBOX_KEYBOARD_GAMEPAD=0 leaves only XInput.
             desktop: (std::env::var_os("TUXBOX_KEYBOARD_GAMEPAD").is_none_or(|v| v != "0"))
                 .then(DesktopPad::default),
+            auto_start: AutoStart::from_env(),
         }
     }
 
@@ -154,6 +208,9 @@ impl Pool {
             self.mouse.previous = None;
             return;
         }
+        // The title's primary pad: the keyboard-merged pad, else the first XInput pad.
+        let primary = desktop_slot.or_else(|| self.pads.iter().position(Option::is_some).map(|i| i + 2));
+        let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now);
         for slot in 0..DEVICES {
             let kind = kind(slot);
             if kind & mask == 0 {
@@ -176,6 +233,13 @@ impl Pool {
                     Some(pad) => Sample::Pad(pad),
                     None => continue,
                 },
+            };
+            let data = match data {
+                Sample::Pad(mut pad) if press_a && primary == Some(slot) => {
+                    pad.buttons |= 0x4; // GameInputGamepadA
+                    Sample::Pad(pad)
+                }
+                other => other,
             };
             if self.latest[slot]
                 .as_ref()
