@@ -87,7 +87,13 @@ fn compile(hlsl: &str) -> Result<Arc<[u8]>> {
             w!("dxcompiler.dll"),
             None,
             LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
-        )?
+        ).inspect_err(|error| {
+            static FAILED: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&FAILED, || format!(
+                "rectangle shader: dxcompiler.dll load failed {:#010x}; stage matching x64 dxcompiler.dll and dxil.dll",
+                error.code().0
+            ));
+        })?
     };
     let result = (|| unsafe {
         let entry = GetProcAddress(module, s!("DxcCreateInstance")).ok_or(E_NOTIMPL)?;

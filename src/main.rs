@@ -261,6 +261,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
     splash::status(0.6, "Starting the game");
     commit_preflight();
+    dxc_preflight(&game);
     // XLaunchNewGame: the title writes a request and exits; start what it asked
     // for in its place (at most 8 times in a row). TUXBOX_RELAUNCH=0 in the
     // title ignores the request, so no file appears.
@@ -324,6 +325,37 @@ fn split_args(s: &str) -> Vec<OsString> {
 /// Translation layers commit about 15 GB at the menu; when commit runs out
 /// allocations fail with error 1455 and the title crashes. Warns below
 /// TUXBOX_MIN_COMMIT_GB (default 20); NEONBRIDGE_COMMIT_CHECK=0 skips it.
+/// Port of TuxBox 02dcc15 (Apache-2.0, warn_scarlett_dxc): advisory only.
+/// d3d12_xs compiles rectangle-list pipelines with the dxcompiler.dll and
+/// dxil.dll beside the game (a system copy may still work).
+/// NEONBRIDGE_DXC_CHECK=0 skips it.
+fn dxc_preflight(game: &Path) {
+    if std::env::var("NEONBRIDGE_DXC_CHECK").as_deref() == Ok("0") {
+        return;
+    }
+    let x64_dll = |data: &[u8]| -> bool {
+        let u16_at = |o: usize| data.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+        let Some(pe) = data.get(0x3c..0x40).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize) else { return false };
+        data.starts_with(b"MZ")
+            && data.get(pe..pe + 4) == Some(b"PE\0\0")
+            && u16_at(pe + 4) == Some(0x8664)
+            && u16_at(pe + 22).is_some_and(|c| c & 0x2000 != 0)
+            && u16_at(pe + 24) == Some(0x20b)
+    };
+    let mut problems = Vec::new();
+    for name in ["dxcompiler.dll", "dxil.dll"] {
+        match fs::read(game.join(name)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => problems.push(format!("{name} missing")),
+            Err(e) => problems.push(format!("{name} is unreadable ({e})")),
+            Ok(data) if !x64_dll(&data) => problems.push(format!("{name} is not an x64 Windows DLL")),
+            Ok(_) => {}
+        }
+    }
+    if !problems.is_empty() {
+        println!("[launch] Windows DXC: {}. Rectangle-list pipelines need both DLLs from the same Microsoft x64 DXC release (Windows SDK Redist\\D3D\\x64, or set DXC) beside the game; a system copy may also work", problems.join("; "));
+    }
+}
+
 fn commit_preflight() {
     #[repr(C)]
     struct MemoryStatusEx { length: u32, load: u32, total_phys: u64, avail_phys: u64, total_page_file: u64, avail_page_file: u64, total_virtual: u64, avail_virtual: u64, avail_extended: u64 }
