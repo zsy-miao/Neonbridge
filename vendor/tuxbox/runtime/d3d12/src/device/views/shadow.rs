@@ -27,6 +27,32 @@ struct Entry {
     pieces: Vec<(ID3D12Resource, u64, u64, u64)>,
     writable: bool,
     view: Weak<TextureAddress>,
+    /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP=1).
+    hash: Option<u64>,
+}
+
+/// TUXBOX_SHADOW_SKIP=1: a read-only shadow whose title bytes hash the same
+/// as at its last refresh is not copied again. The hash is taken on the CPU
+/// at submission, so GPU writes still queued ahead of this submission are not
+/// seen; off by default until a run shows no stale constants.
+fn skip_unchanged() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_SKIP") == Some("1")
+}
+
+/// FNV-1a over 8-byte words of `bytes` at `address` (title memory, readable
+/// while the view lives).
+fn hash(address: u64, bytes: u64) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    // SAFETY: the shadow's title range was imported, so it is committed.
+    let data = unsafe { core::slice::from_raw_parts(address as *const u8, bytes as usize) };
+    let mut words = data.chunks_exact(8);
+    for w in &mut words {
+        h = (h ^ u64::from_le_bytes(w.try_into().unwrap())).wrapping_mul(0x100_0000_01b3);
+    }
+    for &b in words.remainder() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+    }
+    h
 }
 
 struct Recorder {
@@ -105,7 +131,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     entries.retain(|_, e| e.view.strong_count() > 0);
-    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view) });
+    entries.insert((address, bytes, writable), Entry { pieces, writable, view: Arc::downgrade(&view), hash: None });
     static FIRST: std::sync::Once = std::sync::Once::new();
     crate::diagnostics::log_once(&FIRST, || format!("shadowed buffer view at {address:#x}, {bytes} bytes"));
     Ok(view)
@@ -131,12 +157,29 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     {
         let mut entries = lock(&shadows.entries);
         entries.retain(|_, e| e.view.strong_count() > 0);
-        for entry in entries.values().filter(|e| !back || e.writable) {
+        let skip = !back && skip_unchanged();
+        let (mut live, mut skipped) = (0u64, 0u64);
+        for (&(address, bytes, _), entry) in entries.iter_mut().filter(|(_, e)| !back || e.writable) {
+            live += 1;
+            if skip && !entry.writable {
+                let now = hash(address, bytes);
+                if entry.hash.replace(now) == Some(now) {
+                    skipped += 1;
+                    continue;
+                }
+            }
             if let Some(view) = entry.view.upgrade() {
                 for (source, offset, at, bytes) in &entry.pieces {
                     copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
                 }
             }
+        }
+        static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n < 4 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {} copies",
+                if back { "write-back" } else { "refresh" }, n + 1, copies.len()));
         }
     }
     if copies.is_empty() {
