@@ -59,7 +59,7 @@ These are in the vendored TuxBox provider:
   - Descriptors without the title's root layout are bound from the shader's own FSSM and PSV records.
   - Compute-heap stores, wave width, VCC branch votes across the wave, `bpermute`, and many single instructions translate.
   - Hint and debug SOPPs are no-ops.
-  - dxc retries at `-O0` when `-O1` times out.
+  - dxc retries at `-O0` when `-O1` takes longer than `NEONBRIDGE_DXC_O1_SECS` (10 s). One shader once spent 92 s in dxc, and dxc took almost all shader time, starving the pipelines the title waits on.
   - `[WaveSize]` widths the host GPU lacks are compiled out (`TB_NO_WAVESIZE_<n>`), using the wave range the runtime reads from the device.
 - **Speed:**
   - Buffer binds keep their imported memory alive, so recording dropped from about 156 ms to under 2 ms per frame.
@@ -133,6 +133,8 @@ These are in the vendored TuxBox provider:
   - An import over pages from more than one OS allocation goes straight to the shadow copy (`TUXBOX_IMPORT_PRECHECK=0` asks the driver), refused ranges are remembered by page for about 1 s (`TUXBOX_REFUSED_PAGES=0` off), and the reservation walk is bounded (`TUXBOX_RESERVATION_WALK_ALL=1` walks to the end).
   - A read-only shadow (an address SRV, or the CBV fallback) over title pages that can't be opened as a heap, even one 64 KiB page at a time, reads them through an upload buffer the CPU fills from title memory before each refresh, instead of binding a null view that reads zeros (`TUXBOX_SHADOW_CPU=0` binds null). Writable views are unchanged.
   - Single-level R8 and R8G8 textures at least 256 wide (video planes) are read on every refresh, past the byte and time budgets, so a video's YUV-to-RGB draw never mixes a stale plane with fresh ones, which smeared the loading videos (`TUXBOX_PLANE_UNBUDGETED=0` budgets them like the rest).
+  - Video planes are not read while a Bink decode is in flight (xmem's Bink hooks count `BinkDoFrame`, `BinkDoFrameAsyncMulti` until its `BinkDoFrameAsyncWait`, and catch-up decodes). They are read at the next refresh, or anyway after 250 ms of one decode (`TUXBOX_BINK_PLANE_GATE=0` reads regardless). `TUXBOX_BINK_CALL_TRACE` logs the first 48 decode calls.
+  - A level the read budget defers is read again at the next refresh instead of waiting for its next write (`TUXBOX_DEFER_OWED=0` off).
   - Shadows are hashed (`TUXBOX_SHADOW_HASH_LOCKED=1`) and released (`TUXBOX_SHADOW_DROP_LOCKED=1`) outside the shadow lock, pruned only after the map grows (`TUXBOX_SHADOW_PRUNE_EVERY=1` scans every call), and dead ones are freed before a remap of their range (`TUXBOX_SHADOW_RELEASE_ON_REMAP=0` keeps them).
   - A descriptor publish walks only the tables that can hold its slots (`TUXBOX_PUBLISH_SCAN_ALL=1` walks them all).
 - **xmem page mapping:**
