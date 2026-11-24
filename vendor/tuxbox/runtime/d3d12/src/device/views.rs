@@ -94,6 +94,14 @@ pub(super) unsafe extern "system" fn cbv(
 
 // Desktop textures have no buffer GPU VA. Reserve address space on demand
 // for the Xbox descriptor API, which identifies the original texture by VA.
+/// A placed buffer over separately mapped title pages that no heap can open:
+/// a device-local copy refreshed before and written back after each submission.
+pub(super) fn shadow_buffer(device: &Device, address: u64, bytes: u64)
+    -> windows::core::Result<(ID3D12Resource, std::sync::Arc<TextureAddress>)> {
+    let view = shadow::writable_view(device, address, bytes)?;
+    Ok((view.native.clone(), view))
+}
+
 pub(crate) struct TextureAddress {
     pub(super) base: usize,
     pub(super) buffer_offset: u64,

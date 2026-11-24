@@ -471,6 +471,17 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
     host.Width = width;
     let (native, heap) = match import_buffer_with_heap(device, base, &host, D3D12_RESOURCE_STATE_COMMON) {
         Ok(resource) => resource,
+        Err(error) if error.code() == E_INVALIDARG => {
+            // Title pages from different sections: no heap spans them.
+            let (native, buffer) = match super::views::shadow_buffer(device, address, desc.Width) {
+                Ok(shadow) => shadow,
+                Err(e) => return e.code(),
+            };
+            static SHADOWED: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&SHADOWED, || format!("placed buffer at {address:#x} ({} bytes) spans separately mapped pages; using a device copy", desc.Width));
+            return unsafe { wrap_pageable(Ok(native), &RESOURCE, device,
+                super::ResourceState::from(super::Backing::Addressed(buffer, *desc)), out) };
+        }
         Err(error) => {
             crate::diagnostics::recording_error(format_args!(
                 "placed buffer import at {address:#x} bytes={} native offset={delta:#x}: {:?}", desc.Width, error.code()

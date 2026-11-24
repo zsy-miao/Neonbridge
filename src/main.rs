@@ -428,11 +428,13 @@ fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug
         // Commands go in a script file: Sandboxie's Start.exe re-splits a quoted -c argument.
         let script = log.with_extension("cdb.cmd");
         // Trace every C++ (e06d7363), msxml/app (e0000001) and WinRT-originate (40080201)
-        // exception with its record and stack, then dump the fatal event.
+        // exception with its record and stack, then dump the fatal event. Illegal
+        // instructions are the title's CPU feature probes: not logged.
         fs::write(&script, format!("sxe -c \".exr -1;kn 25;gn\" e06d7363
 sxe -c \".exr -1;kn 25;gn\" e0000001
 sxe -c \".exr -1;kn 25;gn\" 40080201
 sxe -c \".exr -1;kn 25;gn\" av
+sxi ii
 {extra}
 g
 .lastevent
@@ -440,7 +442,6 @@ r
 kn 60
 .ecxr
 kn 60
-lm o
 q
 "))?;
         // -hd: the debug heap that cdb otherwise turns on serializes every allocation.
