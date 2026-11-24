@@ -37,3 +37,22 @@ impl GuestMemory {
         }
     }
 }
+
+/// Commits the reserved pages of lazy title views in `[base, base + size)`
+/// (xmem lazy_commit.rs, from xcl 38b05b7: views of physical pages commit on
+/// first CPU use) and returns how many 64 KiB pages it committed. Memory the
+/// CPU never touched stays reserved, so a kernel call (an import, a
+/// NtWriteVirtualMemory) fails on it and a commit-state check refuses it:
+/// every such use commits first. Pages outside a lazy view are left alone.
+pub(crate) fn commit_lazy(base: usize, size: usize) -> usize {
+    type Commit = unsafe extern "system" fn(usize, usize) -> usize;
+    static COMMIT: std::sync::OnceLock<Option<Commit>> = std::sync::OnceLock::new();
+    let commit = COMMIT.get_or_init(|| unsafe {
+        let module = GetModuleHandleW(w!("xmem.dll")).ok()?;
+        GetProcAddress(module, s!("TuxBoxCommitRange")).map(|f| core::mem::transmute::<_, Commit>(f))
+    });
+    match commit {
+        Some(commit) if size > 0 => unsafe { commit(base, size) },
+        _ => 0,
+    }
+}

@@ -141,6 +141,8 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     if guest == 0 || crate::env_toggle!("TUXBOX_ROOT_SPAN") == Some("1") {
         return address(list, state, guest, 1);
     }
+    // A page only the GPU writes is still reserved in a lazy title view.
+    device::commit_lazy(guest as usize, 0x10000 - (guest as usize & 0xffff));
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if unsafe { VirtualQuery(Some(guest as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
         static UNMAPPED: std::sync::Once = std::sync::Once::new();

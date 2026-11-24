@@ -418,6 +418,8 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     // the guest byte offset using the adapter's tight buffer alignment.
     let nearest = address & !0xffff;
     let tight = !(address - nearest).is_multiple_of(u64::from(stride));
+    // A buffer only the GPU writes is still reserved in a lazy title view.
+    super::commit_lazy(address as usize, bytes as usize);
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if unsafe { VirtualQuery(Some(address as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT
         || backed_image(device, address, region.AllocationBase.addr()) {

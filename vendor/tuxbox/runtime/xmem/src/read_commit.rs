@@ -77,6 +77,13 @@ unsafe fn prepare(buffer: usize, bytes: usize) -> usize {
 pub(crate) unsafe extern "system" fn read_file(
     file: *mut c_void, buffer: *mut c_void, bytes: u32, read: *mut u32, overlapped: *mut c_void,
 ) -> i32 {
+    // The kernel writes the buffer without faulting, so a reserved page of a
+    // lazy title view (lazy_commit.rs) fails the read: commit them first. An
+    // overlapped read cannot be retried below, since it returns IO_PENDING and
+    // reports the 998 at completion, so this is its only chance.
+    if !buffer.is_null() && enabled() {
+        crate::lazy_commit::ensure(buffer as usize, bytes as usize);
+    }
     let ok = unsafe { ReadFile(file, buffer, bytes, read, overlapped) };
     if ok != 0 || buffer.is_null() || !enabled() || unsafe { GetLastError() } != ERROR_NOACCESS {
         return ok;

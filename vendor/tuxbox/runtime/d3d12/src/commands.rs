@@ -2398,6 +2398,13 @@ pub(crate) fn accessible(at: usize, len: usize, write: bool) -> bool {
     if at == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
         return false;
     }
+    // A word or buffer only the GPU wrote (a fence word, a counter) is still
+    // reserved in a lazy title view: its CPU stores and copies were skipped
+    // and a waiter on it hung. Commit it, as the CPU's first touch would.
+    if region.State == MEM_RESERVE && region.Type == MEM_MAPPED && device::commit_lazy(at, len) > 0
+        && unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+        return false;
+    }
     let protect = region.Protect;
     let readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY
         | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;

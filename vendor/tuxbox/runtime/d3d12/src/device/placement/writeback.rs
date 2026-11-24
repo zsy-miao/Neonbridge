@@ -194,6 +194,9 @@ impl Readback {
                 let size = (mip.source.end - mip.source.start) as usize;
                 let element = mip.element_bytes as usize;
                 let address = (texture.address + mip.source.start) as usize;
+                // GPU-written pages of a lazy title view are still reserved;
+                // the write-back is their first CPU-side use.
+                crate::device::commit_lazy(address, size);
                 let mut region = query_region(address)?;
                 // There are no guest bytes to publish if a single unmapped
                 // region covers this mip. Recheck on every publication, since
@@ -316,6 +319,10 @@ fn write_mapped(
         // for the spans in this region until crossing into a different one.
         if addr >= region.0 {
             *region = query_region(addr)?;
+            if region.1.State == MEM_RESERVE && region.1.Type == MEM_MAPPED
+                && crate::device::commit_lazy(addr, base + range.end - addr) > 0 {
+                *region = query_region(addr)?;
+            }
         }
         let end = (region.0 - base).min(range.end);
         let info = &region.1;

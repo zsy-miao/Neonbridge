@@ -770,32 +770,38 @@ fn one_allocation(base: u64, size: u64) -> bool {
 }
 
 /// rebox's idea (re-derived from 19a69d0): a failed adoption is remembered by
-/// its first 64 KiB page for about a second in a fixed table (a collision
-/// overwrites), so retries at that address skip the lock, the list scan and
-/// the VirtualQuery walk. `record` adds it; otherwise it answers whether the
-/// page failed recently. TUXBOX_REFUSED_PAGES=0 off.
-pub(super) fn refused_page(address: u64, record: bool) -> bool {
+/// its first 64 KiB page and its size for about a second in a fixed table (a
+/// collision overwrites), so retries of that range skip the lock, the list
+/// scan and the VirtualQuery walk. `record` adds it; otherwise it answers
+/// whether the range failed recently. Keyed by the page alone, a refused range
+/// also refused every smaller range at its start: shadow.rs split_import's
+/// left halves never asked the driver down to the last page, and the shadow's
+/// leftmost piece got the device stand-in (test134 lines 703-708).
+/// TUXBOX_REFUSED_PAGES=0 off.
+pub(super) fn refused_page(address: u64, size: u64, record: bool) -> bool {
     use std::sync::atomic::{AtomicU64, Ordering};
     const SLOTS: usize = 4096;
     static TABLE: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
     static STAMP: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+    static SIZE: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     if crate::env_toggle!("TUXBOX_REFUSED_PAGES") == Some("0") { return false; }
     let page = (address >> 16) + 1;
-    let slot = (page.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 52) as usize % SLOTS;
+    let slot = ((page ^ size.rotate_left(29)).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 52) as usize % SLOTS;
     let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1;
     if record {
         TABLE[slot].store(page, Ordering::Relaxed);
+        SIZE[slot].store(size, Ordering::Relaxed);
         STAMP[slot].store(now, Ordering::Relaxed);
         return true;
     }
-    let hit = TABLE[slot].load(Ordering::Relaxed) == page && now.saturating_sub(STAMP[slot].load(Ordering::Relaxed)) < 1000;
+    let hit = TABLE[slot].load(Ordering::Relaxed) == page && SIZE[slot].load(Ordering::Relaxed) == size && now.saturating_sub(STAMP[slot].load(Ordering::Relaxed)) < 1000;
     if hit {
         static HITS: AtomicU64 = AtomicU64::new(0);
         let n = HITS.fetch_add(1, Ordering::Relaxed) + 1;
         if n <= 4 || n.is_power_of_two() {
             crate::diagnostics::log_line(format_args!(
-                "heap import: {address:#x} failed adoption less than 1 s ago, not asked again ({n} so far; TUXBOX_REFUSED_PAGES=0 off)"));
+                "heap import: {size:#x} bytes at {address:#x} failed adoption less than 1 s ago, not asked again ({n} so far; TUXBOX_REFUSED_PAGES=0 off)"));
         }
     }
     hit
@@ -809,11 +815,11 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     // fell back to its shadow copy. The window lets a remapped range in.
     static REFUSED: std::sync::Mutex<Vec<(u64, u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
     let refuse = || {
-        refused_page(base, true);
+        refused_page(base, size, true);
         let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
         if refused.len() < 4096 { refused.push((base, size, std::time::Instant::now())); }
     };
-    if refused_page(base, false) {
+    if refused_page(base, size, false) {
         return Err(E_INVALIDARG.into());
     }
     {
@@ -853,20 +859,9 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     Ok(Arc::new(ImportedHeap { native, _pin: pin }))
 }
 
-/// Commits the pages of a title range xmem mapped without commit (xmem
-/// lazy_commit.rs, from xcl 38b05b7) before the driver imports it: a kernel
-/// import of reserved pages fails instead of faulting them in.
+/// Commits the lazy title pages of a range before the driver imports it.
 fn commit_title_range(base: u64, size: u64) {
-    type Commit = unsafe extern "system" fn(usize, usize) -> usize;
-    static COMMIT: std::sync::OnceLock<Option<Commit>> = std::sync::OnceLock::new();
-    let commit = COMMIT.get_or_init(|| unsafe {
-        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
-        GetProcAddress(module, windows::core::s!("TuxBoxCommitRange")).map(|f| core::mem::transmute::<_, Commit>(f))
-    });
-    if let Some(commit) = commit {
-        unsafe { commit(base as usize, size as usize) };
-    }
+    super::commit_lazy(base as usize, size as usize);
 }
 
 /// Asks xmem to make the title range one OS view (TuxBoxJoinPageRange);
@@ -1640,6 +1635,9 @@ pub(super) extern "system" fn unregister_pages(device: &Device, token: usize) {
 pub(super) struct PagePools(std::sync::Mutex<std::collections::HashMap<usize, Box<PagePool>>>);
 
 struct PagePool {
+    /// Unique per registration: a pool registered after another was removed
+    /// can reuse its Box address (the token), never its id.
+    id: u64,
     start: u64,
     end: u64,
     last_page: Option<(u64, std::sync::Weak<ImportedHeap>)>,
@@ -1647,7 +1645,9 @@ struct PagePool {
 
 impl PagePools {
     fn register(&self, start: u64, end: u64) -> usize {
-        let pool = Box::new(PagePool { start, end, last_page: None });
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let pool = Box::new(PagePool { id, start, end, last_page: None });
         let token = core::ptr::from_ref(pool.as_ref()).addr();
         self.0.lock().unwrap_or_else(|e| e.into_inner()).insert(token, pool);
         token
@@ -1725,7 +1725,7 @@ impl PagePools {
                 if let Some((cached, heap)) = &pool.last_page && *cached == base && let Some(heap) = heap.upgrade() {
                     return Ok(heap);
                 }
-                let key = core::ptr::from_ref(pool.as_ref()).addr();
+                let (key, id) = (core::ptr::from_ref(pool.as_ref()).addr(), pool.id);
                 if !super::views::view_lockfree() {
                     let heap = open()?;
                     pool.last_page = Some((base, Arc::downgrade(&heap)));
@@ -1736,7 +1736,9 @@ impl PagePools {
                 drop(pools);
                 let heap = open()?;
                 let mut pools = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(pool) = pools.get_mut(&key) {
+                // Only the pool the heap was opened for: one unregistered
+                // meanwhile and another allocated at its address is not it.
+                if let Some(pool) = pools.get_mut(&key).filter(|pool| pool.id == id) {
                     pool.last_page = Some((base, Arc::downgrade(&heap)));
                 }
                 return Ok(heap);
