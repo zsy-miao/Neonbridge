@@ -528,6 +528,8 @@ pub(super) extern "system" fn save_close_provider(_: &Object, _provider: *const 
 const BUFFER_TOO_SMALL: i32 = 0x8083_0007u32 as i32;
 const BLOB_NOT_FOUND: i32 = 0x8083_0008u32 as i32;
 const SAVE_QUOTA: i64 = 256 << 20;
+const OUT_OF_LOCAL_STORAGE: i32 = 0x8083_0003u32 as i32;
+const QUOTA_EXCEEDED: i32 = 0x8083_0006u32 as i32;
 
 #[repr(C)]
 pub(super) struct ContainerInfo {
@@ -890,6 +892,49 @@ pub(super) unsafe extern "system" fn save_blob_delete(_: &Object, update: usize,
     }
 }
 
+fn tree_bytes(path: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else { return 0 };
+    entries.flatten().map(|entry| match entry.metadata() {
+        Ok(meta) if meta.is_dir() => tree_bytes(&entry.path()),
+        Ok(meta) => meta.len(),
+        Err(_) => 0,
+    }).sum()
+}
+
+/// Space for an update, checked as the console does before anything is written.
+/// Over the 256 MB title quota (counting the blobs it replaces or deletes as
+/// freed) is E_GS_QUOTA_EXCEEDED; within the quota but over the host disk's
+/// free space is E_GS_OUT_OF_LOCAL_STORAGE, so the title does not tell the
+/// player to delete saves. The disk check credits nothing: each new blob is
+/// written before the one it replaces is renamed away. TUXBOX_SAVE_SPACE_CHECK=0
+/// skips both (VIctory f0ee35e, re-derived).
+fn space_check(pending: &Update, blobs: &std::path::Path) -> Option<i32> {
+    if std::env::var("TUXBOX_SAVE_SPACE_CHECK").is_ok_and(|v| v.trim() == "0") {
+        return None;
+    }
+    let size = |name: &String| std::fs::metadata(blobs.join(encode(name))).map_or(0, |m| m.len());
+    let incoming: u64 = pending.writes.iter().map(|(_, data)| data.len() as u64).sum();
+    let mut replaced: Vec<&String> = pending.writes.iter().map(|(name, _)| name).chain(&pending.deletes).collect();
+    replaced.sort();
+    replaced.dedup();
+    let freed: u64 = replaced.into_iter().map(size).sum();
+    let used = tree_bytes(std::path::Path::new(&save_root()));
+    if used.saturating_sub(freed) + incoming > SAVE_QUOTA as u64 {
+        return Some(QUOTA_EXCEEDED);
+    }
+    let mut probe = blobs.to_path_buf();
+    while !probe.exists() {
+        if !probe.pop() { return None; }
+    }
+    let wide: Vec<u16> = std::os::windows::ffi::OsStrExt::encode_wide(probe.as_os_str()).chain(Some(0)).collect();
+    let mut free = 0u64;
+    let ok = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, core::ptr::null_mut(), core::ptr::null_mut())
+    };
+    // A small margin for the display name and file system bookkeeping.
+    (ok != 0 && incoming + (64 << 10) > free).then_some(OUT_OF_LOCAL_STORAGE)
+}
+
 /// Apply a pending update: each blob is written beside its target and renamed
 /// over it, so a crash mid-save keeps the previous blob.
 fn submit(update: usize) -> i32 {
@@ -897,6 +942,10 @@ fn submit(update: usize) -> i32 {
     let Some(pending) = updates.get(&update) else { return INVALID };
     let dir = container_dir(&pending.container);
     let blobs = dir.join("blobs");
+    if let Some(status) = space_check(pending, &blobs) {
+        super::report(format_args!("game save: container {:?} refused: {status:#x}", pending.container));
+        return status;
+    }
     let result = (|| -> std::io::Result<()> {
         std::fs::create_dir_all(&blobs)?;
         for name in &pending.deletes {
