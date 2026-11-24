@@ -990,10 +990,21 @@ fn lower_lane_spills(insns: &mut [Insn], wave32: bool) -> Result<(), String> {
     // A lane chosen at run time is a real cross-lane access, not a spill: every
     // lane op on that VGPR stays a wave operation (see `Emitter::lane_access`).
     let lane_vgpr = |i: &Insn| if i.op == READLANE { i.src.first() } else { i.dst.first() }.cloned();
-    let dynamic: BTreeSet<u8> = insns.iter().filter(|i| is_lane(i))
+    let mut dynamic: BTreeSet<u8> = insns.iter().filter(|i| is_lane(i))
         .filter(|i| !matches!(i.src.get(1), Some(Opnd::ConstInt(l)) if (0..64).contains(l)))
         .filter_map(|i| match lane_vgpr(i) { Some(Opnd::Vgpr(v)) => Some(v), _ => None })
         .collect();
+    // test108: wave64 compute shaders read lane 31 or 32 of an ordinary VGPR
+    // (a wave scan's partial total) that no v_writelane ever wrote, and were
+    // refused as unwritten spill slots. A VGPR no v_writelane targets is a
+    // real cross-lane read too (WaveReadLaneAt). TB_READLANE_VECTOR=0 refuses.
+    if !wave32 && std::env::var("TB_READLANE_VECTOR").map_or(true, |v| v.trim() != "0") {
+        let spilled: BTreeSet<u8> = insns.iter().filter(|i| i.enc == Enc::Vop3 && i.op == WRITELANE)
+            .filter_map(|i| match i.dst.first() { Some(Opnd::Vgpr(v)) => Some(*v), _ => None })
+            .collect();
+        dynamic.extend(insns.iter().filter(|i| i.enc == Enc::Vop3 && i.op == READLANE)
+            .filter_map(|i| match i.src.first() { Some(Opnd::Vgpr(v)) if !spilled.contains(v) => Some(*v), _ => None }));
+    }
     for ins in insns.iter_mut() {
         if !is_lane(ins) {
             continue;
