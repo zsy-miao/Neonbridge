@@ -143,5 +143,5 @@ pub(crate) unsafe fn install() {
             ],
         )
     };
-    log(&format!("{n} file import(s) patched; G:\\ maps to the exe folder, D:\ to a per-title folder"));
+    log(&format!("{n} file import(s) patched; G:\\ maps to the exe folder, D:\\ to a per-title folder"));
 }
