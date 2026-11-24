@@ -202,6 +202,11 @@ fn heap_d16(m: &str, channels: u8) -> Result<(bool, bool), String> {
     Ok((true, high))
 }
 
+/// V_DIV_SCALE/FMAS/FIXUP_F32 lowerings; TB_DIV_OPS=0 leaves them unsupported.
+fn div_ops_on() -> bool {
+    std::env::var("TB_DIV_OPS").map_or(true, |v| v.trim() != "0")
+}
+
 /// Typed heap buffer views consult the runtime's view-format table
 /// (tb_view_formats). TB_TYPED_FMT=0 keeps float4 views only.
 fn typed_fmt_table() -> bool {
@@ -318,6 +323,9 @@ float tb_fmax(float a, float b) { return (a == 0.0 && b == 0.0) ? asfloat(asuint
 float tb_min(float a, float b) { return tb_isnan(a) ? b : (tb_isnan(b) ? a : tb_fmin(a, b)); }
 float tb_max(float a, float b) { return tb_isnan(a) ? b : (tb_isnan(b) ? a : tb_fmax(a, b)); }
 float tb_med3(float a, float b, float c) { if (tb_isnan(a) || tb_isnan(b) || tb_isnan(c)) return tb_min(tb_min(a, b), c); float mx = tb_max(tb_max(a, b), c); if (mx == a) return tb_max(b, c); if (mx == b) return tb_max(a, c); return tb_max(a, b); }
+// V_DIV_FIXUP_F32 (S0 quotient, S1 denominator, S2 numerator), leonida-ce
+// tools/div_fixup_diff.py rules measured on gfx1036: S1/S2 denormals read as zero.
+uint tb_div_fixup(float q, float den, float num) { uint a = asuint(q), b = asuint(den), c = asuint(num); if ((b & 0x7f800000u) == 0u) b &= 0x80000000u; if ((c & 0x7f800000u) == 0u) c &= 0x80000000u; uint s = (b ^ c) & 0x80000000u, mb = b & 0x7fffffffu, mc = c & 0x7fffffffu; if (mc > 0x7f800000u) return c; if (mb > 0x7f800000u) return b; if ((mb == 0u && mc == 0u) || (mb == 0x7f800000u && mc == 0x7f800000u)) return 0xffc00000u; if (mc == 0u || mb == 0x7f800000u) return s; if (mb == 0u || mc == 0x7f800000u) return s | 0x7f800000u; if ((int)(mc >> 23) - (int)(mb >> 23) <= -151) return s; if ((a & 0x7fffffffu) > 0x7f800000u) return s | 0x7f800000u; return s | (a & 0x7fffffffu); }
 // x * 65535 rounded once to nearest even: the double product is exact (24 + 16 bits).
 uint tb_unorm16(float x) { precise double p = (double)saturate(x) * 65535.0; uint q = (uint)p; precise double rem = p - (double)q; return q + ((rem > 0.5 || (rem == 0.5 && (q & 1u) != 0u)) ? 1u : 0u); }
 float tb_ldexp(float x, int n) { n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
@@ -6741,6 +6749,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             return Ok(());
         }
+        // V_DIV_SCALE_F32 D, VCC, S0, S1, S2: the operand unscaled and no scale flag.
+        // Exact for every quotient whose operands are not near the exponent limits;
+        // v_div_fixup_f32 still settles zeros, infinities and NaNs.
+        if m == "v_div_scale_f32" && div_ops_on() {
+            let flag = match (ins.raw[0] >> 8) & 127 {
+                n @ 0..=104 => Opnd::Sgpr(n as u8),
+                106 => Opnd::VccLo,
+                _ => return Err("unsupported division-scale flag destination".into()),
+            };
+            let value = format!("asuint({})", self.fm(ins, 0)?);
+            self.wv(&d, &value)?;
+            self.ws(&flag, "0u")?;
+            if self.one_word_vector_mask() { return Ok(()); }
+            return self.ws(&hi(&flag), "0u");
+        }
         if m == "v_mad_u64_u32" {
             let Opnd::Vgpr(low) = d else { return Err("expected VGPR pair".into()); };
             let high = Opnd::Vgpr(low.checked_add(1).ok_or("VGPR pair overflows")?);
@@ -7076,6 +7099,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_cubetc_f32" => Some(format!("tb_cubetc({}, {}, {})", fa()?, fb()?, fc()?)),
             "v_cubeid_f32" => Some(format!("tb_cubeid({}, {}, {})", fa()?, fb()?, fc()?)),
             "v_cos_f32" => Some(format!("cos({} * 6.28318530718)", fa()?)),
+            // Scaled FMA of the division sequence (leonida-ce design.md): with this
+            // lane's VCC bit set the result is scaled by 2^64 when |S2| >= 2 and by
+            // 2^-64 otherwise. TB_DIV_OPS=0 leaves the op unsupported.
+            "v_div_fmas_f32" if div_ops_on() => {
+                let bit = if self.resolve_wave32 { "tb_lane_bit" } else { "1u" };
+                Some(format!(
+                    "(({a} * {b} + {c}) * (((vcc_lo & {bit}) == 0u) ? 1.0 : (((asuint({c}) >> 23) & 0xffu) > 127u ? asfloat(0x5f800000u) : asfloat(0x1f800000u))))",
+                    a = fa()?, b = fb()?, c = fc()?))
+            }
+            "v_div_fixup_f32" if div_ops_on() => Some(format!("asfloat(tb_div_fixup({}, {}, {}))", fa()?, fb()?, fc()?)),
             _ => None,
         };
         if let Some(e) = fexpr {
