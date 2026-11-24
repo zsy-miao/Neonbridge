@@ -1416,3 +1416,9 @@ pub(super) extern "system" fn store_empty_list_result(_: &Object, block: *mut c_
         Err(status) => status,
     }
 }
+/// XStoreQueryPackageUpdatesAsync(context, packageIdentifiers, count, async): none.
+pub(super) unsafe extern "system" fn store_package_updates_async(
+    _: &Object, _context: *mut c_void, _ids: *const *const u8, _count: usize, block: *mut c_void,
+) -> i32 {
+    unsafe { complete(block, OK, 0, Payload::Empty) }
+}

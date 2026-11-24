@@ -56,9 +56,10 @@ unsafe extern "system" fn method<const K: usize, const N: usize>(
 
 macro_rules! table {
     ($k:literal) => {{
-        let mut t = [Slot(method::<$k, 0> as *const ()); 64];
+        let mut t = [Slot(method::<$k, 0> as *const ()); SLOTS];
         table!(@fill t $k; 3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,
-            32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63);
+            32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,
+            64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127);
         t[0] = Slot(super::query_probe as *const ());
         t[1] = Slot(super::add_ref as *const ());
         t[2] = Slot(super::release as *const ());
@@ -71,7 +72,12 @@ macro_rules! service {
     ($f:path) => { Slot($f as *const ()) };
 }
 
-static TABLES: [[Slot; 64]; 12] = {
+/// Slots per interface table. Runtime interfaces run past 64 methods (XStore
+/// reaches 81; GTA6-BootTest needed 128): a call past the end of a shorter table
+/// read the next static as a function pointer and jumped into title memory.
+pub(super) const SLOTS: usize = 128;
+
+static TABLES: [[Slot; SLOTS]; 12] = {
     use super::services::*;
     let mut t = [table!(0), table!(1), table!(2), table!(3), table!(4), table!(5), table!(6), table!(7), table!(8), table!(9), table!(10), table!(11)];
     // XUser
@@ -201,6 +207,10 @@ static TABLES: [[Slot; 64]; 12] = {
     t[11][55] = service!(store_empty_async);
     t[11][56] = service!(store_zero_count);
     t[11][57] = service!(store_empty_list_result);
+    // XStoreQueryPackageUpdatesAsync(context, ids, count, async), ResultCount, Result.
+    t[11][79] = service!(store_package_updates_async);
+    t[11][80] = service!(store_zero_count);
+    t[11][81] = service!(store_empty_list_result);
     t
 };
 

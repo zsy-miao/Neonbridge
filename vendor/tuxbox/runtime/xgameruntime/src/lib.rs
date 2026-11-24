@@ -116,7 +116,7 @@ macro_rules! slot {
 /// Same layout as `Object` with a wider table (see `probe`).
 #[repr(C)]
 struct ProbeObject {
-    vtable: &'static [Slot; 64],
+    vtable: &'static [Slot; probe::SLOTS],
     references: AtomicU32,
 }
 
