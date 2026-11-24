@@ -1103,6 +1103,37 @@ impl PlacementMemory {
     }
 }
 
+/// VIctory 13bbd6f (Marvisak, GPL-3.0) gives one host texture to each texture
+/// memory: title textures at one address with the same shape and element size
+/// share it, each viewing it in its own format. Here each format gets its own
+/// native copy, kept in step only through title memory (GPU write-back, then a
+/// re-read). This counts how often that happens before porting the sharing:
+/// a live texture at the same address with the same dimension, size, array,
+/// mips, samples and layout but another format or flags. The first 16 are
+/// logged with both formats. TUXBOX_SAME_MEMORY_WATCH=0 off.
+fn same_memory_other_format(images: &BTreeMap<u64, Vec<Alias>>, address: u64, desc: &D3D12_RESOURCE_DESC) {
+    static FOUND: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if crate::env_toggle!("TUXBOX_SAME_MEMORY_WATCH") == Some("0") {
+        return;
+    }
+    let Some(alias) = images.get(&address).and_then(|list| list.iter().find(|a| {
+        let d = &a.desc;
+        d.Dimension == desc.Dimension && d.Width == desc.Width && d.Height == desc.Height
+            && d.DepthOrArraySize == desc.DepthOrArraySize && d.MipLevels == desc.MipLevels
+            && d.SampleDesc.Count == desc.SampleDesc.Count && d.Layout == desc.Layout
+            && a.texture.strong_count() != 0
+    })) else { return };
+    let n = FOUND.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 16 || n.is_power_of_two() {
+        let live = alias.texture.upgrade();
+        crate::diagnostics::log_line(format_args!(
+            "placed textures: {address:#x} {}x{}x{} mips {} placed again as format {} flags {:#x} over a live one of format {} flags {:#x} ({} MiB, superseded already: {}); each gets its own native copy ({n} so far; VIctory 13bbd6f shares one; TUXBOX_SAME_MEMORY_WATCH=0 off)",
+            desc.Width, desc.Height, desc.DepthOrArraySize, desc.MipLevels, desc.Format.0, desc.Flags.0,
+            alias.desc.Format.0, alias.desc.Flags.0, live.as_ref().map_or(0, |t| t.bytes >> 20),
+            live.as_ref().is_some_and(|t| t.superseded.load(Ordering::Relaxed))));
+    }
+}
+
 impl Placements {
     pub(super) fn finish_cpu_write(&self, texture: &Arc<Texture>) -> Result<()> {
         self.memory.flush_textures(vec![texture.clone()])
@@ -1138,6 +1169,7 @@ impl Placements {
         if let Some(texture) = Self::find_texture(&images, address, desc) {
             return Ok(texture);
         }
+        same_memory_other_format(&images, address, desc);
         let texture = Texture::new(device, &self.memory.images, address, desc, clear)?;
         self.memory.device.get_or_init(|| {
             let mut registry = lock(&FLUSH_DEVICES);
