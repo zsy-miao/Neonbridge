@@ -67,6 +67,12 @@ unsafe fn equivalent_stencil(payload: *const u8, depth: &D3D12_DEPTH_STENCIL_DES
 /// guest roots; otherwise the stream is a desktop one made by `create`, whose
 /// root pointer is left out (translated shaders already depend on it).
 unsafe fn canonical(guest: Option<&Device>, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<String> {
+    let (text, _) = unsafe { canonical_parts(guest, desc) }?;
+    shader_cache::source_digest(text.as_bytes())
+}
+
+/// The canonical text of a stream and, per record, (tag, end of its text).
+unsafe fn canonical_parts(guest: Option<&Device>, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<(String, Vec<(i32, usize)>)> {
     use core::fmt::Write;
     fn field<T: core::fmt::Debug>(out: &mut String, payload: *const u8) {
         let _ = write!(out, "{:?};", unsafe { &*payload.cast::<T>() });
@@ -95,6 +101,7 @@ unsafe fn canonical(guest: Option<&Device>, desc: &D3D12_PIPELINE_STATE_STREAM_D
         return None;
     }
     let mut out = String::new();
+    let mut parts = Vec::new();
     let mut at = 0;
     while at < size {
         let record = unsafe { input.add(at) };
@@ -174,18 +181,21 @@ unsafe fn canonical(guest: Option<&Device>, desc: &D3D12_PIPELINE_STATE_STREAM_D
                 // The console stencil record ends the stream (see `equivalent_stencil`).
                 let state = unsafe { payload.cast::<[u8; 18]>().read_unaligned() };
                 let _ = write!(out, "{state:?}");
+                parts.push((tag, out.len()));
                 break;
             }
             _ => return None,
         }
+        parts.push((tag, out.len()));
         at += bytes_used;
     }
-    shader_cache::source_digest(out.as_bytes())
+    Some((out, parts))
 }
 
 /// What identifies a guest stream across runs (see `pipeline_cache`).
-unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<String> {
-    unsafe { canonical(Some(device), desc) }
+unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Option<(String, String, Vec<(i32, usize)>)> {
+    let (text, parts) = unsafe { canonical_parts(Some(device), desc) }?;
+    Some((shader_cache::source_digest(text.as_bytes())?, text, parts))
 }
 
 /// Census of the guest pipelines the title creates (test139: 84,186 at
@@ -193,11 +203,26 @@ unsafe fn guest_key(device: &Device, desc: &D3D12_PIPELINE_STATE_STREAM_DESC) ->
 /// (the guest key, which adds the state). The driver's compile cost goes by
 /// the distinct sets and states, not the count. Logged at powers of two from
 /// 1024 and every 20,000. TUXBOX_PIPELINE_CENSUS=0 off.
-unsafe fn census(desc: &D3D12_PIPELINE_STATE_STREAM_DESC, key: Option<&str>) {
+///
+/// test140 had 40,000 distinct keys over 693 program sets. To name the state
+/// that varies, each new key is compared record by record with the first
+/// pipeline of its program set; the line counts the differing records by
+/// tag, and the first few differences of each tag are logged in full.
+unsafe fn census(desc: &D3D12_PIPELINE_STATE_STREAM_DESC, key: Option<&str>, text: Option<&(String, Vec<(i32, usize)>)>) {
     use std::collections::{HashMap, HashSet};
     use std::hash::{Hash, Hasher};
     #[derive(Default)]
-    struct Census { by_blob: HashMap<(usize, usize), u64>, programs: HashSet<u64>, sets: HashSet<u64>, keys: HashSet<String>, count: u64 }
+    struct Census {
+        by_blob: HashMap<(usize, usize), u64>,
+        programs: HashSet<u64>,
+        sets: HashSet<u64>,
+        keys: HashSet<String>,
+        count: u64,
+        /// Per program set, the first pipeline's records as (tag, text).
+        first: HashMap<u64, Vec<(i32, String)>>,
+        /// Differing records by tag (-1: a different record list).
+        differs: std::collections::BTreeMap<i32, u64>,
+    }
     static CENSUS: std::sync::Mutex<Option<Census>> = std::sync::Mutex::new(None);
     if crate::env_toggle!("TUXBOX_PIPELINE_CENSUS") == Some("0") {
         return;
@@ -239,16 +264,48 @@ unsafe fn census(desc: &D3D12_PIPELINE_STATE_STREAM_DESC, key: Option<&str>) {
         c.programs.insert(program);
         (tag, program).hash(&mut set);
     }
-    c.sets.insert(set.finish());
-    if let Some(key) = key {
-        c.keys.insert(key.to_owned());
+    let set = set.finish();
+    c.sets.insert(set);
+    let new_key = key.is_some_and(|key| c.keys.insert(key.to_owned()));
+    if let Some((text, parts)) = text {
+        let records: Vec<(i32, String)> = parts.iter().scan(0, |start, &(tag, end)| {
+            let piece = text.get(*start..end).unwrap_or_default().to_owned();
+            *start = end;
+            Some((tag, piece))
+        }).collect();
+        match c.first.get(&set) {
+            None => { c.first.insert(set, records); }
+            Some(first) if new_key => {
+                let tags = |r: &[(i32, String)]| r.iter().map(|(t, _)| *t).collect::<Vec<_>>();
+                let mut differing = Vec::new();
+                if tags(first) != tags(&records) {
+                    differing.push((-1, format!("{:?}", tags(first)), format!("{:?}", tags(&records))));
+                } else {
+                    for ((tag, a), (_, b)) in first.iter().zip(&records) {
+                        if a != b {
+                            differing.push((*tag, a.clone(), b.clone()));
+                        }
+                    }
+                }
+                for (tag, a, b) in differing {
+                    let seen = c.differs.entry(tag).or_default();
+                    *seen += 1;
+                    if *seen <= 3 {
+                        let cut = |t: &str| t.chars().take(600).collect::<String>();
+                        crate::diagnostics::log_line(format_args!(
+                            "pipeline census: record {tag} differs within a program set: first {} | this {}", cut(&a), cut(&b)));
+                    }
+                }
+            }
+            Some(_) => {}
+        }
     }
     c.count += 1;
     let n = c.count;
     if (n >= 1024 && n.is_power_of_two()) || n.is_multiple_of(20_000) {
         crate::diagnostics::log_line(format_args!(
-            "pipeline census: {n} created; {} distinct programs, {} distinct program sets, {} distinct pipelines (with state) (TUXBOX_PIPELINE_CENSUS=0 off)",
-            c.programs.len(), c.sets.len(), c.keys.len()));
+            "pipeline census: {n} created; {} distinct programs, {} distinct program sets, {} distinct pipelines (with state); records differing from the set's first pipeline, by tag: {:?} (TUXBOX_PIPELINE_CENSUS=0 off)",
+            c.programs.len(), c.sets.len(), c.keys.len(), c.differs));
     }
 }
 
@@ -830,8 +887,11 @@ pub(super) unsafe extern "system" fn create_pipeline(
     };
     let mut state = compute::PipelineData::default();
     let worker = background::on_worker();
+    let mut census_text = None;
     if !worker {
-        state.key = unsafe { guest_key(device, desc) }.map(Into::into);
+        let keyed = unsafe { guest_key(device, desc) };
+        state.key = keyed.as_ref().map(|(key, _, _)| key.clone().into());
+        census_text = keyed.map(|(_, text, parts)| (text, parts));
         if let Some(key) = state.key.as_deref()
             && crate::diagnostics::capture::shaders_on()
         {
@@ -842,7 +902,7 @@ pub(super) unsafe extern "system" fn create_pipeline(
     // lazy pipelines); the ones an earlier run bound are handed to the
     // workers now (see `background::eager`).
     if !worker {
-        unsafe { census(desc, state.key.as_deref()) };
+        unsafe { census(desc, state.key.as_deref(), census_text.as_ref()) };
     }
     let used_before = state.key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));
     if !worker
