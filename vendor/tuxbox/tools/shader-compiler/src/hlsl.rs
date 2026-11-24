@@ -1187,6 +1187,10 @@ fn mark_wave_allocations(insns: &mut [Insn]) -> Result<(bool, bool), String> {
 /// Instructions whose 64-bit SGPR source is a lane mask (EXEC, VCC, a compare result
 /// or a saved EXEC). The per-invocation model holds only this lane's bit there, so
 /// counting the mask's bits needs a wave ballot.
+fn mask_high_shadow() -> bool {
+    std::env::var("TB_MASK_HIGH_SHADOW").map_or(true, |v| v.trim() != "0")
+}
+
 fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
     let mut masks = BTreeSet::<u8>::new();
     let mut reads = BTreeSet::new();
@@ -1203,7 +1207,8 @@ fn lane_mask_reads(insns: &[Insn]) -> BTreeSet<usize> {
             ("s_bcnt1_i32_b64", Some(o)) if is_mask(&masks, o) => { reads.insert(i); }
             ("v_mbcnt_lo_u32_b32", Some(o)) if is_mask(&masks, o) => { reads.insert(i); }
             ("v_mbcnt_hi_u32_b32", Some(Opnd::VccHi | Opnd::ExecHi)) => { reads.insert(i); }
-            ("v_mbcnt_hi_u32_b32", Some(Opnd::Sgpr(n))) if *n > 0 && masks.contains(&(n - 1)) => { reads.insert(i); }
+            // With the high dword shadowed it is read as the integer it holds.
+            ("v_mbcnt_hi_u32_b32", Some(Opnd::Sgpr(n))) if *n > 0 && masks.contains(&(n - 1)) && !mask_high_shadow() => { reads.insert(i); }
             _ => {}
         }
         let [Opnd::Sgpr(d)] = ins.dst[..] else { continue; };
@@ -7024,12 +7029,25 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.ws(&d, &format!("t{t}ballot.x"))?;
                 return self.ws(&hi(&d), &format!("t{t}ballot.y"));
             }
-            self.ws(&d, &format!("(((exec_lo & 1u) != 0u) && {c}) ? 1u : 0u"))?;
+            // five-star-recomp 2781f9c (GPL-3.0): the high dword of a wave64 mask
+            // is an integer every mask write sets, to the high lanes' ballot.
+            // Mask reads were matched to writes in emission order, so on another
+            // path s43 (an integer base the culling program adds to) read as a
+            // mask half. TB_MASK_HIGH_SHADOW=0 writes 0 as before.
+            let shadow = !self.one_word_vector_mask() && mask_high_shadow();
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("bool t{t}c = ((exec_lo & 1u) != 0u) && {c};"));
+            let high = if shadow {
+                self.line(&format!("uint t{t}h = WaveActiveBallot(t{t}c).y;"));
+                format!("t{t}h")
+            } else { "0u".into() };
+            self.ws(&d, &format!("t{t}c ? 1u : 0u"))?;
             if self.one_word_vector_mask() { return Ok(()); } // The next SGPR can hold an independent mask.
             let dh = hi(&d);
             if !matches!(dh, Opnd::Null | Opnd::ConstInt(_)) {
                 self.touch(&dh);
-                self.ws(&dh, "0u")?;
+                self.ws(&dh, &high)?;
             }
             return Ok(());
         }
