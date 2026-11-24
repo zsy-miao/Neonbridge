@@ -138,6 +138,8 @@ These are in the vendored TuxBox provider:
   - Bound pipelines go ahead of the workers' queue (`TUXBOX_PIPELINE_PRIORITY=0` off), and a frame waits at most 50 ms for pipelines still being made (`TUXBOX_FRAME_WAIT_MS=500` as before).
   - Compute pipelines up to `TUXBOX_SMALL_COMPUTE_BYTES` (16384; 0 off) are made on the title's thread at first bind, drawing on a shared first-use budget of 0.25 s a second up to 1 s (`TUXBOX_FIRST_USE_BUDGET=0` off). A worker building a pipeline the title waits on runs at normal priority (`TUXBOX_PIPELINE_HURRY=0` off).
   - Driver compiles wait for the memory they're expected to take (4096 bytes per byte of DXIL, 2-32 GB), at most `TUXBOX_COMPILE_BUDGET_WAIT_MS` (30000) (`TUXBOX_COMPILE_BUDGET=0` off).
+  - A title thread that finds a shader-cache bucket busy (a worker holds it while it waits on the translator) hands the job to the workers instead of waiting (`TUXBOX_SHADER_LOCK_SKIP=0` waits).
+- **Ray tracing:** TLAS instances at a foreign address go through the GPU address fixup, and a GPU pointer array with relocated BLASes builds an empty TLAS instead of leaving its list out (`TUXBOX_FOREIGN_INSTANCES=0` leaves the list out). test101 lost the device in a TLAS build right after this path ran, so it may be turned off by default.
 - **Views and Map:** a depth image gets a default SRV of its depth plane (`TUXBOX_DEPTH_DEFAULT_SRV=0` off), and Map of a resource with no CPU pages answers E_INVALIDARG without the PC call (`TUXBOX_MAP_HEAP_CHECK=0` off).
 - **DirectStorage (`xcrdapi`):** a request fails when its destination isn't committed and writable (`TUXBOX_XCRD_CHECK_DEST=0` off), and a read refused at enqueue keeps its request, so its error record names it and a tag cancel reaches it (`TUXBOX_XCRD_REFUSED_RECORD=0` off).
 - **Shader translator, more:**
@@ -149,6 +151,7 @@ These are in the vendored TuxBox provider:
   - `v_writelane_b32` keeps its other lanes live (`TB_WRITELANE_CARRY=0` counts a full write), and every address VGPR of a non-NSA image instruction counts as read (`TB_MIMG_ADDR_LIVE=0` counts vaddr only).
   - `s_ff1_i32_b64` on any operand and MTBUF format 69 as four 16-bit channels (`TB_FF1_FMT69=0` off); wide image atomics in every pixel shader (`TB_WIDE_ATOMIC_ANY_PS=0` HWRasterizePS only).
   - Inline sampler words through `s_mov_b64` pair copies (`TUXBOX_SAMPLER_PAIR_MOVES=0` refuses them) and packed RGBA8 `image_store_pck`/`image_store_mip_pck` (`TUXBOX_PACKED_STORES=0` refuses them).
+  - A shader whose only general DPP are full-mask quad permutes no longer requires wave64 (`TB_DPP_QUAD_ANY_WAVE=0` keeps wave64).
 - **Launch:**
   - A neon loading screen shows until the game's first frame (`NEONBRIDGE_SPLASH=0` turns it off). The game window is kept on one monitor at 16:9, and the game ends when the launcher does (`NEONBRIDGE_JOB=0`).
   - Started without `--game`, the launcher opens a picker for the game folder or exe.
@@ -158,6 +161,7 @@ These are in the vendored TuxBox provider:
 
 - **`--debug`:** runs under cdb and dumps registers, stacks, the memory region and code around a fault. Title `int 3` asserts are logged and stepped over.
 - **Run summary:** the launcher prints one line with fps, the per-frame cost split (record, close, submit, present, waits), the most expensive recording calls, lit-frame samples and failure counters. `--timeout S` ends a run cleanly, and `--summary LOG` summarises an old log.
+- **Closed-list recording:** a recording call that reaches a closed list without a Reset is logged once with its guest RVA.
 - **Heartbeat:** the present heartbeat logs fps every 10 s, plus GPU latency per frame and each thread's CPU time. An fps overlay shows in the game window, and `TUXBOX_FPS=0` hides it.
 - **Diagnostic switches:**
   - `TUXBOX_TRACE_PRESENT=60` samples whether frames are lit.
@@ -186,7 +190,7 @@ These are in the vendored TuxBox provider:
 
 - **Video memory:** the main limit. The game uses about 8 GB against a 7.2 GB device-local budget, and the frame rate sinks from about 40 to 20 once it overflows.
 - **Black picture:** the first mission plays sound but draws black.
-- **End-of-run freeze:** after about 3000 frames no frame is presented for 15 s; the title's submit thread waits on a command list's recording lock. The placement deadlock fix didn't end it.
+- **End-of-run freeze:** after about 3000 frames no frame was presented for 15 s. Two causes are fixed (a placement drop-order deadlock and title threads waiting on a shader-cache lock); test101 ran past it but then lost the device in a TLAS build.
 - **BCPack textures:** shown as grey blocks until a decoder is written (about 14% of textures).
 - **Later screens:** blend patches from derived pipelines are logged but not applied yet.
 - **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders.
