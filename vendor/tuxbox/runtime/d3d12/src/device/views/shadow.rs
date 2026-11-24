@@ -122,6 +122,7 @@ pub(crate) unsafe fn refresh(device: &Device, queue: &ID3D12CommandQueue) -> Res
     unsafe {
         recorder.list.Close()?;
         queue.ExecuteCommandLists(&[Some(recorder.list.cast()?)]);
+        crate::dred::check(queue, "shadow refresh");
         recorder.value += 1;
         queue.Signal(&recorder.fence, recorder.value)?;
     }

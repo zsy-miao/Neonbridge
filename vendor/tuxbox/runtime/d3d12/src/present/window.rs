@@ -57,6 +57,14 @@ impl OutputWindow {
         HWND(self.handle as _)
     }
 
+    /// A title can resize its own window after the swap chain binds it, for
+    /// example to span every monitor. Keep it within one monitor's work area.
+    pub(super) fn keep_fitted(&self, width: u32, height: u32) {
+        if self._owner.is_none() {
+            let _ = fit_title_window(self.hwnd(), width, height);
+        }
+    }
+
     pub(super) fn is_open(&self) -> bool {
         unsafe { IsWindow(Some(self.hwnd())).as_bool() }
     }

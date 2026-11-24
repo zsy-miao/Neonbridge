@@ -246,6 +246,7 @@ pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits)
                     lists.as_ptr(),
                 )
             };
+            crate::dred::check(&queue.native, "guest command lists");
         }
     };
     let mut start = 0;

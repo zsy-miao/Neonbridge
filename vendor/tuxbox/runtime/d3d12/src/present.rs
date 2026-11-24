@@ -167,6 +167,7 @@ impl SwapChain {
             if !self.window.is_open() {
                 return Err(DXGI_ERROR_ACCESS_LOST.into());
             }
+            self.window.keep_fitted(self.width, self.height);
             if u64::from(self.width) != desc.Width
                 || self.height != desc.Height
                 || self.format != desc.Format
@@ -189,6 +190,7 @@ impl SwapChain {
             frame.list.Close()?;
             frame.source = Some(source.clone());
             queue.ExecuteCommandLists(&[Some(ID3D12CommandList::clone(&frame.list))]);
+            crate::dred::check(queue, "present copy");
             if let Err(error) = queue.Signal(&self.fence, self.next) {
                 self.failed_signal = Some((error.code(), queue.clone()));
                 return Err(error);

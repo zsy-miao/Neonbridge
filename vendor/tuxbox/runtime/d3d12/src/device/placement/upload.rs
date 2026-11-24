@@ -104,6 +104,7 @@ impl Transfer {
         self.pending.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
         unsafe {
             self.queue.ExecuteCommandLists(&[Some(upload.list.clone())]);
+            crate::dred::check(&self.queue, "placement upload");
         }
         self.pending.push_back((tick, upload));
         if let Err(error) = unsafe { self.queue.Signal(&self.fence, tick) } {

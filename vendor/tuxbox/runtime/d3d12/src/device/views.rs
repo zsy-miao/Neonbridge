@@ -66,6 +66,15 @@ pub(super) unsafe extern "system" fn cbv(
             }
         }
     }
+    // A desktop runtime removes the device for an invalid CBV description.
+    if let (Some(value), Some(guest)) = (&aligned, unsafe { desc.as_ref() })
+        && (!value.BufferLocation.is_multiple_of(256) || !value.SizeInBytes.is_multiple_of(256)
+            || value.SizeInBytes > 65536 || (value.BufferLocation != 0 && owner.is_none()))
+    {
+        crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+            "invalid CBV: guest {:#x}+{} host {:#x}+{} imported={}",
+            guest.BufferLocation, guest.SizeInBytes, value.BufferLocation, value.SizeInBytes, owner.is_some()));
+    }
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::ConstantBuffer { _address: owner }));
     unsafe {
         device

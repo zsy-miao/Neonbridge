@@ -631,6 +631,7 @@ pub(crate) unsafe fn submit(
         // Separate ExecuteCommandLists calls allow simultaneous-access textures
         // to decay to COMMON between the guest batch and this copy.
         unsafe { queue.ExecuteCommandLists(&[Some(readback.list.clone())]) };
+        crate::dred::check(queue, "placement readback");
     }
     if let Err(error) = unsafe { queue.Signal(reader, tick) } {
         transfer.failed = Some(error.code());

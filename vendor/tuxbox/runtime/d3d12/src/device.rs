@@ -976,10 +976,16 @@ pub(crate) const DEVICE_INTERFACES: &[GUID] = &[
 /// `adapter` must be null or a borrowed DXGI adapter. The caller must supply
 /// a cleared, writable output pointer for the new guest device reference.
 pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> HRESULT {
+    crate::dred::configure();
     let mut native = None;
     // SAFETY: The public factory validated its arguments. A null adapter
     // selects D3D12's default, otherwise it remains borrowed for this call.
-    if let Err(error) = unsafe {
+    if let Some(created) = crate::dred::debug_device(unsafe { IUnknown::from_raw_borrowed(&adapter) }) {
+        match created {
+            Ok(device) => native = Some(device),
+            Err(error) => return error.code(),
+        }
+    } else if let Err(error) = unsafe {
         D3D12CreateDevice::<_, ID3D12Device>(
             IUnknown::from_raw_borrowed(&adapter),
             D3D_FEATURE_LEVEL_12_0,
@@ -992,6 +998,7 @@ pub(crate) unsafe fn create(adapter: *mut c_void, requested: GUID, out: Out) -> 
         return E_POINTER;
     };
     crate::diagnostics::device_created(&native);
+    crate::dred::watch(&native);
     // SAFETY: the caller holds the selected adapter through factory return.
     let pipeline_device = native.cast::<ID3D12Device2>().ok();
     let interfaces: &'static [GUID] = if native.cast::<ID3D12Device11>().is_ok() {

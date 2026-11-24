@@ -209,6 +209,7 @@ impl Builder {
             self.list.Close()?;
             self.pending = Some(pending);
             self.queue.ExecuteCommandLists(&[Some(list)]);
+            crate::dred::check(&self.queue, "BLAS rebuild");
             self.queue.Signal(&self.fence, self.tick)?;
             self.fence
                 .SetEventOnCompletion(self.tick, HANDLE::default())?;

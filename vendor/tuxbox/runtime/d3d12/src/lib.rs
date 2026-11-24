@@ -3,6 +3,7 @@
 mod commands;
 mod device;
 mod diagnostics;
+mod dred;
 mod exports;
 mod guids;
 mod present;
