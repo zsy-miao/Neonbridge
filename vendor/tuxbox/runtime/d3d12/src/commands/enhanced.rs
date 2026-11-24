@@ -132,6 +132,183 @@ fn fix_texture(item: &mut D3D12_TEXTURE_BARRIER, compute: bool, simultaneous: bo
     }
 }
 
+/// Planes of a host format: depth+stencil and two-plane video formats have 2.
+fn plane_count(format: i32) -> u32 {
+    match format {
+        19..=22 | 44..=47 | 103 | 104 | 110 | 112 | 113 => 2,
+        _ => 1,
+    }
+}
+
+/// Keep the subresource range inside the host resource: Xbox depth+stencil
+/// barriers name two planes of what may be a one-plane host format, and
+/// out-of-range mips, slices or planes failed the host Close with E_INVALIDARG.
+fn fix_range(range: &mut D3D12_BARRIER_SUBRESOURCE_RANGE, desc: &D3D12_RESOURCE_DESC) {
+    let mips = u32::from(desc.MipLevels.max(1));
+    let slices = if desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D { 1 } else { u32::from(desc.DepthOrArraySize.max(1)) };
+    let planes = plane_count(desc.Format.0);
+    let all = D3D12_BARRIER_SUBRESOURCE_RANGE { IndexOrFirstMipLevel: u32::MAX, ..Default::default() };
+    if range.IndexOrFirstMipLevel == u32::MAX {
+        *range = all;
+        return;
+    }
+    if range.NumMipLevels == 0 {
+        // Single subresource index form.
+        *range = if range.IndexOrFirstMipLevel >= mips * slices * planes { all } else {
+            D3D12_BARRIER_SUBRESOURCE_RANGE { IndexOrFirstMipLevel: range.IndexOrFirstMipLevel, ..Default::default() }
+        };
+        return;
+    }
+    let clamp = |first: u32, count: u32, total: u32| -> Option<(u32, u32)> {
+        if first >= total { return None; }
+        let count = if count == 0 { total - first } else { count.min(total - first) };
+        Some((first, count))
+    };
+    *range = match (
+        clamp(range.IndexOrFirstMipLevel, range.NumMipLevels, mips),
+        clamp(range.FirstArraySlice, range.NumArraySlices, slices),
+        clamp(range.FirstPlane, range.NumPlanes, planes),
+    ) {
+        (Some((m, nm)), Some((a, na)), Some((pl, np))) if (m, nm, a, na, pl, np) != (0, mips, 0, slices, 0, planes) =>
+            D3D12_BARRIER_SUBRESOURCE_RANGE {
+                IndexOrFirstMipLevel: m, NumMipLevels: nm, FirstArraySlice: a,
+                NumArraySlices: na, FirstPlane: pl, NumPlanes: np,
+            },
+        _ => all,
+    };
+}
+
+/// Layouts the host resource's flags allow: an RT, depth or UAV layout
+/// without its ALLOW_* flag (or a shader-resource layout on a
+/// DENY_SHADER_RESOURCE image) is invalid on the host. Such a layout becomes
+/// COMMON, consistently on both sides, so the layout sequence stays coherent.
+fn fix_layout_flags(layout: &mut D3D12_BARRIER_LAYOUT, flags: D3D12_RESOURCE_FLAGS) {
+    let has = |f: D3D12_RESOURCE_FLAGS| flags.0 & f.0 != 0;
+    let ok = match *layout {
+        D3D12_BARRIER_LAYOUT_RENDER_TARGET => has(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+        D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_WRITE | D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_READ =>
+            has(D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
+        D3D12_BARRIER_LAYOUT_UNORDERED_ACCESS | D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_UNORDERED_ACCESS
+            | D3D12_BARRIER_LAYOUT_COMPUTE_QUEUE_UNORDERED_ACCESS => has(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+        D3D12_BARRIER_LAYOUT_SHADER_RESOURCE | D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_SHADER_RESOURCE
+            | D3D12_BARRIER_LAYOUT_COMPUTE_QUEUE_SHADER_RESOURCE => !has(D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE),
+        _ => true,
+    };
+    if !ok { *layout = D3D12_BARRIER_LAYOUT_COMMON; }
+}
+
+/// Accesses the host resource's flags allow.
+fn flag_access(flags: D3D12_RESOURCE_FLAGS) -> i32 {
+    let mut a = !0;
+    if flags.0 & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0 == 0 { a &= !D3D12_BARRIER_ACCESS_RENDER_TARGET.0; }
+    if flags.0 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 == 0 {
+        a &= !(D3D12_BARRIER_ACCESS_DEPTH_STENCIL_WRITE.0 | D3D12_BARRIER_ACCESS_DEPTH_STENCIL_READ.0);
+    }
+    if flags.0 & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 == 0 { a &= !D3D12_BARRIER_ACCESS_UNORDERED_ACCESS.0; }
+    if flags.0 & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE.0 != 0 { a &= !D3D12_BARRIER_ACCESS_SHADER_RESOURCE.0; }
+    a
+}
+
+/// Fit a texture barrier to the host resource behind it (range, flags,
+/// DISCARD). Runs before fix_texture, which then fits accesses to layouts.
+fn fit_host(item: &mut D3D12_TEXTURE_BARRIER, desc: &D3D12_RESOURCE_DESC) {
+    if !enhanced_fix() { return; }
+    let snapshot = |b: &D3D12_TEXTURE_BARRIER| {
+        let r = b.Subresources;
+        (r.IndexOrFirstMipLevel, r.NumMipLevels, r.FirstArraySlice, r.NumArraySlices, r.FirstPlane, r.NumPlanes,
+         b.LayoutBefore.0, b.LayoutAfter.0, b.Flags.0, b.AccessBefore.0, b.AccessAfter.0)
+    };
+    let before = snapshot(item);
+    fix_range(&mut item.Subresources, desc);
+    fix_layout_flags(&mut item.LayoutBefore, desc.Flags);
+    fix_layout_flags(&mut item.LayoutAfter, desc.Flags);
+    let allowed = flag_access(desc.Flags);
+    for access in [&mut item.AccessBefore, &mut item.AccessAfter] {
+        if access.0 != D3D12_BARRIER_ACCESS_NO_ACCESS.0 { access.0 &= allowed; }
+    }
+    // DISCARD is only a hint; the host restricts which layouts take it.
+    item.Flags = D3D12_TEXTURE_BARRIER_FLAGS(0);
+    let after = snapshot(item);
+    if before != after {
+        static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        let key = format!("{before:x?}");
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 24 && !seen.contains(&key) {
+            crate::diagnostics::log_line(format_args!(
+                "enhanced texture barrier fitted to host (format {} mips {} slices {} flags {:#x}): range/layouts/flags/access {before:x?} -> {after:x?}",
+                desc.Format.0, desc.MipLevels, desc.DepthOrArraySize, desc.Flags.0));
+            seen.push(key);
+        }
+    }
+}
+
+type Scratch = (D3D12_COMMAND_LIST_TYPE, ID3D12CommandAllocator, ID3D12GraphicsCommandList7);
+
+/// TUXBOX_LIST_RING=1: record each barrier of a group alone on a scratch list
+/// and Close it, then log the first 16 the host rejects with all fields.
+fn probe(native: &ID3D12GraphicsCommandList7, group: &D3D12_BARRIER_GROUP) {
+    if !ring_enabled() { return; }
+    use std::cell::RefCell;
+    thread_local! {
+        static SCRATCH: RefCell<Vec<Scratch>> = const { RefCell::new(Vec::new()) };
+    }
+    static FAILED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if FAILED.load(Ordering::Relaxed) >= 16 { return; }
+    let kind = unsafe { native.GetType() };
+    let Some((allocator, scratch)) = SCRATCH.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((_, a, l)) = cache.iter().find(|(k, ..)| *k == kind) { return Some((a.clone(), l.clone())); }
+        let mut device: Option<ID3D12Device4> = None;
+        unsafe { native.GetDevice(&mut device) }.ok()?;
+        let device = device?;
+        let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(kind) }.ok()?;
+        let list: ID3D12GraphicsCommandList7 = unsafe { device.CreateCommandList1(0, kind, D3D12_COMMAND_LIST_FLAG_NONE) }.ok()?;
+        cache.push((kind, allocator.clone(), list.clone()));
+        Some((allocator, list))
+    }) else { return };
+    for i in 0..group.NumBarriers as usize {
+        let single = unsafe {
+            match group.Type {
+                D3D12_BARRIER_TYPE_GLOBAL => D3D12_BARRIER_GROUP { NumBarriers: 1, Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: group.Anonymous.pGlobalBarriers.add(i) }, ..*group },
+                D3D12_BARRIER_TYPE_BUFFER => D3D12_BARRIER_GROUP { NumBarriers: 1, Anonymous: D3D12_BARRIER_GROUP_0 { pBufferBarriers: group.Anonymous.pBufferBarriers.add(i) }, ..*group },
+                _ => D3D12_BARRIER_GROUP { NumBarriers: 1, Anonymous: D3D12_BARRIER_GROUP_0 { pTextureBarriers: group.Anonymous.pTextureBarriers.add(i) }, ..*group },
+            }
+        };
+        let result = unsafe {
+            if allocator.Reset().is_err() || scratch.Reset(&allocator, None).is_err() { return; }
+            scratch.Barrier(&[single]);
+            scratch.Close()
+        };
+        let Err(error) = result else { continue };
+        if FAILED.fetch_add(1, Ordering::Relaxed) >= 16 { return; }
+        let text = unsafe {
+            match group.Type {
+                D3D12_BARRIER_TYPE_GLOBAL => {
+                    let b = &*single.Anonymous.pGlobalBarriers;
+                    format!("global sync {:#x}->{:#x} access {:#x}->{:#x}", b.SyncBefore.0, b.SyncAfter.0, b.AccessBefore.0, b.AccessAfter.0)
+                }
+                D3D12_BARRIER_TYPE_BUFFER => {
+                    let b = &*single.Anonymous.pBufferBarriers;
+                    format!("buffer sync {:#x}->{:#x} access {:#x}->{:#x} offset {:#x} size {:#x}",
+                        b.SyncBefore.0, b.SyncAfter.0, b.AccessBefore.0, b.AccessAfter.0, b.Offset, b.Size)
+                }
+                _ => {
+                    let b = &*single.Anonymous.pTextureBarriers;
+                    let desc = b.pResource.as_ref().map(|r| r.GetDesc()).unwrap_or_default();
+                    let r = b.Subresources;
+                    format!("texture sync {:#x}->{:#x} access {:#x}->{:#x} layout {}->{} range [{:#x} {} {} {} {} {}] flags {:#x} \
+                        | resource dim {} format {} {}x{}x{} mips {} flags {:#x} layout {}",
+                        b.SyncBefore.0, b.SyncAfter.0, b.AccessBefore.0, b.AccessAfter.0, b.LayoutBefore.0, b.LayoutAfter.0,
+                        r.IndexOrFirstMipLevel, r.NumMipLevels, r.FirstArraySlice, r.NumArraySlices, r.FirstPlane, r.NumPlanes, b.Flags.0,
+                        desc.Dimension.0, desc.Format.0, desc.Width, desc.Height, desc.DepthOrArraySize, desc.MipLevels, desc.Flags.0, desc.Layout.0)
+                }
+            }
+        };
+        crate::diagnostics::log_line(format_args!(
+            "barrier probe: host Close {:#010x} on list type {} for {text}", error.code().0, kind.0));
+    }
+}
+
 fn note_rewrite(kind: &str, original: (i32, i32, i32, i32, i32, i32), fixed: (i32, i32, i32, i32, i32, i32)) {
     static SEEN: std::sync::Mutex<Vec<(i32, i32, i32, i32, i32, i32)>> = std::sync::Mutex::new(Vec::new());
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -147,15 +324,13 @@ fn note_rewrite(kind: &str, original: (i32, i32, i32, i32, i32, i32), fixed: (i3
 
 fn texture_group(api: &ID3D12GraphicsCommandList7, items: &[D3D12_TEXTURE_BARRIER]) {
     if !items.is_empty() {
-        unsafe {
-            api.Barrier(&[D3D12_BARRIER_GROUP {
-                Type: D3D12_BARRIER_TYPE_TEXTURE,
-                NumBarriers: items.len() as u32,
-                Anonymous: D3D12_BARRIER_GROUP_0 {
-                    pTextureBarriers: items.as_ptr(),
-                },
-            }]);
-        }
+        let group = D3D12_BARRIER_GROUP {
+            Type: D3D12_BARRIER_TYPE_TEXTURE,
+            NumBarriers: items.len() as u32,
+            Anonymous: D3D12_BARRIER_GROUP_0 { pTextureBarriers: items.as_ptr() },
+        };
+        probe(api, &group);
+        unsafe { api.Barrier(&[group]) };
     }
 }
 
@@ -182,12 +357,12 @@ unsafe fn record(
                     let fixed = (item.SyncBefore.0, item.SyncAfter.0, item.AccessBefore.0, item.AccessAfter.0, 0, 0);
                     if fixed != original { note_rewrite("global", original, fixed); }
                 }
-                unsafe {
-                    native.Barrier(&[D3D12_BARRIER_GROUP {
-                        Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: barriers.as_ptr() },
-                        ..*group
-                    }]);
-                }
+                let fixed = D3D12_BARRIER_GROUP {
+                    Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: barriers.as_ptr() },
+                    ..*group
+                };
+                probe(native, &fixed);
+                unsafe { native.Barrier(&[fixed]) };
             }
             D3D12_BARRIER_TYPE_BUFFER => {
                 let mut barriers = Vec::new();
@@ -244,14 +419,12 @@ unsafe fn record(
                     if fixed != original { note_rewrite("buffer", original, fixed); }
                     barriers.push(item);
                 }
-                unsafe {
-                    native.Barrier(&[D3D12_BARRIER_GROUP {
-                        Anonymous: D3D12_BARRIER_GROUP_0 {
-                            pBufferBarriers: barriers.as_ptr(),
-                        },
-                        ..*group
-                    }]);
-                }
+                let fixed = D3D12_BARRIER_GROUP {
+                    Anonymous: D3D12_BARRIER_GROUP_0 { pBufferBarriers: barriers.as_ptr() },
+                    ..*group
+                };
+                probe(native, &fixed);
+                unsafe { native.Barrier(&[fixed]) };
             }
             D3D12_BARRIER_TYPE_TEXTURE => {
                 let mut barriers = Vec::new();
@@ -293,6 +466,27 @@ unsafe fn record(
                             item.LayoutAfter = D3D12_BARRIER_LAYOUT_COMMON;
                         }
                     }
+                    let desc = unsafe { resource.native.GetDesc() };
+                    if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && enhanced_fix() {
+                        // A texture barrier on a host buffer (a placed alias) is
+                        // invalid; order its memory with a global barrier instead.
+                        static BUFFER: std::sync::Once = std::sync::Once::new();
+                        crate::diagnostics::log_once(&BUFFER, || "enhanced texture barrier on a host buffer recorded as a global barrier".into());
+                        let mut global = D3D12_GLOBAL_BARRIER {
+                            SyncBefore: item.SyncBefore, SyncAfter: item.SyncAfter,
+                            AccessBefore: item.AccessBefore, AccessAfter: item.AccessAfter,
+                        };
+                        fix_half(&mut global.SyncBefore, &mut global.AccessBefore, compute);
+                        fix_half(&mut global.SyncAfter, &mut global.AccessAfter, compute);
+                        texture_group(native, &barriers);
+                        barriers.clear();
+                        let group = D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_GLOBAL, NumBarriers: 1,
+                            Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: &global } };
+                        probe(native, &group);
+                        unsafe { native.Barrier(&[group]) };
+                        continue;
+                    }
+                    fit_host(&mut item, &desc);
                     fix_texture(&mut item, compute, simultaneous);
                     barriers.push(item);
                 }
