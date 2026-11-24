@@ -29,6 +29,8 @@ mod mubuf_offsets;
 #[cfg(test)]
 mod raw_width;
 #[cfg(test)]
+mod raw_idxen;
+#[cfg(test)]
 mod wide_atomic_test;
 mod fssm_bindings;
 mod micropoly;
@@ -7676,11 +7678,27 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         Ok(())
     }
 
+    // A raw descriptor's stride is one byte, so IDXEN is a byte offset too; with
+    // both enables the first address VGPR is the index and the next the byte
+    // offset. TuxBox 242121b (brcly, Apache-2.0); TB_RAW_IDXEN=0 refuses IDXEN.
     fn raw_address(&mut self, ins: &Insn) -> Result<String, String> {
-        if ins.aux.mask & 2 != 0 {
+        let offen = ins.aux.mask & 1 != 0;
+        let idxen = ins.aux.mask & 2 != 0;
+        if idxen && std::env::var("TB_RAW_IDXEN").is_ok_and(|v| v.trim() == "0") {
             return Err("raw buffer IDXEN needs the console descriptor stride".into());
         }
-        let vector = if ins.aux.mask & 1 != 0 { r(&ins.src[0])? } else { "0u".to_string() };
+        let vector = if idxen && offen {
+            let Opnd::Vgpr(base) = ins.src[0] else {
+                return Err("raw buffer index needs a VGPR".into());
+            };
+            let offset = Opnd::Vgpr(base.checked_add(1).ok_or("raw buffer address register overflow")?);
+            self.touch(&offset);
+            format!("({}) + ({})", r(&ins.src[0])?, r(&offset)?)
+        } else if idxen || offen {
+            r(&ins.src[0])?
+        } else {
+            "0u".to_string()
+        };
         let address = format!("raw_addr{}", self.tmp);
         self.tmp += 1;
         self.line(&format!("uint {address} = {vector} + {} + {}u;", r(&ins.src[2])?, ins.aux.imm));
