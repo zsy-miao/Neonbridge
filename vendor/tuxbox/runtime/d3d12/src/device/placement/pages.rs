@@ -321,14 +321,16 @@ static COMPACTED_POOLS: AtomicU64 = AtomicU64::new(0);
 /// the new tiles (tile bytes shared by resources at one address, as every
 /// page here already is), on the pages queue before the targets are mapped
 /// again, and title work waits for that fence as for any mapping.
-/// TUXBOX_PAGES_COMPACT_FILL_PCT (50; 25 the first cut): the fullest pool a
+/// TUXBOX_PAGES_COMPACT_FILL_PCT (75; 25 the first cut, then 50): the fullest pool a
 /// compaction moves. test177 compacted 8 pools of at most a quarter full by
 /// 337 s and none after, while 61 pools (3904 MiB) held 2113 MiB of tiles in
 /// use with 1790 MiB free: the half-full pools were never candidates. The
-/// move still needs that many free tiles in other pools.
+/// move still needs that many free tiles in other pools. test178 ended with
+/// 71 pools over half full: a pool at 75% moves into the free quarters of
+/// three others, the merge of part-empty pools that 50% never reached.
 fn compact_fill_pct() -> usize {
     static PCT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *PCT.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_COMPACT_FILL_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(50).min(100))
+    *PCT.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_COMPACT_FILL_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(75).min(100))
 }
 
 fn compact_on() -> bool {

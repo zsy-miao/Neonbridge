@@ -844,3 +844,69 @@ mod waits {
 pub(crate) static GAMEPLAY_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static GAMEPLAY_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SEEN_STATE3: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// One thread's stack, as `all_stacks` writes it (None: it could not be read).
+pub(crate) fn thread_stack(tid: u32) -> Option<String> {
+    let list = modules();
+    let mut context = Box::new(Aligned(CONTEXT::default()));
+    let mut stack = vec![0usize; SCAN_WORDS];
+    let access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION;
+    let handle = unsafe { OpenThread(access, false, tid) }.ok()?;
+    let words = unsafe { capture(handle, &mut context.0, &mut stack) };
+    let _ = unsafe { CloseHandle(handle) };
+    let words = words?;
+    let name = super::threads::name_of(tid);
+    let wait = waits::describe(&context.0);
+    Some(format!("thread {name}({tid}){wait}: {}", stack_text(&list, context.0.Rip as usize, &stack[..words])))
+}
+
+/// TUXBOX_SLOW_STACK_MS (500; 0 off): a call wrapped in `slow_watch` that
+/// runs longer has its thread's stack logged once per call site, sampled by a
+/// watcher thread while it is still inside (test178: a thread 94% in win32u
+/// under CommandList::Close with no stack saying which driver path).
+pub(crate) struct SlowWatch(u64);
+
+static SLOW: std::sync::Mutex<Vec<(u64, u32, std::time::Instant, &'static str)>> = std::sync::Mutex::new(Vec::new());
+static SLOW_SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+fn slow_ms() -> u64 {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| crate::env_toggle!("TUXBOX_SLOW_STACK_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(500))
+}
+
+pub(crate) fn slow_watch(what: &'static str) -> Option<SlowWatch> {
+    let ms = slow_ms();
+    if ms == 0 || SLOW_SEEN.lock().unwrap_or_else(|e| e.into_inner()).contains(&what) {
+        return None;
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static WATCHER: std::sync::Once = std::sync::Once::new();
+    WATCHER.call_once(|| {
+        let _ = std::thread::Builder::new().name("TuxBox slow stacks".into()).spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let due: Vec<(u32, &'static str, u128)> = {
+                let slow = SLOW.lock().unwrap_or_else(|e| e.into_inner());
+                slow.iter().filter(|e| e.2.elapsed().as_millis() as u64 >= ms).map(|e| (e.1, e.3, e.2.elapsed().as_millis())).collect()
+            };
+            for (tid, what, held) in due {
+                {
+                    let mut seen = SLOW_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+                    if seen.contains(&what) { continue; }
+                    seen.push(what);
+                }
+                let stack = thread_stack(tid).unwrap_or_else(|| format!("thread {tid}: stack not read"));
+                super::log_line(format_args!(
+                    "slow call: {what} inside for {held} ms (TUXBOX_SLOW_STACK_MS={ms}, once per site): {stack}"));
+            }
+        });
+    });
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    SLOW.lock().unwrap_or_else(|e| e.into_inner()).push((id, unsafe { GetCurrentThreadId() }, std::time::Instant::now(), what));
+    Some(SlowWatch(id))
+}
+
+impl Drop for SlowWatch {
+    fn drop(&mut self) {
+        SLOW.lock().unwrap_or_else(|e| e.into_inner()).retain(|e| e.0 != self.0);
+    }
+}

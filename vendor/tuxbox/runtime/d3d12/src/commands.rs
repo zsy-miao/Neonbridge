@@ -1000,7 +1000,9 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
             if let Err(error) = state.prefix.finish(&list.native) { { state.error = error.code(); state.error_at = (file!(), line!()); } }
             state.balance(&list.native);
             depth::late_pass(&list.native);
+            let slow = crate::diagnostics::crash::slow_watch("CommandList::Close (native)");
             let closed = unsafe { list.native.Close() };
+            drop(slow);
             if closed.is_ok() {
                 enhanced::closed_ok(list);
             }
