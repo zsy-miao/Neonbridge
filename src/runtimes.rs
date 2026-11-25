@@ -1105,11 +1105,15 @@ pub fn fail_box(e: &dyn std::fmt::Display) {
 
 fn agility(name: &str, exe: &Path) {
     let Some(to) = exe.parent().map(|d| d.join("D3D12")) else { return };
-    let from = std::env::var_os("NEONBRIDGE_AGILITY_DIR").map(PathBuf::from).or_else(|| {
-        std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("6ixpack").join("agility-1.614.1"))
-    });
-    let Some(from) = from.filter(|d| d.join("D3D12Core.dll").is_file()) else {
-        println!("[launch] {name}: no D3D12 Agility SDK (NEONBRIDGE_AGILITY_DIR, default %LOCALAPPDATA%\\6ixpack\\agility-1.614.1); the system's D3D12 is used");
+    // NEONBRIDGE_AGILITY_DIR first (an empty one is unset), then the default;
+    // a set one without D3D12Core.dll no longer hides the default.
+    let tried: Vec<PathBuf> = [std::env::var_os("NEONBRIDGE_AGILITY_DIR").filter(|v| !v.is_empty()).map(PathBuf::from), Some(pack().join("agility-1.614.1"))].into_iter().flatten().collect();
+    let Some(from) = tried.iter().find(|d| d.join("D3D12Core.dll").is_file()).cloned() else {
+        if to.join("D3D12Core.dll").is_file() {
+            return;
+        }
+        let list = tried.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", ");
+        println!("[launch] {name}: no D3D12 Agility SDK (no D3D12Core.dll in {list}); the system's D3D12 is used");
         return;
     };
     let _ = fs::create_dir_all(&to);
@@ -1275,6 +1279,25 @@ fn migrate_saves(to: &Path) {
     }
 }
 
+/// xcl's DXIL cache (XCL_DXIL_CACHE): %LOCALAPPDATA%\6ixpack\cache\xcl. Its
+/// own default, %LOCALAPPDATA%\xcl\dxil, is moved there (a rename) the first
+/// time. NEONBRIDGE_SHADER_ROOT_MOVE=0 keeps the old one.
+fn xcl_cache() -> PathBuf {
+    let new = family_cache().join("xcl");
+    let old = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("xcl").join("dxil"));
+    if std::env::var("NEONBRIDGE_SHADER_ROOT_MOVE").is_ok_and(|v| v.trim() == "0") {
+        return old.unwrap_or(new);
+    }
+    if let Some(old) = old.filter(|o| o.is_dir()) && !new.exists() {
+        let _ = fs::create_dir_all(family_cache());
+        match fs::rename(&old, &new) {
+            Ok(()) => println!("[launch] xcl: moved its shader cache {} -> {}", old.display(), new.display()),
+            Err(e) => println!("[launch] xcl: could not move {} -> {}: {e}", old.display(), new.display()),
+        }
+    }
+    new
+}
+
 fn cache(name: &str) -> PathBuf {
     std::env::var_os("NEONBRIDGE_CACHE").map(|d| PathBuf::from(d).join(name)).unwrap_or_else(|| {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("6ixpack").join(name).join("cache")
@@ -1377,11 +1400,22 @@ enum WarmLine {
     Total(u64),
     /// A pipeline made (INFO `host mesh pipeline`): a tick between record lines.
     Pipeline,
+    /// xcl's `precompiling <total> shaders into ...`.
+    Planned(u64),
+    /// xcl's `  <done>/<total> (<t> s)`.
+    Of(u64, u64),
     Other,
 }
 
 fn warm_line(l: &str) -> WarmLine {
     let number_before = |at: usize| l[..at].trim_end().rsplit(' ').next().and_then(|n| n.parse().ok());
+    let t = l.trim();
+    if let Some(n) = t.strip_prefix("precompiling ").and_then(|r| r.split_once(" shaders")).and_then(|(n, _)| n.parse().ok()) {
+        return WarmLine::Planned(n);
+    }
+    if let Some((d, rest)) = t.split_once('/') && let Some((m, _)) = rest.split_once(" (") && let (Ok(d), Ok(m)) = (d.parse(), m.parse()) {
+        return WarmLine::Of(d, m);
+    }
     if let Some(at) = l.find(" records: ") {
         if let Some(n) = number_before(at) {
             return if l.trim_start().starts_with("precompile-graphics") { WarmLine::Total(n) } else { WarmLine::Records(n) };
@@ -1417,7 +1451,7 @@ fn warm(name: &str, mut cmd: Command, cache: &Path) -> Result<(), String> {
     let a = pump(Box::new(child.stdout.take().unwrap()), false, tx.clone());
     let b = pump(Box::new(child.stderr.take().unwrap()), true, tx);
     let saved = cache.join("warm-total.txt");
-    let total: Option<u64> = fs::read_to_string(&saved).ok().and_then(|t| t.trim().parse().ok()).filter(|&t| t > 0);
+    let mut total: Option<u64> = fs::read_to_string(&saved).ok().and_then(|t| t.trim().parse().ok()).filter(|&t| t > 0);
     let (mut records, mut ticks, mut last_total) = (0u64, 0u64, None);
     for l in rx {
         if tail.len() == 12 {
@@ -1438,11 +1472,19 @@ fn warm(name: &str, mut cmd: Command, cache: &Path) -> Result<(), String> {
                 (n, "compiling pipelines")
             }
             WarmLine::Shaders(n) => (n, "translating shaders"),
+            WarmLine::Planned(n) => {
+                total = Some(n).filter(|&n| n > 0);
+                (0, "translating shaders")
+            }
+            WarmLine::Of(d, m) => {
+                total = Some(m).filter(|&m| m > 0);
+                (d, "translating shaders")
+            }
             WarmLine::Other => continue,
         };
         let (fraction, count) = match total {
-            Some(t) => ((done as f32 / t as f32).min(1.0), format!("{done}/{t}")),
-            None => (done as f32 / (done as f32 + 4000.0), format!("{done}")),
+            Some(t) => ((done as f32 / t as f32).min(1.0), format!("{} / {}", grouped(done), grouped(t))),
+            None => (done as f32 / (done as f32 + 4000.0), grouped(done)),
         };
         crate::splash::counted(0.5 + 0.3 * fraction, &format!("Warming the shaders ({name}): {what} {count}"));
     }
@@ -1454,6 +1496,19 @@ fn warm(name: &str, mut cmd: Command, cache: &Path) -> Result<(), String> {
         Ok(s) if s.success() => Ok(()),
         s => Err(format!("{name}: the shader warm failed ({}), so the game was not started. Its last lines:\n{}", s.map_or_else(|e| e.to_string(), |s| s.to_string()), tail.into_iter().collect::<Vec<_>>().join("\n"))),
     }
+}
+
+/// 26503 -> "26,503".
+fn grouped(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Records per precompile-graphics run (ScarlettPort engine::CHUNK).
@@ -1644,6 +1699,9 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         env.push(("VICTORY_DATA_DIR".to_owned(), family_saves().display().to_string()));
     }
     env.extend(spec.env.iter().map(|(k, v)| (k.clone(), fill(v, &places))));
+    if name == "xcl" && std::env::var_os("XCL_DXIL_CACHE").is_none() {
+        env.push(("XCL_DXIL_CACHE".to_owned(), xcl_cache().display().to_string()));
+    }
     if logging() && !env.iter().any(|(k, _)| k == "RUST_LOG") {
         env.push(("RUST_LOG".to_owned(), "info".to_owned()));
     }
@@ -1793,6 +1851,11 @@ mod tests {
         assert_eq!(warm_line("WARN host mesh pipeline refused"), WarmLine::Other);
         assert_eq!(warm_line("warm-up      120 shaders so far, 3 s"), WarmLine::Shaders(120));
         assert_eq!(warm_line("INFO something else"), WarmLine::Other);
+        assert_eq!(warm_line("precompiling 26503 shaders into C:\\x\\dxil (15 compile threads)"), WarmLine::Planned(26503));
+        assert_eq!(warm_line("  1000/26503 (72 s)"), WarmLine::Of(1000, 26503));
+        assert_eq!(grouped(26503), "26,503");
+        assert_eq!(grouped(1000), "1,000");
+        assert_eq!(grouped(999), "999");
     }
 
     #[test]
