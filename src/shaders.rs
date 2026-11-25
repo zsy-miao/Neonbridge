@@ -915,6 +915,20 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     let _ = fs::remove_dir_all(scratch);
 }
 
+/// Parallel translations (xshader, then dxc) for the prewarm and for the
+/// title's requests. The prewarm runs before the game starts, so it takes
+/// every core but two (test143: 8 of 16 threads gave about 1.8 programs a
+/// second, ten minutes for a changed translator). While the game runs the
+/// title needs the cores, so its requests keep at most 8 as before.
+/// NEONBRIDGE_SHADER_THREADS sets both.
+fn worker_counts() -> (usize, usize) {
+    if let Some(n) = std::env::var("NEONBRIDGE_SHADER_THREADS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n > 0) {
+        return (n, n);
+    }
+    let cores = thread::available_parallelism().map_or(4, |n| n.get());
+    (cores.saturating_sub(2).max(2), cores.clamp(2, 8))
+}
+
 /// How long the prewarm may hold the launch, both passes together
 /// (NEONBRIDGE_PREWARM_MAX_S, 600; 0 no limit). After an xshader change every
 /// cached translation is stale and the full archive is ~80k programs: test142
@@ -946,7 +960,8 @@ impl Worker {
         let _ = fs::write(session_dir.join("worker-pid"), std::process::id().to_string());
         let stop = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Stats::default());
-        let workers = thread::available_parallelism().map_or(4, |n| n.get().clamp(2, 8));
+        let (prewarm_workers, workers) = worker_counts();
+        log(format!("shader workers: {prewarm_workers} for the prewarm, {workers} while the game runs (NEONBRIDGE_SHADER_THREADS sets both)"));
         let archive = cache_root.join("requests");
         let _ = fs::create_dir_all(&archive);
         // test113-116 all said "0 prewarmed, N compiled, 0 from cache": runs
@@ -960,13 +975,13 @@ impl Worker {
         if std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0") {
             let started = std::time::Instant::now();
             let seen = seen_requests(&cache_root, &archive);
-            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), workers, &stats, Some(&seen), "seen prewarm", deadline, &log);
+            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, Some(&seen), "seen prewarm", deadline, &log);
             log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused, {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
                 seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
         }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
         if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
-            prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats, None, "full prewarm (TUXBOX_PREWARM=0 skips)", deadline, &log);
+            prewarm(&tools, &cache, &archive, &private.join("prewarm"), prewarm_workers, &stats, None, "full prewarm (TUXBOX_PREWARM=0 skips)", deadline, &log);
         }
         let (s, st) = (stop.clone(), stats.clone());
         let log = Arc::new(log);
