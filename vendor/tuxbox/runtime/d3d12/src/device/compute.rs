@@ -374,6 +374,13 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
         return E_NOTIMPL;
     };
     let (upgrade, slot57) = if real { unsafe { super::slot57::upgrade(this, desc) } } else { (super::stream::background::never(), None) };
+    // test168: 32 of 64 records were refused by build() (their VS is the NGG
+    // stage in slot 2) and their draws dropped, while REAL=0 answers E_NOTIMPL
+    // and the title draws them its own way. A refused record now answers
+    // E_NOTIMPL too. TUXBOX_SLOT57_REFUSED_NOTIMPL=0 keeps the placeholder.
+    if real && slot57.is_none() && crate::env_toggle!("TUXBOX_SLOT57_REFUSED_NOTIMPL") != Some("0") {
+        return E_NOTIMPL;
+    }
     let state = PipelineData { lazy: true, slot57, ..Default::default() };
     let _ = state.upgrade.set(upgrade);
     if call < 4 && !real {
