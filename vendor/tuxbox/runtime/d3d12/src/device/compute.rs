@@ -35,6 +35,7 @@ pub(crate) struct PipelineData {
     pub(crate) heap_pending: Vec<String>,
     pub(crate) heap_late: std::sync::OnceLock<std::sync::Arc<super::shader_cache::HeapAccess>>,
     pub(crate) heap_tried_ms: std::sync::atomic::AtomicU64,
+    pub(crate) heap_tries: std::sync::atomic::AtomicU32,
     /// Filled by a background worker when this pipeline was created without
     /// its translation (see `stream::background`).
     pub(crate) upgrade: std::sync::OnceLock<std::sync::Arc<super::stream::Upgrade>>,
@@ -76,6 +77,11 @@ pub(crate) fn late_heap_access(data: &PipelineData) -> Option<std::sync::Arc<sup
     if now.saturating_sub(last) < 1000
         || data.heap_tried_ms.compare_exchange(last, now, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed).is_err()
     {
+        return None;
+    }
+    // test179: the programs still missing theirs were untranslated
+    // (unsupported, or no translation in this cache): 30 tries, then none.
+    if data.heap_tries.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 30 {
         return None;
     }
     let mut merged = super::shader_cache::HeapAccess::default();
