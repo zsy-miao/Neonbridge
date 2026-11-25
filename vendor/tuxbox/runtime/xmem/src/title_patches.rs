@@ -33,7 +33,7 @@
 use core::ffi::c_void;
 use windows_sys::Win32::System::Diagnostics::Debug::FlushInstructionCache;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAlloc, VirtualProtect};
+use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, VirtualAlloc, VirtualProtect};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 /// Rewrites `expect.len()` bytes at `rva` of the exe to `with` when they are `expect`.
@@ -57,7 +57,11 @@ unsafe fn patch(name: &str, rva: usize, expect: &[u8], with: &[u8]) {
     }
     unsafe {
         core::ptr::copy_nonoverlapping(with.as_ptr(), at, with.len());
-        VirtualProtect(at as *const c_void, with.len(), old, &mut old);
+        // Always back to EXECUTE_READ, not the page's earlier protection:
+        // that can be writable already (an import patch on the same page),
+        // and d3d12 writebacks write RW/WRITECOPY/EXECUTE_RW pages, which is
+        // how stale copies put the original code back (test169).
+        VirtualProtect(at as *const c_void, with.len(), PAGE_EXECUTE_READ, &mut old);
         FlushInstructionCache(GetCurrentProcess(), at as *const c_void, with.len());
     }
     crate::loader::log(&format!("title patch {name}: applied at game+{rva:#x}"));
@@ -140,6 +144,8 @@ unsafe fn fmt10_pitch() {
     }
     unsafe {
         core::ptr::copy_nonoverlapping(code.as_ptr(), stub, code.len());
+        let mut old = 0;
+        VirtualProtect(stub as *const c_void, 4096, PAGE_EXECUTE_READ, &mut old);
         FlushInstructionCache(GetCurrentProcess(), stub as *const c_void, code.len());
     }
     let rel = (stub as i64 - (base + AT + 5) as i64) as i32;
