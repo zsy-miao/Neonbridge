@@ -60,13 +60,13 @@ pub(crate) fn register_root(base: usize, bytes: usize) {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     pool.roots.retain(|&b, r| b + r.bytes <= base || base + bytes <= b);
     // Section import needs a committed section (Section::new_committed);
-    // TUXBOX_POOL_SECTION_COMMIT=0 keeps roots SEC_RESERVE.
-    let commit = section_import() && std::env::var("TUXBOX_POOL_SECTION_COMMIT").map_or(true, |v| v.trim() != "0");
+    // TUXBOX_POOL_SECTION_COMMIT=1 with the import on (off by default).
+    let commit = section_import() && std::env::var("TUXBOX_POOL_SECTION_COMMIT").is_ok_and(|v| v.trim() == "1");
     let section = if commit { Section::new_committed(bytes / PAGE) } else { Section::new(bytes / PAGE) };
     if commit {
         static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let total = TOTAL.fetch_add(bytes as u64, Ordering::Relaxed) + bytes as u64;
-        crate::loader::log(&format!("pool section commit: root {base:#x} of {} MiB is a SEC_COMMIT section; {} MiB of roots committed so far (TUXBOX_POOL_SECTION_COMMIT=0 off)", bytes >> 20, total >> 20));
+        crate::loader::log(&format!("pool section commit: root {base:#x} of {} MiB is a SEC_COMMIT section; {} MiB of roots committed so far (TUXBOX_POOL_SECTION_COMMIT=1 on)", bytes >> 20, total >> 20));
     }
     pool.roots.insert(base, Root { bytes, section: Arc::new(section), bound: HashMap::new() });
 }
@@ -1825,9 +1825,11 @@ fn install_joining_fault() {
 }
 
 /// Section import on (d3d12 d26cb24 opens the section, xmem answers):
-/// TUXBOX_POOL_SECTION_IMPORT=0 off.
+/// TUXBOX_POOL_SECTION_IMPORT=1 on (off by default).
 fn section_import() -> bool {
-    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_POOL_SECTION_IMPORT").map_or(true, |v| v.trim() != "0"));
+    // Off by default: the import needs SEC_COMMIT sections, and the 6236 MiB
+    // GPU pool committed at once is more than the host affords.
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_POOL_SECTION_IMPORT").is_ok_and(|v| v.trim() == "1"));
     *ON
 }
 
@@ -1867,7 +1869,7 @@ unsafe extern "system" fn page_section(address: usize, want: usize, out: *mut [u
         seen.push(handle as u64);
         static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let total = TOTAL.fetch_add(bytes, Ordering::Relaxed) + bytes;
-        crate::loader::log(&format!("pool section import: section {:#x} of {} MiB at {address:#x} handed out; {} section(s), {} MiB total (TUXBOX_POOL_SECTION_IMPORT=0 off)",
+        crate::loader::log(&format!("pool section import: section {:#x} of {} MiB at {address:#x} handed out; {} section(s), {} MiB total (TUXBOX_POOL_SECTION_IMPORT=1 on)",
             handle as u64, bytes >> 20, seen.len(), total >> 20));
     }
     1
