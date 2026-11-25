@@ -2043,6 +2043,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         crate::mix::remember_good(m);
     }
     let result = supervised(name, cmd, log.as_deref(), timeout, echo);
+    let mut why = None;
     if matches!(task, Task::Run) && let Some(l) = &log {
         let _ = fs::copy(l, cache.join("last-run.log"));
         // Performance summary of the run (ScarlettPort's perf readout): its fps lines.
@@ -2050,9 +2051,21 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         let perf = crate::report::fps_summary(&lines);
         println!("[launch] {name} run: {}", perf.replace('\n', "; "));
         let _ = fs::write(cache.join("last-perf.txt"), &perf);
-        let _ = crate::crash::after_run(name, &cache, &lines);
+        why = crate::crash::after_run(name, &cache, &lines);
         backup_cache(&cache); // what this run compiled
     }
+    // The failure box leads with the reason (its first lines; crashes.log stays in last-crash.txt).
+    let result = match (result, why) {
+        (Err(e), Some(w)) => {
+            let short: Vec<&str> = w.lines().take_while(|l| !l.starts_with("The runtime's crash report")).collect();
+            Err(format!("{}
+
+Why:
+{}", e, short.join("
+")).into())
+        }
+        (r, _) => r,
+    };
     if matches!(task, Task::Run) && let Err(e) = &result {
         fail_box(e);
     }
