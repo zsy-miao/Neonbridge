@@ -652,6 +652,33 @@ fn remembered() -> Vec<(String, String)> {
     fs::read_to_string(last_pick()).unwrap_or_default().lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
 }
 
+/// Install... for the PC GDK: asks first, then fetches Microsoft's GDK
+/// release (about 1.4 GB) into %LOCALAPPDATA%\6ixpack\gdk on a thread of
+/// its own, and re-checks the runtimes when it is done.
+fn install_gdk(hwnd: HWND) {
+    let text = wide(&format!(
+        "Download the Microsoft PC GDK {} (about 1.4 GB) from github.com/microsoft/GDK into {}?\n\nIt is Microsoft's own release, used only to build Five Star Recomp.",
+        crate::runtimes::GDK_VERSION,
+        crate::runtimes::gdk_dir().display()
+    ));
+    let title = wide("Neonbridge");
+    // SAFETY: both strings are NUL-terminated and live across the call.
+    if unsafe { MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION) } != IDYES {
+        return;
+    }
+    let h = hwnd as isize;
+    std::thread::spawn(move || {
+        let r = crate::runtimes::fetch_gdk();
+        let hwnd = h as HWND;
+        match r {
+            Ok(()) => message(hwnd, "The PC GDK is installed for Neonbridge.", MB_ICONINFORMATION),
+            Err(e) => message(hwnd, &format!("The PC GDK was not installed: {e}"), MB_ICONWARNING),
+        }
+        // Back on the window's thread: rows are rebuilt by the next refresh.
+        unsafe { PostMessageW(hwnd, WM_APP + 7, 0, 0) };
+    });
+}
+
 fn message(hwnd: HWND, text: &str, icon: u32) {
     let (text, title) = (wide(text), wide("Neonbridge"));
     unsafe { MessageBoxW(hwnd, text.as_ptr(), title.as_ptr(), MB_OK | icon) };
@@ -758,7 +785,11 @@ fn click(hwnd: HWND, h: Hit) {
         Hit::Install => {
             // Only opens the pages: nothing is downloaded or installed here.
             for page in with_state(|s| s.rows.get(s.sel).and_then(|r| r.missing.as_ref().map(|m| m.1.clone()))).flatten().unwrap_or_default() {
-                let _ = crate::runtimes::command("explorer").arg(page).spawn();
+                if page == crate::runtimes::GDK_DOWNLOAD {
+                    install_gdk(hwnd);
+                } else {
+                    let _ = crate::runtimes::command("explorer").arg(page).spawn();
+                }
             }
         }
         Hit::None => {}
@@ -773,6 +804,17 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         WM_PAINT => {
             paint(hwnd);
+            0
+        }
+        // install_gdk finished: re-check which runtimes can run.
+        m if m == WM_APP + 7 => {
+            let fresh = rows();
+            with_state(|s| {
+                for (row, new) in s.rows.iter_mut().zip(fresh) {
+                    row.missing = new.missing;
+                }
+            });
+            unsafe { InvalidateRect(hwnd, null(), 0) };
             0
         }
         WM_ERASEBKGND => 1,

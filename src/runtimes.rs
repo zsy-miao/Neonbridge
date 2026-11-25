@@ -209,7 +209,7 @@ pub fn missing(name: &str) -> Option<(String, Vec<&'static str>)> {
     let tools = [first("build"), first("launcher")];
     let mut pages = Vec::new();
     if reason.contains("PC GDK") {
-        pages.push("https://learn.microsoft.com/gaming/gdk/");
+        pages.push(GDK_DOWNLOAD);
     } else if tools.iter().any(|t| t == "dotnet") {
         let major = fs::read_to_string(root.join("global.json")).ok()
             .and_then(|j| j.split("\"version\"").nth(1).and_then(|v| v.split('"').nth(1)).and_then(|v| v.split('.').next().map(str::to_owned)));
@@ -232,6 +232,65 @@ pub fn missing(name: &str) -> Option<(String, Vec<&'static str>)> {
     Some((reason, pages))
 }
 
+/// The PC GDK release Neonbridge fetches (with the user's yes) from
+/// github.com/microsoft/GDK into %LOCALAPPDATA%\6ixpack\gdk\<version>, as
+/// it does the Agility SDK. Never committed.
+pub const GDK_VERSION: &str = "2610.0.9661";
+pub const GDK_URL: &str = "https://github.com/microsoft/GDK/releases/download/October-2026-v2610.0.9661/GDK_2610.0.9661.zip";
+/// The picker's Install... page for it: a confirm-then-download, not a web page.
+pub const GDK_DOWNLOAD: &str = "neonbridge:gdk";
+
+pub fn gdk_dir() -> PathBuf {
+    crate::data_dir().join("gdk").join(GDK_VERSION)
+}
+
+/// The fetched GDK as (GameDK, GameDKLatest): the folder holding GRDK (the
+/// edition folder, up to three levels in) and its parent, each with the
+/// trailing backslash the GDK's MSBuild props expect.
+pub fn local_gdk() -> Option<(String, String)> {
+    fn find(d: &Path, depth: u32) -> Option<PathBuf> {
+        if d.join("GRDK").is_dir() {
+            return Some(d.to_path_buf());
+        }
+        if depth == 0 {
+            return None;
+        }
+        fs::read_dir(d).ok()?.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).find_map(|e| find(&e.path(), depth - 1))
+    }
+    let latest = find(&gdk_dir(), 3)?;
+    let root = latest.parent()?.to_path_buf();
+    Some((format!("{}\\", root.display()), format!("{}\\", latest.display())))
+}
+
+/// GameDK and GameDKLatest for a GDK-linked tree's build and run, from the
+/// fetched GDK when there is one and the machine sets none.
+fn gdk_env(root: &Path) -> Vec<(String, String)> {
+    if !needs_gdk(root) || std::env::var_os("GameDKLatest").is_some() {
+        return Vec::new();
+    }
+    local_gdk().map(|(dk, latest)| vec![("GameDK".into(), dk), ("GameDKLatest".into(), latest)]).unwrap_or_default()
+}
+
+/// Fetches the GDK release into gdk_dir() (curl, then tar to unpack), for
+/// the picker's Install... after the user said yes. Err is for a person.
+pub fn fetch_gdk() -> Result<(), String> {
+    let dir = gdk_dir();
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let zip = dir.join(format!("GDK_{GDK_VERSION}.zip"));
+    let ok = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    if !ok(crate::runtimes::command("curl").args(["-L", "--fail", "-o"]).arg(&zip).arg(GDK_URL)) {
+        return Err(format!("downloading {GDK_URL} failed"));
+    }
+    if !ok(crate::runtimes::command("tar").arg("-xf").arg(&zip).current_dir(&dir)) {
+        return Err(format!("unpacking {} failed", zip.display()));
+    }
+    let _ = fs::remove_file(&zip);
+    if local_gdk().is_none() {
+        return Err(format!("the GDK was unpacked into {} but no GRDK folder was found in it", dir.display()));
+    }
+    Ok(())
+}
+
 /// The tree's toml says its build links the PC GDK (Five Star: xgameruntime.lib).
 fn needs_gdk(root: &Path) -> bool {
     fs::read_to_string(root.join("NEONBRIDGE.toml")).is_ok_and(|t| t.contains("GDK"))
@@ -240,7 +299,7 @@ fn needs_gdk(root: &Path) -> bool {
 /// The PC GDK is installed: its GameDK / GameDKLatest variables, or its
 /// folder under Program Files (x86).
 fn gdk_installed() -> bool {
-    ["GameDKLatest", "GameDK"].iter().filter_map(std::env::var_os).any(|d| Path::new(&d).is_dir())
+    local_gdk().is_some() || ["GameDKLatest", "GameDK"].iter().filter_map(std::env::var_os).any(|d| Path::new(&d).is_dir())
         || std::env::var_os("ProgramFiles(x86)").is_some_and(|p| Path::new(&p).join("Microsoft GDK").is_dir())
 }
 
@@ -659,6 +718,7 @@ fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>
     if python_build {
         build_env(name, &mut c)?;
     }
+    c.envs(gdk_env(root));
     c.args(&cmd[1..]).current_dir(root).env_remove("CARGO_TARGET_DIR").stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(t) = &target {
         c.env("CARGO_TARGET_DIR", t);
@@ -1516,6 +1576,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         // One save folder for the family (mix runs too); a toml or preset may still name another.
         env.push(("VICTORY_DATA_DIR".to_owned(), family_saves().display().to_string()));
     }
+    env.extend(gdk_env(&root));
     env.extend(spec.env.iter().map(|(k, v)| (k.clone(), fill(v, &places))));
     if logging() && !env.iter().any(|(k, _)| k == "RUST_LOG") {
         env.push(("RUST_LOG".to_owned(), "info".to_owned()));
