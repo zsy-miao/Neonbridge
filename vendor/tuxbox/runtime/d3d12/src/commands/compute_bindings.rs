@@ -26,6 +26,8 @@ pub(super) struct Bindings {
     /// SetSampleMaskX's quad mask (None: none set), for translated pixel
     /// shaders that declare it (quad_mask).
     pub(super) quad_mask: Option<u64>,
+    /// Title addresses of compute root SRVs, by slot (bvh_raw).
+    root_guests: BTreeMap<u32, u64>,
 }
 
 // A private root descriptor captures its value when recording. A guest
@@ -235,6 +237,15 @@ impl Bindings {
             None => unsafe { view.apply::<COMPUTE>(list, slot) },
         }
         self.buffer::<COMPUTE>(slot, view);
+    }
+
+    pub(super) fn note_guest<const COMPUTE: bool>(&mut self, slot: u32, guest: Option<u64>) {
+        if COMPUTE {
+            match guest {
+                Some(va) => { self.root_guests.insert(slot, va); }
+                None => { self.root_guests.remove(&slot); }
+            }
+        }
     }
 
     fn view_tabled<const COMPUTE: bool>(&self, slot: u32) -> bool {
@@ -455,6 +466,30 @@ impl Bindings {
             }
             None => None,
         };
+        // BVH raw root views (bvh_raw): each guest root SRV's title memory.
+        let mut bvh_views = Vec::new();
+        if COMPUTE && let Some((first, slots)) = &table.bvh_raw {
+            let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+            for (k, slot) in slots.iter().enumerate() {
+                let resolved = self.root_guests.get(slot)
+                    .and_then(|&va| unsafe { crate::device::bvh_root_address(owner, va) });
+                let address = match resolved {
+                    Some((buffer, address)) => {
+                        let held_buffer = ID3D12Pageable::from(buffer);
+                        let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+                        if !held.contains(&held_buffer) {
+                            held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                            held.push(held_buffer);
+                        }
+                        address
+                    }
+                    None => super::compute::null_sink(guest).unwrap_or(0),
+                };
+                if address != 0 {
+                    bvh_views.push((first + k as u32, address));
+                }
+            }
+        }
         let list = &guest.native;
         unsafe {
             if COMPUTE {
@@ -479,6 +514,9 @@ impl Bindings {
                 if let Some((slot, table, bitmap)) = view_marks {
                     list.SetComputeRootShaderResourceView(slot, table);
                     list.SetComputeRootUnorderedAccessView(slot + 1, bitmap);
+                }
+                for &(slot, address) in &bvh_views {
+                    list.SetComputeRootShaderResourceView(slot, address);
                 }
                 dispatch();
                 list.SetComputeRootSignature(self.compute.as_ref());

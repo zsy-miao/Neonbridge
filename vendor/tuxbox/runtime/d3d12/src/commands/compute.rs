@@ -89,6 +89,7 @@ fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: f
         if let (BufferView::Uav(_), Some(buffer)) = (view, buffer.as_ref()) {
             unsafe { device::note_root_uav(parent(&list.parent), windows::core::Interface::as_raw(buffer)) };
         }
+        state.bindings.note_guest::<COMPUTE>(index, matches!(view, BufferView::Srv(_)).then_some(guest));
         state.bindings.bind_buffer::<COMPUTE>(&list.native, index, view, buffer.as_ref());
     }
 }
@@ -98,7 +99,7 @@ fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: f
 /// shader, and on this driver that faults. Such views get the address of a
 /// 64 KiB zeroed buffer of their device instead: reads see zeros, writes
 /// land there. TUXBOX_NULL_ROOT_SINK=0 binds 0 again.
-fn null_sink(list: &List) -> Option<u64> {
+pub(super) fn null_sink(list: &List) -> Option<u64> {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use windows::Win32::Graphics::Direct3D12::*;

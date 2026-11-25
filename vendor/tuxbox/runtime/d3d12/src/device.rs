@@ -32,6 +32,7 @@ pub(crate) mod desc_table;
 pub(crate) mod view_formats;
 pub(crate) mod view_marks;
 pub(crate) mod slot_views;
+pub(crate) mod bvh_raw;
 pub(crate) mod descriptor_paging;
 mod dxgi;
 mod features;
@@ -72,7 +73,7 @@ pub(crate) fn title_held() -> u32 {
 mod title_memory;
 pub(crate) use title_memory::{commit_lazy, view_state};
 mod views;
-pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, is_null_rtv, refresh_shadows, note_shadow_write, note_root_uav, flush_desc_table, desc_table_address, view_formats_address, slot_views_address, write_back_shadows};
+pub(crate) use views::{clear_buffer_alias, command_buffer_address, host_cpu_descriptor, is_constant_buffer, is_null_rtv, refresh_shadows, note_shadow_write, note_root_uav, flush_desc_table, desc_table_address, view_formats_address, slot_views_address, bvh_root_address, write_back_shadows};
 
 type Device = Proxy<ID3D12Device, dxgi::DxgiDevice>;
 pub(crate) enum Backing {

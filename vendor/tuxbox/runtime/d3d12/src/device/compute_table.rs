@@ -22,6 +22,10 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding buffer view addresses per heap slot
     /// (t3, space32766; see slot_views).
     pub(crate) slot_views: Option<u32>,
+    /// TUXBOX_BVH_RAW_SRV=1: the first of the raw root SRVs at t5..,
+    /// space32766 over each guest root SRV parameter's acceleration
+    /// structure, and those guest parameters' slots (see bvh_raw).
+    pub(crate) bvh_raw: Option<(u32, Vec<u32>)>,
     /// Root slot of the two root constants of SetSampleMaskX's quad mask
     /// (b0, space32766; see quad_mask).
     pub(crate) quad_mask: Option<u32>,
@@ -336,6 +340,7 @@ fn reflected_tables(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            bvh_raw: None,
             view_marks: None,
             quad_mask: None,
         })))
@@ -440,6 +445,7 @@ fn extend_root_from(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            bvh_raw: None,
             view_marks: None,
             quad_mask: None,
         })))
@@ -452,14 +458,15 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool,
+    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool,
 ) -> Result<Arc<ComputeTable>> {
     let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
     let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
     let add_slots = slots && !table.is_some_and(|t| t.slot_views.is_some());
     let add_marks = marks && !table.is_some_and(|t| t.view_marks.is_some());
     let add_quad = quad && !table.is_some_and(|t| t.quad_mask.is_some());
-    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks && !add_quad) {
+    let add_bvh = bvh && !table.is_some_and(|t| t.bvh_raw.is_some());
+    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -518,6 +525,17 @@ pub(super) fn with_runtime_tables(
             });
             Some(parameters.len() as u32 - 1)
         } else { table.and_then(|t| t.quad_mask) };
+        let bvh_slot = if add_bvh {
+            let guests: Vec<u32> = parameters.iter().enumerate()
+                .filter(|(_, p)| p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_SRV
+                    && p.Anonymous.Descriptor.RegisterSpace != super::bvh_raw::SPACE)
+                .map(|(i, _)| i as u32).collect();
+            let first = parameters.len() as u32;
+            for k in 0..guests.len() as u32 {
+                parameters.push(root_srv(super::bvh_raw::REGISTER + k, super::bvh_raw::SPACE));
+            }
+            (!guests.is_empty()).then_some((first, guests))
+        } else { table.and_then(|t| t.bvh_raw.clone()) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let _padded = pad_root_constants(&mut desc);
@@ -538,6 +556,7 @@ pub(super) fn with_runtime_tables(
             slot_views: slots_slot,
             view_marks: marks_slot,
             quad_mask: quad_slot,
+            bvh_raw: bvh_slot,
         }))
     }
 }
@@ -642,6 +661,7 @@ fn append_corroborated_ranges(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            bvh_raw: None,
             view_marks: None,
             quad_mask: None,
         })))

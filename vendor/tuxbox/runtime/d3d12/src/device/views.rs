@@ -1757,3 +1757,17 @@ unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_D
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
     true
 }
+
+/// TUXBOX_BVH_RAW_SRV=1, root form: the host resource and GPU address of a
+/// raw view over the title memory at `location`, an acceleration
+/// structure's title VA, for its t5.. root SRV (bvh_raw). None when no
+/// placed structure buffer holds it.
+pub(crate) unsafe fn bvh_root_address(owner: &windows::core::IUnknown, location: u64) -> Option<(ID3D12Resource, u64)> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    let (start, bytes) = device.state.blas.structure_extent(location)?;
+    let entry = buffer_at(device, start, bytes, 4, true, false).ok()??;
+    let offset = entry.offset(location);
+    let native = entry.native.clone();
+    let address = unsafe { native.GetGPUVirtualAddress() } + offset;
+    Some((native, address))
+}

@@ -127,6 +127,7 @@ pub(super) fn reflected(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            bvh_raw: None,
             view_marks: None,
             quad_mask: None,
         })))
