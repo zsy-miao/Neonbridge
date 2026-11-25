@@ -4581,6 +4581,12 @@ impl<'a> Emitter<'a> {
                         written.insert(d);
                     }
                 }
+                // s_gl1_inv, s_dcache_inv and the s_atc_probe forms touch no
+                // register: SDATA of a probe is an immediate (VIctory 3d71ad1).
+                Enc::Smem if matches!(ins.op, 31 | 32 | 38 | 39) => {}
+                Enc::Smem if ins.op > 12 && !matches!(ins.op, 36 | 37) => {
+                    return Err(format!("{} at {:#x} unsupported", ins.mnemonic, ins.offset));
+                }
                 Enc::Smem if matches!(ins.op, 36 | 37) => {
                     // s_memtime / s_memrealtime write a 64-bit counter to an SGPR pair.
                     let d = ins.dst.first().and_then(sg).ok_or("s_memtime: bad dst")?;
@@ -5182,6 +5188,7 @@ impl<'a> Emitter<'a> {
             // Multi-register destinations: SMEM, buffer and image loads, 64-bit scalar ops.
             let extra = match ins.enc {
                 Enc::Smem if matches!(ins.op, 36 | 37) => 1,
+                Enc::Smem if ins.op > 12 => 0,
                 Enc::Smem => (1u32 << (ins.op & 7)) - 1,
                 Enc::Mimg => u32::from(image_data_registers(ins)).saturating_sub(1),
                 Enc::Mtbuf if ins.op < 4 => ins.op,
@@ -6902,6 +6909,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.line(&format!("scc = {c} ? 1u : 0u;"));
                 Ok(())
             }
+            // Cache invalidations and ATC probes have no host-visible effect
+            // (VIctory 3d71ad1, f47ebd8); in compute the invalidations order
+            // memory like the MUBUF gl*_inv forms.
+            Enc::Smem if matches!(ins.op, 31 | 32 | 38 | 39) => {
+                if matches!(ins.op, 31 | 32) && self.is_cs {
+                    self.line("DeviceMemoryBarrier();");
+                }
+                Ok(())
+            }
+            Enc::Smem if ins.op > 12 && !matches!(ins.op, 36 | 37) => Err(format!("{} unsupported", ins.mnemonic)),
             Enc::Smem if self.packed.is_some() => self.emit_packed_load(idx, ins),
             Enc::Smem => {
                 if matches!(ins.op, 36 | 37) {
@@ -8013,13 +8030,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let lo = format!("tb_trig_f16({bits}, {})", m == "v_cos_f16");
             return self.wv(&d, &format!("(({} & 0xffff0000u) | {lo})", r(&d)?));
         }
-        if ins.aux.sdwa.is_none() && matches!(m.as_str(), "v_rcp_f16" | "v_sqrt_f16" | "v_rsq_f16" | "v_exp_f16" | "v_floor_f16" | "v_ceil_f16" | "v_trunc_f16" | "v_rndne_f16" | "v_fract_f16") {
+        if ins.aux.sdwa.is_none() && matches!(m.as_str(), "v_rcp_f16" | "v_sqrt_f16" | "v_rsq_f16" | "v_exp_f16" | "v_log_f16" | "v_floor_f16" | "v_ceil_f16" | "v_trunc_f16" | "v_rndne_f16" | "v_fract_f16") {
             let a = h16(&s[0])?;
             let e = match m.as_str() {
                 "v_rcp_f16" => format!("1.0 / {a}"),
                 "v_sqrt_f16" => format!("sqrt({a})"),
                 "v_rsq_f16" => format!("rsqrt({a})"),
                 "v_exp_f16" => format!("exp2({a})"),
+                // Xbox2Windows 9cec06e4 (MIT): the binary16 transcendentals.
+                "v_log_f16" => format!("log2({a})"),
                 "v_floor_f16" => format!("floor({a})"),
                 "v_ceil_f16" => format!("ceil({a})"),
                 "v_trunc_f16" => format!("trunc({a})"),
@@ -8040,6 +8059,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 return self.wv(&d, &format!("(({} & 0xffff0000u) | {})", r(&d)?, hres(e)));
             }
             return self.wv(&d, &hres(e));
+        }
+        // Binary16 frexp (Xbox2Windows 9cec06e4, MIT): the half widens to f32
+        // exactly, and its mantissa in [0.5, 1) narrows back exactly. The
+        // exponent is an i16 in the low half; 0, Inf and NaN give 0.
+        if ins.aux.sdwa.is_none() && matches!(m.as_str(), "v_frexp_mant_f16" | "v_frexp_exp_i16_f16") {
+            let a = h16(&s[0])?;
+            if m == "v_frexp_mant_f16" {
+                return self.wv(&d, &hres(format!("asfloat(tb_frexp_mant32(asuint({a})))")));
+            }
+            return self.wv(&d, &format!("(asuint(tb_frexp_exp32(asuint({a}))) & 0xffffu)"));
         }
         if m == "v_cvt_f16_u16" {
             return self.wv(&d, &format!("tb_f16_rne({})", Self::half_source(ins, format!("(float)(({}) & 0xffffu)", r(&s[0])?))));
