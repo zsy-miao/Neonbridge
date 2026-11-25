@@ -1,5 +1,5 @@
 //! Device slot 57 pipeline records. Stage 1 decodes and logs them; stage 2
-//! (TUXBOX_SLOT57_REAL=1) wraps their programs as synthetic DXBC and builds
+//! (TUXBOX_SLOT57_REAL (default on, =0 off)) wraps their programs as synthetic DXBC and builds
 //! a real graphics pipeline lazily (Xbox2Windows d3d12_draw.inl
 //! translation_for / pipeline_for, MIT). Ported from Xbox2Windows 009153b7
 //! pipeline_state_decode.h / depth_state_apply.h (MIT); palmetto
@@ -227,11 +227,11 @@ fn dss_logging() -> bool {
     crate::env_toggle!("TUXBOX_SLOT57_DSS") != Some("0")
 }
 
-/// TUXBOX_SLOT57_REAL=1: stage 2, real pipelines (off by default). It
+/// TUXBOX_SLOT57_REAL (default on, =0 off): stage 2, real pipelines (off by default). It
 /// implies the placeholder path (TUXBOX_SLOT57=placeholder): the title gets
 /// the placeholder with a lazy upgrade built at first bind.
 pub(super) fn real() -> bool {
-    crate::env_toggle!("TUXBOX_SLOT57_REAL") == Some("1")
+    crate::env_toggle!("TUXBOX_SLOT57_REAL") != Some("0")
 }
 
 fn head(p: &[u8]) -> String {
@@ -338,7 +338,7 @@ pub(super) fn wrap(program: &[u8], stage: u32) -> Vec<u8> {
     container(&image, stage)
 }
 
-/// TUXBOX_SLOT67_REAL=1: a slot 67 compute program (kind 6, bare RDNA2 code)
+/// TUXBOX_SLOT67_REAL (default on, =0 off): a slot 67 compute program (kind 6, bare RDNA2 code)
 /// as the synthetic DXBC xshader parses: FSSM image layout 6 with directory
 /// slot 11 occupied (dxbc fssm.rs compute_lds_bytes), the LDS bytes at
 /// descriptor +0x4c, no entry (+0x60 count 0), and the preamble's group
@@ -471,7 +471,7 @@ impl Targets {
 }
 
 /// Host view format of each RTV/DSV handle, written at view creation
-/// (TUXBOX_SLOT57_REAL=1 only).
+/// (TUXBOX_SLOT57_REAL (default on, =0 off) only).
 static VIEW_FORMATS: std::sync::Mutex<Option<std::collections::HashMap<usize, i32>>> = std::sync::Mutex::new(None);
 
 pub(super) fn note_view(handle: usize, format: Option<windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT>) {
@@ -545,7 +545,7 @@ pub(crate) unsafe fn variant(device: *mut c_void, bound: &Bound, targets: Target
                     Ok(e) => e,
                     Err(why) => {
                         crate::diagnostics::log_line(format_args!(
-                            "slot 57 record {:016x} variant {targets:?}: refused: {why}; its draws are dropped (TUXBOX_SLOT57_REAL=1)", bound.key));
+                            "slot 57 record {:016x} variant {targets:?}: refused: {why}; its draws are dropped (TUXBOX_SLOT57_REAL (default on, =0 off))", bound.key));
                         (super::stream::background::never(), None)
                     }
                 };
@@ -562,7 +562,7 @@ pub(crate) unsafe fn variant(device: *mut c_void, bound: &Bound, targets: Target
             if seen.len() < 64 && !seen.contains(&(bound.key, targets)) {
                 seen.push((bound.key, targets));
                 crate::diagnostics::log_line(format_args!(
-                    "slot 57 record {:016x} variant {targets:?}: not made yet, draw dropped (logged once; TUXBOX_SLOT57_REAL=1)", bound.key));
+                    "slot 57 record {:016x} variant {targets:?}: not made yet, draw dropped (logged once; TUXBOX_SLOT57_REAL (default on, =0 off))", bound.key));
             }
             None
         }
@@ -698,7 +698,7 @@ pub(super) unsafe fn upgrade(device: &super::Device, desc: *const c_void) -> (st
             if seen.len() < 32 && !seen.contains(&hash) {
                 seen.push(hash);
                 crate::diagnostics::log_line(format_args!(
-                    "slot 57 record {hash:016x}: real pipeline refused: {why}; placeholder (TUXBOX_SLOT57_REAL=1)"));
+                    "slot 57 record {hash:016x}: real pipeline refused: {why}; placeholder (TUXBOX_SLOT57_REAL (default on, =0 off))"));
             }
             (super::stream::background::never(), None)
         }

@@ -22,7 +22,7 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding buffer view addresses per heap slot
     /// (t3, space32766; see slot_views).
     pub(crate) slot_views: Option<u32>,
-    /// TUXBOX_BVH_RAW_SRV=1: the first of the raw root SRVs at t5..,
+    /// TUXBOX_BVH_RAW_SRV (default on, =0 off): the first of the raw root SRVs at t5..,
     /// space32766 over each guest root SRV parameter's acceleration
     /// structure, and those guest parameters' slots (see bvh_raw).
     pub(crate) bvh_raw: Option<(u32, Vec<u32>)>,
@@ -716,7 +716,7 @@ pub(super) fn capture_stage_root(stage: &[u8], root: &RootSource) {
     }
 }
 
-/// TUXBOX_ROOTCONST_PAD4=1 rounds every root-constant parameter of a host
+/// TUXBOX_ROOTCONST_PAD4 (default on, =0 off) rounds every root-constant parameter of a host
 /// compute root up to whole 16-byte rows while the root stays within 64
 /// DWORDs. test140-153: four compute PSOs failed E_INVALIDARG on title roots
 /// whose b500 constants hold 1-3 DWORDs, while the translated cbuffer is at
@@ -727,7 +727,7 @@ pub(super) fn capture_stage_root(stage: &[u8], root: &RootSource) {
 /// serialization.
 unsafe fn pad_root_constants(desc: &mut D3D12_VERSIONED_ROOT_SIGNATURE_DESC) -> Option<Vec<D3D12_ROOT_PARAMETER1>> {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOTCONST_PAD4") == Some("1")) || desc.Version != D3D_ROOT_SIGNATURE_VERSION_1_1 {
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOTCONST_PAD4") != Some("0")) || desc.Version != D3D_ROOT_SIGNATURE_VERSION_1_1 {
         return None;
     }
     let d = unsafe { &mut desc.Anonymous.Desc_1_1 };

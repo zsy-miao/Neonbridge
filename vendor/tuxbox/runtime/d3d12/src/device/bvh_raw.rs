@@ -1,4 +1,4 @@
-//! TUXBOX_BVH_RAW_SRV=1, root form: a translated compute stage that
+//! TUXBOX_BVH_RAW_SRV (default on, =0 off), root form: a translated compute stage that
 //! declares an SRV at t5.. in space32766 gets one raw root SRV per guest
 //! root SRV parameter, in parameter order (k-th guest root SRV -> t(5+k)),
 //! over the title memory at the address the title bound there, so the
@@ -11,7 +11,7 @@ pub(crate) const REGISTER: u32 = 5;
 pub(crate) const SPACE: u32 = super::desc_table::SPACE;
 
 pub(crate) fn enabled() -> bool {
-    crate::env_toggle!("TUXBOX_BVH_RAW_SRV") == Some("1")
+    crate::env_toggle!("TUXBOX_BVH_RAW_SRV") != Some("0")
 }
 
 /// The stage declares an SRV binding at t5 or above in space32766.

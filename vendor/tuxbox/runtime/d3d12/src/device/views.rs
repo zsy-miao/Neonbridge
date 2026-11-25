@@ -1717,7 +1717,7 @@ pub(super) unsafe extern "system" fn address_uav(
         desc.address, resource_desc.Width, view.Format.0));
 }
 
-/// TUXBOX_BVH_RAW_SRV=1: an acceleration-structure SRV becomes a raw buffer
+/// TUXBOX_BVH_RAW_SRV (default on, =0 off): an acceleration-structure SRV becomes a raw buffer
 /// SRV over the title memory of the placed structure buffer holding its
 /// Location, starting at the Location (the T# base), and its slot_views entry
 /// gets that VA and the bytes to the buffer's end ( the translated node test reads
@@ -1726,7 +1726,7 @@ pub(super) unsafe extern "system" fn address_uav(
 /// as before. Returns false (native path) when no structure buffer is known.
 unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_DESC, handle: D3D12_CPU_DESCRIPTOR_HANDLE) -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_BVH_RAW_SRV") == Some("1")) { return false; }
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_BVH_RAW_SRV") != Some("0")) { return false; }
     let Some(view) = (unsafe { desc.as_ref() }) else { return false };
     if view.ViewDimension != D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE { return false; }
     let location = unsafe { view.Anonymous.RaytracingAccelerationStructure.Location };
@@ -1758,7 +1758,7 @@ unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_D
     true
 }
 
-/// TUXBOX_BVH_RAW_SRV=1, root form: the host resource and GPU address of a
+/// TUXBOX_BVH_RAW_SRV (default on, =0 off), root form: the host resource and GPU address of a
 /// raw view over the title memory at `location`, an acceleration
 /// structure's title VA, for its t5.. root SRV (bvh_raw). None when no
 /// placed structure buffer holds it.

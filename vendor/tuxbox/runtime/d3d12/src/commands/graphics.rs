@@ -82,7 +82,7 @@ pub(super) fn bind_host(
     unsafe { list.native.SetPipelineState(native) };
 }
 
-/// TUXBOX_SLOT57_REAL=1: a draw with a slot 57 record bound sets the
+/// TUXBOX_SLOT57_REAL (default on, =0 off): a draw with a slot 57 record bound sets the
 /// record's variant for the list's RTV/DSV formats, and its decoded stencil
 /// reference around the draw, then restores the title's own (Xbox2Windows
 /// d3d12_draw.inl pipeline_for and depth_state_apply.h, MIT). A variant not

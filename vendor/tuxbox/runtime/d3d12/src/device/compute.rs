@@ -41,7 +41,7 @@ pub(crate) struct PipelineData {
     pub(crate) compute: bool,
     /// The guest stream it was made from, for CreateDerivedPipelineStateX.
     pub(in crate::device) derive_from: Option<std::sync::Arc<super::stream::background::OwnedStream>>,
-    /// The slot 57 record it was made from (TUXBOX_SLOT57_REAL=1): draws
+    /// The slot 57 record it was made from (TUXBOX_SLOT57_REAL (default on, =0 off)): draws
     /// pick a variant for the list's targets (slot57::variant).
     pub(crate) slot57: Option<std::sync::Arc<super::slot57::Bound>>,
 }
@@ -339,7 +339,7 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     // with. The placeholder (S_OK, draws dropped) left the picture black
     // (test38-45: clears only; test46 with the stub drew).
     // TUXBOX_SLOT57=placeholder answers the placeholder.
-    // TUXBOX_SLOT57_REAL=1 implies it and attaches a lazy real pipeline.
+    // TUXBOX_SLOT57_REAL (default on, =0 off) implies it and attaches a lazy real pipeline.
     // Slot 67's description is a serialized console PSO, not slot 57's
     // state-block record: test154 logged 26 "state block A too short" lines
     // from decoding it as one (its +0x10/+0x20 are 0x1c/0x14). Only slot 57
@@ -364,7 +364,7 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     if hr.is_err() {
         return hr;
     }
-    if N == 67 && crate::env_toggle!("TUXBOX_SLOT67_REAL") == Some("1") {
+    if N == 67 && crate::env_toggle!("TUXBOX_SLOT67_REAL") != Some("0") {
         return unsafe { slot67_real(this, desc, call, iid, out) };
     }
     if stub {
@@ -755,7 +755,7 @@ unsafe fn null_compute(
     Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData::default(), out) })
 }
 
-/// TUXBOX_SLOT67_REAL=1: slot 67's description is a deserialized console
+/// TUXBOX_SLOT67_REAL (default on, =0 off): slot 67's description is a deserialized console
 /// compute PSO (leonida d3d12_xs_device.cpp DeserializeComputePipelineStateX
 /// and docs/fspx.md, GPL-3.0, credit): +0x00 root signature, +0x08/+0x10
 /// kind 0 dispatch state (7 words: word 3 NumThreadsX | Y << 16, word 4
