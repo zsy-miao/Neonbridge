@@ -143,6 +143,19 @@ fn wait_on(fence: &ID3D12Fence, value: u64, ms: u32) -> bool {
                         crate::diagnostics::log_line(format_args!(
                             "present throttle: a queue's work is held at a GPU memory wait; going on after {held} ms ({n} so far; TUXBOX_PRESENT_HELD_MS=0 waits)"));
                     }
+                    // five-star-recomp bd100ba (GPL-3.0, credit to its
+                    // authors): the escape also releases the queues' held
+                    // memory waits, since their writer may come from this
+                    // thread after the present; going on alone left the
+                    // queue stalled behind them. TUXBOX_THROTTLE_RELEASE=0
+                    // only goes on, as before.
+                    if crate::env_toggle!("TUXBOX_THROTTLE_RELEASE") != Some("0") {
+                        let released = crate::commands::release_memory_waits();
+                        if n <= 8 || n.is_power_of_two() {
+                            crate::diagnostics::log_line(format_args!(
+                                "present throttle: released {released} held GPU memory waits (TUXBOX_THROTTLE_RELEASE=0 off)"));
+                        }
+                    }
                     // Not a give-up: the caller counts this as reached.
                     reached = true;
                     break;
