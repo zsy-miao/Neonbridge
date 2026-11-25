@@ -55,6 +55,63 @@ unsafe extern "system" {
     fn ClipCursor(rect: *const Rect) -> i32;
     fn ShowWindowAsync(hwnd: H, cmd: i32) -> i32;
     fn SetForegroundWindow(hwnd: H) -> i32;
+    fn GetWindowLongPtrA(hwnd: H, index: i32) -> isize;
+    fn SetWindowLongPtrA(hwnd: H, index: i32, value: isize) -> isize;
+    fn CallWindowProcA(proc_: isize, hwnd: H, msg: u32, w: usize, l: isize) -> isize;
+}
+
+const GWLP_WNDPROC: i32 = -4;
+const WM_NCDESTROY: u32 = 0x0082;
+
+/// Top-level windows' own procedures, by window, for `window_proc`.
+static TITLE_PROCS: Mutex<Vec<(usize, isize)>> = Mutex::new(Vec::new());
+
+/// The title's top-level window is subclassed, as fxceless does (ztrx
+/// lifecycle.rs hook/window_proc, GPL-3.0, credit to its authors): its own
+/// procedure may handle WM_SYSCOMMAND or keys without reaching the exe's
+/// DefWindowProc import (or reach user32's directly), so the key menu drop,
+/// the Alt+Enter/F11 toggle and the cursor clip ran only some of the time.
+/// The window is ANSI (CreateWindowExA), so the A forms keep it ANSI.
+/// TUXBOX_SUBCLASS_WINDOW=0 relies on the DefWindowProc imports alone.
+fn subclass_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_SUBCLASS_WINDOW").map_or(true, |v| v.trim() != "0"))
+}
+
+unsafe fn subclass(hwnd: H) {
+    let mut procs = TITLE_PROCS.lock().unwrap_or_else(|e| e.into_inner());
+    // Stored before ours can run.
+    let title = unsafe { GetWindowLongPtrA(hwnd, GWLP_WNDPROC) };
+    if title == 0 {
+        return;
+    }
+    procs.retain(|&(h, _)| h != hwnd as usize);
+    procs.push((hwnd as usize, title));
+    drop(procs);
+    unsafe { SetWindowLongPtrA(hwnd, GWLP_WNDPROC, window_proc as *const () as isize) };
+}
+
+unsafe extern "system" fn window_proc(hwnd: H, msg: u32, w: usize, l: isize) -> isize {
+    let title = {
+        let mut procs = TITLE_PROCS.lock().unwrap_or_else(|e| e.into_inner());
+        let title = procs.iter().find(|&&(h, _)| h == hwnd as usize).map(|&(_, p)| p);
+        if msg == WM_NCDESTROY {
+            procs.retain(|&(h, _)| h != hwnd as usize);
+        }
+        title
+    };
+    if alt_enter(msg, w, l) {
+        unsafe { toggle_fullscreen(hwnd) };
+        return 0;
+    }
+    if alt_enter_char(msg, w) || drop_key_menu(msg, w) {
+        return 0;
+    }
+    unsafe { clip_cursor(hwnd, msg, w) };
+    match title {
+        Some(p) => unsafe { CallWindowProcA(p, hwnd, msg, w, l) },
+        None => unsafe { DefWindowProcA(hwnd, msg, w, l) },
+    }
 }
 
 const SW_SHOW: i32 = 5;
@@ -436,6 +493,9 @@ unsafe extern "system" fn create_window_ex_a(ex: u32, class: *const u8, name: *c
         log(&format!("window: created at {fw}x{fh}+{fx}+{fy} instead of {w}x{h}+{x}+{y} (one monitor, 16:9)"));
     }
     let hwnd = unsafe { CreateWindowExA(ex, class, name, style, fx, fy, fw, fh, parent, menu, inst, param) };
+    if top && !hwnd.is_null() && subclass_enabled() {
+        unsafe { subclass(hwnd) };
+    }
     if top && !hwnd.is_null() && cloak_enabled() && unsafe { cloak(hwnd, true) } {
         CLOAKED.lock().unwrap_or_else(|e| e.into_inner()).push(hwnd as usize);
         log(&format!("window: cloaked {:#x} until the first present (TUXBOX_CLOAK_WINDOW=0 turns this off)", hwnd as usize));
