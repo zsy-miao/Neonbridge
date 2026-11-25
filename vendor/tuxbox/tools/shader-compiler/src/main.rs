@@ -184,7 +184,6 @@ fn run() -> Result<(), Error> {
     }
     let mut output = None;
     let mut profile_output = None;
-    let mut target_writes_output = None;
     let mut consumer = None;
     let mut pixel_order = None;
     let mut stencil_target = None;
@@ -202,7 +201,6 @@ fn run() -> Result<(), Error> {
         let slot = match argument.to_str() {
             Some("--hlsl-out") => &mut output,
             Some("--profile-out") => &mut profile_output,
-            Some("--target-writes-out") => &mut target_writes_output,
             Some("--link-pixel") => &mut consumer,
             Some("--pixel-order") => &mut pixel_order,
             _ => return Err(format!("unknown option {argument:?}").into()),
@@ -252,26 +250,6 @@ fn run() -> Result<(), Error> {
         };
         fs::write(&path, format!("{stage}_{model}"))
             .map_err(|e| format!("{}: {e}", path.display()))?;
-    }
-    // The channels each colour target's exports enable, as `target=mask` (hex,
-    // bit 0 red) for the exported targets: the HLSL writes 0.0 into a disabled
-    // channel, where the hardware leaves the target's channel alone, so the
-    // runtime ANDs the mask into RenderTargetWriteMask (Xbox2Windows
-    // 03dee932 / 27f32934, MIT). Read from the ISA so the HLSL is unchanged.
-    if let Some(path) = target_writes_output {
-        let mut writes = std::collections::BTreeMap::<i64, u8>::new();
-        if shader.stage == Stage::Pixel {
-            for ins in tuxbox_xshader::rdna2::instructions(&shader.isa) {
-                if ins.enc != tuxbox_xshader::rdna2::Enc::Exp || !(0..8).contains(&ins.aux.imm) {
-                    continue;
-                }
-                let (en, compr) = (ins.aux.mask, ins.aux.imm2 & 1 != 0);
-                let on = |i: u8| if compr { (en >> (i / 2 * 2)) & 1 != 0 || (en >> i) & 1 != 0 } else { (en >> i) & 1 != 0 };
-                *writes.entry(ins.aux.imm).or_default() |= (0..4u8).filter(|&i| on(i)).fold(0, |m, i| m | 1 << i);
-            }
-        }
-        let list: Vec<String> = writes.iter().map(|(t, m)| format!("{t}={m:x}")).collect();
-        fs::write(&path, list.join(" ")).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let mut instructions = 0;
     let mut consumed = 0;
