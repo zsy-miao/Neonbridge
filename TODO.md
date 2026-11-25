@@ -7,9 +7,6 @@ Open work. Each item is tested in a run of its own.
 - Pending A/B runs: `TUXBOX_DEPTH_TWINS=1` (close-time pass landed, 86f630f late_pass); `TUXBOX_ROOT_VIEW_TABLES=1` (bind half landed, 92da1f3; default-on after its run); `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
-- A/B for the untested commits, one per run:
-  - 04a7bee: never tested on, because the base env sets `TUXBOX_TITLE_MEMORY_MB=0`. B: drop it from the env, giving the 13824 MiB cap. Compare commit growth and the working set budget line. Safe.
-  - 81a0a3a: never tested on, because the base env sets `TUXBOX_READ_COMMIT_CRT=0`. B: drop it from the env. Watch for short CRT reads (998) in the video atlas. Safe.
 - A/B `TB_VIEW_MARKS=1` (498fc37, 9549a0d; needs a prewarm): shadow write-backs should copy only marked pages.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
