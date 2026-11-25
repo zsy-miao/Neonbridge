@@ -136,6 +136,22 @@ fn sized_floor(shader_bytes: u64) -> u64 {
     if floor == 0 { 0 } else { floor.max(shader_bytes.saturating_mul(512)) }
 }
 
+/// The commit a gated compile leaves free beyond its estimate and the running
+/// compiles' remaining ones. It was a fixed 8 GB (five-star's NVIDIA figure):
+/// test132 (38 GB commit, the title at 18 GB) never had it free, so every
+/// prefetch of 256 KiB of DXIL or more waited the full 30 s, while
+/// VIctory-fxceless builds its early list ungated. Since 2332ba8 the commit
+/// floor scales with the program (sized_floor), so the reserve is that floor:
+/// 3 GB for programs up to 6 MiB of DXIL instead of 8. The estimate itself
+/// stays (measured peaks reach 7.4 KB per DXIL byte alone, test140), and so
+/// does the floor's hold: test142 lost the device at the commit limit.
+/// TUXBOX_COMPILE_COMMIT_RESERVE=fixed keeps 8 GB; with the floor off
+/// (TUXBOX_COMPILE_COMMIT_FLOOR_MB=0) it is 8 GB too.
+fn commit_reserve(shader_bytes: u64) -> u64 {
+    let floor = sized_floor(shader_bytes);
+    if floor == 0 || crate::env_toggle!("TUXBOX_COMPILE_COMMIT_RESERVE") == Some("fixed") { COMMIT_RESERVE } else { floor }
+}
+
 fn try_enter(estimate: u64, tiny: bool, large: bool, shader_bytes: u64) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if large && state.large != 0 && enabled() {
@@ -159,7 +175,7 @@ fn try_enter(estimate: u64, tiny: bool, large: bool, shader_bytes: u64) -> bool 
     if !tiny {
         let need = estimate.saturating_add(remaining);
         let (physical, commit) = available();
-        if physical < PHYSICAL_RESERVE.saturating_add(need) || commit < COMMIT_RESERVE.saturating_add(need) {
+        if physical < PHYSICAL_RESERVE.saturating_add(need) || commit < commit_reserve(shader_bytes).saturating_add(need) {
             return false;
         }
         if state.large != 0 {
