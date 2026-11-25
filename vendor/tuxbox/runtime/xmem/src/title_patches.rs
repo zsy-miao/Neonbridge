@@ -11,6 +11,14 @@
 //! drained and overflows at about 100 s. The branch is sent to the unlocking
 //! tail (+0x5267c7f: rcx = the object, frame popped, jmp unlock).
 //! TUXBOX_AUDIO_LOCK_PATCH=0 leaves it alone.
+//!
+//! Stall watchdog (ScarlettPort bb3a27a / xcl#505, GPL-3.0, credit to their
+//! authors): the title ends itself when its heartbeat is unchanged for 30 s
+//! (the branch at +0x2215c70, `74 04`) or an in-flight timestamp is too old
+//! (+0x2215bdc, `73 2e`). Slow first pipeline builds can trip it after a
+//! load. A DIAGNOSTIC, off by default: TUXBOX_NO_WATCHDOG=1 turns both
+//! branches into NOPs, so an A/B run shows whether a post-load exit or stall
+//! is this watchdog. The cause it masks is the slow builds themselves.
 use core::ffi::c_void;
 use windows_sys::Win32::System::Diagnostics::Debug::FlushInstructionCache;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -58,5 +66,10 @@ pub(crate) unsafe fn install() {
         let mut with = [0x0f, 0x84, 0, 0, 0, 0];
         with[2..].copy_from_slice(&rel.to_le_bytes());
         unsafe { patch("audio lock leak (leonida-ce 62ad4fdf, TUXBOX_AUDIO_LOCK_PATCH=0 off)", AT, &[0x0f, 0x84, 0xae, 0x05, 0x00, 0x00], &with) };
+    }
+    if std::env::var_os("TUXBOX_NO_WATCHDOG").is_some_and(|v| v == "1") {
+        for (rva, expect) in [(0x221_5c70usize, [0x74u8, 0x04]), (0x221_5bdc, [0x73, 0x2e])] {
+            unsafe { patch("stall watchdog off (ScarlettPort bb3a27a, TUXBOX_NO_WATCHDOG=1 diagnostic)", rva, &expect, &[0x90, 0x90]) };
+        }
     }
 }
