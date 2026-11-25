@@ -2893,7 +2893,11 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         em.body = exec_group::group(&em.body);
     }
     if em.body.contains("tb_vm_live") {
-        em.body.insert_str(0, "    uint tb_vm_live = 1u;\n");
+        // A lane no VM=1 export reached is not valid: it starts dead (xcl
+        // dc0d25f `live_vm_var`, written false at entry). TB_EXP_VM_START=1
+        // starts it live as before.
+        let start = u32::from(std::env::var("TB_EXP_VM_START").is_ok_and(|v| v.trim() == "1"));
+        em.body.insert_str(0, &format!("    uint tb_vm_live = {start}u;\n"));
     }
     if hair_cluster_export {
         em.body.insert_str(0, "    uint4 hair_record = 0;\n");
