@@ -667,7 +667,8 @@ static HELD: AtomicU64 = AtomicU64::new(0);
 /// released then (rebox a1ebac2 `value_wait_force`, GPL-2.0, credit to its
 /// authors): no queue will ever write it, so it would only wait out the
 /// watchdog with the present behind it. TUXBOX_MEMORY_WAIT_FORCE=0 waits.
-/// TUXBOX_PRESENT_RELEASE_ALL=1 releases every held wait at a present, as
+/// Every held wait is released at a present (TUXBOX_PRESENT_RELEASE_ALL=0
+/// keeps only the writerless ones), as
 /// five-star b828157 `MemoryWaits.ReleaseAll` does (GPL-3.0, marquezini).
 static PRESENTS: AtomicU64 = AtomicU64::new(0);
 
@@ -676,7 +677,7 @@ pub(super) fn presented() {
 }
 
 /// Bumped by `release_all`: every wait held when it moves gives up at once,
-/// the way a TUXBOX_PRESENT_RELEASE_ALL=1 present does (five-star bd100ba).
+/// the way a present does (five-star bd100ba).
 static RELEASE_ALL: AtomicU64 = AtomicU64::new(0);
 
 /// Releases every held GPU memory wait now and returns how many were held.
@@ -687,7 +688,7 @@ pub(super) fn release_all() -> usize {
 }
 
 fn present_release(address: u64) -> bool {
-    if crate::env_toggle!("TUXBOX_PRESENT_RELEASE_ALL") == Some("1") {
+    if crate::env_toggle!("TUXBOX_PRESENT_RELEASE_ALL") != Some("0") {
         return true;
     }
     crate::env_toggle!("TUXBOX_MEMORY_WAIT_FORCE") != Some("0") && writers::writer_queue(address).is_none()
