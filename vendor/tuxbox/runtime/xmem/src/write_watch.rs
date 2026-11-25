@@ -65,7 +65,7 @@ struct Stat {
     times: [std::time::Instant; 3],
 }
 
-static STATS: Mutex<[[u64; 6]; 2]> = Mutex::new([[0; 6]; 2]);
+static STATS: Mutex<[[u64; 6]; 4]> = Mutex::new([[0; 6]; 4]);
 
 impl Drop for Stat {
     fn drop(&mut self) {
@@ -92,8 +92,9 @@ impl Drop for Stat {
         }
         let line = |n: &str, s: &[u64; 6]| format!("{n} {} queries {} MiB, {} OS pages, ms lock {:.1} os {:.1} owed {:.1}",
             s[0], s[1] >> 20, s[2], s[3] as f64 / 1e3, s[4] as f64 / 1e3, s[5] as f64 / 1e3);
-        let text = format!("write watch last 10 s: {}; {} (TUXBOX_WATCH_STATS=0 off)", line("title", &stats[0]), line("runtime", &stats[1]));
-        *stats = [[0; 6]; 2];
+        let text = format!("write watch last 10 s: {}; {}; refused: {}; {} (TUXBOX_WATCH_STATS=0 off)",
+            line("title", &stats[0]), line("runtime", &stats[1]), line("title", &stats[2]), line("runtime", &stats[3]));
+        *stats = [[0; 6]; 4];
         drop(stats);
         crate::loader::log(&text);
     }
@@ -177,7 +178,12 @@ unsafe fn journal_query(me: usize, reset: bool, base: *const c_void, bytes: usiz
     let t1 = std::time::Instant::now();
     let n = match unsafe { j.ask(base, bytes) } {
         Ok(n) => n,
-        Err(e) => return e,
+        Err(e) => {
+            // Refused queries (a span crossing allocations) cost the caller
+            // too: count them, with no pages.
+            let _stat = Stat { side: me + 2, bytes, os_pages: 0, times: [t0, t1, std::time::Instant::now()] };
+            return e;
+        }
     };
     let t2 = std::time::Instant::now();
     let _stat = Stat { side: me, bytes, os_pages: j.found.len(), times: [t0, t1, t2] };
