@@ -911,7 +911,18 @@ pub(super) unsafe extern "system" fn srv(
         unsafe { device.native.CreateShaderResourceView(target, Some(desc), handle) };
         report_bad_view("SRV", &device.native, target, unsafe { desc.as_ref() });
     }
-    device.state.imported_views.store(handle.ptr, alias.map(|(native, original)| DescriptorBacking::BufferAlias { native, original }));
+    device.state.imported_views.store(handle.ptr, alias.map(|(native, original)| DescriptorBacking::BufferAlias { native, original })
+        .or_else(|| slot_holds().then(|| texture.cloned()).flatten().map(|t| DescriptorBacking::Placed { _texture: t })));
+}
+
+/// A descriptor slot holding a view of a placed texture keeps the texture
+/// (and so its native copy, span or pages) alive until the slot is rewritten
+/// or its heap freed: retired textures were released while the title's heaps
+/// still held views of them and the GPU faulted (rebox 7745cef, GPL-2.0,
+/// credit to its authors). The address-only SRV already did this.
+/// TUXBOX_SLOT_HOLDS_TEXTURE=0 keeps only weak references, as before.
+fn slot_holds() -> bool {
+    crate::env_toggle!("TUXBOX_SLOT_HOLDS_TEXTURE") != Some("0")
 }
 
 pub(super) unsafe extern "system" fn uav(
@@ -989,7 +1000,8 @@ pub(super) unsafe extern "system" fn uav(
     if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, proxy.and_then(|p| p.state.render_heap())); }
     device.state.blas.views.store(handle.ptr, None);
     device.state.imported_views.store(handle.ptr, uav_alias.as_ref().map(|(alias, original)|
-        DescriptorBacking::BufferAlias { native: alias.clone(), original: original.clone() }));
+        DescriptorBacking::BufferAlias { native: alias.clone(), original: original.clone() })
+        .or_else(|| slot_holds().then(|| placed.cloned()).flatten().map(|t| DescriptorBacking::Placed { _texture: t })));
     let buffer = unsafe { view_resource(device, object, desc, handle) };
     let buffer = uav_alias.as_ref().map(|(alias, _)| alias).or(buffer);
     if let Some(resource) = buffer { shadow::mark_written(device, resource.as_raw()); }
