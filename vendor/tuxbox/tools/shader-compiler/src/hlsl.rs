@@ -31,6 +31,7 @@ mod uniform_texel;
 mod pixel_quad;
 mod mubuf_offsets;
 mod split_wave64;
+mod mask_liveness;
 mod code_offset;
 mod scalar_bits;
 #[cfg(test)]
@@ -9678,8 +9679,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.tmp += 1;
             self.line(&format!("bool t{t}c = ((exec_lo & 1u) != 0u) && {c};"));
             let high = if shadow {
-                self.line(&format!("uint t{t}h = WaveActiveBallot(t{t}c).y;"));
-                format!("t{t}h")
+                // xcl b4019c4 / 7bea019: a high word nothing reads skips the split-wave64 exchange.
+                if mask_liveness::on() && self.split_wave64() && mask_liveness::high_dead(&self.insns, self.cur_idx, &hi(&d)) {
+                    "0u".into()
+                } else {
+                    self.line(&format!("uint t{t}h = WaveActiveBallot(t{t}c).y;"));
+                    format!("t{t}h")
+                }
             } else { "0u".into() };
             self.ws(&d, &format!("t{t}c ? 1u : 0u"))?;
             if self.one_word_vector_mask() { return Ok(()); } // The next SGPR can hold an independent mask.
