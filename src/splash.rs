@@ -24,6 +24,8 @@ const WIDTH: i32 = 560;
 const HEIGHT: i32 = 210;
 const BACKGROUND: COLORREF = rgb(11, 11, 20);
 const TRACK: COLORREF = rgb(32, 30, 48);
+/// The pulse: a faint sheen moving through the unfilled track.
+const SHEEN: COLORREF = rgb(52, 56, 78);
 const PINK: COLORREF = rgb(255, 46, 151);
 const CYAN: COLORREF = rgb(0, 229, 255);
 const TEXT: COLORREF = rgb(200, 200, 220);
@@ -38,6 +40,8 @@ struct State {
     /// The step prints no count: an indeterminate pulse runs past the bar's
     /// end instead of a made-up percentage.
     pulse: bool,
+    /// When the current step began, for its elapsed time while it pulses.
+    since: Option<std::time::Instant>,
     /// Drawn position; eases towards the target and never moves back.
     shown: f32,
     text: String,
@@ -45,7 +49,7 @@ struct State {
 }
 
 static STATE: Mutex<State> =
-    Mutex::new(State { target: 0.0, pulse: true, shown: 0.0, text: String::new(), tick: 0 });
+    Mutex::new(State { target: 0.0, pulse: true, since: None, shown: 0.0, text: String::new(), tick: 0 });
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 fn state() -> std::sync::MutexGuard<'static, State> {
@@ -67,6 +71,11 @@ pub fn status(progress: f32, text: &str) {
     let mut s = state();
     s.target = s.target.max(progress.clamp(0.0, 1.0));
     s.pulse = true;
+    // A new step (not a recount of the same one) restarts its clock.
+    let head = |t: &str| t.split(": ").next().unwrap_or("").to_owned();
+    if s.since.is_none() || head(&s.text) != head(text) {
+        s.since = Some(std::time::Instant::now());
+    }
     s.text = text.to_owned();
 }
 
@@ -353,9 +362,9 @@ unsafe fn text(dc: HDC, s: &str, mut r: RECT, color: COLORREF, f: HFONT, flags: 
 }
 
 unsafe fn paint(hwnd: HWND) {
-    let (shown, line, tick, pulse) = {
+    let (shown, line, tick, pulse, since) = {
         let s = state();
-        (s.shown, s.text.clone(), s.tick, s.pulse)
+        (s.shown, s.text.clone(), s.tick, s.pulse, s.since)
     };
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
@@ -389,7 +398,12 @@ unsafe fn paint(hwnd: HWND) {
         SelectObject(dc, old);
         text(dc, "BRIDGE", RECT { left: 32 + size.cx, top: 28, right: WIDTH - 32, bottom: 84 }, CYAN, title, DT_LEFT | DT_VCENTER);
         // Counted lines carry their own numbers; dots only for waits.
-        let dots = if pulse { ".".repeat((tick / 12 % 4) as usize) } else { String::new() };
+        // No count: dots and the step's elapsed time ("Warming the shaders... 1m 20s").
+        let dots = match since.map(|t| t.elapsed()).filter(|_| pulse) {
+            Some(e) if e.as_secs() >= 1 => format!("{:<3} {}", ".".repeat((tick / 12 % 4) as usize), crate::progress::clock(e)),
+            Some(_) => ".".repeat((tick / 12 % 4) as usize),
+            None => String::new(),
+        };
         text(dc, &format!("{line}{dots}"), RECT { left: 32, top: 104, right: WIDTH - 32, bottom: 130 }, TEXT, small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
 
         // Progress bar with a moving highlight.
@@ -397,14 +411,11 @@ unsafe fn paint(hwnd: HWND) {
         fill(dc, bar, TRACK);
         let filled = bar.left + ((bar.right - bar.left) as f32 * shown.clamp(0.0, 1.0)) as i32;
         fill(dc, RECT { right: filled, ..bar }, PINK);
-        let span = (filled - bar.left).max(1);
-        let glint = bar.left + (tick as i32 * 6) % (span + 60) - 60;
-        fill(dc, RECT { left: glint.max(bar.left), right: (glint + 60).min(filled), ..bar }, CYAN);
-        // No count: a segment sweeps the unfilled track (indeterminate).
+        // No count: one faint sheen moves through the unfilled track only.
         if pulse && filled < bar.right {
             let rest = bar.right - filled;
-            let at = filled + (tick as i32 * 4) % (rest + 80) - 80;
-            fill(dc, RECT { left: at.max(filled), right: (at + 80).min(bar.right), ..bar }, CYAN);
+            let at = filled + (tick as i32 * 3) % (rest + 80) - 80;
+            fill(dc, RECT { left: at.max(filled), right: (at + 80).min(bar.right), ..bar }, SHEEN);
         }
         text(dc, &format!("{}%", (shown * 100.0).floor() as u32), RECT { left: 32, top: 162, right: WIDTH - 32, bottom: 186 }, TEXT, small, DT_RIGHT | DT_VCENTER);
 
