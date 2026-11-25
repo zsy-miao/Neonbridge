@@ -4,7 +4,7 @@
 # "Quick Play"; the environment is its scripts/play.ps1 (tuned on an RTX 3070 8 GB).
 name = "unified"
 rank = 8   # launcher list order (Master): 7th on the gta6-pc-race tracker
-about = "victory-unified 73b22cc (GPL-3.0): 8 GB NVIDIA fork; ~58 min without a crash into the camp mission at 2-3 fps (its author's RTX 3070 8 GB); not yet run here"
+about = "victory-unified d5b5fca (GPL-3.0): 8 GB NVIDIA fork; ~58 min without a crash into the camp mission at 2-3 fps (its author's RTX 3070 8 GB); not yet run here"
 upstream = "https://github.com/Itsbatt/victory-unified"
 build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md Quick Play (+--locked)
 watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]

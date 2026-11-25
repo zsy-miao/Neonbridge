@@ -147,9 +147,9 @@ thread_local! {
     /// stage's shader can store to buffers (`Translated::stores`).
     static STORES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// While `State::early_textures` runs the texture pass: the
-    /// milliseconds and the bytes that run may take, in place of the
-    /// pass's own per frame.
-    static PASS_BUDGET: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
+    /// milliseconds, the bytes, and whether this is a one-time decoration bake
+    /// (which uses `resource::bake_room()` so 8 GB GPUs do not bake black skin).
+    static PASS_BUDGET: std::cell::Cell<Option<(u64, u64, bool)>> = const { std::cell::Cell::new(None) };
 }
 
 /// The milliseconds of every frame the pass that uploads textures picked
@@ -1903,10 +1903,11 @@ impl State {
         }
         let left = bake_ms.saturating_sub(BAKED_MS.load(Ordering::Relaxed));
         let budget = if bake && left > 0 {
-            // What a bake may read must be there now: up to 2 GiB.
-            (left, 2 << 30)
+            // What a bake may read must be there now: up to 2 GiB, and allow
+            // using the 97% bake headroom (`resource::bake_room`) on 8 GB GPUs.
+            (left, 2 << 30, true)
         } else if first && early_ms > 0 {
-            (early_ms, 64 << 20)
+            (early_ms, 64 << 20, false)
         } else {
             return;
         };
@@ -2063,7 +2064,9 @@ impl State {
         // makes room again: so the slots are still looked at (the pass
         // returned here, and a slot whose texture had been streamed out
         // kept its host copy for as long as the card was full).
-        let mut room = crate::resource::room();
+        let is_bake = PASS_BUDGET.get().is_some_and(|(_, _, b)| b);
+        let check_room = || if is_bake { crate::resource::bake_room() } else { crate::resource::room() };
+        let mut room = check_room();
         // Bytes uploaded by this pass since the card was last asked
         // whether it has room: asked again every 32 MiB (a pass may upload
         // 192 MB and more, and one asking a pass let the queue run some
@@ -2080,8 +2083,13 @@ impl State {
             host.texture_slots_room(frame);
         }
         // Slots whose texture's memory the runtime mapped, unmapped or
-        // wrote since the last pass are due again.
-        host.texture_slots_remapped(frame);
+        // wrote since the last pass are due again (immediately during a
+        // character decoration bake so freshly-landed skin textures upload
+        // before PS_BakeDecorations_* draws).
+        host.texture_slots_remapped(frame, is_bake);
+        if is_bake {
+            host.texture_slots_bake_prepare(frame);
+        }
         // Levels on demand: the slots of textures whose first level with
         // memory changed since the last pass are made again from it.
         host.texture_views_remade();
@@ -2090,7 +2098,7 @@ impl State {
         if room {
             host.texture_slots_waiting(frame);
         }
-        let (due, census) = host.texture_slots_due(frame, 4096);
+        let (due, census) = host.texture_slots_due(frame, if is_bake { 16384 } else { 4096 });
         HEAP_TEXTURES_WAITING.store(census[0], Ordering::Relaxed);
         for (count, now) in HEAP_TEXTURES_QUEUE.iter().zip(census) {
             count.store(now, Ordering::Relaxed);
@@ -2138,7 +2146,7 @@ impl State {
         // own: its bytes on top of what the frame has spent so far.
         // (Not `most`: that is the longest wait between looks, used below.)
         let (span, bytes_at_most) = match PASS_BUDGET.get() {
-            Some((ms, bytes)) => {
+            Some((ms, bytes, _)) => {
                 (std::time::Duration::from_millis(ms), SPENT.load(Ordering::Relaxed).saturating_add(bytes))
             }
             None => (span, per_frame),
@@ -2335,7 +2343,7 @@ impl State {
             since_asked += bytes;
             if room && since_asked >= 32 << 20 {
                 since_asked = 0;
-                room = crate::resource::room();
+                room = check_room();
             }
             HEAP_TEXTURE_BYTES.fetch_add(bytes, Ordering::Relaxed);
             HEAP_TEXTURES.fetch_add(1, Ordering::Relaxed);
@@ -3699,6 +3707,8 @@ impl State {
         list.note_op(|| {
             self.op_text(format!("indirect kind {kind} max {max} at {arguments:#x}"), kind == DISPATCH)
         });
+        #[cfg(feature = "diagnostics")]
+        crate::capture::note_args(kind, arguments);
         if kind == MESH {
             self.mesh_scissor(list, true);
         }

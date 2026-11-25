@@ -1,0 +1,22 @@
+LIBRARY xgameruntime
+EXPORTS
+  InitializeApiImpl
+  InitializeApiImplEx
+  InitializeApiImplEx2
+  UninitializeApiImpl
+  QueryApiImpl
+  XErrorReport
+  XGameRuntimeInitialize
+  XGameRuntimeUninitialize
+  XSystemGetDeviceType
+  ; Registre simulé pour le jeu (le mode natif les branche à la place d'ADVAPI32)
+  AnyXboxX_RegOpenKeyW
+  AnyXboxX_RegOpenKeyExW
+  AnyXboxX_RegQueryValueExW
+  AnyXboxX_RegCloseKey
+  ; Compteur d'images (ANYXBOXX_FPS / ANYXBOXX_FPS_CSV) : le mode natif les branche à la place de DXGI
+  AnyXboxX_CreateDXGIFactory
+  AnyXboxX_CreateDXGIFactory1
+  AnyXboxX_CreateDXGIFactory2
+  ; Repli des luminances HDR quand l'écran n'en annonce pas (tests)
+  AnyXboxX_NormalizeHdrLuminance

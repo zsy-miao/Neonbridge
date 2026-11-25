@@ -246,9 +246,13 @@ fn endless(name: &str, begins: bool) {
     use std::time::{Duration, Instant};
     // Some long programs take a while (the upscaler's 10,000 instructions);
     // what takes memory all along goes first.
-    const ENDLESS: Duration = Duration::from_secs(20);
-    const EVEN_SO: Duration = Duration::from_secs(150);
-    const GROWTH: u64 = 3 << 30;
+    // Not sooner, nor for less memory: while the world loads the process
+    // takes gigabytes by itself and every core is busy, and four pipelines
+    // the driver makes in seconds were left out for good (20 s and 3 GiB;
+    // run amd1, 2026-11-25). A compile that never ends takes 8 GiB a minute.
+    const ENDLESS: Duration = Duration::from_secs(60);
+    const EVEN_SO: Duration = Duration::from_secs(300);
+    const GROWTH: u64 = 8 << 30;
     static AT_WORK: Mutex<Vec<(String, Instant, u32)>> = Mutex::new(Vec::new());
     static WATCH: std::sync::Once = std::sync::Once::new();
     {

@@ -800,6 +800,7 @@ pub(super) const VOP3P: &[(u16, &str)] = &[
     (0x015, "v_dot2_u32_u16"),
     (0x016, "v_dot4_i32_i8"),
     (0x017, "v_dot4_u32_u8"),
+    (0x018, "v_dot8_i32_i4"),
     (0x019, "v_dot8_u32_u4"),
     (0x020, "v_fma_mix_f32"),
     (0x021, "v_fma_mixlo_f16"),

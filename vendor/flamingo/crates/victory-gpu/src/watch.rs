@@ -545,8 +545,7 @@ pub(crate) fn writes(start: usize, end: usize, guarded: bool, since: u64) -> Opt
     }
     j.asked += 1;
     let now = j.asked;
-    let pages = j.found[..count].iter().map(|&at| at / PAGE).chain(guarded);
-    for page in pages.collect::<Vec<_>>() {
+    for page in j.found[..count].iter().map(|&at| at / PAGE).chain(guarded) {
         j.written.insert(page, now);
     }
     Some((

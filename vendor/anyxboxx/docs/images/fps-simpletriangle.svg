@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="300" viewBox="0 0 760 300" font-family="Segoe UI, Arial, sans-serif" font-size="12">
+<rect width="760" height="300" fill="#f7f8fa"/>
+<text x="48" y="28" font-size="16" font-weight="600" fill="#1d2230">SimpleTriangleDesktop: frames per second</text>
+<line x1="48" y1="251.0" x2="712" y2="251.0" stroke="#d0d7de" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="712" y="245.0" text-anchor="end" fill="#1d2230">60 fps target</text>
+<line x1="48" y1="252" x2="712" y2="252" stroke="#1d2230"/>
+<text x="48" y="270" fill="#1d2230">0 s</text>
+<text x="712" y="270" text-anchor="end" fill="#1d2230">7 s</text>
+<polyline points="142.8,65.3 237.7,48.0 332.6,68.2 427.5,54.2 522.3,54.3 617.2,52.6 712.0,51.9" fill="none" stroke="#2ea043" stroke-width="3"/>
+</svg>

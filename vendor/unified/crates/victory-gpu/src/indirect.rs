@@ -367,15 +367,16 @@ pub(crate) fn bound_ahead(
 }
 
 /// How clamps of indirect draws are recorded:
-/// - `0`: each clamp inline before its draw;
+/// - `0` (default): each clamp inline before its draw (best fit for `late`
+///   submission batching on NVIDIA);
 /// - `1`: in a list before the list that draws, without inter-clamp barriers;
 /// - `2`: as `1`, plus a UAV barrier before each draw;
 /// - `3`: hoist mesh dispatches only;
 /// - `4`: hoist non-mesh draws only;
 /// - `5`: as `1`, always opening a fresh list for clamps;
 /// - `6`: cut lists as for `1`, but keep clamps inline;
-/// - `7` (default): as `1`, running clamps sequentially (UAV barrier between
-///   clamps) so list budgets are charged in draw order without mesh flicker.
+/// - `7`: as `1`, running clamps sequentially (UAV barrier between clamps)
+///   so list budgets are charged in draw order without mesh flicker.
 pub(crate) fn hoist_mode() -> u8 {
     use std::sync::atomic::{AtomicU8, Ordering};
     static MODE: AtomicU8 = AtomicU8::new(u8::MAX);
@@ -384,7 +385,7 @@ pub(crate) fn hoist_mode() -> u8 {
         let set = std::env::var("VICTORY_HOIST_CLAMPS")
             .ok()
             .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(7);
+            .unwrap_or(0);
         MODE.store(set, Ordering::Relaxed);
         return set;
     }

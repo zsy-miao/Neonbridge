@@ -1443,6 +1443,25 @@ pub(crate) fn room() -> bool {
     }
 }
 
+/// Room check used ONLY during one-time character decoration bakes
+/// (`PS_BakeDecorations_*`, `draw.rs` `early_textures`).
+///
+/// On 8 GB GPUs, `room()` hits false during world load because of the
+/// `card_room_kept()` + `targets_room_kept()` reserves and 90% ceiling —
+/// right BEFORE `PS_BakeDecorations` runs at frames ~1529-1637. Refusing the
+/// tiny (~20-40 MB) character skin source textures during that one-time bake
+/// permanently bakes `#000000` black onto the protagonists' skin for the rest
+/// of the run. Ignoring those reserves up to 97% of the DXGI budget lets the
+/// bake read real skin textures, after which the source textures are swept
+/// back out normally.
+#[cfg(windows)]
+pub(crate) fn bake_room() -> bool {
+    match crate::host::host().and_then(|h| h.video_memory()) {
+        Some([budget, used, ..]) => used < budget / 100 * 97,
+        None => true,
+    }
+}
+
 /// The bytes of the card's memory the texture queue leaves free for
 /// render targets and other host copies the host itself writes that are
 /// not made yet: `VICTORY_CARD_ROOM_FOR_TARGETS_MB` (3,072; 0: none, as

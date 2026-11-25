@@ -2,7 +2,7 @@
 
 How Neonbridge builds, prepares and starts each runtime in `vendor/`. Every setting below is its author's own (the source is noted in its `vendor/<name>/NEONBRIDGE.toml`); the only things Neonbridge adds are listed under [What Neonbridge adds](#what-neonbridge-adds).
 
-All eight are builds of [VIctory](https://github.com/Marvisak/VIctory) (Marvisak): the same `victory.exe` with the same commands (`run`, `translate`, `warm`). They differ in their fixes, their switches and their shader cache format.
+All nine are builds of [VIctory](https://github.com/Marvisak/VIctory) (Marvisak): the same `victory.exe` with the same commands (`run`, `translate`, `warm`). They differ in their fixes, their switches and their shader cache format.
 
 ## Family tree
 
@@ -13,6 +13,7 @@ VIctory (Marvisak)
 │   ├── VI-BR-PORT (edsuuu)          → vendor/vibrport
 │   ├── victory-unified (Itsbatt)    → vendor/unified   (+ Belobug, DexNom)
 │   └── KLBF Lab (PastiiJay)         → vendor/klbf   (VIctory + victory-fork)
+├── AnyXboxX (LooperSalty)         → vendor/anyxboxx  (third_party/victory, Neptune base)
 ├── VIctory-Belobug-AMD (Belobug)    → vendor/belobug
 ├── VItoriaBr (uiliannn)             → vendor/vitoriabr
 └── ScarlettPort (ZigZagBoi1)        → vendor/scarlettport/runtime/victory
@@ -67,6 +68,12 @@ VIctory (Marvisak)
    - Prepare: `translate <game> --warm all` (its base victory-fork's warm; its README names none)
    - Run: `run <game exe> --execute` (Series X profile)
    - Its switches, from its `scripts/play.ps1` for an RTX 3070 8 GB: `ASYNC_SUBMIT`, `QUEUE2` (128 MB landing), `HOIST_CLAMPS=7`, `AMBIENT=1.25`, `MAX_FPS=30`, `LEVELS_ON_DEMAND`, `TEXTURE_NO_WAIT`, `TEXTURE_BUDGET_MB=1920`, 768 MB card buffers and 15 more
+   - Shader cache: VSH1
+9. **AnyXboxX** (`anyxboxx`)
+   - Build: `cargo build --release` of `third_party/victory` → `third_party/victory/target/release/victory.exe`
+   - Prepare: `warm` of `shaders.rpf`, the game and its two DLLs (its `lancer_victory.ps1 -Precompile`)
+   - Run: `run <game exe> --execute` (Series X profile)
+   - Its switches: Neptune's set from its `tools/lancer_victory.ps1` (37, tuned for a 16 GB card: `CARD_WINDOWS_MB=4096`, `CARD_BUFFERS_MB=1536`, `RELAY=2`, `LEVELS_ON_DEMAND`, `PIPELINE_WAIT_MS=2500` and more)
    - Shader cache: VSH1
 
 Every switch above is a `VICTORY_` environment variable (`RELAY=1` means `VICTORY_RELAY=1`).

@@ -1533,6 +1533,19 @@ pub(crate) fn room() -> bool {
     }
 }
 
+/// Room on the card during a decoration bake (`PS_BakeDecorations_*`): up to
+/// 97 % of its budget, past the reserves [`room`] keeps (after
+/// fxceless/victory-fork #1097). On an 8 GB card [`room`] said no just
+/// before the bakes, and a skin source refused then is baked black for the
+/// rest of the run; the sources are swept out again afterwards.
+#[cfg(windows)]
+pub(crate) fn bake_room() -> bool {
+    match crate::host::host().and_then(|h| h.video_memory()) {
+        Some([budget, used, ..]) => used < budget / 100 * 97,
+        None => true,
+    }
+}
+
 /// Whether, with no room on the card ([`room`]) and every texture there
 /// used in the last seconds, more may go on into the PC memory the system
 /// shares with the card: up to half the shared budget, the rest left to

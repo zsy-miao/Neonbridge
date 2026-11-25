@@ -1896,6 +1896,98 @@ pub(crate) fn evict_placed_textures(start: u64, end: u64) {
     }
 }
 
+/// Diagnostics: the placed textures counted, to tell why they hold more
+/// than the title's own memory does. Logs how many there are and the title
+/// bytes they cover; how many addresses hold more than one (other largest
+/// mips or descriptions) and the bytes of the extra ones; and how many
+/// stand on memory the title no longer has.
+#[cfg(all(windows, feature = "diagnostics"))]
+pub(crate) fn placed_census() {
+    // What the host holds for them: all, and those holding over twice
+    // their title memory, by title format (count, title bytes, host bytes).
+    let mut heavy: std::collections::BTreeMap<u32, (u64, u64, u64)> = Default::default();
+    let mut host_bytes = 0u64;
+    let entries: Vec<(u64, u64, u32)> = PLACED_TEXTURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .map(|(&(address, desc), &(r, end))| {
+            let res = resource(r as This);
+            if let Some(h) = res.host.as_ref() {
+                host_bytes += h.bytes;
+                if h.bytes > 2 * (end - address) {
+                    let e = heavy.entry(res.desc.format).or_default();
+                    *e = (e.0 + 1, e.1 + (end - address), e.2 + h.bytes);
+                }
+            }
+            (address, end, desc[13])
+        })
+        .collect();
+    let mut heavy: Vec<_> = heavy.into_iter().collect();
+    heavy.sort_unstable_by_key(|&(_, (_, _, host))| std::cmp::Reverse(host));
+    heavy.truncate(5);
+    tracing::info!(
+        "placed textures hold {} MiB on the host; over twice their title memory, by title format (count, title MiB, host MiB): {:?}",
+        host_bytes >> 20,
+        heavy.iter().map(|&(f, (n, t, h))| (f, n, t >> 20, h >> 20)).collect::<Vec<_>>()
+    );
+    let mb = |b: u64| b >> 20;
+    let total: u64 = entries.iter().map(|&(a, e, _)| e - a).sum();
+    let (mut shared, mut extra, mut gone, mut gone_bytes) = (0u64, 0u64, 0u64, 0u64);
+    let mut i = 0;
+    while i < entries.len() {
+        let mut j = i + 1;
+        while j < entries.len() && entries[j].0 == entries[i].0 {
+            j += 1;
+        }
+        if j - i > 1 {
+            shared += 1;
+            let sizes = entries[i..j].iter().map(|&(a, e, _)| e - a);
+            extra += sizes.clone().sum::<u64>() - sizes.max().unwrap_or(0);
+        }
+        i = j;
+    }
+    // A byte of each texture's first and last pages only: cheap enough for
+    // tens of thousands of them once in a while.
+    for &(address, end, _) in &entries {
+        let mut byte = [0u8; 1];
+        if !crate::host::read_into(address as *const u8, &mut byte)
+            || !crate::host::read_into((end - 1) as *const u8, &mut byte)
+        {
+            gone += 1;
+            gone_bytes += end - address;
+        }
+    }
+    // Stretches of title memory covered by more than one texture.
+    let mut spans: Vec<(u64, u64)> = entries.iter().map(|&(a, e, _)| (a, e)).collect();
+    spans.sort_unstable();
+    let (mut covered, mut reach) = (0u64, 0u64);
+    for (a, e) in spans {
+        if e > reach {
+            covered += e - a.max(reach);
+            reach = e;
+        }
+    }
+    for (what, (held, used, slabs, worst)) in ["textures", "staging"].iter().zip(crate::texpool::census()) {
+        tracing::info!(
+            "texture pool, {what}: {} MiB in {slabs} slabs, {} MiB of them in use; most waste in slots of {} KiB: {} MiB held, {} MiB used",
+            mb(held),
+            mb(used),
+            worst.0 >> 10,
+            mb(worst.1),
+            mb(worst.2)
+        );
+    }
+    tracing::info!(
+        "placed textures: {} over {} MiB of title memory ({} MiB once overlaps are counted once);          {shared} addresses hold several, {} MiB extra; {gone} on memory the title no longer has, {} MiB",
+        entries.len(),
+        mb(total),
+        mb(covered),
+        mb(extra),
+        mb(gone_bytes)
+    );
+}
+
 #[cfg(all(test, windows))]
 pub(crate) fn has_placed_texture(address: u64, desc: &[u32; 14]) -> bool {
     PLACED_TEXTURES

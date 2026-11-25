@@ -365,6 +365,13 @@ impl Spans {
 /// [`REMAPPED`] so that what such writes do is counted by itself.
 static PAGE_WRITTEN: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::new());
 
+/// Recent DirectStorage page-write ranges retained for the next one-time
+/// character decoration bake (`PS_BakeDecorations_*`) when `VICTORY_PAGE_WRITES`
+/// does not enable continuous slot re-uploads (bit 2). Avoids flooding normal
+/// frames with thousands of streaming re-uploads while still ensuring skin/hair
+/// textures written by DirectStorage are flushed immediately before a bake.
+static BAKE_PAGE_WRITTEN: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::new());
+
 /// Since the start: such ranges kept for a pass; ranges dropped because no
 /// pass took them; slots of placed textures that held bytes of them when a
 /// pass took them; of those, the slots whose texture had been uploaded
@@ -1212,17 +1219,15 @@ impl HostHeap {
 
     /// Takes the ranges of title memory the runtime mapped, unmapped or
     /// wrote since the last call ([`remapped`]) and makes the slots whose
-    /// placed texture lies there due from the next frame (by when a write
-    /// under way has landed): memory that arrived is uploaded, memory that
-    /// went makes the slot null ([`HostHeap::texture_slot_gone`]), and a
-    /// texture streamed into the place of another of the same description
-    /// is uploaded although no descriptor says so. Slots tables read are
-    /// left to their draws. Returns how many slots it made due.
+    /// placed texture lies there due from the next frame (or immediately on
+    /// `frame` when `immediate` is true, e.g. right before a character
+    /// decoration bake). Slots tables read are left to their draws. Returns
+    /// how many slots it made due.
     /// shortcut: the ranges are kept in one place for all heaps; the heap
     /// whose pass runs first takes them (a title has one view heap).
-    pub(crate) fn texture_slots_remapped(&self, frame: u64) -> usize {
+    pub(crate) fn texture_slots_remapped(&self, frame: u64, immediate: bool) -> usize {
         use std::sync::atomic::Ordering::Relaxed;
-        self.texture_slots_page_written(frame);
+        self.texture_slots_page_written(frame, immediate);
         let ranges = std::mem::take(&mut *REMAPPED.lock().unwrap_or_else(|e| e.into_inner()));
         if ranges.is_empty() {
             return 0;
@@ -1234,12 +1239,30 @@ impl HostHeap {
         slots.sort_unstable();
         slots.dedup();
         slots.retain(|&slot| !self.tabled_lately(slot, frame));
+        let due_frame = if immediate { frame } else { frame + 1 };
         let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
         for &slot in &slots {
-            textures.changed(slot, frame, frame + 1);
+            textures.changed(slot, frame, due_frame);
         }
         STALE[3].fetch_add(slots.len() as u64, Relaxed);
         slots.len()
+    }
+
+    /// Right before a one-time character decoration bake (`PS_BakeDecorations_*`),
+    /// pull recently-uploaded slots awaiting their first fingerprint recheck
+    /// (`looks <= 1`) and partially-mapped slots (`mapped > 0`) to `due = frame`
+    /// so any skin/hair texture whose bytes landed after its initial zeroed
+    /// upload is re-checked and uploaded before the bake runs.
+    pub(crate) fn texture_slots_bake_prepare(&self, frame: u64) -> usize {
+        let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pulled = 0usize;
+        for w in textures.slots.values_mut() {
+            if w.due > frame && ((w.checked.2 != 0 && w.checked.3 <= 1) || w.mapped > 0) {
+                w.due = frame;
+                pulled += 1;
+            }
+        }
+        pulled
     }
 
     /// Takes the ranges of title memory written behind the guards' back
@@ -1247,25 +1270,45 @@ impl HostHeap {
     /// placed texture holds bytes of them ([`Spans::slots_holding`]). A
     /// slot whose texture was uploaded before the write shows the bytes
     /// from before: with `VICTORY_PAGE_WRITES` (`crate::watch::page_writes`,
-    /// bit 2) it is due again [`PAGE_WRITE_AFTER`] frames on, as memory
-    /// mapped under it would make it ([`HostHeap::texture_slots_remapped`]);
-    /// its host copy exists, so the upload needs no room on the card. A
+    /// bit 2) — or unconditionally when `immediate` is true for a decoration
+    /// bake — it is due again (`frame` if `immediate`, else `frame + PAGE_WRITE_AFTER`).
+    /// Its host copy exists, so the upload needs no room on the card. A
     /// slot still waiting for its first upload is left as it is: that
     /// upload takes the bytes that are there by then. Slots tables read
     /// are left to their draws. Counted either way; returns how many slots
     /// it made due.
-    fn texture_slots_page_written(&self, frame: u64) -> usize {
+    fn texture_slots_page_written(&self, frame: u64, immediate: bool) -> usize {
         let ranges = std::mem::take(&mut *PAGE_WRITTEN.lock().unwrap_or_else(|e| e.into_inner()));
+        let continuous = crate::watch::page_writes() & 2 != 0;
+        if immediate {
+            let mut saved = std::mem::take(&mut *BAKE_PAGE_WRITTEN.lock().unwrap_or_else(|e| e.into_inner()));
+            saved.extend(ranges);
+            if saved.is_empty() {
+                return 0;
+            }
+            return self.slots_written_under(&saved, frame, true, frame)[2];
+        }
         if ranges.is_empty() {
             return 0;
         }
-        self.slots_written_under(&ranges, frame, crate::watch::page_writes() & 2 != 0)[2]
+        if !continuous {
+            // Retain recent ranges for the next decoration bake (capped to keep memory tiny).
+            let mut saved = BAKE_PAGE_WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+            const BAKE_CAP: usize = 8192;
+            if saved.len() + ranges.len() > BAKE_CAP {
+                let drop_n = (saved.len() + ranges.len() - BAKE_CAP).min(saved.len());
+                saved.drain(..drop_n);
+            }
+            saved.extend(ranges.iter().copied());
+        }
+        let due_frame = frame + PAGE_WRITE_AFTER;
+        self.slots_written_under(&ranges, frame, continuous, due_frame)[2]
     }
 
     /// [`HostHeap::texture_slots_page_written`] for `ranges` (start, end):
     /// the slots that held bytes of them, those of them uploaded before,
     /// and those made due (the latter, if `due`).
-    fn slots_written_under(&self, ranges: &[(u64, u64)], frame: u64, due: bool) -> [usize; 3] {
+    fn slots_written_under(&self, ranges: &[(u64, u64)], frame: u64, due: bool, due_frame: u64) -> [usize; 3] {
         use std::sync::atomic::Ordering::Relaxed;
         let mut slots: Vec<u32> = {
             let placed = self.placed.lock().unwrap_or_else(|e| e.into_inner());
@@ -1285,7 +1328,7 @@ impl HostHeap {
             return [held, slots.len(), 0];
         }
         for &slot in &slots {
-            textures.changed(slot, frame, frame + PAGE_WRITE_AFTER);
+            textures.changed(slot, frame, due_frame);
         }
         [held, slots.len(), slots.len()]
     }
@@ -2429,6 +2472,26 @@ fn buffer_view_ok(format: DXGI_FORMAT, first: u64, count: u32, stride: u32, raw:
             .is_some_and(|end| end <= width)
 }
 
+/// Flamingo: for a raw view whose first byte in its host copy is not on 16
+/// bytes (the host refuses those, and the slot read zeros: the title's
+/// structured views of 4 MiB windows start where their data does, as at byte
+/// 8, 12 views a frame in the world), a copy of the view's own bytes
+/// ([`crate::shadow::exact`]) that the view takes from element 0. `copy_start`:
+/// the title address of the host copy's byte 0. `None`: the view stays.
+fn raw_on_own_bytes(raw: bool, first: u64, count: u32, copy_start: u64) -> Option<std::sync::Arc<crate::shadow::Shadow>> {
+    // Opt-in (`VICTORY_RAW_OWN_COPY=1`): with it no view was left null, but
+    // nothing changed in the picture and the frame rate went from about 10.5
+    // to 7.5-8.7 (runs 133, 136, 138: a copy made anew every frame).
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("VICTORY_RAW_OWN_COPY").is_some_and(|v| v == "1")) {
+        return None;
+    }
+    if !raw || first.is_multiple_of(4) || count == 0 {
+        return None;
+    }
+    crate::shadow::exact(copy_start + first * 4, u64::from(count) * 4)
+}
+
 fn buffer_srv(
     address: u64,
     len: u64,
@@ -2484,6 +2547,13 @@ fn buffer_srv(
     }
     let (first, count, stride) = (buffer.FirstElement, buffer.NumElements, buffer.StructureByteStride);
     let raw = buffer.Flags.0 & D3D12_BUFFER_SRV_FLAG_RAW.0 != 0;
+    let (shadow, first) = match raw_on_own_bytes(raw, first, count, address - offset) {
+        Some(own) => {
+            buffer.FirstElement = 0;
+            (own, 0)
+        }
+        None => (shadow, first),
+    };
     // SAFETY: a live buffer.
     let width = unsafe { shadow.buffer.GetDesc() }.Width;
     if !buffer_view_ok(desc.Format, first, count, stride, raw, width) {
@@ -2587,6 +2657,13 @@ fn buffer_uav(
         // refused by `buffer_view_ok` and left null, runs 15 and 16.)
         desc.Format = DXGI_FORMAT_R32_TYPELESS;
     }
+    let (shadow, first) = match raw_on_own_bytes(raw, first, count, address - offset) {
+        Some(own) => {
+            desc.Anonymous.Buffer.FirstElement = 0;
+            (own, 0)
+        }
+        None => (shadow, first),
+    };
     // SAFETY: a live buffer.
     let width = unsafe { shadow.buffer.GetDesc() }.Width;
     if !buffer_view_ok(desc.Format, first, count, stride, raw, width) {
@@ -3494,20 +3571,25 @@ mod tests {
         assert!(heap.note_buffer(1, Some(&view), false).is_empty());
         let written = [(at, at + 0x1000)];
         // Waiting for its first upload: held, not uploaded, nothing done.
-        assert_eq!(heap.slots_written_under(&written, 50, true), [1, 0, 0]);
+        assert_eq!(heap.slots_written_under(&written, 50, true, 50 + PAGE_WRITE_AFTER), [1, 0, 0]);
         let (queued, write) = heap.texture_slots_due(u64::MAX, 8).0[0];
         assert_eq!(queued, 1);
         heap.texture_slot_done(1, write, None);
         assert_eq!(slots(u64::MAX), []);
         // Uploaded and out of the queue. Memory elsewhere: nothing.
-        assert_eq!(heap.slots_written_under(&[(at + 0x10_0000, at + 0x10_1000)], 60, true), [0, 0, 0]);
+        assert_eq!(heap.slots_written_under(&[(at + 0x10_0000, at + 0x10_1000)], 60, true, 60 + PAGE_WRITE_AFTER), [0, 0, 0]);
         // Under it, counted only: it stays out of the queue.
-        assert_eq!(heap.slots_written_under(&written, 60, false), [1, 1, 0]);
+        assert_eq!(heap.slots_written_under(&written, 60, false, 60 + PAGE_WRITE_AFTER), [1, 1, 0]);
         assert_eq!(slots(u64::MAX), []);
         // Under it, asked for: due two frames on, not before.
-        assert_eq!(heap.slots_written_under(&written, 60, true), [1, 1, 1]);
+        assert_eq!(heap.slots_written_under(&written, 60, true, 60 + PAGE_WRITE_AFTER), [1, 1, 1]);
         assert_eq!(slots(61), []);
         assert_eq!(slots(62), [1]);
+        // Immediate bake flush: due in the same frame (60), not delayed.
+        let (_, write) = heap.texture_slots_due(62, 8).0[0];
+        heap.texture_slot_done(1, write, None);
+        assert_eq!(heap.slots_written_under(&written, 60, true, 60), [1, 1, 1]);
+        assert_eq!(slots(60), [1]);
     }
 
     /// `VICTORY_STALE_TEXTURES=0`: nothing is ever stale, and a view that
@@ -3582,9 +3664,15 @@ mod tests {
         // Memory elsewhere: nothing. Under the texture: due from the next frame.
         remapped((at + 2 * len) as usize, 0x1000);
         remapped(at as usize, 0x1000);
-        assert_eq!(heap.texture_slots_remapped(50), 1);
+        assert_eq!(heap.texture_slots_remapped(50, false), 1);
         assert_eq!(slots(50), []);
         assert_eq!(slots(51), [1]);
+        // Immediate bake flush makes remapped texture due in the same frame.
+        let (_, write) = heap.texture_slots_due(51, 8).0[0];
+        heap.texture_slot_done(1, write, None);
+        remapped(at as usize, 0x1000);
+        assert_eq!(heap.texture_slots_remapped(55, true), 1);
+        assert_eq!(slots(55), [1]);
         // A wider texture written at the same address: slot 1 is stale.
         assert_eq!(heap.note_buffer(2, Some(&view(at, 128)), false), [1]);
         assert_eq!(slots(u64::MAX), [2]);

@@ -1,0 +1,18 @@
+LIBRARY xmem
+EXPORTS
+  XMemAlloc
+  XMemFree
+  XMemAllocDefault
+  XMemFreeDefault
+  XMemSetAllocationHooks
+  XMemGetAllocationHooks
+  XMemVirtualQuery
+  XMemGetWorkingSetStatistics
+  AnyXboxX_DecodeAllocAttributes
+  XMemVirtualAlloc
+  XMemAllocatePhysicalPages
+  XMemFreePhysicalPages
+  XMemMapPhysicalPages
+  XMemMapPhysicalPagesScatter
+  XMemIsToolsMemAvailable
+  XMemTransferMemory

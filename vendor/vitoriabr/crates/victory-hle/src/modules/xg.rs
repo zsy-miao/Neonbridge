@@ -147,16 +147,20 @@ fn texture(desc: &ResourceDesc) -> Option<Texture> {
         l if l & !0xff == SWIZZLED => Swizzle(l & 0xff),
         _ => return None,
     };
-    let texture = Texture::new(&TextureDesc {
-        dimension,
-        width: u32::try_from(desc.width).ok()?,
-        height: desc.height,
-        depth_or_array: u32::from(desc.depth_or_array),
-        mips: u32::from(desc.mips),
-        format: desc.format,
-        samples: desc.samples.max(1),
-        swizzle,
-    })
+    let texture = Texture::for_gpu(
+        &TextureDesc {
+            dimension,
+            width: u32::try_from(desc.width).ok()?,
+            height: desc.height,
+            depth_or_array: u32::from(desc.depth_or_array),
+            mips: u32::from(desc.mips),
+            format: desc.format,
+            samples: desc.samples.max(1),
+            swizzle,
+        },
+        victory_gpu::console::current().pipes(),
+        0,
+    )
     .ok()?;
     // The layout struct has room for 15 mips.
     (texture.planes[0].layout.mips.len() <= MIPS).then_some(texture)

@@ -16,7 +16,8 @@
 //!  * the frame is one of `VICTORY_SHOT_AT` (comma-separated, counted from
 //!    the first frame of 500 draws or more, as `VICTORY_RENDERDOC_AT`).
 //!
-//! Of that frame the shot keeps, in `<folder>\shot-<frame>`:
+//! Of that frame the shot keeps, in `<folder>\shot-<frame>-<hhmmss>` (the
+//! time of day it began, UTC):
 //!  * `events.txt`: every draw, dispatch, copy, submission and drop in the
 //!    order recorded, with the list it was recorded into, the thread, and
 //!    the place of its timestamp (the lines of `capture::op`: shaders,
@@ -188,6 +189,10 @@ struct Carry {
     /// The shot's first frame (its folder's name) and why it was taken.
     first: u64,
     why: String,
+    /// The time of day (UTC, `hhmmss`) the shot began: the rest of its
+    /// folder's name. (Two runs' shots of the same frame number went into
+    /// one folder: runs 270 and 273, `shot-1864`.)
+    began: u32,
     /// Frames taken so far; pictures saved and failed in them.
     parts: u32,
     saved: u32,
@@ -201,6 +206,21 @@ struct Carry {
     places: u32,
     not_taken: u32,
     read_back_mb: u64,
+}
+
+impl Carry {
+    /// `shot-<first frame>-<hhmmss>`.
+    fn folder_name(&self) -> String {
+        format!("shot-{}-{:06}", self.first, self.began)
+    }
+}
+
+/// The time of day now, UTC, as the number `hhmmss`.
+fn hhmmss() -> u32 {
+    let s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() % 86_400) as u32;
+    (s / 3600) * 10_000 + (s / 60 % 60) * 100 + s % 60
 }
 
 struct Shot {
@@ -709,7 +729,7 @@ pub(crate) fn present(frame: u64, drawn: u64) {
                 if u64::from(TAKEN.fetch_add(1, Relaxed)) >= most {
                     tracing::warn!(most, "frame shot not taken: the run has its most already (VICTORY_SHOT_MAX)");
                 } else {
-                    arm(frame + 1, Carry { first: frame + 1, why, ..Default::default() }, folder);
+                    arm(frame + 1, Carry { first: frame + 1, why, began: hhmmss(), ..Default::default() }, folder);
                 }
             }
         }
@@ -754,7 +774,7 @@ pub(crate) fn present(frame: u64, drawn: u64) {
                 .is_some_and(|(when, of)| when.elapsed() >= std::time::Duration::from_secs(2) && frame >= of + 8);
             if ready && let Some(s) = shot.take() {
                 PHASE.store(SAVING, Relaxed);
-                let to = folder.join(format!("shot-{}", s.carry.first));
+                let to = folder.join(s.carry.folder_name());
                 let spawned = std::thread::Builder::new().name("victory-shot".into()).spawn(move || {
                     crate::framelog::keep_on_slow_cores("frame shot");
                     let next = save(s, &to);
@@ -782,7 +802,7 @@ fn arm(frame: u64, carry: Carry, folder: &std::path::Path) {
                 part = carry.parts,
                 "frame shot ends here: too little memory free for more of its pictures"
             );
-            finish(&carry, &folder.join(format!("shot-{}", carry.first)), "ended early: too little memory free for more pictures", 0);
+            finish(&carry, &folder.join(carry.folder_name()), "ended early: too little memory free for more pictures", 0);
             return;
         }
         // The lines and times need none of it.

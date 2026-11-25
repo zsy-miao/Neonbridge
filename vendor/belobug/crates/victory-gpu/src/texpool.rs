@@ -177,3 +177,26 @@ pub(crate) fn place(
     .ok()?;
     Some((texture?, slot))
 }
+
+/// Diagnostics: for textures and for staging, the bytes of the slabs that
+/// have memory, the bytes of their slots in use, how many slabs, and the
+/// size class that wastes most with its slab and used bytes.
+#[cfg(feature = "diagnostics")]
+pub(crate) fn census() -> [(u64, u64, u64, (u64, u64, u64)); 2] {
+    let slabs = SLABS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut out = [(0, 0, 0, (0, 0, 0)); 2];
+    for (&(size, staging), of) in slabs.iter() {
+        let (mut held, mut used, mut count) = (0u64, 0u64, 0u64);
+        for s in of.iter().filter(|s| s.memory.is_some()) {
+            held += u64::from(s.slots) * size;
+            used += (u64::from(s.slots) - s.free.len() as u64) * size;
+            count += 1;
+        }
+        let o = &mut out[usize::from(staging)];
+        (o.0, o.1, o.2) = (o.0 + held, o.1 + used, o.2 + count);
+        if held - used > o.3.1 - o.3.2 {
+            o.3 = (size, held, used);
+        }
+    }
+    out
+}

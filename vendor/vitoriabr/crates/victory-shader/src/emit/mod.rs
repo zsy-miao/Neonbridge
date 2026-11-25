@@ -97,6 +97,8 @@ mod threading;
 #[cfg(windows)]
 pub mod validator;
 #[cfg(all(test, windows))]
+mod test_skip;
+#[cfg(all(test, windows))]
 mod valu_tests;
 #[cfg(all(test, windows))]
 mod waterfall_tests;
@@ -1109,7 +1111,7 @@ mod tests {
     #[cfg(windows)]
     fn stub_pipeline_is_created() {
         let Ok(host) = super::host::Host::new(false) else {
-            eprintln!("no SM 6.6 device; skipped");
+            crate::emit::test_skip::skip("no SM 6.6 device; skipped");
             return;
         };
         let ps = super::HostShader {
@@ -1170,7 +1172,7 @@ mod tests {
         let mut c = constant_color();
         let path = super::validator::Validator::default_path();
         let Ok(mut v) = super::validator::Validator::load(path.as_deref()) else {
-            eprintln!("no dxil.dll; skipped");
+            crate::emit::test_skip::skip("no dxil.dll; skipped");
             return;
         };
         let ours = c[4..20].to_vec();
@@ -1311,7 +1313,10 @@ mod tests {
         let st = crate::structure::structure(&p).unwrap();
         let res = crate::resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
         let io = crate::io::raise(&p, &native).unwrap();
-        let out = super::emit(&c, &native, &p, &st, &io, &res).expect("a POPS pixel shader translates");
+        let out =
+            super::emit(&c, &native, &p, &st, &io, &res).expect("a POPS pixel shader translates");
+        let host = super::Container::parse(&out.dxil).expect("the emitted shader container parses");
+        assert!(host.part(super::FourCC::DXIL).is_some());
         #[cfg(windows)]
         if let Ok(mut v) =
             super::validator::Validator::load(super::validator::Validator::default_path().as_deref())
@@ -2124,6 +2129,7 @@ mod lds_bounds_tests {
             let addrs = [0u32, 508, 512, 0xFFFF_FFF0, 1, 509, 602];
             for (label, warp) in [("hardware", false), ("warp", true)] {
                 let Ok(host) = super::host::Host::new(warp) else {
+                    super::test_skip::skip(&format!("no SM 6.6 {label} device"));
                     continue;
                 };
                 let (root, pso) = host.compute_pipeline(&cs).unwrap();
@@ -2223,6 +2229,7 @@ mod lds_bounds_tests {
             addrs[2] = 0; // lane 2 is active and in-bounds
             for (label, warp) in [("hardware", false), ("warp", true)] {
                 let Ok(host) = super::host::Host::new(warp) else {
+                    super::test_skip::skip(&format!("no SM 6.6 {label} device"));
                     continue;
                 };
                 let (root, pso) = host.compute_pipeline(&cs).unwrap();

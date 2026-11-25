@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="456" viewBox="0 0 760 456" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+<rect width="760" height="456" fill="#f7f8fa"/>
+<text x="24" y="34" font-size="18" font-weight="600" fill="#1d2230">AnyXboxX: Xbox Series X translation progress</text>
+<text x="24" y="56" fill="#4b5263">Share translated for the Xbox Series X · green complete, orange partial, red not started</text>
+<text x="270" y="90" text-anchor="end" fill="#1d2230">CPU instructions (x86-64, Zen 2)</text>
+<rect x="300" y="76" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="76" width="220" height="18" rx="3" fill="#107c10"/>
+<text x="532" y="90" fill="#1d2230">100%</text>
+<text x="300" y="110" font-size="11" fill="#4b5263">same instruction set as the PC: run as-is in native mode</text>
+<text x="270" y="136" text-anchor="end" fill="#1d2230">GPU instructions disassembled (RDNA 2, LLVM syntax)</text>
+<rect x="300" y="122" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="122" width="220" height="18" rx="3" fill="#107c10"/>
+<text x="532" y="136" fill="#1d2230">1487/1487 (100%)</text>
+<text x="300" y="156" font-size="11" fill="#4b5263">operands checked against LLVM's public encoding tests, SDWA and DPP forms included</text>
+<text x="270" y="182" text-anchor="end" fill="#1d2230">GPU instructions (RDNA 2, console shaders)</text>
+<rect x="300" y="168" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="168" width="77" height="18" rx="3" fill="#e8890c"/>
+<text x="532" y="182" fill="#1d2230">521/1487 (35%)</text>
+<text x="300" y="202" font-size="11" fill="#4b5263">run by the reference interpreter (wave32); recompiled to DXIL: compute, vertex, pixel</text>
+<text x="270" y="228" text-anchor="end" fill="#1d2230">System functions imported by the package</text>
+<rect x="300" y="214" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="214" width="144" height="18" rx="3" fill="#e8890c"/>
+<text x="532" y="228" fill="#1d2230">876/1337 (66%)</text>
+<text x="300" y="248" font-size="11" fill="#4b5263">isolated mode: emulated or provided by a package DLL</text>
+<text x="270" y="274" text-anchor="end" fill="#1d2230">xmem.dll</text>
+<rect x="300" y="260" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="260" width="220" height="18" rx="3" fill="#107c10"/>
+<text x="532" y="274" fill="#1d2230">4/4 (100%)</text>
+<text x="300" y="294" font-size="11" fill="#4b5263">complete</text>
+<text x="270" y="320" text-anchor="end" fill="#1d2230">d3d12_xs.dll</text>
+<rect x="300" y="306" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="306" width="220" height="18" rx="3" fill="#107c10"/>
+<text x="532" y="320" fill="#1d2230">2/2 (100%)</text>
+<text x="300" y="340" font-size="11" fill="#4b5263">complete</text>
+<text x="270" y="366" text-anchor="end" fill="#1d2230">D3D12.X: device and ID3D12* interfaces</text>
+<rect x="300" y="352" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="352" width="220" height="18" rx="3" fill="#107c10"/>
+<text x="532" y="366" fill="#1d2230">100%</text>
+<text x="300" y="386" font-size="11" fill="#4b5263">served by TomBox's d3d12_xs.dll (194/200 methods by their count), not yet tried with a game</text>
+<text x="270" y="412" text-anchor="end" fill="#1d2230">GDK runtime functions served by AnyXboxX</text>
+<rect x="300" y="398" width="220" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="300" y="398" width="117" height="18" rx="3" fill="#e8890c"/>
+<text x="532" y="412" fill="#1d2230">210/396 (53%)</text>
+<text x="300" y="432" font-size="11" fill="#4b5263">26/34 interfaces (used when the Windows GDK runtime is off)</text>
+</svg>

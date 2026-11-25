@@ -15,6 +15,8 @@ use crate::dxbc::{Container, FourCC};
 
 pub struct Host {
     pub device: ID3D12Device,
+    /// The adapter the device runs on, as `name (vendor 0x....)`.
+    pub adapter: String,
 }
 
 /// What the stage declares that a pipeline must match.
@@ -56,6 +58,26 @@ fn target_format(e: &SigElement) -> DXGI_FORMAT {
         4 => DXGI_FORMAT_R32G32B32A32_SINT,
         _ => DXGI_FORMAT_R32G32B32A32_UINT,
     }
+}
+
+/// `name (vendor 0x....)` of the adapter `device` runs on.
+fn adapter_label(device: &ID3D12Device) -> String {
+    // SAFETY: plain DXGI calls with valid arguments.
+    let desc = unsafe {
+        let factory = CreateDXGIFactory2::<IDXGIFactory4>(DXGI_CREATE_FACTORY_FLAGS(0)).ok();
+        factory
+            .and_then(|f| f.EnumAdapterByLuid::<IDXGIAdapter1>(device.GetAdapterLuid()).ok())
+            .and_then(|a| a.GetDesc1().ok())
+    };
+    let Some(desc) = desc else {
+        return "unknown adapter".to_owned();
+    };
+    let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+    format!(
+        "{} (vendor {:#06x})",
+        String::from_utf16_lossy(&desc.Description[..len]),
+        desc.VendorId
+    )
 }
 
 fn err(e: windows::core::Error) -> String {
@@ -119,7 +141,16 @@ impl Host {
                     sm.HighestShaderModel.0
                 ));
             }
-            Ok(Host { device })
+            let adapter = adapter_label(&device);
+            // Once per adapter and process, so a log shows what ran the
+            // tests (a card or WARP) without one line per test.
+            static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            if !seen.contains(&adapter) {
+                eprintln!("VICTORY HOST GPU: {adapter}");
+                seen.push(adapter.clone());
+            }
+            Ok(Host { device, adapter })
         }
     }
 

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Can it run GTA VI? | AnyXboxX</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%23ff5c8a%22/%3E%3C/svg%3E">
+<meta name="description" content="Can Grand Theft Auto VI (Xbox Series, build 1.0.2.1) run on a PC yet? Status, disk space and a hardware estimate, from AnyXboxX and Leonida.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --night: #1d0f33; --violet: #3b1d5e; --flamingo: #ff5c8a; --mango: #ffb44a; --lagoon: #19b3b1;
+  --foam: #fff4ea; --haze: #cbb8dc; --line: rgba(255, 244, 234, .16);
+  --no: #ff7a8f; --wip: #ffb44a; --ok: #3fd6c6;
+}
+* { box-sizing: border-box; }
+html { background: var(--night); }
+body { margin: 0; background: var(--night); color: var(--foam);
+  font: 400 17px/1.6 "Bricolage Grotesque", system-ui, sans-serif; font-optical-sizing: auto; }
+a { color: var(--mango); text-underline-offset: 3px; }
+a:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--mango); outline-offset: 3px; }
+code { font-size: .92em; color: var(--haze); }
+
+/* Hero: the one loud thing on the page */
+.hero { position: relative; min-height: min(100svh, 860px); display: flex; align-items: flex-end; overflow: hidden; }
+.scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hero::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(to bottom, rgba(29, 15, 51, 0) 64%, rgba(29, 15, 51, .72) 86%, var(--night)); }
+.hero-text { position: relative; z-index: 1; width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 20px 56px; }
+.hero h1 { font-weight: 600; font-size: clamp(1.15rem, 2.6vw, 1.6rem); margin: 0; color: var(--foam); }
+.verdict { font-weight: 800; font-size: clamp(4.2rem, 15vw, 11rem); line-height: .86; letter-spacing: -.035em;
+  margin: 6px 0 18px; font-variation-settings: "opsz" 96; }
+.hero p { max-width: 60ch; margin: 0; font-size: 1.08rem; }
+.hero code { color: var(--foam); }
+.hero p.build { color: var(--haze); font-size: .95rem; margin-top: 14px; }
+.sun { animation: rise 2.4s cubic-bezier(.2, .7, .2, 1) both; }
+@keyframes rise { from { transform: translateY(70px); } }
+@media (prefers-reduced-motion: reduce) { .sun { animation: none; } }
+
+/* Content */
+main { max-width: 1080px; margin: 0 auto; padding: 8px 20px 72px; }
+section { margin-top: 64px; }
+h2 { font-weight: 800; font-size: clamp(1.6rem, 3.6vw, 2.3rem); line-height: 1.1; letter-spacing: -.015em; margin: 0 0 14px; }
+.lead { max-width: 64ch; color: var(--haze); margin: 0 0 22px; }
+.note { max-width: 72ch; color: var(--haze); font-size: .92rem; margin: 16px 0 0; }
+
+/* Disk space: one bar at scale (30 + 370 = 400) */
+.bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--violet); }
+.bar span { display: block; }
+.bar .run { background: var(--lagoon); }
+.bar .assets { background: linear-gradient(90deg, var(--flamingo), var(--mango)); }
+.disk { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.disk li { border-left: 4px solid var(--line); padding-left: 14px; }
+.disk li[data-disk="run"] { border-color: var(--lagoon); }
+.disk li[data-disk="assets"] { border-color: var(--flamingo); }
+.disk li[data-disk="full"] { border-color: var(--foam); }
+.disk .gb { font-weight: 800; font-size: 2.2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.disk .what { font-weight: 600; margin-top: 4px; }
+.disk p { margin: 4px 0 0; color: var(--haze); font-size: .93rem; }
+
+/* Estimator */
+.estimator { display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch;
+  background: var(--violet); border-radius: 18px; padding: 26px; }
+.estimator label { display: block; font-weight: 600; margin: 14px 0 6px; }
+.estimator label:first-of-type { margin-top: 0; }
+.estimator select, .estimator input[type="text"] { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--night); color: var(--foam); font: inherit; }
+.estimator .check { display: flex; gap: 10px; align-items: center; font-weight: 400; }
+.estimator .check input { width: 18px; height: 18px; accent-color: var(--flamingo); }
+.hint { min-height: 1.2em; margin: 4px 0 0; color: var(--haze); font-size: .85rem; }
+.hint.miss { color: var(--no); }
+#detected { list-style: none; padding: 0; margin: 0 0 18px; color: var(--haze); font-size: .92rem; }
+#result { border-radius: 14px; padding: 22px; background: var(--night); }
+#fps { font-weight: 800; font-size: clamp(2.6rem, 6vw, 3.6rem); line-height: 1; color: var(--mango);
+  font-variant-numeric: tabular-nums; }
+#quality { font-weight: 600; font-size: 1.1rem; margin: 10px 0 0; }
+#bottleneck { color: var(--haze); margin: 6px 0 0; }
+#notes { margin: 14px 0 0; padding-left: 18px; color: var(--haze); font-size: .93rem; }
+#notes li { margin: 4px 0; }
+.empty { color: var(--haze); margin: 0; }
+
+/* Status */
+.status { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+.status li { display: grid; grid-template-columns: 14px minmax(0, 15rem) minmax(0, 1fr); gap: 4px 14px;
+  padding: 14px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.status .dot { width: 10px; height: 10px; border-radius: 50%; align-self: center; }
+.status .no .dot { background: var(--no); }
+.status .wip .dot { background: var(--wip); }
+.status .ok .dot { background: var(--ok); }
+.status b { font-weight: 600; }
+.status .state { font-weight: 600; margin-right: 6px; }
+.status .no .state { color: var(--no); }
+.status .wip .state { color: var(--wip); }
+.status .ok .state { color: var(--ok); }
+.status .detail { color: var(--haze); }
+
+.needs { max-width: 64ch; padding-left: 20px; margin: 0; }
+.needs li { margin: 6px 0; }
+.links { display: flex; flex-wrap: wrap; gap: 12px; }
+.links a { padding: 12px 18px; border-radius: 12px; background: var(--violet); color: var(--foam);
+  text-decoration: none; font-weight: 600; }
+.links a:hover { background: #4a2673; }
+footer { max-width: 1080px; margin: 0 auto; padding: 28px 20px 48px; border-top: 1px solid var(--line);
+  color: var(--haze); font-size: .85rem; }
+footer p { max-width: 80ch; margin: 0 0 6px; }
+
+@media (max-width: 760px) {
+  .hero::after { background: linear-gradient(to bottom, rgba(29, 15, 51, 0) 30%, rgba(29, 15, 51, .82) 58%, var(--night)); }
+  .estimator { grid-template-columns: 1fr; padding: 18px; }
+  .status li { grid-template-columns: 14px minmax(0, 1fr); }
+  .status .detail { grid-column: 2; }
+}
+</style>
+</head>
+<body>
+<header class="hero">
+  <!-- Original illustration (no game artwork): dusk over a Florida-like coast. -->
+  <svg class="scene" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#1d0f33"/><stop offset=".38" stop-color="#3b1d5e"/>
+        <stop offset=".62" stop-color="#a8306e"/><stop offset=".8" stop-color="#ff6a62"/>
+        <stop offset=".92" stop-color="#ffb44a"/>
+      </linearGradient>
+      <linearGradient id="sunfill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#ffe08a"/><stop offset=".55" stop-color="#ffb44a"/><stop offset="1" stop-color="#ff5c8a"/>
+      </linearGradient>
+      <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#4a1f63"/><stop offset=".5" stop-color="#2a1448"/><stop offset="1" stop-color="#1d0f33"/>
+      </linearGradient>
+      <mask id="stripes">
+        <rect x="0" y="0" width="1600" height="900" fill="#fff"/>
+        <g fill="#000">
+          <rect x="860" y="520" width="440" height="7"/><rect x="860" y="548" width="440" height="10"/>
+          <rect x="860" y="578" width="440" height="13"/><rect x="860" y="604" width="440" height="16"/>
+        </g>
+      </mask>
+    </defs>
+    <rect width="1600" height="640" fill="url(#sky)"/>
+    <g class="sun"><circle cx="1080" cy="560" r="200" fill="url(#sunfill)" mask="url(#stripes)"/></g>
+    <!-- skyline on the far shore -->
+    <path fill="#2a1448" d="M0 640V600h60v-30h40v30h30v-70h50v70h24v-46h36v46h40V500h22v-26h12v26h22v140h30v-90h46v90h20
+      v-60h40v60h34v-120h18v-24h22v24h18v120h40v-52h50v52h30v-34h44v34h40v-80h36v80h560v-18h60v-40h40v58h70v-30h40v30h60
+      V640z"/>
+    <rect y="636" width="1600" height="264" fill="url(#sea)"/>
+    <!-- sun reflection -->
+    <g fill="#ff8a6a" opacity=".75">
+      <rect x="930" y="652" width="300" height="5" rx="2.5"/><rect x="965" y="676" width="230" height="5" rx="2.5"/>
+      <rect x="1000" y="702" width="160" height="4" rx="2"/><rect x="1030" y="730" width="100" height="4" rx="2"/>
+      <rect x="1052" y="760" width="56" height="3" rx="1.5"/>
+    </g>
+    <!-- palms in the foreground -->
+    <g fill="#12081f">
+      <g transform="translate(-200 60)">
+      <path d="M248 900c10-150 30-290 78-410l14 5c-44 120-62 258-70 405z"/>
+      <path d="M332 486c-60-40-150-44-214-8 70-6 140 6 196 34zM334 482c-14-70-70-128-140-146 52 38 92 92 112 156z
+        M338 484c40-60 112-92 186-86-62 18-118 54-160 104zM336 486c76-20 160 4 214 58-64-30-136-44-206-30z
+        M334 488c-40 40-60 104-50 166 14-58 40-112 80-152z"/>
+      </g>
+      <path d="M1450 900c-6-120 4-230 38-330l13 4c-30 100-40 208-34 326z"/>
+      <path d="M1494 572c-52-34-128-36-182-4 60-4 118 6 166 30zM1496 568c-10-60-58-108-118-122 44 32 78 78 96 132z
+        M1500 570c34-50 94-78 156-72-52 16-98 46-134 88zM1498 572c64-16 134 4 180 50-54-26-114-38-174-26z"/>
+    </g>
+  </svg>
+  <div class="hero-text">
+    <h1>Can it run GTA VI on PC?</h1>
+    <div class="verdict" id="verdict">Not yet.</div>
+    <p>The game's executable (<code>game_scarlett_master.exe</code>) is missing from the package studied, so the game itself has never been started, by AnyXboxX or by Leonida. Once an executable is available, expect at least a few weeks of work before the game is even minimally playable.</p>
+    <p class="build">Grand Theft Auto VI for Xbox Series, build 1.0.2.1. Status checked on <time datetime="2026-11-23">23 November 2026</time>.</p>
+  </div>
+</header>
+
+<main>
+  <section aria-labelledby="disk-title">
+    <h2 id="disk-title">Disk space to plan for</h2>
+    <p class="lead">These are work files, on top of the game package itself, which the runtime reads in place. Work folders can go on another drive.</p>
+    <div class="bar" role="img" aria-label="400 GB in total: 30 GB to run the game, 370 GB for the optional asset export">
+      <span class="run" style="width: 7.5%"></span><span class="assets" style="width: 92.5%"></span>
+    </div>
+    <ul class="disk">
+      <li data-disk="run" data-gb="30"><div class="gb">~30 GB</div><div class="what">To run the game</div>
+        <p>Leonida's <code>check</code>, <code>shaders</code> and <code>runtime</code> stages.</p></li>
+      <li data-disk="assets" data-gb="370"><div class="gb">~370 GB</div><div class="what">Asset export, optional</div>
+        <p>Only for the asset tools (models, textures, audio). Not needed to play.</p></li>
+      <li data-disk="full" data-gb="400"><div class="gb">~400 GB</div><div class="what">Full build</div>
+        <p>All stages. Sizes as Windows Explorer shows them (GiB): 400 GiB is about 430 GB.</p></li>
+    </ul>
+    <p class="note">Source: the prerequisites in Leonida's README.</p>
+  </section>
+
+  <section aria-labelledby="pc-title">
+    <h2 id="pc-title">Will my PC run it?</h2>
+    <p class="lead">An estimate from your graphics card, processor and memory. Your browser fills in what it can; correct anything it got wrong.</p>
+    <div class="estimator">
+      <div>
+        <ul id="detected"><li>Detecting your hardware…</li></ul>
+        <label for="gpu">Graphics card</label>
+        <input id="gpu" type="text" list="gpu-list" autocomplete="off" spellcheck="false" placeholder="Type to search, for example 4070 or 6700 XT">
+        <datalist id="gpu-list"></datalist><p class="hint" id="gpu-hint"></p>
+        <label class="check"><input type="checkbox" id="laptop"> Laptop version of this card</label>
+        <label for="cpu">Processor</label>
+        <input id="cpu" type="text" list="cpu-list" autocomplete="off" spellcheck="false" placeholder="Type to search, for example 13700K or 7800X3D">
+        <datalist id="cpu-list"></datalist><p class="hint" id="cpu-hint"></p>
+        <label for="ram">Memory (RAM)</label><select id="ram"></select>
+      </div>
+      <div id="result" aria-live="polite">
+        <p class="empty" id="empty">Type your graphics card to see an estimate.</p>
+        <div id="answer" hidden>
+          <div id="fps"></div>
+          <p id="quality"></p>
+          <p id="bottleneck"></p>
+          <ul id="notes"></ul>
+        </div>
+      </div>
+    </div>
+    <p class="note"><b>This is a guess, not a measurement</b>: the game does not run yet. It compares your parts to the Xbox Series X (graphics and processor indexes from public benchmarks, about ±20 %), assumes the console version runs at 30 fps and that translation costs 20 to 60 % more. Real numbers will replace it once the game boots. Detection happens in your browser; nothing is sent anywhere.</p>
+  </section>
+
+  <section aria-labelledby="status-title">
+    <h2 id="status-title">Where things stand</h2>
+    <ul class="status">
+      <li class="no"><span class="dot"></span><b>Game executable</b><span class="detail"><span class="state">Missing.</span>Nothing can boot without it.</span></li>
+      <li class="no"><span class="dot"></span><b>Booting, story mode</b><span class="detail"><span class="state">No.</span>Waits for the executable.</span></li>
+      <li class="ok"><span class="dot"></span><b>GPU shaders</b><span class="detail"><span class="state">Done.</span>All 26,503 of the game's shaders translate from RDNA 2 to SPIR-V and pass <code>spirv-val</code> (Leonida).</span></li>
+      <li class="ok"><span class="dot"></span><b>Models, textures, audio</b><span class="detail"><span class="state">Exported.</span>Read from the player's own copy (Leonida); some texture formats are still partial.</span></li>
+      <li class="wip"><span class="dot"></span><b>Xbox Direct3D 12 to Vulkan</b><span class="detail"><span class="state">In progress.</span>Device, queues and resources work; ray tracing is under way (Leonida).</span></li>
+      <li class="wip"><span class="dot"></span><b>Console system functions</b><span class="detail"><span class="state">In progress.</span>AnyXboxX has written 210 of the 396 GDK functions; Leonida has its own. The two projects share their work.</span></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="needs-title">
+    <h2 id="needs-title">What you will need, once it works</h2>
+    <ul class="needs">
+      <li>Your own copy of the Xbox Series package, version 1.0.2.1. Nothing here provides it or explains how to get it.</li>
+      <li>Windows 10 or 11, 64-bit, and a graphics card with Vulkan.</li>
+      <li>The disk space above.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="follow-title">
+    <h2 id="follow-title">Follow the work</h2>
+    <div class="links">
+      <a href="https://github.com/LooperSalty/AnyXboxX">AnyXboxX on GitHub</a>
+    </div>
+    <p class="note">Leonida, the project this page once tracked, was deleted from GitHub on 2026-11-24.</p>
+  </section>
+</main>
+
+<footer>
+  <p>AnyXboxX and Leonida are open-source projects under the GPL 3.0. They contain no game files, keys or executables. The illustration above is original.</p>
+  <p>Not affiliated with or endorsed by Rockstar Games, Take-Two Interactive or Microsoft. Grand Theft Auto and Xbox are trademarks of their respective owners.</p>
+</footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -536,7 +536,7 @@ fn run(wide: bool, descriptor: Descriptor, pointers: u64, sort: bool) {
     let mut ran = 0;
     for (label, warp) in [("hardware", false), ("warp", true)] {
         let Ok(host) = Host::new(warp) else {
-            eprintln!("no SM 6.6 {label} device; skipped");
+            crate::emit::test_skip::skip(&format!("no SM 6.6 {label} device; skipped"));
             continue;
         };
         let (root, pso) = host

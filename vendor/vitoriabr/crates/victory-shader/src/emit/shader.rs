@@ -1053,7 +1053,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let Ok(host) = Host::new(true) else {
-            eprintln!("no SM 6.6 WARP adapter; skipped");
+            crate::emit::test_skip::skip("no SM 6.6 WARP adapter; skipped");
             return;
         };
         let mut s = Shader::new(false);

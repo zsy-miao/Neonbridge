@@ -1,0 +1,75 @@
+# Neonbridge launcher spec for vendor/anyxboxx: LooperSalty's AnyXboxX. Its game runtime is the VIctory
+# copy in third_party/victory (Neptune / VIctory Edit. 2026-11-25c base); build, run and environment are its
+# tools/lancer_victory.ps1 (README "~12 fps in the world", RTX 4070 SUPER, 4K, Series X).
+name = "anyxboxx"
+rank = 9   # launcher list order (Master): 2nd on the gta6-pc-race tracker
+about = "AnyXboxX 9a06443 (GPL-3.0): ~12 fps in the world (median 12.5, peaks 30) on its author's RTX 4070 SUPER, no crash; not yet run here"
+upstream = "https://github.com/LooperSalty/AnyXboxX"
+build = ["cargo", "build", "--release", "-p", "victory", "--manifest-path", "third_party/victory/Cargo.toml", "--locked"]   # lancer_victory.ps1:102,114 (+--locked)
+watch = ["third_party/victory/apps", "third_party/victory/crates", "third_party/victory/Cargo.toml", "third_party/victory/Cargo.lock"]
+exe = "third_party/victory/target/release/victory.exe"   # lancer_victory.ps1:103
+diag_build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--features", "diagnostics", "--manifest-path", "third_party/victory/Cargo.toml", "--locked"]   # lancer_victory.ps1:99 (-Diag)
+run = ["run", "{game_exe}", "--execute"]   # lancer_victory.ps1:233 (Series X)
+# lancer_victory.ps1 -Precompile (:211-229): shaders.rpf, the game and its two DLLs
+prewarm = ["warm", "{game}/shaders.rpf", "{game_exe}", "{game}/XboxBvhBuilder.dll", "{game}/amd_fidelityfx_upscaler_xbox.dll"]
+game_env = "VICTORY_GAME_DIR"
+cache_env = "VICTORY_CACHE_DIR"
+agility = false
+
+options = [
+  "VICTORY_AUTO_A=150: taps A through the start screens (lancer_victory.ps1 -AutoA)",
+  "VICTORY_FRAMETIME_DUMP=1: frametime.csv in the cache (-FrameTime)",
+  "VICTORY_D3D12_DRED=1: device-removed data, diagnostics build (-Dred)",
+  "VICTORY_CARD_WINDOWS_MB / VICTORY_CARD_BUFFERS_MB: lower these first on a smaller card (lancer_victory.ps1:53-55)",
+]
+
+[env]   # lancer_victory.ps1:121-163, Neptune's switch set as it sets it
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family
+VICTORY_DISCORD = "0"
+VICTORY_CARD_WINDOWS_MB = "4096"
+VICTORY_BAKE_TEXTURES_MS = "10000"
+VICTORY_EARLY_TEXTURES_MS = "40"
+VICTORY_WIDE_MERGE = "1"
+VICTORY_RELAY_OWN_QUEUE = "1"
+VICTORY_UNDER_WRITES_WORDS = "1"
+VICTORY_UNDER_WRITES_RUNS = "100000"
+VICTORY_UNDER_WRITES_MASKS = "1"
+VICTORY_RELAY = "2"
+VICTORY_WIDE_REFRESH = "1"
+VICTORY_ASK_ONCE = "1"
+VICTORY_TEXTURE_NO_WAIT = "1"
+VICTORY_CARD_REHASH_RUNS = "1"
+VICTORY_JOIN_COPIES = "1"
+VICTORY_D3D12_BACKGROUND = "0"
+VICTORY_LATE_WAIT_LISTS = "1024"
+VICTORY_WINDOW_TAILS = "1"
+VICTORY_TEXTURE_STAGE_MB = "512"
+VICTORY_CARD_BUFFERS_MIN_KB = "64"
+VICTORY_ASK_QUIET = "8"
+VICTORY_COPY_CHANGED = "1"
+VICTORY_QUIET_BACK = "1"
+VICTORY_LIST_POOL_MOST = "2048"
+VICTORY_LIST_POOL_MB = "2048"
+VICTORY_WIDE_THREADS = "12"
+VICTORY_UNDER_WRITES_MASKS_LEAST = "1"
+VICTORY_INDIRECT_RAW = "2"
+VICTORY_TEXTURE_HASH_EVERY = "32"
+VICTORY_LEVELS_ON_DEMAND = "1"
+VICTORY_WINDOW_KB = "1024"
+VICTORY_CARD_BUFFERS_MB = "1536"
+VICTORY_CARD_WINDOW_UPLOAD = "1"
+VICTORY_DROP_DXIL = "1"
+VICTORY_DESC_DATA = "1"
+VICTORY_VRAM_IDLE_MS = "15000,2500,1000"
+VICTORY_PIPELINE_WAIT_MS = "2500"
+
+[controls]
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter"
+b = "Backspace"
+x = "X"
+y = "Y"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

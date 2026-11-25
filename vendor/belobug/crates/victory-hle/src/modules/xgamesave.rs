@@ -195,7 +195,13 @@ fn current(dir: &Path) -> std::io::Result<Option<Version>> {
         return Ok(None);
     };
     for old in &committed[..committed.len() - 1] {
-        std::fs::remove_dir_all(dir.join(format!("v{old}")))?;
+        // An older version that does not go must not hide the newest one:
+        // the title then started as if it had no settings at all, each time
+        // (a version in a folder the host shows through another one, which
+        // refuses the removal: error 4395, 2026-11-25).
+        if let Err(e) = std::fs::remove_dir_all(dir.join(format!("v{old}"))) {
+            tracing::warn!(dir = %dir.display(), old, %e, "an older save version stays");
+        }
     }
     let version = dir.join(format!("v{number}"));
     let bad = || std::io::Error::new(std::io::ErrorKind::InvalidData, "bad save manifest");

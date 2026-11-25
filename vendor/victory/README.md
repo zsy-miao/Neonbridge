@@ -45,7 +45,46 @@ Tested on one machine: Windows 11, Intel i7-14700KF, NVIDIA RTX 4070 12 GB,
 | Frame rate in the world | 8 to 10 fps in the first rooms: 97 to 104 ms a frame at about 3,850 draws, 122 ms in a heavier view (6,774 draws). 5 to 8.5 fps through the opening cutscene, by stretch (runs 271 to 273, with `VICTORY_CARD_WINDOWS_MB`). All measured with the switch set of run 253, which is off by default: `VICTORY_LEVELS_ON_DEMAND=1 VICTORY_ASYNC_SUBMIT=1 VICTORY_QUEUE2=1 VICTORY_INDIRECT_WINDOW=1 VICTORY_TEXTURE_NO_WAIT=1 VICTORY_MERGE_GAP=64 VICTORY_MERGE_RUNS=4096 VICTORY_STAGING_POOL=0 VICTORY_COPY_PLAIN=1 VICTORY_JOIN_PARTS=1 VICTORY_BACK_OWN_VIEW=1 VICTORY_INDIRECT_GATHER=1 VICTORY_CARD_REHASH_RUNS=1`. The plain defaults were last measured at 420 to 450 ms a frame and not since. It started at 3 to 6 seconds a frame |
 | Stability | no driver hang or device loss in normal runs (a hang introduced by the wave64 update was found and fixed: its barrier form for 64-lane programs is now off unless `VICTORY_WAVE_WIDE=1`) |
 
-### Newest (2026-11-25, evening UTC)
+### Newest (2026-11-25, night UTC)
+
+**Small buffers into the card's memory: about 18 ms of card time a frame gone, 5 ms of frame so far.**
+Tested on the machine above, first rooms, at like draw counts (runs 274 and 275).
+- **Why some compute passes were slow.** A title buffer's host copy under 1 MiB stayed in the PC's
+  memory (about 3,700 of 3,800 copies, 30 MB in all), so every load, store and atomic a shader did
+  on it crossed the bus. The passes that were slow by the thread were small dispatches on such
+  buffers. `VICTORY_CARD_BUFFERS_MIN_KB=64` (with `VICTORY_CARD_BUFFERS_MB=1280`; off by default)
+  puts every copy in the card's memory: the title's lists went from 68.0 to 49.8 ms of card time a
+  frame; single passes from 6.7 to 1.6 ms, from 4.1, 2.7 and 2.0 ms to under 0.3 each. The frame:
+  114.9 -> 109.7 ms. The layer's own send-and-hash lists rose from 11.6 to 23.0 ms (each small copy
+  is hashed over a whole 64 KiB); `VICTORY_CARD_HASH_LEN=1` hashes the buffer's own bytes instead
+  and has not run in a game yet. The card now idles 12 to 40 ms a frame: the thread that prepares
+  submissions is the limit.
+- **`changed_runs` by masks** (the default; `VICTORY_CHANGED_RUNS=0` the old walk, `=alt` in turn):
+  64 bytes at a time as one mask of differing bytes. 3.8 ms less work a frame on the submitting
+  thread at equal draws; the frame's gain is inside the noise. A first form (64 equal bytes, then
+  eight at a time) was a fifth slower than the walk on sparse changes and never ran.
+- **Scalar buffer loads, four dwords a call** (`VICTORY_SHADER_OPT=127`; not in the default 63):
+  the dwords of one console load instruction are read by one call. Whole pack: with the bit off
+  25,635 of 25,635 shaders are byte-identical to the build before; with it on 20,154 change and
+  buffer loads fall by 38 %. Tested on the software adapter, also across a view's end. Whether a
+  card is faster for it is not measured yet.
+- **Pull request #999 merged** (cxy0072019-sketch, porting a patch by Geckomacabre):
+  `VICTORY_TEXTURE_BACK=1` copies textures of the ocean's kinds that shaders write back into title
+  memory, where the title's own code reads them. Off by default. Without it a boat sank here and
+  its mission failed at once (run 275). With it (run 276, both shader caches wiped first): 22,900
+  read-backs landed in six minutes of play and the tester got past that point: the largest step
+  of the day. The same run then ended with the card lost (the driver logged two errors, then
+  "device removed", with nothing of the layer's running on the card at that moment). Why is not
+  known; run 275, the same set without this switch, played twenty minutes without an error.
+- **`VICTORY_BACK_READS=1|2|alt`** (diagnostics builds): counts who touches what the copy-back
+  stored (the measuring step before any lazy copy-back). Not run yet.
+- The texture pass's time budget: never reached in the first rooms (about 5 ms a frame); 15 to
+  30 % of the frame in an open-world session. The translator emits no stack slots to promote:
+  registers are SSA values already.
+- Not run in this tree: the unit tests after the merge (the same changes passed them in the
+  working tree they came from: 182 of the graphics crate's, the new shader test both ways).
+
+### Earlier (2026-11-25, evening UTC)
 
 **Update, 2026-11-25 evening: a frame capture built into the layer, and a
 card time that does not add up yet.** No frame-rate gain is claimed; the

@@ -52,14 +52,8 @@ pub(crate) fn level() -> Option<f32> {
 }
 
 /// The light's colour: warm white, or what `VICTORY_AMBIENT_TINT=r,g,b`
-/// gives. With `VICTORY_AMBIENT_FILE=<file>` (diagnostics builds) the file's
-/// `level r g b` is read again twice a second, to tune both by eye in a
-/// running title.
+/// gives.
 fn tint() -> [f32; 3] {
-    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, tint)) = *live {
-        return tint;
-    }
     static SET: OnceLock<[f32; 3]> = OnceLock::new();
     *SET.get_or_init(|| {
         let set: Vec<f32> = std::env::var("VICTORY_AMBIENT_TINT")
@@ -74,8 +68,20 @@ fn tint() -> [f32; 3] {
     })
 }
 
-/// The level and colour last read from `VICTORY_AMBIENT_FILE`, if any.
-static LIVE: std::sync::Mutex<Option<(f32, [f32; 3])>> = std::sync::Mutex::new(None);
+/// Indirect light and reflection settings last read from the ambient file.
+#[derive(Clone, Copy, PartialEq)]
+struct Live {
+    level: f32,
+    tint: [f32; 3],
+    ceiling: f32,
+    floor: f32,
+}
+
+static LIVE: std::sync::Mutex<Option<Live>> = std::sync::Mutex::new(None);
+
+/// The last reflection history update and the UAV it writes.
+pub(crate) const REFLECTED: &[u8] = b"CS_UpdateHistory";
+pub(crate) const REFLECTIONS: (u8, u32) = (1, 40);
 
 /// Where the resolve reads the scene's depth (reversed, D32 with stencil):
 /// root parameter and place in its table.
@@ -104,9 +110,11 @@ fn shade() -> [f32; 4] {
     })
 }
 
-/// The level from `VICTORY_AMBIENT_FILE`, if it gave one; starts the thread
-/// that reads the file.
-fn live_level() -> Option<f32> {
+/// Reads `VICTORY_AMBIENT_FILE` twice a second in diagnostics builds. Its
+/// values are `level r g b`, optionally followed by `strength radius near
+/// tan_y` and then the reflection ceiling and floor as fractions of ambient
+/// light. Zero disables the corresponding reflection bound.
+fn live_settings() -> Option<Live> {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         if !cfg!(feature = "diagnostics") {
@@ -125,10 +133,22 @@ fn live_level() -> Option<f32> {
                         .filter_map(|v| v.parse().ok())
                         .collect();
                     if let [level, r, g, b, ref rest @ ..] = read[..] {
-                        if let [s, rad, n, t] = rest[..] {
+                        if let [s, rad, n, t, ..] = rest[..] {
                             *SHADE.lock().unwrap_or_else(|e| e.into_inner()) = Some([s, rad, n, t]);
                         }
-                        let new = Some((level.max(0.0), [r, g, b]));
+                        let fraction = |i| {
+                            rest.get(i)
+                                .copied()
+                                .filter(|f: &f32| f.is_finite())
+                                .unwrap_or(0.0)
+                                .max(0.0)
+                        };
+                        let new = Some(Live {
+                            level: level.max(0.0),
+                            tint: [r, g, b],
+                            ceiling: fraction(4),
+                            floor: fraction(5),
+                        });
                         let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
                         if *live != new {
                             tracing::info!(level, r, g, b, "ambient light set from the file");
@@ -139,16 +159,15 @@ fn live_level() -> Option<f32> {
                 }
             });
     });
-    LIVE.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .map(|(level, _)| level)
+    *LIVE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 const SOURCE: &str = r#"
-#define RS "RootConstants(num32BitConstants=8, b0), DescriptorTable(UAV(u0), SRV(t0))"
+#define RS "RootConstants(num32BitConstants=10, b0), DescriptorTable(UAV(u0), SRV(t0))"
 cbuffer Floor : register(b0) {
     float level; float3 tint;
     float strength; float radius; float near; float tan_y;
+    float held; float floor_part;
 };
 RWTexture2D<uint> light : register(u0);
 Texture2D<float> depth : register(t0);
@@ -183,6 +202,9 @@ float open_to_light(int2 p, float2 size) {
     }
     return saturate(1.0 - strength * 2.0 * sum / N);
 }
+float3 unpack(uint v) {
+    return float3(v & 511, (v >> 9) & 511, (v >> 18) & 511) * exp2(float(v >> 27) - 24.0);
+}
 uint pack(float3 c) {
     c = clamp(c, 0.0, 65408.0);
     float most = max(c.r, max(c.g, c.b));
@@ -198,8 +220,19 @@ void main(uint3 at : SV_DispatchThreadID) {
     uint w, h;
     light.GetDimensions(w, h);
     if (at.x >= w || at.y >= h) return;
+    float3 ambient = tint * level;
+    if (held > 0.0 || floor_part > 0.0) {
+        const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
+        float3 reflection = unpack(light[at.xy]);
+        float has = dot(reflection, LUMA);
+        float most = dot(ambient, LUMA) * held;
+        float3 floor_light = ambient * floor_part;
+        if (held > 0.0 && has > most) light[at.xy] = pack(reflection * (most / has));
+        else if (has < dot(floor_light, LUMA)) light[at.xy] = pack(floor_light);
+        return;
+    }
     float open = strength > 0.0 ? open_to_light(int2(at.xy), float2(w, h)) : 1.0;
-    light[at.xy] = pack(tint * level * open);
+    light[at.xy] = pack(ambient * open);
 }
 "#;
 
@@ -290,9 +323,34 @@ fn uav_barrier(list: &ID3D12GraphicsCommandList) {
 /// wrote it as an image. Whether it recorded anything (the list's bindings
 /// are then ours).
 pub(crate) fn raise(list: &HostList, light: This, depth: Option<This>) -> bool {
+    record(list, light, depth, false)
+}
+
+/// Applies the configured ambient bounds after the reflection history update.
+pub(crate) fn reflect(list: &HostList, light: This) -> bool {
+    record(list, light, None, true)
+}
+
+fn record(list: &HostList, light: This, depth: Option<This>, reflections: bool) -> bool {
     let (Some(level), Some(host)) = (level(), host()) else {
         return false;
     };
+    let live = live_settings();
+    let mut bounds = [0.0; 2];
+    if reflections {
+        let Some(live) = live else {
+            return false;
+        };
+        let floor = if live.ceiling > 0.0 {
+            live.floor.min(live.ceiling)
+        } else {
+            live.floor
+        };
+        bounds = [live.ceiling, floor];
+        if bounds == [0.0; 2] {
+            return false;
+        }
+    }
     let Some(light) = crate::resource::host_made(light) else {
         return false;
     };
@@ -366,12 +424,13 @@ pub(crate) fn raise(list: &HostList, light: This, depth: Option<This>) -> bool {
         l.SetDescriptorHeaps(&[Some(pass.views.clone())]);
         l.SetComputeRootSignature(&pass.root);
         l.SetPipelineState(&pass.pso);
-        let [r, g, b] = tint();
-        let level = live_level().unwrap_or(level);
+        let [r, g, b] = live.map_or_else(tint, |live| live.tint);
+        let level = live.map_or(level, |live| live.level);
         let [strength, radius, near, tan_y] = shade();
         let strength = if depth.is_some() { strength } else { 0.0 };
-        let constants = [level, r, g, b, strength, radius, near, tan_y];
-        l.SetComputeRoot32BitConstants(0, 8, constants.as_ptr().cast(), 0);
+        let [held, floor] = bounds;
+        let constants = [level, r, g, b, strength, radius, near, tan_y, held, floor];
+        l.SetComputeRoot32BitConstants(0, constants.len() as u32, constants.as_ptr().cast(), 0);
         l.SetComputeRootDescriptorTable(
             1,
             D3D12_GPU_DESCRIPTOR_HANDLE {

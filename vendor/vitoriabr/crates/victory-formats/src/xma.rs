@@ -503,7 +503,10 @@ impl Decoder {
         let mut b = Bits {
             data,
             pos: 0,
-            end: bits,
+            // Past the data there are only zeros to read. A count beyond it
+            // would never let a stereo tile header overread, and its loop
+            // takes no subframe on zero bits, so it would spin for good.
+            end: bits.min(data.len().saturating_mul(8)),
         };
         let len = b.read(LENGTH_BITS) as usize;
         let result = self.frame(&mut b, len);
@@ -1190,6 +1193,240 @@ mod tests {
         assert_eq!(c.bits, 60);
         // C was packet 1's only frame: the next would be in packet 2.
         assert_eq!(c.next, None);
+    }
+
+    /// Deterministic noise: xorshift64, as in BCPack's noise test.
+    struct Noise(u64);
+
+    impl Noise {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// A number below `n`.
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        /// `len` bytes of even noise, or of mostly zeros (`density` 1) or
+        /// mostly ones (2), which take other paths through a frame.
+        fn bytes(&mut self, len: usize, density: usize) -> Vec<u8> {
+            (0..len)
+                .map(|_| {
+                    let r = self.next();
+                    let (a, b, c) = (r as u8, (r >> 8) as u8, (r >> 16) as u8);
+                    match density {
+                        0 => a,
+                        1 => a & b & c,
+                        _ => a | b | c,
+                    }
+                })
+                .collect()
+        }
+    }
+
+    /// Writes `value` as `n` bits, MSB first, at bit `pos`, over what is there.
+    fn set_bits(data: &mut [u8], pos: usize, n: u32, value: u32) {
+        for i in 0..n as usize {
+            let (p, bit) = (pos + i, (value >> (n as usize - 1 - i)) & 1);
+            data[p / 8] = (data[p / 8] & !(0x80 >> (p % 8))) | ((bit as u8) << (7 - p % 8));
+        }
+    }
+
+    /// `packets` packets of one stream: back-to-back frames of noise after
+    /// their length fields, 300 to 4299 bits long (so every packet but the
+    /// last has a frame start, and at most 55 do), then padding of ones.
+    /// The headers count the frames that begin in each packet. Also gives
+    /// the number of frames.
+    fn noise_stream(noise: &mut Noise, packets: usize, density: usize) -> (Vec<u8>, usize) {
+        const PAYLOAD: usize = PACKET_BITS - HEADER_BITS;
+        let mut data = noise.bytes(packets * PACKET_BYTES, density);
+        // Where payload bit `q` of the stream is in the buffer.
+        let at = |q: usize| q / PAYLOAD * PACKET_BITS + HEADER_BITS + q % PAYLOAD;
+        let mut headers = vec![(0u32, 0u32); packets];
+        let (mut q, mut frames) = (0, 0);
+        loop {
+            let len = 300 + noise.below(4000);
+            if q + len > packets * PAYLOAD {
+                break;
+            }
+            let header = &mut headers[q / PAYLOAD];
+            if header.0 == 0 {
+                header.1 = (q % PAYLOAD) as u32;
+            }
+            header.0 += 1;
+            for i in 0..LENGTH_BITS {
+                let bit = (len >> (LENGTH_BITS - 1 - i)) as u32 & 1;
+                set_bits(&mut data, at(q + i as usize), 1, bit);
+            }
+            q += len;
+            frames += 1;
+        }
+        for padding in q..packets * PAYLOAD {
+            set_bits(&mut data, at(padding), 1, 1);
+        }
+        for (p, &(count, first)) in headers.iter().enumerate() {
+            set_bits(&mut data, p * PACKET_BITS, 32, count << 26 | first << 11);
+        }
+        (data, frames)
+    }
+
+    /// Packets of noise, streams of frames of noise, and such streams with
+    /// headers and bits damaged: walking the frames from the first packet
+    /// and decoding each, mono and stereo, gives a frame of samples per
+    /// frame and ends within the frames the buffer can hold (each is over
+    /// 15 bits and the walk only moves on).
+    #[test]
+    fn noise_packets_walk_and_decode() {
+        let mut noise = Noise(0x2545_f491_4f6c_dd1d);
+        for round in 0..60 {
+            let packets = 1 + round % 4;
+            let density = [0, 0, 1, 2][round / 3 % 4];
+            let (mut data, written) = match round % 3 {
+                0 => (noise.bytes(packets * PACKET_BYTES, density), 0),
+                _ => noise_stream(&mut noise, packets, density),
+            };
+            if round % 3 == 2 {
+                for _ in 0..1 + noise.below(3) {
+                    let p = noise.below(packets);
+                    set_bits(&mut data, p * PACKET_BITS, 32, noise.next() as u32);
+                }
+                for _ in 0..noise.below(16) {
+                    let bit = noise.below(data.len() * 8);
+                    data[bit / 8] ^= 0x80 >> (bit % 8);
+                }
+            }
+            let budget = data.len() * 8 / 16;
+            for channels in [1, 2] {
+                let mut decoder = Decoder::new(channels, 48_000);
+                let per_frame = FRAME_SAMPLES * channels;
+                let (mut pcm, mut frames) = (Vec::new(), 0);
+                let mut at = packet(&data, 0).map(|p| HEADER_BITS + p.first_frame_bit as usize);
+                while let Some(frame) = at.and_then(|bit| read_frame(&data, bit)) {
+                    frames += 1;
+                    let moves_on = frame.next.is_none_or(|next| next > frame.start);
+                    assert!(frames <= budget && moves_on, "round {round}");
+                    let _ = decoder.decode(&frame.data, frame.bits, &mut pcm);
+                    assert_eq!(pcm.len(), frames * per_frame, "round {round}");
+                    at = frame.next;
+                }
+                if round % 3 == 1 {
+                    // A clean stream: every frame is walked.
+                    assert_eq!(frames, written, "round {round}");
+                }
+                decoder.flush(&mut pcm);
+                assert_eq!(pcm.len(), frames * per_frame + per_frame / 2);
+            }
+        }
+    }
+
+    /// Frames of noise, mono and stereo at each sample rate, with bit
+    /// counts up to the end of the data: every decode gives one frame of
+    /// samples, whether the frame decodes or not.
+    #[test]
+    fn noise_frames_decode_to_a_frame_of_samples() {
+        let mut noise = Noise(0x9e37_79b9_7f4a_7c15);
+        for channels in [1, 2] {
+            for rate in [24_000, 32_000, 44_100, 48_000] {
+                let mut decoder = Decoder::new(channels, rate);
+                let mut pcm = Vec::new();
+                for round in 0..48 {
+                    let data = noise.bytes(round * 89 % 4096, [0, 0, 1, 2][round % 4]);
+                    let bits = match round % 2 {
+                        0 => data.len() * 8,
+                        _ => noise.below(data.len() * 8 + 1),
+                    };
+                    pcm.clear();
+                    let _ = decoder.decode(&data, bits, &mut pcm);
+                    assert_eq!(
+                        pcm.len(),
+                        FRAME_SAMPLES * channels,
+                        "{channels} channels, {rate} Hz, round {round}"
+                    );
+                    if round % 16 == 15 {
+                        decoder.reset();
+                    }
+                }
+                pcm.clear();
+                decoder.flush(&mut pcm);
+                assert_eq!(pcm.len(), FRAME_SAMPLES / 2 * channels);
+            }
+        }
+    }
+
+    /// Bit counts past the end of a frame's data, up to `usize::MAX`: the
+    /// decoding ends, with a frame of samples. A stereo tile header that ran
+    /// out of data used to loop on the zeros past it for good (found by
+    /// this test).
+    #[test]
+    fn noise_frames_with_bit_counts_past_the_data() {
+        let mut noise = Noise(0xd1b5_4a32_d192_ed03);
+        for channels in [1, 2] {
+            let mut decoder = Decoder::new(channels, 48_000);
+            let mut pcm = Vec::new();
+            for round in 0..48 {
+                let len = [0, 1, 2, 3, 5, 8, 40, 300][round % 8];
+                let data = noise.bytes(len, [0, 0, 1, 2][round / 8 % 4]);
+                let bits = match round % 3 {
+                    0 => data.len() * 8 + 1 + noise.below(1 << 16),
+                    1 => usize::MAX / 2 + noise.below(1 << 20),
+                    _ => usize::MAX,
+                };
+                pcm.clear();
+                let _ = decoder.decode(&data, bits, &mut pcm);
+                assert_eq!(
+                    pcm.len(),
+                    FRAME_SAMPLES * channels,
+                    "{channels} channels, round {round}"
+                );
+            }
+        }
+    }
+
+    /// `read_frame` from any bit of a buffer of noise and past it, and
+    /// `packet` at any index: a frame read stays inside its limits.
+    #[test]
+    fn noise_offsets_read_a_frame_or_nothing() {
+        let mut noise = Noise(0x6a09_e667_f3bc_c908);
+        for round in 0..24 {
+            let packets = 1 + round % 3;
+            let data = noise.bytes(packets * PACKET_BYTES, [0, 0, 1, 2][round % 4]);
+            let all = data.len() * 8;
+            let edges = [
+                0,
+                1,
+                HEADER_BITS - 1,
+                HEADER_BITS,
+                PACKET_BITS - LENGTH_BITS as usize,
+                PACKET_BITS - 1,
+                PACKET_BITS,
+                all - 1,
+                all,
+                all + 1,
+                usize::MAX / 2,
+                usize::MAX - PACKET_BITS + 1,
+                usize::MAX,
+            ];
+            let mut starts = edges.to_vec();
+            starts.extend((0..32).map(|_| noise.below(all)));
+            for start in starts {
+                if let Some(frame) = read_frame(&data, start) {
+                    let lengths = LENGTH_BITS as usize + 1..0x7fff;
+                    assert!(lengths.contains(&frame.bits), "start {start}");
+                    assert_eq!(frame.data.len(), frame.bits.div_ceil(8));
+                    if let Some(next) = frame.next {
+                        assert!(next > start && next / 8 < data.len(), "start {start}");
+                    }
+                }
+            }
+            let far = usize::MAX / PACKET_BYTES;
+            for index in [0, packets - 1, packets, far, usize::MAX] {
+                assert_eq!(packet(&data, index).is_some(), index < packets, "{index}");
+            }
+        }
     }
 
     /// Walks and decodes saved input buffers (`VICTORY_XMA_STREAMS=<dir>` of

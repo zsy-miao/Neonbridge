@@ -109,6 +109,7 @@ Then step 6, step 7 again, and step 8.
 | Pre-build says everything is already built but the game still crashes in `amdxc64.dll` | A cache from another VIctory-based build is in the way: delete `%LOCALAPPDATA%\victory\cache\pipelines`, then redo step 7 (thanks @Ethan-Hill) |
 | Black screen with sound, log says `amd_fidelityfx_loader_dx12.dll not found` with `<FidelityFX SDK>` in the path | `VICTORY_FFX_DIR` still holds the example path: set it to the folder where you unzipped the SDK (step 5/6) (thanks @Ethan-Hill) |
 | Graphics card stops responding after ~1 min | `$env:VICTORY_LATE_WAIT = '0'` |
+| Crash while loading: the log shows `dstorage: request failed: zlib … hr=0x8007000d`, then `0x80000003` at `victory-image…+0x19b5024` | Some game files are incomplete or damaged: copy the game folder again from your source (thanks @Emaxoso) |
 
 Still stuck? Open an [issue](https://github.com/PastiiJay/klbf-lab/issues) with your graphics card, driver version, Windows version and the last lines PowerShell printed.
 

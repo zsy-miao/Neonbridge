@@ -94,6 +94,14 @@ pub(crate) struct HostHeap {
     /// one of them stood in the queue of textures picked by index, ahead
     /// of or behind the ones shaders do pick by index.
     tabled: Vec<std::sync::atomic::AtomicU32>,
+    /// Per title slot, the frame (plus one; 0: never) in which a draw last
+    /// took a buffer or constant view of it from a table
+    /// ([`HostHeap::buffer_slot_tabled`]).
+    tabled_buffers: Vec<std::sync::atomic::AtomicU32>,
+    /// Per title slot, the null-view kind currently stored (1 = buffer SRV,
+    /// 2 = CBV, 3 = buffer UAV, 0 = other/non-null) so `VICTORY_SYNC_NULL_SKIP`
+    /// avoids recreating an identical null view.
+    nulls: Vec<std::sync::atomic::AtomicU8>,
     /// The title memory each placed texture view of this heap describes,
     /// by slot and by address ([`Spans`]): which slots a newer view of
     /// other memory there makes stale, and which to look at again when the
@@ -1012,6 +1020,12 @@ impl HostHeap {
             tabled: (0..if sampler { 0 } else { count })
                 .map(|_| std::sync::atomic::AtomicU32::new(0))
                 .collect(),
+            tabled_buffers: (0..if sampler { 0 } else { count })
+                .map(|_| std::sync::atomic::AtomicU32::new(0))
+                .collect(),
+            nulls: (0..if sampler { 0 } else { count })
+                .map(|_| std::sync::atomic::AtomicU8::new(0))
+                .collect(),
             placed: {
                 let spans = std::sync::Arc::<Mutex<Spans>>::default();
                 if !sampler {
@@ -1739,6 +1753,9 @@ impl HostHeap {
 
     /// Slot `index` now views `resource` (or nothing of the host's).
     fn keep(&self, index: u32, resource: Option<ID3D12Resource>) {
+        if let Some(null) = self.nulls.get(index as usize) {
+            null.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
         let mut kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(slot) = kept.get_mut(index as usize) {
             // A running submission may still read the old resource through
@@ -1930,6 +1947,31 @@ impl HostHeap {
         true
     }
 
+    /// Records that a draw took a buffer or constant view from title slot
+    /// `index` via a table (`VICTORY_TABLE_BUFFERS=1`).
+    pub(crate) fn buffer_slot_tabled(&self, index: u32) {
+        if !table_buffers() {
+            return;
+        }
+        if let Some(stamp) = self.tabled_buffers.get(index as usize) {
+            let now = (crate::frame::current() as u32).wrapping_add(1);
+            if stamp.load(std::sync::atomic::Ordering::Relaxed) != now {
+                stamp.store(now, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Whether title slot `index` held a buffer or constant view of a draw's
+    /// table in this frame or the last.
+    fn buffer_tabled_lately(&self, index: u32, frame: u64) -> bool {
+        let Some(stamp) = self.tabled_buffers.get(index as usize) else {
+            return false;
+        };
+        let stamp = stamp.load(std::sync::atomic::Ordering::Relaxed);
+        let now = (frame as u32).wrapping_add(1);
+        stamp != 0 && now.wrapping_sub(stamp) <= 1
+    }
+
     /// [`HostHeap::mirror_copied`] for every record of one changed page of
     /// the title's heap (`super::sync_heaps`): title slots `slots`, the
     /// record of slot `i` at title address `start + i * step`, and `page`
@@ -1987,6 +2029,24 @@ impl HostHeap {
                 if !tables && self.tabled_lately(index as u32, frame) {
                     COPIED_TABLED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     continue;
+                }
+                if table_buffers()
+                    && self.buffer_tabled_lately(index as u32, frame)
+                    && record.len() >= 12
+                {
+                    let word = |at: usize| {
+                        u32::from_le_bytes([
+                            record[at],
+                            record[at + 1],
+                            record[at + 2],
+                            record[at + 3],
+                        ])
+                    };
+                    if word(0) == VIEW_TAG
+                        && view_at(word(4), word(8)).is_some_and(|v| null_kind(&v) != 0)
+                    {
+                        continue;
+                    }
                 }
                 *last = print;
                 due.push((index as u32, handle));
@@ -2076,9 +2136,22 @@ impl HostHeap {
                 make(&view, self.cpu(index))
             };
             if kept.is_none() && !self.sampler {
+                let kind = null_kind(&view);
+                let null = self.nulls.get(index as usize);
+                if kind != 0
+                    && null_skip()
+                    && null.is_some_and(|n| n.load(std::sync::atomic::Ordering::Relaxed) == kind)
+                {
+                    return Some(view);
+                }
                 null_for(&view, self.cpu(index));
+                self.keep(index, None);
+                if let Some(null) = null {
+                    null.store(kind, std::sync::atomic::Ordering::Relaxed);
+                }
+            } else {
+                self.keep(index, kept.flatten());
             }
-            self.keep(index, kept.flatten());
         }
         Some(view)
     }
@@ -2316,6 +2389,35 @@ fn sync_tables() -> bool {
 /// Since the last frame line: slots on changed heap pages that
 /// [`HostHeap::mirror_copied`] left to their draws (tables' slots).
 pub(crate) static COPIED_TABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the pass over records copied in as bytes also leaves buffer and
+/// constant views to the draws that take them from tables lately
+/// (`VICTORY_TABLE_BUFFERS=1`; off by default).
+fn table_buffers() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VICTORY_TABLE_BUFFERS").is_ok_and(|v| v == "1"))
+}
+
+/// Whether an identical null view is skipped (`VICTORY_SYNC_NULL_SKIP=0` to
+/// recreate it as before; on by default).
+fn null_skip() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_SYNC_NULL_SKIP").is_none_or(|v| v != "0"))
+}
+
+/// Kind of null view for buffer/constant slots (1 = buffer SRV, 2 = CBV,
+/// 3 = buffer UAV, 0 = other).
+fn null_kind(view: &View) -> u8 {
+    let is_buffer = |r: &usize| crate::resource::buffer_bytes(*r as crate::object::This).is_some();
+    match view {
+        View::Constant(..) => 2,
+        View::Unordered(r, _, desc) if is_buffer(r) || desc.is_some_and(|d| d[1] == 1) => 3,
+        View::Placed(true, resource, _) if resource[0] == 1 => 3,
+        View::Shader(r, desc) if is_buffer(r) || desc.is_some_and(|d| d[1] == 1) => 1,
+        View::Placed(false, resource, _) if resource[0] == 1 => 1,
+        _ => 0,
+    }
+}
 
 /// A 64-bit fingerprint of a descriptor record's bytes (16 or 32 of them):
 /// equal records give equal prints, and two different records the same

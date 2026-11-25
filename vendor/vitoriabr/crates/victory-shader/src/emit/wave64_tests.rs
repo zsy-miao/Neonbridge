@@ -208,7 +208,10 @@ fn partial_thread_dispatch_masks_the_final_groups_memory_writes() {
     let _one = super::valu_tests::ONE_AT_A_TIME
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let Ok(host) = Host::new(true) else { return };
+    let Ok(host) = Host::new(true) else {
+        crate::emit::test_skip::skip("no SM 6.6 WARP adapter");
+        return;
+    };
     let (root, pso) = host.compute_pipeline(&shader).unwrap();
     for count in [0u32, 1, 7, 63, 64, 65, 74, 77, 127, 128] {
         let mut constants = vec![0; shader.user_data_dwords() as usize];
@@ -283,13 +286,13 @@ fn a_sum_of_halves_over_the_wave_is_the_consoles_tree_bit_for_bit() {
     assert_ne!(tree[0], in_a_row, "these terms tell the tree from another order");
     let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(host) = Host::new(false) else {
-        eprintln!("no SM 6.6 hardware device; not run");
+        crate::emit::test_skip::skip("no SM 6.6 hardware device; not run");
         return;
     };
     let (root, pso) = match host.compute_pipeline(&shader) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("the hardware device does not take this program (waves of 32?): {e}; not run");
+            crate::emit::test_skip::skip(&format!("the hardware device does not take this program (waves of 32?): {e}; not run"));
             return;
         }
     };
@@ -410,11 +413,11 @@ fn a_16_bit_sum_rounds_to_nearest_when_asked_to() {
             v.validate(&mut copy).expect("DXIL validation failed");
         }
         let Ok(host) = Host::new(false) else {
-            eprintln!("no SM 6.6 hardware device; not run");
+            crate::emit::test_skip::skip("no SM 6.6 hardware device; not run");
             return;
         };
         let Ok((root, pso)) = host.compute_pipeline(&shader) else {
-            eprintln!("the hardware device does not take this program; not run");
+            crate::emit::test_skip::skip("the hardware device does not take this program; not run");
             return;
         };
         let ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
@@ -484,13 +487,13 @@ fn a_wave_or_inside(skip: u32, name: &str) {
     // both halves, whichever half's lanes take the branch.
     let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(host) = Host::new(false) else {
-        eprintln!("no SM 6.6 hardware device; not run");
+        crate::emit::test_skip::skip("no SM 6.6 hardware device; not run");
         return;
     };
     let (root, pso) = match host.compute_pipeline(&shader) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("the hardware device does not take this program (waves of 32?): {e}; not run");
+            crate::emit::test_skip::skip(&format!("the hardware device does not take this program (waves of 32?): {e}; not run"));
             return;
         }
     };
@@ -523,11 +526,11 @@ fn a_wave_or_inside(skip: u32, name: &str) {
 /// of the UAV; None (and a line) without a device that takes it.
 fn on_the_card(shader: &HostShader, constants: [u32; 2]) -> Option<u32> {
     let Ok(host) = Host::new(false) else {
-        eprintln!("no SM 6.6 hardware device; not run");
+        crate::emit::test_skip::skip("no SM 6.6 hardware device; not run");
         return None;
     };
     let Ok((root, pso)) = host.compute_pipeline(shader) else {
-        eprintln!("the hardware device does not take this program; not run");
+        crate::emit::test_skip::skip("the hardware device does not take this program; not run");
         return None;
     };
     let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
@@ -683,7 +686,7 @@ fn an_automatic_barrier_inside_a_lane_branch_runs_on_narrow_hardware() {
     }
     let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(host) = Host::new(false) else {
-        eprintln!("no SM 6.6 hardware device; not run");
+        crate::emit::test_skip::skip("no SM 6.6 hardware device; not run");
         return;
     };
     let mut waves = windows::Win32::Graphics::Direct3D12::D3D12_FEATURE_DATA_D3D12_OPTIONS1::default();
@@ -695,7 +698,7 @@ fn an_automatic_barrier_inside_a_lane_branch_runs_on_narrow_hardware() {
         ).expect("host wave capabilities");
     }
     if waves.WaveLaneCountMax >= 64 || waves.WaveLaneCountMax == 0 {
-        eprintln!("no narrow-wave hardware device; not run");
+        crate::emit::test_skip::skip("no narrow-wave hardware device; not run");
         return;
     }
     let (root, pso) = host.compute_pipeline(&shader).expect("pipeline on narrow-wave hardware");

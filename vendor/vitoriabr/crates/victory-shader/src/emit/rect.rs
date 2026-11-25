@@ -434,7 +434,7 @@ mod tests {
     fn rectangles_are_drawn_whole() {
         use super::super::host::{Draw, Host};
         let Ok(host) = Host::new(false) else {
-            eprintln!("no SM 6.6 device; skipped");
+            crate::emit::test_skip::skip("no SM 6.6 device; skipped");
             return;
         };
         let (vs, ps) = pass_through();

@@ -62,6 +62,13 @@ pub fn ensure_outside_repo(path: &Path) -> Result<(), PolicyError> {
     Ok(())
 }
 
+/// True if `path` is `root` or lies below it, after resolving symlinks and
+/// `..` (neither path has to exist yet). Compares whole components, so
+/// `cache-old` is not inside `cache`.
+pub fn is_within(path: &Path, root: &Path) -> Result<bool, PolicyError> {
+    Ok(resolve(path)?.starts_with(resolve(root)?))
+}
+
 /// Canonicalizes the longest existing prefix of `path` and re-appends the
 /// rest, so that paths which do not exist yet can still be compared.
 fn resolve(path: &Path) -> Result<PathBuf, PolicyError> {

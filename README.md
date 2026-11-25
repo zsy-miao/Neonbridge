@@ -12,27 +12,36 @@ Read from the [GTA VI PC race tracker](https://github.com/vuyp/gta6-pc-race) ([l
 
 Lanes, as the tracker reads them: **Picture** (1 mostly dark, 3 lit with faults, 5 the console's picture), **Speed** (fps reported in play), **Stability** (longest session without a crash).
 
-- **1.** 🟢 **[klbf-lab](https://github.com/PastiiJay/klbf-lab)**  
-  AMD · 3/5: lit, tints and faint lines · 5–9 fps · 77 min without a crash
-- **2.** 🟢 **[Flamingo](https://github.com/realblastex/flamingo)**  
-  NVIDIA · 2/5: shadows missing, rooms dark · 7.8–14 fps (unconfirmed) · 24 min without a crash
-- **3.** 🟢 **[victory-fork](https://github.com/fxceless/victory-fork)** (VIctory-fxceless)  
-  NVIDIA · 2/5: shadows black · 4.5–7.6 fps · 30 min without a crash
-- **4.** 🟢 **[VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT)**  
-  NVIDIA 8 GB · 2/5: shadows black · 4–7 fps at 1080p · about an hour without a crash
-- **5.** 🟢 **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)**  
-  AMD · lit and whole, stand-in light · 5–7 fps · 15 min without a crash
-- **6.** [ruff-lab](https://github.com/LoverCatys/ruff-lab)  
-  AMD · lit, no magenta · 3.6 fps · 39 min without a crash
-- **7.** 🟢 **[victory-unified](https://github.com/Itsbatt/victory-unified)**  
-  NVIDIA · stand-in light · about 2 fps · 49 min without a crash
-- **8–18.** CBL VIctory, AnyXboxX, ztrx (archived here), [Kelvaroq](https://github.com/fablinoo/kelvaroq), vilocity, BRVIctory-ka1qux, VIniVIdiVIci, victory-perf, Vice-Tay, omonkey, victory-amd
-- **19.** 🟢 **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**  
-  NVIDIA · lit, stand-in light · 3.5–6 fps
-- **23.** 🟢 **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**  
-  NVIDIA · shadows dark · about 4 fps
-- **28.** [XCL](https://github.com/ivall/xcl) (archived here)  
-  NVIDIA · stage 5: recognisable picture
+- **1.** 🟢 **[victory-fork](https://github.com/fxceless/victory-fork)**  
+  shadows black · 4.5 and 7.6 fps, averages of two play sessions · 30 minutes, in a pull request
+- **2.** 🟢 **[AnyXboxX](https://github.com/LooperSalty/AnyXboxX)**  
+  even stand-in light indoors, some parts missing · about 12 fps median on its new base · 45 minutes, relayed, on its earlier base
+- **3.** 🟢 **[klbf-lab](https://github.com/PastiiJay/klbf-lab)**  
+  lit, with tints and faint lines · 5 to 9 fps by scene · 77 minutes, ended by choice
+- **4.** 🟢 **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)**  
+  lit and whole, stand-in light follows the sky · 5 to 8 fps, less while driving · a 15 minute drive
+- **5.** [ztrx](https://github.com/Zettrox/ztrx) (repository gone)  
+  shadows black · 1 to 3 fps · over 90 minutes
+- **6.** 🟢 **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**  
+  lit with a shaded stand-in light · 3.5 to 6 fps · no run length reported
+- **7.** [victory-perf](https://github.com/vitutu1/victory-perf) (repository gone)  
+  shade lit by stand-ins · 4.5 to 14 fps by scene, unconfirmed · no run length reported
+- **8.** 🟢 **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**  
+  shadows dark · about 4 fps · no run length reported
+- **9.** omonkey  
+  lit, major effects missing · about 5 fps · no run length reported
+- **10.** suri  
+  close to the retail game · about 3 fps · no run length reported
+- **11.** CGBJ  
+  unlit · about 4 fps · no run length reported
+- **12.** [victory-amd](https://github.com/myokex/victory-amd)  
+  walls or lamps missing at times · 2 to 3 fps · 8 minute runs
+- **14.** 🟢 **[Flamingo](https://github.com/realblastex/flamingo)**  
+  shadows missing, rooms dark · 7.8 to 14 fps by scene, unconfirmed · a 24 minute play session
+- **21.** 🟢 **[victory-unified](https://github.com/Itsbatt/victory-unified)**  
+  shade lit by a stand-in light · 2 to 3 fps · about 58 minutes, no crash
+- **23.** 🟢 **[VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT)**  
+  shadows black, some skin black · 4 to 7 fps at 1080p · sessions of an hour
 
 25 projects are in-game (stage 6 of 7) and 12 more show a recognisable picture (stage 5); the full list is on the tracker.
 
@@ -53,6 +62,7 @@ Tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB 
 6. **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**: Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far
 7. **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**: Yes: intro at 30 fps, 3D scenes at 2–3 fps
 8. **[victory-unified](https://github.com/Itsbatt/victory-unified)**: **Testing now** (just added; its author: about 58 min without a crash on an RTX 3070 8 GB)
+9. **[AnyXboxX](https://github.com/LooperSalty/AnyXboxX)**: **Testing now** (just added; its author: about 12 fps in the world on an RTX 4070 SUPER)
 
 xcl is archived (28th on the race): `git checkout 5a8260eeef4a0308a5048d5d382b10564e58a3cf -- vendor/xcl` brings it back. ztrx-victory (Zettrox/ztrx, upstream now gone) is archived too: `git checkout 2210a25024c0ffedc232661f7b312c06e88c86f2 -- vendor/ztrx-victory` brings it back.
 

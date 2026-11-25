@@ -1,0 +1,57 @@
+name: voisins
+# Toutes les heures : TomBox et Xbox2Windows ont-ils avancé ? Si oui, la branche « auto/voisins »
+# est force-poussée avec le sous-module avancé et les copies recopiées sans modification, et la CI (tests.yml)
+# la teste. Aucune pull request n'est ouverte par Actions : un mainteneur relit la branche et ouvre la PR.
+on:
+  schedule:
+    - cron: "17 * * * *"            # minute 17 : hors du pic de début d'heure de GitHub
+  workflow_dispatch:
+
+permissions:
+  contents: write                  # pousser la branche auto/voisins
+  actions: write                   # lancer tests.yml (un push du GITHUB_TOKEN ne le déclenche pas)
+
+concurrency:
+  group: voisins
+  cancel-in-progress: false
+
+env:
+  BRANCHE: auto/voisins
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Nouveautés des voisins
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -I tools/sync_voisins.py --appliquer --rapport "$RUNNER_TEMP/rapport.md" --message "$RUNNER_TEMP/message.txt"
+      - name: Résumé du passage
+        if: always()
+        run: cat "$RUNNER_TEMP/rapport.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Branche auto/voisins
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCHE"
+          git add -A third_party THIRD_PARTY.md
+          git commit -q -F "$RUNNER_TEMP/message.txt"
+          # Même contenu que la branche déjà poussée : rien à faire (pas de CI relancée toutes les heures).
+          if git fetch -q origin "$BRANCHE" 2>/dev/null && git diff --quiet FETCH_HEAD HEAD; then
+            echo "Branche $BRANCHE déjà à jour."
+            exit 0
+          fi
+          git push -q --force origin "$BRANCHE"
+          echo "::notice::Branche $BRANCHE poussée, à relire : https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCHE}"
+          gh workflow run tests.yml --ref "$BRANCHE"

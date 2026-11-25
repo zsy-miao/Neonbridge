@@ -1,0 +1,18 @@
+[package]
+name = "anyxboxx-audio"
+version = "0.1.0"
+edition = "2021"
+description = "Son console : fichiers XMA2 décodés en WAV par le décodeur xma de TomBox (portage Rust de FFmpeg)."
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "anyxboxx_audio"
+path = "src/lib.rs"
+
+[[bin]]
+name = "anyxboxx_xma"
+path = "src/main.rs"
+
+[dependencies]
+# Décodeur XMA2 / WMA Pro de TomBox (LGPL-2.1+, portage de libavcodec/wmaprodec.c), sous-module third_party/tombox.
+xma = { path = "../../third_party/tombox/crates/compat/xma" }

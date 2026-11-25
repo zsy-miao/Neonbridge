@@ -5,6 +5,8 @@
 //! it is written: functions, then constants (all at module level), then the
 //! instructions of `main` in block order.
 
+pub mod opt;
+
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

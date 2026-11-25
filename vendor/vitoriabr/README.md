@@ -105,16 +105,20 @@ cargo build --release -p victory
 # Opcional (1x por atualização): pré-aquece todo o cache de shaders antes de abrir o título
 .\target\release\victory.exe warm <pasta_do_jogo>
 
-# Preset recomendado na RTX 5060 Ti 16 GB (visual completo fotorrealista, zero pele preta, zero TDR)
+# Preset recomendado na RTX 5060 Ti 16 GB (visual completo 4K/1080p, ondas reais, zero pele preta, zero TDR — até 5.8 fps em 4K)
 $env:VICTORY_RELAY = "2"
 $env:VICTORY_QUEUE2 = "1"
 $env:VICTORY_ASYNC_SUBMIT = "1"
 $env:VICTORY_COPY_PLAIN = "1"
+$env:VICTORY_INDIRECT_GATHER = "1"
+$env:VICTORY_TABLE_BUFFERS = "1"
+$env:VICTORY_TEXTURE_BACK = "1"
 $env:VICTORY_TEXTURE_NO_WAIT = "1"
 $env:VICTORY_CARD_BUFFERS_MB = "2048"
 $env:VICTORY_TEXTURE_BUDGET_MB = "10240"
 $env:VICTORY_PAGE_WRITES = "slots"
 $env:VICTORY_AMBIENT = "0.6"
+$env:VICTORY_UNWATCHED_FRAMES = "4"
 $env:VICTORY_WIDE_REFRESH = "1"
 $env:VICTORY_WIDE_MERGE = "1"
 $env:VICTORY_JOIN_COPIES = "1"
@@ -123,10 +127,35 @@ $env:VICTORY_DISPLAY_MODE = "1920x1080"
 .\target\release\victory.exe run --execute <pasta_do_jogo>\<executavel_do_titulo>
 ```
 
+### Preset para GPUs de 8 GB VRAM (AMD RDNA2 / PCIe x4) + HDD
+O preset acima (`VICTORY_CARD_BUFFERS_MB = "2048"`, `VICTORY_TEXTURE_BUDGET_MB = "10240"`) é dimensionado para placas de 16 GB de VRAM. Em GPUs de **8 GB de VRAM** (como a **Radeon RX 6500 XT**, especialmente em barramentos PCIe 3.0 x4 e com os arquivos em HDD), ajustar os limites de memória para caber com folga evita paginação excessiva, texturas de pele pretas e *driver timeouts* (`0x887A0006`):
+
+```powershell
+# Mantenha cache_dir e data_dir em um SSD no victory.toml (ex.: C:\victory-data)
+$env:VICTORY_RELAY = "0"
+$env:VICTORY_FILL_WAIT = "1"
+$env:VICTORY_CARD_BUFFERS_MB = "1024"
+$env:VICTORY_TEXTURE_BUDGET_MB = "5120"
+$env:VICTORY_PAGE_WRITES = "slots"
+$env:VICTORY_AMBIENT = "0.6"
+$env:VICTORY_TEXTURE_NO_WAIT = "1"
+$env:VICTORY_WIDE_REFRESH = "1"
+$env:VICTORY_WIDE_MERGE = "1"
+$env:VICTORY_JOIN_COPIES = "1"
+$env:VICTORY_DISPLAY_MODE = "1920x1080"
+
+.\target\release\victory.exe run --execute <pasta_do_jogo>\<executavel_do_titulo>
+```
+
+- **Dicas para 16 GB de RAM + HDD:** Feche navegadores e aplicativos pesados antes de iniciar para liberar RAM ao cache de leitura do Windows, e configure um arquivo de paginação (*Pagefile*) manual de **16 GB a 24 GB** no SSD para evitar erro `1455` durante o carregamento.
+
 #### Achados importantes de tuning & diagnóstico
 - **Pele ou chão pretos (VRAM cheia / streaming):** dois fatores resolvidos:
   1. **`VICTORY_CARD_BUFFERS_MB=2048` + `VICTORY_TEXTURE_BUDGET_MB=10240`** (em 8 GB: `1024` e `5120`) evita o limite de 90% da VRAM (`no room for new ones`), que impedia novas texturas de pele/terreno de subir.
   2. **`VICTORY_PAGE_WRITES=slots`** re-enfileira automaticamente texturas `placed` que foram subidas antes de o título terminar de gravar seus bytes (recuperou 7.000+ texturas por sessão).
+- **`VICTORY_TABLE_BUFFERS=1` + `VICTORY_SYNC_NULL_SKIP` (padrão) + `VICTORY_INDIRECT_GATHER=1`:** dobraram o FPS no mundo aberto na RTX 5060 Ti (`2,7 → 5,8 fps` em `3840x2160`, derrubando `preparing` de `~230 ms` para `~105–113 ms` e `copies` para `~37–49 ms`).
+- **`VICTORY_TEXTURE_BACK=1`:** habilita readback de texturas escritas por shaders (como ondas 3D da água), combinado com layouts XOR swizzle (portado de `myokex/victory-amd` `1544bd5`, GPL-3.0 / Mesa addrlib MIT).
+- **HUD em tela (`VICTORY_FPS_COUNTER`):** ligado por padrão em 2 linhas no canto superior esquerdo (`VITORIABR | FPS | MS | DRAWS` + `RES | VRAM | GPU`); use `compact` para só FPS ou `0` para desligar.
 - **`VICTORY_QUEUE2=1` + `VICTORY_ASYNC_SUBMIT=1` + `VICTORY_COPY_PLAIN=1`:** corta `copying back` em **~3×** (`~205 ms → ~65–78 ms`) usando a Copy Queue dedicada, executa ~12.400 cópias in-place/frame (`~290 MB/frame`) sem syscall do kernel e derruba `textures` pela metade (`~40 ms → ~20 ms`).
 - **`VICTORY_AMBIENT=0.6` (padrão):** ativa o pass de iluminação ambiente com sombreamento por profundidade (portado de `Belobug/VIctory-Belobug-AMD`, GPL-3.0), mantendo personagens, pele, veículos, água e interiores totalmente iluminados enquanto o RTGI completo ainda não roda. Use `0` para desligar.
 - **`VICTORY_TEXTURE_NO_WAIT=1`**: elimina stalls de lock na leitura de memória do título durante refresh de texturas (`textures` cai de `900–3.700 ms` para `6–25 ms`).
@@ -229,16 +258,20 @@ cargo test --workspace
 cargo build --release -p victory
 .\target\release\victory.exe warm <game_dir>   # optional: pre-translate shaders into the cache first
 
-# Recommended preset tested on RTX 5060 Ti 16 GB (photorealistic skin/water/foliage, zero black skin, zero TDR)
+# Recommended preset tested on RTX 5060 Ti 16 GB (up to 5.8 fps in 4K, real 3D waves, zero black skin, zero TDR)
 $env:VICTORY_RELAY = "2"
 $env:VICTORY_QUEUE2 = "1"
 $env:VICTORY_ASYNC_SUBMIT = "1"
 $env:VICTORY_COPY_PLAIN = "1"
+$env:VICTORY_INDIRECT_GATHER = "1"
+$env:VICTORY_TABLE_BUFFERS = "1"
+$env:VICTORY_TEXTURE_BACK = "1"
 $env:VICTORY_TEXTURE_NO_WAIT = "1"
 $env:VICTORY_CARD_BUFFERS_MB = "2048"
 $env:VICTORY_TEXTURE_BUDGET_MB = "10240"
 $env:VICTORY_PAGE_WRITES = "slots"
 $env:VICTORY_AMBIENT = "0.6"
+$env:VICTORY_UNWATCHED_FRAMES = "4"
 $env:VICTORY_WIDE_REFRESH = "1"
 $env:VICTORY_WIDE_MERGE = "1"
 $env:VICTORY_JOIN_COPIES = "1"
@@ -247,7 +280,29 @@ $env:VICTORY_DISPLAY_MODE = "1920x1080"
 .\target\release\victory.exe run --execute <game_dir>\<title_exe>
 ```
 
-> **Tuning notes (RTX 5060 Ti & 8 GB GPUs):** Use `VICTORY_CARD_BUFFERS_MB=2048` + `VICTORY_TEXTURE_BUDGET_MB=10240` on 16 GB GPUs (`1024` / `5120` on 8 GB GPUs) together with `VICTORY_PAGE_WRITES=slots` to prevent `the card has no room for new ones` and re-upload late-written placed textures (fixing black skin and ground). Enabling `VICTORY_QUEUE2=1`, `VICTORY_ASYNC_SUBMIT=1`, and `VICTORY_COPY_PLAIN=1` cuts `copying back` by ~3× (`~205 → ~65–78 ms`) and handles ~12,400 in-place copies/frame without kernel syscalls. Keep `VICTORY_CARD_FETCH_INFLIGHT` off (`0`, default). `VICTORY_BVH_BUILDER=1` reaches `50/53` compute shaders on wave32 (missing 3 `v_readfirstlane_b32` scans: `39321a95223001ed`, `77360df21e12ea43`, `9fc111d3be79364f`); leave `VICTORY_FIRSTLANE_OWN` off for now.
+#### Preset for 8 GB VRAM GPUs (AMD RDNA2 / PCIe x4) + HDD
+The 16 GB preset above (`VICTORY_CARD_BUFFERS_MB = "2048"`, `VICTORY_TEXTURE_BUDGET_MB = "10240"`) exceeds 8 GB cards. On **8 GB VRAM GPUs** (such as the **Radeon RX 6500 XT**, especially over PCIe 3.0 x4 and with files on an HDD), lowering the budgets avoids paging, black skin textures, and display driver timeouts (`0x887A0006`):
+
+```powershell
+# Keep cache_dir and data_dir on an SSD in victory.toml (e.g. C:\victory-data)
+$env:VICTORY_RELAY = "0"
+$env:VICTORY_FILL_WAIT = "1"
+$env:VICTORY_CARD_BUFFERS_MB = "1024"
+$env:VICTORY_TEXTURE_BUDGET_MB = "5120"
+$env:VICTORY_PAGE_WRITES = "slots"
+$env:VICTORY_AMBIENT = "0.6"
+$env:VICTORY_TEXTURE_NO_WAIT = "1"
+$env:VICTORY_WIDE_REFRESH = "1"
+$env:VICTORY_WIDE_MERGE = "1"
+$env:VICTORY_JOIN_COPIES = "1"
+$env:VICTORY_DISPLAY_MODE = "1920x1080"
+
+.\target\release\victory.exe run --execute <game_dir>\<title_exe>
+```
+
+- **16 GB RAM + HDD tips:** Close browsers and heavy background apps before launching to leave RAM for Windows file caching, and set a manual **16 GB–24 GB** SSD pagefile to prevent Windows error `1455` during loading.
+
+> **Tuning notes (RTX 5060 Ti & 8 GB GPUs):** Enabling `VICTORY_TABLE_BUFFERS=1`, `VICTORY_INDIRECT_GATHER=1`, and `VICTORY_SYNC_NULL_SKIP` (default on) doubled open-world FPS on RTX 5060 Ti (`2.7 → 5.8 fps` at `3840x2160`, cutting `preparing` from `~230 ms` to `~105–113 ms`). `VICTORY_TEXTURE_BACK=1` restores shader-written water wave textures. The 2-line performance HUD (`VITORIABR | FPS | MS | DRAWS` + `RES | VRAM | GPU`) is controlled via `VICTORY_FPS_COUNTER` (`1`/`full` default, `compact`, or `0`). Use `VICTORY_CARD_BUFFERS_MB=2048` + `VICTORY_TEXTURE_BUDGET_MB=10240` on 16 GB GPUs (`1024` / `5120` on 8 GB GPUs) together with `VICTORY_PAGE_WRITES=slots` to prevent `the card has no room for new ones` and re-upload late-written placed textures (fixing black skin and ground). Keep `VICTORY_CARD_FETCH_INFLIGHT` off (`0`, default).
 
 Diagnostics build:
 ```powershell

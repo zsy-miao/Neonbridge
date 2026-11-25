@@ -374,6 +374,50 @@ pub(crate) fn note_target(resource: crate::object::This) {
 }
 
 /// At the present of frame `frame`: saves the noted targets.
+/// Flamingo: the indirect commands of the frames listed in
+/// `VICTORY_CAPTURE_FRAMES` (frame, kind, title address of the first
+/// record), written out at the frame's present by [`dump_args`].
+static ARGS: std::sync::Mutex<Vec<(u64, u32, u64)>> = std::sync::Mutex::new(Vec::new());
+
+/// An indirect command of kind `kind` whose first record is at title
+/// address `at`, if its frame is listed.
+pub(crate) fn note_args(kind: u32, at: u64) {
+    let frame = crate::queue::presented() + 1;
+    if listed(frame) {
+        ARGS.lock().unwrap_or_else(|e| e.into_inner()).push((frame, kind, at));
+    }
+}
+
+/// At the present of listed frame `frame`: each of its indirect commands'
+/// first record as title memory holds it then (the culling passes write
+/// them; what shaders wrote is copied back), as `frame-<n>-args.txt`, one
+/// line per command in recording order: kind, address, four dwords (for a
+/// mesh dispatch: the groups along x, y and z).
+pub(crate) fn dump_args(frame: u64) {
+    let Some(folder) = folder() else { return };
+    let mine: Vec<(u32, u64)> = {
+        let mut args = ARGS.lock().unwrap_or_else(|e| e.into_inner());
+        let mine = args.iter().filter(|a| a.0 == frame).map(|a| (a.1, a.2)).collect();
+        args.retain(|a| a.0 > frame);
+        mine
+    };
+    if mine.is_empty() {
+        return;
+    }
+    let mut out = String::new();
+    for (kind, at) in mine {
+        let mut bytes = [0u8; 16];
+        let words = if crate::host::read_into(at as *const u8, &mut bytes) {
+            let w: Vec<u32> = bytes.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            format!("{w:?}")
+        } else {
+            "unreadable".into()
+        };
+        out += &format!("kind {kind} at {at:#x}: {words}\n");
+    }
+    let _ = std::fs::write(folder.join(format!("frame-{frame}-args.txt")), out);
+}
+
 pub(crate) fn dump_targets(frame: u64) {
     use std::sync::atomic::Ordering::Relaxed;
     let targets = std::mem::take(&mut *TARGETS.lock().unwrap_or_else(|e| e.into_inner()));

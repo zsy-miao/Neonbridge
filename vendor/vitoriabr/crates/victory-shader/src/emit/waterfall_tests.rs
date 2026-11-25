@@ -91,7 +91,7 @@ fn build(words: &[u32], buffers: bool) -> HostShader {
         v.validate(&mut shader.dxil.clone())
             .expect("DXIL validation failed");
     } else {
-        eprintln!("no dxil.dll; validation skipped");
+        crate::emit::test_skip::skip("no dxil.dll; validation skipped");
     }
     shader
 }
@@ -118,7 +118,7 @@ fn run(shader: &HostShader, views: &[View]) -> Vec<(&'static str, Vec<u32>)> {
         .unwrap_or_else(|e| e.into_inner());
     for (label, warp) in [("hardware", false), ("warp", true)] {
         let Ok(host) = Host::new(warp) else {
-            eprintln!("no SM 6.6 {label} device; skipped");
+            crate::emit::test_skip::skip(&format!("no SM 6.6 {label} device; skipped"));
             continue;
         };
         let (root, pso) = match host.compute_pipeline(shader) {

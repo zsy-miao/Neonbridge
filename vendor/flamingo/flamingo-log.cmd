@@ -54,8 +54,10 @@ if "%FLAMINGO_SERIES_X%"=="1" set "CONSOLE=series-x"
 >> "%LOG%" echo profile %CONSOLE%
 
 echo.
-echo Running. Play until the problem shows (for a black screen: wait a minute in it),
-echo then close the game window. The log is written to:
+echo Running. The first minutes can stay black while shaders are translated (the
+echo first launch most of all); the menus come after. Play until the problem shows
+echo (for a black screen in the game: wait a minute in it), then close the GAME
+echo WINDOW. Do not press Ctrl+C here: the log would not be zipped. It is written to:
 echo   %LOG%
 echo.
 "%TARGET%\diag\victory.exe" run "%GAME%" --execute --console %CONSOLE% >> "%LOG%" 2>&1

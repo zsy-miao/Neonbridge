@@ -1,0 +1,4 @@
+LIBRARY d3d12_xs
+; Les redirections vers d3d12.dll sont déclarées dans d3d12_xs.cpp (#pragma comment(linker)).
+EXPORTS
+  D3D12ConfigureVirtualMemoryX

@@ -13,6 +13,10 @@ pub enum ConsoleOnly {
     Clzero,
     /// `clzero` loop: `clzero; add rax, 0x40; cmp rax, <reg>; jb -12` – zero `[rax..reg)`
     ClzeroLoop { end_reg: u8 },
+    /// `clzero` in the loop `mov rax, <ptr>; add <ptr>, 0x40; clzero; cmp <ptr>, <end>; jb -15`
+    /// (the seven bytes before it are the caller's to check, [`loop15_head`]): the length is
+    /// the `clzero`'s own
+    ClzeroStep { ptr_reg: u8, end_reg: u8 },
     /// `rdpru`: ecx = 0 MPERF / 1 APERF → edx:eax (a counter)
     Rdpru,
     /// `monitorx` / `mwaitx`: a wait the emulation skips
@@ -84,6 +88,24 @@ fn modrm_len(b: &[u8]) -> Option<usize> {
     (b.len() >= len).then_some(len)
 }
 
+/// Whether `before`, the seven bytes in front of a [`ConsoleOnly::ClzeroStep`], are
+/// `mov rax, <ptr>; add <ptr>, 0x40` for that pointer register (neither rax nor rsp).
+pub fn loop15_head(before: &[u8], ptr_reg: u8) -> bool {
+    let (hi, lo) = (ptr_reg >> 3 & 1, ptr_reg & 7);
+    ptr_reg != 0
+        && ptr_reg != 4
+        && before.len() == 7
+        // mov rax, ptr: REX.W (+R for r8..r15) 89 /r with rm = rax
+        && before[0] == 0x48 | hi << 2
+        && before[1] == 0x89
+        && before[2] == 0xC0 | lo << 3
+        // add ptr, 0x40: REX.W (+B) 83 /0 ib
+        && before[3] == 0x48 | hi
+        && before[4] == 0x83
+        && before[5] == 0xC0 | lo
+        && before[6] == 0x40
+}
+
 /// The console-only instruction at the start of `code` and its length.
 pub fn decode(code: &[u8]) -> Option<(ConsoleOnly, usize)> {
     let mut i = 0;
@@ -128,6 +150,19 @@ pub fn decode(code: &[u8]) -> Option<(ConsoleOnly, usize)> {
                 let modrm = code[i + 9];
                 let reg_idx = ((modrm >> 3) & 7) | if rex_r { 8 } else { 0 };
                 Some((ConsoleOnly::ClzeroLoop { end_reg: reg_idx }, i + 12))
+            } else if i == 0
+                && code.len() >= 8
+                && code[3] & 0xF8 == 0x48
+                && code[3] & 0x02 == 0
+                && code[4] == 0x39
+                && code[5] >> 6 == 3
+                && code[6..8] == [0x72, 0xF1]
+            {
+                // clzero; cmp <ptr>, <end> (REX.W 39 /r, register form); jb -15
+                let (rex, modrm) = (code[3], code[5]);
+                let end_reg = ((modrm >> 3) & 7) | (rex & 4) << 1;
+                let ptr_reg = (modrm & 7) | (rex & 1) << 3;
+                Some((ConsoleOnly::ClzeroStep { ptr_reg, end_reg }, 3))
             } else {
                 Some((ConsoleOnly::Clzero, i + 3))
             }
@@ -193,6 +228,22 @@ mod tests {
         );
         // the same loop after an address-size prefix: that one CLZERO alone
         assert_eq!(decode(&[0x67, 0x0F, 0x01, 0xFC, 0x48, 0x83, 0xC0, 0x40, 0x48, 0x39, 0xD0, 0x72, 0xF4]), Some((ConsoleOnly::Clzero, 4)));
+        // the title's other loop, as at its +0x4e8ab4c: mov rax, r10; add r10, 0x40; clzero;
+        // cmp r10, r11; jb -15 (and against r9/r10, r8/r9, rdx/r8)
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x4D, 0x39, 0xDA, 0x72, 0xF1]), Some((ConsoleOnly::ClzeroStep { ptr_reg: 10, end_reg: 11 }, 3)));
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x4D, 0x39, 0xD1, 0x72, 0xF1]), Some((ConsoleOnly::ClzeroStep { ptr_reg: 9, end_reg: 10 }, 3)));
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x4D, 0x39, 0xC8, 0x72, 0xF1]), Some((ConsoleOnly::ClzeroStep { ptr_reg: 8, end_reg: 9 }, 3)));
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x4C, 0x39, 0xC2, 0x72, 0xF1]), Some((ConsoleOnly::ClzeroStep { ptr_reg: 2, end_reg: 8 }, 3)));
+        assert!(loop15_head(&[0x4C, 0x89, 0xD0, 0x49, 0x83, 0xC2, 0x40], 10));
+        assert!(loop15_head(&[0x4C, 0x89, 0xC8, 0x49, 0x83, 0xC1, 0x40], 9));
+        assert!(loop15_head(&[0x4C, 0x89, 0xC0, 0x49, 0x83, 0xC0, 0x40], 8));
+        assert!(loop15_head(&[0x48, 0x89, 0xD0, 0x48, 0x83, 0xC2, 0x40], 2));
+        assert!(!loop15_head(&[0x4C, 0x89, 0xD0, 0x49, 0x83, 0xC2, 0x40], 9), "another register");
+        assert!(!loop15_head(&[0x4C, 0x89, 0xD0, 0x49, 0x83, 0xC2, 0x80], 10), "another step");
+        // not that loop: another jump back, a memory operand, a 32-bit compare
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x4D, 0x39, 0xDA, 0x72, 0xF4]), Some((ConsoleOnly::Clzero, 3)));
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x4D, 0x39, 0x1A, 0x72, 0xF1]), Some((ConsoleOnly::Clzero, 3)));
+        assert_eq!(decode(&[0x0F, 0x01, 0xFC, 0x45, 0x39, 0xDA, 0x72, 0xF1]), Some((ConsoleOnly::Clzero, 3)));
         assert_eq!(decode(&[0x0F, 0x01, 0xFD]), Some((ConsoleOnly::Rdpru, 3)));
         assert_eq!(decode(&[0x0F, 0x01, 0xFA]), Some((ConsoleOnly::Monitorx, 3)));
         assert_eq!(decode(&[0x0F, 0x01, 0xFB]), Some((ConsoleOnly::Mwaitx, 3)));

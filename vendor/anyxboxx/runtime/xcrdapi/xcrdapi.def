@@ -1,0 +1,4 @@
+LIBRARY XCRDAPI
+; DStorageGetFactory : factory minimale, voir xcrdapi.cpp.
+EXPORTS
+  DStorageGetFactory

@@ -1901,8 +1901,11 @@ impl HostHeap {
                 let lacks = match (new, &planned) {
                     (_, None) => true,
                     (Some(new), Some(reads)) => {
+                        // No submission uses the plan's writes outside
+                        // tests (`Batch::prepare_bindless`), so another
+                        // write alone leaves the plan as good as it was.
                         let lacking = [
-                            !same_range(&new.write, wrote),
+                            cfg!(test) && !same_range(&new.write, wrote),
                             new.bounce != bounced,
                             !covered(reads, &new.read),
                         ];
@@ -1913,9 +1916,10 @@ impl HostHeap {
                         lacking.contains(&true)
                     }
                     (None, Some(_)) => {
-                        let gone = wrote.is_some() || bounced.is_some();
+                        let wrote = cfg!(test) && wrote.is_some();
+                        let gone = wrote || bounced.is_some();
                         why[3] += usize::from(gone);
-                        bits |= u8::from(wrote.is_some()) | u8::from(bounced.is_some()) << 1;
+                        bits |= u8::from(wrote) | u8::from(bounced.is_some()) << 1;
                         gone
                     }
                 };
@@ -2813,7 +2817,42 @@ fn largest_mip(resource: &[u32; 14], desc: &[u32; 16]) -> u32 {
     }
     let (width, height) = (resource[4], resource[6]);
     let (format, mips) = (resource[8], resource[7] >> 16);
-    let mut first = desc[4].min(mips.saturating_sub(1));
+    // The view may also say so with a least level of detail while it
+    // starts at mip 0: the title streams the larger mips in later, and their
+    // memory holds nothing yet (`VICTORY_LOD_CLAMP=0`: as before, when the
+    // host texture was made whole for such a view).
+    let clamp = {
+        let words: &[u32; 10] = desc[..10].try_into().unwrap_or(&[0; 10]);
+        let d = srv_desc(words);
+        // SAFETY: the member the dimension names.
+        let clamp = unsafe {
+            match d.ViewDimension {
+                D3D12_SRV_DIMENSION_TEXTURE2D => d.Anonymous.Texture2D.ResourceMinLODClamp,
+                D3D12_SRV_DIMENSION_TEXTURE2DARRAY => d.Anonymous.Texture2DArray.ResourceMinLODClamp,
+                D3D12_SRV_DIMENSION_TEXTURECUBE => d.Anonymous.TextureCube.ResourceMinLODClamp,
+                D3D12_SRV_DIMENSION_TEXTURECUBEARRAY => d.Anonymous.TextureCubeArray.ResourceMinLODClamp,
+                _ => 0.0,
+            }
+        };
+        if clamp.is_finite() && clamp >= 1.0 { clamp.floor().min(32.0) as u32 } else { 0 }
+    };
+    static CLAMPED: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let on = *ON.get_or_init(|| std::env::var_os("VICTORY_LOD_CLAMP").is_none_or(|v| v != "0"));
+    let n = CLAMPED[usize::from(clamp > desc[4])].fetch_add(1, Ordering::Relaxed);
+    if clamp > desc[4] && n.is_power_of_two() {
+        tracing::info!(
+            views = n + 1,
+            others = CLAMPED[0].load(Ordering::Relaxed),
+            clamp,
+            first = desc[4],
+            width,
+            height,
+            on,
+            "a placed texture's view holds its detail back"
+        );
+    }
+    let mut first = desc[4].max(if on { clamp } else { 0 }).min(mips.saturating_sub(1));
     let block = (70..=84).contains(&format) || (94..=99).contains(&format);
     let fits = |k: u32| {
         (width >> k) > 0

@@ -39,9 +39,12 @@ logged in [FLAMINGO.md](FLAMINGO.md).
 
 Flamingo's own work:
 
-- **Stats overlay** (RivaTuner-style): fps and frame time, frames, draws, CPU, GPU and
-  copy-back time per frame, VRAM, RAM, and a frame-time graph. **F9** shows or hides it.
-  `FLAMINGO_OSD=1` shows it from the start; `FLAMINGO_OSD=0` turns it off.
+- **Stats overlay** (RivaTuner-style). **F9** goes round a compact display (fps and frame
+  time, GPU load and temperature, VRAM, CPU load, RAM, a frame-time graph, as MSI Afterburner
+  shows them), the full diagnostics (also frames, draws, preparing submissions with its copies
+  and textures, waiting for the GPU, copy-back in ms and MB, shaders, pipelines, dropped
+  draws), and nothing. `FLAMINGO_OSD=1` starts with the compact display, `FLAMINGO_OSD=2` with
+  the full one, `FLAMINGO_OSD=0` turns it off. GPU load and temperature need an NVIDIA card.
   <img src="https://github.com/realblastex/flamingo/releases/download/progress-2026-11-25/stats-overlay.png" alt="Stats overlay">
 - **Discord Rich Presence**: the game's name, menu or world, frame rate and time played.
 - **DualSense support**: a PlayStation 5 controller (and the DualSense Edge), over USB or

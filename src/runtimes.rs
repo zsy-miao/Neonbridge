@@ -1550,7 +1550,7 @@ enum WarmLine {
 /// Shader cache format of each runtime (WIRING.md): runtimes of one format seed each other.
 fn cache_format(name: &str) -> Option<&'static str> {
     match name {
-        "klbf" | "victory" | "vibrport" | "vitoriabr" | "scarlettport" | "unified" => Some("VSH1"),
+        "klbf" | "victory" | "vibrport" | "vitoriabr" | "scarlettport" | "unified" | "anyxboxx" => Some("VSH1"),
         "flamingo" | "belobug" => Some("VSH2"),
         _ => None,
     }
@@ -1569,7 +1569,7 @@ fn seed_cache(name: &str, cache: &Path) {
         return;
     }
     let Some(fmt) = cache_format(name) else { return };
-    let mut froms: Vec<(&str, PathBuf)> = ["klbf", "victory", "vibrport", "vitoriabr", "scarlettport", "unified", "flamingo", "belobug"]
+    let mut froms: Vec<(&str, PathBuf)> = ["klbf", "victory", "vibrport", "vitoriabr", "scarlettport", "unified", "anyxboxx", "flamingo", "belobug"]
         .into_iter().filter(|f| *f != name && cache_format(f) == Some(fmt)).map(|f| (f, self::cache(f))).collect();
     // The old shared cache (6ixpack\cache) is VSH1: a key it has loads, a stale one is rejected and compiled.
     if fmt == "VSH1" {

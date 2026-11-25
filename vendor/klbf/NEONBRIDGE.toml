@@ -4,7 +4,7 @@
 # 5-9 fps on an AMD RX 9070 XT. Not yet confirmed on NVIDIA by its author.
 name = "klbf"
 rank = 1   # launcher list order (Master): first on the gta6-pc-race tracker
-about = "KLBF Lab 39b99cd (GPL-3.0): claims 5-9 fps in free roam, 77 min without a crash (AMD); not yet verified here"
+about = "KLBF Lab 94cf8a7 (GPL-3.0): claims 5-9 fps in free roam, 77 min without a crash (AMD); not yet verified here"
 upstream = "https://github.com/PastiiJay/klbf-lab"
 build = ["cargo", "build", "--release", "--locked"]   # README.md:127
 watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]

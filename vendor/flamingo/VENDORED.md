@@ -1,4 +1,4 @@
 # Vendored: flamingo
 
-Copied unchanged from https://github.com/realblastex/flamingo at upstream commit 866d277 (full hash in UPSTREAM).
+Copied unchanged from https://github.com/realblastex/flamingo at upstream commit 78bb903 (full hash in UPSTREAM).
 GPL-3.0 (see LICENSE); all credit to its authors. Builds as its own workspace.

@@ -38,6 +38,19 @@ Tested on one machine: AMD Radeon RX 9070 XT 16 GB (Adrenalin 32.0.32029.2010), 
 
 The recommended settings render the world at 1280×720 and upscale it to 1920×1080 with **AMD FSR** (FidelityFX Super Resolution). The game itself does the same on console: it ships with its own FSR upscaler and calls it every frame. KLBF Lab hands that call to AMD's official FidelityFX SDK on the PC, so the picture is upscaled the way the game expects, and the frame rate goes up by about a third. FSR works on AMD, NVIDIA and Intel cards. Native resolution without FSR is listed too (~5 fps).
 
+## Built by KLBF Lab
+
+What this project wrote itself, checked commit by commit (everything taken from other forks keeps its credit in [Credits](#credits)):
+
+- **A pipeline pre-build that survives AMD's shader compiler.** On top of the upstream pre-build, KLBF Lab saves progress as it goes (every 200 pipelines and every minute) and resumes after a crash. Pipelines that crash the driver (`amdxc64.dll`) are recorded in `prebuild-crashed.txt`, and every later run skips them. This is what lets the game start on Radeon cards that crash elsewhere.
+- **Console wave32 programs on 64-lane AMD hardware.** Each half of a 64-lane wave runs as one console wave, with wave reductions done per half and the console's float-denormal handling. This is the base of correct pixel and vertex shading on RDNA.
+- **NaN guard on colour exports and typed stores**, against the purple/black areas one invalid value spreads on AMD. Proposed upstream too: fxceless/victory-fork#837.
+- **The console's plane composition.** Each present plane is composed with its own resources, in submission order, scaled the way the console scales it.
+- **AMD frame generation (`VICTORY_FRAMEGEN=1`)** through FidelityFX SDK 2.4, with the interface plane handed to the SDK so menus and HUD are not interpolated. Also a no-SDK fallback for the title's upscale (`VICTORY_FFX_SIMPLE=1`).
+- **A per-frame budget for texture uploads** (`VICTORY_TEXTURE_QUEUE_MB/MS`), so streaming doesn't stall a frame.
+- **Proven in play, on our own saves.** From a new game to the open world: the prologue and the first mission completed, including the water mission with boats floating. The water fix itself is credited to Geckomacabre/vx-layer and MiamiGame/XTP; we integrated and proved it. Record: 77 min of play without a crash.
+- **A beginner's guide** ([docs/GUIDE.md](docs/GUIDE.md)) with every command to copy and paste, Windows 10 and Linux notes, and a troubleshooting table built from players' reports.
+
 ## Progress
 
 How far the project gets in the story, scene by scene (one machine: AMD Radeon RX 9070 XT, recommended settings with AMD FSR). Frame rates are measured in the world, while playing, unless stated.

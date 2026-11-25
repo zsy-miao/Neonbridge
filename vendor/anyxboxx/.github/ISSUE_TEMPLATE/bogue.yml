@@ -1,0 +1,26 @@
+name: Bug
+description: Report incorrect behaviour of the emulator (please write in English)
+labels: [bogue]
+body:
+  - type: textarea
+    id: etapes
+    attributes:
+      label: Steps to reproduce
+      description: Command run or button used.
+    validations:
+      required: true
+  - type: textarea
+    id: attendu
+    attributes:
+      label: Expected result and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: journal
+    attributes:
+      label: Log or compatibility report
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Windows and Python version

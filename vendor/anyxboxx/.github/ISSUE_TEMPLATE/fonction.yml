@@ -1,0 +1,21 @@
+name: Function to emulate
+description: Request emulation of an Xbox or Windows system function (please write in English)
+labels: [hle]
+body:
+  - type: input
+    id: nom
+    attributes:
+      label: Function
+      placeholder: xgameruntime.dll!XUserAddAsync
+    validations:
+      required: true
+  - type: input
+    id: doc
+    attributes:
+      label: Link to the public documentation
+  - type: textarea
+    id: contexte
+    attributes:
+      label: Program that calls it and expected behaviour
+    validations:
+      required: true

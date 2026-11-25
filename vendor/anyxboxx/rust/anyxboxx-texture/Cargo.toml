@@ -1,0 +1,17 @@
+[package]
+name = "anyxboxx-texture"
+version = "0.1.0"
+edition = "2021"
+description = "Textures console : décodage BC7, désentrelacement GFX10 SW_4K_S, export PNG (portage de Xbox2Windows, MIT)."
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "anyxboxx_texture"
+path = "src/lib.rs"
+
+[[bin]]
+name = "anyxboxx_texture"
+path = "src/main.rs"
+
+[dev-dependencies]
+sha2 = "0.10"

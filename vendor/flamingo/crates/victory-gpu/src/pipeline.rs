@@ -98,7 +98,9 @@ fn program_name(container: &[u8]) -> Option<&str> {
             && w[1].is_ascii_uppercase()
             && w[2] == b'_'
             && (i == 0 || !ident(container[i - 1]));
-        if starts {
+        // (Not a system value's semantic, `SV_Position`: a mesh or pixel
+        // container names those before its program.)
+        if starts && !w.starts_with(b"SV_") {
             let len = w.iter().take_while(|&&b| ident(b)).count();
             if len >= 6 {
                 return std::str::from_utf8(&w[..len]).ok();
@@ -121,6 +123,7 @@ mod name_tests {
         bytes.extend_from_slice(b"\x00CS_ShadowRenderTiled_9a1b\x00PS_Other\x00");
         assert_eq!(program_name(&bytes), Some("CS_ShadowRenderTiled_9a1b"));
         assert_eq!(program_name(b"\x00AB_x\x00"), None);
+        assert_eq!(program_name(b"\x00SV_Position\x00MS_VS_Transform_1a\x00"), Some("MS_VS_Transform_1a"));
         assert_eq!(program_name(b""), None);
     }
 }

@@ -3,7 +3,7 @@
 # RTX 4060 Ti 8 GB). Build, keys and run are its README.md "Como compilar e rodar".
 name = "vibrport"
 rank = 4   # launcher list order (Master): 4th on the gta6-pc-race tracker
-about = "VI-BR-PORT 00c3c48 (GPL-3.0): does not run on our RTX 4060 yet, even alone (game stops ~20 s in); 8 GB NVIDIA fork; 4-7 fps at 1080p, hour-long sessions (its author's RTX 4060 Ti)"
+about = "VI-BR-PORT 96135bd (GPL-3.0): does not run on our RTX 4060 yet, even alone (game stops ~20 s in); 8 GB NVIDIA fork; 4-7 fps at 1080p, hour-long sessions (its author's RTX 4060 Ti)"
 upstream = "https://github.com/edsuuu/VI-BR-PORT"
 build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--features", "diagnostics", "--locked"]   # README.md:143 (+--locked)
 watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]

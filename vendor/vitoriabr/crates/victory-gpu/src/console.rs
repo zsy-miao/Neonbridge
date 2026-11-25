@@ -26,6 +26,15 @@ impl Console {
         }
     }
 
+    /// The GPU's pipe configuration, which the addresses of the XOR swizzle
+    /// modes follow (textures the title's CPU reads or writes in one).
+    pub const fn pipes(self) -> victory_formats::texture::Pipes {
+        match self {
+            Console::SeriesX => victory_formats::texture::Pipes::SERIES_X,
+            Console::SeriesS => victory_formats::texture::Pipes::SERIES_S,
+        }
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Console::SeriesX => "Xbox Series X",

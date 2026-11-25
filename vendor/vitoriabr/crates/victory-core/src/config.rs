@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::policy::ensure_outside_repo;
+use crate::policy::{ensure_outside_repo, is_within};
 
 #[derive(Debug, Default, Clone)]
 pub struct Config {
@@ -91,6 +91,14 @@ impl Config {
         let data_dir = env_path("VICTORY_DATA_DIR")
             .or(file.data_dir)
             .map_or_else(|| default_dir("data"), Ok)?;
+        if is_within(&data_dir, &cache_dir)? {
+            anyhow::bail!(
+                "data_dir ({}) must not be the cache_dir ({}) or inside it: the cache may be \
+                 deleted at any time",
+                data_dir.display(),
+                cache_dir.display()
+            );
+        }
         Ok(Config {
             game_dir: env_path("VICTORY_GAME_DIR").or(file.game_dir),
             cache_dir,
@@ -213,5 +221,37 @@ mod tests {
             ..Default::default()
         };
         assert!(cfg.data_subdir("x").is_err());
+    }
+
+    fn resolve_dirs(cache: &Path, data: &Path) -> Result<Config> {
+        let file = FilePaths {
+            cache_dir: Some(cache.to_path_buf()),
+            data_dir: Some(data.to_path_buf()),
+            ..Default::default()
+        };
+        Config::resolve(file, None, |_| None)
+    }
+
+    #[test]
+    fn data_dir_equal_to_cache_dir_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(resolve_dirs(tmp.path(), tmp.path()).is_err());
+    }
+
+    #[test]
+    fn data_dir_inside_cache_dir_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        assert!(resolve_dirs(&cache, &cache.join("data")).is_err());
+        assert!(resolve_dirs(&cache, &cache.join("a/../data")).is_err());
+    }
+
+    #[test]
+    fn sibling_with_similar_prefix_and_cache_inside_data_are_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        assert!(resolve_dirs(&cache, &tmp.path().join("cache-old")).is_ok());
+        let data = tmp.path().join("data");
+        assert!(resolve_dirs(&data.join("cache"), &data).is_ok());
     }
 }

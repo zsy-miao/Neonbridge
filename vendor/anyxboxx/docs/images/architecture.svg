@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="460" viewBox="0 0 880 460" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+  <rect width="880" height="460" fill="#f7f8fa"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 10 5 0 10z" fill="#4b5263"/>
+    </marker>
+  </defs>
+  <text x="24" y="34" font-size="18" font-weight="600" fill="#1d2230">AnyXboxX — prototype architecture</text>
+
+  <g fill="#ffffff" stroke="#9aa3b5">
+    <rect x="24" y="64" width="190" height="92" rx="8"/>
+    <rect x="254" y="64" width="190" height="92" rx="8"/>
+    <rect x="484" y="64" width="370" height="92" rx="8"/>
+    <rect x="254" y="196" width="190" height="112" rx="8"/>
+    <rect x="484" y="196" width="370" height="112" rx="8"/>
+    <rect x="24" y="196" width="190" height="118" rx="8"/>
+  </g>
+  <g fill="#1d2230">
+    <text x="40" y="90" font-weight="600">GDK package</text>
+    <text x="40" y="112">MicrosoftGame.Config</text>
+    <text x="40" y="130">PE32+ x86-64 executable</text>
+    <text x="270" y="90" font-weight="600">emu/config.py</text>
+    <text x="270" y="112">TitleId, Identity,</text>
+    <text x="270" y="130">“Scarlett” executable</text>
+    <text x="500" y="90" font-weight="600">emu/loader.py · emu/modules.py</text>
+    <text x="500" y="112">sections, relocations, TLS, exports and ordinals;</text>
+    <text x="500" y="130">package DLLs loaded and linked together</text>
+    <text x="270" y="222" font-weight="600">emu/machine.py</text>
+    <text x="270" y="244">Unicorn x86-64 (Zen 2)</text>
+    <text x="270" y="262">stack, heap, TEB/PEB (GS)</text>
+    <text x="270" y="280">instruction budget</text>
+    <text x="500" y="222" font-weight="600">emu/hle — HLE page</text>
+    <text x="500" y="244">gdk.py: xgameruntime (XSystem*, XMem*, XTaskQueue*)</text>
+    <text x="500" y="262">kernel.py, library.py: time, heap, TLS, modules</text>
+    <text x="500" y="280">crt.py + guest.py: malloc, memcpy, _initterm</text>
+    <text x="40" y="222" font-weight="600">scarlett.py</text>
+    <text x="40" y="244">Tkinter interface</text>
+    <text x="40" y="262">log, report</text>
+    <text x="40" y="280">--demo · --rapport · --banc</text>
+    <text x="40" y="298">--natif → emu/native (Wine)</text>
+  </g>
+  <g stroke="#4b5263" stroke-width="1.6" fill="none" marker-end="url(#a)">
+    <path d="M214 110H250"/>
+    <path d="M444 110H480"/>
+    <path d="M669 156 C669 176 349 170 349 192"/>
+    <path d="M444 240H480"/>
+    <path d="M480 270H448"/>
+    <path d="M254 252H218"/>
+  </g>
+
+  <rect x="24" y="344" width="830" height="92" rx="8" fill="#fff4f0" stroke="#d98a73" stroke-dasharray="5 4"/>
+  <text x="40" y="370" font-weight="600" fill="#8a3b24">Not emulated yet</text>
+  <text x="40" y="394" fill="#5a2a1c">D3D12.X (d3d12_xs.dll) and RDNA 2 shaders · xg_xs · ESRAM · XMA audio · Xbox Live</text>
+  <text x="40" y="414" fill="#5a2a1c">x64 SEH exceptions (.pdata) · dynamic LoadLibrary</text>
+</svg>

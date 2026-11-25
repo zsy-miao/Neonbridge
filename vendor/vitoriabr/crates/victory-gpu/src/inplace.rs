@@ -286,9 +286,19 @@ fn views() -> std::sync::MutexGuard<'static, Views> {
 /// The runtime made a section of `bytes` for physical pages; `committed`
 /// if with `SEC_COMMIT` (only such a section can be opened as a heap).
 pub fn title_memory_section(section: usize, bytes: u64, committed: bool) {
-    let mut v = views();
-    v.sections.retain(|s| s.0 != section);
-    v.sections.push((section, bytes, committed));
+    {
+        let mut v = views();
+        v.sections.retain(|s| s.0 != section);
+        v.sections.push((section, bytes, committed));
+    }
+    // A view of our own made on an earlier section that had this handle's
+    // number shows that section's pages, not this one's: it is forgotten
+    // (left mapped: nothing reads it any more) and the next store through
+    // a view of ours maps this section.
+    let gone = OWN.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|own| own.remove(&section)).flatten();
+    if gone.is_some() {
+        tracing::info!(section, "a section handle's number came round again: our own view of the earlier section is forgotten");
+    }
 }
 
 /// The runtime mapped `[at, at + len)` as a view of `section` from
@@ -418,9 +428,32 @@ pub(crate) fn views_of_section(section: usize, offset: u64, len: usize) -> Vec<(
 /// told the page was written (`crate::watch::wrote_own`) so that every
 /// other copy of it takes it again, and the copy that wrote it notes the
 /// page current (`put_back_own` in `crate::shadow`).
+///
+/// `VICTORY_BACK_OWN_VIEW=alt`: twenty seconds with, twenty without, in
+/// turn, each change said in the log, for measuring it in one scene.
 pub(crate) fn back_own() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VICTORY_BACK_OWN_VIEW").is_some_and(|v| v == "1"))
+    /// 0 off, 1 on, 2 in turn.
+    static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    match *MODE.get_or_init(|| match std::env::var("VICTORY_BACK_OWN_VIEW").as_deref() {
+        Ok("1") => 1,
+        Ok("alt") => 2,
+        _ => 0,
+    }) {
+        0 => false,
+        1 => true,
+        _ => {
+            static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let on = (EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs() / 20) % 2 == 1;
+            static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+            if LAST.swap(u8::from(on), std::sync::atomic::Ordering::Relaxed) != u8::from(on) {
+                tracing::info!(
+                    "copy-back through views of our own from now (VICTORY_BACK_OWN_VIEW=alt): {}",
+                    if on { "ON" } else { "off, as usual" }
+                );
+            }
+            on
+        }
+    }
 }
 
 /// A view of our own on a whole section of the title's physical pages:

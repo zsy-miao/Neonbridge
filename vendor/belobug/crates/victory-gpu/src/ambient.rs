@@ -118,11 +118,27 @@ fn keep() -> f32 {
 /// its name: a small image of the whole sky, in the light's own units.
 pub(crate) const SKY: &[u8] = b"ps_sky_paraboloid_reflection";
 
-/// The image that program last drew into.
-static SKY_IMAGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The sky dome that program last drew into: the host copy, held, since
+/// the title's object may go at any time.
+///
+/// The program draws twice a frame, on two lists recorded at once: the dome
+/// (128x128, R16G16B16A16_FLOAT) and another image of the sky (R11G11B10).
+/// Following whichever was recorded last made the light jump between the
+/// two, three times apart, from frame to frame (run don1, 2026-11-25).
+static SKY_IMAGE: std::sync::Mutex<Option<std::sync::Arc<crate::resource::HostTexture>>> =
+    std::sync::Mutex::new(None);
 
 pub(crate) fn sky_drawn(image: usize) {
-    SKY_IMAGE.store(image, Ordering::Relaxed);
+    let Some(copy) = crate::resource::host_copy(image as This) else { return };
+    // SAFETY: a live resource.
+    let d = unsafe { copy.texture.GetDesc() };
+    if d.Format != DXGI_FORMAT_R16G16B16A16_FLOAT || d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D {
+        return;
+    }
+    let mut held = SKY_IMAGE.lock().unwrap_or_else(|e| e.into_inner());
+    if !held.as_ref().is_some_and(|h| std::sync::Arc::ptr_eq(h, &copy)) {
+        *held = Some(copy);
+    }
 }
 
 /// The light follows the sky: its level and colour are the sky image's mean
@@ -130,30 +146,30 @@ pub(crate) fn sky_drawn(image: usize) {
 /// right were 0.07 at night, 0.3 at dusk and 1.4 at noon (runs lum1, pr1,
 /// av1, 2026-11-25), with sky means of 0.001 at night and 0.65 at dawn; one
 /// level for all hours either drowned the title's own shadows or left what
-/// the sun does not reach black. `VICTORY_AMBIENT_SKY=gain,least` turns it
-/// on (unfinished: see [`follow`]); a file of two numbers, or six with the
-/// shading's, does so in a running game.
+/// the sun does not reach black. On by default; `VICTORY_AMBIENT_SKY=off`
+/// keeps the constant, `gain,least,power` sets it; a file of two or three
+/// numbers, or six or seven with the shading's, does so in a running game.
 /// shortcut: the sky's mean stands in for the light the title's traced
 /// probes would gather; indoors it is the sky's too.
-static FOLLOW: std::sync::Mutex<Option<Option<[f32; 2]>>> = std::sync::Mutex::new(None);
+static FOLLOW: std::sync::Mutex<Option<Option<[f32; 3]>>> = std::sync::Mutex::new(None);
 
-fn follow() -> Option<[f32; 2]> {
+/// Gain, least level and power: the level is `gain * mean^power + least`.
+/// The power is under one because the title's exposure follows the light:
+/// the sky's mean goes from 0.001 at night to several units by day, the
+/// levels that look right only from 0.07 to 1.4.
+fn follow() -> Option<[f32; 3]> {
     if let Some(live) = *FOLLOW.lock().unwrap_or_else(|e| e.into_inner()) {
         return live;
     }
-    static SET: OnceLock<Option<[f32; 2]>> = OnceLock::new();
+    static SET: OnceLock<Option<[f32; 3]>> = OnceLock::new();
     *SET.get_or_init(|| {
-        // Off unless asked for: it does not work yet. The image the sky
-        // program draws into is not the one expected here, and the sky is in
-        // the scene's units while the light is exposed already, so the
-        // title's exposure is needed too.
-        let Ok(set) = std::env::var("VICTORY_AMBIENT_SKY") else {
-            return None;
-        };
+        // On unless `off`: by day and by night it looked right where a
+        // constant did not (runs ciel3, opt1b, 2026-11-25).
+        let set = std::env::var("VICTORY_AMBIENT_SKY").unwrap_or_default();
         if set.trim() == "off" {
             return None;
         }
-        let mut follow = [0.5, 0.05];
+        let mut follow = [0.36, 0.05, 0.4];
         for (to, v) in follow.iter_mut().zip(set.split(',')) {
             if let Ok(v) = v.trim().parse() {
                 *to = v;
@@ -209,16 +225,22 @@ fn live_level() -> Option<f32> {
                     .split_whitespace()
                     .filter_map(|v| v.parse().ok())
                     .collect();
+                // Two, three, six or seven numbers: gain, least, a power if
+                // their count is odd, then the shading's four.
                 if let [gain, least, ref rest @ ..] = read[..]
-                    && matches!(rest.len(), 0 | 4)
+                    && matches!(rest.len(), 0 | 1 | 4 | 5)
                 {
+                    let (power, rest) = match rest.len() % 2 {
+                        1 => (rest[0], &rest[1..]),
+                        _ => (0.4, rest),
+                    };
                     if let [s, r, n, t] = rest[..] {
                         *SHADE.lock().unwrap_or_else(|e| e.into_inner()) = Some([s, r, n, t]);
                     }
-                    let new = Some(Some([gain, least]));
+                    let new = Some(Some([gain, least, power]));
                     let mut follow = FOLLOW.lock().unwrap_or_else(|e| e.into_inner());
                     if *follow != new {
-                        tracing::info!(gain, least, "ambient light follows the sky, set from the file");
+                        tracing::info!(gain, least, power, "ambient light follows the sky, set from the file");
                         *follow = new;
                     }
                 } else if let [level, r, g, b, ref rest @ ..] = read[..] {
@@ -246,26 +268,34 @@ fn live_level() -> Option<f32> {
 }
 
 const SOURCE: &str = r#"
-#define RS "RootConstants(num32BitConstants=12, b0), DescriptorTable(UAV(u0), SRV(t0), SRV(t1))"
+#define RS "RootConstants(num32BitConstants=13, b0), DescriptorTable(UAV(u0), SRV(t0), SRV(t1))"
 cbuffer Floor : register(b0) {
     float level; float3 tint;
     float strength; float radius; float near; float tan_y;
     float gain; float least;
-    float held; float floor_part;
+    float held; float floor_part; float power;
 };
-Texture2D<float3> sky : register(t1);
+Texture2DArray<float4> sky : register(t1);
 // The light, from the sky's mean when it follows the sky (gain above 0).
 float3 from_around() {
     if (gain <= 0.0) return tint * level;
-    uint sw, sh;
-    sky.GetDimensions(sw, sh);
+    uint sw, sh, slices;
+    sky.GetDimensions(sw, sh, slices);
     float3 sum = 0.0;
-    const int N = 6;
+    const int N = 8;
     for (int y = 0; y < N; y++)
-        for (int x = 0; x < N; x++)
+        for (int x = 0; x < N; x++) {
             // The sun's own texels are held down: it lights by itself.
-            sum += min(sky.Load(int3((x * 2 + 1) * sw / (N * 2), (y * 2 + 1) * sh / (N * 2), 0)), 8.0);
-    return sum / (N * N) * gain + float3(0.6, 0.75, 1.0) * least;
+            float3 there = sky.Load(int4((x * 2 + 1) * sw / (N * 2), (y * 2 + 1) * sh / (N * 2), 0, 0)).rgb;
+            sum += clamp(there, 0.0, 8.0);
+        }
+    float3 mean = sum / (N * N);
+    float m = dot(mean, float3(0.2126, 0.7152, 0.0722));
+    // The sky's colour, half washed out (the ground lights too); a dark
+    // sky has none worth following.
+    const float3 NIGHT = float3(0.6, 0.75, 1.0);
+    float3 hue = lerp(NIGHT, lerp(float3(1.0, 1.0, 1.0), mean / max(m, 1e-6), 0.5), saturate(m / 0.05));
+    return hue * (gain * pow(max(m, 0.0), power) + least);
 }
 RWTexture2D<uint> light : register(u0);
 Texture2D<float> depth : register(t0);
@@ -472,22 +502,39 @@ fn record(list: &HostList, light: This, depth: Option<This>, held: f32) -> bool 
     });
     let slot = pass.next.fetch_add(1, Ordering::Relaxed) % SLOTS * 3;
     // The sky image, if the light follows it and the title has drawn it.
-    let sky_image = SKY_IMAGE.load(Ordering::Relaxed) as This;
+    let sky_image = SKY_IMAGE.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let sky = follow().and_then(|f| {
-        let t = crate::resource::host_resource(sky_image)?;
+        let t = &sky_image.as_ref()?.texture;
         // SAFETY: a live resource.
         let d = unsafe { t.GetDesc() };
-        (d.Format == DXGI_FORMAT_R11G11B10_FLOAT && d.DepthOrArraySize == 1).then_some((t, f))
+        static SEEN: std::sync::Once = std::sync::Once::new();
+        SEEN.call_once(|| {
+            tracing::info!(
+                format = d.Format.0,
+                width = d.Width,
+                height = d.Height,
+                slices = d.DepthOrArraySize,
+                "the sky image the ambient light would follow"
+            );
+        });
+        Some((t, f, d.Format))
     });
     static FOLLOWS: std::sync::Once = std::sync::Once::new();
-    if let Some((t, f)) = sky {
-        FOLLOWS.call_once(|| tracing::info!(gain = f[0], least = f[1], "ambient light follows the sky"));
+    if let Some((t, f, _)) = sky {
+        FOLLOWS.call_once(|| tracing::info!(gain = f[0], least = f[1], power = f[2], "ambient light follows the sky"));
         list.keep(t);
-        crate::list::ensure_state(
-            list,
-            sky_image,
-            (D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE.0 | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE.0) as u32,
-        );
+        let read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE.0 | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE.0;
+        if let Some(copy) = &sky_image
+            && let Some(before) = list.transition_copy(copy, read as u32)
+        {
+            let barrier = crate::host::transition(
+                t,
+                D3D12_RESOURCE_STATES(before as i32),
+                D3D12_RESOURCE_STATES(read),
+            );
+            // SAFETY: an open list and a live texture the list keeps.
+            unsafe { list.list.ResourceBarrier(&[barrier]) };
+        }
     }
     list.keep(light);
     // The depth the resolve just read, in the state it read it in; of the
@@ -529,15 +576,15 @@ fn record(list: &HostList, light: This, depth: Option<This>, held: f32) -> bool 
         let beside = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: at.ptr + pass.step as usize };
         host.device.CreateShaderResourceView(depth, Some(&seen), beside);
         let around = D3D12_SHADER_RESOURCE_VIEW_DESC {
-            Format: DXGI_FORMAT_R11G11B10_FLOAT,
-            ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+            Format: sky.map_or(DXGI_FORMAT_R16G16B16A16_FLOAT, |s| s.2),
+            ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2DARRAY,
             Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
             Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
-                Texture2D: D3D12_TEX2D_SRV { MipLevels: 1, ..Default::default() },
+                Texture2DArray: D3D12_TEX2D_ARRAY_SRV { MipLevels: 1, ArraySize: 1, ..Default::default() },
             },
         };
         let third = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: at.ptr + 2 * pass.step as usize };
-        host.device.CreateShaderResourceView(sky.map(|(t, _)| t), Some(&around), third);
+        host.device.CreateShaderResourceView(sky.map(|s| s.0), Some(&around), third);
         l.SetDescriptorHeaps(&[Some(pass.views.clone())]);
         l.SetComputeRootSignature(&pass.root);
         l.SetPipelineState(&pass.pso);
@@ -545,10 +592,10 @@ fn record(list: &HostList, light: This, depth: Option<This>, held: f32) -> bool 
         let level = live_level().unwrap_or(level);
         let [strength, radius, near, tan_y] = shade();
         let strength = if depth.is_some() { strength } else { 0.0 };
-        let [gain, least] = sky.map_or([0.0, 0.0], |(_, f)| f);
+        let [gain, least, power] = sky.map_or([0.0, 0.0, 1.0], |s| s.1);
         let floor = *LEAST.lock().unwrap_or_else(|e| e.into_inner());
-        let constants = [level, r, g, b, strength, radius, near, tan_y, gain, least, held, floor];
-        l.SetComputeRoot32BitConstants(0, 12, constants.as_ptr().cast(), 0);
+        let constants = [level, r, g, b, strength, radius, near, tan_y, gain, least, held, floor, power];
+        l.SetComputeRoot32BitConstants(0, 13, constants.as_ptr().cast(), 0);
         l.SetComputeRootDescriptorTable(
             1,
             D3D12_GPU_DESCRIPTOR_HANDLE {

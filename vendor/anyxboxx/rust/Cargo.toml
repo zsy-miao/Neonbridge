@@ -1,0 +1,7 @@
+# Espace de travail Rust d'AnyXboxX.
+[workspace]
+resolver = "2"
+members = ["anyxboxx-rdna2", "anyxboxx-texture", "anyxboxx-audio"]
+
+[profile.release]
+opt-level = 3

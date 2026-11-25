@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="582" viewBox="0 0 880 582" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+<rect width="880" height="582" fill="#f7f8fa"/>
+<text x="24" y="34" font-size="18" font-weight="600" fill="#1d2230">Test bench: modules of a GDK Scarlett package</text>
+<text x="24" y="58" fill="#4b5263">Share of imported functions resolved (HLE or package DLL) · ✓ = DllMain returned TRUE in AnyXboxX</text>
+<text x="240" y="109" text-anchor="end" fill="#1d2230">amd_fidelityfx_loader_xbox.dll</text>
+<rect x="250" y="96" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="96" width="494" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="109" fill="#1d2230">95% · 22 ✓</text>
+<text x="240" y="135" text-anchor="end" fill="#1d2230">amd_fidelityfx_upscaler_xbox.dll</text>
+<rect x="250" y="122" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="122" width="421" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="135" fill="#1d2230">81% · 86 ✓</text>
+<text x="240" y="161" text-anchor="end" fill="#1d2230">Bink2Scarlett.dll</text>
+<rect x="250" y="148" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="148" width="328" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="161" fill="#1d2230">63% · 60 ✓</text>
+<text x="240" y="187" text-anchor="end" fill="#1d2230">concrt140.dll</text>
+<rect x="250" y="174" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="174" width="406" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="187" fill="#1d2230">78% · 103 ✓</text>
+<text x="240" y="213" text-anchor="end" fill="#1d2230">libHttpClient.GDK.dll</text>
+<rect x="250" y="200" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="200" width="302" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="213" fill="#1d2230">58% · 198 ✓</text>
+<text x="240" y="239" text-anchor="end" fill="#1d2230">msvcp140.dll</text>
+<rect x="250" y="226" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="226" width="260" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="239" fill="#1d2230">50% · 187 ✓</text>
+<text x="240" y="265" text-anchor="end" fill="#1d2230">msvcp140_1.dll</text>
+<rect x="250" y="252" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="252" width="442" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="265" fill="#1d2230">85% · 33 ✓</text>
+<text x="240" y="291" text-anchor="end" fill="#1d2230">msvcp140_2.dll</text>
+<rect x="250" y="278" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="278" width="437" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="291" fill="#1d2230">84% · 96 ✓</text>
+<text x="240" y="317" text-anchor="end" fill="#1d2230">msvcp140_atomic_wait.dll</text>
+<rect x="250" y="304" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="304" width="380" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="317" fill="#1d2230">73% · 64 ✓</text>
+<text x="240" y="343" text-anchor="end" fill="#1d2230">msvcp140_codecvt_ids.dll</text>
+<rect x="250" y="330" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="330" width="411" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="343" fill="#1d2230">79% · 24 ✓</text>
+<text x="240" y="369" text-anchor="end" fill="#1d2230">vccorlib140.dll</text>
+<rect x="250" y="356" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="356" width="317" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="369" fill="#1d2230">61% · 114 ✓</text>
+<text x="240" y="395" text-anchor="end" fill="#1d2230">vcomp140.dll</text>
+<rect x="250" y="382" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="382" width="307" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="395" fill="#1d2230">59% · 78 ✓</text>
+<text x="240" y="421" text-anchor="end" fill="#1d2230">vcruntime140.dll</text>
+<rect x="250" y="408" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="408" width="369" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="421" fill="#1d2230">71% · 41 ✓</text>
+<text x="240" y="447" text-anchor="end" fill="#1d2230">vcruntime140_1.dll</text>
+<rect x="250" y="434" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="434" width="426" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="447" fill="#1d2230">82% · 34 ✓</text>
+<text x="240" y="473" text-anchor="end" fill="#1d2230">XboxBvhBuilder.dll</text>
+<rect x="250" y="460" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="460" width="390" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="473" fill="#1d2230">75% · 57 ✓</text>
+<text x="240" y="499" text-anchor="end" fill="#1d2230">XCurl.dll</text>
+<rect x="250" y="486" width="520" height="18" rx="3" fill="#e3e6ee"/>
+<rect x="250" y="486" width="250" height="18" rx="3" fill="#107c10"/>
+<text x="780" y="499" fill="#1d2230">48% · 140 ✓</text>
+<text x="24" y="542" font-weight="600" fill="#107c10">Initialization succeeded: 16/16 modules (0/16 with the first prototype version)</text>
+</svg>
