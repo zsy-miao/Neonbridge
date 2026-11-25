@@ -531,6 +531,13 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
         crate::diagnostics::log_once(&UNKNOWN_PLACEMENT, || format!("placed resource dim={} {}x{} format={} flags={:#x} layout={:#x} initial={} clear={}", desc.Dimension.0, desc.Width, desc.Height, desc.Format.0, desc.Flags.0, desc.Layout.0, layout.0, !clear.is_null()));
         return E_NOTIMPL;
     }
+    // Buffers arrive here (slot 133) as well as at place_virtual (slot 44):
+    // a buffer in a GPU page pool gets its device buffer here too (test162:
+    // no device buffer was made, every pool buffer came through this slot).
+    if let Some(native) = super::placed_device::place(device, address, desc) {
+        return unsafe { wrap_pageable(native, &RESOURCE, device,
+            super::ResourceState::from(super::Backing::ConsoleLayout(desc.Layout, desc.Flags)), out) };
+    }
     let mut host = *desc;
     host.Flags = host_flags(host.Flags);
     // A Series buffer can start between native placement boundaries. Bind a
