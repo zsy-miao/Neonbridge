@@ -59,7 +59,16 @@ struct Root {
 pub(crate) fn register_root(base: usize, bytes: usize) {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     pool.roots.retain(|&b, r| b + r.bytes <= base || base + bytes <= b);
-    pool.roots.insert(base, Root { bytes, section: Arc::new(Section::new(bytes / PAGE)), bound: HashMap::new() });
+    // Section import needs a committed section (Section::new_committed);
+    // TUXBOX_POOL_SECTION_COMMIT=0 keeps roots SEC_RESERVE.
+    let commit = section_import() && std::env::var("TUXBOX_POOL_SECTION_COMMIT").map_or(true, |v| v.trim() != "0");
+    let section = if commit { Section::new_committed(bytes / PAGE) } else { Section::new(bytes / PAGE) };
+    if commit {
+        static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let total = TOTAL.fetch_add(bytes as u64, Ordering::Relaxed) + bytes as u64;
+        crate::loader::log(&format!("pool section commit: root {base:#x} of {} MiB is a SEC_COMMIT section; {} MiB of roots committed so far (TUXBOX_POOL_SECTION_COMMIT=0 off)", bytes >> 20, total >> 20));
+    }
+    pool.roots.insert(base, Root { bytes, section: Arc::new(section), bound: HashMap::new() });
 }
 
 static POOL: LazyLock<Mutex<Pool>> = LazyLock::new(|| Mutex::new(Pool::default()));

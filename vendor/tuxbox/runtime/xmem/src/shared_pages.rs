@@ -7,7 +7,7 @@ use windows_sys::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MEM_COMMIT, MEM_PRESERVE_PLACEHOLDER, MEM_RELEASE,
     MEM_REPLACE_PLACEHOLDER, MEM_RESERVE, MEM_RESERVE_PLACEHOLDER, MEMORY_BASIC_INFORMATION,
     MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, MapViewOfFile3, PAGE_NOACCESS, PAGE_READWRITE,
-    SEC_RESERVE, UnmapViewOfFile, UnmapViewOfFile2, VirtualAlloc, VirtualAlloc2, VirtualFree,
+    SEC_COMMIT, SEC_RESERVE, UnmapViewOfFile, UnmapViewOfFile2, VirtualAlloc, VirtualAlloc2, VirtualFree,
     VirtualQuery,
 };
 use windows_sys::Win32::System::SystemServices::MEM_COALESCE_PLACEHOLDERS;
@@ -102,6 +102,7 @@ pub(super) fn replace_aperture(address: *mut c_void, bytes: usize) -> *mut c_voi
 pub(super) struct Section {
     bytes: u64,
     handle: OnceLock<OwnedHandle>,
+    committed: bool,
 }
 
 impl Section {
@@ -109,7 +110,16 @@ impl Section {
         Self {
             bytes: count as u64 * PAGE as u64,
             handle: OnceLock::new(),
+            committed: false,
         }
+    }
+
+    /// A SEC_COMMIT section: D3D12 OpenExistingHeapFromFileMapping refuses a
+    /// SEC_RESERVE one with E_INVALIDARG (test170: the 185 MiB root at
+    /// 0xd9c600000), and XPortPC's pool section is SEC_COMMIT (41da567,
+    /// credited). Its whole size is charged to commit when created.
+    pub(super) fn new_committed(count: usize) -> Self {
+        Self { committed: true, ..Self::new(count) }
     }
 
     fn handle(&self) -> Result<*mut c_void, u32> {
@@ -120,7 +130,7 @@ impl Section {
             CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
                 ptr::null(),
-                PAGE_READWRITE | SEC_RESERVE,
+                PAGE_READWRITE | if self.committed { SEC_COMMIT } else { SEC_RESERVE },
                 (self.bytes >> 32) as u32,
                 self.bytes as u32,
                 ptr::null(),
