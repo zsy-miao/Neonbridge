@@ -1672,6 +1672,17 @@ unsafe extern "system" fn copy_resource(
 // its own hardware policy, so console tuning hints have no effect. GTA VI calls
 // it with feature 2 and value 1 (title RVA 0x50a6651) and ignores the result.
 // TuxBox bedf503 (brcly, Apache-2.0).
+/// Device11 list slot 59, InsertGpuMarker (GDK d3d12_xs.h): logged once.
+unsafe extern "system" fn gpu_marker(
+    list: &List, a: *mut c_void, b: u32, c: *mut c_void, d: u64, e: *mut c_void, f: u64,
+) {
+    if crate::env_toggle!("TUXBOX_DEVICE11_SLOT59") == Some("0") {
+        return unsafe { execute_indirect(list, a, b, c, d, e, f) };
+    }
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&ONCE, || format!("Device11 list slot 59 (InsertGpuMarker) called: ignored ({a:p}, {b:#x}); TUXBOX_DEVICE11_SLOT59=0 runs ExecuteIndirect as before"));
+}
+
 unsafe extern "system" fn driver_hint(_list: &List, _feature: u64, _value: u64) -> u64 {
     0
 }
@@ -2516,6 +2527,9 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     // (brcly, Apache-2.0).
     slots[61] = crate::slot!(execute_indirect);
     slots[101] = crate::slot!(driver_hint);
+    // Slot 59 here is InsertGpuMarker, not ExecuteIndirect (inherited from
+    // LIST_SLOTS): a logged no-op. TUXBOX_DEVICE11_SLOT59=0 keeps the old mapping.
+    slots[59] = crate::slot!(gpu_marker);
     // GTA VI calls slot 131 on this table as the extended cache barrier
     // (cache 0xc280, engines 0x20000, address 0, bytes 0xffffffffff00 at
     // game+0x1560994); sending it to the batched AS build faulted reading
