@@ -190,9 +190,19 @@ impl Transfer {
         let rotate = crate::env_toggle!("TUXBOX_REFRESH_ROTATE") != Some("0");
         static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
         let ms = *MS.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(4));
+        let count = textures.len();
+        // A refresh over 1024 or more textures (a world load, a camera cut)
+        // gets three times the bytes and time: at the fixed budget such a
+        // batch took dozens of refreshes to catch up, drawing stale levels
+        // meanwhile. VIctory-fxceless draw.rs:1528-1531 (GPL-3.0, credit to
+        // its authors). TUXBOX_REFRESH_BUSY_SCALE=1 keeps the fixed budget.
+        static SCALE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let scale: u64 = *SCALE.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_BUSY_SCALE").and_then(|v| v.trim().parse().ok()).unwrap_or(3_u64).max(1));
+        let (budget_scale, ms) = if count >= 1024 { (scale, ms.saturating_mul(scale)) } else { (1, ms) };
+        budget = budget.saturating_mul(budget_scale);
+        super::REFRESH_FULL.store(budget, std::sync::atomic::Ordering::Relaxed);
         let limited = budget != 0;
         let started = std::time::Instant::now();
-        let count = textures.len();
         let start = if rotate && count != 0 { self.cursor % count } else { 0 };
         let mut stopped = None;
         for k in 0..count {

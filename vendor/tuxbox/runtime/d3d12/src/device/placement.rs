@@ -162,6 +162,10 @@ fn bink_gate() -> bool {
     since.get_or_insert_with(std::time::Instant::now).elapsed() < std::time::Duration::from_millis(250)
 }
 
+/// This refresh's whole byte budget (refresh_read_budget, scaled for a busy
+/// refresh): a level is never deferred while the budget is untouched.
+pub(super) static REFRESH_FULL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub(super) fn refresh_read_budget() -> u64 {
     static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MB.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(32)) << 20
@@ -907,7 +911,7 @@ impl Texture {
             // The first level of a refresh always reads (progress); later ones
             // stop at the budget (0: unlimited) and are read next time.
             let limit = refresh_read_budget();
-            if limit != 0 && *budget != limit && size > *budget && !video_plane(&self.desc, self.mips.len()) {
+            if limit != 0 && *budget != REFRESH_FULL.load(Ordering::Relaxed).max(limit) && size > *budget && !video_plane(&self.desc, self.mips.len()) {
                 static DEFERRED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = DEFERRED.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 4 || n.is_power_of_two() {
