@@ -1579,6 +1579,12 @@ fn warm(name: &str, mut cmd: Command, cache: &Path, to: f32) -> Result<(), Strin
             crate::splash::step(0.5, to, &format!("Warming the shaders ({name}): translating shaders"), d, total);
             continue;
         }
+        // xcl's --pipelines pass after its shaders: "  pipelines: 800 made, 0 refused"
+        // (no total): the count and a pulse, so the bar doesn't sit on the last shader count.
+        if let Some(n) = l.trim().strip_prefix("pipelines: ").and_then(|r| r.split(' ').next()).and_then(|n| n.parse::<u64>().ok()) {
+            crate::splash::step(0.5, to, &format!("Warming the shaders ({name}): building GPU pipelines"), n, None);
+            continue;
+        }
         let (done, what) = match warm_line(&l) {
             WarmLine::Records(n) => {
                 (records, ticks) = (n, 0);
