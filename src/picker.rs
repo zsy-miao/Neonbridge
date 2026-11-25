@@ -514,6 +514,7 @@ fn draw(dc: HDC, w: i32, h: i32, s: &mut State, f: &Fonts) {
                     Some(0) => "Started, no frames presented".into(),
                     Some(n) => format!("{n} frames presented"),
                 }),
+                ("Frame rate", crate::runtimes::last_run_fps(&row.name).unwrap_or_else(|| "-".into())),
             ]
         };
         let mut y = HEADER + 84;

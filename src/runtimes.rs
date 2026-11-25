@@ -714,6 +714,16 @@ pub fn last_run_frames(name: &str) -> Option<u64> {
     Some(log.lines().filter_map(|l| l.split("completed PresentX #").nth(1)).filter_map(|n| n.split(' ').next()?.parse::<u64>().ok()).max().unwrap_or(0))
 }
 
+/// The last run's frame-rate line ("94 fps samples: average 11.3, ...") from last-perf.txt.
+pub fn last_run_fps(name: &str) -> Option<String> {
+    let t = fs::read_to_string(cache(name).join("last-perf.txt")).ok()?;
+    let l = t.lines().next()?.trim();
+    let avg = l.split("average ").nth(1)?.split(',').next()?;
+    let min = l.split("min ").nth(1).and_then(|r| r.split(',').next()).unwrap_or("?");
+    let max = l.split("max ").nth(1).and_then(|r| r.split(',').next()).unwrap_or("?");
+    Some(format!("{avg} fps average ({min} to {max})"))
+}
+
 /// The presets a runtime's toml names (preset_<name>).
 pub fn presets(name: &str) -> Vec<String> {
     rows().into_iter().find(|(n, _, _)| n == name).map(|(_, _, p)| p).unwrap_or_default()
@@ -1982,6 +1992,12 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     let result = supervised(name, cmd, log.as_deref(), timeout, echo);
     if matches!(task, Task::Run) && let Some(l) = &log {
         let _ = fs::copy(l, cache.join("last-run.log"));
+        // Performance summary of the run (ScarlettPort's perf readout): its fps lines.
+        let lines: Vec<String> = fs::read_to_string(l).unwrap_or_default().lines().map(str::to_owned).collect();
+        let perf = crate::report::fps_summary(&lines);
+        println!("[launch] {name} run: {}", perf.replace('\n', "; "));
+        let _ = fs::write(cache.join("last-perf.txt"), &perf);
+        backup_cache(&cache); // what this run compiled
     }
     if matches!(task, Task::Run) && let Err(e) = &result {
         fail_box(e);
