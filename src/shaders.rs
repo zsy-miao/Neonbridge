@@ -1183,6 +1183,40 @@ fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet
 /// `log`; no job starts after `deadline` (the rest are translated when the
 /// title asks for them).
 #[allow(clippy::too_many_arguments)]
+/// The session's urgent/ markers (d3d12_xs writes one for each shader a title
+/// thread waits on): the background prewarm stands aside while any exist.
+static URGENT_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn title_waiting() -> bool {
+    URGENT_DIR.get().is_some_and(|d| fs::read_dir(d).is_ok_and(|mut e| e.next().is_some()))
+}
+
+fn idle_priority() {
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_IDLE};
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE) };
+}
+
+/// The seen programs' prewarm and its summary lines.
+#[allow(clippy::too_many_arguments)]
+fn seen_prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
+    seen: &std::collections::HashSet<String>, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync), stop: Option<&AtomicBool>) {
+            let started = std::time::Instant::now();
+            prewarm(tools, cache, archive, scratch, workers, stats, Some(seen), if stop.is_some() { "seen prewarm in the background (NEONBRIDGE_BLOCKING_PREWARM=1 waits for it)" } else { "seen prewarm" }, deadline, log, stop);
+            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
+                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
+                stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+            let o0 = O0_REUSES.load(Ordering::Relaxed);
+            log(format!("seen prewarm: DXIL: {} reused at -O1, {o0} reused at -O0 (queued for the -O1 upgrade), {} fresh dxc compiles; {} programs left at -O0 in the upgrade queue (drained between runs)",
+                stats.reused.load(Ordering::Relaxed).saturating_sub(o0), stats.prewarmed.load(Ordering::Relaxed),
+                tools.dxil.as_deref().map_or(0, crate::dxil_upgrade::left)));
+            // The churn line: how much of this xshader's output was new HLSL.
+            // 1273355's 515 s prewarm compiled 1141 and reused 25, from an
+            // xshader change three revs back (59ad7f5's helper pruning).
+            let (new, same) = (stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed));
+            log(format!("seen prewarm: HLSL churn: {new} of {} translations emitted HLSL the DXIL cache had not seen (dxc compiled them), {same} unchanged (DXIL reused), {:.0}% changed",
+                new + same, if new + same == 0 { 0.0 } else { 100.0 * new as f64 / (new + same) as f64 }));
+}
+
 fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
     only: Option<&std::collections::HashSet<String>>, label: &str, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync),
     stop: Option<&AtomicBool>) {
@@ -1254,6 +1288,9 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         });
         for _ in 0..workers {
             scope.spawn(|| {
+                if stop.is_some() {
+                    idle_priority();
+                }
                 while std::time::Instant::now() < deadline
                     && !stop.is_some_and(|s| s.load(Ordering::Acquire))
                     && let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed))
@@ -1261,7 +1298,8 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                     // In-process compiles abandoned past their time still run and hold
                     // memory (a4ba782): each one counts as a job until it ends.
                     while (!room_for_programs(running.load(Ordering::Acquire) + crate::dxc::abandoned())
-                        || running.load(Ordering::Acquire) + crate::dxc::abandoned() >= workers)
+                        || running.load(Ordering::Acquire) + crate::dxc::abandoned() >= workers
+                        || (stop.is_some() && title_waiting()))
                         && !stop.is_some_and(|s| s.load(Ordering::Acquire)) {
                         thread::sleep(Duration::from_millis(250));
                     }
@@ -1374,23 +1412,18 @@ impl Worker {
         // whatever TUXBOX_PREWARM says; with an unchanged toolchain they are
         // cache hits. NEONBRIDGE_PREWARM_SEEN=0 turns it off.
         let deadline = prewarm_deadline();
-        if std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0") {
-            let started = std::time::Instant::now();
+        // Tests start at once (user order): outside --prewarm the seen prewarm
+        // no longer holds the launch. It runs in the background thread below,
+        // at idle priority and paused while the title waits on a shader, and
+        // the title's own requests compile at -O0 the moment it asks (the
+        // upgrade queue raises them to -O1 between runs).
+        // NEONBRIDGE_BLOCKING_PREWARM=1 prewarms before the game as before.
+        let blocking = PREWARM_ONLY.load(Ordering::Relaxed) || std::env::var("NEONBRIDGE_BLOCKING_PREWARM").as_deref() == Ok("1");
+        let _ = URGENT_DIR.set(session_dir.join("urgent"));
+        let seen_on = std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0");
+        if seen_on && blocking {
             let seen = seen_requests(&cache_root, &archive);
-            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, Some(&seen), "seen prewarm", deadline, &log, None);
-            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
-                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
-                stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
-            let o0 = O0_REUSES.load(Ordering::Relaxed);
-            log(format!("seen prewarm: DXIL: {} reused at -O1, {o0} reused at -O0 (queued for the -O1 upgrade), {} fresh dxc compiles; {} programs left at -O0 in the upgrade queue (drained between runs)",
-                stats.reused.load(Ordering::Relaxed).saturating_sub(o0), stats.prewarmed.load(Ordering::Relaxed),
-                tools.dxil.as_deref().map_or(0, crate::dxil_upgrade::left)));
-            // The churn line: how much of this xshader's output was new HLSL.
-            // 1273355's 515 s prewarm compiled 1141 and reused 25, from an
-            // xshader change three revs back (59ad7f5's helper pruning).
-            let (new, same) = (stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed));
-            log(format!("seen prewarm: HLSL churn: {new} of {} translations emitted HLSL the DXIL cache had not seen (dxc compiled them), {same} unchanged (DXIL reused), {:.0}% changed",
-                new + same, if new + same == 0 { 0.0 } else { 100.0 * new as f64 / (new + same) as f64 }));
+            seen_prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, &seen, deadline, &log, None);
         }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without
         // building the archive (~80k programs) in the background.
@@ -1402,13 +1435,21 @@ impl Worker {
             crate::dxil_upgrade::start(tools.dxc.clone(), tools.defines.clone(), dxil, move |line| log(line));
         }
         let tools = Arc::new(tools);
-        let background = full.then(|| {
+        let seen_later = (seen_on && !blocking).then(|| seen_requests(&cache_root, &archive));
+        let background = (full || seen_later.is_some()).then(|| {
             let (tools, cache, archive, scratch, stats, log, stop) =
                 (tools.clone(), cache.clone(), archive.clone(), private.join("prewarm"), stats.clone(), log.clone(), stop.clone());
+            let seen_scratch = private.join("prewarm-seen");
             // Half the game-time workers: the title's own requests keep the rest.
             let n = workers.div_ceil(2).max(1);
             thread::Builder::new().name("shader-prewarm".into()).spawn(move || {
                 let forever = std::time::Instant::now() + Duration::from_secs(10 * 365 * 24 * 3600);
+                if let Some(seen) = &seen_later {
+                    seen_prewarm(&tools, &cache, &archive, &seen_scratch, n, &stats, seen, forever, &*log, Some(&stop));
+                }
+                if !full || stop.load(Ordering::Acquire) {
+                    return;
+                }
                 prewarm(&tools, &cache, &archive, &scratch, n, &stats, None, "full prewarm in the background (TUXBOX_PREWARM=0 skips)", forever, &*log, Some(&stop));
             }).ok()
         }).flatten();
@@ -1489,7 +1530,7 @@ impl Worker {
                         let (tools, cache, session, st, log, busy, active) =
                             (tools.clone(), cache.clone(), session_dir.clone(), st.clone(), log.clone(), busy.clone(), active.clone());
                         thread::spawn(move || {
-                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session, false, None);
+                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session, !blocking, None);
                             match &outcome {
                                 Outcome::Compiled(xs, dxc) => {
                                     // Measures whether dxc dominates (a direct DXIL writer would only save the dxc part).
