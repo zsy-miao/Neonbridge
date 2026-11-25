@@ -543,7 +543,7 @@ fn job_times(workers: usize) -> String {
 }
 
 /// Prewarm jobs under way: key -> (started, the dxc/xshader child's pid).
-/// The prewarm's watchdog ends a job past NEONBRIDGE_PREWARM_JOB_S (300; 0
+/// The prewarm's watchdog ends a job past NEONBRIDGE_PREWARM_JOB_S (660, past the big programs' 600 s dxc; 0
 /// off): the last --prewarm sat at 1704/1705 for over 10 minutes on one
 /// program (fe9c9850..., 3.4 MB of HLSL in dxc) until it was killed by hand.
 static PREWARM_JOBS: std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, Option<u32>)>>> = std::sync::Mutex::new(None);
@@ -554,7 +554,7 @@ thread_local! {
 }
 
 fn prewarm_job_secs() -> u64 {
-    std::env::var("NEONBRIDGE_PREWARM_JOB_S").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(300)
+    std::env::var("NEONBRIDGE_PREWARM_JOB_S").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(660)
 }
 
 fn prewarm_job(key: Option<&str>) {
@@ -811,8 +811,12 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             } else { (None, None) };
             let stencil = (ext == "stencil").then(|| key.split_once("_rt").and_then(|(_, n)| n.parse().ok())).flatten();
             match crate::xshader_lib::translate(&dll, read(&cooked)?, consumer, order, stencil, Duration::from_secs(120), cancel) {
-                crate::xshader_lib::Outcome::Done(text, prof) => {
+                crate::xshader_lib::Outcome::Done(text, prof, heap) => {
                     fs::write(&hlsl, text).and_then(|_| fs::write(&profile, prof)).map_err(|e| format!("write {}: {e}", hlsl.display()))?;
+                    // The process path's xshader writes this itself (hlsl/heap_reflect.rs).
+                    if let Some(heap) = heap {
+                        let _ = fs::write(work.join("shader.hlsl.heap"), heap);
+                    }
                     true
                 }
                 crate::xshader_lib::Outcome::Unsupported(msg) => {
@@ -1005,7 +1009,15 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Err(ToolError::Other(msg)) if msg == "timed out" && !cancelled() => {
                 let _ = fs::remove_file(&output);
                 dxil_o0 = true;
-                dxc("-O0", 120, &cancelled)
+                // The prewarm gives big programs (over NEONBRIDGE_PREWARM_BIG_HLSL_KB
+                // of HLSL, 2048) NEONBRIDGE_PREWARM_BIG_DXC_S (600; 0 keeps 120) at
+                // -O0, so they land in the cache once: prewarm176's six over 2 MB
+                // were killed at 120 s and left to the run's binds.
+                let big_kb = std::env::var("NEONBRIDGE_PREWARM_BIG_HLSL_KB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(2048);
+                let big_s = std::env::var("NEONBRIDGE_PREWARM_BIG_DXC_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(600);
+                let o0_secs = if PREWARM_ONLY.load(Ordering::Relaxed) && big_s > 0
+                    && fs::metadata(&hlsl).map(|m| m.len()).unwrap_or(0) > big_kb << 10 { big_s.max(120) } else { 120 };
+                dxc("-O0", o0_secs, &cancelled)
             }
             other => other,
         };
