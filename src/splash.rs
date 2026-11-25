@@ -32,17 +32,12 @@ const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     r as u32 | (g as u32) << 8 | (b as u32) << 16
 }
 
-/// Where the launcher's stages start on the bar ([`status`] callers); a stage
-/// without counts creeps towards the next one and never past it.
-const STAGES: [f32; 5] = [0.3, 0.4, 0.6, 0.8, 1.0];
-
 struct State {
     /// Where the bar should be, 0..1; it only grows.
     target: f32,
-    /// Where an uncounted stage may creep to: just short of the next stage.
-    ceiling: f32,
-    /// The target comes from real counts ([`counted`]): no creep.
-    counted: bool,
+    /// The step prints no count: an indeterminate pulse runs past the bar's
+    /// end instead of a made-up percentage.
+    pulse: bool,
     /// Drawn position; eases towards the target and never moves back.
     shown: f32,
     text: String,
@@ -50,7 +45,7 @@ struct State {
 }
 
 static STATE: Mutex<State> =
-    Mutex::new(State { target: 0.0, ceiling: 0.0, counted: false, shown: 0.0, text: String::new(), tick: 0 });
+    Mutex::new(State { target: 0.0, pulse: true, shown: 0.0, text: String::new(), tick: 0 });
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 fn state() -> std::sync::MutexGuard<'static, State> {
@@ -71,10 +66,28 @@ pub fn show(text: &str) {
 pub fn status(progress: f32, text: &str) {
     let mut s = state();
     s.target = s.target.max(progress.clamp(0.0, 1.0));
-    let next = STAGES.iter().copied().find(|&at| at > s.target + 0.001).unwrap_or(1.0);
-    s.ceiling = s.ceiling.max(next - 0.02);
-    s.counted = false;
+    s.pulse = true;
     s.text = text.to_owned();
+}
+
+/// A step with no count to show: the bar stays where it is and pulses.
+pub fn pulse(text: &str) {
+    let mut s = state();
+    s.pulse = true;
+    if s.text != text {
+        s.text = text.to_owned();
+    }
+}
+
+/// One step's count on its share of the bar (`from`..`to`): "label: 1,000 /
+/// 26,503", or with no total "label: 1,000" and a pulse.
+pub fn step(from: f32, to: f32, label: &str, done: u64, total: Option<u64>) {
+    match total.filter(|&t| t > 0) {
+        Some(t) => counted(from + (to - from) * (done.min(t) as f32 / t as f32), &format!("{label}: {} / {}", crate::progress::grouped(done.min(t)), crate::progress::grouped(t))),
+        None => {
+            status(from, &format!("{label}: {}", crate::progress::grouped(done)));
+        }
+    }
 }
 
 /// Moves the bar to `progress` (0..1) from real completed/total counts, with
@@ -86,7 +99,7 @@ pub fn counted(progress: f32, text: &str) {
     }
     let mut s = state();
     s.target = s.target.max(progress.clamp(0.0, 1.0));
-    s.counted = true;
+    s.pulse = false;
     if s.text != text {
         s.text = text.to_owned();
     }
@@ -288,15 +301,11 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
                     let mut s = state();
                     s.tick = s.tick.wrapping_add(1);
                     // Ease towards the target (with a floor on the step, so it
-                    // arrives instead of approaching forever). A stage with no
-                    // counts creeps towards its ceiling, the next stage's start,
-                    // so a wait still moves without overstating; counted stages
-                    // show their counts only. Never backwards.
+                    // arrives instead of approaching forever). Only real counts
+                    // move it; a step without them pulses. Never backwards.
                     if s.shown < s.target {
                         let step = ((s.target - s.shown) * 0.15).max(0.0015);
                         s.shown = (s.shown + step).min(s.target);
-                    } else if !s.counted && s.shown < s.ceiling {
-                        s.shown += (s.ceiling - s.shown) * 0.003;
                     }
                 }
                 InvalidateRect(hwnd, std::ptr::null(), 0);
@@ -344,9 +353,9 @@ unsafe fn text(dc: HDC, s: &str, mut r: RECT, color: COLORREF, f: HFONT, flags: 
 }
 
 unsafe fn paint(hwnd: HWND) {
-    let (shown, line, tick) = {
+    let (shown, line, tick, pulse) = {
         let s = state();
-        (s.shown, s.text.clone(), s.tick)
+        (s.shown, s.text.clone(), s.tick, s.pulse)
     };
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
@@ -380,7 +389,7 @@ unsafe fn paint(hwnd: HWND) {
         SelectObject(dc, old);
         text(dc, "BRIDGE", RECT { left: 32 + size.cx, top: 28, right: WIDTH - 32, bottom: 84 }, CYAN, title, DT_LEFT | DT_VCENTER);
         // Counted lines carry their own numbers; dots only for waits.
-        let dots = if line.contains('%') { String::new() } else { ".".repeat((tick / 12 % 4) as usize) };
+        let dots = if pulse { ".".repeat((tick / 12 % 4) as usize) } else { String::new() };
         text(dc, &format!("{line}{dots}"), RECT { left: 32, top: 104, right: WIDTH - 32, bottom: 130 }, TEXT, small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
 
         // Progress bar with a moving highlight.
@@ -391,6 +400,12 @@ unsafe fn paint(hwnd: HWND) {
         let span = (filled - bar.left).max(1);
         let glint = bar.left + (tick as i32 * 6) % (span + 60) - 60;
         fill(dc, RECT { left: glint.max(bar.left), right: (glint + 60).min(filled), ..bar }, CYAN);
+        // No count: a segment sweeps the unfilled track (indeterminate).
+        if pulse && filled < bar.right {
+            let rest = bar.right - filled;
+            let at = filled + (tick as i32 * 4) % (rest + 80) - 80;
+            fill(dc, RECT { left: at.max(filled), right: (at + 80).min(bar.right), ..bar }, CYAN);
+        }
         text(dc, &format!("{}%", (shown * 100.0).floor() as u32), RECT { left: 32, top: 162, right: WIDTH - 32, bottom: 186 }, TEXT, small, DT_RIGHT | DT_VCENTER);
 
         BitBlt(screen, ox, oy, WIDTH, HEIGHT, dc, 0, 0, SRCCOPY);

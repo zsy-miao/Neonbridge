@@ -407,6 +407,10 @@ fn value(s: &str) -> Option<Value> {
         "false" => return Some(Value::Bool(false)),
         _ => {}
     }
+    // A bare number (rank = 3) is kept as its text.
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(Value::Str(s.to_owned()));
+    }
     if s.starts_with('"') {
         return quoted(s).map(|(v, _)| Value::Str(v));
     }
@@ -764,25 +768,19 @@ fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>
     if python_build {
         build_env(name, &mut c)?;
     }
-    c.args(&cmd[1..]).current_dir(root).env_remove("CARGO_TARGET_DIR").stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args(&cmd[1..]).current_dir(root).env_remove("CARGO_TARGET_DIR").env("CARGO_TERM_PROGRESS_WHEN", "always").env("CARGO_TERM_PROGRESS_WIDTH", "100").stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(t) = &target {
         c.env("CARGO_TARGET_DIR", t);
     }
     let status = hidden(&mut c).spawn().and_then(|mut child| {
-        // cargo's "Compiling <crate>" lines move the loader bar (0.1 to 0.45).
+        // cargo's "Building [..] N/M" (or a Python build's N/M) moves the
+        // loader bar from 0.1 to 0.45.
         let out = child.stdout.take().map(|o| std::thread::spawn(move || {
             for l in BufReader::new(o).lines().map_while(Result::ok) {
                 println!("{l}");
             }
         }));
-        let mut n = 0;
-        for l in BufReader::new(child.stderr.take().unwrap()).lines().map_while(Result::ok) {
-            eprintln!("{l}");
-            if let Some(k) = l.trim_start().strip_prefix("Compiling ") {
-                n += 1;
-                crate::splash::counted(0.1 + 0.35 * (1.0 - 0.99f32.powi(n)), &format!("Building {name}: {} ({n} compiled)", k.split(' ').next().unwrap_or(k)));
-            }
-        }
+        crate::progress::build_lines(child.stderr.take().unwrap(), &format!("Building {name}"), 0.1, 0.45, |l| eprintln!("{l}"));
         let _ = out.map(|t| t.join());
         child.wait()
     });
@@ -946,6 +944,15 @@ pub fn names() -> Vec<String> {
     rows().into_iter().map(|(n, _, _)| n).filter(|n| n != TUXBOX).collect()
 }
 
+/// Where a runtime sits in the picker, best first: its toml's `rank = N`.
+/// Neonbridge's own build has no toml and is 10. None: unranked, listed last.
+pub fn rank(name: &str) -> Option<u32> {
+    if name == TUXBOX {
+        return Some(10);
+    }
+    load(name).ok().and_then(|(_, s)| s.str("rank").and_then(|r| r.trim().parse().ok()))
+}
+
 /// A runtime as people know it: "<project> <version or upstream hash>", from
 /// its toml's about (up to the first comma, without the licence).
 pub fn title(name: &str) -> String {
@@ -987,20 +994,17 @@ pub fn options_of(name: &str) -> Vec<String> {
 pub fn cargo(cmd: &[String], cwd: &Path, target: &Path, label: &str) -> Result<(), String> {
     crate::splash::status(0.1, label);
     let mut c = crate::runtimes::command(&cmd[0]);
-    c.args(&cmd[1..]).current_dir(cwd).env("CARGO_TARGET_DIR", target).stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args(&cmd[1..]).current_dir(cwd).env("CARGO_TARGET_DIR", target).env("CARGO_TERM_PROGRESS_WHEN", "always").env("CARGO_TERM_PROGRESS_WIDTH", "100").stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = hidden(&mut c).spawn().map_err(|e| format!("{}: {e}", cmd[0]))?;
     let out = child.stdout.take().map(|o| std::thread::spawn(move || {
         for l in BufReader::new(o).lines().map_while(Result::ok) {
             println!("{l}");
         }
     }));
-    let (mut n, mut errors, mut in_error) = (0, Vec::new(), false);
-    for l in BufReader::new(child.stderr.take().unwrap()).lines().map_while(Result::ok) {
+    let (mut errors, mut in_error) = (Vec::new(), false);
+    crate::progress::build_lines(child.stderr.take().unwrap(), label, 0.1, 0.45, |l| {
         eprintln!("{l}");
-        if let Some(k) = l.trim_start().strip_prefix("Compiling ") {
-            n += 1;
-            crate::splash::counted(0.1 + 0.35 * (1.0 - 0.99f32.powi(n)), &format!("{label}: {} ({n} compiled)", k.split(' ').next().unwrap_or(k)));
-        }
+        let l = l.to_owned();
         if l.starts_with("error") {
             in_error = true;
         } else if l.starts_with("warning") || l.trim_start().starts_with("Compiling") {
@@ -1009,7 +1013,7 @@ pub fn cargo(cmd: &[String], cwd: &Path, target: &Path, label: &str) -> Result<(
         if in_error && errors.len() < 80 {
             errors.push(l);
         }
-    }
+    });
     let _ = out.map(|t| t.join());
     match child.wait() {
         Ok(s) if s.success() => Ok(()),
@@ -1347,6 +1351,13 @@ fn supervised(name: &str, mut cmd: Command, log: Option<&Path>, timeout: Option<
                 }
                 let mut f = frames.lock().unwrap_or_else(|e| e.into_inner());
                 crate::fps::feed(&line);
+                if !crate::splash::closed() && let Some((d, m, title)) = crate::progress::setup_line(&line) {
+                    let label = match title {
+                        Some(t) => format!("Setting up ({tag}): {t}"),
+                        None => format!("Setting up ({tag})"),
+                    };
+                    crate::splash::step(0.8, 0.95, &label, d, Some(m));
+                }
                 // The loader stays up until the title presents its first frame.
                 if line.contains("PresentX #") || line.contains("frame times: ") || fps(&line).is_some() {
                     crate::splash::close();
@@ -1402,8 +1413,6 @@ enum WarmLine {
     Pipeline,
     /// xcl's `precompiling <total> shaders into ...`.
     Planned(u64),
-    /// xcl's `  <done>/<total> (<t> s)`.
-    Of(u64, u64),
     Other,
 }
 
@@ -1412,9 +1421,6 @@ fn warm_line(l: &str) -> WarmLine {
     let t = l.trim();
     if let Some(n) = t.strip_prefix("precompiling ").and_then(|r| r.split_once(" shaders")).and_then(|(n, _)| n.parse().ok()) {
         return WarmLine::Planned(n);
-    }
-    if let Some((d, rest)) = t.split_once('/') && let Some((m, _)) = rest.split_once(" (") && let (Ok(d), Ok(m)) = (d.parse(), m.parse()) {
-        return WarmLine::Of(d, m);
     }
     if let Some(at) = l.find(" records: ") {
         if let Some(n) = number_before(at) {
@@ -1436,7 +1442,7 @@ fn warm_line(l: &str) -> WarmLine {
 /// an estimate that slows as it goes), pipelines made between record lines,
 /// or victory's shader counts. The status line is ours, never a raw log line.
 /// A failed warm stops the launch: Err carries its last lines.
-fn warm(name: &str, mut cmd: Command, cache: &Path) -> Result<(), String> {
+fn warm(name: &str, mut cmd: Command, cache: &Path, to: f32) -> Result<(), String> {
     let mut child = hidden(cmd.stdout(Stdio::piped()).stderr(Stdio::piped())).spawn().map_err(|e| format!("{name}: the warm step did not start: {e}"))?;
     let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     let (tx, rx) = std::sync::mpsc::channel::<String>();
@@ -1452,12 +1458,19 @@ fn warm(name: &str, mut cmd: Command, cache: &Path) -> Result<(), String> {
     let b = pump(Box::new(child.stderr.take().unwrap()), true, tx);
     let saved = cache.join("warm-total.txt");
     let mut total: Option<u64> = fs::read_to_string(&saved).ok().and_then(|t| t.trim().parse().ok()).filter(|&t| t > 0);
-    let (mut records, mut ticks, mut last_total) = (0u64, 0u64, None);
+    let (mut records, mut ticks, mut last_total, mut seen) = (0u64, 0u64, None, 0u64);
     for l in rx {
         if tail.len() == 12 {
             tail.pop_front();
         }
         tail.push_back(l.clone());
+        // A done/total count (xcl, TuxBox, Five Star) carries its own total.
+        if let Some((d, Some(m))) = crate::progress::count(&l) {
+            total = Some(m);
+            seen = seen.max(d);
+            crate::splash::step(0.5, to, &format!("Warming the shaders ({name}): translating shaders"), d, total);
+            continue;
+        }
         let (done, what) = match warm_line(&l) {
             WarmLine::Records(n) => {
                 (records, ticks) = (n, 0);
@@ -1476,39 +1489,21 @@ fn warm(name: &str, mut cmd: Command, cache: &Path) -> Result<(), String> {
                 total = Some(n).filter(|&n| n > 0);
                 (0, "translating shaders")
             }
-            WarmLine::Of(d, m) => {
-                total = Some(m).filter(|&m| m > 0);
-                (d, "translating shaders")
-            }
             WarmLine::Other => continue,
         };
-        let (fraction, count) = match total {
-            Some(t) => ((done as f32 / t as f32).min(1.0), format!("{} / {}", grouped(done), grouped(t))),
-            None => (done as f32 / (done as f32 + 4000.0), grouped(done)),
-        };
-        crate::splash::counted(0.5 + 0.3 * fraction, &format!("Warming the shaders ({name}): {what} {count}"));
+        seen = seen.max(done);
+        // No total (victory's "N shaders so far" the first time): the count
+        // and a pulse, and this run's count is the next run's total.
+        crate::splash::step(0.5, to, &format!("Warming the shaders ({name}): {what}"), done, total);
     }
     let _ = (a.join(), b.join());
-    if let Some(t) = last_total {
+    if let Some(t) = last_total.or((seen > 0).then_some(seen)) {
         let _ = fs::write(&saved, t.to_string());
     }
     match child.wait() {
         Ok(s) if s.success() => Ok(()),
         s => Err(format!("{name}: the shader warm failed ({}), so the game was not started. Its last lines:\n{}", s.map_or_else(|e| e.to_string(), |s| s.to_string()), tail.into_iter().collect::<Vec<_>>().join("\n"))),
     }
-}
-
-/// 26503 -> "26,503".
-fn grouped(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// Records per precompile-graphics run (ScarlettPort engine::CHUNK).
@@ -1530,7 +1525,7 @@ enum Chunk {
 
 /// One precompile-graphics chunk, hidden, its output echoed, the bar moved
 /// by its record lines (`<t> s  <done> records: ...`).
-fn graphics_chunk(name: &str, mut cmd: Command, skip: u64) -> Result<Chunk, String> {
+fn graphics_chunk(name: &str, mut cmd: Command, skip: u64, all: Option<u64>) -> Result<Chunk, String> {
     let mut child = hidden(cmd.stdout(Stdio::piped()).stderr(Stdio::piped())).spawn().map_err(|e| format!("{name}: precompile-graphics did not start: {e}"))?;
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let pump = |r: Box<dyn std::io::Read + Send>, err: bool, tx: std::sync::mpsc::Sender<String>| {
@@ -1560,7 +1555,9 @@ fn graphics_chunk(name: &str, mut cmd: Command, skip: u64) -> Result<Chunk, Stri
                     }
                     _ => continue,
                 };
-                crate::splash::counted(0.5 + 0.3 * ((skip + done) as f32 / (skip + done + 4000) as f32), &format!("Warming the shaders ({name}): compiling graphics pipelines {}", skip + done));
+                // Records over every chunk's total (the last full pass's, in
+                // graphics-total.txt); none yet: the count and a pulse.
+                crate::splash::step(0.65, 0.8, &format!("Warming the shaders ({name}): compiling graphics pipelines"), skip + done, all);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 let _ = child.kill();
@@ -1758,7 +1755,8 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
                 None => wc.env_remove(k),
             };
         }
-        if let Err(e) = warm(name, wc, &cache) {
+        let graphics = std::env::var("NEONBRIDGE_PRECOMPILE_GRAPHICS").map_or(true, |v| v.trim() != "0") && spec.list("prewarm_graphics").is_some();
+        if let Err(e) = warm(name, wc, &cache, if graphics { 0.65 } else { 0.8 }) {
             crate::splash::close();
             fail_box(&e);
             return Err(e.into());
@@ -1768,7 +1766,9 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         // ... until a chunk's summary gives fewer than 1000. Play runs set
         // VICTORY_PRECOMPILED_GRAPHICS=1, so these must be built first.
         // NEONBRIDGE_PRECOMPILE_GRAPHICS=0 skips it.
-        if std::env::var("NEONBRIDGE_PRECOMPILE_GRAPHICS").map_or(true, |v| v.trim() != "0") && let Some(g) = spec.list("prewarm_graphics") {
+        if graphics && let Some(g) = spec.list("prewarm_graphics") {
+            let all_file = cache.join("graphics-total.txt");
+            let all: Option<u64> = fs::read_to_string(&all_file).ok().and_then(|t| t.trim().parse().ok()).filter(|&t| t > 0);
             let mut skip = 0u64;
             loop {
                 let a: Vec<String> = g.iter().map(|a| fill(a, &places).replace("{skip}", &skip.to_string())).collect();
@@ -1781,8 +1781,11 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
                         None => gc.env_remove(k),
                     };
                 }
-                match graphics_chunk(name, gc, skip) {
-                    Ok(Chunk::Done(n)) if n < GRAPHICS_CHUNK => break,
+                match graphics_chunk(name, gc, skip, all) {
+                    Ok(Chunk::Done(n)) if n < GRAPHICS_CHUNK => {
+                        let _ = fs::write(&all_file, (skip + n).to_string());
+                        break;
+                    }
                     Ok(Chunk::Done(_)) => {}
                     Ok(Chunk::Idle) => println!("[launch] {name}: records {}-{} printed nothing for {} s: left to compile in game", skip + 1, skip + GRAPHICS_CHUNK, graphics_idle().as_secs()),
                     Err(e) => {
@@ -1852,10 +1855,7 @@ mod tests {
         assert_eq!(warm_line("warm-up      120 shaders so far, 3 s"), WarmLine::Shaders(120));
         assert_eq!(warm_line("INFO something else"), WarmLine::Other);
         assert_eq!(warm_line("precompiling 26503 shaders into C:\\x\\dxil (15 compile threads)"), WarmLine::Planned(26503));
-        assert_eq!(warm_line("  1000/26503 (72 s)"), WarmLine::Of(1000, 26503));
-        assert_eq!(grouped(26503), "26,503");
-        assert_eq!(grouped(1000), "1,000");
-        assert_eq!(grouped(999), "999");
+        assert_eq!(warm_line("warm-up      120 shaders so far, 3 s"), WarmLine::Shaders(120));
     }
 
     #[test]
@@ -1881,6 +1881,7 @@ VICTORY_PRESS_FILE = "{press}"
         assert_eq!(s.list("build").unwrap(), ["cargo", "build", "--release"]);
         assert_eq!(s.str("exe"), Some(r"target\release\v.exe"));
         assert!(s.flag("agility"));
+        assert_eq!(parse("rank = 3\n").unwrap().str("rank"), Some("3"));
         assert_eq!(s.env, [("VICTORY_RELAY".into(), "2".into()), ("VICTORY_PRESS_FILE".into(), "{press}".into())]);
     }
 

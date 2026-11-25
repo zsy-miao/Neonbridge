@@ -655,6 +655,9 @@ fn rows() -> Vec<Row> {
             Row { frames: crate::runtimes::last_run_frames(&n), missing: crate::runtimes::missing(&n), name: n, title: name_part, version, licence, upstream }
         })
         .collect();
+    // Best first by each toml's rank (as runs come in, the ranks change);
+    // unranked last, in name order.
+    rows.sort_by_key(|r| (crate::runtimes::rank(&r.name).unwrap_or(u32::MAX), r.name.clone()));
     rows.push(Row { name: MIX.into(), title: "Mix".into(), version: String::new(), licence: String::new(), upstream: String::new(), frames: None, missing: None });
     rows
 }
@@ -1401,7 +1404,8 @@ pub fn pick() -> Option<Pick> {
     let memory = remembered();
     let get = |k: &str| memory.iter().find(|(m, _)| m == k).map(|(_, v)| v.clone());
     let rows = rows();
-    let want = get("runtime").map(|r| crate::runtimes::alias(&r)).unwrap_or_else(|| crate::runtimes::name(None));
+    // The last pick, else NEONBRIDGE_RUNTIME, else the top-ranked runtime.
+    let want = get("runtime").map(|r| crate::runtimes::alias(&r)).or_else(|| std::env::var("NEONBRIDGE_RUNTIME").ok().filter(|v| !v.trim().is_empty()).map(|v| crate::runtimes::name(Some(&v)))).unwrap_or_else(|| rows[0].name.clone());
     let sel = rows.iter().position(|r| r.name == want).unwrap_or(0);
     STATE.with(|s| *s.borrow_mut() = Some(State { rows, sel, hover: Hit::None, presets: Vec::new(), preset: 0, game: detect_game(), targets: Vec::new() }));
 

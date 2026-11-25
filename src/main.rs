@@ -1289,21 +1289,12 @@ fn tool(env: &HashMap<String, String>, exe: &str) -> PathBuf {
 /// work). The total is unknown up front, so each crate closes a fixed share of
 /// what is left. NEONBRIDGE_BUILD_PROGRESS=0 runs cargo as before.
 fn cargo_status(cmd: &mut Command, base: f32, span: f32, label: &str) -> std::io::Result<std::process::ExitStatus> {
-    use std::io::BufRead;
     if std::env::var("NEONBRIDGE_BUILD_PROGRESS").as_deref() == Ok("0") {
         return cmd.status();
     }
-    let mut child = cmd.stderr(std::process::Stdio::piped()).spawn()?;
-    let mut n = 0i32;
+    let mut child = cmd.env("CARGO_TERM_PROGRESS_WHEN", "always").env("CARGO_TERM_PROGRESS_WIDTH", "100").stderr(std::process::Stdio::piped()).spawn()?;
     if let Some(err) = child.stderr.take() {
-        for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
-            eprintln!("{line}");
-            if let Some(name) = line.trim_start().strip_prefix("Compiling ") {
-                n += 1;
-                let krate = name.split_whitespace().next().unwrap_or(name);
-                splash::counted(base + span * 0.9 * (1.0 - 0.8f32.powi(n)), &format!("{label}: {krate} ({n} compiled)"));
-            }
-        }
+        progress::build_lines(err, label, base, base + span, |l| eprintln!("{l}"));
     }
     child.wait()
 }
