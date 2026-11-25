@@ -632,8 +632,10 @@ unsafe fn create(
     for (i, variant) in rooted.iter().enumerate() {
         let Some((code, _)) = original[i] else { continue; };
         let source = variant.as_deref().unwrap_or(code);
-        let Some(compiled) = shader_cache::prepared(source) else {
-            if variant.is_some() { return Err(E_NOTIMPL.into()); }
+        let quad = i == 1 && QUAD_PS.with(|q| q.get());
+        let compiled = if quad { shader_cache::quad_mask_variant(source) } else { shader_cache::prepared(source) };
+        let Some(compiled) = compiled else {
+            if variant.is_some() || quad { return Err(E_NOTIMPL.into()); }
             continue;
         };
         let target = fields[i].ok_or(E_INVALIDARG)?;
@@ -1013,6 +1015,49 @@ unsafe fn null_pipeline(
         substituted(if compute { "compute stream" } else { "raster stream" });
     }
     Some(result)
+}
+
+thread_local! {
+    /// Set by a background worker building a quad-mask variant (draws under a
+    /// SetSampleMaskX mask that is not full; commands/graphics.rs draw_quad):
+    /// the pixel stage is translated with xshader's tb_quad_mask discard.
+    pub(super) static QUAD_PS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The quad-mask variant of `host` (built in the background from the stream
+/// it was made from), None while it is being made or when it cannot be.
+pub(crate) unsafe fn quad_variant(device: *mut c_void, host: &compute::Pipeline) -> Option<&'static compute::Pipeline> {
+    let device = unsafe { &*device.cast::<Device>() };
+    use std::sync::{Arc, Mutex};
+    static VARIANTS: Mutex<Vec<(usize, Arc<background::Upgrade>)>> = Mutex::new(Vec::new());
+    let key = host as *const compute::Pipeline as usize;
+    let slot = {
+        let mut variants = VARIANTS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, slot)) = variants.iter().find(|(k, _)| *k == key) {
+            slot.clone()
+        } else {
+            let base = host.state.derive_from.as_ref()?;
+            // A deep copy of the kept stream (patched with nothing points
+            // into `base`, which outlives the copy here).
+            let mut storage = base.patched(&[])?;
+            let desc = D3D12_PIPELINE_STATE_STREAM_DESC {
+                SizeInBytes: storage.len() * size_of::<usize>(),
+                pPipelineStateSubobjectStream: storage.as_mut_ptr().cast(),
+            };
+            let mut stream = unsafe { background::OwnedStream::copy(&desc) }?;
+            stream.quad = true;
+            let slot = background::lazy((*identity(device)).clone(), background::Work::Stream(stream));
+            // Kept for the process (no eviction: draws hold `&'static` to them).
+            if variants.len() >= 4096 {
+                return None;
+            }
+            variants.push((key, slot.clone()));
+            slot
+        }
+    };
+    let built = background::wait_for(&slot, std::time::Duration::from_millis(200))?;
+    // SAFETY: `slot` stays in VARIANTS for the process, so its pipeline does too.
+    Some(unsafe { &*(built.pipeline() as *const compute::Pipeline) })
 }
 
 pub(super) unsafe extern "system" fn create_pipeline(

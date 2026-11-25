@@ -275,6 +275,12 @@ pub(super) fn mesh_link_before(
     })
 }
 
+/// xshader's quad-mask pixel variant of `shader` (`<digest>_qm.quadmask`).
+pub(super) fn quad_mask_variant(shader: &[u8]) -> Option<Vec<u8>> {
+    let source = source_digest(shader)?;
+    compile::quad_mask(shader, &source)
+}
+
 pub(super) fn stencil_target(shader: &[u8], slot: u32) -> Option<Vec<u8>> {
     let source = source_digest(shader)?;
     compile::stencil(shader, &source, slot)

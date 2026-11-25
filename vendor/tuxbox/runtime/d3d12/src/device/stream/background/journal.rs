@@ -348,6 +348,7 @@ unsafe fn deserialize(
         _strides: Vec::new(),
         _views: Vec::new(),
         _root: None,
+        quad: false,
     };
     let mut at = 0;
     while at < size {

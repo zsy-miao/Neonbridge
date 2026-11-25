@@ -265,6 +265,17 @@ pub(super) fn on_demand(shader: &[u8], source: &str, stage: Stage) -> Option<Vec
     })
 }
 
+pub(crate) fn quad_mask(shader: &[u8], source: &str) -> Option<Vec<u8>> {
+    let key = format!("{source}_qm");
+    request(&key, Stage::Pixel, |pending, requests| {
+        let published = fs::write(pending, shader).and_then(|()| fs::rename(pending, requests.join(format!("{key}.quadmask"))));
+        if published.is_err() {
+            let _ = fs::remove_file(pending);
+        }
+        published
+    })
+}
+
 pub(crate) fn stencil(shader: &[u8], source: &str, slot: u32) -> Option<Vec<u8>> {
     let key = format!("{source}_rt{slot}");
     request(&key, Stage::Pixel, |pending, requests| {

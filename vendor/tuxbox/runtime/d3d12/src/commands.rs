@@ -88,6 +88,9 @@ struct Recording {
     /// TUXBOX_SLOT57_REAL=1: the bound slot 57 record, the bound target
     /// formats and the title's own stencil reference (graphics::draw_slot57).
     slot57: Option<Arc<device::compute::Slot57>>,
+    /// The bound host pipeline (graphics::bind_host), for its quad-mask
+    /// variant (graphics::draw_quad); 0 for none.
+    quad_host: usize,
     slot57_targets: device::compute::Slot57Targets,
     stencil_reference: u32,
     display_bound: bool,
@@ -3464,6 +3467,7 @@ pub(crate) unsafe fn wrap_command_list(
             stencil_targets: None,
             dsv_bound: false,
             slot57: None,
+            quad_host: 0,
             slot57_targets: Default::default(),
             stencil_reference: 0,
             display_bound: false,

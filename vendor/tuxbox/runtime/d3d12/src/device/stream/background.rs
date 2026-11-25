@@ -605,6 +605,8 @@ pub(in crate::device) struct OwnedStream {
     _strides: Vec<Vec<u32>>,
     _views: Vec<Vec<D3D12_VIEW_INSTANCE_LOCATION>>,
     _root: Option<IUnknown>,
+    /// Build with the pixel stage's quad-mask variant (stream::QUAD_PS).
+    pub(in crate::device) quad: bool,
 }
 
 unsafe fn copy_array<T: Copy>(data: *const T, count: usize) -> Option<Vec<T>> {
@@ -649,6 +651,7 @@ impl OwnedStream {
             _strides: Vec::new(),
             _views: Vec::new(),
             _root: None,
+            quad: false,
         };
         let mut seen = 0u32;
         let mut at = 0;
@@ -1345,7 +1348,10 @@ fn build(mut job: Job) {
         let status = match &mut job.work {
             Work::Stream(stream) => {
                 let desc = stream.desc();
-                unsafe { super::create_pipeline(device, &desc, &iid, &mut out) }
+                super::QUAD_PS.with(|q| q.set(stream.quad));
+                let status = unsafe { super::create_pipeline(device, &desc, &iid, &mut out) };
+                super::QUAD_PS.with(|q| q.set(false));
+                status
             }
             Work::Compute(compute) => {
                 let desc = compute.desc();

@@ -69,6 +69,7 @@ pub(crate) mod stencil;
 pub(crate) mod null_kinds;
 pub(crate) mod pipeline_cache;
 mod stream;
+pub(crate) use stream::quad_variant;
 
 /// Title threads now held waiting for a pipeline (tuxbox_title_held).
 pub(crate) fn title_held() -> u32 {

@@ -79,6 +79,7 @@ pub(super) fn bind_host(
     state.bindings.pipeline = Some(host.into());
     state.bindings.draw_trace = data.draw_trace.clone();
     state.slot57 = host.state.slot57.clone();
+    state.quad_host = host as *const crate::device::compute::Pipeline as usize;
     unsafe { list.native.SetPipelineState(native) };
 }
 
@@ -89,7 +90,7 @@ pub(super) fn bind_host(
 /// made yet drops the draw, as the placeholder did. Other pipelines draw as before.
 fn draw_slot57(list: &List, state: &mut super::Recording, rasterizes: bool, draw: impl FnOnce()) {
     let Some(bound) = state.slot57.clone() else {
-        return state.draw(list, rasterizes, draw);
+        return draw_quad(list, state, rasterizes, draw);
     };
     // A refused call earlier in the list (pending, no pipeline) still drops.
     if state.pipeline_pending && state.pending_pipeline == 0 {
@@ -112,6 +113,39 @@ fn draw_slot57(list: &List, state: &mut super::Recording, rasterizes: bool, draw
         unsafe { list.native.OMSetStencilRef(state.stencil_reference) };
     }
     (state.pipeline_pending, state.pending_pipeline) = saved;
+}
+
+/// A draw under a SetSampleMaskX mask that is not full binds its pipeline's
+/// quad-mask variant (xshader 84fbaed: the PS discards the pixels the mask
+/// leaves out; tb_quad_mask's constants are bound by the bindings), then
+/// restores the pipeline. Nothing ever requested that variant, so no PS
+/// applied the mask. A variant still being made draws with full coverage
+/// as before. Only pipelines drawn under such a mask change.
+/// TUXBOX_QUAD_MASK_VARIANT=0 draws every pipeline with full coverage.
+fn draw_quad(list: &List, state: &mut super::Recording, rasterizes: bool, draw: impl FnOnce()) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let on = *ON.get_or_init(|| crate::env_toggle!("TUXBOX_QUAD_MASK_VARIANT") != Some("0"));
+    if !on || state.bindings.quad_mask.is_none() || state.quad_host == 0 || state.pipeline_pending {
+        return state.draw(list, rasterizes, draw);
+    }
+    // SAFETY: the bound pipeline is held by the bindings while it is bound.
+    let host = unsafe { &*(state.quad_host as *const crate::device::compute::Pipeline) };
+    let (native, data, _) = crate::device::compute::current(host);
+    if data.raster_table.as_ref().is_some_and(|t| t.quad_mask.is_some()) {
+        return state.draw(list, rasterizes, draw);
+    }
+    let Some(variant) = (unsafe { crate::device::quad_variant(parent(&list.parent), host) }) else {
+        return state.draw(list, rasterizes, draw);
+    };
+    // The variant's root table holds tb_quad_mask's constants: the draw binds
+    // through its bindings (root signature, arguments, mask words), then the
+    // pipeline's own are back.
+    let native = native.clone();
+    let saved = state.bindings.pipeline.replace(variant.into());
+    unsafe { list.native.SetPipelineState(&crate::device::compute::current(variant).0.clone()) };
+    state.draw(list, rasterizes, draw);
+    state.bindings.pipeline = saved;
+    unsafe { list.native.SetPipelineState(&native) };
 }
 
 pub(super) unsafe extern "system" fn viewports(
