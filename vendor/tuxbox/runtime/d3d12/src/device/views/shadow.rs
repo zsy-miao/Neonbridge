@@ -58,6 +58,15 @@ impl Drop for Entry {
     }
 }
 
+/// A copy or clear recorded into `resource`: if it is a writable shadow's
+/// copy, it is written back, and whole from now on (its run is given up),
+/// since copies and clears mark no pages and a list may run after any
+/// number of write-backs.
+pub(crate) fn mark_copied(device: &Device, resource: *mut core::ffi::c_void) {
+    mark_written(device, resource);
+    let _ = marks_entry(device, resource, None);
+}
+
 /// The view-marks entry for a UAV of `resource` starting `offset` bytes into
 /// it, when `resource` is a writable shadow's copy with a run. A UAV whose
 /// offset is unknown (None) gives the shadow's run up, so it copies whole:
