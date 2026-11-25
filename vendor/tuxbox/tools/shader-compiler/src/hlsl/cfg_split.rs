@@ -33,6 +33,11 @@ fn mode() -> u8 {
     match std::env::var("TB_CFG_SPLIT").as_deref().map(str::trim) {
         Ok("0") => 0,
         Ok("1") => 2,
+        // TB_STRUCTURED_CF (default on): every interleaved program is split and
+        // emitted structured instead of going to the tb_pc dispatcher, whose
+        // 1,100-block loop costs dxc most of a large program's compile.
+        // TB_STRUCTURED_CF=0: only quad-exchange programs, as before.
+        _ if std::env::var("TB_STRUCTURED_CF").map_or(true, |v| v.trim() != "0") => 2,
         _ => 1,
     }
 }
