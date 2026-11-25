@@ -11679,11 +11679,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 0 => format!("{tex}.SampleCmp({smp}, {cvec}, {z}{})", tail(&offset, &None)?),
                 4 if !a16 && self.immediate_zero_before(idx, addr_reg(base + ncoord)) => format!("{tex}.SampleCmpLevelZero({smp}, {cvec}, {z}{})", tail(&offset, &None)?),
                 7 => format!("{tex}.SampleCmpLevelZero({smp}, {cvec}, {z}{})", tail(&offset, &None)?),
-                // SM5 has no SampleCmpLevel/Bias/Grad: approximate with LOD 0
-                // (exact for single-mip depth, too sharp otherwise) instead of
-                // refusing the shader (Xbox2Windows 7f3b070f, MIT).
-                // TB_CMP_LEVEL_STRICT=1 refuses as before.
-                _ if std::env::var("TB_CMP_LEVEL_STRICT").is_ok_and(|v| v.trim() == "1") =>
+                // A depth compare with an explicit LOD, bias or gradient has no
+                // SM5 form, so the shader is refused, as fxceless lower.rs
+                // 9430-9440 (no image_sample_c_l/_b/_d) and Xbox2Windows
+                // d21e3d6e do; reading mip 0 instead is silently wrong for
+                // mipped depth. TB_CMP_LEVEL_APPROX=1 restores the LOD 0
+                // approximation (d51e710).
+                _ if !std::env::var("TB_CMP_LEVEL_APPROX").is_ok_and(|v| v.trim() == "1") =>
                     return Err("depth-compare sample with explicit LOD/bias/gradient unsupported in SM5".into()),
                 _ => {
                     self.line(&format!("// APPROX-CMP-LEVEL: depth-compare sample modifier {modi} emitted as LOD 0"));
