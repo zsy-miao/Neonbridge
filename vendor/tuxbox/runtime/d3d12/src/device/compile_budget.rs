@@ -126,17 +126,27 @@ fn commit_floor() -> u64 {
 
 static FLOOR_HELD: AtomicU64 = AtomicU64::new(0);
 
-fn try_enter(estimate: u64, tiny: bool, large: bool) -> bool {
+/// The floor sized by the program (xcl 28946bb, GPL-2.0-only, credit to its
+/// authors): the 3 GB floor was measured on 256 KiB programs, while a
+/// 29.8 MB program's driver compile grew past 14 GB of commit and ~1 MB ones
+/// took several GB. A compile asks for max(floor, 512 x its DXIL); programs
+/// up to 6 MiB wait for what they did before.
+fn sized_floor(shader_bytes: u64) -> u64 {
+    let floor = commit_floor();
+    if floor == 0 { 0 } else { floor.max(shader_bytes.saturating_mul(512)) }
+}
+
+fn try_enter(estimate: u64, tiny: bool, large: bool, shader_bytes: u64) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if large && state.large != 0 && enabled() {
-        let floor = commit_floor();
+        let floor = sized_floor(shader_bytes);
         let (_, commit) = available();
         if floor != 0 && commit < floor {
             let n = FLOOR_HELD.fetch_add(1, Ordering::Relaxed) + 1;
             if n <= 4 || n.is_power_of_two() {
                 crate::diagnostics::log_line(format_args!(
-                    "compile budget: a large compile waits for one of the {} running: {} MiB commit free, under the {} MiB floor (TUXBOX_COMPILE_COMMIT_FLOOR_MB; {n} holds so far)",
-                    state.large, commit >> 20, floor >> 20));
+                    "compile budget: a large compile ({} KiB of DXIL) waits for one of the {} running: {} MiB commit free, under its {} MiB floor (max of TUXBOX_COMPILE_COMMIT_FLOOR_MB and 512x its DXIL; {n} holds so far)",
+                    shader_bytes >> 10, state.large, commit >> 20, floor >> 20));
             }
             return false;
         }
@@ -202,7 +212,7 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
     let tiny = shader_bytes < TINY_SHADER_BYTES || !gated;
     let mut waited = None;
     let large = shader_bytes >= TINY_SHADER_BYTES;
-    while !try_enter(estimate, tiny || waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait()), large) {
+    while !try_enter(estimate, tiny || waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait()), large, shader_bytes) {
         if waited.is_none() {
             WAITING.fetch_add(1, Ordering::Relaxed);
             waited = Some(std::time::Instant::now());
