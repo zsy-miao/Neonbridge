@@ -373,9 +373,17 @@ fn root_import(list: &List, state: &mut super::Recording, guest: u64, span: u64)
     let result = unsafe { device::command_buffer_address(parent(&list.parent), guest, span) }
         .or_else(|_| unsafe { device::command_buffer_address(parent(&list.parent), guest, 1) })
         .and_then(|(buffer, va)| {
-            if let Some(buffer) = buffer {
-                super::raytracing::retain(state, &[&buffer])?;
-                ROOT_IMPORT.with(|b| b.replace(Some(buffer)));
+            match buffer {
+                Some(buffer) => {
+                    super::raytracing::retain(state, &[&buffer])?;
+                    ROOT_IMPORT.with(|b| b.replace(Some(buffer)));
+                }
+                // Unbacked: the stale-clear path below (sink, draws drop).
+                None if null_unbacked() => {
+                    note_unbacked("root view", guest, span);
+                    return Err(windows::Win32::Foundation::E_INVALIDARG.into());
+                }
+                None => {}
             }
             Ok(va)
         });
@@ -472,11 +480,40 @@ pub(super) fn buffer_offset(resource: &device::Resource, offset: u64, bytes: u64
     base.checked_add(offset)
 }
 
+/// TUXBOX_NULL_UNBACKED_ADDRESSES (default on, =0 passes through as before):
+/// a title address no buffer backs (command_buffer_address gives no import)
+/// binds null rather than handing the GPU the raw title VA. test180 lost the
+/// device to a page fault in DrawIndexedInstanced at the last page of an
+/// unbacked 0x84a02400 range: the vertex streams were already nulled
+/// (TUXBOX_NULL_UNBACKED_STREAMS), but index buffers and root views took this
+/// pass-through.
+pub(super) fn null_unbacked() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_NULL_UNBACKED_ADDRESSES") != Some("0"))
+}
+
+pub(super) fn note_unbacked(what: &str, guest: u64, bytes: u64) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "{what} at title address {guest:#x} ({bytes} bytes) has no backing: bound null ({n} so far; TUXBOX_NULL_UNBACKED_ADDRESSES=0 passes it through)"));
+    }
+}
+
 pub(super) fn address(list: &List, state: &mut super::Recording, guest: u64, bytes: u64) -> Option<u64> {
+    address_of(list, state, guest, bytes, "buffer view")
+}
+
+pub(super) fn address_of(list: &List, state: &mut super::Recording, guest: u64, bytes: u64, what: &str) -> Option<u64> {
     if guest == 0 { return Some(0); }
     let result = unsafe { device::command_buffer_address(parent(&list.parent), guest, bytes.max(1)) }
         .and_then(|(buffer, va)| {
-            if let Some(buffer) = buffer { super::raytracing::retain(state, &[&buffer])?; }
+            match buffer {
+                Some(buffer) => super::raytracing::retain(state, &[&buffer])?,
+                None if null_unbacked() => { note_unbacked(what, guest, bytes); return Ok(0); }
+                None => {}
+            }
             Ok(va)
         });
     match result { Ok(va) => Some(va), Err(e) => { { state.error = e.code(); state.error_at = (file!(), line!()); } None } }

@@ -400,7 +400,10 @@ pub(super) unsafe extern "system" fn index_buffer(
     if state.can_record_graphics(&list.native) {
         let mut host = unsafe { view.as_ref() }.copied();
         if let Some(v) = &mut host {
-            let Some(address) = super::compute::address(list, &mut state, v.BufferLocation, v.SizeInBytes.into()) else { return; };
+            let Some(address) = super::compute::address_of(list, &mut state, v.BufferLocation, v.SizeInBytes.into(), "index buffer") else { return; };
+            if address == 0 && v.BufferLocation != 0 && super::compute::null_unbacked() {
+                v.SizeInBytes = 0;
+            }
             v.BufferLocation = address;
             if address == 0 && v.SizeInBytes != 0 {
                 crate::diagnostics::null_va("index buffer", format_args!("{} bytes, format {}", v.SizeInBytes, v.Format.0));
