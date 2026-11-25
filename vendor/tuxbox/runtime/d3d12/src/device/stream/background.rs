@@ -491,13 +491,28 @@ fn fxceless_shape() -> bool {
     crate::env_toggle!("TUXBOX_PIPELINE_SHAPE") == Some("fxceless")
 }
 
-fn hold_while_throttled() {
+/// test153: in a world load (152 queued, the title at 12 fps) the held
+/// workers stayed held while pipelines the title had bound queued behind the
+/// two kept ones' eager backlog, and the title waited 4.09 ms a frame on them
+/// or dropped their draws. A held pipeline worker now takes a job while one
+/// is queued as bound (`Jobs::bound`, taken first): that is work the title
+/// waits on, which the hold exists to make room for. Prefetchers stay held.
+/// TUXBOX_THROTTLE_RELEASE_BOUND=0 holds them as before.
+fn bound_waiting() -> bool {
+    if crate::env_toggle!("TUXBOX_THROTTLE_RELEASE_BOUND") == Some("0") {
+        return false;
+    }
+    let g = JOBS.0.lock().unwrap_or_else(|e| e.into_inner());
+    g.as_ref().is_some_and(|jobs| !jobs.bound.is_empty())
+}
+
+fn hold_while_throttled(release_bound: bool) {
     if fxceless_shape() {
         return;
     }
     static HELD: AtomicU64 = AtomicU64::new(0);
     let mut noted = false;
-    while throttled() {
+    while throttled() && !(release_bound && bound_waiting()) {
         if !noted {
             noted = true;
             let n = HELD.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1169,7 +1184,7 @@ fn send(job: Job, bound: bool) {
                     crate::device::shader_cache::patience(handoff_wait());
                     loop {
                         if prefetch_only || i >= throttle_keep() {
-                            hold_while_throttled();
+                            hold_while_throttled(!prefetch_only);
                         }
                         let (job, prefetch) = next_job(prefetch_only);
                         PREFETCH.with(|p| p.set(prefetch));
