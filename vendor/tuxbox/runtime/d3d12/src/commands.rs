@@ -3086,6 +3086,7 @@ unsafe fn present_planes(
     queue: &Queue, count: u32, planes: *const PresentPlane, params: *const PresentParameters,
 ) -> HRESULT {
     // Before the submission lock: the wait must not hold up this queue.
+    memory_wait::presented();
     crate::throttle::presented();
     let mut submitted = queue
         .state

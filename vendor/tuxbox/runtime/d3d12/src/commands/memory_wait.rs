@@ -646,6 +646,25 @@ pub(super) struct Worker(mpsc::Sender<Job>);
 /// The present throttle releases early while one is held (five-star bd100ba).
 static HELD: AtomicU64 = AtomicU64::new(0);
 
+/// Bumped at each present: a held wait whose word no queued list writes is
+/// released then (rebox a1ebac2 `value_wait_force`, GPL-2.0, credit to its
+/// authors): no queue will ever write it, so it would only wait out the
+/// watchdog with the present behind it. TUXBOX_MEMORY_WAIT_FORCE=0 waits.
+/// TUXBOX_PRESENT_RELEASE_ALL=1 releases every held wait at a present, as
+/// five-star b828157 `MemoryWaits.ReleaseAll` does (GPL-3.0, marquezini).
+static PRESENTS: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn presented() {
+    PRESENTS.fetch_add(1, Ordering::AcqRel);
+}
+
+fn present_release(address: u64) -> bool {
+    if crate::env_toggle!("TUXBOX_PRESENT_RELEASE_ALL") == Some("1") {
+        return true;
+    }
+    crate::env_toggle!("TUXBOX_MEMORY_WAIT_FORCE") != Some("0") && writers::writer_queue(address).is_none()
+}
+
 /// Whether a GPU memory wait is holding a queue's work back.
 pub(super) fn held() -> bool {
     HELD.load(Ordering::Relaxed) != 0
@@ -675,6 +694,7 @@ impl Worker {
                         let mut dumped = false;
                         let was_dead = dead_ms() != 0 && dead(job.segment.address);
                         let mut released = false;
+                        let presents = PRESENTS.load(Ordering::Acquire);
                         let _holding = (!job.segment.word.reached(job.segment.target, job.segment.comparison))
                             .then(|| { HELD.fetch_add(1, Ordering::Relaxed); Holding });
                         while !job.segment.word.reached(job.segment.target, job.segment.comparison) {
@@ -693,6 +713,16 @@ impl Worker {
                                         "GPU memory wait {:#x} >= {:#x} on queue {:#x} released after {} ms: the list writing {value:#x} there completed, yet the word reads {now:#x}{} ({n} so far; TUXBOX_WAIT_WRITER_RELEASE=0 waits)",
                                         job.segment.address, job.segment.target, job.queue, waited.as_millis(),
                                         super::page_mapping::remapped_under_import(job.segment.address)));
+                                }
+                                break;
+                            }
+                            if PRESENTS.load(Ordering::Acquire) != presents && present_release(job.segment.address) {
+                                static AT_PRESENT: AtomicU64 = AtomicU64::new(0);
+                                let n = AT_PRESENT.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n <= 8 || n.is_power_of_two() {
+                                    crate::diagnostics::log_line(format_args!(
+                                        "GPU memory wait {:#x} >= {:#x} on queue {:#x} released at a present after {} ms: no queued list writes it ({n} so far; TUXBOX_MEMORY_WAIT_FORCE=0 waits)",
+                                        job.segment.address, job.segment.target, job.queue, waited.as_millis()));
                                 }
                                 break;
                             }
