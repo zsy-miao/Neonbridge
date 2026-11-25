@@ -145,3 +145,20 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
   - 733f135: flush the commit_guard log before exit.
   - c4f8bd8: the credit should be VIctory 35b054e.
   - 88dbc97/d97535c: parity-only unless their notices fire.
+
+### runtime/launcher slice 0
+- BAD PORT 49702da: confirmed a second time. Port xcl `allows()` into `lazy_commit.rs`.
+- Upstream found the real cause:
+  - leonida-ce e8ca18c79: the title's pitch for staging format 0x0a returns 0, so a 4 KiB fill overruns the heap. That is the 117-143 s stop; the a77e6cd lock patch is not.
+  - five-star 61c095b: GPU views must follow XMem remaps. 5958301 only logs the stale pages.
+- Upstream changed:
+  - rebox 502959e: re-read the whole DStorage page array when the request runs.
+  - VIctory 985d8d4: the XMA loop skip applies to the first frame (xma.rs:326-335). This is an audio bug.
+  - five-star 4e95ab2: leave write-combined memory out of the compile ceiling.
+- Ref method better b789893: apply the DStorage retry ladder only to page lists. Fail an unwritable destination at once.
+- Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
+- Minor:
+  - B8G8R8X8_TYPELESS for present.
+  - Read the XAsync queue handle before publishing the status.
+  - XErrorReport passes "" for a null message.
+  - Credits: c608da2 should cite ff39277; 04a7bee's rebox figure is 13 GiB.
