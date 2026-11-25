@@ -21,10 +21,10 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
 
 ## xshader (tree clean at 1befb53, nothing pushed)
-- Fence-only barriers inside per-thread guards (fxceless lower.rs 1391-1419). The patch compiles and sits in xshader's scratch as fence_only.patch.
+- Fence-only barriers inside per-thread guards (fxceless lower.rs 1391-1419). The patch compiles: `_ref/held/fence_only.patch`.
 - Five programs fail DXC with "^". These are DXC rejections, not panics. Name them by logging every failed shader by hash (see Launcher).
 - 35af8e6d and 40a6b3dc hit the DXC timeout. xshader translates each in 7 s, but each emits 12.7 MB of flat HLSL: a ~3,300-case v_cmpx_ne v31,k chain. Fix by emitting it as a switch, or by raising the DXC timeout or lowering its -O level for huge programs.
-- Partition classifier (xcl dfc5578, 5796cc4, 43a5550): written in xshader's scratch (partition.rs, partition_cfg.rs), not wired in yet.
+- Partition classifier (xcl dfc5578, 5796cc4, 43a5550): written but not wired in yet: `_ref/held/partition.rs` and `_ref/held/partition_cfg.rs`.
 - xcl 7bea019 (split-wave64 mask liveness per block) and 9e2c7a5 (fold the reduction-tail readlane).
 - Atlas gaps 1-9:
   - descriptors read as data (at least refuse them)
