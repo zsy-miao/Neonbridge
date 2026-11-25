@@ -771,6 +771,7 @@ impl Pool {
         if unsafe { VirtualFree(address as _, bytes, MEM_DECOMMIT) } == 0 {
             return Err(shared_pages::os_error("unmap:756"));
         }
+        crate::unmap_trace::record(address, bytes, crate::unmap_trace::PHYSICAL_UNMAP);
         for at in (address..address + bytes).step_by(PAGE) {
             let token = self
                 .mappings

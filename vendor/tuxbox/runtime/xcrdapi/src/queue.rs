@@ -1310,11 +1310,32 @@ fn writable(at: usize, len: usize) -> bool {
             static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if n <= 4 || n.is_power_of_two() {
-                log(format_args!("request destination {at:#x} ({len:#x} bytes) is not committed and writable at {p:#x}: the request fails ({n} so far; TUXBOX_XCRD_CHECK_DEST=0 writes anyway)"));
+                log(format_args!("request destination {at:#x} ({len:#x} bytes) is not committed and writable at {p:#x}: the request fails ({n} so far; TUXBOX_XCRD_CHECK_DEST=0 writes anyway); {}; region state {:#x} protect {:#x} type {:#x} base {:#x}",
+                    unmapped_by(p, end - p), region.State.0, region.Protect.0, region.Type.0, region.AllocationBase as usize));
             }
             return false;
         }
         p = region.BaseAddress as usize + region.RegionSize;
     }
     true
+}
+
+/// Who unmapped `[at, at + len)`, from xmem's unmap ring (TuxBoxUnmapTrace;
+/// TUXBOX_XMEM_UNMAP_TRACE=0 there records nothing).
+fn unmapped_by(at: usize, len: usize) -> String {
+    type Trace = unsafe extern "system" fn(usize, usize, *mut [u64; 4]) -> u32;
+    static TRACE: OnceLock<Option<Trace>> = OnceLock::new();
+    let trace = TRACE.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, b"TuxBoxUnmapTrace ".as_ptr()) };
+        (!f.is_null()).then(|| core::mem::transmute::<*const c_void, Trace>(f))
+    });
+    let Some(trace) = trace else { return "xmem unmap trace unavailable".into() };
+    let mut out = [0u64; 4];
+    if unsafe { trace(at, len, &mut out) } == 0 {
+        return "no xmem unmap recorded over it (never mapped by xmem, or unmapped outside it)".into();
+    }
+    let site = match out[0] { 1 => "XMemFreePhysicalPages unmap", 2 => "view unmap", 3 => "pool block decommit", 4 => "XMemFree release", _ => "?" };
+    format!("unmapped by xmem {site} of {:#x}+{:#x} {} ms ago", out[1], out[2], out[3])
 }

@@ -78,6 +78,7 @@ impl Pool {
             if block.as_ref().is_some_and(Block::is_empty) {
                 let address = (self.base + index * BLOCK) as *mut c_void;
                 if unsafe { VirtualFree(address, BLOCK, MEM_DECOMMIT) } != 0 {
+                    crate::unmap_trace::record(address.addr(), BLOCK, crate::unmap_trace::POOL_DECOMMIT);
                     *block = None;
                     self.decommits = self.decommits.wrapping_add(1);
                     excess -= 1;

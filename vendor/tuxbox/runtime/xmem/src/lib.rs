@@ -23,6 +23,7 @@ mod shared_pages;
 mod sleep_hold;
 mod virtual_memory;
 mod write_watch;
+mod unmap_trace;
 mod xaudio;
 
 use core::{ffi::c_void, mem::size_of, ptr};
@@ -242,6 +243,9 @@ fn alloc_default_inner(bytes: usize, attributes: u64) -> *mut c_void {
 pub unsafe extern "system" fn free_default(memory: *mut c_void, attributes: u64) {
     if memory.is_null() && !process_heap_attributes(attributes) {
         return;
+    }
+    if !process_heap_attributes(attributes) {
+        unmap_trace::record(memory.addr(), 0, unmap_trace::RELEASE);
     }
     match attributes {
         attr if process_heap_attributes(attr) => {

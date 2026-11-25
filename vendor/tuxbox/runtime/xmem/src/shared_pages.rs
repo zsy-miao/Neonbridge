@@ -329,6 +329,7 @@ fn unmap_once(address: usize) -> Result<(), u32> {
     };
     if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, MEM_PRESERVE_PLACEHOLDER) } != 0 {
         crate::lazy_commit::note_unmap(address);
+        crate::unmap_trace::record(address, 0, crate::unmap_trace::VIEW_UNMAP);
         return Ok(());
     }
     let error = os_error("unmap:244");
