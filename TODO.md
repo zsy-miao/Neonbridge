@@ -76,7 +76,6 @@ Open work. Each item is tested in a run of its own.
 
 ### runtime/launcher
 - Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
-- b69a488: re-evaluate f1b5622 now that the AnyPS5 ban is lifted.
 
 ## Done / not needed
 - xshader: xcl 74fe4c2 v_div_fixup_f16 ported (9250d13, TB_DIV_FIXUP_F16=0 off).
