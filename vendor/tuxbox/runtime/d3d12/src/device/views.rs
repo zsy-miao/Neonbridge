@@ -412,6 +412,7 @@ pub(crate) unsafe fn view_formats_address(
 /// A command or view may write `resource` (a raw native resource).
 pub(crate) unsafe fn note_shadow_write(owner: *mut core::ffi::c_void, resource: *mut core::ffi::c_void) {
     let device = unsafe { &*owner.cast::<Device>() };
+    super::placed_device::note_gpu_write(resource as usize);
     shadow::mark_copied(device, resource);
 }
 

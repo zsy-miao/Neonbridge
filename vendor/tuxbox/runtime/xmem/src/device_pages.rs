@@ -6,8 +6,10 @@
 //! touch faults here: the page is committed if reserved, d3d12's callback
 //! brings the GPU's bytes back if the GPU may have written them, and the
 //! page turns read-write and CPU-owned until d3d12 uploads and protects it
-//! again before a submit that uses it. The section's other views (title
-//! aliases of the same physical page) are not protected yet.
+//! again before a submit that uses it. Every protection change applies to
+//! all title views of the same physical page (physical_pages::aliases): the
+//! title writes its pool through a CPU alias (test155 mapped 0x37f10 at both
+//! 0x480000000 and 0xdac000000).
 //! Model: LMIII / VItoriaBr / leonida device-heap shadows by title VA
 //! (victory-gpu resource.rs create_at_address, shadow.rs; GPL-3.0, credit),
 //! with copy-back moved to the CPU's first touch so GPU-only pages are never
@@ -31,6 +33,23 @@ pub(crate) fn enabled() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_PLACED_DEVICE").map_or(true, |v| v.trim() != "0"))
 }
 
+/// The covered alias of `page` (itself or another view of its physical page).
+fn covered_alias(page: usize) -> Option<usize> {
+    if covers(page) {
+        return Some(page);
+    }
+    super::physical_pages::aliases(page).into_iter().find(|&a| a != page && covers(a))
+}
+
+fn set_all(page: usize, protection: u32) -> bool {
+    let mut ok = true;
+    for at in super::physical_pages::aliases(page) {
+        let mut old = 0;
+        ok &= unsafe { VirtualProtect(at as *const c_void, PAGE, protection, &mut old) } != 0;
+    }
+    ok
+}
+
 pub(crate) fn covers(page: usize) -> bool {
     for _ in 0..1000 {
         if let Ok(ranges) = RANGES.try_read() {
@@ -43,9 +62,10 @@ pub(crate) fn covers(page: usize) -> bool {
 
 /// The fault handler's part: true when the access at `page` may resume.
 pub(crate) unsafe fn fault(page: usize, access: usize) -> bool {
-    if !enabled() || !covers(page) {
+    if !enabled() || RANGES.try_read().is_ok_and(|r| r.is_empty()) {
         return false;
     }
+    let Some(primary) = covered_alias(page) else { return false };
     // A reserved page is committed first (it reads as zeros, a fresh page).
     let committed = unsafe { super::lazy_commit::commit_page_any(page) };
     if !committed {
@@ -54,12 +74,25 @@ pub(crate) unsafe fn fault(page: usize, access: usize) -> bool {
     let callback = CALLBACK.load(Ordering::Acquire);
     if callback != 0 {
         let f: Callback = unsafe { std::mem::transmute(callback) };
-        if unsafe { f(page, u32::from(access == 1)) } == 0 {
+        if unsafe { f(primary, u32::from(access == 1)) } == 0 {
             return false;
         }
     }
-    let mut old = 0;
-    unsafe { VirtualProtect(page as *const c_void, PAGE, PAGE_READWRITE, &mut old) != 0 }
+    set_all(page, PAGE_READWRITE)
+}
+
+/// A kernel call is about to read or write `[address, address + bytes)`
+/// (TuxBoxCommitRange): its device-backed pages are opened as a CPU touch
+/// would open them, since a kernel access to a no-access page fails.
+pub(crate) fn open(address: usize, bytes: usize) {
+    if !enabled() || bytes == 0 || RANGES.read().map_or(true, |r| r.is_empty()) {
+        return;
+    }
+    let (mut at, end) = (address & !(PAGE - 1), address.saturating_add(bytes));
+    while at < end {
+        unsafe { fault(at, 1) };
+        at += PAGE;
+    }
 }
 
 /// Registers (`on` 1) or forgets (`on` 0) a device-backed title range.
@@ -90,11 +123,23 @@ unsafe extern "system" fn protect_device_pages(start: usize, bytes: usize) -> us
     let (mut at, end) = (start & !(PAGE - 1), start.saturating_add(bytes));
     let mut n = 0;
     while at < end {
-        let mut old = 0;
-        if unsafe { VirtualProtect(at as *const c_void, PAGE, PAGE_NOACCESS, &mut old) } != 0 {
+        if set_all(at, PAGE_NOACCESS) {
             n += 1;
         }
         at += PAGE;
     }
     n
+}
+
+/// Sets `protection` on `[start, start + bytes)` and every alias of its
+/// pages; returns 1 when all changes took.
+#[unsafe(export_name = "TuxBoxProtectDeviceAliases")]
+unsafe extern "system" fn protect_device_aliases(start: usize, bytes: usize, protection: u32) -> u32 {
+    let (mut at, end) = (start & !(PAGE - 1), start.saturating_add(bytes));
+    let mut ok = true;
+    while at < end {
+        ok &= set_all(at, protection);
+        at += PAGE;
+    }
+    u32::from(ok)
 }

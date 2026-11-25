@@ -34,6 +34,7 @@ pub(crate) mod view_marks;
 pub(crate) mod slot_views;
 pub(crate) mod bvh_raw;
 pub(crate) mod root_strides;
+pub(crate) mod placed_device;
 pub(crate) mod descriptor_paging;
 mod dxgi;
 mod features;

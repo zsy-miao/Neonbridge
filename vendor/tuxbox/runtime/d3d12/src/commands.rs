@@ -2982,6 +2982,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                         if retire_write.get() {
                             retire_waits::wait_others(&queue.native);
                         }
+                        device::placed_device::before_submit(&queue.native);
                         {
                             let _site = crate::diagnostics::cost::site();
                             let tails = tails.borrow();
@@ -2995,6 +2996,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                         retire_waits::submitted(&queue.native);
                         crate::diagnostics::transient_pool::submitted(&queue.native, &pool_lists.borrow());
                         device::committed_writeback::submitted(&queue.native);
+                        device::placed_device::after_submit(&queue.native);
                         if let Some(owner) = queue.parent.as_ref() {
                             let _site = crate::diagnostics::cost::site();
                             step("shadow write-back", device::write_back_shadows(owner, &queue.native))?;

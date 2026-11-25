@@ -390,6 +390,7 @@ unsafe extern "system" fn view_state_export(address: usize, bytes: usize, base: 
 /// commits the lazy pages of `[address, address + bytes)`; returns how many.
 #[unsafe(export_name = "TuxBoxCommitRange")]
 unsafe extern "system" fn commit_range(address: usize, bytes: usize) -> usize {
+    crate::device_pages::open(address, bytes);
     ensure(address, bytes)
 }
 

@@ -420,7 +420,10 @@ pub(super) unsafe extern "system" fn place_virtual(
     if let Err(error) = GPU_APERTURE.wait(address, 1) { return error.code(); }
     let state = super::host_state(initial, desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER);
     if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && clear.is_null() {
-        let native = import_or_back(device, address, desc, state);
+        let native = match super::placed_device::place(device, address, desc) {
+            Some(native) => native,
+            None => import_or_back(device, address, desc, state),
+        };
         return unsafe {
             wrap_pageable(native, &RESOURCE, device,
                 super::ResourceState::from(super::Backing::ConsoleLayout(desc.Layout, desc.Flags)), out)
@@ -1951,6 +1954,11 @@ struct PagePool {
 }
 
 impl PagePools {
+    /// Whether `address` is inside a registered pool (placed_device).
+    pub(super) fn contains(&self, address: u64) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).values().any(|p| p.start <= address && address < p.end)
+    }
+
     fn register(&self, start: u64, end: u64) -> usize {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

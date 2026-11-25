@@ -231,7 +231,7 @@ impl Pool {
         page.has_section_data = true;
         page.aliases += 1;
         let aliases = page.aliases;
-        let previous = self.mappings.insert(at, token);
+        let previous = { MAPPINGS_CHANGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed); &mut *self }.mappings.insert(at, token);
         imports::moved(at, previous, Some(token));
         if aliases > 1 {
             self.note_alias(token, at, aliases);
@@ -284,7 +284,7 @@ impl Pool {
             p.aliases += 1;
             p.has_section_data = true;
             let aliases = p.aliases;
-            let previous = self.mappings.insert(start + i * PAGE, token);
+            let previous = { MAPPINGS_CHANGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed); &mut *self }.mappings.insert(start + i * PAGE, token);
             imports::moved(start + i * PAGE, previous, Some(token));
             if aliases > 1 {
                 self.note_alias(token, start + i * PAGE, aliases);
@@ -453,7 +453,7 @@ impl Pool {
         self.views.remove(&lo);
         self.views.extend(restored);
         for a in (at..end).step_by(PAGE) {
-            let t = self.mappings.remove(&a).unwrap();
+            let t = { MAPPINGS_CHANGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed); &mut *self }.mappings.remove(&a).unwrap();
             imports::moved(a, Some(t), None);
             self.pages.get_mut(&t).unwrap().aliases -= 1;
         }
@@ -563,7 +563,7 @@ impl Pool {
             self.apertures.get_mut(&base).unwrap().1 -= 1;
         }
         self.pages.get_mut(&token).unwrap().aliases -= 1;
-        let previous = self.mappings.remove(&at);
+        let previous = { MAPPINGS_CHANGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed); &mut *self }.mappings.remove(&at);
         imports::moved(at, previous, None);
         Ok(())
     }
@@ -707,7 +707,7 @@ impl Pool {
                 page.saved = Vec::new();
             }
             page.mapped = true;
-            let previous = self.mappings.insert(at, *token);
+            let previous = { MAPPINGS_CHANGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed); &mut *self }.mappings.insert(at, *token);
             imports::moved(at, previous, Some(*token));
         }
         Ok(())
@@ -1808,3 +1808,31 @@ unsafe extern "system" fn join_page_range(base: usize, bytes: usize) -> i32 {
         Err(e) => -(e as i32),
     }
 }
+
+/// Every title address mapping the same physical page as `at` (`at` too),
+/// for device_pages; just `at` when xmem does not map it. Spins on the pool
+/// lock rather than blocking: the fault handler can run on a thread inside
+/// a map call.
+pub(crate) fn aliases(at: usize) -> Vec<usize> {
+    for _ in 0..1000 {
+        if let Ok(pool) = POOL.try_lock() {
+            let Some(&token) = pool.mappings.get(&at) else { return vec![at] };
+            // A reverse index, rebuilt when a mapping changed since.
+            let changed = MAPPINGS_CHANGED.load(std::sync::atomic::Ordering::Relaxed);
+            let mut index = ALIAS_INDEX.lock().unwrap_or_else(|e| e.into_inner());
+            if index.0 != changed || index.1.is_empty() {
+                index.1.clear();
+                for (&a, &t) in &pool.mappings {
+                    index.1.entry(t).or_default().push(a);
+                }
+                index.0 = changed;
+            }
+            return index.1.get(&token).cloned().unwrap_or_else(|| vec![at]);
+        }
+        std::thread::yield_now();
+    }
+    vec![at]
+}
+
+static MAPPINGS_CHANGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ALIAS_INDEX: LazyLock<std::sync::Mutex<(u64, HashMap<u64, Vec<usize>>)>> = LazyLock::new(|| std::sync::Mutex::new((u64::MAX, HashMap::new())));
