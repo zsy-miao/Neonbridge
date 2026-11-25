@@ -48,6 +48,20 @@ The first start of a runtime takes a while: it builds the runtime and prepares t
 | ![The loader preparing the shaders](assets/loader.png) | ![The controls overlay](assets/controls.png) |
 | **The loader.** Shows what's happening before the game starts. | **On-screen keys and frame rate.** |
 
+## Watch on your phone (Tailscale)
+
+Hand this to your AI agent (Claude Code, Codex and the like), or run it yourself in a terminal in the Neonbridge folder:
+
+```powershell
+.
+eonbridge.exe --feed-only
+```
+
+1. It prints `Tailscale sign-in needed: open <link>`. Open that link, sign in to your own free Tailscale account and approve the PC (once; nothing to install).
+2. It prints `live at https://neonbridge.<your-tailnet>.ts.net`. Open `http://127.0.0.1:8788` on this PC first and set the stream password.
+3. Install the Tailscale app on your phone, sign in to the same account, then open the `ts.net` address.
+4. Leave that window open and start games with `NEONBRIDGE_FEED=1` set (or skip `--feed-only` and launch with it set: the stream starts with the game). `NEONBRIDGE_FEED_SCREEN=1` streams your whole left monitor instead of the game window.
+
 ## Keys
 
 | Key | Does |
