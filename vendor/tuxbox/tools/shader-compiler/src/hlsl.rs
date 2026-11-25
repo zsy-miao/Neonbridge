@@ -2172,6 +2172,17 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         other => return Err(format!("stage {other:?} not supported yet")),
     };
     let mut insns = disassemble(&ex.isa);
+    // A branch whose target is the next instruction does nothing either way:
+    // fold it to s_nop so the structurizer sees no edge (VIctory 825c045,
+    // EatCodeSleep2, MIT, re-derived). TB_FOLD_NULL_BRANCH=0 keeps it.
+    if std::env::var("TB_FOLD_NULL_BRANCH").map_or(true, |v| v.trim() != "0") {
+        for ins in insns.iter_mut() {
+            if ins.enc == Enc::Sopp && ins.aux.imm == 0 && Emitter::branch_cond(ins.op).is_some() {
+                ins.op = 0;
+                ins.mnemonic = "s_nop".into();
+            }
+        }
+    }
     if lone_lane::on() { lone_lane::prepare(&mut insns)?; }
     let resolve_wave32 = !lone_lane::on() && ray_resolve::wave32(ex, &insns)?;
     let probe = radiance_probe::identify(ex);
