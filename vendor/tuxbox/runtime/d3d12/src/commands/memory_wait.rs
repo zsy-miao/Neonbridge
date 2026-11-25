@@ -324,8 +324,12 @@ unsafe fn wait_value(
         if state.prefix.in_body && super::split::on() {
             // Split the list here: the work before the wait runs ahead of it (split).
             let segment = Arc::new(Segment { prefix: None, word, target, comparison, address });
-            if unsafe { super::split::split(list, &mut state, segment)? } {
+            if unsafe { super::split::split(list, &mut state, segment.clone())? } {
                 capture_wait(list, "split the list", address, target);
+                return Ok(());
+            }
+            if super::split::hoist(&mut state, segment) {
+                hoisted(list, address, target);
                 return Ok(());
             }
             capture_wait(list, "skipped: the list cannot split", address, target);
@@ -340,6 +344,10 @@ unsafe fn wait_value(
             return Ok(());
         }
         if state.prefix.in_body {
+            if super::split::hoist(&mut state, Arc::new(Segment { prefix: None, word, target, comparison, address })) {
+                hoisted(list, address, target);
+                return Ok(());
+            }
             // Waits are honoured only at a native list boundary. Failing here
             // rejected the whole list (black frames); dropping the wait keeps
             // the rendering and only loosens ordering with the signalling queue.
@@ -676,6 +684,16 @@ fn present_release(address: u64) -> bool {
         return true;
     }
     crate::env_toggle!("TUXBOX_MEMORY_WAIT_FORCE") != Some("0") && writers::writer_queue(address).is_none()
+}
+
+fn hoisted(list: &List, address: u64, target: u64) {
+    capture_wait(list, "moved to the start of its host list", address, target);
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "GPU memory wait {address:#x} >= {target:#x} after rendering commands moved to the start of its host list ({n} so far; TUXBOX_WAIT_HOIST=0 skips it)"));
+    }
 }
 
 /// TuxBox 3f2a717: a wait that cannot be honoured inside a list still orders

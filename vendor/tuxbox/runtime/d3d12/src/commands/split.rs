@@ -153,6 +153,31 @@ pub(super) struct Segments {
     /// The host allocator the recording uses.
     allocator: Option<ID3D12CommandAllocator>,
     pub(super) replay: Replay,
+    /// Waits moved to the start of the current host list (hoist).
+    extra: Vec<Arc<memory_wait::Segment>>,
+}
+
+/// VIctory-fxceless 7d7963e (list.rs:1839-1860, GPL-3.0, credit to its
+/// authors): a wait the list cannot split at is moved to the start of its
+/// current host list (holding that segment back), never dropped. Returns
+/// false when TUXBOX_WAIT_HOIST=0 (skip as before) or nothing to attach to.
+pub(super) fn hoist(state: &mut Recording, segment: Arc<memory_wait::Segment>) -> bool {
+    if crate::env_toggle!("TUXBOX_WAIT_HOIST") == Some("0") {
+        return false;
+    }
+    if state.segments.closed.is_empty() {
+        if state.prefix.segments.try_reserve(1).is_err() { return false; }
+        state.prefix.segments.push(segment);
+    } else {
+        state.segments.extra.push(segment);
+    }
+    true
+}
+
+/// Splits a recording may make: TUXBOX_SPLIT_CAP (default unlimited; was 32).
+fn split_cap() -> usize {
+    static CAP: OnceLock<usize> = OnceLock::new();
+    *CAP.get_or_init(|| crate::env_toggle!("TUXBOX_SPLIT_CAP").and_then(|v| v.trim().parse().ok()).unwrap_or(usize::MAX))
 }
 
 impl Drop for Segments {
@@ -175,6 +200,7 @@ impl Segments {
             if self.spares.len() < CAPACITY { self.spares.push(list); } else { retire(list); }
         }
         self.replay = Replay::default();
+        self.extra.clear();
     }
 
     /// The host list submitted first for this recording.
@@ -185,7 +211,9 @@ impl Segments {
     /// The later host lists of this recording, each with the wait before it.
     pub(super) fn tails(&self, native: &ID3D12GraphicsCommandList) -> Vec<(Arc<memory_wait::Segment>, *mut c_void)> {
         let lists = self.closed.iter().skip(1).map(|(list, _)| list.as_raw()).chain([native.as_raw()]);
-        self.closed.iter().map(|(_, segment)| segment.clone()).zip(lists).collect()
+        let mut tails: Vec<_> = self.closed.iter().map(|(_, segment)| segment.clone()).zip(lists).collect();
+        tails.extend(self.extra.iter().map(|segment| (segment.clone(), native.as_raw())));
+        tails
     }
 }
 
@@ -196,7 +224,7 @@ pub(super) unsafe fn split(list: &List, state: &mut Recording, segment: Arc<memo
     let segments = &state.segments;
     if !on()
         || kind == D3D12_COMMAND_LIST_TYPE_BUNDLE
-        || segments.closed.len() >= CAPACITY
+        || segments.closed.len() >= split_cap()
         || !state.open_queries.is_empty()
         || !state.split_barriers.is_empty()
         || segments.replay.predicated
