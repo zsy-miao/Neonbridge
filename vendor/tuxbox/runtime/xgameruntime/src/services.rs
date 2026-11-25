@@ -879,7 +879,19 @@ pub(super) unsafe extern "system" fn save_read_blobs_async(
 /// XGameSaveReadBlobDataResult(async, blobsSize, blobData, countOfBlobs*) (slot 22).
 pub(super) unsafe extern "system" fn save_read_blobs_result(_: &Object, block: *mut c_void, size: usize, out: *mut Blob, count: *mut u32) -> i32 {
     match take(block) {
-        Ok(Payload::Blobs(blobs)) => unsafe { fill_blobs(&blobs, size, out, count) },
+        Ok(Payload::Blobs(blobs)) => {
+            let status = unsafe { fill_blobs(&blobs, size, out, count) };
+            // A too-small buffer keeps the result for the title's retry with a
+            // bigger one, as VIctory-fxceless xgamesave.rs (GPL-3.0, credit)
+            // does; before, take() dropped it and the retry failed.
+            // TUXBOX_SAVE_KEEP_RESULT=0 drops it again.
+            if status == BUFFER_TOO_SMALL && std::env::var_os("TUXBOX_SAVE_KEEP_RESULT").is_none_or(|v| v != "0") {
+                let needed = blobs_size(&blobs);
+                OPERATIONS.lock().unwrap_or_else(|e| e.into_inner())
+                    .insert(block as usize, Operation { status: OK, size: needed, payload: Payload::Blobs(blobs) });
+            }
+            status
+        }
         Ok(_) => INVALID,
         Err(status) => status,
     }
