@@ -366,10 +366,10 @@ fn view_marks_on() -> bool {
 /// SetSampleMaskX's quad mask (d3d12 ccafab1, device/quad_mask.rs): a pixel
 /// shader declares `tb_quad_mask` (b0, space32766, the mask's low and high
 /// words) and discards a pixel whose 16-bit lane, p = ((y & 1) << 1) | (x & 1),
-/// is 0. On by default (TB_QUAD_MASK=0 off): the discard costs every pixel shader
+/// is 0. Opt-in with TB_QUAD_MASK=1: the discard costs every pixel shader
 /// its early depth test.
 fn quad_mask_on() -> bool {
-    std::env::var("TB_QUAD_MASK").map_or(true, |v| v.trim() != "0")
+    std::env::var("TB_QUAD_MASK").is_ok_and(|v| v.trim() == "1")
 }
 
 /// TB_LOOP_PER_COUNTER=0 restores the one shared, never-reset tb_guard that
