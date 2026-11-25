@@ -101,3 +101,29 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - ref better: a1df9a6 (refuse SOPP 0x26).
 - risk: 2ad360a (SNORM _pck).
 - unneeded: dbd0bcd tb_rndne, 14b2de5 TB_FLAT_UINT.
+
+### d3d12 slice 1
+- BAD PORT 49702da: the lazy commit resumes on any committed page and never checks the access type, so a write to a read-only page or a DEP fault re-faults forever. Port xcl lazy.rs `allows`.
+- BAD PORT db43389: misread leonida 673dd15d. D3D12 doesn't need the depth clamp, so default `TUXBOX_DEPTH_CLEAR_CLAMP` off and fix the credit.
+- Partial port 479b039/631b28f: port five-star 9d61a3c (skip unready first uses) and xcl 9a272d4 (a pipeline the title waits on skips the queue).
+- Upstream changed since we copied:
+  - rebox c78d9f4/f0bcabe (2be3430): build display-sized pipelines at once, at the front of the queue.
+  - five-star b828157 (e1ce01d): release every pending memory wait at each present.
+  - five-star ad07dd9 (0217153): give up on a timed-out address for good, with a 5000 ms timeout.
+  - five-star CompileBudget limits (65344bb): a 4-compile cap, a 28 GB ceiling, start one when none runs (9a5bcc1), urgent compiles.
+  - TuxBox 9ba53f9 (68bb418): mask flags with HOST_FLAGS at heap.rs:669/690.
+  - TuxBox ff2cdfb (0173b3f): re-import with unordered access allowed before the shadow copy, and record memory_type at +56.
+  - five-star 226887c (f96284e): trigger on the slot-74 64-bit wait.
+- Ref method better:
+  - 7404809: re-check every 50 ms whether the title now waits on a prefetch.
+  - 68d8158: chunk copies over 64 MiB through scratch (xcl 392dc0c).
+  - ab5af3f: snapshot every CBV no title buffer covers.
+  - 2e53f61: reopen a closed list with a native Reset.
+- Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
+- Gap cefdfdb: set stencil when part 0 is added, and handle or refuse tags 26/27/28.
+- Small fixes:
+  - move the misplaced doc comment in src/main.rs;
+  - correct the device.rs:627 doc;
+  - map B8G8R8X8_TYPELESS for present;
+  - check GTA VI's imports before keeping the XError exports;
+  - confirm GTA VI never calls Scarlett slot 59.
