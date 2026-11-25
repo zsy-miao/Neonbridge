@@ -1435,11 +1435,11 @@ impl Placements {
     }
 }
 
-/// Whether a queue waits on placed-texture fences of other queues (off unless
-/// TUXBOX_PLACED_CROSS_WAITS=1).
+/// Whether a queue waits on placed-texture fences of other queues (on unless
+/// TUXBOX_PLACED_CROSS_WAITS=0 off; default on, batch rule).
 fn cross_waits() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PLACED_CROSS_WAITS") == Some("1"))
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PLACED_CROSS_WAITS") != Some("0"))
 }
 
 struct PendingWrite {
@@ -1676,7 +1676,7 @@ pub(crate) unsafe fn submit(
             // while the writing queue waited on the title. The writing queue
             // already waits for its own publication, and the title orders its
             // queues itself, so no queue waits here unless
-            // TUXBOX_PLACED_CROSS_WAITS=1.
+            // TUXBOX_PLACED_CROSS_WAITS (default on; =0 skips it).
             if cross_waits() {
                 unsafe { queue.Wait(&write.published, write.tick)? };
                 crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture write-back publication", &write.published, write.tick);
@@ -1733,7 +1733,7 @@ pub(crate) unsafe fn submit(
     for texture in writes.iter() {
         for (fence, value) in &lock(&texture.contents).readers {
             // Another queue's read: the title orders it (test76 held a queue
-            // 1.8 s on one), so it is waited on only with TUXBOX_PLACED_CROSS_WAITS=1.
+            // 1.8 s on one), so it is waited on only with TUXBOX_PLACED_CROSS_WAITS (default on; =0 skips it).
             if cross_waits() && fence != reader && unsafe { fence.GetCompletedValue() } < *value {
                 unsafe { queue.Wait(fence, *value)? };
                 crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(queue) as usize, "placed texture reader", fence, *value);

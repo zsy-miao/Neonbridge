@@ -18,7 +18,7 @@
 //! next re-read. The recorded layout is the last barrier recorded, which can
 //! differ from execution order.
 //!
-//! Default off: TUXBOX_COMMITTED_WRITEBACK=1 turns it on.
+//! Default on (batch rule); TUXBOX_COMMITTED_WRITEBACK=0 turns it off.
 use std::collections::{BTreeMap, HashMap};
 use std::mem::ManuallyDrop;
 use std::sync::{Mutex, MutexGuard, Once};
@@ -32,7 +32,7 @@ use windows::core::{Interface, Result};
 
 pub(crate) fn enabled() -> bool {
     static ON: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| crate::env_toggle!("TUXBOX_COMMITTED_WRITEBACK") == Some("1"));
+        std::sync::LazyLock::new(|| crate::env_toggle!("TUXBOX_COMMITTED_WRITEBACK") != Some("0"));
     *ON
 }
 

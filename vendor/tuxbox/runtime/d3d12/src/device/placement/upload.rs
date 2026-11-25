@@ -340,7 +340,7 @@ impl Transfer {
             // waited on another queue's reader, itself waiting on the title's
             // GPU memory wait. The title orders other queues' reads before its
             // CPU writes itself, so a submission's upload waits only for its
-            // own queue's readers (TUXBOX_PLACED_CROSS_WAITS=1: all).
+            // own queue's readers (all unless TUXBOX_PLACED_CROSS_WAITS=0).
             let contents = lock(&mips[0].texture.contents);
             for (fence, value) in &contents.readers {
                 if own.is_some_and(|own| own != fence) && !super::cross_waits() {

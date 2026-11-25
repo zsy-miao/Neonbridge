@@ -35,7 +35,7 @@ struct Entry {
     written: bool,
     /// Write-back number of the last UAV, copy or clear that targeted it.
     marked: u64,
-    /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP=1).
+    /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP, default on).
     hash: Option<u64>,
     /// Refresh number at which a descriptor last bound this shadow (or its
     /// title bytes last changed), for aging.
@@ -234,12 +234,12 @@ fn aged_shadows_are_checked_once_every_sixteen_refreshes() {
     assert_eq!(due, 1);
 }
 
-/// TUXBOX_SHADOW_SKIP=1: a read-only shadow whose title bytes hash the same
+/// TUXBOX_SHADOW_SKIP (default on, batch rule; =0 off): a read-only shadow whose title bytes hash the same
 /// as at its last refresh is not copied again. The hash is taken on the CPU
 /// at submission, so GPU writes still queued ahead of this submission are not
-/// seen; off by default until a run shows no stale constants.
+/// seen; on by default (batch rule), =0 if a run shows stale constants.
 fn skip_unchanged() -> bool {
-    crate::env_toggle!("TUXBOX_SHADOW_SKIP") == Some("1")
+    crate::env_toggle!("TUXBOX_SHADOW_SKIP") != Some("0")
 }
 
 /// FNV-1a over the committed, readable parts of `bytes` at `address`.
