@@ -119,6 +119,36 @@ impl Emitter<'_> {
         } else {
             ins.op & 15
         };
+        // TB_F32_NATIVE_CMP (default on, =0 off): in programs of at least
+        // TB_NATIVE_CMP_MIN_INSNS (8000) instructions, an f32 compare with a constant
+        // flush-to-zero mode is a native compare of the flushed operands instead of the
+        // inlined integer relation (test177: fe9c9850 had 1448 of them in 5.5 MB of DXIL,
+        // 157 s / +6.8 GiB driver compiles for 2-5 MB programs). Exact: denormals become
+        // signed zero first (as the relation does), ±0 compare equal natively, and the
+        // unordered bit is isnan on either side.
+        let big = self.insns.len() >= std::env::var("TB_NATIVE_CMP_MIN_INSNS").ok()
+            .and_then(|v| v.trim().parse().ok()).unwrap_or(8000usize);
+        if sign == 0x8000_0000 && infinity == 0x7f80_0000 && mode == "0xc0u" && big
+            && std::env::var("TB_F32_NATIVE_CMP").map_or(true, |v| v.trim() != "0")
+        {
+            // 0xc0 & 0x10 == 0: f32 inputs flushed.
+            let ftz = |s: &str| format!("asfloat(((({s}).y & 0x7f800000u) == 0u) ? (({s}).y & 0x80000000u) : ({s}).y)");
+            let (x, y) = (ftz(&a), ftz(&b));
+            // NaN tested on the bits: DXC's default fast-math flags may fold isnan and
+            // assume ordered compares, so the ordered terms are gated on !unordered.
+            let un = format!("(((({a}).y & 0x7fffffffu) > 0x7f800000u) || ((({b}).y & 0x7fffffffu) > 0x7f800000u))");
+            let mut ordered = Vec::new();
+            if pred & 1 != 0 { ordered.push(format!("({x} < {y})")); }
+            if pred & 2 != 0 { ordered.push(format!("({x} == {y})")); }
+            if pred & 4 != 0 { ordered.push(format!("({x} > {y})")); }
+            let ord = (!ordered.is_empty()).then(|| format!("(!{un} && ({}))", ordered.join(" || ")));
+            return Ok(match (ord, pred & 8 != 0) {
+                (None, false) => "false".into(),
+                (None, true) => un,
+                (Some(o), false) => o,
+                (Some(o), true) => format!("({un} || {o})"),
+            });
+        }
         Ok(format!("((tb_float_relation({a}, {b}, {sign:#x}u, {infinity:#x}u, {min_normal:#x}u, ({mode} & {input_mode:#x}u) != 0u) & {pred}u) != 0u)"))
     }
 
