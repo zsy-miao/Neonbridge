@@ -43,7 +43,27 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - Log every failed shader by hash: remove the `if m.contains("timed out")` gate at src/shaders.rs:1112, so every Failed prints `Xbox shader {key}: {m}`. The next prewarm then names all 7.
 
 ## Research
-- The ref watch is paused (cron acf2e111 removed). Restart it after the audit.
+- The ref watch is stopped (cron acf2e111 deleted). Restart it after the audit.
+- Open atlas items to port:
+  - TuxBox 1397cb6: pixel_wave quad exchange in loops (hlsl.rs:5855).
+  - TuxBox 5891be3 and 4b40c64: immediates in v_add/sub_nc_i32/_i16.
+  - TuxBox 9ba53f9: mask HOST_FLAGS (heap.rs:320, 526, 669, 690).
+  - TuxBox 3f2a717: a stand-in for the large-compile deadline, plus a failure ledger.
+  - VIctory cd94d35 and 940d32f: view_marks page marks. The d3d12 contract comes first, then xshader.
+  - leonida f2268abea and 255f17001: the slot-31 paired CPU view mirror.
+  - xcl 7881dbc: BC7 dictionary entry 0 (xcrdapi bcpack_victory/tables.rs:1443).
+  - xcl 74fe4c2: v_div_fixup_f16.
+  - xcl 1f8d4be: POPS ROV.
+  - X2W 6f784a50: v_dot2_u32_u16 and v_dot4_u32_u8.
+- To verify:
+  - xcl c7f6933: a zero T# that falls back to heap[0] hangs.
+  - xcl fb9d059: the 32 MiB texture upload cap.
+  - xcl 6c9f947: fmt_encode clamps for UINT/SINT.
+  - xcl 18423c3: round-to-nearest-even on f16 products.
+  - xcl 4070ae1: 2D resinfo for D16.
+  - xcl 4b0af47: a per-stage mesh_stage cache.
+  - VIctory-zhai f07016a: copy-memory diagnostics.
+  - five-star: evict-windows (design only).
 
 ## Housekeeping
 - Delete `_ref/emu-old` once the audit no longer needs it.
