@@ -49,6 +49,12 @@ fn spin() -> bool {
 /// the rest of it (the emitter's helpers included) through the exchange.
 pub(super) fn prelude([tx, ty, tz]: [u32; 3]) -> String {
     let threads = tx * ty * tz;
+    // 64 threads: two full hardware waves, where the one-wave form was already
+    // exact. Keep its text byte for byte so those programs' HLSL (and their
+    // compiled-shader cache entries) do not change.
+    if threads == 64 {
+        return prelude_one_wave([tx, ty, tz]);
+    }
     let w = waves(threads);
     let chunks = threads.div_ceil(32);
     // Several console waves always meet by the spin.
@@ -139,6 +145,138 @@ uint tb_x_read(uint v, uint l) {{
 // Lanes l and l ^ 32 of one value in one exchange (xcl 9e2c7a5).
 uint2 tb_x_read2(uint v, uint l) {{
     uint s = tb_x_wave * 128u + (tb_x_k & 1u) * 64u;
+    tb_x_v[s + tb_x_lane()] = v;
+    bool met = tb_x_meet();
+    uint a = tb_x_v[s + (l & 63u)], b = tb_x_v[s + ((l ^ 32u) & 63u)];
+    bool mine = ((l >> 5) & 1u) == tb_x_half;
+    return uint2(met || mine ? a : 0u, met || !mine ? b : 0u);
+}}
+int tb_x_read(int v, uint l) {{ return asint(tb_x_read(asuint(v), l)); }}
+float tb_x_read(float v, uint l) {{ return asfloat(tb_x_read(asuint(v), l)); }}
+bool tb_x_read(bool v, uint l) {{ return tb_x_read(v ? 1u : 0u, l) != 0u; }}
+uint tb_x_first_lane() {{ uint4 m = tb_x_ballot(true); return m.x != 0u ? firstbitlow(m.x) : 32u + firstbitlow(m.y); }}
+uint tb_x_first(uint v) {{ return tb_x_read(v, tb_x_first_lane()); }}
+int tb_x_first(int v) {{ return asint(tb_x_first(asuint(v))); }}
+float tb_x_first(float v) {{ return asfloat(tb_x_first(asuint(v))); }}
+bool tb_x_is_first() {{ return tb_x_lane() == tb_x_first_lane(); }}
+uint tb_x_sum(uint v) {{ uint2 p = tb_x_pair(WaveActiveSum(v)); return p.x + p.y; }}
+int tb_x_sum(int v) {{ uint2 p = tb_x_pair(asuint(WaveActiveSum(v))); return asint(p.x) + asint(p.y); }}
+float tb_x_sum(float v) {{ uint2 p = tb_x_pair(asuint(WaveActiveSum(v))); return asfloat(p.x) + asfloat(p.y); }}
+uint tb_x_min(uint v) {{ uint2 p = tb_x_pair(WaveActiveMin(v)); return min(p.x, p.y); }}
+int tb_x_min(int v) {{ uint2 p = tb_x_pair(asuint(WaveActiveMin(v))); return min(asint(p.x), asint(p.y)); }}
+float tb_x_min(float v) {{ uint2 p = tb_x_pair(asuint(WaveActiveMin(v))); return min(asfloat(p.x), asfloat(p.y)); }}
+uint tb_x_max(uint v) {{ uint2 p = tb_x_pair(WaveActiveMax(v)); return max(p.x, p.y); }}
+int tb_x_max(int v) {{ uint2 p = tb_x_pair(asuint(WaveActiveMax(v))); return max(asint(p.x), asint(p.y)); }}
+float tb_x_max(float v) {{ uint2 p = tb_x_pair(asuint(WaveActiveMax(v))); return max(asfloat(p.x), asfloat(p.y)); }}
+uint tb_x_or(uint v) {{ uint2 p = tb_x_pair(WaveActiveBitOr(v)); return p.x | p.y; }}
+uint tb_x_and(uint v) {{ uint2 p = tb_x_pair(WaveActiveBitAnd(v)); return p.x & p.y; }}
+uint tb_x_xor(uint v) {{ uint2 p = tb_x_pair(WaveActiveBitXor(v)); return p.x ^ p.y; }}
+// Prefixes: the upper half adds the lower half's total.
+uint tb_x_prefix_sum(uint v) {{ uint2 p = tb_x_pair(WaveActiveSum(v)); return WavePrefixSum(v) + (tb_x_half != 0u ? p.x : 0u); }}
+int tb_x_prefix_sum(int v) {{ uint2 p = tb_x_pair(asuint(WaveActiveSum(v))); return WavePrefixSum(v) + (tb_x_half != 0u ? asint(p.x) : 0); }}
+float tb_x_prefix_sum(float v) {{ uint2 p = tb_x_pair(asuint(WaveActiveSum(v))); return WavePrefixSum(v) + (tb_x_half != 0u ? asfloat(p.x) : 0.0f); }}
+uint tb_x_prefix_count(bool b) {{ uint2 p = tb_x_pair(WaveActiveCountBits(b)); return WavePrefixCountBits(b) + (tb_x_half != 0u ? p.x : 0u); }}
+#define WaveActiveBallot(b) tb_x_ballot(b)
+#define WaveActiveAnyTrue(b) tb_x_any(b)
+#define WaveActiveAllTrue(b) tb_x_all(b)
+#define WaveActiveCountBits(b) tb_x_count(b)
+#define WaveReadLaneAt(v, l) tb_x_read(v, l)
+#define WaveReadLaneFirst(v) tb_x_first(v)
+#define WaveIsFirstLane() tb_x_is_first()
+#define WaveActiveSum(v) tb_x_sum(v)
+#define WaveActiveMin(v) tb_x_min(v)
+#define WaveActiveMax(v) tb_x_max(v)
+#define WaveActiveBitOr(v) tb_x_or(v)
+#define WaveActiveBitAnd(v) tb_x_and(v)
+#define WaveActiveBitXor(v) tb_x_xor(v)
+#define WavePrefixSum(v) tb_x_prefix_sum(v)
+#define WavePrefixCountBits(b) tb_x_prefix_count(b)
+#define WaveGetLaneIndex() tb_x_lane()
+#define WaveGetLaneCount() 64u
+#endif
+"#)
+}
+
+/// The one-console-wave prelude as it was before 396b1f0 (64-thread groups).
+fn prelude_one_wave([tx, ty, tz]: [u32; 3]) -> String {
+    let threads = tx * ty * tz;
+    let spin = u32::from(spin());
+    format!(r#"#ifdef TB_NO_WAVESIZE_64
+// Split wave64 (xcl 3ecf4cf / 77a5eee / e40ac38, GPL-2.0): this console wave
+// runs as two 32-lane halves of one thread group.
+groupshared uint tb_x_next;
+groupshared uint tb_x_c[2];
+groupshared uint tb_x_w[4];
+groupshared uint tb_x_v[128];
+static uint tb_x_half = 0u;
+// Exchanges so far (the same in both halves), the other half's lanes, and
+// whether the other half failed to arrive in time.
+static uint tb_x_k = 0u;
+static uint tb_x_other = 0u;
+static bool tb_x_dead = false;
+// Hardware waves need not hold consecutive thread indices: each takes the
+// next 32 console threads as it arrives.
+uint3 tb_x_start(uint3 hw) {{
+    if (hw.x + {tx}u * (hw.y + {ty}u * hw.z) == 0u) {{ tb_x_next = 0u; tb_x_c[0] = 0u; tb_x_c[1] = 0u; }}
+    GroupMemoryBarrierWithGroupSync();
+    tb_x_other = {threads}u - WaveActiveCountBits(true);
+    uint base = 0u;
+    if (WaveIsFirstLane()) InterlockedAdd(tb_x_next, 1u, base);
+    tb_x_half = WaveReadLaneFirst(base) & 1u;
+    uint t = tb_x_half * 32u + WaveGetLaneIndex();
+    return uint3(t % {tx}u, (t / {tx}u) % {ty}u, t / ({tx}u * {ty}u));
+}}
+uint tb_x_lane() {{ return tb_x_half * 32u + WaveGetLaneIndex(); }}
+// Meet the other half after writing this exchange's slot: true when its
+// words are readable (xcl 066ae5b xcl_x_meet).
+bool tb_x_meet() {{
+    uint k = tb_x_k;
+    tb_x_k = k + 1u;
+#if {spin}
+    if (tb_x_dead) return false;
+    GroupMemoryBarrier();
+    uint lanes = WaveActiveCountBits(true);
+    uint ok = 1u;
+    if (WaveIsFirstLane()) {{
+        uint o;
+        InterlockedAdd(tb_x_c[tb_x_half], lanes, o);
+        uint need = (k + 1u) * tb_x_other;
+        [loop] for (uint n = 0u; ; n++) {{
+            uint c;
+            InterlockedAdd(tb_x_c[tb_x_half ^ 1u], 0u, c);
+            if ((int)(c - need) >= 0) break;
+            if (n >= (1u << 20)) {{ ok = 0u; break; }}
+        }}
+    }}
+    if (WaveReadLaneFirst(ok) == 0u) {{ tb_x_dead = true; return false; }}
+    GroupMemoryBarrier();
+#else
+    GroupMemoryBarrierWithGroupSync();
+#endif
+    return true;
+}}
+// One word per half: each half gives its value, both read both.
+uint2 tb_x_pair(uint mine) {{
+    uint s = (tb_x_k & 1u) * 2u;
+    tb_x_w[s + tb_x_half] = mine;
+    uint o = tb_x_meet() ? tb_x_w[s + (tb_x_half ^ 1u)] : 0u;
+    return tb_x_half != 0u ? uint2(o, mine) : uint2(mine, o);
+}}
+uint4 tb_x_ballot(bool b) {{ return uint4(tb_x_pair(WaveActiveBallot(b).x), 0u, 0u); }}
+bool tb_x_any(bool b) {{ uint4 m = tb_x_ballot(b); return (m.x | m.y) != 0u; }}
+bool tb_x_all(bool b) {{ uint4 m = tb_x_ballot(b); uint4 a = tb_x_ballot(true); return m.x == a.x && m.y == a.y; }}
+uint tb_x_count(bool b) {{ uint4 m = tb_x_ballot(b); return countbits(m.x) + countbits(m.y); }}
+// Any lane, uniform or not: every lane gives its value.
+uint tb_x_read(uint v, uint l) {{
+    uint s = (tb_x_k & 1u) * 64u;
+    tb_x_v[s + tb_x_lane()] = v;
+    bool met = tb_x_meet();
+    uint r = tb_x_v[s + (l & 63u)];
+    return met || ((l >> 5) & 1u) == tb_x_half ? r : 0u;
+}}
+// Lanes l and l ^ 32 of one value in one exchange (xcl 9e2c7a5).
+uint2 tb_x_read2(uint v, uint l) {{
+    uint s = (tb_x_k & 1u) * 64u;
     tb_x_v[s + tb_x_lane()] = v;
     bool met = tb_x_meet();
     uint a = tb_x_v[s + (l & 63u)], b = tb_x_v[s + ((l ^ 32u) & 63u)];
