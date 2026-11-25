@@ -100,6 +100,7 @@ pub(crate) unsafe extern "system" fn read_file(
         return ok;
     }
     // Lazy title views (lazy_commit.rs) are reserved mapped pages: commit them too.
+    crate::section_watch::writing(buffer as usize, bytes as usize);
     let lazy = crate::lazy_commit::ensure(buffer as usize, bytes as usize) * 0x1_0000;
     let changed = lazy + unsafe { prepare(buffer as usize, bytes as usize) };
     // A split's gap closes within microseconds; let it finish.

@@ -698,6 +698,8 @@ impl Pool {
         if unsafe { VirtualAlloc(address as _, bytes, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
             return Err(shared_pages::os_error("map:672"));
         }
+        // Committed read-write anew: no guard of section_watch stands there.
+        crate::section_watch::remapped(address, bytes);
         for (i, &token) in tokens.iter().enumerate() {
             let p = &self.pages[&token];
             if p.has_section_data && p.saved.is_empty()

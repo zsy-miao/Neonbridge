@@ -88,7 +88,7 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
                 break;
             }
             out.extend((0..pages).map(|i| from + i * 0x1000));
-            if !crate::device_pages::covers(block) {
+            if !crate::device_pages::covers(block) && !pinned(block) {
                 protect(g, block);
             }
         }
@@ -103,7 +103,8 @@ fn protect(g: &mut Guards, block: usize) {
     let mut done = Vec::new();
     for a in crate::physical_pages::aliases(block) {
         let a = a & !(BLOCK - 1);
-        if g.alias_of.contains_key(&a) && a != block {
+        // device_pages owns its pages' protection (NOACCESS / READWRITE).
+        if (g.alias_of.contains_key(&a) && a != block) || (a != block && (crate::device_pages::covers(a) || pinned(a))) {
             continue;
         }
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
@@ -136,10 +137,28 @@ fn protect(g: &mut Guards, block: usize) {
     }
 }
 
-/// Before the kernel writes `[at, at + len)` (ReadFile): opens its guards.
+/// Ranges a kernel write may still be filling (overlapped ReadFile and
+/// DirectStorage complete after the call returns): not guarded for 2 s.
+static PINNED: Mutex<Vec<(usize, usize, std::time::Instant)>> = Mutex::new(Vec::new());
+
+fn pinned(block: usize) -> bool {
+    let mut p = PINNED.lock().unwrap_or_else(|e| e.into_inner());
+    p.retain(|&(_, _, at)| at.elapsed() < std::time::Duration::from_secs(2));
+    p.iter().any(|&(s, e, _)| s < block + BLOCK && block < e)
+}
+
+/// Before the kernel writes `[at, at + len)` (ReadFile, DirectStorage):
+/// opens its guards and keeps them open for 2 s.
 pub(crate) fn writing(at: usize, len: usize) {
     if !enabled() {
         return;
+    }
+    {
+        let mut p = PINNED.lock().unwrap_or_else(|e| e.into_inner());
+        p.retain(|&(_, _, t)| t.elapsed() < std::time::Duration::from_secs(2));
+        if p.len() < 4096 {
+            p.push((at, at.saturating_add(len), std::time::Instant::now()));
+        }
     }
     let mut slot = lock();
     let Some(g) = slot.as_mut() else { return };
