@@ -4,106 +4,101 @@
 
 Test them all in one convenient launcher.
 
-**Status: WIP.** Neonbridge is one launcher that runs each leading project's working build, vendored whole and unchanged, against the Xbox Series X|S (Scarlett) build of Grand Theft Auto VI that you dumped from a console you own. Pick a runtime, and Neonbridge builds it when its sources are newer than its exe, sets it up, starts it with that runtime's settings and logs the run. It **isn't playable yet**. No game files are included or linked, and the current release is the v0.2.0-alpha pre-release.
+Neonbridge is a Windows app that runs every project trying to bring the Xbox Series version of GTA VI to PC, from one window, on a copy of the game you dumped from your own console. **None of them is playable yet.** No game files are included.
 
 ## Status
 
-| Runtime | Builds | Launches via loader | Intro | 3D scene | Playable | Notes |
+| Runtime | Builds | Starts | Intro | 3D scene | Playable | Notes |
 |---|---|---|---|---|---|---|
-| ScarlettPort | ✅ | ✅ | ✅ | ⚠️ | ❌ | Intro 30 fps; 3D scenes 2–3 fps (warm cache, ray tracing off) |
-| victory (fxceless) | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
-| VItoriaBr | ✅ | ✅ | ✅ | ⚠️ | ❌ | Device removed in 3D; ray-tracing fix pending |
-| ztrx-victory | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
-| xcl | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
-| Neonbridge (own build) | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
-| TuxBox (upstream) | ⚠️ | ❌ | ❌ | ❌ | ❌ | brcly/TuxBox as vendored; upstream says Windows compatibility is in development. Needs Python 3.10+ and the VS x64 C++ tools |
-| Five Star Recomp | ❌ | ❌ | ❌ | ❌ | ❌ | Not bundled: needs the .NET 10 SDK |
+| ScarlettPort | ✅ | ✅ | ✅ | ⚠️ | ❌ | Intro at 30 fps; 3D scenes at 2–3 fps |
+| VItoriaBr | ✅ | ✅ | ✅ | ⚠️ | ❌ | Stops in 3D scenes; a fix is coming |
+| victory (fxceless) | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
+| ztrx-victory | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
+| xcl | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
+| Neonbridge (own build) | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
+| TuxBox (upstream) | ⚠️ | ❌ | ❌ | ❌ | ❌ | Its authors say Windows support is still in progress |
+| Five Star Recomp | ❌ | ❌ | ❌ | ❌ | ❌ | Not in the download yet; needs .NET 10 and the PC GDK |
 
-| Feature | Status | Notes |
-|---|---|---|
-| Loader | ✅ | |
-| FPS overlay | ✅ | F3 shows or hides it |
-| Shared saves | ⚠️ | One save folder for the victory family; untested |
-| Shared cache | ✅ | One cache folder for the victory family |
-| Controls overlay | ✅ | F1 shows or hides it, F2 hides it |
-| Mix mode | ⚠️ | Untested |
+## Get started
+
+1. Download the **v0.2.0-alpha** zip from [Releases](../../releases).
+2. Unzip it anywhere, for example `C:\Games\Neonbridge`.
+3. Run `neonbridge.exe`.
+4. If it doesn't find your game folder by itself, click **Change** and choose it. Then pick a runtime and press **Play**.
+
+The first start of a runtime takes a while: it prepares the game's shaders. Later starts are quicker.
+
+## What you need
+
+- **Your own copy of the game:** the Xbox Series X|S version of GTA VI, dumped from a console you own. It's the folder with `game_scarlett_master.exe` in it, about 210 GB.
+- **Windows 10 or 11**, 64-bit, with a processor that supports AVX2.
+- **A graphics card** that supports DirectX 12 with mesh shaders (Shader Model 6.6), with an up-to-date driver.
+- **Memory:** 32 GB of RAM is recommended.
+- **Disk space:** the game, plus up to about 20 GB per runtime for its files and shaders.
+
+Some runtimes need one more thing. Neonbridge greys them out until it's there, and its **Install...** button helps you get it:
+
+| Runtime | Also needs |
+|---|---|
+| TuxBox (upstream) | [Python 3.10 or newer](https://www.python.org/downloads/windows/) and the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (C++ tools) |
+| Five Star Recomp | The [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and the [Microsoft PC GDK](https://github.com/microsoft/GDK/releases) |
 
 ## Screenshots
 
 | | |
 |---|---|
 | ![The launcher: runtimes, details, preset and the game](assets/picker.png) | ![Advanced: mix mode and the run options](assets/mix.png) |
-| **Launcher.** Pick a runtime and its preset. The game is found by itself; Change opens the folder dialog. | **Advanced.** Mix mode takes each victory crate from the tree you pick (clashes in vendor/mix-compat.toml are marked), plus the run options. |
-| ![The loader warming the shaders](assets/loader.png) | ![The controls overlay](assets/controls.png) |
-| **Loader.** Shows the patch, build, warm and launch steps with progress. | **Controls and fps overlays.** The runtime's key map (F1 shows or hides it, F2 hides it) and fps (F3). |
+| **The launcher.** Pick a runtime and a preset, then press Play. | **Advanced.** Mix parts of different runtimes, or set options for a run. |
+| ![The loader preparing the shaders](assets/loader.png) | ![The controls overlay](assets/controls.png) |
+| **The loader.** Shows what's happening before the game starts. | **On-screen keys and frame rate.** |
 
-![Options...: every option of the runtime](assets/options.png)
+## Keys
 
-**Options...** lists every option of the runtime, or of each tree in a mix, with its default and where it is read.
-
-## Quick start
-
-```
-cargo build --release                      # target\release\neonbridge.exe
-neonbridge                                 # numbered picker: runtime and preset, then the game folder
-neonbridge --runtime victory --game <dump dir> [--log run.log] [--timeout S]
-```
-
-You need Visual Studio Build Tools with the x64 C++ tools, the Windows SDK and Rust (stable, `x86_64-pc-windows-msvc`). Each runtime's own toolchain is pinned in its tree (`rust-toolchain.toml`), and rustup fetches it.
-
-## Runtimes
-
-Each runtime is a tree under `vendor/<name>`, copied unchanged from its upstream at the hash in its `UPSTREAM` file. Its `NEONBRIDGE.toml` tells the launcher how to build it, which exe and arguments to run, its environment, options, presets and setup steps.
-
-| `--runtime` | What it is | Upstream |
-|---|---|---|
-| `scarlettport` (default) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
-| `victory` | VIctory-fxceless, the victory emulator fork | fxceless/victory-fork |
-| `vitoriabr` | VItoriaBr's VIctory fork | uiliannn/VItoriaBr |
-| `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
-| `xcl` | xcl | ivall/xcl |
-| `neonbridge-own` | Neonbridge (own build): TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator (`tuxbox` still works as its name for this release) | brcly/TuxBox |
-
-## Commands
-
-| Command | Does |
+| Key | Does |
 |---|---|
-| `neonbridge` | In a terminal with no arguments: every runtime and each of its presets as numbered choices (Enter takes the default), then the game-folder picker. `NEONBRIDGE_PICKER=0` skips both. |
-| `--runtime <name>` | The runtime to use (or `NEONBRIDGE_RUNTIME`; default `scarlettport`). |
-| `--list` | The runtimes. |
-| `--list <name>` | That runtime's options, their defaults and the values a run would use, plus its presets and setup steps. |
-| `--set NAME=VALUE` | One option for this run: an environment variable, or `--set --flag=VALUE` for the runtime's own arguments. Repeatable. |
-| `--preset <name>` | A preset from the runtime's `NEONBRIDGE.toml`, applied before `--set`. |
-| `--setup <name>` | The runtime's setup steps. A step that downloads something or needs a file of yours asks first and runs only on a typed `yes`. |
-| `--game <dir>`, `--exe <file>` | The dump folder, and another title exe in it. |
-| `--log <file>`, `--timeout <s>` | The runtime's stdout and stderr go to the log, with a `heartbeat: completed PresentX #N (F fps)` line after each frame-rate line. The timeout stops the run. |
-| `--build-only`, `--prewarm` | Build the runtime only, or run its shader prewarm. |
+| **F1** | Shows or hides the controls |
+| **F2** | Hides the controls |
+| **F3** | Shows or hides the frame rate |
 
-Settings apply in this order, the later winning: the toml, your environment, the preset, then `--set`. Each runtime's cache is `%LOCALAPPDATA%\6ixpack\<name>\cache`. A runtime that opts in to the D3D12 Agility SDK gets it from `NEONBRIDGE_AGILITY_DIR` (default `%LOCALAPPDATA%\6ixpack\agility-1.614.1`, the DLLs of the official Microsoft.Direct3D.D3D12 1.614.1 NuGet package).
+Each runtime has its own keyboard and mouse layout. F1 shows it in game.
 
-The `neonbridge-own` runtime keeps its own options (`--debug`, `--rev`, `--tuxbox`, `--pipelines`, `neonbridge ctl ...`); `neonbridge --runtime neonbridge-own --help` lists them.
+## Where things are
 
-## Requirements
+Everything Neonbridge keeps is in `%LOCALAPPDATA%\6ixpack`. Paste that into the Explorer address bar to open it.
 
-- **Game:** your own dump of the Xbox Series X|S build of GTA VI: the folder with `game_scarlett_master.exe`, `shaders.rpf` and `pack/`, about 210 GB.
-- **System:** Windows 10 or 11, x64, with a CPU that has AVX2 (the game's code is run as-is).
-- **GPU:** a D3D12 GPU with Shader Model 6.6 and mesh shaders, and an up-to-date driver.
-- **Memory:** at least 20 GB of free commit (RAM plus page file). 32 GB of RAM with a system-managed page file is recommended.
-- **Disk:** the dump, plus the runtimes' builds and shader caches (up to about 20 GB each).
+| What | Folder |
+|---|---|
+| Saves | `6ixpack\save` |
+| Shaders and other caches | `6ixpack\cache`, and `6ixpack\<runtime>\cache` |
+| Logs | `6ixpack\logs` |
+
+## Troubleshooting
+
+- **The game crashed or closed.** Neonbridge shows the log's location. Send that file from `%LOCALAPPDATA%\6ixpack\logs` (the newest one) when you report the problem.
+- **A runtime is greyed out.** It needs something that isn't installed yet. Select it to see what, then click **Install...**.
+- **The first start is slow.** That's the shader preparation. It's only slow the first time.
+- **It says no game was found.** Click **Change** and choose the folder that holds `game_scarlett_master.exe`.
 
 ## FAQ
 
-- **Can I play GTA 6 on PC with this?** Not yet; every runtime here is a work in progress.
-- **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
-- **Whose work is this?** Mostly the vendored projects'. Neonbridge is the launcher around them, plus its own build (`neonbridge-own`); see [CREDITS.md](CREDITS.md).
-- **Does it go online?** Only for what you approve: `--setup` steps that download something ask first. The runtimes themselves don't need the network.
+- **Can I play GTA 6 on PC with this?** Not yet. Every runtime here is still a work in progress.
+- **Is this a download or a crack?** No. There are no game files, keys or protection bypasses. You need your own dump.
+- **Whose work is this?** Mostly the authors of the projects it runs. Neonbridge is the launcher around them. See [CREDITS.md](CREDITS.md).
+- **Does it go online?** Only when you say yes, for example to an **Install...** download.
+
+<details>
+<summary><b>For developers</b></summary>
+
+Building from source, the command line, runtime settings, patches and environment variables are in [DEVELOPERS.md](DEVELOPERS.md).
+
+</details>
 
 ## Credits
 
-Every vendored runtime and every project Neonbridge's own code borrows from is named in [CREDITS.md](CREDITS.md), with its authors, licence and upstream hash.
+Every runtime and every project Neonbridge borrows from is named in [CREDITS.md](CREDITS.md), with its authors, licence and version.
 
 ## Licence
 
-GPL-3.0-or-later ([LICENSE](LICENSE)). Each vendored tree keeps its own licence (`vendor/<name>/LICENSE`): xcl is GPL-2.0-only, the VIctory forks and ScarlettPort are GPL-3.0, and TuxBox is Apache-2.0. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive; Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by them.
+GPL-3.0-or-later ([LICENSE](LICENSE)). Each runtime keeps its own licence (`vendor/<name>/LICENSE`): xcl is GPL-2.0-only, the VIctory forks and ScarlettPort are GPL-3.0, TuxBox is Apache-2.0 and Five Star Recomp is GPL-3.0-or-later. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive; Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by them.
 
-<sub>Keywords: GTA 6 PC, GTA VI PC, GTA 6 launcher, Grand Theft Auto VI Windows, Xbox Series X|S to PC, Scarlett, VIctory, ScarlettPort, xcl, TuxBox.</sub>
+<sub>Keywords: GTA 6 PC, GTA VI PC, GTA 6 launcher, Grand Theft Auto VI Windows, Xbox Series X|S to PC, Scarlett, VIctory, ScarlettPort, xcl, TuxBox, Five Star Recomp.</sub>
