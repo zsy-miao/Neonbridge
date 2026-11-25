@@ -817,8 +817,13 @@ fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet
 /// Translate archived requests into the cache before the title starts, so its
 /// pipelines load translations instead of waiting on the worker. `only`
 /// limits it to those request names.
+///
+/// Every 10 s it reports done/total, the rate and the time left to stdout and
+/// `log`; no job starts after `deadline` (the rest are translated when the
+/// title asks for them).
+#[allow(clippy::too_many_arguments)]
 fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
-    only: Option<&std::collections::HashSet<String>>) {
+    only: Option<&std::collections::HashSet<String>>, label: &str, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync)) {
     let Ok(entries) = fs::read_dir(archive) else { return };
     let jobs: Vec<(PathBuf, String, String)> = entries.flatten().filter_map(|e| {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -833,10 +838,42 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     }
     let next = AtomicUsize::new(0);
     let running = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let finished = AtomicBool::new(false);
+    let workers_done = AtomicUsize::new(0);
+    let total = jobs.len();
+    let say = |line: String| {
+        println!("[launch] {line}");
+        log(line);
+    };
+    say(format!("{label}: {total} programs to translate before the game starts (stops taking new ones {} s from now; NEONBRIDGE_PREWARM_MAX_S)",
+        deadline.saturating_duration_since(std::time::Instant::now()).as_secs()));
+    let started = std::time::Instant::now();
     thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut last = std::time::Instant::now();
+            while !finished.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(200));
+                if last.elapsed() < Duration::from_secs(10) {
+                    continue;
+                }
+                last = std::time::Instant::now();
+                let n = done.load(Ordering::Relaxed);
+                let secs = started.elapsed().as_secs_f64();
+                let rate = n as f64 / secs.max(0.001);
+                let left = total.saturating_sub(n);
+                let eta = if rate > 0.0 { format!("{:.0} s", left as f64 / rate) } else { "unknown".into() };
+                say(format!("{label}: {n}/{total} done ({:.1}%), {rate:.1}/s, {eta} left at this rate; {} translated, {} dxc reused, {} cached, {} unsupported, {} failed; {} running",
+                    100.0 * n as f64 / total as f64, stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed),
+                    stats.cached.load(Ordering::Relaxed), stats.unsupported.load(Ordering::Relaxed), stats.failed.load(Ordering::Relaxed),
+                    running.load(Ordering::Relaxed)));
+            }
+        });
         for _ in 0..workers {
             scope.spawn(|| {
-                while let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                while std::time::Instant::now() < deadline
+                    && let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed))
+                {
                     while !room_for_programs(running.load(Ordering::Acquire)) {
                         thread::sleep(Duration::from_millis(250));
                     }
@@ -851,12 +888,33 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                         Outcome::Failed(m) => { stats.note("failed", &m); &stats.failed }
                     };
                     counter.fetch_add(1, Ordering::Relaxed);
+                    done.fetch_add(1, Ordering::Relaxed);
                     let _ = fs::remove_file(scratch.join(format!("{key}.cso")));
+                }
+                if workers_done.fetch_add(1, Ordering::AcqRel) + 1 == workers {
+                    finished.store(true, Ordering::Release);
                 }
             });
         }
     });
+    let n = done.load(Ordering::Relaxed);
+    if n < total {
+        say(format!("{label}: stopped at NEONBRIDGE_PREWARM_MAX_S with {n}/{total} done in {:.0} s; the other {} are translated when the title asks for them",
+            started.elapsed().as_secs_f64(), total - n));
+    } else {
+        say(format!("{label}: all {total} done in {:.0} s", started.elapsed().as_secs_f64()));
+    }
     let _ = fs::remove_dir_all(scratch);
+}
+
+/// How long the prewarm may hold the launch, both passes together
+/// (NEONBRIDGE_PREWARM_MAX_S, 600; 0 no limit). After an xshader change every
+/// cached translation is stale and the full archive is ~80k programs: test142
+/// sat 15 minutes in the prewarm with no output and the game not started.
+fn prewarm_deadline() -> std::time::Instant {
+    let secs = std::env::var("NEONBRIDGE_PREWARM_MAX_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(600);
+    let secs = if secs == 0 { 10 * 365 * 24 * 3600 } else { secs };
+    std::time::Instant::now() + Duration::from_secs(secs)
 }
 
 impl Worker {
@@ -890,16 +948,17 @@ impl Worker {
         // the title asked for before (a few hundred) are translated first,
         // whatever TUXBOX_PREWARM says; with an unchanged toolchain they are
         // cache hits. NEONBRIDGE_PREWARM_SEEN=0 turns it off.
+        let deadline = prewarm_deadline();
         if std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0") {
             let started = std::time::Instant::now();
             let seen = seen_requests(&cache_root, &archive);
-            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), workers, &stats, Some(&seen));
+            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), workers, &stats, Some(&seen), "seen prewarm", deadline, &log);
             log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused, {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
                 seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
         }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
         if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
-            prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats, None);
+            prewarm(&tools, &cache, &archive, &private.join("prewarm"), workers, &stats, None, "full prewarm (TUXBOX_PREWARM=0 skips)", deadline, &log);
         }
         let (s, st) = (stop.clone(), stats.clone());
         let log = Arc::new(log);
