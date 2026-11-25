@@ -463,8 +463,60 @@ impl Upload {
     }
 }
 
+/// test152: Upload::record cost 13.2 ms of a 27 ms submit per frame, inline
+/// on the submit path. The tiled layouts visit one element per run, so each
+/// changed mip made a copy call per texel straight into write-combined upload
+/// memory. The fast path merges runs contiguous on both sides and detiles
+/// into a cached scratch buffer, then writes the upload buffer in one
+/// sequential copy. TUXBOX_DETILE_FAST=0 copies run by run into the mapping.
+fn detile_fast() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_DETILE_FAST") != Some("0"))
+}
+
+thread_local! {
+    static DETILE_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Change {
     fn detile(&self, output: &mut [u8]) -> Result<()> {
+        if !detile_fast() {
+            return self.detile_runs(output);
+        }
+        let n = usize::try_from(self.texture.mips[self.level].bytes).map_err(|_| E_INVALIDARG)?.min(output.len());
+        DETILE_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            scratch.clear();
+            scratch.try_reserve(n).map_err(|_| E_OUTOFMEMORY)?;
+            scratch.resize(n, 0);
+            let bytes = &self.bytes;
+            let mut copy = |tiled: std::ops::Range<usize>, linear: std::ops::Range<usize>| -> Result<()> {
+                scratch.get_mut(linear).ok_or(E_INVALIDARG)?.copy_from_slice(bytes.get(tiled).ok_or(E_INVALIDARG)?);
+                Ok(())
+            };
+            let mut run: Option<(std::ops::Range<usize>, std::ops::Range<usize>)> = None;
+            self.texture.layout_runs(self.level, |tiled, linear| {
+                if let Some((t, l)) = &mut run
+                    && t.end == tiled.start && l.end == linear.start
+                {
+                    t.end = tiled.end;
+                    l.end = linear.end;
+                    return Ok(());
+                }
+                if let Some((t, l)) = run.replace((tiled, linear)) {
+                    copy(t, l)?;
+                }
+                Ok(())
+            })?;
+            if let Some((t, l)) = run {
+                copy(t, l)?;
+            }
+            output[..n].copy_from_slice(&scratch);
+            Ok(())
+        })
+    }
+
+    fn detile_runs(&self, output: &mut [u8]) -> Result<()> {
         self.texture.layout_runs(self.level, |tiled, linear| {
             output
                 .get_mut(linear)
