@@ -127,3 +127,21 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
   - map B8G8R8X8_TYPELESS for present;
   - check GTA VI's imports before keeping the XError exports;
   - confirm GTA VI never calls Scarlett slot 59.
+
+### d3d12 slice 0
+- BAD PORT 4e749f4: we write TRIANGLE where VIctory passes the guest topology, or UNDEFINED (stream.rs:723, :516).
+- Bug 4b28545: the indirect clamp is gated at bind time, so an indirect call whose pipeline is ready by call time runs unclamped. Decide at call time (commands.rs:1656).
+- Ref method better:
+  - 7d7963e: move the wait to the segment start instead of skipping it, and lift the 32-split cap.
+  - 8807bc8: make STORES an RwLock and call StorePipeline outside LIBRARY.
+  - c5018ee: apply the cap of 4 and the 28 GB ceiling to every compile, and port five-star 4e95ab2 (leave out write-combined memory).
+  - 92823b8: our refresh base is 32 MB / 4 ms against fxceless's 192 MB / 250 ms; likely the cause of the backlog.
+  - bb35fd2/ac966c7: the fps hold treats the symptom. Test the fxceless shape (n/2 workers, prefetchers off), then TUXBOX_PIPELINE_HANDOFF_MS=0.
+  - Sampler decode (views.rs:1346): the mag/min order, aniso rule, compare range and the w[12] bias differ from fxceless sampler.rs:11-48. Verify against live words.
+  - 184d486: port five-star AsRaw.
+  - 77d9d04: link mesh+pixel before the create.
+- Small fixes:
+  - 9ccbb3e: clamp the rounded-up CBV to the buffer end.
+  - 733f135: flush the commit_guard log before exit.
+  - c4f8bd8: the credit should be VIctory 35b054e.
+  - 88dbc97/d97535c: parity-only unless their notices fire.
