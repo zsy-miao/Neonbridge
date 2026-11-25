@@ -275,6 +275,7 @@ impl Recording {
             return;
         }
         if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<true>() {
+            unpaged_dispatch(self.bindings.paged_shape::<true>(), self.capture_pipeline.as_deref());
             { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); }
             return;
         }
@@ -1903,6 +1904,28 @@ unsafe extern "system" fn execute_indirect(
         let rasterizes = max_count != 0 && signature.state.kind != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
         state.draw(list, rasterizes, execute);
     }
+}
+
+/// test177 refused one dispatch E_NOTIMPL at 409.284 s (a paged arena and a
+/// compute root with no paged path), and every later ExecuteIndirect of its
+/// list then ran empty as stale. A root with no paged path is either directly
+/// indexed (ResourceDescriptorHeap) on a pipeline without the translator's
+/// index map, which only the shader can fix, or has an unbounded table. Each
+/// such pipeline is named once with its shape so the next run says which.
+fn unpaged_dispatch(shape: Option<(bool, bool)>, key: Option<&str>) {
+    static SEEN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+    let key = key.unwrap_or("(no pipeline key)");
+    if !SEEN.lock().unwrap_or_else(|e| e.into_inner()).insert(key.to_string()) {
+        return;
+    }
+    let what = match shape {
+        None => "no root layout".to_string(),
+        Some((direct, paged)) => format!("{}{}",
+            if direct { "directly indexed root (ResourceDescriptorHeap) with no translator index map" } else { "" },
+            if !paged { if direct { ", and an unbounded table" } else { "an unbounded descriptor table" } } else { "" }),
+    };
+    crate::diagnostics::log_line(format_args!(
+        "dispatch refused on a paged descriptor arena: compute pipeline {key}: {what}"));
 }
 
 /// Ported from ivall/xcl bind.rs `indirect_guard` (0223c29, cc73c11;

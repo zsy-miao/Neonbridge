@@ -364,6 +364,12 @@ impl Bindings {
         root.as_ref()?.paged_tables.as_deref()
     }
 
+    /// (directly indexed, every table bounded) of the bound root, if any.
+    pub(super) fn paged_shape<const COMPUTE: bool>(&self) -> Option<(bool, bool)> {
+        let root = if COMPUTE { &self.layout } else { &self.graphics_layout };
+        root.as_ref().map(|r| (r.direct_resources, r.paged_tables.is_some()))
+    }
+
     pub(super) fn supports_paged_draw<const COMPUTE: bool>(&self) -> bool {
         let root = if COMPUTE { &self.layout } else { &self.graphics_layout };
         root.as_ref().is_some_and(|r| !r.direct_resources && r.paged_tables.is_some())
