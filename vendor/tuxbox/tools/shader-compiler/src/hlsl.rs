@@ -106,6 +106,7 @@ use sampler_heap::DirectSampler;
 mod reflection_probe;
 mod wave_scan;
 mod exit_stubs;
+mod cfg_split;
 mod skip_bits;
 use packed_root::{PackedRoot, RootAbi};
 
@@ -3056,9 +3057,11 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // like overlapping loops, which forced a64767c5 into the tb_pc dispatcher (34 s at
     // dxc -O1). Move each one before the code it rejoins. TB_INLINE_EXIT_STUBS=0 off.
     exit_stubs::inline(&mut insns);
+    // Interleaved loops: split and re-sort so they nest (xcl make_reducible). TB_CFG_SPLIT.
+    let cfg_alias = cfg_split::apply(&mut insns);
     let mut em = Emitter::new(ex, insns);
     phase("recognizers");
-    let keyed = |i: &Insn| (i.offset, i.mnemonic.clone());
+    let keyed = |i: &Insn| (cfg_alias.get(&i.offset).copied().unwrap_or(i.offset), i.mnemonic.clone());
     em.lane_masks = em.insns.iter().enumerate().filter(|(_, i)| lane_masks.contains(&keyed(i))).map(|(j, _)| j).collect();
     em.mixed_masks = em.insns.iter().enumerate().filter_map(|(j, i)| mixed_masks.get(&keyed(i)).map(|&k| (j, k))).collect();
     em.scc_votes = em.insns.iter().enumerate().filter(|(_, i)| scc_votes.contains(&keyed(i))).map(|(j, _)| j).collect();
