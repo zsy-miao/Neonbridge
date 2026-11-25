@@ -514,7 +514,7 @@ fn load_or_make(
         let _stores = STORES.write().unwrap_or_else(|e| e.into_inner());
         with_library(host, |l| {
             // A name already present (another description) keeps its entry.
-            let ok = unsafe { l.library.StorePipeline(&name, &made) }.is_ok();
+            let ok = store_logged(unsafe { l.library.StorePipeline(&name, &made) }, &text);
             if ok {
                 l.dirty = true;
             }
@@ -525,7 +525,7 @@ fn load_or_make(
         let _stores = STORES.read().unwrap_or_else(|e| e.into_inner());
         match with_library(host, |l| l.library.clone()) {
             Some(library) => {
-                let ok = unsafe { library.StorePipeline(&name, &made) }.is_ok();
+                let ok = store_logged(unsafe { library.StorePipeline(&name, &made) }, &text);
                 if ok {
                     // Under STORES' read side: the save cannot clear this
                     // before it serialises the store.
@@ -546,6 +546,20 @@ fn load_or_make(
         }
     }
     Ok(made)
+}
+
+/// A StorePipeline result; a failure is logged with its HRESULT and name
+/// (first 16, then powers of two; TUXBOX_PIPELINE_MISS_LOG=0 off): it showed
+/// only as "made but not in the library" (Coder2).
+fn store_logged(result: Result<()>, name: &str) -> bool {
+    let Err(error) = result else { return true };
+    static FAILED: AtomicU64 = AtomicU64::new(0);
+    let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
+    if (n <= 16 || n.is_power_of_two()) && crate::env_toggle!("TUXBOX_PIPELINE_MISS_LOG") != Some("0") {
+        crate::diagnostics::log_line(format_args!(
+            "pipeline library store failed (#{n}): name {name}, {:#x}", error.code().0));
+    }
+    false
 }
 
 /// CreatePipelineState through the library.
