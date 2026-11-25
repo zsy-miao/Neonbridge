@@ -12,7 +12,6 @@ Open work. Each item is tested in a run of its own.
 - A/B for the untested commits, one per run:
   - 04a7bee: never tested on, because the base env sets `TUXBOX_TITLE_MEMORY_MB=0`. B: drop it from the env, giving the 13824 MiB cap. Compare commit growth and the working set budget line. Safe.
   - 81a0a3a: never tested on, because the base env sets `TUXBOX_READ_COMMIT_CRT=0`. B: drop it from the env. Watch for short CRT reads (998) in the video atlas. Safe.
-  - 65e77ca: stale shader serving is off in test runs, because the launcher sets `NEONBRIDGE_STALE_SHADERS=0` (main.rs:198,546). A/B: `NEONBRIDGE_STALE_SHADERS=1` on a run right after an xshader landing. Risk: it mixes xshader builds (see risk 65e77ca), so it voids that run's shader results.
 - A/B `TB_VIEW_MARKS=1` (498fc37, 9549a0d; needs a prewarm): shadow write-backs should copy only marked pages.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
@@ -72,7 +71,6 @@ Open work. Each item is tested in a run of its own.
 - minor: 3258c66 denorm, 83f5a3b unaligned, da066d0 clamp/omod, e7f6be4, 078b76a cube, credit fixes.
 
 ### runtime/launcher
-- Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
 
 ## Done / not needed
 - not needed (ref watch): five-star 22f2085/79a5a3e d16 format buffer halves (hlsl.rs:11595 already packs two per VGPR); five-star 95c3cd9 format element range rule (our buffers are D3D views, bounds checked by the view, no V# range emulation); five-star 1a8083a superstep carry (off by default there, no superstep dispatch here); ScarlettCompat 8b8511f/a88e509 BCPack (6ixpack's bcpack tool owns decoding, not the runtime); palmetto 755e947..772fa54 (Vulkan frame-capture replay and slot-70 docs; no D3D12 path change).
