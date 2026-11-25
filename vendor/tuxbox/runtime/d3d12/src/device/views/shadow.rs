@@ -605,6 +605,39 @@ fn dead_cap() -> u64 {
 pub(crate) static LIVE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) static DEAD_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Live copies by how long since a descriptor last bound them (refreshes,
+/// about one a submission), at most every 30 s: what of the live bytes a
+/// stale descriptor alone keeps (test173: 786 to 1211 MiB live while the
+/// title's working set held). Writable and read-only kept apart.
+/// TUXBOX_SHADOW_CENSUS=0 off.
+fn census(entries: &HashMap<(u64, u64, bool), Entry>) {
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    if crate::env_toggle!("TUXBOX_SHADOW_CENSUS") == Some("0") {
+        return;
+    }
+    {
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(30)) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let now = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
+    // [writable][age bucket]: (copies, bytes); buckets < 1k, < 10k, < 100k, older refreshes.
+    let mut b = [[(0u64, 0u64); 4]; 2];
+    for e in entries.values().filter(|e| e.view.strong_count() > 0) {
+        let age = now.saturating_sub(e.bound);
+        let i = match age { 0..1_000 => 0, 1_000..10_000 => 1, 10_000..100_000 => 2, _ => 3 };
+        let c = &mut b[usize::from(e.writable)][i];
+        c.0 += 1;
+        c.1 += e.pieces.iter().map(|p| p.3).sum::<u64>();
+    }
+    let row = |r: &[(u64, u64); 4]| r.iter().map(|(n, by)| format!("{n} ({} MiB)", by >> 20)).collect::<Vec<_>>().join(" / ");
+    crate::diagnostics::log_line(format_args!(
+        "shadow census at refresh {now}: live copies last bound < 1k / < 10k / < 100k / older refreshes ago: read-only {}; writable {} (TUXBOX_SHADOW_CENSUS=0 off)",
+        row(&b[0]), row(&b[1])));
+}
+
 /// (live, dead) copy bytes.
 fn copy_bytes(entries: &HashMap<(u64, u64, bool), Entry>) -> (u64, u64) {
     entries.values().fold((0, 0), |(live, dead), e| {
@@ -641,6 +674,7 @@ fn prune_into(entries: &mut HashMap<(u64, u64, bool), Entry>, sources: &Mutex<Ha
     let mut over = false;
     if CALLS.fetch_add(1, Relaxed).is_multiple_of(64) {
         let (live, dead) = copy_bytes(entries);
+        census(entries);
         LIVE_BYTES.store(live, Relaxed);
         DEAD_BYTES.store(dead, Relaxed);
         over = dead > dead_cap();
