@@ -348,6 +348,11 @@ pub fn translate_request(
     let model = if translated.required_wave_size.is_some()
         || translated.typed_int64_atomics
         || matches!(translated.profile, "ps_6_6" | "cs_6_6" | "ms_6_6")
+        // vs_6_6 / gs_6_6 (heap-indexed vertex and geometry shaders, hlsl.rs) were
+        // compiled as 6_0, where ResourceDescriptorHeap is undeclared
+        // (prewarm-1273355: 4 programs). TB_HEAP_PROFILE_ALL_STAGES=0 off.
+        || (translated.profile.ends_with("_6_6")
+            && std::env::var("TB_HEAP_PROFILE_ALL_STAGES").map_or(true, |v| v.trim() != "0"))
     {
         "6_6"
     } else if shader.stage == Stage::Mesh || translated.profile == "cs_6_5" {
