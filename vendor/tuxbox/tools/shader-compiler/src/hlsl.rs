@@ -1215,6 +1215,23 @@ fn lower_lane_spills(insns: &mut [Insn], wave32: bool, group_reads: bool) -> Res
             continue;
         }
         let at = ins.offset;
+        // A uniform SGPR lane on an ordinary VGPR is read exactly through the
+        // whole-wave group read, which WaveReadLaneAt only approximates on a host
+        // wave narrower than 64 (TuxBox 4774547, Pavel Kirilin, copied with
+        // credit). Spill areas stay slotted per constant lane.
+        if !wave32 && group_reads && ins.op == READLANE {
+            if let ([Opnd::Vgpr(d) | Opnd::Sgpr(d)], [Opnd::Vgpr(v), lane @ Opnd::Sgpr(_), ..]) =
+                (ins.dst.as_slice(), ins.src.as_slice())
+            {
+                if !any_written.contains(v) {
+                    ins.dst = vec![Opnd::Sgpr(*d)];
+                    ins.src = vec![Opnd::Vgpr(*v), *lane];
+                    ins.enc = Enc::Sop1;
+                    ins.mnemonic = GROUP_READ.into();
+                    continue;
+                }
+            }
+        }
         if matches!(lane_vgpr(ins), Some(Opnd::Vgpr(v)) if dynamic.contains(&v)) {
             continue;
         }
@@ -2257,8 +2274,12 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     if !wave_cull && !page_waves { {
         // Swizzles already exchange values through group memory; so can a lane read.
         let [x, y, z] = compute_group(ex);
+        // A readlane with an SGPR lane takes the group read too (TuxBox 4774547).
+        // TB_GROUP_READ_SGPR=0 keeps it a WaveReadLaneAt.
+        let sgpr_lane_read = std::env::var("TB_GROUP_READ_SGPR").map_or(true, |v| v.trim() != "0")
+            && insns.iter().any(|i| i.enc == Enc::Vop3 && i.op == 0x360 && matches!(i.src.get(1), Some(Opnd::Sgpr(_))));
         let group_reads = ex.stage == Stage::Compute && !resolve_wave32 && !lone_lane::on() && x * y * z % 64 == 0
-            && insns.iter().any(|i| i.mnemonic == "ds_swizzle_b32") && insns.iter().any(|i| i.mnemonic.ends_with("exec_b64") || i.mnemonic == "s_mov_b64")
+            && (sgpr_lane_read || insns.iter().any(|i| i.mnemonic == "ds_swizzle_b32") && insns.iter().any(|i| i.mnemonic.ends_with("exec_b64") || i.mnemonic == "s_mov_b64"))
             && !insns.iter().any(|i| i.enc == Enc::Ds && i.mnemonic != "ds_swizzle_b32" && i.mnemonic.starts_with("ds_ordered"));
         if ex.stage == Stage::Pixel && pixel_heap_base(ex, 5).is_some() { lower_first_lane_reads(&mut insns); }
         lower_lane_spills(&mut insns, resolve_wave32, group_reads)?;
@@ -2354,7 +2375,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // DS bit-mask mode operates on the low five lane bits in wave32 and wave64.
     // Map guest lanes by workgroup index, independently of the Vulkan subgroup layout.
     em.compute_swizzle = ex.stage == Stage::Compute && scan_width.is_none() && !resolve_wave32
-        && em.insns.iter().any(|i| i.mnemonic == "ds_swizzle_b32");
+        && em.insns.iter().any(|i| i.mnemonic == "ds_swizzle_b32" || i.mnemonic == GROUP_READ);
     if em.compute_swizzle {
         let [x, y, z] = compute_group(ex);
         let count = x.checked_mul(y).and_then(|n| n.checked_mul(z)).unwrap_or(0);
@@ -7642,7 +7663,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let value = if guard.is_empty() { value } else { format!("({}) ? {value} : 0u", guard.join(" && ")) };
             self.line(&format!("tb_swizzle[tb_lane] = {value};"));
             self.line("GroupMemoryBarrierWithGroupSync();");
-            self.line(&format!("uint swizzle{idx} = tb_swizzle[(tb_lane & ~63u) | {}];", r(&ins.src[1])?));
+            self.line(&format!("uint swizzle{idx} = tb_swizzle[(tb_lane & ~63u) | (({}) & 63u)];", r(&ins.src[1])?));
             self.line("GroupMemoryBarrierWithGroupSync();");
             return Ok(());
         }
