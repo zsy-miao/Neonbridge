@@ -68,7 +68,7 @@ The `neonbridge-own` runtime keeps its own options (`--debug`, `--rev`, `--tuxbo
 | `NEONBRIDGE_FEED=1` | Stream the run over Tailscale (`tools/tsproxy.exe`, else `tools/cloudflared.exe`) behind a site password; needs ffmpeg. Shows the loader and the game window. |
 | `NEONBRIDGE_FEED_WINDOWS=0` | Stream only neonbridge-own's frame tap, not window captures. |
 | `NEONBRIDGE_AUTO_A=0` | Turns off auto-press A: by default the launcher focuses the game window and presses Enter (A) every 8 s for the whole run, alternating a tap (start screens) and a 6 s hold (cutscene skip), so unattended runs don't stall (`NEONBRIDGE_AUTO_A_EVERY`, `_FOR` in seconds, `_HOLD_MS`, `_LONG_MS`) |
-| `NEONBRIDGE_CACHE_BACKUP=0` | Turns off the cache backup: at each launch and after each shader warm, the runtime's shader and pipeline cache is mirrored (new files only, never deleted) into `%LOCALAPPDATA%ixpack\cache-backup` at idle priority; `=<folder>` backs up there instead |
+| `NEONBRIDGE_CACHE_BACKUP=0` | Turns off the cache backup: at each launch and after each shader warm, the runtime's shader and pipeline cache is mirrored (new files only, never deleted) into `%LOCALAPPDATA%\6ixpack\cache-backup` at idle priority; `=<folder>` backs up there instead |
 | `NEONBRIDGE_BUILD=0` | Never build; use the exe as it is. |
 | `NEONBRIDGE_BUILD_STAMP=0` | Use the mtime check instead of build stamps. |
 | `NEONBRIDGE_PATCHES=0` | Build the trees without `vendor/patches`. |
