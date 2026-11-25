@@ -59,6 +59,10 @@ extern "system" fn UninitializeApiImpl() {
 /// KestrelX ee0f749 (MIT): XErrorReport returns bool and calls the callback
 /// set with XErrorSetCallback(callback, context), which decides the result
 /// (true without one). TUXBOX_XERROR_CALLBACK=0 never calls it.
+/// Parity-only for GTA VI (d08a7c4 check): game_scarlett_master.exe, XCurl.dll
+/// and libHttpClient.GDK.dll import XErrorReport but none imports
+/// XErrorSetCallback or XErrorSetOptions, so no callback is ever set and
+/// XErrorReport answers true.
 type ErrorCallback = unsafe extern "system" fn(i32, *const c_char, *mut c_void) -> bool;
 static CALLBACK: std::sync::Mutex<Option<(ErrorCallback, usize)>> = std::sync::Mutex::new(None);
 static OPTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
