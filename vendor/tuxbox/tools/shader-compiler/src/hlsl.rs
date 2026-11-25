@@ -271,18 +271,29 @@ fn typed_fmt_table() -> bool {
 /// known (no integer use inferred, or a heap view) is refused instead of
 /// stored as float4, so a 32_UINT target cannot take float-converted values.
 /// Inferred uint/int views already store the raw dwords.
-/// Back-edge cap for a structured guest loop: 128 PS, 256 VS/MS, 4096 CS, as
-/// fxceless lower.rs 10541-10544 does (via ztrx/VItoriaBr), so a runaway loop
-/// ends before a TDR. TB_LOOP_CAP overrides it for every stage.
+/// Back-edge cap for a structured guest loop: 4096 for every stage by
+/// default. TB_LOOP_CAP=stage selects fxceless's per-stage 128 PS, 256 VS/MS,
+/// 4096 CS (lower.rs 10905-10910); TB_LOOP_CAP=<n> sets one cap for all.
 fn loop_cap(stage: Stage) -> u32 {
-    if let Some(v) = std::env::var("TB_LOOP_CAP").ok().and_then(|v| v.trim().parse().ok()) {
-        return v;
+    let v = std::env::var("TB_LOOP_CAP").unwrap_or_default();
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("stage") {
+        return match stage {
+            Stage::Pixel => 128,
+            Stage::Compute => 4096,
+            _ => 256,
+        };
     }
-    match stage {
-        Stage::Pixel => 128,
-        Stage::Compute => 4096,
-        _ => 256,
-    }
+    v.parse().unwrap_or(4096)
+}
+
+/// Each structured loop gets its own counter, reset before its `do {`, and a
+/// lane that reaches the cap leaves the program (discard in a pixel shader,
+/// return elsewhere), as fxceless lower.rs 10906-10918 / abort_block does.
+/// TB_LOOP_PER_COUNTER=0 restores the one shared, never-reset tb_guard that
+/// only ends the loop.
+fn loop_per_counter() -> bool {
+    std::env::var("TB_LOOP_PER_COUNTER").map_or(true, |v| v.trim() != "0")
 }
 
 fn exp_vm_last() -> bool {
@@ -5356,6 +5367,16 @@ impl<'a> Emitter<'a> {
         self.heap_bound.clear();
     }
 
+    /// How a lane stopped by the loop cap leaves (fxceless abort_block):
+    /// discard in a pixel shader, then return from main.
+    fn cap_exit(&self, is_ps: bool) -> String {
+        let void = self.is_gs
+            || self.ex.output_sig.is_empty()
+            || matches!(self.ex.stage, Stage::Compute | Stage::Mesh | Stage::Amplification);
+        let ret = if void { "return;" } else { "return o;" };
+        if is_ps { format!("discard; {ret}") } else { ret.to_string() }
+    }
+
     fn end_guard(&mut self, open: &mut bool) {
         if *open {
             self.line("}");
@@ -5708,7 +5729,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.line(&format!("bool j{l} = false;"));
         }
         if !loops.is_empty() {
-            self.line("uint tb_guard = 0u;");
+            if !loop_per_counter() {
+                self.line("uint tb_guard = 0u;");
+            }
             for &(_, b) in &loops {
                 self.line(&format!("bool tb_c{b} = false;"));
             }
@@ -5779,6 +5802,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if let Some(&b) = heads.get(&i) {
                 self.end_guard(&mut open);
                 cur.clear();
+                if loop_per_counter() {
+                    self.line(&format!("uint tb_g{b} = 0u;"));
+                }
                 self.line("do {");
                 // The back edge can store the index after a use. Bind again inside the loop.
                 self.drop_heap_handles();
@@ -5936,12 +5962,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
                 let exits: Vec<String> = labels.iter().filter(|&&t| t > i).map(|t| format!("j{t}")).collect();
                 let exit = if exits.is_empty() { String::new() } else { format!(" && !({})", exits.join(" || ")) };
-                let guard_text = format!(" && ++tb_guard < {}u", loop_cap(self.ex.stage));
-                let guard = if self.wave_cull || self.light_grid || probe_trace || self.packed.as_ref().is_some_and(|p| p.copy_backedges.contains(&i) || p.bounded_backedges.contains(&i)) {
-                    ""
-                } else {
-                    guard_text.as_str()
-                };
+                let cap = loop_cap(self.ex.stage);
+                let per = loop_per_counter();
+                let guard_text = if per { format!(" && tb_g{i} < {cap}u") } else { format!(" && ++tb_guard < {cap}u") };
+                let unguarded = self.wave_cull || self.light_grid || probe_trace || self.packed.as_ref().is_some_and(|p| p.copy_backedges.contains(&i) || p.bounded_backedges.contains(&i));
+                let guard = if unguarded { "" } else { guard_text.as_str() };
+                if per && !unguarded && !view_cull.is_some_and(|p| p.back == ins.offset) {
+                    // A lane that would iterate past the cap is stopped for
+                    // good, not let fall through into the code after the loop.
+                    let stop = self.cap_exit(is_ps);
+                    self.line(&format!("if (tb_c{i}{exit}) {{ if (++tb_g{i} >= {cap}u) {{ {stop} }} }}"));
+                }
                 if view_cull.is_some_and(|p| p.back == ins.offset) {
                     // The guest iterates cb0[12] views. Retired lanes must
                     // participate in the barriers for each remaining view.
