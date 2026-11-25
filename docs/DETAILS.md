@@ -1,458 +1,283 @@
 # Neonbridge: technical details
 
-The [README](../README.md) has the short version. This page lists what works, every runtime fix, the diagnostic switches and the open issues. A switch in brackets turns a fix off or changes it; a bare number in brackets is a default.
+The [README](../README.md) has the overview. This page covers the components, building and running, every environment switch, and the credits.
 
-## Status
+## Components
 
-What the Xbox Series build of GTA VI (`game_scarlett_master.exe`, from your own dump) does today:
+- **`neonbridge` (launcher, `src/`):** finds the dump (or opens a picker), builds the providers and `xshader` from `vendor/tuxbox`, stages them, sets safe game settings, runs the shader worker (prewarm, title requests, dxc in-process or `dxc.exe`, `-O0` to `-O1` upgrade queue), shows the loading screen, keeps displays awake, runs the game in a job object and serves `neonbridge ctl` over a local pipe.
+- **`crates/feed`:** the opt-in game feed (fMP4 via ffmpeg, MJPEG fallback) on 127.0.0.1:8788, optionally shared over Tailscale (`tools/tsproxy.exe`) or cloudflared.
+- **`vendor/tuxbox/runtime/*` (TuxBox providers):** Rust replacements for the console DLLs.
+  - `d3d12`: D3D12.x on desktop D3D12: list and queue slots, barriers, placed textures and page pools, root and address views, imports and shadow copies, GPU memory waits, pipelines and the shared pipeline library, presentation, diagnostics and frame capture.
+  - `xmem`: title memory, lazy commit on first touch, page mappings, commit bits, title memory cap, core affinity.
+  - `xgameruntime`: XGameSave, XGameUi, XAccessibility, XAsync, XError, relaunch.
+  - `xcrdapi`: DirectStorage reads and decompression.
+  - `acphal`, `xapu`: audio (XMA decoder, XAPU, `chad` XDsp).
+  - `gameinput`: pads and the keyboard-as-pad; `xg`, `xg-layout`: console texture layouts; `bvh`: ray-tracing builds; `dxbc`, `dxc`: shader containers and compiler loading.
+- **`vendor/tuxbox/tools/shader-compiler` (`xshader`):** translates RDNA2 shader code to HLSL for dxc. `xshader --refusals DIR [--json]` lists the first refusal of every program in a request folder.
 
-- **Boot:** runs natively with the console DLLs replaced by Rust providers, passes `xgameruntime` initialisation, maps `G:` to the executable's folder and mounts every `.rpf`.
-- **Rendering:** lit D3D12 frames in a window fitted to one monitor at 16:9: the stars intro, the player-selection prompt and the menus. The window stays hidden until its first frame, so there is no white flash.
-- **Speed:** peaks about 35 fps, sinking below 20 once video memory overflows.
-- **Input:** the title reads the virtual pad; an automatic A press passes the player-selection prompt.
-- **Saves:** stored under `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`; the "Player" save loads on the next launch.
-- **Offline and contained:** network calls fail as "no network", `D:` is a local folder, and the game runs in a job that ends with the launcher.
-- **Audio:** sound plays; Bink movies keep to their clock.
-- **Menus:** dialogs, text entry, speech and relaunch are answered. The game reaches the first mission, where the picture is still black.
-- **Longest run:** frame ~3310, about 5 minutes after the shader prewarm. It ends at the scene load after the loading screens, in the title's 30 s hang watchdog or, with `TUXBOX_COMPILE_BUDGET=0`, when Windows commit runs out. The test133 shadow-fill crash is fixed by 09a97d4.
+## Build and run
 
-## Runtime fixes
+Needs Rust stable (`x86_64-pc-windows-msvc`), Visual Studio Build Tools (x64 C++) and the Windows SDK (`dxc.exe`; `cdb` for `--debug`). The game folder needs x64 `dxcompiler.dll` and `dxil.dll`.
 
-These are in the vendored TuxBox provider.
+```
+cargo build --release
+neonbridge --game <dump dir> [--debug] [--log FILE] [--timeout S] [--rev COMMIT]
+neonbridge --game <dir> --prewarm       # translate the seen shader set and exit
+neonbridge --game <dir> --pipelines     # build pipelines.journal into the library (never while the game runs)
+neonbridge --summary LOG                # summarise an old log
+neonbridge --feed-only                  # keep the feed page up with no game
+neonbridge replay-shaders <capture dir> [--xshader EXE] [--against DIR]
+neonbridge ctl status | log [N] [filter] | stack | press A+Down [ms] | hold | release | screenshot FILE | get | set | unset | capture [K] | stop
+```
 
-- **Present barrier:** the end-of-frame barrier used layout 31, which desktop D3D12 rejects, so every `Close` failed. Layouts outside the desktop range are recorded as COMMON (= PRESENT). This made frames appear.
-- **Barriers:**
-  - Enhanced barriers (list slot 146) are fitted to the host resource (subresource range, layouts, accesses, DISCARD, buffer targets), with legal sync and access pairs.
-  - Depth-stencil textures leave DIRECT_QUEUE_GENERIC_READ for DEPTH_STENCIL_READ (`TUXBOX_DS_GENERIC_READ=1` keeps it).
-  - The rectangle geometry shader copies only the channels the vertex shader writes; copying whole fields read channels the VS never writes and the pipeline was refused with E_INVALIDARG (`TUXBOX_RECT_UNWRITTEN=0` copies every declared channel; VIctory-zhai a64b6c6).
-  - When the present throttle's held-wait escape fires it also releases every held GPU memory wait at once (`commands::release_memory_waits()`), since their writer may be this thread after the present; going on alone left the queue stalled (`TUXBOX_THROTTLE_RELEASE=0` only goes on; five-star-recomp bd100ba).
-  - In DEPTH_STENCIL_READ a side drops SHADER_RESOURCE access (`TUXBOX_DS_READ_SR=1` keeps it); a side with only depth-stencil access gets DEPTH_STENCIL sync (`TUXBOX_DS_SYNC=0`).
-  - Two-plane depth formats get one barrier per plane (`TUXBOX_DS_PLANE_SPLIT=0`).
-  - A rejected texture barrier is retried one field at a time, and the accepted variant is reused for that kind (`TUXBOX_BARRIER_LEARN=0` logs only). One no variant fixes is left out so `Close` succeeds (`TUXBOX_BARRIER_SKIP=0` records it).
-  - A texture barrier with no resource (every texture, on the console) becomes a global barrier (`TUXBOX_NULL_TEXTURE_BARRIER=0` refuses the call). A clear of a null RTV is skipped (`TUXBOX_NULL_RTV_CLEAR=1` passes it on).
-- **Startup crash:** list slot 131 is a cache barrier but went to the ray-tracing build path, which read garbage; it now records a cache barrier. A host list whose `Close` fails is rebuilt, not left failing every `Reset`.
-- **Title asserts:** a release-build size check at game+0x4ffd879 hits `int 3`; the runtime steps over it when its bytes match (from upstream TuxBox).
-- **Unknown calls:** an unmapped D3D12.x slot logs `unmapped slot <n>` and answers 0 (`TUXBOX_UNMAPPED=failfast` fails fast). Newer list slots (fills, `DispatchX`, `CopyResourceX`, markers) are handled; Scarlett lists map DXR at 119-123 and `DispatchMesh` at 129, which was unmapped before, so mesh dispatches never ran; GPU memory waits honour every comparison.
-- **List slots:** slot 62 (`CopyMemoryToMemoryX`) records a buffer copy. Slot 61 is ExecuteIndirect (it used to answer 0, so its commands never ran); each call on a non-bundle list sits between COMMON and INDIRECT_ARGUMENT transitions of a small buffer of ours, so the GPU waits for the argument writes before it (`TUXBOX_INDIRECT_ORDER=0` off). Slot 101 (DriverHintX) is a no-op. The console copies `CopyTextureRegionX` and `CopyResourceX` (slots 83 to 86) drop their trailing flags argument and copy, logging each new value once; a nonzero value refused the whole list (`TUXBOX_COPY_FLAGS_STRICT=1` refuses). `RSSetScissorRects` with more than 16 rectangles keeps the first 16; it closed the list with E_INVALIDARG (`TUXBOX_SCISSOR_CLAMP=0`). A copy within one buffer goes through a scratch buffer of up to `TUXBOX_COPY_SCRATCH_MB` (64; 0 off). Once a list drops or refuses a dispatch (a pipeline still being made, for one), every later ExecuteIndirect in that list runs nothing and is logged; it used to run on whatever arguments the buffer held before (`TUXBOX_INDIRECT_GUARD=0` off). MaxCommandCount is capped at `TUXBOX_INDIRECT_MAX` (65536). Barriers from or into LAYOUT_UNDEFINED on placed textures become COMMON with no sync or access, as on the console; passing UNDEFINED through let the driver discard contents we upload only when their bytes change (`TUXBOX_PLACED_UNDEFINED=1` passes it through).
-  - The console's indirect argument type 105 is created as DISPATCH at any stride (it was taken only at 12 bytes). A command signature we refuse (more than one argument, or an unmapped type) is logged with its type, count and stride, since it drops the title's indirect work.
-  - An indirect call dropped because its pipeline is still being made, or because a root view is unresolved, skips the argument clamp, since nothing reads its records.
-  - An ExecuteIndirect after a dispatch of its list that did not run used to run empty (the xcl indirect guard, since its arguments may be stale), so one compute pipeline still being made emptied every later indirect draw of the list, the mesh world draws among them. A call whose records the argument clamp covered now runs, the stale counts bounded by the clamp; one it did not cover still runs empty. Both are counted in the log (VIctory-fxceless `indirect.rs`; `TUXBOX_INDIRECT_STALE=empty` empties them all).
-  - A structured buffer view off an element boundary, which without byte-offset descriptors takes the common divisor of offset and stride as its stride, is logged with its offset and both strides, and the buffer-view mode in use is logged once. five-star-recomp found such views corrupting the title's pools.
-- **Textures:** Xbox layout 0x10a (64 KiB display swizzle, mipped) gets a real size and placement; the invalid one crashed the title. BCPack BC1 and BC7 are decoded; modes 3 to 6 (BC3, BC4, BC5 and BC6H) use a decoder copied from xcl's `bcpack_victory`. Before, those modes were filled with solid blocks, so every BC5 normal map held a flat value (`TUXBOX_BCPACK_VICTORY=0` fills them solid). A stream a decoder refuses is logged and filled grey (`TUXBOX_BCPACK=refuse`). Placed textures are re-compared only after a CPU write. A committed R9G9B9E5_SHAREDEXP image used as a render target or UAV, such as the FidelityFX upscale output in Series S mode, gets an R16G16B16A16_FLOAT host image, with its views, clear values and pipeline target formats following; desktop D3D12 refuses RGB9E5 targets, and its render target view removed the device at the world. Sampled-only RGB9E5 images keep their format (`TUXBOX_RGB9E5_TARGETS=0` off).
-- **Root signatures:** all four root-signature exports clear the console flag byte (bits 24 to 31) that desktop D3D12 rejects. The serializers get a copy of the description; the deserializers get a copy of the RTS0 container with its DXBC checksum recomputed (all-zero checksums kept). FidelityFX's upscaler and the title both call them (`TUXBOX_ROOT_FLAGS=0` forwards unchanged).
-- **Malformed root signatures:** a root signature that fails the check is refused for that translation request instead of attached to the pipeline (`TUXBOX_ROOT_CHECK=0` attaches it unchecked; Xbox2Windows 155397e6).
-- **Upload and readback heaps:** committed resources start in GENERIC_READ (UPLOAD) or COPY_DEST (READBACK), the only states desktop D3D12 accepts; the console state failed with E_INVALIDARG. Other heaps, and a linear readback image's custom L0 heap, keep the title's state (`TUXBOX_COMMITTED_HEAP_STATE=0`).
-- **Platform:**
-  - A 1 ms (or finer) system timer, so the audio mixer isn't slowed by the 15.6 ms tick (`TUXBOX_FINE_TIMER=0`).
-  - The console reads as Series X (`TUXBOX_CONSOLE=s` Series S, `=pc` a PC).
-  - `clwb`, `rdpid` and `mcommit` are emulated where missing.
-  - Title memory the GPU window can't hold goes below 2^40.
-  - XAudio2 is created without console-only flags or core masks.
-- **Rendering:**
-  - A stale inline descriptor binds a typed null; a failed batch drops only itself.
-  - A GPU memory wait after rendering commands is skipped instead of rejecting the list.
-  - Placed textures over unmapped pages upload zero-filled.
-  - Depth clears are clamped to [0, 1] and NaN clears to 0; the first is logged (`TUXBOX_DEPTH_CLEAR_CLAMP=0`).
-  - Draws whose descriptor table doesn't fit are dropped and counted. Unbacked vertex streams and bad address views bind empty; null vertex-buffer arrays unbind explicitly.
-- **Views D3D12 rejects:** null UAVs on a depth image's stencil plane drop the plane slice; B5G5R5A1 UAVs are viewed as R16_UINT; R32_UINT render targets are castable to R9G9B9E5. A depth image gets a default SRV of its depth plane (`TUXBOX_DEPTH_DEFAULT_SRV=0`). Map of a resource with no CPU pages answers E_INVALIDARG without the PC call (`TUXBOX_MAP_HEAP_CHECK=0`).
-- **Presentation:**
-  - The swap chain resizes when the title changes output size or format.
-  - If the title's window isn't shown yet, frames go to its largest hidden top-level window, not ours, which its black window would cover (`TUXBOX_HIDDEN_TITLE_WINDOW=0` uses ours).
-  - TYPELESS RGBA8, BGRA8 and RGB10A2 surfaces present through a UNORM back buffer (`TUXBOX_PRESENT_TYPELESS=0` refuses them).
-  - Each present waits until every guest queue is within `TUXBOX_PRESENT_LAG` (2) presents, at most `TUXBOX_PRESENT_WAIT_MS` (5000) per queue (`TUXBOX_PRESENT_LAG=0` off). A queue held behind a GPU memory wait is waited on for only `TUXBOX_PRESENT_HELD_MS` (250; 0 full time), in 10 ms slices, since the title often writes the word after the present returns; the heartbeat counts these releases.
-- **Command allocators:**
-  - Slot 9, called in a loop over the title's blocks, answers S_OK and is logged (`TUXBOX_ALLOC_SLOT9_OK=0` answers E_NOTIMPL).
-  - A list reset on an allocator another list still records from gets an extra host allocator (Xbox allows it; desktop D3D12 returns E_INVALIDARG).
-  - Allocators reset or released at a reused address start clean; recordings still in use survive a reset.
-- **Queues and lists:**
-  - Queue slot 29 (`CopyPageMappingsBatchX`) works on the older table.
-  - Queries and split barriers are closed before `Close`; copy lists get a timestamp heap; extended `Reset` options are ignored.
-  - A list that fails to record, or whose BLAS preparation fails, is left out of its batch (`TUXBOX_STRICT_LISTS=1`, `TUXBOX_STRICT_SCENE=1` drop the batch). The CPU then makes its marker and 64-bit value writes so the title's progress wait doesn't hang (`TUXBOX_ORPHAN_WRITES=0`).
-  - Those CPU writes only raise words the title waits on, so a fence word never drops below another queue's newer write (`TUXBOX_ORPHAN_WRITES_MAX=all` raises every word, `=0` none). Raising every word lost the device at GPU VA 0.
-  - A batch whose written placed texture overlaps another of its textures runs, sharing bytes as on the console (`TUXBOX_OVERLAP_STRICT=1` drops it).
-  - A page-mapping call xmem refuses whole is applied batch by batch (`TUXBOX_PAGE_MAPPING_STRICT=1`).
-  - Slot-35 submissions are taken on every queue type (`TUXBOX_SLOT35_DIRECT_ONLY=1`); an array holding no list of ours is dropped, not overwritten with clock ticks (`TUXBOX_QSLOT35=pair`).
-  - The fence completion cell only rises (`TUXBOX_FENCE_CELL_MAX=0` stores as read).
-  - Each guest queue uploads placed textures on its own copy queue (`TUXBOX_UPLOAD_PER_QUEUE=0` shares one) and doesn't wait on another queue's write-back or reads (`TUXBOX_PLACED_CROSS_WAITS=1`).
-  - A list splits at a GPU memory wait recorded after rendering work (on by default; `TUXBOX_SPLIT_AT_WAITS=0` skips such waits as before). It splits at a GPU memory wait after rendering work into segments on the same allocator, carrying heaps, roots and arguments, pipeline and IA/RS/OM state; each wait runs before its segment. Lists with open queries, split barriers, predication or bundles, or past 32 splits, skip the wait. Runs test135 to test142 skipped 32 or more waits each; VIctory-fxceless cuts at every wait, which let its lighting see depth.
-- **GPU memory waits:**
-  - A wait is released once its writing list completes on the GPU (`TUXBOX_WAIT_WRITER_RELEASE=0` waits for the 2 s watchdog).
-  - A wait whose word can't be mapped is dropped (`TUXBOX_WAIT_MAP_STRICT=1` refuses the list).
-  - The poller reads the word with ReadProcessMemory, not a load through the title's memory, so a page the title unmaps under a pending wait no longer faults it; an unreadable word counts as met and is logged (`TUXBOX_WAIT_SAFE_READ=0` loads directly).
-  - After the watchdog releases a word, later waits on it last at most `TUXBOX_WAIT_DEAD_MS` (100; 0 off) until one completes by itself.
-  - Once the watchdog has released a word, it stays short-waited for good, even after a wait on it completes by itself (`TUXBOX_WAIT_DEAD_STICKY=0` ends the short waits at that completion).
-  - A held memory wait that no queued list writes is released at the next present (`TUXBOX_MEMORY_WAIT_FORCE=0`); `TUXBOX_PRESENT_RELEASE_ALL=1` releases every held wait at a present (opt-in).
-- **Root views:**
-  - Root CBV/SRV/UAV binds import up to 64 KiB of committed title memory; an uncommitted address binds null, across adjoining committed regions of the same allocation (`TUXBOX_ROOT_SPAN_REGIONS=0` stops at the first region).
-  - CBV sizes are clamped to 64 KiB and rounded up to 256 bytes, and a CBV left without a buffer is written as null; an oversized or zero-address CBV is invalid and can remove the device.
-  - A null root view points at a 64 KiB zeroed buffer, not GPU VA 0 (`TUXBOX_NULL_ROOT_SINK=0`).
-  - A root view whose address doesn't resolve drops its list's draws and dispatches until rebound, a new root signature or a reset (`TUXBOX_ROOT_STALE_CLEAR=sink` draws with a zeroed buffer, `=0` refuses the call).
-  - A CBV over memory remapped since import (`CopyPageMappingsBatchX`) reads a copy of the CPU's bytes from a 4 MiB upload chunk, since the import holds the old pages (`TUXBOX_REMAPPED_CBV_COPY=0`).
-  - A rounded-up CBV stops at its buffer's end (`TUXBOX_CBV_CLAMP_END=0` keeps the full rounded size).
-- **Address UAVs (device slot 71):** writes a real UAV descriptor; it answered S_OK and left stale contents (`TUXBOX_ADDRESS_UAV=0`).
-  - Buffers import the title buffer, or a written-back copy; textures, address 0 and counter addresses bind a logged null.
-  - Each view is checked against its host buffer (UAV flag, heap type, format and stride rules, element range); a failure binds a logged R32_UINT null instead of removing the device (`TUXBOX_ADDRESS_UAV_CHECKS=0`).
-  - Title buffers import with ALLOW_UNORDERED_ACCESS as well as ALLOW_CROSS_ADAPTER (`TUXBOX_UAV_IMPORTS=0`). An older import without it uses the written-back copy; a refused import falls back to a shadow copy.
-  - An address UAV over an import made without unordered access re-imports the range with it, instead of going through a CPU written-back copy (`TUXBOX_UAV_REIMPORT=0`).
-- **Imports:**
-  - Buffers spanning separately mapped title pages use device-local copies.
-  - Buffer binds keep their imports alive (recording fell from about 156 ms to under 2 ms a frame).
-  - Neighbouring 64 KiB title pages are joined into one view on demand, so large buffers import zero-copy. Joins across two OS reservations are re-reserved as one block (`TUXBOX_JOIN_RERESERVE=0`).
-  - A join runs on past its range over the rest of the same section run, up to `TUXBOX_JOIN_AHEAD_MB` (32; 0 stops at the range), so later imports nest inside one view instead of overlapping joins that Windows refused with 87 (test144-148). A join is not tried over a view a GPU import pins (`TUXBOX_JOIN_SKIP_PINNED=0` tries it).
-  - Buffers are written back only after the GPU wrote them.
-  - Per-frame constant buffers at new addresses reuse earlier imports and copies (`TUXBOX_SHADOW_IMPORT_CACHE=0`, `TUXBOX_SHADOW_COPY_REUSE=0`).
-  - The last 512 heap imports stay referenced for 2 s (`TUXBOX_IMPORT_KEEP=0` off, `=N` count). An import a live heap covers exactly reuses it (`TUXBOX_IMPORT_REUSE=0`).
-  - One thread at a time opens a range as a heap; others share it (`TUXBOX_IMPORT_SINGLE=0`).
-  - Past 65536 entries the live-import map checks the next 16 keys per import instead of walking the whole map (`TUXBOX_IMPORT_SWEEP=0` walks it). A failed heap open is logged once per call, size, result and title RVA, with a running count.
-  - Ranges over more than one OS allocation go straight to the shadow copy (`TUXBOX_IMPORT_PRECHECK=0` asks the driver). Refused ranges are remembered by page and size for about 1 s, so a split's smaller pieces still reach the driver (`TUXBOX_REFUSED_PAGES=0`). The reservation walk is bounded (`TUXBOX_RESERVATION_WALK_ALL=1`). A placed buffer that only imports after its reserved pages are committed (the slot 133 backstop) is registered at its title address with its offset and heap; only a true stand-in sits at address 0. A page remap (`CopyPageMappingsBatchX`) under an imported range drops the cached imports there, so later imports open the new pages instead of a stale heap on the old ones, and views found by address pass over a retired heap and import the range again (`TUXBOX_IMPORT_RETIRE=0` turns both off).
-  - A descriptor publish walks only tables that can hold its slots (`TUXBOX_PUBLISH_SCAN_ALL=1`).
-  - Host buffer imports mask their resource flags to the host flags (`TUXBOX_HOST_FLAG_MASK=0` clears only 0x20000).
-- **Shadow copies:**
-  - A read-only shadow (address SRV or CBV fallback) over pages that can't be opened as a heap reads through an upload buffer the CPU fills before each refresh, not a null view (`TUXBOX_SHADOW_CPU=0`). Writable views are unchanged.
-  - CPU fills copy 64 KiB chunks through ReadProcessMemory, retrying a failing chunk per 4 KiB page; released pages read as zeros and are logged. A plain copy faulted on pages released after the view was made (`TUXBOX_SHADOW_FILL_CHECKED=0`).
-  - Shadow hashes read the same way, over committed memory only; skipped lengths still change the hash and are logged (`TUXBOX_SHADOW_HASH_COMMITTED=query` uses `VirtualQuery`, which stalled submits; `=0` reads directly).
-  - Shadows are hashed (`TUXBOX_SHADOW_HASH_LOCKED=1`) and released (`TUXBOX_SHADOW_DROP_LOCKED=1`) outside the shadow lock, pruned only after the map grows (`TUXBOX_SHADOW_PRUNE_EVERY=1`), and freed before a remap of their range (`TUXBOX_SHADOW_RELEASE_ON_REMAP=0`).
-- **Submit cost:** written textures are checked against viewed textures by sort and sweep, not every pair, which made submit cost grow each frame. Submit steps and placed-texture refresh steps are cost sites in the frame report. The log gives the batch size at each doubling, the most unpublished writes one submit scanned, and the count and cost of `D3DFlushEntireCpuCache`, which refreshes every live placed texture under the same lock.
-- **GPU memory sizes:** allocation-info slots 25 and 108 answer the console footprint, so GTA's 2.2 GB GPU pool doesn't fill early (the 87 s stop other projects hit). Slot 108 sizes a description the host can't with a conservative size, not u64::MAX (`TUXBOX_SLOT108_FALLBACK=0`). Image-address backing is off by default, since it was a symptom workaround (`TUXBOX_BACK_IMAGES=1` backs committed textures' addresses with zeroed memory again).
-- **Reserved (tiled) resources:** device slots 30, 34, 35 and 42 (`CreateReservedResource`, `MakeResident`, `Evict`, `GetResourceTiling`) and queue slots 8 and 9 (`UpdateTileMappings`, `CopyTileMappings`, both queue layouts) are served, and the host's tiled tier is reported (`TUXBOX_RESERVED=0`). A placed buffer over a reserved range commits its pages or gets a device buffer (`TUXBOX_PLACED_BACKSTOP=0`). The heap table has 11 slots, the pipeline table 14.
-- **Page pools:**
-  - Released reserved resources are reused by description (`TUXBOX_PAGES_RECYCLE`, 4096; 0 none). The pages fence is signalled once before the next title wait (`TUXBOX_PAGES_SIGNAL_EACH=1` per mapping).
-  - Pools are never evicted or put in system memory, since shaders can still sample them through the heap (`TUXBOX_PAGES_EVICT=1` evicts idle pools past `TUXBOX_SPAN_EVICT_PCT` of budget; `TUXBOX_PAGES_SYSTEM_PCT=80` puts new sampled pools in system memory). A pool idle `TUXBOX_SPAN_EVICT_S` (10) over budget gets the lowest residency priority (`TUXBOX_PAGES_DEMOTE=0`).
-  - Pools with no tile in use are evicted while over budget (`TUXBOX_PAGES_TRIM_EMPTY=0`); tiles come from the fullest pools first (`TUXBOX_PAGES_PACK=0`).
-  - Over `TUXBOX_PAGES_TRIM_PCT` (95) percent of budget, sampled textures leave mip 0 unmapped; over `TUXBOX_PAGES_TRIM2_PCT` (110), mips 0 and 1 (0 maps all).
-  - Over budget, placed textures idle `TUXBOX_PAGES_IDLE_S` (5; 0 never) are unmapped, largest first and none under `TUXBOX_PAGES_IDLE_MIN_KB` (1024), and re-uploaded at next use.
-  - Only formats with tiled support go on pages (`TUXBOX_PAGES_TILED_CHECK=0`).
-  - A texture's tiles come from one heap (best fit from per-heap free lists), so its tile mappings stay contiguous (`TUXBOX_PAGES_CONTIGUOUS=0` takes tiles one by one as before).
-  - Sampled-only render heaps get LOW residency priority, heaps with render or depth targets HIGH (`TUXBOX_RENDER_HEAP_PRIORITY=0`).
-- **Placed-texture refresh and write-back:**
-  - A committed write-back copy that times out after 5 s keeps its allocator, command list and readback buffer until its fence passes, and the timeout is logged; they used to be released under a copy that could still be running (xcl 52272a0, PR #578; the module is off unless `TUXBOX_COMMITTED_WRITEBACK=1`).
-  - Each level keeps a 64-bit hash, not a copy. Pages passed to an identical texture at the same address keep their snapshots (`TUXBOX_CLAIM_SAME_KEEP=0`).
-  - Levels over `TUXBOX_SNAPSHOT_BIG_MB` (16) are read back only after a CPU write, at most every `TUXBOX_SNAPSHOT_BIG_MS` (500). Levels over `TUXBOX_SNAPSHOT_MAX_MB` (256; 0 lifts it) are never read back, nor written back (`TUXBOX_WRITEBACK_MAX_MB=0` writes them).
-  - A refresh reads at most `TUXBOX_REFRESH_READ_MB` (32) and `TUXBOX_REFRESH_READ_MS` (4), resuming where the last stopped (`TUXBOX_REFRESH_ROTATE=0`). A deferred level is read at the next refresh (`TUXBOX_DEFER_OWED=0` waits for its next write).
-  - A refresh over 1024 or more textures gets three times the bytes and time, so a world load or camera cut that brings thousands of textures due doesn't take dozens of refreshes to catch up while stale levels are drawn (VIctory-fxceless `draw.rs`; `TUXBOX_REFRESH_BUSY_SCALE=<n>` sets the factor, 1 keeps the fixed budget).
-  - Video planes (single-level R8 and R8G8, at least 256 wide) are read every refresh outside the budget, so YUV-to-RGB never mixes stale and fresh planes (`TUXBOX_PLANE_UNBUDGETED=0`).
-  - Planes aren't read during a Bink decode (xmem hooks `BinkDoFrame`, `BinkDoFrameAsyncMulti` to `BinkDoFrameAsyncWait`, and catch-up decodes), only at the next refresh or after 250 ms (`TUXBOX_BINK_PLANE_GATE=0`). `TUXBOX_BINK_CALL_TRACE` logs the first 48 decode calls.
-  - The placed-texture refresh line counts video planes read while Bink decodes (expected 0) and plane reads the gate put off, and each read during a decode is logged. The plane trace opens a second 64-line window after Bink's first finished decode, so playback is traced too.
-  - All video planes of one refresh are gated together on Bink's decode count at the refresh's start, so Y and CbCr never mix frames (`TUXBOX_BINK_FRAME_GATE=0` gates each plane alone). The planes-read report to xmem is turned off with `TUXBOX_BINK_PLANES_READ=0`.
-  - Write-back readback buffers stay within `TUXBOX_WRITEBACK_INFLIGHT_MB` (512; 0 lifts it).
-  - Inherited GPU readers merge once per fence (`TUXBOX_READERS_MERGE=0` appends).
-  - Out of memory in residency, refresh or write-back frees dead shadows and retries (`TUXBOX_PLACED_OOM_RETRY=0`), then skips with stale bytes (`TUXBOX_PLACED_OOM_STRICT=1` drops the batch).
-  - A failed write-back publication (out of memory, or a guarded title page) is logged and skipped. It used to latch the queue's error, so every later submit, fence signal and tile call returned early and the title waited on fences with black frames. Only a lost device latches now (`TUXBOX_PUBLICATION_STRICT=1` latches every failure). A null command-list array drops only that call.
-  - Ranges under `TUXBOX_WATCH_GAP_MB` (64; 0 off) apart share one write-watch scan.
-  - Dropping a placed texture no longer deadlocks on the page index when an overlapping texture goes with it.
-- **xmem:**
-  - Title views of physical pages are committed on first CPU touch, one 64 KiB page at a time, instead of at map time. Kernel-side readers (ReadFile, DirectStorage reads, heap imports from title memory) commit their range first through the `TuxBoxCommitRange` export, and temporary read views zero-fill pages nobody committed (`TUXBOX_LAZY_COMMIT=0` commits at map time). The GPU page-pool registration and the device-memory image key accept reserved pages of a read-write view (the pool only names a range for video memory), and placed-buffer imports commit their range before checking it; both refused lazy views with E_INVALIDARG, which the title asserted on. Every other CPU-side or kernel use of a title range commits its lazy pages first: root views, address views, left-out list writes to fence or counter words, the CPU copy fallback, write-backs, and ReadFile (overlapped reads included). The ReadFile hook also covers title DLLs that import ReadFile themselves: Bink2Scarlett.dll reads its movie stream into title memory, and its reads into untouched lazy pages failed with error 998, so the decoder ran on a stream with holes and the intro showed block smear from test137 on; reads that had to commit pages are logged (`TUXBOX_READ_COMMIT=0` off). Before, a page only the GPU touched looked unmapped, so binds went null and a fence write was skipped. DirectStorage decompress and BCPack stores, and a shadow's CPU piece, commit their destination too; test136 failed 512 such loads and the title asserted. xmem keeps one bit per 64 KiB page of the title window for pages of a lazy view known to be committed, so these checks are bit tests instead of VirtualQuery walks. One VirtualQuery scans to the end of its region (about 16 ms per GiB of a committed view), and the 5.4 GiB page pool made every buffer bind cost tens of ms; test137 hung on it (`TUXBOX_COMMIT_BITS=0` walks as before).
-  - Physical page views (MEM_MAPPED) are never opened as heaps, so CopyPageMappingsBatchX can unmap them; callers read through copies. In test145-147, remaps over pool 0xdac000000 unmapped views a heap had pinned, Windows refused with 87, later maps failed 0x800701E7 and 156+ unmaps stayed deferred Only ranges CopyPageMappingsBatchX has remapped into are kept from heap imports, so the fix adds no broad shadow traffic (`TUXBOX_IMPORT_REMAPPABLE=1` opens every view as before, `=mapped` keeps out every physical page view; leonida, VIctory-fxceless, five-star, xcl).
-  - The CRT's file reads (`fread`, `_read`) go through the same ReadFile hook: ucrtbase's ReadFile import went straight to the kernel, so a CRT read into a lazy view no CPU had touched failed with 998 and came back short (`TUXBOX_READ_COMMIT_CRT=0` leaves ucrtbase alone). The exe and Bink2Scarlett import no ReadFileEx, ReadFileScatter or NtReadFile.
-  - A lazy page that can't be committed on first use is logged with the OS error (the first four, then at powers of two) before the fault is passed on; the title used to die of an access violation with no line naming the exhausted commit.
-  - A lazy page committed by a fault resumes the thread only when its protection allows that access; a write to a read-only page or an execute (DEP) fault used to re-fault forever, and now passes on (xcl `lazy.rs` `allows`; `TUXBOX_LAZY_ALLOWS=0` resumes on any committed page).
-  - The title's memory is capped at 13824 MiB, a Series X title's budget, in both the free-page statistics and page allocation and the working-set budget. Both used to draw on the whole commit limit, so the title sized its pools past what the PC could commit (test142 had 165 MiB of commit free). `TUXBOX_TITLE_MEMORY_MB=<MiB>` sets the cap, 0 leaves it uncapped.
-  - A root view commits its whole 64 KiB import window, not only the first page of the bound address. For an unaligned address the window's second page stayed reserved, the import fell short of what the shader reads, and the GPU could fault; a suspect for the garbled intro (`TUXBOX_ROOT_COMMIT_PAGE=1` commits the first page alone).
-  - Unmapping a page inside a multi-page or unrecorded view splits or rebuilds it (`TUXBOX_XMEM_UNMAP_FALLBACK=0`).
-  - An unmap failing with error 87 is retried later instead of refusing its batch (`TUXBOX_XMEM_DEFER_UNMAP=0`); the short sleep-retry is off (`TUXBOX_XMEM_UNMAP_RETRY=1`).
-  - The CLZERO fill loop leaves its last compare's full EFlags (`TUXBOX_CLZERO_FLAGS=0` clears CF only).
-  - `XMemAllocDefault` serves graphics and physical attributes (`TUXBOX_XMEM_DEVICE_ALLOC=0`). `XMemSetWin32HeapName`, `XMemGetWin32HeapName`, `XMemResetWriteWatch` and `XMemRegisterGraphicsMemoryConfiguration` are exported (`TUXBOX_XMEM_GRAPHICS_BUDGET=0` skips its budget write); `xmem.def` lists all 36 exports in alphabetical ordinal order.
-- **Pipelines:**
-  - Half the cores, 2 to 8, make pipelines (`TUXBOX_PIPELINE_WORKERS=N`; 2 was the default after test117a, where eight at once took the intro from 39 to 2.6-7.8 fps, but two can't drain the ~80,000 pipelines the title creates at load, and frames now wait for their pipelines instead of dropping them, as VIctory-fxceless does). A worker waits at most `TUXBOX_PIPELINE_HANDOFF_MS` (150; 0 off) for a translation, then hands the pipeline to a below-normal compile pool (`TUXBOX_COMPILE_WORKERS`, 2), where bound pipelines go first; before, two big uncached programs held both workers and every pipeline queued behind them.
-  - `TUXBOX_PIPELINE_SHAPE=fxceless` (opt-in) runs half-core workers with no prefetchers and no fps hold, to test VIctory-fxceless's shape against the hold.
-  - A display-sized draw's pipeline is built at once on its own thread, else at the front of the queue (`TUXBOX_DISPLAY_BUILD_NOW=0` builds it on the title's thread within the bind's wait).
-  - A mesh pipeline takes its pixel-linked mesh shader before the create, and the slot-71 cache arm looks the link up (`TUXBOX_MESH_LINK_FIRST=0` links only after a refusal).
-  - While the title presents slower than `TUXBOX_PIPELINE_FPS_FLOOR` (30) frames a second, only the first two pipeline workers take jobs; the others and the prefetchers wait. A title thread held waiting on a pipeline, or a second with no present, lets them all build. In test145, eight workers and four prefetchers compiling in the driver at once took the intro to 13 fps, Bink to 5.8 frames a second, and the audio glitched; below-normal priority didn't keep them off the title's pinned cores (`TUXBOX_PIPELINE_FPS_FLOOR=0` never holds them).
-  - Slot 57 pipelines take each target's write mask from CB_TARGET_MASK at state block A +0x78 (four bits per target) instead of writing every channel (`TUXBOX_CB_TARGET_MASK=0` writes all channels again; OpenScarlett d3d12_xs/device_x.cpp, MIT).
-  - xshader emits a large program of mostly repeated blocks in compact dispatch form: each distinct block once, in a loop over packed class and successor tables. Shader 35af8e6d's 14,411 unrolled blocks of 762 kinds had grown its HLSL to 12.7 MB (`TB_COMPACT=0` keeps the flat dispatch; xcl e591a8c).
-  - The list of pipelines earlier runs bound and the driver's pipeline library live in `runtime/`, shared by every translator build; before, each rebuild started empty, so every pipeline was built lazily while frames waited (`TUXBOX_PIPELINE_CACHE_SHARED=0` keeps them per build). A library over `TUXBOX_PIPELINE_LIBRARY_MB` (16384) starts afresh. The library is mapped read-only from its file and saved through a mapped staging file, so it takes no commit charge; on the heap it cost twice its size, which had kept the cap at 256 MB, about 2,700 of the 80,000 pipelines (`TUXBOX_PIPELINE_LIBRARY_MAPPED=0` uses the heap). Idle-priority prefetch workers build listed pipelines the title has created but not yet bound, during loads (a quarter of the cores, up to 4; `TUXBOX_PREFETCH_WORKERS=N`, `0` off). After builds the title waits on, a worker takes the first graphics pipeline among the first 512 queued, else the oldest; in creation order graphics waited behind compute, and test140 recorded 2 of 2291 draws in its last 10 s (`TUXBOX_GRAPHICS_FIRST=0` keeps creation order).
-  - Every pipeline made lazily is written to `pipelines.journal` beside the shared library: its guest stream, shaders, root signatures and whether it was bound (`TUXBOX_PIPELINE_JOURNAL=0` off). `neonbridge --game <dir> --pipelines` builds the journal into the library outside the title, bound pipelines first, at below-normal priority, on `NEONBRIDGE_PIPELINE_THREADS` threads (half the cores), waiting while less than 6 GB of commit is free, so the next run loads them instead of building them. Never run it while the game runs: both write the library. The title asks for about 80,000 distinct pipelines at load (test140), so the library must be sized for them (`TUXBOX_PIPELINE_LIBRARY_MB`); the build stops at 90% of it. The design follows xcl's pipeline journal and offline build (`pso_journal.rs`, `pipelines.rs`).
-  - `neonbridge --pipelines` translates every program first with no time cap (it sets `NEONBRIDGE_PREWARM_MAX_S=0` and `TUXBOX_LOG=stderr` unless set), then ends with one line counting pipelines stored into the library, already in it, made but not stored, with null shaders, with a translation request unanswered, unreadable from the journal, and refused. It used to count every pipeline the driver accepted as made.
-  - The offline build skips a pipeline whose DXIL is over `TUXBOX_PIPELINE_MAX_KB` (8192; 0 no cap) when the library lacks it, and its done line counts them; the title still builds one when it binds it. Such driver compiles took tens of minutes and gigabytes of commit (29 to 30 MB programs hung xcl's build for over 33 minutes). The cap is checked after the library lookup.
-  - The mapped pipeline library keeps its file handle open until the view is unmapped. A save renames the new library over the file, and with the handle closed Windows dropped the old contents, so view pages that were trimmed read back as zeros and the driver loaded zeroed pipelines (0x887A0020). `TUXBOX_PIPELINE_LIBRARY_HANDLE=0` closes it after mapping, as before.
-  - A library save no longer blocks loads: stores and the save share their own lock, and the save takes the library lock only to read and clear the dirty flag. Each 20 s save used to stall every library hit for its length (VIctory-fxceless `library.rs`; `TUXBOX_PIPELINE_SAVE_LOCKED=1` holds it throughout).
-  - A save whose rename over the library file fails is kept as `pipelines.d3d12lib.next`, which the next start moves into place (`TUXBOX_PIPELINE_LIBRARY_NEXT=0` drops it). Once loads have been quiet 10 s (5 s under 4 GiB free, 2 s under 2 GiB), the library's mapped pages leave the working set (`TUXBOX_PIPELINE_LIBRARY_TRIM=0` keeps them).
-  - Pipelines of different names load from the library at the same time: a load can compile inside the driver for seconds, and every pipeline thread used to wait behind it. One thread holds a name for its load and store; stores and serialising keep the lock (`TUXBOX_PIPELINE_PARALLEL_LOAD=0` loads under the lock again). A miss that joins another thread's compile of the same name no longer holds the in-flight map's lock while it waits.
-  - A mesh pipeline whose guest stream has no topology record gets a triangle one, since a pipeline library compares descriptions and loaded no mesh pipeline stored without it (`TUXBOX_MESH_TOPOLOGY=0` off). Every name stored in the library is listed in `pipeline-names.txt` beside it, and the saved line splits misses into names no earlier run stored (the host description changed) and names one did (refused by the driver, or lost when the library started afresh).
-  - A census counts the stream pipelines the title creates, with their distinct programs, program sets and pipelines (program set plus state), logged at powers of two from 1024 and every 20,000 (`TUXBOX_PIPELINE_CENSUS=0`). The driver's cost follows the distinct count, not the 84,000 the title creates at load. Each new pipeline is also compared, record by record, with the first pipeline of its program set; the line counts the differing records by stream tag (-1 when the record lists differ) and logs the first three differences of each tag in full, to name the field that makes keys unique.
-  - A pipeline an earlier run bound goes to the workers at once, not into the title's Create call (`TUXBOX_EAGER_ON_TITLE=1`). Bound pipelines jump the queue (`TUXBOX_PIPELINE_PRIORITY=0`). Workers run below normal priority, and one building a pipeline the title waits on is raised to normal (`TUXBOX_PIPELINE_HURRY=0`); `TUXBOX_PIPELINE_PRIORITY=normal` keeps every worker at normal priority.
-  - Binds wait up to `TUXBOX_PIPELINE_WAIT_MS` (500; 60 s before the first present) a frame for lazy pipelines, on a budget of their own; title threads polling the translator keep `TUXBOX_FRAME_WAIT_MS` (50). Both used to share the 50 ms budget, so a frame whose polls spent it dropped the draws of pipelines finished a few ms later. Frames now slow down while pipelines build instead of losing their draws (VIctory-fxceless `make.rs`; 50 is the old drop-first trade).
-  - Each draw and dispatch under a pipeline still being made asks again, within the frame's budget, and binds the made pipeline from that draw on. Before, the answer at SetPipelineState held until the next bind, so a pipeline made a millisecond later lost all that bind's draws. Pipelines pending for another reason, such as a forgiven refused call, aren't asked again (VIctory-fxceless `draw.rs`; `TUXBOX_PENDING_RECHECK=0` keeps the bind's answer).
-  - Compute pipelines up to `TUXBOX_SMALL_COMPUTE_BYTES` (16384; 0 off) are made on the title's thread at first bind, from a first-use budget of 0.25 s a second, at most 1 s (`TUXBOX_FIRST_USE_BUDGET=0`).
-  - Bind waits draw on the same budget and keep the stand-in once it is spent; unbudgeted waits stalled the loading-screen render thread into the hang watchdog (`TUXBOX_BIND_WAIT_BUDGET=0`).
-  - A compute pipeline pending at bind or list reset is waited for up to `TUXBOX_COMPUTE_PENDING_WAIT_MS` (3000; 0 drops its dispatches), logged with its caller. A frame's compute bind waits share `TUXBOX_COMPUTE_PENDING_FRAME_MS` (4000; 0 unlimited), after which its dispatches drop.
-  - A waited-on compute pipeline no worker has started is built on the title's thread instead (`TUXBOX_COMPUTE_STEAL=0`), sharing one deadline with the bind wait; a miss goes back to the front of the queue and is logged as handed over, not failed. Early title-thread builds that miss are waited for at bind too.
-  - Past the frame budget, a pending compute bind builds on its own thread for up to `TUXBOX_COMPUTE_OVER_BUDGET_MS` (750; 0 drops), logged as "made at its bind anyway".
-  - A pending graphics pipeline bound with a placed target the size of the last presented frame is waited for up to `TUXBOX_DISPLAY_DRAW_WAIT_MS` (250; 0 drops) outside the budget, so UI, text and the final composite draw; logged as "display-sized target: waited X ms".
-  - A failed compute pipeline's log line says why: cached refusal, translator failure, no reply, busy deadline, frame budget or host rejection.
-  - A failed pipeline create returns a shared placeholder whose upgrade is never built, instead of a failure that left a null record for the title to fault on later; its binds drop their work and log why (`TUXBOX_REFUSED_PLACEHOLDER=0`).
-  - `CreateDerivedPipelineStateX` (device slot 55) applies its patches: graphics streams made through slot 86 are kept (within `TUXBOX_DERIVED_PSO_MB`, 512), and a derivation writes its depth-stencil, rasterizer, blend or sample-mask patch over the base, keeps the console stencil record consistent, and builds through slot 86. Identical derivations share a pipeline; an unkept base or unknown part returns the base and is logged (`TUXBOX_DERIVED_PSO=base` always the base, `=fail` fails).
-  - A title thread waiting on a shader with a deadline marks it urgent, even mid-build, and the launcher's worker serves urgent shaders first (`NEONBRIDGE_URGENT_SHADERS=0` directory order). Both sides log urgent requests.
-  - A title thread finding a shader-cache bucket busy retries every millisecond within `TUXBOX_FRAME_WAIT_MS`, then hands off and drops its draws (`TUXBOX_SHADER_LOCK_SKIP=0` blocks).
-  - Only prefetch builds (a worker building a created pipeline not yet bound) wait for their expected memory (4096 bytes per DXIL byte, 2-32 GB), at most `TUXBOX_COMPILE_BUDGET_WAIT_MS` (30000). A compile a title thread waits on, or a bound pipeline's, starts at once (`TUXBOX_COMPILE_BUDGET=all` gates every compile as before; `=0` none).
-  - A prefetch of 256 KiB of DXIL or more reserves the program-sized commit floor (3 GB for programs up to 6 MiB), not a fixed 8 GB. test132 never had 8 GB free, so every such prefetch waited the full 30 s, while VIctory-fxceless builds its early list ungated (`TUXBOX_COMPILE_COMMIT_RESERVE=fixed` keeps 8 GB).
-  - At most `TUXBOX_MAX_DRIVER_COMPILES` (4) driver compiles of 256 KiB of DXIL or more run at once, and none starts while private bytes plus the running ones' expected memory and its own would pass `TUXBOX_COMPILE_CEILING_GB` (28); one may always start when none runs (0 turns either off). The ceiling also counts the shader worker and its xshader and dxc children, and the launcher holds its translation jobs (prewarms and the title's requests) to the worker's own size, the launcher with its xshader and dxc children, against `NEONBRIDGE_WORKER_CEILING_GB` (8; 0 off); counting the title as well would have run translations one at a time once it passed the ceiling. A request a title thread waits on is never held. test140 had six threads in the driver compiler with 19.8 GB private and under 4 GB of commit free.
-  - No such compile starts while another runs and free system commit is under `TUXBOX_COMPILE_COMMIT_FLOOR_MB` (3072; 0 off), whether or not the title waits on it. The hold ends when the running compile does, and with none running it never holds; holds are logged. In test142 three awaited compiles of 1.7 to 2.2 GB each ran at once, and with 165 MiB of commit left a driver allocation failed and removed the device.
-  - The floor grows with the program: a compile waits for the larger of `TUXBOX_COMPILE_COMMIT_FLOOR_MB` and 512 times its DXIL size, so programs up to 6 MiB wait as before. A 29.8 MB program's driver compile grew past 14 GB of commit. The hold line names the program's size and its floor.
-  - A typed UAV in a format the device can't load or store through (checked once per format) is written null, and the first one per format is logged with its resource, since its stores are lost (`TUXBOX_TYPED_UAV_GUARD=0` off). Root CBV, SRV and UAV binds in a window xmem tracks ask its commit bits instead of calling VirtualQuery, which cost a walk of the 5.4 GiB page pool per bind (`TUXBOX_COMMIT_BITS=0` walks).
-- **Shader translator (`xshader`):**
-  - Descriptors without the title's root layout bind from the shader's FSSM and PSV records; a run-time table gives host samplers for sampler words in the code.
-  - A raw buffer IDXEN access whose index is not a proven byte index or scaled by a sibling view's stride, and an indexed raw store, refuse the shader, as upstream; an element index was read as a byte offset (`TB_RAW_IDXEN_LOOSE=1` restores the guess).
-  - Unassigned SOPP 0x26 refuses the shader again; it had been made a trace no-op (`TB_SOPP_26_NOP=1` restores the no-op).
-  - The signed SMEM offset applies to `s_load` only; the RDNA2 ISA reads it unsigned for `s_buffer_load`/`store` (`TUXBOX_SMEM_SIGNED_OFFSET=all` signs buffer loads too, `=0` none).
-  - Console samplers reach the host with values D3D12 accepts: NaN LOD bounds fall back, infinities clamp, an inverted range clamps max up to min, the bias clamps to D3D12's range, unknown address modes clamp, a plain sampler compares with NEVER, and with no mip filter sampling stays at the minimum LOD (`TUXBOX_SAMPLER_SANITIZE=0` passes the words through).
-  - Anisotropic samplers with a point mip filter get D3D12 filter 0x54 (and its comparison, min and max forms) where the driver reports `AnisoFilterWithPointMipSupported`, else 0x55 as before. Every one used to get 0x55, which blends mip levels the title meant to keep apart. The fallback covers every CreateSampler, literal S# slots and guest static samplers in extended root signatures, so a guest 0x54 never reaches a host without it (VIctory 170ab23, PR #1337; `TUXBOX_ANISO_POINT_MIP=0` gives every anisotropic sampler 0x55).
-  - Blending is turned off on integer (UINT and SINT) render targets, which D3D12 rejects in a pipeline. A blend description shared by every target is split per target, so the other targets keep theirs. It covers both kinds of pipeline creation, and each change is logged (`TUXBOX_INTEGER_TARGET_BLEND=1` keeps the title's blend state).
-  - Translated: compute-heap stores, wave width, VCC votes, `bpermute`, `v_permlane16`, `v_mad_i64_i32`, `s_memtime`, `s_bitcmp*_b64`, `image_sample_o`, `image_load_pck`, signed atomics, packed inline constants, round-half-even, -0/+0 in min/max, sample-frequency shading and more typed-buffer formats. Hint and debug SOPPs are no-ops. PlayStation-project sources were removed and re-derived from the AMD RDNA2 ISA.
-  - `[WaveSize]` widths the GPU lacks are compiled out (`TB_NO_WAVESIZE_<n>`) from the device's wave range.
-  - Each of these is refused again by its switch set to 0: `v_div_scale/fmas/fixup_f32` (`TB_DIV_OPS`); `image_atomic` sub, inc, dec, fmin, fmax, cmpswap, fcmpswap (`TB_IMAGE_ATOMIC_EXT`); cube UAVs as 2D arrays with face = z (`TB_CUBE_UAV`); `v_pk_add_i16`, `v_pk_mad_i16/u16`, `v_pk_max/min_u16` and the packed clamp bit (`TB_PK_INT16_MORE`); `v_sad_u8/hi_u8/u16/u32` and `v_msad_u8` (`TB_SAD`); `v_cvt_f32_f64` in integer math, round to nearest even (`TB_CVT_F32_F64`); f64 `v_trunc/ceil/rndne/floor/fract`, `v_frexp_exp/mant` with no-op `v_pipeflush` and `v_clrexcp` (`TB_VOP1_F64`); `s_bitreplicate_b64_b32`, SCC unchanged (`TB_BITREPLICATE`); `ds_cmpst_b32/rtn_b32` as LDS compare-exchange (`TB_DS_CMPST`); `s_mov_b64` sampler pair copies (`TUXBOX_SAMPLER_PAIR_MOVES`); packed RGBA8 `image_store_pck`/`image_store_mip_pck` (`TUXBOX_PACKED_STORES`).
-  - `s_ff1_i32_b64` on any operand and MTBUF format 69 as four 16-bit channels (`TB_FF1_FMT69=0`); wide image atomics in every pixel shader (`TB_WIDE_ATOMIC_ANY_PS=0` HWRasterizePS only).
-  - Half-result conversions apply the VOP3 output modifier, then clamp, before rounding (`TB_CVT_F16_OMOD=0` drops both).
-  - `v_mad_f32`, `v_mac_f32`, `v_madmk_f32`, `v_madak_f32` (and legacy forms) are a `precise` multiply then add, so dxc can't fuse an FMA the console wouldn't (`TB_MAD_UNFUSED=0`).
-  - Format 71 (`BUF_FMT_16_16_16_16_FLOAT`) typed loads convert all four half channels; they read (0, 0, 0, 1) (`TB_TYPED_HALF4=0`).
-  - Indexed buffer accesses past their element are out of range as on RDNA: loads read 0, stores drop (`TB_STRUCT_OFFSET_OOB=0` addresses flat).
-  - Raw buffer IDXEN adds the index as a byte offset; with OFFEN too, the first address VGPR is the index (`TB_RAW_IDXEN=0` refuses IDXEN).
-  - `v_writelane_b32` keeps other lanes live (`TB_WRITELANE_CARRY=0`); every address VGPR of a non-NSA image instruction counts as read (`TB_MIMG_ADDR_LIVE=0` vaddr only).
-  - A wave64 `v_readlane` of a VGPR no `v_writelane` targets is `WaveReadLaneAt`, not a spill slot (`TB_READLANE_VECTOR=0`).
-  - In wave64 compute, a `v_readlane` whose lane is an SGPR takes the whole-wave group read, with groups kept whole multiples of 64 (TuxBox 4774547; `TB_GROUP_READ_SGPR=0` keeps `WaveReadLaneAt`).
-  - `v_readfirstlane` with no guest-active lane keeps the lane's own value (VIctory 5fa5de3).
-  - Full-mask quad-permute DPP no longer forces wave64 (`TB_DPP_QUAD_ANY_WAVE=0`).
-  - Wave64 compute groups under 32 threads run as one host wave of 32, since their upper 32 lanes never exist on the console; larger groups still need 64-lane waves (`TB_PARTIAL_WAVE=0` refuses all).
-  - A constant moved into one EXEC half on wave64 sets that half per bit and keeps the other (`TB_EXEC_HALF_CONST=0` writes the raw constant).
-  - A wave64 `v_cmp` writes the high lanes' ballot into its pair's high dword, and `v_mbcnt_hi` reads it as an integer, so integer reads of the high SGPR aren't stale (`TB_MASK_HIGH_SHADOW=0` writes 0).
-  - `s_bcnt1` and `v_mbcnt` decide mask versus integer by joining every path into the read, so masks over loop back edges count (`TB_MASK_CFG=0` program order).
-  - `s_bcnt1_i32_b32 exec_lo` counts the guest wave32's active lanes from the ballot word, also in guarded regions; it read 1, so wave-level allocations reserved one slot for 32 lanes (`TB_BCNT_EXEC_WAVE=0`).
-  - `s_quadmask` sets one bit per quad of four lanes with any bit set, from the wave's ballot when the source is a per-lane EXEC or VCC. A VOP3 `v_cndmask` whose mask is an inline constant or literal takes this lane's bit of it, not bit 0; a negative inline constant's high word is all ones (VIctory 95f6c6e, 6160c9e).
-  - Heap `image_get_resinfo` answers 1D, 3D and array views, not only 2D; a 1D array gives its layer count in y (xcl cafda82; `TB_RESINFO_DIMS=0` keeps 2D only).
-  - `image_gather4h` and `image_gather8h` are refused instead of being translated as a 2x2 Gather, which read the wrong texels (xcl 61ce2f9 by sennecools, PR #437).
-  - Wave sums accept forward `s_cbranch_execz` skips over self-contained masked regions; a branch landing on the region's start counts as entering it (TuxBox d59da4d).
-  - A branch to the next instruction folds to `s_nop` (VIctory 825c045; `TB_FOLD_NULL_BRANCH=0` keeps the branch).
-  - `s_ff1_i32_b32 exec_lo` finds the wave32's first active lane the same way; it read 0 on active lanes (`TB_FF1_EXEC_WAVE=0`).
-  - A PC-relative long jump with a carried high half (`s_getpc_b64`, `s_add_u32`, `s_addc_u32 s[n+1], s[n+1], 0`, `s_setpc_b64`) resolves as a branch; six world shaders jump this way to their `s_endpgm` (`TB_SETPC_ADDC=0`).
-  - In compute shaders, runs of exec-guarded ALU writes with no wave, quad, derivative or memory access share one guard, which halved dxc -O1 time on measured programs (`TB_EXEC_GROUP_COMPUTE=0`; pixel shaders already did this).
-  - Exec-guarded register writes are grouped in every stage, not only pixel and compute (TuxBox ab06fe1; `TB_EXEC_GROUP=0` keeps the old pixel and compute set).
-  - Loop-exit stubs a program places after its end (lane-local writes, then a branch back into the code) are moved to just before the instruction they rejoin, so the loops no longer look interleaved and the shader stays structured. a64767c5 went from 35.9 s to 11.8 s at dxc -O1. Programs with PC-relative code are left alone (`TB_INLINE_EXIT_STUBS=0` off).
-  - A backward branch to an early `s_endpgm` goes straight to the end of the program instead of looking like a loop back edge, so the program stays structured; 60310787 went from 71.2 s to 34.1 s (`TB_ENDPGM_BRANCH_EXIT=0`).
-  - Programs with 128 or more forward-branch skip flags keep them as bits of `uint` words instead of one `bool` each, because LLVM's jump threading over hundreds of boolean phis was most of dxc's `-O1` time: d19d19f6 went from 35.8 s to 15.0 s and 60310787 from 22.6 s to 8.5 s, with DXIL within 5% (`TB_SKIP_FLAG_BITS=0`).
-  - A block placed out of line (entered only by branches, ending in an unconditional branch) is moved next to its target when that makes overlapping loops nest, so more programs stay structured: 4326f79f went from 76.5 s to 15.2 s, and 9 of the title's 885 programs left the PC dispatcher (`TB_MOVE_BLOCKS=0`).
-  - Structured back edges are capped per stage: 128 iterations in pixel shaders, 256 in vertex and mesh shaders, 4096 in compute, instead of a shared 65,536 (`TB_LOOP_CAP` overrides), so a runaway loop ends before the GPU times out. The dispatch loop entered past instruction 0 gets the same step guard as the entry-0 form, and the dispatch form runs at most 256 blocks per allowed loop iteration instead of a fixed 1,000,000 steps (VIctory-fxceless `lower.rs`, five-star-recomp f938530).
-  - A packed f16 interpolation half with no signature element reads 0 instead of refusing the pixel shader (VIctory-fxceless `lower.rs`).
-  - Float-to-int conversions (`v_cvt_u32_f32`, `v_cvt_i32_f32`, `v_cvt_flr_i32_f32`, `v_cvt_rpi_i32_f32`) saturate to the integer range and give 0 for NaN, as RDNA2 does; plain HLSL casts left those inputs undefined (`TB_CVT_SATURATE=0`).
-  - The translator is merged with upstream TuxBox up to 7b815f2, including its "translate most ProjectScarlett programs" work: sibling-stride raw indexing, uint heap views, compare-aware inline samplers, pixel heaps, group readlanes, SAD forms and `v_mad_i64_i32`. Our typed-format table, D16, fmt69/half4 and SOFFSET paths are kept. Where upstream refuses what ours translates, its refusal is opt-in: `TB_RAW_IDXEN_STRICT=1` (an unproven raw byte index), `TB_HEAP_LOAD_STRICT=1` (an ambiguous heap typed or texel load). Its new forms can be turned off: `TB_PK_INT16_MORE=0` (more packed int16 forms), `TB_LANE_ELECTION=0` (lane-election verification of unmatched regions), `TUXBOX_SAMPLER_PAIR_MOVES=0` and `TB_INLINE_SAMPLER_WORDS=0` (inline sampler matching). Dynamic heap descriptor origins are followed through direct control flow, and xor, or or and with a literal that keeps the descriptor alignment keeps a heap offset's origin (TuxBox 1181af3). `v_swap_b32` tests the lane's EXEC bit under resolved wave32 and marks both registers written.
-  - The signed no-carry adds and subtracts (`v_add_nc_i32`, `v_sub_nc_i32`) are translated by the integer path in compute and refused in other stages; the separate wrapping-sum arm and its `TB_NC_I32` switch never ran and are gone.
-  - Outside pixel shaders, and in compute groups SM 6.6 cannot split into quads, implicit-derivative samples use LOD 0 with the bias as the level; vertex and mesh programs emitted `Sample`, which dxc rejects, and such compute groups were refused (`TB_DERIV_STRICT=1` keeps the old behaviour).
-  - Typed buffer loads of binary16 and 11/10-bit floats keep NaN payloads, signaling ones included (`TB_TYPED_NAN_BITS=0`).
-  - Proven straight-line DPP8 lane exchanges stay exchanges instead of lane-local copies. Signed min and max, XOR and FI exchanges are proven exact as well (TuxBox 7e76da5).
-  - Constant 64-bit compares (`v_cmp_f`/`v_cmp_t` on i64 and u64) return their constant without reading sources, so modifiers or unpaired sources no longer refuse them. `v_frexp_mant_f32` and `v_ldexp_f32` apply abs and neg to the sign bit, and ldexp returns an infinity or NaN unchanged.
-  - `v_add_f64`, `v_mul_f64`, `v_fma_f64`, `v_min_f64` and `v_max_f64` lower through host doubles; abs and neg act on each source's sign, and clamp and omod are refused (`TB_F64_ARITH=0` refuses them all).
-  - The lane-mask analysis is kept by instruction offset and mnemonic, not index, so passes that splice instructions in no longer leave it pointing at the wrong one. That was test142's four panicking compute programs.
-  - A bitwise or saveexec op on lane masks sets SCC per lane in the translated form, so an SCC branch after it is voted across the wave like EXEC and VCC branches; a group barrier under a diverged branch can hang the GPU (`TB_SCC_VOTE=0` turns it off).
-  - `s_cbranch_vccz` and `s_cbranch_vccnz` test all of VCC regardless of EXEC, as the hardware does (xcl 1c971de; `TB_VCC_VOTE_EXEC=1` keeps the old AND with EXEC).
-  - A signed packed image load (`image_load_pck_sgn`, `image_load_mip_pck_sgn`) through a normalized view rebuilds the byte as round(clamp(x, -1, 1) * 127), so negative SNORM texels keep their sign; the UNORM recovery read them as 0 (`TB_PCK_SNORM=0` restores it). Flat parameters stay float, the producer stage's type; the opt-in uint retype is gone.
-  - `tbuffer_load_format_d16_*` go through the typed load that packs two 16-bit channels per register (the d16 stores stay refused).
-  - SDWA float conversions apply clamp and the output modifier to the float result before the destination select; they used to drop them.
-  - An inline float on a half `v_fma_mix` source is the value as a half (1.0 used to read as 0.0); a negative inline integer there is refused.
-  - The lone static sampler fallback for literal sampler words keeps the use's comparison mode.
-  - `v_interp_p2_f16` applies the output modifier before its one rounding to half, and `op_sel[3]` writes the high half.
-  - Where the device cannot run 64-lane waves, a wave64 compute program whose group is one console wave (33 to 64 threads) runs as two exchanging wave32 halves: ballots, any/all, lane and first-lane reads, reductions and prefixes go through 67 groupshared words with group barriers. Before, those programs ran with the upper 32 lanes missing. Groups over 64 threads, and programs whose LDS leaves no room, keep the old form (`TB_SPLIT_WAVE64=0`).
-  - Static `s_buffer_load` and sampler-heap `s_load` with a negative immediate offset are refused; the offset was cast to unsigned and read the wrong words. Dynamic offsets still wrap (Xbox2Windows 83bb752d, ed7d09a4).
-  - `xshader --refusals DIR [--json]` is a read-only census of the first refusal site of every program in a request folder; it runs no dxc and writes nothing.
-  - Mesh shaders declare only the vertices that fit dxc's 32,768-byte vertex and primitive output budget; a group over it is dropped by the size guard, and a shader with no room for one vertex is refused. A mesh shader linked to its pixel shader (`--link-pixel`) keeps only the outputs the pixel shader declares, plus position and clip and cull distances, so more vertices fit (`TB_MESH_DROP_UNREAD=0` keeps all). The runtime sends such a link request when the driver refuses a mesh pipeline with E_INVALIDARG, with the same root-augmented mesh code it translates, and retries with the linked mesh shader; before, only vertex and geometry producers were linked (`TUXBOX_MESH_LINK=0` off). Portable pixel consumers give each producer output its component type, as native ones did; ambiguous or non-32-bit types are refused.
-  - A mesh shader's 8-dword image T# record binds the typed SRV or UAV its PSV names at that register; every binding arm required a 4-dword buffer V#, so test142's only failing mesh shader (dea0795e) was refused as "unverified mesh shader bindings".
-  - DPP16 abs and neg source modifiers on float operations move the sign bit (bit 15 for f16, bit 31 for f32) instead of being refused; integer operations with modifiers stay refused.
-  - In the per-lane form, scalar and/or/xor (and andn2, orn2, nand, nor, xnor) of EXEC, VCC or a tracked mask with a plain number read the number's bit for this lane, and SCC is any bit of the whole-wave result; they used the number's low bit and this lane's SCC, a silent miscompile. A register that is a mask on any path counts as a mask. Inline constants (0 and all ones included), literals and NULL count as the number side, so `exec ^ -1` sets SCC from the whole wave. `s_bitcmp0` and `s_bitcmp1` of a lane mask test bit N of the whole wave's mask. `--refusals` counts the programs with such a site (`TB_MIXED_MASK=0` off).
-  - `s_lshl1_add_u32` to `s_lshl4_add_u32` set SCC from the carry of the wide `(S0 << N) + S1`, counting bits shifted out of S0 as well as the add wrapping.
-  - `s_ff1` of VCC or a tracked mask in the per-lane form finds the first set lane of the whole wave (both words for b64) instead of this lane's bit (under `TB_MIXED_MASK`).
-  - A multi-dword scalar write such as `s_load_dwordx4` clears the lane-mask mark of every SGPR it fills (Xbox2Windows 7ebe57e7).
-  - Every memory DS instruction with GDS=1 is refused, not translated as plain LDS (xcl e642921).
-  - The EXEC at the last VM=1 export decides which pixels live, and they are killed at the DONE export, so a later, wider VM=1 export revives a lane (xcl dc0d25f; `TB_EXP_VM_LAST=0` discards at each VM=1 export).
-  - `ds_permute_b32` is a forward permute on the wave32 layout `ds_bpermute` uses (five-star-recomp `LdsEmitter.cs`).
-  - Exec groups also take the float min/max helpers, `exp2`, `log2` and `countbits` (`TB_EXEC_GROUP_HELPERS=0` off).
-  - Structured HLSL over 128 bytes per byte of shader code is redone as `tb_pc` dispatch blocks, since structured guards grow with the square of pending skip flags (xcl measured 148 MB structured against 14 MB as blocks). Pixel shaders and DPP quad exchanges stay structured; each fallback is logged (`TB_STRUCTURED_BOUND=0`). This is a bound, not the fix for slow compiles.
-  - Structured emission keeps the set of open forward labels as it goes, instead of rescanning every label against every branch at each instruction, which never finished on ~89,000-instruction compute programs (35af8e6d, 40a6b3dc) and timed out the prewarm.
-- **Shader cache and dxc (launcher):**
-  - The cache key covers the dxc version, wave-size defines, the xshader and dxc binary hashes, and every `TB_*` switch set, so a cache made under other switches is never served. The worker logs the switches; with none set the key is unchanged.
-  - Every shader the title asks for is recorded in `tuxbox_shader_cache/seen` and translated before the next launch starts the title (`NEONBRIDGE_PREWARM_SEEN=0`). The first launch seeds it from the newest cache folders; the worker logs a "seen prewarm" line. The run summary lists up to 8 shader failure reasons under the shaders line.
-  - Each prewarm pass says how many programs it has, then every 10 s prints done/total, the rate, the time left and the outcome counts, to the launcher output and the worker log. Both passes together stop taking new programs after `NEONBRIDGE_PREWARM_MAX_S` (600; 0 no limit), and the rest are translated when the title asks. After an xshader change every cached translation is stale, and test142 waited 15 minutes with no output.
-  - The prewarm before the game uses every core but two; the title's requests during the game keep at most 8 (`NEONBRIDGE_SHADER_THREADS` sets both). test143 translated about 1.8 programs a second on 8.
-  - dxc output is also reused when the HLSL differs only in comments and spacing: a second key hashes it with comments removed and spacing collapsed, since xshader annotates every instruction and the worker compiles without debug info (`NEONBRIDGE_DXIL_REUSE_NORMALISED=0` keys by the exact text).
-  - `neonbridge --prewarm` translates the seen set into the current cache and exits, with no provider build, staging or game, so the first run after an xshader change starts warm. `TUXBOX_PREWARM=1` adds all of `shaders.rpf`; there is no time cap unless `NEONBRIDGE_PREWARM_MAX_S` is set.
-  - After an xshader change the game starts on the last translations instead of waiting for all of them. Each program's last good translation from any xshader build is kept in `<cache_root>/last`, so only programs never translated hold the prewarm; the stale ones are translated again on a background thread with half the game-time workers while the game runs. A title request for a program this build hasn't translated is answered at once from its last translation, and the fresh one serves the next request. A program this build refuses loses its last translation. A closing line counts the programs served stale, retranslated to different code and retranslated unchanged. test143 waited about ten minutes for ~1,300 programs before the game started (`NEONBRIDGE_STALE_SHADERS=0` waits for every stale program; `--prewarm` and `--pipelines` set it).
-  - A prewarm xshader timeout names its shader key, so it can be run again.
-  - dxc output is also kept by the HLSL it came from (`dxil/<dxc fingerprint>/`, keyed by profile and HLSL), so a new xshader build only recompiles programs whose HLSL changed. Before, every xshader commit started all ~885 programs cold. The same DXIL comes back each run, so the driver's cache keeps hitting (`NEONBRIDGE_DXIL_REUSE=0` compiles every program).
-  - The launcher builds xshader from the source tree at launch. After each successful build it keeps a copy as `xshader-good.exe` with its commit (marked `+edits` when the tree was dirty). When a build fails, it prints a warning three times and uses that copy; with no good copy, no dxc, or a worker that won't start, the launch stops. Before, a failed build started the title with no shader worker, so nothing drew (test141). `TUXBOX_RUNTIME_SHADERS=0` still runs without shaders on purpose.
-  - Urgent shaders compile at dxc `-O0` at once, ending any running `-O1` pass (`NEONBRIDGE_DXC_URGENT_O0=0`); some programs took 65 s at `-O1` against 8.3 s at `-O0`.
-  - dxc retries at `-O0` when `-O1` passes `NEONBRIDGE_DXC_O1_SECS` (10), since one shader spent 92 s in dxc.
-- **Ray tracing:**
-  - TLAS instances at a foreign address are read through the host buffer behind it, since the raw address lost the device; pointer arrays with relocated BLASes build an empty TLAS (`TUXBOX_FOREIGN_INSTANCES=0` leaves the list out).
-  - BLAS builds with geometry at address 0 are skipped and logged, since one hung the GPU (`TUXBOX_AS_NULL_SKIP=0`). `TUXBOX_AS_BUILDS=0` skips every build; `TUXBOX_AS_TRACE=N` logs the first N geometries and TLAS builds.
-  - `TUXBOX_RAYS=0` skips every `DispatchRays`, for A/B tests.
-- **DirectStorage (`xcrdapi`):**
-  - A read past the end of a file fails cleanly (`TUXBOX_EOF_PARTIAL=1` reads the part that exists first).
-  - A request into memory that isn't committed and writable fails (`TUXBOX_XCRD_CHECK_DEST=0`).
-  - A read refused at enqueue keeps its request, so its error record names it and tag cancels reach it (`TUXBOX_XCRD_REFUSED_RECORD=0`).
-  - A page-list entry still 0 is read again for up to `TUXBOX_DSTORAGE_PAGE_WAIT_MS` (8; 0 reads once), since a half-full queue is submitted on its own and can run before the title fills its list; before, the request failed and the model or texture stayed unwritten.
-  - The re-read uses ReadProcessMemory, so a page array the title freed after enqueueing leaves its entries 0 and fails the request, instead of faulting in the queue worker and ending the process (xcl db6d692, PR #509).
-  - A store into a destination not yet committed or mapped is retried up to `TUXBOX_DSTORAGE_RETRIES` times (12; 0 fails at once), from 2 ms doubling to 128 ms, and a final failure is logged.
-  - Failures are counted by entry kind and HRESULT, naming common causes, as "storage failures by cause" at failures 1-4 and powers of two (`TUXBOX_STORAGE_FAILURE_CAUSES=0`).
-- **`xgameruntime`:**
-  - XGameSave containers, blobs, updates, quota and the save-files folder are on disk, with the 256 MB quota, buffer-size checks and the console's error codes.
-  - XGameUi: message dialogs answer their default button, text entry asks in a modal host dialog on its own thread, pending until it closes, with Cancel answering E_ABORT (`TUXBOX_TEXT_ENTRY` answers without asking; `TUXBOX_TEXT_ENTRY_DIALOG=0` answers the default text), other dialogs cancel.
-  - XAccessibility: a silent speech synthesizer (`TUXBOX_SPEECH=refuse`); captions and high contrast off.
-  - `XLaunchNewGame` asks the launcher to relaunch (`TUXBOX_RELAUNCH=0`); a terminated task queue wakes its waiting dispatch.
-  - An XAsync completion fires the completion routine the block held when it finished. The status used to be published before the queued delivery read the routine, so a title that polled and reused the block in between had the new call's routine fire for the old call (`TUXBOX_XASYNC_EARLY_CALLBACK=0` off; VIctory d01b170).
-  - `XErrorReport` calls the `XErrorSetCallback` callback (`TUXBOX_XERROR_CALLBACK=0`).  `XErrorSetCallback` and `XErrorSetOptions` are parity-only: GTA VI's exe, XCurl.dll and libHttpClient.GDK.dll import only `XErrorReport`.
-- **Audio:**
-  - `chad` (XDsp) completes every command, silent for transforms it can't compute (`TUXBOX_CHAD_STRICT=1`).
-  - AcpHal answers connect, message queue and XMA submit, with an XMA decoder (LGPL `xma` crate, notice in `vendor/tuxbox/runtime/acphal/NOTICE`; `TUXBOX_XMA=0`).
-  - An XMA read or write block past the end of the title's ring wraps to its start, instead of decoding into or reading from memory past it.
-  - `ApuFree` returns blocks through a coalescing free list (`TUXBOX_APU_FREE=0` no-op).
-  - The audio-lock leak at game+0x5267720 is patched when its bytes match (`TUXBOX_AUDIO_LOCK_PATCH=0`).
-  - Bink movies run `TUXBOX_BINK_LEAD` (1) frames ahead of their clock. Catch-up decodes are off by default, as in every ref, so the title's own `BinkWait`/`BinkShouldSkip` pace them; the extra decodes garbled intros 2 and 3 (`TUXBOX_BINK_CATCHUP=4` restores them, also on `BinkWait` unless `TUXBOX_BINK_WAIT_CATCHUP=0`; rebox bink_trace.c, xcl hle/bink.rs).
-  - Opt-in catch-up waits up to `TUXBOX_BINK_PLANE_FENCE_MS` (8; 0 off) before each extra decode for d3d12 to report, through the xmem export `TuxBoxBinkPlanesRead(decoded)`, that it has read the latest decode's planes. Until d3d12 reports there is no wait.
-  - `BinkShouldSkip` says skip while a movie is a frame or more behind its clock, so the title's skip loop decodes the next frames in order (`TUXBOX_BINK_SKIP_SIGNAL=0` passes Bink's answer through).
-- **Bad-port fixes (audit):** each switch restores the old behaviour.
-  - Xbox layout 0 maps by kind: 1D to 0x100, depth to 0x118, render targets to 0x11b, else 0x105, and any 0x100|swizzle is accepted (`TUXBOX_LAYOUT0_BY_KIND=0` maps 0 to 0x105 in the 0x100..=0x10a window; VIctory texture_layout).
-  - A texture alias is placed only at an aligned guest VA and retires every overlapping span (`TUXBOX_ALIAS_EXACT=0` places below the VA and retires only covered spans; xbox-emulator alias.rs).
-  - A mesh stream without a topology gets UNDEFINED, not TRIANGLE (`TUXBOX_MESH_TOPOLOGY_UNDEFINED=0`; VIctory host_topology).
-  - The indirect argument clamp is decided at the call, so a pipeline built after the bind is clamped too (`TUXBOX_INDIRECT_CALL_TIME=0` keeps the bind's answer).
-  - The depth clear clamp is off by default; it was for leonida's Vulkan backend (`TUXBOX_DEPTH_CLEAR_CLAMP=1` turns it on; leonida 673dd15d).
-  - XAPU clamps kept frames to capacity/(channels*4); frame count 0 keeps all and silence falls back to 960 (`TUXBOX_XAPU_CLAMP=0` answers TOO_SMALL; rebox xapu.c:222).
-  - `xshader`: each structured loop has its own counter, reset before its `do {`, and a lane at the cap discards (pixel) or returns instead of running on; the cap is 4096 for every stage (`TB_LOOP_CAP=stage` picks 128/256/4096, `TB_LOOP_CAP=<n>` one value; `TB_LOOP_PER_COUNTER=0` restores the shared guard; fxceless lower.rs 10906-10918).
-  - `xshader`: a parked lane mask follows fxceless unspill pairing: only a VGPR used solely by constant-lane writelane/readlane is a park area, and halves pair only within a block with nothing touching them between (`TB_MASK_UNSPILL=0` restores the old tracking; fxceless ir.rs 309-380).
-  - `xshader`: a depth compare with explicit LOD, bias or gradient refuses the shader (`TB_CMP_LEVEL_APPROX=1` samples LOD 0; fxceless lower.rs 9430-9440, Xbox2Windows d21e3d6e).
-  - `xshader`: `s_memtime` and `s_memrealtime` refuse the shader, since HLSL has no shader clock (`TB_MEMTIME_ZERO=1` reads 0; fxceless lower.rs 5573).
-  - `xshader`: the idxen offset-vs-stride check is opt-in, since structured access never sees OOB_SELECT and the check dropped valid select 1/3 reads (`TB_IDXEN_STRIDE_GUARD=1` applies it as select 0; five-star rdna_prelude.hlsli buf_limit).
-  - `xshader` ref credits corrected: `s_ff1` of a mask is xcl f90033c, the mixed-mask whole-wave SCC xcl 438d420/1c971de, binary16 frexp leonida 43c737f45, `v_log_f16` leonida rdna2spirv, the packed f16 half reading 0 VItoriaBr f95856d.
-- **Keys:** Alt and F10 don't open the window menu that made the game abort (`TUXBOX_KEY_MENU=1` allows it).  The title's top-level window procedure is subclassed, so the key-menu drop, Alt+Enter/F11 toggle and cursor clip run even when the title doesn't reach the exe's DefWindowProc import (`TUXBOX_SUBCLASS_WINDOW=0` relies on that import alone).
-- **Transient-pool watch (opt-in):** `TUXBOX_TRANSIENT_WATCH=1` reads the title's transient pool every `TUXBOX_TRANSIENT_WATCH_MS` (50) (globals at image RVA 0x75df1b8, `TUXBOX_TRANSIENT_POOL_RVA`). A corrupted block list is reported after 3 confirmations with a dump and root views; when a block's retire token changes, incomplete submissions that reached it are named.
-- **Retire waits (opt-in):** `TUXBOX_RETIRE_WAITS_ALL=1` makes a batch writing a 64-bit completion value wait on the GPU for every other queue first, so transient memory isn't reused early.
-- **Launch:**
-  - A neon loading screen shows until the first frame (`NEONBRIDGE_SPLASH=0`). The game ends with the launcher (`NEONBRIDGE_JOB=0`).
-  - Without `--game`, a picker asks for the game folder or exe.
-  - `--rev <commit>` (`NEONBRIDGE_REV`) builds the providers and xshader from that commit's `vendor/tuxbox`, so other sessions' uncommitted edits and local commits stay out of the run; `--prewarm --rev` uses the same snapshot and the snapshot's shader-compiler source is hashed from its files like the live tree, CRLF read as LF, so a `--rev` prewarm shares the live tree's shader cache instead of starting cold. The snapshot is mirrored into one fixed tree, `6ixpack/rev-build/vendor/tuxbox`, rewriting only files whose bytes differ, so unchanged crates stay built (`NEONBRIDGE_REV_INCREMENTAL=0` builds in the snapshot itself). Without `--rev` nothing changes.
-  - It warns when free commit is under `TUXBOX_MIN_COMMIT_GB` (20), relaunches when asked, and names a missing DLL after a loader error.
-  - It warns when the game folder lacks x64 `dxcompiler.dll` and `dxil.dll` (`NEONBRIDGE_DXC_CHECK=0`); d3d12 logs once if `dxcompiler.dll` fails to load for rectangle shaders.
-  - **Displays kept on:** with every monitor asleep, Windows paces Present at about 92 ms (about 10 fps). The launcher holds the display-required power request (`NEONBRIDGE_KEEP_AWAKE=0`) and wakes sleeping displays with one zero-delta mouse input (`NEONBRIDGE_WAKE_DISPLAY=0`), logging `[launch] display:` lines.
-  - **Game feed (opt-in):** `NEONBRIDGE_FEED=1` serves the picture on 127.0.0.1:8788 (`NEONBRIDGE_FEED_PORT`) behind a password set only from the PC.
-    - Video is fMP4 from ffmpeg (NVENC, else x264), falling back to MJPEG, shared over Tailscale at `neonbridge.<tailnet>.ts.net` via `tools/tsproxy.exe`, or cloudflared (`NEONBRIDGE_FEED_LINK=tailscale|cloudflared|none`, `NEONBRIDGE_FEED_HOST`, `_FPS`, `_WIDTH`, `_KBPS`; `NEONBRIDGE_FFMPEG`, `_TSPROXY`, `_CLOUDFLARED` set tool paths). The first run prints a Tailscale link to approve the PC once.
-    - `[feed]` lines also go to `%LOCALAPPDATA%\6ixpack\feed\feed.log`. The game logs its first viewer (or none after N presents); the no-frames line gives the shared-memory frame count.
-    - Without frames the page shows a waiting screen with the game's state and reconnects every 3 s. The encoder stops after `NEONBRIDGE_FEED_STALE_S` (5; 0 re-sends forever) without a new frame; a new encoder waits for a fresh frame.
-    - `neonbridge --feed-only` keeps the page up with no game; games started with `NEONBRIDGE_FEED=1` publish to it.
-    - The d3d12 tap (`TUXBOX_FEED=1`, set by the launcher) copies frames to a readback ring only while someone watches, never waits in Present, and scales 4K to 1280x720.
+- The launcher builds `xshader` from the tree at launch and keeps the last good build as `xshader-good.exe`; with no good copy, no dxc or no worker, the launch stops.
+- `--rev` builds providers and `xshader` from that commit's `vendor/tuxbox`, mirrored into `6ixpack/rev-build/vendor/tuxbox`.
+- Run `neonbridge --prewarm` after every `xshader` change so the next run starts warm.
+- Shader cache: `tuxbox_shader_cache/` (with `seen`, `last/` and `dxil/<dxc fingerprint>/`); the pipeline library, `pipelines.journal` and `pipeline-names.txt` live in `runtime/`.
+- Saves: `%LOCALAPPDATA%\TuxBox\PersistentLocalStorage\<title id>\GameSave\`. Crash logs: `%LOCALAPPDATA%\6ixpack\logs\crash_<pid>.log`. Feed log: `%LOCALAPPDATA%\6ixpack\feed\feed.log`. Captures: `%TEMP%\tuxbox_capture\<pid>-frame<N>`.
+- `--debug` runs under cdb and dumps registers, stacks and code at a fault. The run summary gives fps, per-frame cost and failure counters; a heartbeat logs every 10 s.
 
-- **Later fixes:**
-  - An R9G9B9E5 texture placed over a live R32_UINT render target of the same shape is that target, so packed light is not read black (VIctory-fxceless `alias_of`; `TUXBOX_PACKED_ALIAS=0` reads its own memory).
-  - Paged descriptor heaps map stray and unpublished guest indices to a null slot, the heap's last; the heap is never widened, since its size is read back as the guest heap's stride (VIctory host.rs:510-590; `TUXBOX_HEAP_NULL_TAIL=0` maps only the guest entries, and a stray index clamps to a live slot).
-  - A GPU memory wait skipped inside a list records a global UAV barrier (`TUXBOX_WAIT_SKIP_BARRIER=0` records none), and a quad sample mask is logged and ignored (`TUXBOX_QUAD_MASK_REFUSE=1` refuses the pipeline; TuxBox 3f2a717).
-  - A memory wait a list cannot split at moves to the start of its host list instead of being skipped (`TUXBOX_WAIT_HOIST=0` skips it), and splits are uncapped (`TUXBOX_SPLIT_CAP=<n>` caps them; VIctory-fxceless 7d7963e).
-  - Depth twins (`TUXBOX_DEPTH_TWINS=1`, off by default): a depth texture with both depth-stencil and unordered-access bits gets an R32_FLOAT twin (R16 typeless for 16-bit depth) for every mip and slice, and a stencil plane gets its own R8_UINT twin. Each transition into or out of unordered access copies the named subresources through the transfer buffer; both planes rest in COMMON while twinned; UAV views go to the twins, and a UAV barrier on a twinned texture orders every UAV access. Off, only one-mip, one-slice R32G8X24 textures with the two known flag words are twinned, and stencil UAVs are null. Ported from VIctory-fxceless victory-gpu resource.rs:322-570 `Twin`.
-  - Under `TUXBOX_DEPTH_TWINS=1`, console D16S8 depth with unordered access gets a 16-bit twin, and its 24-bit host plane is drawn from the twin when the list closes; the plane's states are settled per list from the title's barriers. Enhanced barriers on such a texture are refused. Ported from VIctory-fxceless `record_plane_pass`, `TwinUse::late`, `twins_to_depth` and `settle`.
-  - The driver compile estimate is 2,816 bytes per DXIL byte, held between 0.5 and 8 GB (five-star-recomp 51c338d; `TUXBOX_COMPILE_ESTIMATE_FIT=0` keeps 4,096 bytes and 2 to 32 GB).
-  - `xshader`: `v_mad`, `v_mac`, `v_madmk` and `v_madak` flush denormal inputs, product and sum to signed zero as gfx10 does (xbox-emulator tombox-xshader `tb_madz`/`tb_madlz`; `TB_MAD_FTZ=0` keeps denormals).
-  - `xshader`: a typed buffer load whose element starts mid-dword reads the two dwords around it and shifts (Xbox2Windows 5d0dce30; `TB_TYPED_UNALIGNED=0` loads the aligned-down dword).
-  - `xshader`: with VM=1 exports a pixel starts invalid, so a lane no VM=1 export reached is discarded at DONE (xcl dc0d25f; `TB_EXP_VM_START=1` starts it valid).
-  - `xshader`: heap `image_get_resinfo` on a cube gives its faces in z, 6 per cube, through the cube view (xcl recomp get_resinfo; `TB_RESINFO_CUBE=0` refuses the shader as before).
-  - Root SRVs and UAVs become one-view descriptor tables at the same register and space; only the root signature half is in, so it is opt-in (`TUXBOX_ROOT_VIEW_TABLES=1`) until the bind half lands (VIctory-fxceless `bounded_root_srvs`, gap 5).
-  - `xshader`: heap map word `0x40000000|count` clamps an identity-mapped heap index below count, onto its null last slot (VIctory HEAP_VIEWS, fxceless 31714de; `TB_HEAP_CLAMP_ALL=0` ignores it). Unpaged d3d12 heaps' identity index map clamps guest indices to the heap the same way.
-  - Indirect arguments are copied into a per-recording scratch, clamped there and executed from it, so the title's argument buffers are never rewritten (VIctory-fxceless indirect.rs `bound`/`record_clamp`; `TUXBOX_INDIRECT_SCRATCH=0` clamps in place).
-  - A structured view off an element boundary is made raw over the same bytes instead of re-strided (five-star-recomp 955a679 AsRaw; `TUXBOX_OFF_ELEMENT_RAW=0` re-strides).
-  - `xshader`: an S_BARRIER inside a per-thread guard lowers to a memory fence only, since a group sync some threads never reach hangs the host (fxceless lower.rs 1391-1419; `TB_FENCE_GUARDED=0` keeps the group sync).
-  - `xshader`: `TB_FENCE_CAPPED=1` also lowers every barrier of a kernel with a backward loop to a memory fence, since the loop cap may stop some lanes early (fxceless `cut_short`). Off by default, since it drops every group sync of a looping kernel.
-  - `xshader`: an ALU read of a statically resolved descriptor's SGPRs, which its `s_load` never writes, refuses the shader instead of reading stale values (`TB_DESC_AS_DATA=1` translates it as before).
-  - `xshader`: in the split wave64 form, two adjacent readlanes of one VGPR at lanes L and L^32 share one exchange (xcl 9e2c7a5; `TB_WAVE64_FOLD=0` keeps two).
-  - An exact span offset off the resource's placement alignment is aligned down, so 1-row textures 4 KiB into a span place instead of failing E_INVALIDARG (`TUXBOX_ALIAS_EXACT_UNALIGNED=1` turns this off).
-  - Title window adoption skips minimised, empty, IME and TuxBox windows and prefers the title's sgaWindowClass over a larger window (palmetto 87b3da3; `TUXBOX_ADOPT_RULE=0` takes the largest visible window).
-  - `xmem`: a failed page join logs which OS step failed (unmap, coalesce, map or commit).
-  - The compile commit floor no longer holds a compile the title waits on or one past its give-up. In test148 title threads sat in wait_granted, and build_here's join behind them, while 2048 floor holds ran at 0.4 to 1.2 GB of free commit (xcl 724b9e2; `TUXBOX_FLOOR_HOLDS_WANTED=1` holds them as before).
-  - The launcher compiles DXIL in-process through dxcompiler.dll, with dxil.dll loaded first to sign, on a 64 MiB-stack thread, instead of spawning one dxc.exe per program. Arguments, timeouts and the urgent give-up are unchanged (xcl gpu/recomp/dxc.rs:326-375 and :467-501, GPL-2.0-only, ported with credit; `NEONBRIDGE_DXC_INPROC=0` spawns dxc.exe).
-  - The prewarm compiles at dxc -O1 by default again: -O0 DXIL runs slower on the GPU and the intro is GPU-bound. `NEONBRIDGE_PREWARM_DXC_O0=1` opts into -O0 until an -O1 upgrade path exists.
-  - The launcher accepts linked programs back as ms_6_5 or ms_6_6, since d3d12 links mesh producers to their pixel shader (stream.rs mesh_link, five-star-recomp ddcaa54); a prewarm used to fail on an ms_6_6 program.
-  - The launcher's loading bar follows real counts: completed over total, with time left from a moving average of the rate. It eases without moving back and creeps through uncounted stages only up to the next stage's start. `--prewarm` shows its progress as one console line rewritten in place; its 10 s log lines stay for launches, and its summary lines stay.
-  - -O0 DXIL is a stopgap: every -O0 result (the opt-in prewarm -O0, urgent requests, -O1 past its time) is stored with a `.o0` marker and queued on disk, and a lowest-priority thread recompiles it at -O1 while the game runs and at the next launch. It writes over an -O0 result only, never over an -O1 one (the refs' tiered caches; xcl dxc.rs). `NEONBRIDGE_DXC_UPGRADE=0` keeps -O0 results as they are; `NEONBRIDGE_DXC_UPGRADE_SECS` (300) sets the upgrade budget.
-  - A `slot_views` table at t3 space32766 holds 16 B per heap slot: the title's address (low and high), byte length and element stride. It is kept with the view formats on descriptor write, copy and release, and bound for compute and graphics once a shader declares it (VItoriaBr b62bbc0; `TUXBOX_SLOT_VIEWS=0` off, nothing is bound).
-  - The shadow recent-write window is opt-in: unset or 0 keeps the sticky mark, `TUXBOX_SHADOW_RECENT=N` sets the window (test149: shadows were not the intro's 100 ms).
+## Environment switches
 
-## Diagnostics
+Format: name (default): effect of changing it. "on" means the fix runs unless set to 0.
 
-- **`--debug`:** runs under cdb and dumps registers, stacks, memory region and code at a fault. Title `int 3` asserts are logged and stepped over.
-- **Run summary:** one line with fps, per-frame cost (record, close, submit, present, waits), the costliest recording calls, lit-frame samples and failure counters. `--timeout S` ends a run cleanly; `--summary LOG` summarises an old log.
-- **Heartbeat:** every 10 s, fps, GPU latency per frame, per-thread CPU time and the busiest threads' hot functions. An fps overlay shows in the window (`TUXBOX_FPS=0` hides it).
-- **Frame work:** after each heartbeat, presents, draws and dispatches called and recorded, and why the rest dropped (`TUXBOX_FRAME_WORK=0`).
-- **GPU timeout settings:** when the adapter is chosen, `TdrLevel`, `TdrDelay` and `TdrDdiDelay` are logged, with a warning for `TdrLevel` 0 (a hang freezes the PC instead of removing the device) or 1 (a timeout is a blue screen).
-- **Present split:** every 64 presents, the average back-buffer retire wait and Present time, with GPU latency split at the present copy, to tell a stalled queue from a compositor stall. Awake, Present takes about 4 ms.
-- **Window reports:** at presents 1 and 60, after the first 5 lit-frame samples and every 600 presents, a back-buffer readback plus the Present result, size, format and window state (visible, minimised, cloaked, foreground, owner) (`TUXBOX_WINDOW_REPORTS=0`). Failing Presents are logged.
-- **Title window close:** `WM_CLOSE`, `SC_CLOSE`, `WM_ENDSESSION` and `WM_DESTROY` are logged, to tell a close from a crash or kill (`TUXBOX_TITLE_CLOSE_LOG=0`).
-- **Frame capture:** `TUXBOX_CAPTURE_FRAME=N` reports the work between presents N and N+1 (`TUXBOX_CAPTURE_FRAMES=K` for K frames; `ctl capture [K]` arms the next one). `frame.jsonl` has each draw, dispatch, submission and memory wait with its list, pipeline key and outcome (ran, refused with code and site, or dropped and why); `pipelines.jsonl` counts per pipeline; `summary.txt` totals. Output goes to `%TEMP%\tuxbox_capture\<pid>-frame<N>` (`TUXBOX_CAPTURE_DIR`), off the present thread; unset, each hook is one atomic load. With `TUXBOX_CAPTURE_FRAME`, or `TUXBOX_CAPTURE_SHADERS=1` when arming through `ctl`, pipelines list their shaders' DXBC SHA-256. Render-target readbacks aren't captured yet.
-- **Shader replay:** `neonbridge replay-shaders <capture dir> [--xshader <exe>] [--against <dir>]` reruns xshader and dxc (`-O0`) over a capture's shaders, taken from the request archive or refusal corpus, writing `replay/<key>.hlsl` and `replay/replay.jsonl` (outcome, reason, HLSL digest, ran and dropped counts) sorted by dropped draws, diffed against the last replay or `--against`. Without `--xshader` it builds the vendored one; `NEONBRIDGE_REPLAY_DXC=0` skips dxc; `NEONBRIDGE_REPLAY_JOBS` sets workers.
-- **Compile measurements:** driver compiles of 256 KiB of DXIL or more log duration, peak private-byte growth (20 ms samples), bytes still held and concurrent compiles, with a running per-byte maximum over solo compiles, budget on or off (`TUXBOX_COMPILE_MEASURE=0`). The budget's estimate is to come from these.
-- **Crash record:** unhandled exceptions, Rust panics and fail-fasts log code, module and offset, registers and stack; every thread's stack is logged after 15 s without a frame (`TUXBOX_CRASH_RECORD=0`). Both also go to `%LOCALAPPDATA%\6ixpack\logs\crash_<pid>.log`, even without the launcher, naming the import or export crossed, the instruction bytes and the faulting address.
-- **Hang peek:** `TUXBOX_HANG_PEEK=off:len,...` prints those main-image offsets' committed bytes in the hang report, to show the title's job-system counters.
-- **Watchdog off:** `TUXBOX_NO_WATCHDOG=1` turns the title's stall watchdog's two aborting branches (heartbeat unchanged for 30 s, an in-flight timestamp too old; game+0x2215c70 and +0x2215bdc) into no-ops, only where the expected bytes are found, and logs either way. It also skips the watchdog call and NOPs its fault, after a run died on the handler's store to 0 (VIctory hooks.rs). It's an A/B diagnostic, off by default.
-- **Sleep hold:** the exe's Sleep calls of 100 ms or more don't run while a title thread is held in a pipeline wait, so the title's stall check doesn't count time a frame spends waiting for pipelines (xcl `kernelx.rs`, XCL_SLEEP_HOLD; `TUXBOX_SLEEP_HOLD=<ms>` sets the shortest held sleep, 0 leaves Sleep alone).
-- **Hang waits:** a hang-stack thread in `NtWaitForSingleObject` or `NtWaitForMultipleObjects` names each handle, its type, an event's manual/auto and set state, and wait-all or wait-any (`TUXBOX_HANG_WAITS=0`). A thread suspended in the syscall loses its volatile registers, so handles are read from the nonvolatile registers and the stack.
-- **Fence stalls:** the 15 s hang report lists each fence a title thread may wait on (CPU cell address and value, host completed value) and pending fence event waits (fence, value, age, registering RVA); one pending over 10 s is logged once (`TUXBOX_FENCE_STALLS=0`).
-- **Queue stalls:** every queue Wait is recorded, so a stalled memory wait names what its writer's queue waits on and whether its range was remapped (`TUXBOX_QUEUE_WAITS=0`). The throttle line gives tracked queues and the furthest one's lag; compile-budget and import waits are logged.
-- **Wait stacks:** a GPU memory wait pending `TUXBOX_WAIT_STACKS_MS` (1500) logs every thread's stack, for the first `TUXBOX_WAIT_STACKS` (3; 0 off) such waits.
-- **Stale GPU pages:** pages remapped or unmapped under a GPU import are logged with the frame it still holds, and again when that frame is mapped elsewhere (`TUXBOX_STALE_GPU_PAGES=0`).
-- **GPU address 0:** the first root view, index or vertex buffer, ray generation record or shader table bound at 0 with nonzero size logs once per kind with the RVA ("GPU address 0 bound"), as does the first indirect `DispatchRays` (`TUXBOX_NULL_VA_TRACE=0`).
-- **Plane textures:** placed 8-bit plane textures at least 256 wide log each refresh: full, or mips skipped and changed (`TUXBOX_PLANE_TRACE=0`).
-- **Pipeline failures:** refused and stand-in stream pipelines are recorded per run in `pipeline-failures.tsv` (`TUXBOX_PIPELINE_FAILURES=0` records nothing; TuxBox 3f2a717 failures.rs).
-- **Closed-list recording:** a call on a closed list without Reset is logged once with its RVA.
-- **Memory line:** live render heaps, commit split into title and host, merged write-watch scans, recycled resources and pool evictions; at each power of two of heaps from 64, older heaps alive under newer ones; a packing log of empty pools.
-- **Render-heap eviction (opt-in):** `TUXBOX_RENDER_HEAP_EVICT=1` evicts render heaps unused for `TUXBOX_SPAN_EVICT_S` while over budget. Its tracking cut 35-40 fps to 15.
-- **Failure logs:** a refused `CreateDescriptorHeap` logs its description (`TUXBOX_HEAP_FAIL_LOG=0`); dropped recording calls name the refusing source line; untranslatable pipeline binds log shader keys and reasons per pipeline up to `TUXBOX_UNTRANSLATABLE_BINDS` (32; 0 off), then at powers of two; full table areas, BLAS preparation checks, dropped batch steps and xmem mapping failures (last OS step, imports holding the page) are named.
-- **More logs:** null bindings by cause, stalling memory waits (capped per address), waits on unsignalled fences, wait/write order after a timeout, texture size queries and allocation-info answer sizes (`TUXBOX_SIZE_WATCH`, `TUXBOX_TRACE_ALLOCATION_BYTES=size,0xhex,invalid`), placed textures re-placed at one address in another format (`TUXBOX_SAME_MEMORY_WATCH=0` off), Opus, XDsp and XMA counters, the audio endpoints opened, and GameInput pad reads.
-- **Diagnostic switches:**
-  - `TUXBOX_GPU_SEGMENTS=1` times every title submit segment on the GPU with timestamp lists around it and logs per queue every 2 s: title work and between-segment ms per second, the longest segments and gaps (for the intro's ~100 ms GPU latency). Off by default.
-  - `TUXBOX_TRACE_PRESENT=N` samples every Nth present for lit frames (the launcher sets 120).
-  - `TUXBOX_LIST_RING=1` logs the last list calls when a host `Close` fails.
-  - `TUXBOX_BARRIER_PROBE=1` closes each barrier alone on a fresh list to name the rejected field, probing the resource if no variant works.
-  - A failed `Close` logs the list's last 8 enhanced barriers with the D3D12 rules they break and probes the next groups (`TUXBOX_BARRIER_RING=0`).
-  - `TUXBOX_FALLBACK=flat`, `TUXBOX_NULL_SHADERS` and `TUXBOX_NULL_BISECT` swap out shaders to find a bad one.
-  - `TUXBOX_BREAK_RVAS=rva,...` logs registers and 8 stack words when the title passes those addresses.
-  - `TUXBOX_DRED=1` names every list by source (title, rebuilt, or the runtime's upload, readback, copy, wait or present lists) and logs the completed lists before the first incomplete one.
-  - `TUXBOX_D3D12_SDK=<dir>` makes a debug device from that Agility SDK, with InfoQueue capture, else the normal device. `TUXBOX_D3D12_SDK_GLOBAL=1` calls `SetSDKVersion` first (process-wide, needs Developer Mode) and doesn't retry a refused device on WARP. `TUXBOX_D3D12_SDK_VERSION` overrides the version read from D3D12Core.dll.
-  - Each crash theory has its own `TUXBOX_*` switch, so variants run from one build.
-- **Game CLI:** `neonbridge ctl status | log [N] [filter] | stack | press A+Down [ms] | hold | release | screenshot FILE | get | set | unset | capture [K] | stop` drives a running game over a local pipe (`TUXBOX_CTL=0`; no network).
+### Launcher (`NEONBRIDGE_*`)
 
-## Open issues
+- `NEONBRIDGE_REV` (unset): same as `--rev`.
+- `NEONBRIDGE_REV_INCREMENTAL` (1): 0 builds in the snapshot itself.
+- `NEONBRIDGE_SPLASH` (1): 0 hides the loading screen.
+- `NEONBRIDGE_JOB` (1): 0 lets the game outlive the launcher.
+- `NEONBRIDGE_SAFE_SETTINGS` (1): 0 keeps the user's graphics settings.
+- `NEONBRIDGE_KEEP_AWAKE` (1): 0 drops the display-required power request.
+- `NEONBRIDGE_WAKE_DISPLAY` (1): 0 skips waking sleeping displays.
+- `NEONBRIDGE_DXC_CHECK` (1): 0 skips the missing dxcompiler/dxil warning.
+- `NEONBRIDGE_SHADER_THREADS` (prewarm: cores-2, game: 8): shader worker threads.
+- `NEONBRIDGE_PREWARM_SEEN` (1): 0 skips the seen-set prewarm.
+- `NEONBRIDGE_PREWARM_MAX_S` (600; `--prewarm`/`--pipelines`: 0): prewarm time cap, 0 none.
+- `NEONBRIDGE_PREWARM_DXC_O0` (0): 1 prewarms at `-O0`.
+- `NEONBRIDGE_STALE_SHADERS` (1): 0 waits for every stale program before starting.
+- `NEONBRIDGE_URGENT_SHADERS` (1): 0 serves shaders in directory order.
+- `NEONBRIDGE_DXC_URGENT_O0` (1): 0 compiles urgent shaders at `-O1`.
+- `NEONBRIDGE_DXC_O1_SECS` (10): `-O1` time before the `-O0` retry.
+- `NEONBRIDGE_DXC_INPROC` (1): 0 spawns `dxc.exe` for every compile.
+- `NEONBRIDGE_DXC_UPGRADE` (1): 0 keeps `-O0` results.
+- `NEONBRIDGE_DXC_UPGRADE_SECS` (300): upgrade compile budget.
+- `NEONBRIDGE_DXIL_REUSE` (1): 0 compiles every program.
+- `NEONBRIDGE_DXIL_REUSE_NORMALISED` (1): 0 keys DXIL by exact HLSL text.
+- `NEONBRIDGE_XSHADER_SOURCE_KEY` (1): 0 keys the cache on xshader.exe bytes.
+- `NEONBRIDGE_WORKER_CEILING_GB` (8): shader worker memory ceiling, 0 off.
+- `NEONBRIDGE_PIPELINE_THREADS` (half the cores): `--pipelines` threads.
+- `NEONBRIDGE_REPLAY_DXC` (1): 0 skips dxc in `replay-shaders`.
+- `NEONBRIDGE_REPLAY_JOBS` (cores): `replay-shaders` workers.
+- `NEONBRIDGE_FEED` (0): 1 serves the game feed.
+- `NEONBRIDGE_FEED_PORT` (8788), `NEONBRIDGE_FEED_HOST`, `NEONBRIDGE_FEED_FPS`, `NEONBRIDGE_FEED_WIDTH`, `NEONBRIDGE_FEED_KBPS`: feed port, host and encoding.
+- `NEONBRIDGE_FEED_LINK` (tailscale): `tailscale`, `cloudflared` or `none`.
+- `NEONBRIDGE_FEED_STALE_S` (5): seconds without a frame before the encoder stops, 0 never.
+- `NEONBRIDGE_FFMPEG`, `NEONBRIDGE_TSPROXY`, `NEONBRIDGE_CLOUDFLARED` (on PATH / `tools/`): tool paths.
 
-- **Scene-load stop:** runs pass the loading screens into the first cutscene (its audio plays) and stop there; test139 hung at frame 2291.
-  - Root cause being traced: pipeline creation. In the cutscene a 10 s window recorded 66 of 3700 draws and 633 of 3271 dispatches; 6268 were dropped as "pipeline still being made" and 458 binds were untranslatable. The only busy threads were the two pipeline workers, both inside the GPU driver's compiler. Open questions: why the cutscene needs thousands of new pipelines, why they miss the driver cache, and why only two workers build them. Building the title's whole pipeline set ahead of time is the planned fix.
-  - Usually the title's 30 s hang watchdog (game+0x2215a60) fires, logging "GPU Loc Sig" and writing 0x4d8bd421 to address 0. The render thread waits on Subrender job events from the title's 5 job workers (traced with `TUXBOX_HANG_PEEK`); whether those workers are starved by the pipeline backlog, or fault in the title's pool allocators as five-star-recomp found for this build, is still to be shown.
-  - With `TUXBOX_COMPILE_BUDGET=0`, Windows commit runs out instead: about 18.6 GB private, of which about 7.5 GB is title mappings and about 10.4 GB our placed-texture mirror.
-  - Already fixed on the way: a placement drop-order deadlock, title threads waiting on a shader-cache lock, binds waiting outside the first-use budget, and slow `-O1` compiles of awaited shaders.
-- **Video memory:** the game uses about 8.1 GB against a 7.2 GB device-local budget; the frame rate sinks from about 35 to below 20 once it overflows. Superseded placed textures are not the cause: nearly all are already unmapped and hold no video memory.
-  - The memory line's "live now" also counts committed placed-texture copies, upload and readback buffers, device buffers, descriptor-table buffers and span heaps, held by a marker on each object until its last release.
-  - The process ends itself with `STATUS_COMMITMENT_LIMIT`, after logging the memory line, once less than `TUXBOX_MIN_COMMIT_MB` (2048) of system commit is left, so other programs keep working (`TUXBOX_MIN_COMMIT_MB=0` runs to the limit).
-- **Black picture:** the first cutscene plays sound but draws almost nothing, because nearly every draw is dropped while its pipeline is built (see the scene-load stop).
-- **Device loss at the first cutscene (test142):** 124 s in, the device was removed with 0x887A0020 (a driver internal error) and no command list in flight; the title's device-lost handler then stops at `int 3` (game+0x2474606). The cause was commit, not a GPU access: the machine sat at its commit limit all run, and three awaited driver compiles took the last of it. A second cause fits too: after five library saves, trimmed pages of the mapped library read back as zeros (fixed in ad53891). Both fixes are to be confirmed by a run. DRED's "page fault at address 0" was an empty record and is now logged as none.
-- **Intro video blocks:** block garbage in the intro and loading-screen Bink videos has come back several times (the plane read budget, the plane gate during decodes, Bink2Scarlett's ReadFile into lazy title pages in 7c028c6), and is also in test139, test140 and test142. Planes are not aliased by other formats. The next run's playback trace and read-during-decode count will show whether the planes are read mid-decode or never written by the CPU.
-- **BCPack textures:** BC3, BC4, BC5 and BC6H now decode (e9d9996); still to be confirmed by a run, and other refused streams stay grey.
-- **Shader translation:** offline `--build-shaders` still refuses some programs, mainly dynamic `s_load` offsets and mesh shaders.
-- **B5G5R5A1 UAVs:** the shader writes float colour into an R16_UINT view, so the 5551 packing is wrong.
+### Launch, platform and input
 
-- **Audit fix batch:** each switch restores the old behaviour.
-  - `extrq`/`insertq` zero the destination's high quadword (`TUXBOX_SSE4A_ZERO_HIGH=0`; ztrx console_insn.rs).
-  - Save blob listings and reads hold the save lock shared and answer busy while a publish holds it (`TUXBOX_SAVE_READ_LOCK=0` reads unlocked; Xbox2Windows 5550ec2b).
-  - Remaining save quota is 256 MiB minus used, capped by disk free (`TUXBOX_SAVE_QUOTA_FIXED=1` answers 256 MiB; ztrx xgamesave.rs:393).
-  - `XErrorReport` passes "" for a null message (`TUXBOX_XERROR_NULL_MESSAGE=1` passes null; KestrelX xgameruntime.cpp:291).
-  - XAsync reads the queue handle with the callback, before publishing the status (`TUXBOX_XASYNC_EARLY_CALLBACK=0` reads both late; VIctory d01b170).
-  - A compile the title waits on skips the cap and ceiling queue, up to 6 at once (`TUXBOX_WANTED_AT_ONCE=0`; xcl 9a272d4).
-  - A prefetch waiting in the compile budget re-asks each pause whether the title now waits on it (`TUXBOX_BUDGET_RECHECK=0` decides once; xcl 724b9e2).
-  - The cap of 4 large compiles and the 28 GB ceiling count every compile (`TUXBOX_COMPILE_CAP_ALL=0` counts gated ones only; five-star-recomp CompileBudget), and the ceiling leaves out write-combined memory (`TUXBOX_COMPILE_CEILING_WC=1` counts it; five-star-recomp 4e95ab2).
-  - A small compute first use is made inline only when its translation is cached (`TUXBOX_INLINE_UNCACHED=1`; five-star-recomp 9d61a3c).
-  - Imports over pages the title remaps retire, so new GPU views follow XMem remaps; needs `TUXBOX_IMPORT_REMAP_CHECK` (`TUXBOX_GPU_FOLLOW_REMAP=0`; five-star-recomp 61c095b).
-  - 3D textures with a packed console mip tail stay off pages (`TUXBOX_PACKED_3D_OFF_PAGES=0`; xcl 971c0e5).
-  - A released list stops holding its allocator recording (`TUXBOX_FORGET_RELEASED_LISTS=0`; xcl b55c478).
-  - A descriptor slot viewing a placed texture keeps it alive (`TUXBOX_SLOT_HOLDS_TEXTURE=0`; rebox 7745cef), and a mip or slice view doesn't supersede its texture (`TUXBOX_PART_VIEWS_STAY=0`; rebox fe7f1d4).
-  - Pipeline stores share a read lock and run outside LIBRARY (`TUXBOX_PIPELINE_STORE_LOCKED=1`; VIctory-fxceless library.rs:556-612).
-  - Console plane sizes for D24S8 and R32G32B32A32/R16G16/R32/R16/R8 MSAA (`TUXBOX_PLANE_SIZE_MORE=0`; Xbox2Windows a6879558).
-  - The title's pitch for format 0x0a answers width*16; its 0 overran the heap in the 117-143 s stop (`TUXBOX_FMT10_PITCH=0`; leonida-ce e8ca18c79).
-  - BCPack BC7 dictionary entry 0 keeps its leading index (`TUXBOX_BCPACK_BC7_ENTRY0=0`; xcl 7881dbc).
-  - Chunked zlib steps by piece 0's size, scoped to its Submit (`TUXBOX_ZLIB_CHUNK_STEP=0`; Xbox2Windows bb35f045, 4f67e704).
-  - The DirectStorage store retry covers page lists only (`TUXBOX_DSTORAGE_RETRY_PLAIN=1` retries plain ones; fxceless), and a heap page array is read again in full as the request runs (`TUXBOX_DSTORAGE_PAGES_LIVE=0`; rebox 502959e).
-  - `CreateSourceVoice` masks console-only flags to NOPITCH|NOSRC|USEFILTER (`TUXBOX_XAUDIO_VOICE_FLAGS=0` leaves it unwrapped; xcl hle/xaudio2.rs:57-58).
-  - The XAPU result record takes the VIctory-fxceless layout: state 0, pitch 1.0, the full 80 bytes (`TUXBOX_XAPU_REBOX_LAYOUT=1`; fxceless apu.rs:384); `chad` zeroes output byte-wise, with no switch (VIctory 643fc6d).
-  - An XMA loop's skip applies to its first packet (`TUXBOX_XMA_LOOP_SKIP_NEXT=0`; VIctory 985d8d4).
-  - `xshader`: normalized buffer formats load their ends as exactly 1.0 and -1.0 (`TB_NORM_EXACT_ENDS=0`; VIctory 645391b); signed no-carry add/sub take integer immediates (`TB_INT32_IMM=0`; TuxBox 5891be3); rooted pixel shaders with a directly indexed resource heap take its base (`TB_PIXEL_HEAP_ROOTED=0`; TuxBox 0b6e788); a register both mask and integer keeps its form at run time (`TB_MASK_BOTH_FORMS=0`; five-star-recomp b5fe3a7/48c08b8); split wave64 halves meet through bounded arrival counters (`TB_WAVE64_SPIN=0` meets at a group barrier; xcl 066ae5b).
-  - Launcher: the shader cache is keyed on the shader-compiler source, not xshader.exe's bytes (`NEONBRIDGE_XSHADER_SOURCE_KEY=0`; VIctory c47b529), and every failed translation logs its key.
+- `TUXBOX_LOG` (launcher sets `stderr`): log destination.
+- `TUXBOX_MIN_COMMIT_GB` (20): free-commit warning threshold.
+- `TUXBOX_MIN_COMMIT_MB` (2048): the process ends once free commit drops below this, 0 off.
+- `TUXBOX_TITLE_MEMORY_MB` (13824): title memory cap, 0 uncapped.
+- `TUXBOX_CONSOLE` (Series X): `s` Series S, `pc` a PC.
+- `TUXBOX_FINE_TIMER` (1): 0 keeps the 15.6 ms tick.
+- `TUXBOX_NETWORK` (0): 1 allows network.
+- `TUXBOX_FULLSCREEN` (0): 1 starts borderless fullscreen.
+- `TUXBOX_KEYBOARD_GAMEPAD` (1): 0 leaves only real pads.
+- `TUXBOX_AUTO_START` (1): 0 stops the automatic A press.
+- `TUXBOX_KEY_MENU` (0): 1 lets Alt/F10 open the window menu.
+- `TUXBOX_SUBCLASS_WINDOW` (1): 0 relies on the DefWindowProc import alone.
+- `TUXBOX_HIDDEN_TITLE_WINDOW` (1): 0 presents to our window.
+- `TUXBOX_ADOPT_RULE` (1): 0 adopts the largest visible window.
+- `TUXBOX_CTL` (1): 0 disables the `ctl` pipe.
+- `TUXBOX_FEED` (set by the launcher): d3d12 frame tap for the feed.
+- `TUXBOX_SSE4A_ZERO_HIGH` (1): 0 leaves extrq/insertq high quadword.
+- `TUXBOX_CLZERO_FLAGS` (1): 0 clears CF only.
+- `TUXBOX_UNMAPPED` (answer 0): `failfast` fails on unmapped slots.
+- `TUXBOX_NO_WATCHDOG` (0): 1 NOPs the title's stall watchdog.
+- `TUXBOX_SLEEP_HOLD` (100): shortest Sleep held during pipeline waits, ms; 0 off.
+- `TUXBOX_RELAUNCH` (1): 0 ignores `XLaunchNewGame`.
+
+### d3d12: barriers and lists
+
+- `TUXBOX_DS_GENERIC_READ` (0): 1 keeps DIRECT_QUEUE_GENERIC_READ on depth.
+- `TUXBOX_DS_READ_SR` (0): 1 keeps SHADER_RESOURCE in DEPTH_STENCIL_READ.
+- `TUXBOX_DS_SYNC` (1), `TUXBOX_DS_PLANE_SPLIT` (1): depth sync and per-plane barriers.
+- `TUXBOX_BARRIER_LEARN` (1): 0 logs rejected barriers only.
+- `TUXBOX_BARRIER_SKIP` (1): 0 records barriers no variant fixes.
+- `TUXBOX_NULL_TEXTURE_BARRIER` (1): 0 refuses resource-less texture barriers.
+- `TUXBOX_NULL_RTV_CLEAR` (0): 1 passes null-RTV clears on.
+- `TUXBOX_PLACED_UNDEFINED` (0): 1 passes LAYOUT_UNDEFINED through.
+- `TUXBOX_RECT_UNWRITTEN` (1): 0 copies every declared channel in the rectangle GS.
+- `TUXBOX_INDIRECT_ORDER` (1), `TUXBOX_INDIRECT_GUARD` (1), `TUXBOX_INDIRECT_SCRATCH` (1), `TUXBOX_INDIRECT_CALL_TIME` (1): ExecuteIndirect ordering, guard, scratch clamp, call-time clamp.
+- `TUXBOX_INDIRECT_STALE` (run clamped): `empty` empties every stale call.
+- `TUXBOX_INDIRECT_MAX` (65536): MaxCommandCount cap.
+- `TUXBOX_COPY_FLAGS_STRICT` (0): 1 refuses nonzero copy flags.
+- `TUXBOX_SCISSOR_CLAMP` (1): 0 passes over 16 scissors.
+- `TUXBOX_COPY_SCRATCH_MB` (64): same-buffer copy scratch, 0 off.
+- `TUXBOX_ALLOC_SLOT9_OK` (1): 0 answers E_NOTIMPL.
+- `TUXBOX_STRICT_LISTS` (0), `TUXBOX_STRICT_SCENE` (0): 1 drops the whole batch on a failed list or BLAS.
+- `TUXBOX_ORPHAN_WRITES` (1): 0 skips CPU writes for left-out lists.
+- `TUXBOX_ORPHAN_WRITES_MAX` (waited words): `all` every word, `0` none.
+- `TUXBOX_OVERLAP_STRICT` (0), `TUXBOX_PAGE_MAPPING_STRICT` (0): 1 drops overlapping or refused batches.
+- `TUXBOX_SLOT35_DIRECT_ONLY` (0), `TUXBOX_QSLOT35` (drop): slot-35 submissions.
+- `TUXBOX_FENCE_CELL_MAX` (1): 0 stores the fence cell as read.
+- `TUXBOX_UPLOAD_PER_QUEUE` (1), `TUXBOX_PLACED_CROSS_WAITS` (0): placed upload queues.
+- `TUXBOX_SPLIT_AT_WAITS` (1): 0 skips waits after rendering work.
+- `TUXBOX_SPLIT_CAP` (uncapped): caps list splits.
+- `TUXBOX_WAIT_HOIST` (1), `TUXBOX_WAIT_SKIP_BARRIER` (1): unsplittable waits hoisted; skipped waits get a UAV barrier.
+- `TUXBOX_QUAD_MASK_REFUSE` (0): 1 refuses quad sample masks.
+- `TUXBOX_FORGET_RELEASED_LISTS` (1): 0 keeps a released list's recording.
+
+### d3d12: GPU memory waits and presentation
+
+- `TUXBOX_WAIT_WRITER_RELEASE` (1), `TUXBOX_WAIT_MAP_STRICT` (0), `TUXBOX_WAIT_SAFE_READ` (1).
+- `TUXBOX_WAIT_DEAD_MS` (100): short wait after a watchdog release, 0 off; `TUXBOX_WAIT_DEAD_STICKY` (1).
+- `TUXBOX_MEMORY_WAIT_FORCE` (1): release unwritten held waits at present; `TUXBOX_PRESENT_RELEASE_ALL` (0).
+- `TUXBOX_THROTTLE_RELEASE` (1): 0 doesn't release held waits at the throttle escape.
+- `TUXBOX_PRESENT_LAG` (2): presents a queue may lag, 0 off; `TUXBOX_PRESENT_WAIT_MS` (5000); `TUXBOX_PRESENT_HELD_MS` (250).
+- `TUXBOX_PRESENT_TYPELESS` (1): 0 refuses typeless present surfaces.
+- `TUXBOX_RETIRE_WAITS_ALL` (0): 1 waits on every queue before completion writes.
+
+### d3d12: resources, views and imports
+
+- `TUXBOX_ROOT_FLAGS` (1), `TUXBOX_ROOT_CHECK` (1): root-signature flag clearing and checking.
+- `TUXBOX_COMMITTED_HEAP_STATE` (1): upload/readback initial states.
+- `TUXBOX_RGB9E5_TARGETS` (1), `TUXBOX_PACKED_ALIAS` (1): RGB9E5 targets as half floats; packed-light alias.
+- `TUXBOX_DEPTH_CLEAR_CLAMP` (0), `TUXBOX_DEPTH_DEFAULT_SRV` (1), `TUXBOX_MAP_HEAP_CHECK` (1).
+- `TUXBOX_DEPTH_TWINS` (0): 1 turns on full depth/stencil UAV twins.
+- `TUXBOX_ROOT_SPAN_REGIONS` (1), `TUXBOX_NULL_ROOT_SINK` (1), `TUXBOX_REMAPPED_CBV_COPY` (1), `TUXBOX_CBV_CLAMP_END` (1).
+- `TUXBOX_ROOT_STALE_CLEAR` (drop): `sink` draws with zeros, `0` refuses.
+- `TUXBOX_ROOT_COMMIT_PAGE` (0): 1 commits only the first page of a root view.
+- `TUXBOX_ROOT_VIEW_TABLES` (0): 1 makes root SRV/UAVs one-view tables (root signature half only).
+- `TUXBOX_ADDRESS_UAV` (1), `TUXBOX_ADDRESS_UAV_CHECKS` (1), `TUXBOX_UAV_IMPORTS` (1), `TUXBOX_UAV_REIMPORT` (1).
+- `TUXBOX_TYPED_UAV_GUARD` (1), `TUXBOX_OFF_ELEMENT_RAW` (1), `TUXBOX_HEAP_NULL_TAIL` (1).
+- `TUXBOX_SLOT_VIEWS` (1), `TUXBOX_VIEW_MARKS` (1): slot_views table and write marks.
+- `TUXBOX_JOIN_RERESERVE` (1), `TUXBOX_JOIN_AHEAD_MB` (32), `TUXBOX_JOIN_SKIP_PINNED` (1).
+- `TUXBOX_SHADOW_IMPORT_CACHE` (1), `TUXBOX_SHADOW_COPY_REUSE` (1).
+- `TUXBOX_IMPORT_KEEP` (512), `TUXBOX_IMPORT_REUSE` (1), `TUXBOX_IMPORT_SINGLE` (1), `TUXBOX_IMPORT_SWEEP` (1), `TUXBOX_IMPORT_PRECHECK` (1), `TUXBOX_IMPORT_RETIRE` (1).
+- `TUXBOX_IMPORT_REMAPPABLE` (remapped ranges kept out): `1` opens every view, `mapped` keeps out all physical views.
+- `TUXBOX_REFUSED_PAGES` (1), `TUXBOX_RESERVATION_WALK_ALL` (0), `TUXBOX_PUBLISH_SCAN_ALL` (0), `TUXBOX_HOST_FLAG_MASK` (1).
+- `TUXBOX_SHADOW_CPU` (1), `TUXBOX_SHADOW_FILL_CHECKED` (1).
+- `TUXBOX_SHADOW_HASH_COMMITTED` (bits): `query` uses VirtualQuery, `0` reads directly.
+- `TUXBOX_SHADOW_HASH_LOCKED` (0), `TUXBOX_SHADOW_DROP_LOCKED` (0), `TUXBOX_SHADOW_PRUNE_EVERY` (0), `TUXBOX_SHADOW_RELEASE_ON_REMAP` (1).
+- `TUXBOX_SHADOW_RECENT` (sticky): N sets the recent-write window.
+- `TUXBOX_SLOT108_FALLBACK` (1), `TUXBOX_BACK_IMAGES` (0).
+- `TUXBOX_RESERVED` (1), `TUXBOX_PLACED_BACKSTOP` (1).
+- `TUXBOX_LAYOUT0_BY_KIND` (1), `TUXBOX_ALIAS_EXACT` (1), `TUXBOX_PLANE_SIZE_MORE` (1), `TUXBOX_FMT10_PITCH` (1), `TUXBOX_PACKED_3D_OFF_PAGES` (1).
+- `TUXBOX_SLOT_HOLDS_TEXTURE` (1), `TUXBOX_PART_VIEWS_STAY` (1), `TUXBOX_MESH_TOPOLOGY_UNDEFINED` (1).
+- `TUXBOX_BCPACK_VICTORY` (1), `TUXBOX_BCPACK_BC7_ENTRY0` (1); `TUXBOX_BCPACK` (grey): `refuse` refuses bad streams.
+- `TUXBOX_HEAP_FAIL_LOG` (1).
+
+### d3d12: page pools, placed textures and write-back
+
+- `TUXBOX_PAGES_RECYCLE` (4096), `TUXBOX_PAGES_SIGNAL_EACH` (0).
+- `TUXBOX_PAGES_EVICT` (0), `TUXBOX_SPAN_EVICT_PCT`, `TUXBOX_SPAN_EVICT_S` (10), `TUXBOX_PAGES_SYSTEM_PCT` (off), `TUXBOX_PAGES_DEMOTE` (1).
+- `TUXBOX_PAGES_TRIM_EMPTY` (1), `TUXBOX_PAGES_PACK` (1), `TUXBOX_PAGES_TRIM_PCT` (95), `TUXBOX_PAGES_TRIM2_PCT` (110).
+- `TUXBOX_PAGES_IDLE_S` (5), `TUXBOX_PAGES_IDLE_MIN_KB` (1024), `TUXBOX_PAGES_TILED_CHECK` (1), `TUXBOX_PAGES_CONTIGUOUS` (1).
+- `TUXBOX_RENDER_HEAP_PRIORITY` (1), `TUXBOX_RENDER_HEAP_EVICT` (0).
+- `TUXBOX_COMMITTED_WRITEBACK` (0): 1 enables committed write-back.
+- `TUXBOX_CLAIM_SAME_KEEP` (1).
+- `TUXBOX_SNAPSHOT_BIG_MB` (16), `TUXBOX_SNAPSHOT_BIG_MS` (500), `TUXBOX_SNAPSHOT_MAX_MB` (256), `TUXBOX_WRITEBACK_MAX_MB` (on).
+- `TUXBOX_REFRESH_READ_MB` (32), `TUXBOX_REFRESH_READ_MS` (4), `TUXBOX_REFRESH_ROTATE` (1), `TUXBOX_DEFER_OWED` (1), `TUXBOX_REFRESH_BUSY_SCALE` (3).
+- `TUXBOX_PLANE_UNBUDGETED` (1), `TUXBOX_BINK_PLANE_GATE` (1), `TUXBOX_BINK_FRAME_GATE` (1), `TUXBOX_BINK_PLANES_READ` (1), `TUXBOX_BINK_CALL_TRACE` (0).
+- `TUXBOX_WRITEBACK_INFLIGHT_MB` (512), `TUXBOX_READERS_MERGE` (1).
+- `TUXBOX_PLACED_OOM_RETRY` (1), `TUXBOX_PLACED_OOM_STRICT` (0), `TUXBOX_PUBLICATION_STRICT` (0).
+- `TUXBOX_WATCH_GAP_MB` (64).
+
+### xmem
+
+- `TUXBOX_LAZY_COMMIT` (1), `TUXBOX_LAZY_ALLOWS` (1), `TUXBOX_COMMIT_BITS` (1).
+- `TUXBOX_READ_COMMIT` (1), `TUXBOX_READ_COMMIT_CRT` (1).
+- `TUXBOX_XMEM_UNMAP_FALLBACK` (1), `TUXBOX_XMEM_DEFER_UNMAP` (1), `TUXBOX_XMEM_UNMAP_RETRY` (0).
+- `TUXBOX_XMEM_DEVICE_ALLOC` (1), `TUXBOX_XMEM_GRAPHICS_BUDGET` (1).
+
+### d3d12: pipelines
+
+- `TUXBOX_PIPELINE_WORKERS` (half the cores, 2-8), `TUXBOX_PIPELINE_HANDOFF_MS` (150), `TUXBOX_COMPILE_WORKERS` (2), `TUXBOX_PREFETCH_WORKERS` (quarter of cores, up to 4).
+- `TUXBOX_PIPELINE_SHAPE` (unset): `fxceless` drops prefetchers and the fps hold.
+- `TUXBOX_PIPELINE_FPS_FLOOR` (30): 0 never holds workers.
+- `TUXBOX_PIPELINE_PRIORITY` (1): 0 no bound-first queue; `normal` keeps workers at normal priority.
+- `TUXBOX_PIPELINE_HURRY` (1), `TUXBOX_EAGER_ON_TITLE` (0), `TUXBOX_GRAPHICS_FIRST` (1), `TUXBOX_DISPLAY_BUILD_NOW` (1).
+- `TUXBOX_MESH_LINK` (1), `TUXBOX_MESH_LINK_FIRST` (1), `TUXBOX_MESH_TOPOLOGY` (1), `TUXBOX_CB_TARGET_MASK` (1).
+- `TUXBOX_PIPELINE_CACHE_SHARED` (1), `TUXBOX_PIPELINE_LIBRARY_MB` (16384), `TUXBOX_PIPELINE_LIBRARY_MAPPED` (1), `TUXBOX_PIPELINE_LIBRARY_HANDLE` (1), `TUXBOX_PIPELINE_LIBRARY_NEXT` (1), `TUXBOX_PIPELINE_LIBRARY_TRIM` (1).
+- `TUXBOX_PIPELINE_SAVE_LOCKED` (0), `TUXBOX_PIPELINE_STORE_LOCKED` (0), `TUXBOX_PIPELINE_PARALLEL_LOAD` (1).
+- `TUXBOX_PIPELINE_JOURNAL` (1), `TUXBOX_PIPELINE_MAX_KB` (8192), `TUXBOX_PIPELINE_CENSUS` (1), `TUXBOX_PIPELINE_FAILURES` (1).
+- `TUXBOX_PIPELINE_WAIT_MS` (500; 60 s before first present), `TUXBOX_FRAME_WAIT_MS` (50), `TUXBOX_PENDING_RECHECK` (1).
+- `TUXBOX_SMALL_COMPUTE_BYTES` (16384), `TUXBOX_FIRST_USE_BUDGET` (1), `TUXBOX_BIND_WAIT_BUDGET` (1), `TUXBOX_INLINE_UNCACHED` (0).
+- `TUXBOX_COMPUTE_PENDING_WAIT_MS` (3000), `TUXBOX_COMPUTE_PENDING_FRAME_MS` (4000), `TUXBOX_COMPUTE_STEAL` (1), `TUXBOX_COMPUTE_OVER_BUDGET_MS` (750), `TUXBOX_DISPLAY_DRAW_WAIT_MS` (250).
+- `TUXBOX_REFUSED_PLACEHOLDER` (1), `TUXBOX_UNTRANSLATABLE_BINDS` (32).
+- `TUXBOX_DERIVED_PSO` (apply): `base` or `fail`; `TUXBOX_DERIVED_PSO_MB` (512).
+- `TUXBOX_SHADER_LOCK_SKIP` (1).
+- `TUXBOX_COMPILE_BUDGET` (prefetch only): `all` gates every compile, `0` none; `TUXBOX_COMPILE_BUDGET_WAIT_MS` (30000).
+- `TUXBOX_COMPILE_COMMIT_RESERVE` (program-sized): `fixed` keeps 8 GB.
+- `TUXBOX_COMPILE_ESTIMATE_FIT` (1): 0 uses 4096 B per DXIL byte, 2-32 GB.
+- `TUXBOX_MAX_DRIVER_COMPILES` (4), `TUXBOX_COMPILE_CEILING_GB` (28), `TUXBOX_COMPILE_CEILING_WC` (0), `TUXBOX_COMPILE_CAP_ALL` (1).
+- `TUXBOX_COMPILE_COMMIT_FLOOR_MB` (3072), `TUXBOX_FLOOR_HOLDS_WANTED` (0), `TUXBOX_WANTED_AT_ONCE` (6), `TUXBOX_BUDGET_RECHECK` (1).
+- `TUXBOX_COMPILE_MEASURE` (1).
+- `TUXBOX_RUNTIME_SHADERS` (1): 0 runs without shaders.
+- `TUXBOX_PREWARM` (0): 1 adds all of `shaders.rpf` to `--prewarm`.
+
+### d3d12: samplers, ray tracing
+
+- `TUXBOX_SAMPLER_SANITIZE` (1), `TUXBOX_ANISO_POINT_MIP` (1), `TUXBOX_INTEGER_TARGET_BLEND` (0), `TUXBOX_SMEM_SIGNED_OFFSET` (s_load only: `all` or `0`).
+- `TUXBOX_SAMPLER_PAIR_MOVES` (1), `TUXBOX_PACKED_STORES` (1).
+- `TUXBOX_FOREIGN_INSTANCES` (1), `TUXBOX_AS_NULL_SKIP` (1), `TUXBOX_AS_BUILDS` (1), `TUXBOX_AS_TRACE` (0), `TUXBOX_RAYS` (1).
+
+### DirectStorage, game runtime, audio
+
+- `TUXBOX_EOF_PARTIAL` (0), `TUXBOX_XCRD_CHECK_DEST` (1), `TUXBOX_XCRD_REFUSED_RECORD` (1).
+- `TUXBOX_DSTORAGE_PAGE_WAIT_MS` (8), `TUXBOX_DSTORAGE_RETRIES` (12), `TUXBOX_DSTORAGE_RETRY_PLAIN` (0), `TUXBOX_DSTORAGE_PAGES_LIVE` (1), `TUXBOX_STORAGE_FAILURE_CAUSES` (1), `TUXBOX_ZLIB_CHUNK_STEP` (1).
+- `TUXBOX_TEXT_ENTRY` (ask): set to answer without asking; `TUXBOX_TEXT_ENTRY_DIALOG` (1).
+- `TUXBOX_SPEECH` (silent): `refuse` refuses the synthesizer.
+- `TUXBOX_XASYNC_EARLY_CALLBACK` (1), `TUXBOX_XERROR_CALLBACK` (1), `TUXBOX_XERROR_NULL_MESSAGE` (0).
+- `TUXBOX_SAVE_READ_LOCK` (1), `TUXBOX_SAVE_QUOTA_FIXED` (0).
+- `TUXBOX_CHAD_STRICT` (0), `TUXBOX_XMA` (1), `TUXBOX_XMA_LOOP_SKIP_NEXT` (1), `TUXBOX_APU_FREE` (1), `TUXBOX_AUDIO_LOCK_PATCH` (1).
+- `TUXBOX_XAPU_CLAMP` (1), `TUXBOX_XAPU_REBOX_LAYOUT` (0), `TUXBOX_XAUDIO_VOICE_FLAGS` (1).
+- `TUXBOX_BINK_LEAD` (1), `TUXBOX_BINK_CATCHUP` (0), `TUXBOX_BINK_WAIT_CATCHUP` (1), `TUXBOX_BINK_PLANE_FENCE_MS` (8), `TUXBOX_BINK_SKIP_SIGNAL` (1).
+
+### Diagnostics
+
+- `TUXBOX_FPS` (1), `TUXBOX_FRAME_WORK` (1), `TUXBOX_WINDOW_REPORTS` (1), `TUXBOX_TITLE_CLOSE_LOG` (1), `TUXBOX_CRASH_RECORD` (1).
+- `TUXBOX_TRACE_PRESENT` (launcher sets 120): sample every Nth present.
+- `TUXBOX_CAPTURE_FRAME` (off), `TUXBOX_CAPTURE_FRAMES` (1), `TUXBOX_CAPTURE_DIR` (`%TEMP%\tuxbox_capture`), `TUXBOX_CAPTURE_SHADERS` (0).
+- `TUXBOX_HANG_PEEK` (off): `off:len,...` image offsets to dump at a hang.
+- `TUXBOX_HANG_WAITS` (1), `TUXBOX_FENCE_STALLS` (1), `TUXBOX_QUEUE_WAITS` (1).
+- `TUXBOX_WAIT_STACKS_MS` (1500), `TUXBOX_WAIT_STACKS` (3).
+- `TUXBOX_NULL_VA_TRACE` (1), `TUXBOX_PLANE_TRACE` (1), `TUXBOX_SAME_MEMORY_WATCH` (1).
+- `TUXBOX_SIZE_WATCH`, `TUXBOX_TRACE_ALLOCATION_BYTES` (off): size-query traces.
+- `TUXBOX_TRANSIENT_WATCH` (0), `TUXBOX_TRANSIENT_WATCH_MS` (50), `TUXBOX_TRANSIENT_POOL_RVA` (0x75df1b8).
+- `TUXBOX_GPU_SEGMENTS` (0): GPU timing of title submit segments.
+- `TUXBOX_LIST_RING` (0), `TUXBOX_BARRIER_PROBE` (0), `TUXBOX_BARRIER_RING` (1).
+- `TUXBOX_FALLBACK` (off): `flat`; `TUXBOX_NULL_SHADERS`, `TUXBOX_NULL_BISECT` (off): swap shaders out to find a bad one.
+- `TUXBOX_BREAK_RVAS` (off): log registers at these RVAs.
+- `TUXBOX_DRED` (0).
+- `TUXBOX_D3D12_SDK` (off): Agility SDK dir for a debug device; `TUXBOX_D3D12_SDK_GLOBAL` (0), `TUXBOX_D3D12_SDK_VERSION` (from D3D12Core.dll).
+
+### xshader (`TB_*`)
+
+Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is set from the device's wave range.
+
+- `TB_COMPACT` (1): compact dispatch for repeated blocks.
+- `TB_RAW_IDXEN` (1), `TB_RAW_IDXEN_LOOSE` (0), `TB_IDXEN_STRIDE_GUARD` (0).
+- `TB_HEAP_LOAD_STRICT` (0), `TB_HEAP_CLAMP_ALL` (1), `TB_PIXEL_HEAP_ROOTED` (1).
+- `TB_SOPP_26_NOP` (0), `TB_DIV_OPS` (1), `TB_IMAGE_ATOMIC_EXT` (1), `TB_CUBE_UAV` (1), `TB_PK_INT16_MORE` (1), `TB_SAD` (1), `TB_CVT_F32_F64` (1), `TB_VOP1_F64` (1), `TB_BITREPLICATE` (1), `TB_DS_CMPST` (1).
+- `TB_FF1_FMT69` (1), `TB_WIDE_ATOMIC_ANY_PS` (1), `TB_CVT_F16_OMOD` (1), `TB_MAD_UNFUSED` (1), `TB_MAD_FTZ` (1), `TB_TYPED_HALF4` (1), `TB_TYPED_UNALIGNED` (1), `TB_TYPED_NAN_BITS` (1), `TB_NORM_EXACT_ENDS` (1), `TB_INT32_IMM` (1).
+- `TB_WRITELANE_CARRY` (1), `TB_MIMG_ADDR_LIVE` (1), `TB_READLANE_VECTOR` (1), `TB_GROUP_READ_SGPR` (1), `TB_DPP_QUAD_ANY_WAVE` (1), `TB_PARTIAL_WAVE` (1), `TB_EXEC_HALF_CONST` (1).
+- `TB_MASK_HIGH_SHADOW` (1), `TB_MASK_CFG` (1), `TB_MASK_UNSPILL` (1), `TB_MASK_BOTH_FORMS` (1), `TB_MIXED_MASK` (1), `TB_BCNT_EXEC_WAVE` (1), `TB_FF1_EXEC_WAVE` (1), `TB_LANE_ELECTION` (1), `TB_INLINE_SAMPLER_WORDS` (1).
+- `TB_SCC_VOTE` (1), `TB_VCC_VOTE_EXEC` (0).
+- `TB_RESINFO_DIMS` (1), `TB_RESINFO_CUBE` (1), `TB_PCK_SNORM` (1), `TB_F64_ARITH` (1), `TB_CVT_SATURATE` (1), `TB_DERIV_STRICT` (0).
+- `TB_CMP_LEVEL_APPROX` (0), `TB_MEMTIME_ZERO` (0), `TB_DESC_AS_DATA` (0).
+- `TB_EXP_VM_LAST` (1), `TB_EXP_VM_START` (0).
+- `TB_FOLD_NULL_BRANCH` (1), `TB_SETPC_ADDC` (1), `TB_INLINE_EXIT_STUBS` (1), `TB_ENDPGM_BRANCH_EXIT` (1), `TB_SKIP_FLAG_BITS` (1), `TB_MOVE_BLOCKS` (1), `TB_STRUCTURED_BOUND` (1).
+- `TB_EXEC_GROUP` (1), `TB_EXEC_GROUP_COMPUTE` (1), `TB_EXEC_GROUP_HELPERS` (1).
+- `TB_LOOP_CAP` (4096): `stage` picks 128/256/4096, or a number; `TB_LOOP_PER_COUNTER` (1).
+- `TB_FENCE_GUARDED` (1), `TB_FENCE_CAPPED` (0).
+- `TB_SPLIT_WAVE64` (1), `TB_WAVE64_FOLD` (1), `TB_WAVE64_SPIN` (1).
+- `TB_MESH_DROP_UNREAD` (1).
+
 ## Credits
 
 Neonbridge stands on other people's work. GPL-3.0 and MIT code is used with credit, and so is code from the GPL-2.0-only projects xcl and rebox. "as" names our commit. Thank you to:
