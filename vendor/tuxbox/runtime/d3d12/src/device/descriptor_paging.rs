@@ -139,13 +139,12 @@ impl Arena {
             };
             (visible, limit, None)
         } else {
-            // n+1: one slot past the tables, or the last one when the host
-            // refuses a bigger heap (VIctory host.rs:510-590 probes 1,000,001).
-            let wider = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: limit.saturating_add(1), ..gpu };
-            let (visible, usable) = match unsafe { device.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&wider) } {
-                Ok(heap) if limit < u32::MAX => (heap, limit),
-                _ => (unsafe { device.CreateDescriptorHeap(&gpu)? }, limit.saturating_sub(1)),
-            };
+            // The heap's last slot is the null one; tables use the rest. The
+            // heap keeps `limit` descriptors: its size is read back as the
+            // guest heap's (the descriptors.rs stride, compute_bindings, the
+            // view-format table), and a limit+1 heap broke those (ad6ecbe).
+            let visible: ID3D12DescriptorHeap = unsafe { device.CreateDescriptorHeap(&gpu)? };
+            let usable = limit.saturating_sub(1);
             let start = unsafe { visible.GetCPUDescriptorHandleForHeapStart() };
             let stride = unsafe { device.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
             super::null_kinds::NullKind::DEFAULT.write(device, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + usable as usize * stride });
