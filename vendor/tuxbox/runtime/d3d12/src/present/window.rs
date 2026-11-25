@@ -164,8 +164,12 @@ fn title_window() -> HWND {
                 && GetWindow(hwnd, GW_OWNER).is_err()
                 && GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as isize == 0
                 && GetClientRect(hwnd, &mut bounds).is_ok()
+                && (!palmetto_rule() || palmetto_usable(hwnd, &bounds))
             {
-                let area = i64::from(bounds.right) * i64::from(bounds.bottom);
+                let mut area = i64::from(bounds.right) * i64::from(bounds.bottom);
+                if palmetto_rule() && class_of(hwnd).eq_ignore_ascii_case("sgaWindowClass") {
+                    area = i64::MAX;
+                }
                 let best = &mut *(parameter.0 as *mut (HWND, i64));
                 if area > best.1 {
                     *best = (hwnd, area);
@@ -187,6 +191,31 @@ fn title_window() -> HWND {
         }
     }
     best.0
+}
+
+/// palmetto 87b3da3 (credit to its authors) adoption rule: besides visible,
+/// unowned and not a tool window, the window must not be minimised, have a
+/// non-empty client area, not be an IME window ("IME" in its class) and not
+/// be one of ours (TuxBox.* classes, the overlay); the title's own class
+/// (sgaWindowClass) wins over a larger window. TUXBOX_ADOPT_RULE=0 keeps the
+/// largest visible window only.
+fn palmetto_rule() -> bool {
+    crate::env_toggle!("TUXBOX_ADOPT_RULE") != Some("0")
+}
+
+fn class_of(hwnd: HWND) -> String {
+    let mut name = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut name) };
+    String::from_utf16_lossy(&name[..n.max(0) as usize])
+}
+
+fn palmetto_usable(hwnd: HWND, client: &RECT) -> bool {
+    let class = class_of(hwnd);
+    !unsafe { IsIconic(hwnd) }.as_bool()
+        && client.right > client.left
+        && client.bottom > client.top
+        && !class.to_ascii_uppercase().contains("IME")
+        && !class.starts_with("TuxBox")
 }
 
 /// A title whose window is not shown yet at its first present (xmem shows it
