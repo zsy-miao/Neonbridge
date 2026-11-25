@@ -581,8 +581,8 @@ impl Recording {
         let n = N.fetch_add(1, Ordering::Relaxed) + 1;
         if n <= 8 || n.is_power_of_two() {
             crate::diagnostics::log_line(format_args!(
-                "a dispatch met its compute pipeline still being made: {} ({n} so far; TUXBOX_DISPATCH_PENDING_WAIT=0 drops at once)",
-                if !waited { "not waited (failed, not lazy or no wait left), dropped" } else if device::compute::current(host).2 { "waited, still not made, dropped" } else { "waited, made, recorded" }));
+                "a dispatch met its compute pipeline still being made: {}, key {:?} ({n} so far; TUXBOX_DISPATCH_PENDING_WAIT=0 drops at once)",
+                if !waited { "not waited (failed, not lazy or no wait left), dropped" } else if device::compute::current(host).2 { "waited, still not made, dropped" } else { "waited, made, recorded" }, host.state.key));
         }
         waited
     }
