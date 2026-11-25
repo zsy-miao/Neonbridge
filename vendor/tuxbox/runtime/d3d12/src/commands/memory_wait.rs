@@ -68,7 +68,8 @@ impl Prefix {
 }
 
 struct Word {
-    resource: ID3D12Resource,
+    /// None: the word is read at the title's own address (`title_word`).
+    resource: Option<ID3D12Resource>,
     mapped: usize,
     /// 64-bit word (slot 74) or 32-bit word (slot 73, Wait32X).
     wide: bool,
@@ -76,7 +77,9 @@ struct Word {
 
 impl Drop for Word {
     fn drop(&mut self) {
-        unsafe { self.resource.Unmap(0, Some(&D3D12_RANGE::default())) };
+        if let Some(resource) = &self.resource {
+            unsafe { resource.Unmap(0, Some(&D3D12_RANGE::default())) };
+        }
     }
 }
 
@@ -86,6 +89,39 @@ impl Word {
         if address == 0 || !address.is_multiple_of(bytes as u64) {
             return Err(E_INVALIDARG.into());
         }
+        Self::map_resource(list, address, wide).or_else(|e| Self::title_word(address, wide).ok_or(e))
+    }
+
+    /// test172: 9 waits on 0x20d382e0000 were dropped with E_INVALIDARG. The
+    /// word sits in title memory that does not import as a heap, so the
+    /// buffer found for it is a shadow (a device buffer the CPU cannot Map).
+    /// The wait only ever reads the word on the CPU, and the title's own
+    /// address holds it (the shadow is a copy of it), so a committed,
+    /// readable title word is read there. TUXBOX_WAIT_TITLE_WORD=0 drops the
+    /// wait again.
+    fn title_word(address: u64, wide: bool) -> Option<Self> {
+        use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
+        if crate::env_toggle!("TUXBOX_WAIT_TITLE_WORD") == Some("0") {
+            return None;
+        }
+        let mut r = MEMORY_BASIC_INFORMATION::default();
+        let found = unsafe { VirtualQuery(Some(address as _), &mut r, size_of_val(&r)) } != 0;
+        // A reserved page of a lazy title view reads as zero (load), so it serves too.
+        let lazy = found && crate::device::view_state(address as usize, word_bytes(wide)).covered();
+        if !lazy && (!found || r.State != MEM_COMMIT || r.Protect.0 & (PAGE_NOACCESS.0 | PAGE_GUARD.0) != 0 || r.Protect.0 == 0) {
+            return None;
+        }
+        static USED: AtomicU64 = AtomicU64::new(0);
+        let n = USED.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "GPU memory wait {address:#x}: its buffer cannot be mapped, the word is read at the title address ({n} so far; TUXBOX_WAIT_TITLE_WORD=0 drops it)"));
+        }
+        Some(Self { resource: None, mapped: address as usize, wide })
+    }
+
+    fn map_resource(list: &List, address: u64, wide: bool) -> Result<Self> {
+        let bytes = word_bytes(wide);
         let (buffer, gpu) =
             unsafe { device::command_buffer_address(parent(&list.parent), address, bytes as u64)? };
         let resource = buffer.ok_or(E_NOTIMPL)?;
@@ -103,7 +139,7 @@ impl Word {
             return Err(E_FAIL.into());
         }
         Ok(Self {
-            resource,
+            resource: Some(resource),
             mapped: base.addr() + offset,
             wide,
         })
