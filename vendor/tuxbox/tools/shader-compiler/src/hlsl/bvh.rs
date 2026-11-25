@@ -1,8 +1,8 @@
 //! image_bvh_intersect_ray node test (five-star-recomp rdna_bvh.hlsli, GPL-3.0, credit).
-//! TB_BVH_RAW=1 (opt-in) uses it for BVH T#s that live in a heap slot.
+//! On by default (TB_BVH_RAW=0 off): uses it for BVH T#s that live in a heap slot.
 
 pub(super) fn on() -> bool {
-    std::env::var("TB_BVH_RAW").is_ok_and(|v| v.trim() == "1")
+    std::env::var("TB_BVH_RAW").map_or(true, |v| v.trim() != "0")
 }
 
 /// Reads behind MemLoad: the heap slot's raw view (tb_bvh_root = ~0u) and the

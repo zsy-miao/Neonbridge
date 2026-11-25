@@ -330,18 +330,18 @@ fn loop_cap(stage: Stage) -> u32 {
 /// (static slots, buffer atomics, global/flat stores) leaves the whole
 /// shader unmarked: it declares neither binding (the mark code sits under
 /// `#ifdef TB_VIEW_MARKS`), so the runtime keeps its whole write-back.
-/// Opt-in with TB_VIEW_MARKS=1.
+/// On by default; TB_VIEW_MARKS=0 turns it off.
 fn view_marks_on() -> bool {
-    std::env::var("TB_VIEW_MARKS").is_ok_and(|v| v.trim() == "1")
+    std::env::var("TB_VIEW_MARKS").map_or(true, |v| v.trim() != "0")
 }
 
 /// SetSampleMaskX's quad mask (d3d12 ccafab1, device/quad_mask.rs): a pixel
 /// shader declares `tb_quad_mask` (b0, space32766, the mask's low and high
 /// words) and discards a pixel whose 16-bit lane, p = ((y & 1) << 1) | (x & 1),
-/// is 0. Opt-in with TB_QUAD_MASK=1: the discard costs every pixel shader
+/// is 0. On by default (TB_QUAD_MASK=0 off): the discard costs every pixel shader
 /// its early depth test.
 fn quad_mask_on() -> bool {
-    std::env::var("TB_QUAD_MASK").is_ok_and(|v| v.trim() == "1")
+    std::env::var("TB_QUAD_MASK").map_or(true, |v| v.trim() != "0")
 }
 
 /// TB_LOOP_PER_COUNTER=0 restores the one shared, never-reset tb_guard that

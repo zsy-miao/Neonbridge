@@ -20,12 +20,12 @@
 //! xcl solves the liveness globally per basic block (7bea019); this pass looks only at the
 //! straight-line code after the compare and calls the shadow live at any control-flow edge,
 //! which can only keep more exchanges than xcl, never fewer.
-//! TB_WAVE64_MASK_LIVENESS=1 enables it (opt-in).
+//! On by default; TB_WAVE64_MASK_LIVENESS=0 turns it off.
 
 use super::{reads_sgpr, Enc, Insn, Opnd};
 
 pub(super) fn on() -> bool {
-    std::env::var("TB_WAVE64_MASK_LIVENESS").is_ok_and(|v| v.trim() == "1")
+    std::env::var("TB_WAVE64_MASK_LIVENESS").map_or(true, |v| v.trim() != "0")
 }
 
 fn per_lane_reader(m: &str) -> bool {
