@@ -56,7 +56,7 @@ impl Worker {
         if let Err(error) = self.sender.send(job) {
             let job = error.0;
             if unsafe { job.ready.GetCompletedValue() } < tick {
-                std::mem::forget(job);
+                super::writeback::park(job.readback, &job.ready, job.tick);
             }
             return Err(E_FAIL.into());
         }

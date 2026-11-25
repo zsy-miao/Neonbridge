@@ -46,6 +46,43 @@ impl Drop for Readback {
     }
 }
 
+/// Readbacks whose GPU work was never proven done (a failed Signal, a lost
+/// publication worker). They were mem::forget-ed, leaking the READBACK buffer,
+/// its list and textures, and their IN_FLIGHT bytes for good; now each is
+/// parked with its fence and released once the fence passes its tick.
+/// TUXBOX_WRITEBACK_PARK=0 forgets them as before.
+static PARKED: std::sync::Mutex<Vec<(Readback, ID3D12Fence, u64)>> = std::sync::Mutex::new(Vec::new());
+
+pub(super) fn park(readback: Readback, fence: &ID3D12Fence, tick: u64) {
+    if crate::env_toggle!("TUXBOX_WRITEBACK_PARK") == Some("0") {
+        std::mem::forget(readback);
+        return;
+    }
+    PARKED.lock().unwrap_or_else(|e| e.into_inner()).push((readback, fence.clone(), tick));
+}
+
+fn reap() {
+    let done: Vec<_> = {
+        let mut parked = PARKED.lock().unwrap_or_else(|e| e.into_inner());
+        if parked.is_empty() { return; }
+        let (done, kept) = std::mem::take(&mut *parked).into_iter().partition(|(_, f, t)| unsafe { f.GetCompletedValue() } >= *t);
+        *parked = kept;
+        done
+    };
+    drop(done);
+}
+
+/// IN_FLIGHT bytes taken for a batch before its buffer exists, so two queues
+/// recording at once no longer both pass the budget check and add after
+/// (test149: 868 MiB of readback against the 512 MiB cap). Given back on
+/// drop unless kept. TUXBOX_WRITEBACK_RESERVE_EARLY=0 adds after creation.
+struct Reserve(u64);
+impl Drop for Reserve {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(self.0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl Readback {
     pub(super) fn record(
         device: &ID3D12Device,
@@ -63,6 +100,8 @@ impl Readback {
         let cap = *MB.get_or_init(|| crate::env_toggle!("TUXBOX_WRITEBACK_MAX_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(256)) << 20;
         static BUDGET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
         let budget = *BUDGET.get_or_init(|| crate::env_toggle!("TUXBOX_WRITEBACK_INFLIGHT_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(512)) << 20;
+        reap();
+        let early = crate::env_toggle!("TUXBOX_WRITEBACK_RESERVE_EARLY") != Some("0");
         let in_flight = IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed);
         let (mut over, mut over_bytes) = (0usize, 0u64);
         for texture in writers {
@@ -104,6 +143,10 @@ impl Readback {
                     writers.len(), over_bytes >> 20, in_flight >> 20, total >> 20));
             }
         }
+        let reserve = early.then(|| {
+            IN_FLIGHT.fetch_add(total, std::sync::atomic::Ordering::Relaxed);
+            Reserve(total)
+        });
         let size = usize::try_from(total)
             .ok()
             .filter(|&n| n <= isize::MAX as usize)
@@ -163,7 +206,10 @@ impl Readback {
             }
         }
         unsafe { list.Close()? };
-        IN_FLIGHT.fetch_add(total, std::sync::atomic::Ordering::Relaxed);
+        match reserve {
+            Some(reserve) => std::mem::forget(reserve),
+            None => { IN_FLIGHT.fetch_add(total, std::sync::atomic::Ordering::Relaxed); }
+        }
         Ok(Self {
             reserved: total,
             list: list.cast()?,

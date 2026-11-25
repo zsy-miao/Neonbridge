@@ -1685,7 +1685,7 @@ pub(crate) unsafe fn submit(
             if unsafe { queue.Signal(reader, tick) }.is_ok() {
                 worker.enqueue(readback, reader, tick)?;
             } else if unsafe { device.native.GetDeviceRemovedReason() }.is_ok() {
-                std::mem::forget(readback);
+                writeback::park(readback, reader, tick);
             }
         }
         return Err(error);
