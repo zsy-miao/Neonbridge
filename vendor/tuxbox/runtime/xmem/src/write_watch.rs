@@ -99,6 +99,126 @@ impl Drop for Stat {
     }
 }
 
+/// ztrx victory-gpu watch.rs (decision 0007 "Copies of title memory",
+/// Rust, copied in its design with credit to its authors): one journal of
+/// each 64 KiB block's last write, numbered by the asking that found it, and
+/// per reader and range the asking it last read through. A reader is told
+/// the blocks written after that; no page moves between per-side sets, the
+/// kernel's answer buffer is reused, and the lock is held only for map
+/// steps. test169: 14 runtime queries a frame cost 29 ms (ztrx: 30-70 us a
+/// kernel call). Blocks are reported as their 4 KiB pages inside the range
+/// (a block written anywhere counts whole, which only over-reports).
+/// TUXBOX_WATCH_JOURNAL=0 keeps the owed sets.
+fn journal_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_WATCH_JOURNAL").map_or(true, |v| v.trim() != "0"))
+}
+
+const BLOCK: usize = 64 << 10;
+
+struct Journal {
+    asked: u64,
+    written: std::collections::BTreeMap<usize, u64>,
+    /// (reader, block) -> the asking through which it last read in that
+    /// block and which of its sixteen 4 KiB pages it has read since the
+    /// block's last write (a range may end inside a block).
+    seen: std::collections::BTreeMap<(usize, usize), (u64, u16)>,
+    found: Vec<usize>,
+}
+
+static JOURNAL: Mutex<Journal> = Mutex::new(Journal { asked: 0, written: std::collections::BTreeMap::new(), seen: std::collections::BTreeMap::new(), found: Vec::new() });
+
+impl Journal {
+    /// Asks the kernel (resetting) about [base, base+bytes) and journals the
+    /// blocks it found written under a new asking number.
+    unsafe fn ask(&mut self, base: *const c_void, bytes: usize) -> Result<u64, u32> {
+        let want = bytes.div_ceil(0x1000).max(1);
+        self.found.clear();
+        self.found.reserve(want);
+        let mut count = want;
+        let mut gran = 0u32;
+        let failed = unsafe { GetWriteWatch(RESET, base, bytes, self.found.as_mut_ptr().cast(), &mut count, &mut gran) };
+        if failed != 0 {
+            return Err(failed);
+        }
+        // SAFETY: the kernel wrote `count` (<= want) entries.
+        unsafe { self.found.set_len(count.min(want)) };
+        self.asked += 1;
+        let n = self.asked;
+        let mut last = usize::MAX;
+        for &p in &self.found {
+            let b = p / BLOCK;
+            if b != last {
+                self.written.insert(b, n);
+                last = b;
+            }
+        }
+        Ok(n)
+    }
+}
+
+/// Pages of block `b` inside [start, end) as a 16-bit mask.
+fn page_mask(b: usize, start: usize, end: usize) -> u16 {
+    let lo = (start.max(b * BLOCK) - b * BLOCK) / 0x1000;
+    let hi = (end.min((b + 1) * BLOCK) - b * BLOCK).div_ceil(0x1000);
+    (lo..hi).fold(0u16, |m, i| m | 1 << i)
+}
+
+/// Records that a reader read `pages` of a block last written at `w`, at asking `n`.
+fn mark(seen: &mut std::collections::BTreeMap<(usize, usize), (u64, u16)>, key: (usize, usize), w: u64, n: u64, pages: u16) {
+    let e = seen.entry(key).or_insert((0, 0));
+    let kept = if w > e.0 { 0 } else { e.1 };
+    *e = (n, kept | pages);
+}
+
+unsafe fn journal_query(me: usize, reset: bool, base: *const c_void, bytes: usize, out: *mut *mut c_void, count: *mut usize, granularity: *mut u32) -> u32 {
+    let t0 = std::time::Instant::now();
+    let mut j = lock(&JOURNAL);
+    let t1 = std::time::Instant::now();
+    let n = match unsafe { j.ask(base, bytes) } {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    let t2 = std::time::Instant::now();
+    let _stat = Stat { side: me, bytes, os_pages: j.found.len(), times: [t0, t1, t2] };
+    let (start, end) = (base as usize, (base as usize).saturating_add(bytes));
+    let capacity = unsafe { count.read() };
+    let mut reported = 0usize;
+    let mut read = Vec::new();
+    let Journal { written, seen, .. } = &mut *j;
+    'blocks: for (&b, &w) in written.range(start / BLOCK..=(end.max(1) - 1) / BLOCK) {
+        let (n_seen, mask) = seen.get(&(me, b)).copied().unwrap_or((0, 0));
+        let fresh = if w > n_seen { 0 } else { mask };
+        let from = (b * BLOCK).max(start & !0xfff);
+        let to = ((b + 1) * BLOCK).min(end);
+        let mut p = from;
+        let mut got = 0u16;
+        while p < to {
+            let bit = 1u16 << ((p - b * BLOCK) / 0x1000);
+            if fresh & bit == 0 {
+                if reported == capacity {
+                    break 'blocks;
+                }
+                unsafe { out.add(reported).write(p as *mut c_void) };
+                reported += 1;
+            }
+            got |= bit;
+            p += 0x1000;
+        }
+        read.push((b, w, got));
+    }
+    if reset {
+        for (b, w, got) in read {
+            mark(seen, (me, b), w, n, got);
+        }
+    }
+    unsafe {
+        count.write(reported);
+        granularity.write(0x1000);
+    }
+    0
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -123,6 +243,9 @@ unsafe fn query(
     let (me, other) = if std::ptr::eq(mine, &OWED_TITLE) { (0, 1) } else { (1, 0) };
     if count.is_null() || out.is_null() || granularity.is_null() {
         return unsafe { GetWriteWatch(if reset { RESET } else { 0 }, base, bytes, out, count, granularity) };
+    }
+    if journal_on() {
+        return unsafe { journal_query(me, reset, base, bytes, out, count, granularity) };
     }
     let t0 = std::time::Instant::now();
     let _one = lock(&QUERY);
@@ -167,6 +290,21 @@ pub(crate) unsafe extern "system" fn title_get(flags: u32, base: *const c_void, 
 
 /// The title's ResetWriteWatch import: pages it drops stay owed to the runtime.
 pub(crate) unsafe extern "system" fn title_reset(base: *const c_void, bytes: usize) -> u32 {
+    if journal_on() {
+        let mut j = lock(&JOURNAL);
+        return match unsafe { j.ask(base, bytes) } {
+            Ok(n) => {
+                let (start, end) = (base as usize, (base as usize).saturating_add(bytes));
+                let blocks: Vec<usize> = j.written.range(start / BLOCK..=(end.max(1) - 1) / BLOCK).map(|(&b, _)| b).collect();
+                for b in blocks {
+                    let w = j.written[&b];
+                    mark(&mut j.seen, (0, b), w, n, page_mask(b, start, end));
+                }
+                0
+            }
+            Err(_) => unsafe { ResetWriteWatch(base, bytes) },
+        };
+    }
     let _one = lock(&QUERY);
     let mut gran = 0;
     match unsafe { os_pages(true, base, bytes, &mut gran) } {
