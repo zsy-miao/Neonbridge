@@ -80,6 +80,16 @@ impl MeshLayout {
                     if typed.next().is_some() { return None; }
                     (found, 1)
                 }
+                // An image T# is 8 dwords (a buffer V# is 4): a typed SRV
+                // or UAV texture at this register (test142's mesh shader
+                // dea0795e, record [0x300, 0x10, 154, 4, 0x10908]).
+                (0x300 | 0x303, 8, _) => {
+                    let image: &[u32] = if class == 0x300 { &[3] } else { &[6] };
+                    let mut typed = resources.iter().filter(|r| image.contains(&r[0]) && r[2] == register && r[3] == register);
+                    let found = typed.next()?[0];
+                    if typed.next().is_some() { return None; }
+                    (found, 1)
+                }
                 (0x100, 4, 1) => (4, 2),
                 (2, 4, 0) => {
                     let RootParamKind::Constants { num32, .. } = root_param.kind else {
