@@ -249,6 +249,9 @@ fn commit_breakdown() -> String {
     const IMAGE: u32 = 0x100_0000;
     let mut by_kind = [0u64; 3];
     let mut by_base: std::collections::HashMap<(u64, u32), u64> = std::collections::HashMap::new();
+    // Host private bytes by protection class: write-combined or uncached
+    // (driver-mapped GPU memory), plain read-write (CPU heaps), other.
+    let mut host_protect = [0u64; 3];
     let mut address = 0u64;
     let mut regions = 0u32;
     // Bounded: a walk of millions of regions under memory pressure must not
@@ -271,6 +274,10 @@ fn commit_breakdown() -> String {
             if kind != 2 {
                 *by_base.entry((m.AllocationBase as u64, m.Type.0)).or_default() += size;
             }
+            if kind == 0 && m.AllocationBase as u64 >= 0x10_0000_0000 {
+                let p = m.Protect.0;
+                host_protect[if p & 0x600 != 0 { 0 } else if p & 0xff == 0x04 { 1 } else { 2 }] += size;
+            }
         }
         address = (m.BaseAddress as u64).saturating_add(size.max(0x1000));
     }
@@ -291,9 +298,18 @@ fn commit_breakdown() -> String {
     }
     let names = ["title private", "title mapped", "host private", "host mapped"];
     let split: Vec<String> = split.iter().zip(names).map(|((n, b), name)| format!("{name} {n} ({} MiB)", mib(*b))).collect();
+    // test149: host private grew 1.8 to 11.9 GiB with no owner named. Its
+    // protection split and largest allocations tell driver-mapped GPU memory
+    // from CPU heaps (storage audit).
+    let mut host: Vec<u64> = largest.iter().filter(|((b, k), _)| *b >= 0x10_0000_0000 && *k != MAPPED).map(|(_, s)| *s).collect();
+    host.sort_unstable_by(|a, b| b.cmp(a));
+    let sizes: Vec<String> = host.iter().take(4).map(|s| format!("{} MiB", mib(*s))).collect();
+    let buckets = host.iter().fold([0u64; 3], |mut c, s| { c[if *s >= 64 << 20 { 0 } else if *s >= 1 << 20 { 1 } else { 2 }] += 1; c });
+    let split = format!("{}; host private by protection: write-combined/uncached {} MiB, read-write {} MiB, other {} MiB; host private allocations >=64 MiB {}, 1-64 MiB {}, <1 MiB {}, largest {}",
+        split.join(", "), mib(host_protect[0]), mib(host_protect[1]), mib(host_protect[2]), buckets[0], buckets[1], buckets[2], sizes.join("/"));
     let partial = if address < 0x7fff_ffff_0000 { format!(" (partial: stopped at {address:#x})") } else { String::new() };
     format!("commit: private {} MiB, mapped {} MiB, image {} MiB in {regions} regions, walked in {} ms{partial}; largest allocations: {}; the other {} allocations {} MiB: {} (TUXBOX_COMMIT_BREAKDOWN=0 off)",
-        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), started.elapsed().as_millis(), top.join(", "), small.0, mib(small.1), split.join(", "))
+        mib(by_kind[0]), mib(by_kind[1]), mib(by_kind[2]), started.elapsed().as_millis(), top.join(", "), small.0, mib(small.1), split)
 }
 
 #[cfg(test)]
