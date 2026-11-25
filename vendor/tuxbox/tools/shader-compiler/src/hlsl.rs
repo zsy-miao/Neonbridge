@@ -1564,6 +1564,125 @@ struct MaskState {
     parked: BTreeSet<(u8, i64)>,
 }
 
+/// Lane-parked scalars, from fxceless ir.rs `unspill` (309-380, GPL-3.0):
+/// a VGPR is a park area only when every use of it is a `v_writelane_b32 vN,
+/// sX, K` / `v_readlane_b32 sX, vN, K` with a constant lane (any other use
+/// drops it), and two neighbouring lanes are a pair (a parked lane mask) only
+/// when each lower save is followed in its block by the upper save with no
+/// write of either register or other access to the lanes between, and each
+/// lower restore by the upper restore with nothing between reading or writing
+/// the upper register, writing the lower, or saving into the lanes. Wave64
+/// only. Any other slot comes back as a scalar. TB_MASK_UNSPILL=0 restores
+/// the f112928 tracking (every slot written from a mask half, CFG-wide).
+#[derive(Default)]
+struct Parking {
+    /// Upper save of a pair -> (VGPR, lower lane, lower source SGPR).
+    upper_save: BTreeMap<usize, (u8, i64, u8)>,
+    /// Lower restore of a pair -> (VGPR, lower lane).
+    lower_restore: BTreeMap<usize, (u8, i64)>,
+    /// Upper restore of a pair (moved with the lower).
+    upper_restore: BTreeSet<usize>,
+}
+
+fn unspill_on() -> bool {
+    std::env::var("TB_MASK_UNSPILL").map_or(true, |v| v.trim() != "0")
+}
+
+/// SGPR numbers `ins` writes, conservatively wide.
+fn sgpr_writes(ins: &Insn) -> Vec<u8> {
+    let m = ins.mnemonic.as_str();
+    let width: u8 = if let Some(x) = m.rfind('x').and_then(|p| m[p + 1..].parse::<u8>().ok()) { x }
+        else if m.ends_with("64") || m.contains("_b64") || m.starts_with("v_") { 2 } else { 1 };
+    ins.dst.iter().filter_map(|o| if let Opnd::Sgpr(k) = *o { Some(k) } else { None })
+        .flat_map(|k| (0..width).map(move |w| k.saturating_add(w))).collect()
+}
+
+fn parking(insns: &[Insn], wave64: bool) -> Parking {
+    let mut out = Parking::default();
+    if !wave64 || !unspill_on() || insns.is_empty() {
+        return out;
+    }
+    let park = |ins: &Insn| -> Option<(bool, u8, u8, i64)> {
+        match (ins.mnemonic.as_str(), ins.dst.first(), ins.src.first(), ins.src.get(1)) {
+            ("v_writelane_b32", Some(&Opnd::Vgpr(v)), Some(&Opnd::Sgpr(c)), Some(&Opnd::ConstInt(l))) if c < 105 => Some((true, v, c, l)),
+            ("v_readlane_b32", Some(&Opnd::Sgpr(c)), Some(&Opnd::Vgpr(v)), Some(&Opnd::ConstInt(l))) if c < 105 => Some((false, v, c, l)),
+            _ => None,
+        }
+    };
+    let mut other = [false; 256];
+    let mut parks: Vec<Option<(bool, u8, u8, i64)>> = Vec::with_capacity(insns.len());
+    for ins in insns {
+        let p = park(ins);
+        if p.is_none() {
+            let alu = matches!(ins.enc, Enc::Vop1 | Enc::Vop2 | Enc::Vopc | Enc::Vop3);
+            for o in ins.src.iter().chain(ins.dst.iter()) {
+                if let Opnd::Vgpr(r) = *o {
+                    // A memory or 64-bit operand may name a run of VGPRs from r.
+                    for k in 0..if alu { 2usize } else { 8 } {
+                        if let Some(x) = other.get_mut(usize::from(r) + k) { *x = true; }
+                    }
+                }
+            }
+        }
+        parks.push(p);
+    }
+    for p in parks.iter_mut() {
+        if p.is_some_and(|p| other[usize::from(p.1)]) { *p = None; }
+    }
+    let targets = branch_targets(insns);
+    let leader = |j: usize| {
+        let prev = insns[j - 1].mnemonic.as_str();
+        targets.contains(&(insns[j].offset as i64)) || prev == "s_branch" || prev.starts_with("s_cbranch_") || prev == "s_endpgm"
+    };
+    let written: Vec<Vec<u8>> = insns.iter().map(sgpr_writes).collect();
+    let partner = |i: usize| -> Option<usize> {
+        let (save, reg, code, lane) = parks[i]?;
+        let mut j = i + 1;
+        while j < insns.len() && !leader(j) {
+            if parks[j] == Some((save, reg, code + 1, lane + 1)) {
+                return Some(j);
+            }
+            let lanes = parks[j].is_some_and(|p| (save || p.0) && p.1 == reg && (p.3 == lane || p.3 == lane + 1));
+            if lanes || written[j].contains(&code) || written[j].contains(&(code + 1))
+                || (!save && reads_sgpr(&insns[j], code + 1))
+            {
+                return None;
+            }
+            j += 1;
+        }
+        None
+    };
+    let mut slots: Vec<(u8, i64)> = parks.iter().flatten().map(|p| (p.1, p.3)).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    let mut pairs: Vec<(u8, i64)> = Vec::new();
+    for &(reg, lane) in &slots {
+        if pairs.iter().any(|&(r, l)| r == reg && l + 1 == lane) || !slots.contains(&(reg, lane + 1)) {
+            continue;
+        }
+        let lower: Vec<usize> = (0..insns.len()).filter(|&i| parks[i].is_some_and(|p| (p.1, p.3) == (reg, lane))).collect();
+        let upper = parks.iter().flatten().filter(|p| (p.1, p.3) == (reg, lane + 1)).count();
+        let partners: Vec<Option<usize>> = lower.iter().map(|&i| partner(i)).collect();
+        let mut distinct: Vec<usize> = partners.iter().flatten().copied().collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if partners.iter().all(Option::is_some) && distinct.len() == lower.len() && upper == lower.len() {
+            pairs.push((reg, lane));
+            for (&i, j) in lower.iter().zip(partners) {
+                let j = j.expect("checked");
+                let (save, _, code, _) = parks[i].expect("park");
+                if save {
+                    out.upper_save.insert(j, (reg, lane, code));
+                } else {
+                    out.lower_restore.insert(i, (reg, lane));
+                    out.upper_restore.insert(j);
+                }
+            }
+        }
+    }
+    out
+}
+
 fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
     match o {
         Opnd::ExecLo | Opnd::VccLo => true,
@@ -1572,7 +1691,7 @@ fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
     }
 }
 
-fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>, mixed: &mut BTreeMap<usize, usize>, scc: &mut BTreeSet<usize>) {
+fn mask_step(state: &mut MaskState, park: &Parking, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>, mixed: &mut BTreeMap<usize, usize>, scc: &mut BTreeSet<usize>) {
     let MaskState { masks, half, parked } = state;
     if let Some(k) = mixed_mask::mask_position(masks, ins) { mixed.insert(i, k); }
     let is_mask = is_lane_mask;
@@ -1590,6 +1709,27 @@ fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, read
     // VIctory 90228a7). The restore is read as the s_mov_b32 the spill
     // lowering turns it into. TB_MASK_PARKED=0 turns it off.
     let parking = std::env::var("TB_MASK_PARKED").map_or(true, |v| v.trim() != "0");
+    if parking && unspill_on() && (m == "v_writelane_b32" || m == "v_readlane_b32") {
+        // fxceless ir.rs 309-380 (see Parking): only a pair of lanes saved
+        // and restored together carries a mask back.
+        if let Some(&(v, lane, code)) = park.upper_save.get(&i) {
+            if masks.contains(&code) { parked.insert((v, lane)); } else { parked.remove(&(v, lane)); }
+            return;
+        }
+        if m == "v_writelane_b32" || park.upper_restore.contains(&i) {
+            return;
+        }
+        if let Some(&(Opnd::Sgpr(d) | Opnd::Vgpr(d))) = ins.dst.first() {
+            masks.retain(|&n| !(n == d || n + 1 == d));
+            half.remove(&d);
+            if let Some(&(v, lane)) = park.lower_restore.get(&i) {
+                masks.retain(|&n| n != d + 1);
+                half.remove(&(d + 1));
+                if parked.contains(&(v, lane)) { masks.insert(d); }
+            }
+        }
+        return;
+    }
     if parking && m == "v_writelane_b32" {
         if let (Some(&Opnd::Vgpr(v)), Some(&Opnd::ConstInt(l))) = (ins.dst.first(), ins.src.get(1)) {
             let mask_half = match ins.src.first() {
@@ -1673,7 +1813,8 @@ fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, read
 /// edge (five-star-recomp b5fe3a7/48c08b8, GPL-3.0, ThatRecompDev: a register that
 /// is a mask on one path and an integer on another). A register that may be a mask
 /// on any path into a read is read as one. TB_MASK_CFG=0 follows program order.
-fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>, BTreeSet<usize>) {
+fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<usize, usize>, BTreeSet<usize>) {
+    let park = parking(insns, wave64);
     let mut mixed = BTreeMap::new();
     let mut scc = BTreeSet::new();
     let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
@@ -1682,7 +1823,7 @@ fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>, 
     if linear {
         let mut state = MaskState::default();
         for (i, ins) in insns.iter().enumerate() {
-            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
+            mask_step(&mut state, &park, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
         }
         return (reads, mixed, scc);
     }
@@ -1711,7 +1852,7 @@ fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>, 
     let mut scratch = BTreeSet::new();
     while let Some(i) = work.pop_front() {
         let mut state = before[i].clone().unwrap_or_default();
-        mask_step(&mut state, &insns[i], i, half_pairs, &mut scratch, &mut BTreeMap::new(), &mut BTreeSet::new());
+        mask_step(&mut state, &park, &insns[i], i, half_pairs, &mut scratch, &mut BTreeMap::new(), &mut BTreeSet::new());
         for s in successors(i) {
             let joined = match &before[s] {
                 None => state.clone(),
@@ -1734,7 +1875,7 @@ fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>, 
     for (i, ins) in insns.iter().enumerate() {
         if let Some(state) = &before[i] {
             let mut state = state.clone();
-            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
+            mask_step(&mut state, &park, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
         }
     }
     (reads, mixed, scc)
@@ -2272,7 +2413,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     if ex.stage == Stage::Pixel && !wave_cull && !page_waves { wave_alloc::prepare(&mut insns); }
     let scc_votes_on = !resolve_wave32 && std::env::var("TB_SCC_VOTE").map_or(true, |v| v.trim() != "0");
     let (lane_masks, mixed_masks, scc_votes) = if general_elections || (!resolve_wave32 && mixed_mask::on()) || scc_votes_on {
-        let (reads, mixed, scc) = lane_mask_reads(&insns);
+        let (reads, mixed, scc) = lane_mask_reads(&insns, !resolve_wave32);
         (if general_elections { reads } else { BTreeSet::new() },
          if !resolve_wave32 && mixed_mask::on() { mixed } else { BTreeMap::new() },
          if scc_votes_on { scc } else { BTreeSet::new() })
