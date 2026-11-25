@@ -12,6 +12,7 @@
 mod awake;
 mod ctl;
 mod dxc;
+mod hang_watch;
 mod dxil_upgrade;
 mod game_settings;
 mod picker;
@@ -66,6 +67,7 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
                (each one stalls the game for the stack walk: slow, use to chase a throw)
   --cdb FILE   extra cdb commands (breakpoints etc.) run before the game starts; implies --debug
   --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
+  --watch-hang SPEC  sample game globals every 100 ms (RVA[:size][=name],...; name* = heartbeat), log changes and 5/15/25 s stalls (five-star)
   --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
   ctl <command>  control the running game over a local pipe (neonbridge ctl help)
 Game feed (NEONBRIDGE_FEED=1): watch the game in a browser on 127.0.0.1:8788 and over
@@ -143,6 +145,8 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 debug = true;
                 trace_throws = true;
             }
+            // five-star --watch-hang: title globals sampled every 100 ms (hang_watch.rs).
+            Some("--watch-hang") => unsafe { std::env::set_var("NEONBRIDGE_WATCH_HANG", val("--watch-hang")?) },
             Some("--timeout") => timeout = Some(val("--timeout")?.to_string_lossy().parse::<f64>().map_err(|e| format!("--timeout: {e}"))?),
             Some("--summary") => return print_summary(Path::new(&val("--summary")?)),
             // The feed page and its link without a game: games started later with
@@ -1238,6 +1242,13 @@ q
             }
         })
     };
+    if let Ok(spec) = std::env::var("NEONBRIDGE_WATCH_HANG") {
+        let f = std::sync::Mutex::new(file.try_clone()?);
+        hang_watch::start(&spec, exe.file_name().unwrap_or_default().to_string_lossy().into_owned(), move |line| {
+            eprintln!("{line}");
+            let _ = writeln!(f.lock().unwrap_or_else(|e| e.into_inner()), "{line}");
+        })?;
+    }
     let a = tee(Box::new(child.stdout.take().unwrap()), file.try_clone()?);
     let b = tee(Box::new(child.stderr.take().unwrap()), file.try_clone()?);
     // --timeout: the launcher stops the run itself, so the summary below still prints
