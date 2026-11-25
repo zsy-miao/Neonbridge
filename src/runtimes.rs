@@ -192,6 +192,40 @@ fn prerequisite(root: &Path, spec: &Spec) -> Result<(), String> {
     Ok(())
 }
 
+/// For the picker: a runtime that can't run here yet, as (reason, the
+/// official download pages for what it lacks). None when its exe is built
+/// (a release, or built before) or its prerequisites are all there.
+pub fn missing(name: &str) -> Option<(String, Vec<&'static str>)> {
+    let (root, spec) = load(name).ok()?;
+    if spec.str("exe").is_some_and(|e| root.join(e).is_file()) {
+        return None;
+    }
+    let reason = prerequisite(&root, &spec).err()?;
+    let first = |k: &str| spec.list(k).and_then(|l| l.first()).cloned().unwrap_or_default();
+    let tools = [first("build"), first("launcher")];
+    let mut pages = Vec::new();
+    if tools.iter().any(|t| t == "dotnet") {
+        let major = fs::read_to_string(root.join("global.json")).ok()
+            .and_then(|j| j.split("\"version\"").nth(1).and_then(|v| v.split('"').nth(1)).and_then(|v| v.split('.').next().map(str::to_owned)));
+        pages.push(match major.as_deref() {
+            Some("8") => "https://dotnet.microsoft.com/download/dotnet/8.0",
+            Some("9") => "https://dotnet.microsoft.com/download/dotnet/9.0",
+            _ => "https://dotnet.microsoft.com/download/dotnet/10.0",
+        });
+        // Five Star's build also links the PC GDK (its toml's build step says so).
+        if fs::read_to_string(root.join("NEONBRIDGE.toml")).is_ok_and(|t| t.contains("GDK")) {
+            pages.push("https://learn.microsoft.com/gaming/gdk/");
+        }
+    }
+    if tools.iter().any(|t| matches!(t.as_str(), "python" | "python3" | "py")) {
+        pages.push("https://www.python.org/downloads/windows/");
+    }
+    if tools.iter().any(|t| t == "cargo") {
+        pages.push("https://rustup.rs/");
+    }
+    Some((reason, pages))
+}
+
 pub enum Task {
     Build,
     Run,

@@ -265,6 +265,8 @@ struct Row {
     licence: String,
     upstream: String,
     frames: Option<u64>,
+    /// A missing prerequisite: (reason, official download pages). Greyed out.
+    missing: Option<(String, Vec<&'static str>)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -275,6 +277,7 @@ enum Hit {
     Change,
     Advanced,
     Play,
+    Install,
 }
 
 struct State {
@@ -468,8 +471,9 @@ fn draw(dc: HDC, w: i32, h: i32, s: &mut State, f: &Fonts) {
         } else if s.hover == Hit::Row(i) {
             fill_rect(dc, r, ROW_HOT);
         }
-        text(dc, &row.title, rect(24, r.top + 8, LEFT - 40, r.top + 30), TEXT, f.strong, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
-        let sub = if row.name == MIX { "Each crate from a tree".to_owned() } else { row.version.clone() };
+        let grey = row.missing.is_some();
+        text(dc, &row.title, rect(24, r.top + 8, LEFT - 40, r.top + 30), if grey { FAINT } else { TEXT }, f.strong, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+        let sub = if row.name == MIX { "Each crate from a tree".to_owned() } else if grey { format!("{} \u{00B7} not installed", row.version) } else { row.version.clone() };
         text(dc, &sub, rect(24, r.top + 30, LEFT - 40, r.top + 50), SUB, f.small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
         if row.name != MIX {
             dot(dc, LEFT - 24, r.top + ROW / 2, if row.frames.is_some_and(|n| n > 0) { GREEN } else { FAINT });
@@ -505,6 +509,23 @@ fn draw(dc: HDC, w: i32, h: i32, s: &mut State, f: &Fonts) {
             text(dc, k, rect(x, y, x + 104, y + 28), SUB, f.body, DT_LEFT | DT_VCENTER);
             text(dc, v, rect(x + 112, y, w - 32, y + 28), TEXT, f.body, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
             y += 32;
+        }
+        // A missing prerequisite: why, and a button to its download pages.
+        if let Some((why, pages)) = &row.missing {
+            let why = why.strip_prefix("needs ").map_or_else(|| why.clone(), |w| format!("Needs {w}"));
+            text(dc, "Can't run", rect(x, y, x + 104, y + 28), SUB, f.body, DT_LEFT | DT_VCENTER);
+            text(dc, &why, rect(x + 112, y, w - 32, y + 28), PINK, f.body, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+            y += 36;
+            if !pages.is_empty() {
+                let label = "Install\u{2026}";
+                let b = rect(x + 112, y, x + 112 + width_of(dc, label, f.body) + 40, y + 32);
+                let hot = s.hover == Hit::Install;
+                rounded(dc, b, if hot { BUTTON_HOT } else { BUTTON }, if hot { CYAN } else { BUTTON }, 6, BACKGROUND);
+                text(dc, label, b, TEXT, f.body, DT_CENTER | DT_VCENTER);
+                s.targets.push((b, Hit::Install));
+                text(dc, "Opens the official download page in your browser", rect(b.right + 16, y, w - 32, y + 32), SUB, f.small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+                y += 40;
+            }
         }
         y += 16;
         fill_rect(dc, rect(x, y, w - 32, y + 1), BORDER);
@@ -564,7 +585,7 @@ fn draw(dc: HDC, w: i32, h: i32, s: &mut State, f: &Fonts) {
     s.targets.push((cr, Hit::Change));
 
     let play = rect(w - 24 - 128, mid - 20, w - 24, mid + 20);
-    let ready = s.game.is_some();
+    let ready = s.game.is_some() && s.rows.get(s.sel).is_none_or(|r| r.missing.is_none());
     let hot = s.hover == Hit::Play && ready;
     rounded(dc, play, if hot { BUTTON_HOT } else { BUTTON }, if hot { PINK } else { BUTTON }, 6, BACKGROUND);
     text(dc, "Play", play, if ready { TEXT } else { FAINT }, f.strong, DT_CENTER | DT_VCENTER);
@@ -619,10 +640,10 @@ fn rows() -> Vec<Row> {
             };
             let licence = ["GPL-3.0", "GPL-2.0", "MIT", "Apache-2.0"].iter().find(|l| about.contains(*l)).map_or("-".to_owned(), |l| (*l).to_owned());
             let upstream = fs::read_to_string(crate::runtimes::vendor().join(&n).join("UPSTREAM")).ok().and_then(|u| u.lines().next().map(|l| l.trim().chars().take(12).collect())).unwrap_or_else(|| "-".into());
-            Row { frames: crate::runtimes::last_run_frames(&n), name: n, title: name_part, version, licence, upstream }
+            Row { frames: crate::runtimes::last_run_frames(&n), missing: crate::runtimes::missing(&n), name: n, title: name_part, version, licence, upstream }
         })
         .collect();
-    rows.push(Row { name: MIX.into(), title: "Mix".into(), version: String::new(), licence: String::new(), upstream: String::new(), frames: None });
+    rows.push(Row { name: MIX.into(), title: "Mix".into(), version: String::new(), licence: String::new(), upstream: String::new(), frames: None, missing: None });
     rows
 }
 
@@ -729,7 +750,17 @@ fn click(hwnd: HWND, h: Hit) {
         }
         Hit::Change => change_game(hwnd),
         Hit::Advanced => show_advanced(),
-        Hit::Play => play(hwnd),
+        Hit::Play => {
+            if with_state(|s| s.rows.get(s.sel).is_some_and(|r| r.missing.is_some())) != Some(true) {
+                play(hwnd);
+            }
+        }
+        Hit::Install => {
+            // Only opens the pages: nothing is downloaded or installed here.
+            for page in with_state(|s| s.rows.get(s.sel).and_then(|r| r.missing.as_ref().map(|m| m.1.clone()))).flatten().unwrap_or_default() {
+                let _ = crate::runtimes::command("explorer").arg(page).spawn();
+            }
+        }
         Hit::None => {}
     }
 }
@@ -774,7 +805,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             match wparam as u16 {
                 VK_UP if sel > 0 => select(hwnd, sel - 1),
                 VK_DOWN => select(hwnd, sel + 1),
-                VK_RETURN => play(hwnd),
+                VK_RETURN => click(hwnd, Hit::Play),
                 _ => {}
             }
             0
