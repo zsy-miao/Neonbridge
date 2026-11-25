@@ -137,6 +137,93 @@ pub struct Worker {
     private: PathBuf,
 }
 
+/// dxc outputs reused by the normalised HLSL key alone (not the exact text).
+pub static NORMALISED_REUSES: AtomicUsize = AtomicUsize::new(0);
+
+/// HLSL with `//` and `/* */` comments removed, each line trimmed with its
+/// runs of spaces and tabs made one space, and blank lines dropped. Line
+/// breaks stay (preprocessor directives end at them), string literals are
+/// kept as written. dxc's DXIL does not depend on any of it without debug
+/// info, which the worker never asks for.
+fn normalised_hlsl(source: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(source.len());
+    let mut line: Vec<u8> = Vec::new();
+    let (mut i, mut block, mut string) = (0, false, false);
+    let flush = |line: &mut Vec<u8>, out: &mut Vec<u8>| {
+        let mut prev_space = true;
+        let mut compact: Vec<u8> = Vec::with_capacity(line.len());
+        for &c in line.iter() {
+            let space = matches!(c, b' ' | b'\t' | b'\r');
+            if !space {
+                compact.push(c);
+            } else if !prev_space {
+                compact.push(b' ');
+            }
+            prev_space = space;
+        }
+        while compact.last() == Some(&b' ') {
+            compact.pop();
+        }
+        if !compact.is_empty() {
+            out.extend_from_slice(&compact);
+            out.push(b'\n');
+        }
+        line.clear();
+    };
+    while i < source.len() {
+        let c = source[i];
+        let next = source.get(i + 1).copied();
+        if block {
+            if c == b'*' && next == Some(b'/') {
+                block = false;
+                line.push(b' ');
+                i += 2;
+                continue;
+            }
+            if c == b'\n' {
+                flush(&mut line, &mut out);
+            }
+            i += 1;
+            continue;
+        }
+        if string {
+            line.push(c);
+            if c == b'\\' && let Some(n) = next {
+                line.push(n);
+                i += 2;
+                continue;
+            }
+            if c == b'"' || c == b'\n' {
+                string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match (c, next) {
+            (b'/', Some(b'/')) => {
+                while i < source.len() && source[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            (b'/', Some(b'*')) => {
+                block = true;
+                i += 2;
+                continue;
+            }
+            (b'"', _) => {
+                string = true;
+                line.push(c);
+            }
+            (b'\n', _) => flush(&mut line, &mut out),
+            _ => line.push(c),
+        }
+        i += 1;
+    }
+    flush(&mut line, &mut out);
+    out
+}
+
 #[derive(Default)]
 pub struct Stats {
     pub compiled: AtomicUsize,
@@ -510,16 +597,33 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // The same HLSL for the same profile compiled before (under another
         // xshader build: test-to-test, most programs' HLSL is unchanged; the
         // helper's exit-stub commit changed 12 of 885) is not compiled again.
-        let reused = tools.dxil.as_ref().and_then(|dir| {
+        // A second key hashes the HLSL with comments and spacing removed
+        // (normalised_hlsl): an xshader change to its comments alone (each
+        // instruction is annotated with its address and disassembly) or to
+        // its layout no longer sends every program back through dxc.
+        // NEONBRIDGE_DXIL_REUSE_NORMALISED=0 keys by the exact text only.
+        let source = tools.dxil.as_ref().and_then(|_| fs::read(&hlsl).ok());
+        let key_path = |text: &[u8], prefix: &str| tools.dxil.as_ref().map(|dir| {
             let mut key = Sha256::new();
             key.update(target.as_bytes());
             key.update(&[0]);
-            key.update(fs::read(&hlsl).ok()?);
-            Some(dir.join(format!("{}.cso", hex(&key.finalize()))))
+            key.update(text);
+            dir.join(format!("{prefix}{}.cso", hex(&key.finalize())))
         });
-        if let Some(path) = &reused
-            && let (Ok(bytes), Ok(sum)) = (fs::read(path), fs::read(path.with_extension("sha256")))
-            && bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes) {
+        let reused = source.as_deref().and_then(|s| key_path(s, ""));
+        let normalised = source.as_deref()
+            .filter(|_| std::env::var("NEONBRIDGE_DXIL_REUSE_NORMALISED").as_deref() != Ok("0"))
+            .and_then(|s| key_path(&normalised_hlsl(s), "n-"));
+        let stored = |path: &PathBuf| -> Option<Vec<u8>> {
+            let (bytes, sum) = (fs::read(path).ok()?, fs::read(path.with_extension("sha256")).ok()?);
+            (bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes)).then_some(bytes)
+        };
+        let found = reused.as_ref().and_then(stored).or_else(|| {
+            let bytes = normalised.as_ref().and_then(stored)?;
+            NORMALISED_REUSES.fetch_add(1, Ordering::Relaxed);
+            Some(bytes)
+        });
+        if let Some(bytes) = found {
             // Into this build's cache as a compile would store it (renamed in whole).
             let (copy, stamp) = (work.join("reused.cso"), work.join("reused.sha256"));
             fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
@@ -578,7 +682,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         let stamp = work.join("sha256");
         fs::write(&stamp, sha256(&bytes)).map_err(|e| e.to_string())?;
-        if let Some(path) = &reused {
+        for path in reused.iter().chain(&normalised) {
             // Written stamp-first under a temporary name: a reader sees both or neither.
             let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
             if fs::write(&tmp, &bytes).and_then(|_| fs::write(path.with_extension("sha256"), sha256(&bytes)))
@@ -976,8 +1080,9 @@ impl Worker {
             let started = std::time::Instant::now();
             let seen = seen_requests(&cache_root, &archive);
             prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, Some(&seen), "seen prewarm", deadline, &log);
-            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused, {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
-                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
+                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
+                stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
         }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
         if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
@@ -1072,7 +1177,8 @@ impl Worker {
                                 Outcome::Reused(xs) => {
                                     let n = st.reused.fetch_add(1, Ordering::Relaxed) + 1;
                                     if n <= 8 || n.is_power_of_two() {
-                                        log(format!("Xbox shader {key}: xshader {xs} ms, its HLSL compiled before: dxc skipped ({n} so far; NEONBRIDGE_DXIL_REUSE=0 off)"));
+                                        log(format!("Xbox shader {key}: xshader {xs} ms, its HLSL compiled before: dxc skipped ({n} so far, {} of them matched only without comments and spacing; NEONBRIDGE_DXIL_REUSE=0 off)",
+                                            NORMALISED_REUSES.load(Ordering::Relaxed)));
                                     }
                                 }
                                 Outcome::Cached => { st.cached.fetch_add(1, Ordering::Relaxed); }
