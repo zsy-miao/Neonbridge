@@ -55,6 +55,7 @@ impl MeshLayout {
         let mut used_resources = BTreeSet::new();
         let mut sgprs = BTreeMap::new();
         let mut parameter_sgprs = BTreeMap::new();
+        let mut raw_tables = BTreeSet::new();
         for [class, offset, register, shape, location] in used {
             if class == 0x401 && mesh_static_sampler() {
                 // A static sampler: the console inlines its state in the code,
@@ -185,6 +186,30 @@ impl MeshLayout {
                         );
                     }
                 }
+                // A raw buffer read straight from the parameter's user SGPRs where the
+                // guest root declares a descriptor table (test176 mesh shader 96bd6026:
+                // [0x100, 0, t0, 1, 0x30b04] on table param 3): the console hands the
+                // shader the parameter's 64-bit address as a buffer base. Rebind the
+                // parameter as that root SRV. TUXBOX_MESH_TABLE_AS_RAW=0 refuses it.
+                RootParamKind::Table(_)
+                    if class == 0x100
+                        && offset == 0
+                        && mesh_table_as_raw()
+                        && user.contains(&[1, 0, 2, register, location >> 8]) =>
+                {
+                    if result.raw.insert(sgpr, (register, space)).is_some() {
+                        return None;
+                    }
+                    raw_tables.insert(index);
+                    result.replacements.insert(
+                        index,
+                        RootParamKind::Descriptor {
+                            kind: 3,
+                            register,
+                            space,
+                        },
+                    );
+                }
                 RootParamKind::Constants {
                     register: original,
                     space: original_space,
@@ -213,6 +238,10 @@ impl MeshLayout {
                 }
                 _ => return None,
             }
+        }
+        // A table parameter is either rebound as a raw buffer or keeps table entries.
+        if ranges.keys().any(|index| raw_tables.contains(index)) {
+            return None;
         }
         for (index, mut used) in ranges {
             let RootParamKind::Table(original) = &root.params[index].kind else {
@@ -369,6 +398,10 @@ mod tests {
 
 fn mesh_typed_buffer() -> bool {
     std::env::var("TUXBOX_MESH_TYPED_BUFFER").map_or(true, |v| v.trim() != "0")
+}
+
+fn mesh_table_as_raw() -> bool {
+    std::env::var("TUXBOX_MESH_TABLE_AS_RAW").map_or(true, |v| v.trim() != "0")
 }
 
 fn mesh_static_sampler() -> bool {
