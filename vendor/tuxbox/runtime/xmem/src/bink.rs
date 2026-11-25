@@ -723,27 +723,36 @@ mod sound {
         std::env::var_os("TUXBOX_BINK_SOUND_STATS").is_none_or(|v| v != "0")
     }
 
+    /// The provider and the open it returns are forwarded with 8 argument
+    /// words: the open (game+0x1a9b300: memsets the 0x1c0-byte BINKSND,
+    /// rate at +0x34, channels at +0x38) takes a 5th, stack argument and
+    /// stores through it at +0x638; a 4-argument wrapper handed it the
+    /// wrapper's own stack garbage (test167: write at 0x638 from
+    /// game+0x1a9b33f, r14 = [rsp+0x80] = 0). Words past the real count are
+    /// the caller's frame, read and never used.
+    type F8 = unsafe extern "system" fn(u64, u64, u64, u64, u64, u64, u64, u64) -> u64;
+
     pub(super) fn wrap_provider(provider: u64) -> u64 {
         if !on() || provider == 0 {
             return provider;
         }
         PROVIDER.store(provider as usize, Ordering::Release);
-        provider_wrapper as F4 as usize as u64
+        provider_wrapper as F8 as usize as u64
     }
 
-    unsafe extern "system" fn provider_wrapper(a: u64, b: u64, c: u64, d: u64) -> u64 {
-        let real: F4 = unsafe { std::mem::transmute(PROVIDER.load(Ordering::Acquire)) };
-        let open = unsafe { real(a, b, c, d) };
+    unsafe extern "system" fn provider_wrapper(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64, h: u64) -> u64 {
+        let real: F8 = unsafe { std::mem::transmute(PROVIDER.load(Ordering::Acquire)) };
+        let open = unsafe { real(a, b, c, d, e, f, g, h) };
         if open == 0 {
             return 0;
         }
         OPEN.store(open as usize, Ordering::Release);
-        open_wrapper as F4 as usize as u64
+        open_wrapper as F8 as usize as u64
     }
 
-    unsafe extern "system" fn open_wrapper(snd: u64, b: u64, c: u64, d: u64) -> u64 {
-        let real: F4 = unsafe { std::mem::transmute(OPEN.load(Ordering::Acquire)) };
-        let result = unsafe { real(snd, b, c, d) };
+    unsafe extern "system" fn open_wrapper(snd: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64, h: u64) -> u64 {
+        let real: F8 = unsafe { std::mem::transmute(OPEN.load(Ordering::Acquire)) };
+        let result = unsafe { real(snd, b, c, d, e, f, g, h) };
         if snd != 0 {
             let mut names = Vec::new();
             // test165 crashed in Bink after the first +0x1a0 call: only
