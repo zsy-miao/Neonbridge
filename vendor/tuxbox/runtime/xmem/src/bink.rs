@@ -812,7 +812,10 @@ mod sound {
             *last = Some(now);
         }
         let seconds = now.duration_since(*started).as_secs_f64();
-        if seconds >= 10.0 {
+        // The first line 2 s after the first callback (short runs), then every 10 s.
+        static PRINTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if seconds >= if PRINTED.load(Ordering::Relaxed) { 10.0 } else { 2.0 } {
+            PRINTED.store(true, Ordering::Relaxed);
             *started = now;
             let slots: Vec<String> = (0..SLOTS).filter_map(|i| {
                 let n = CALLS[i].swap(0, Ordering::Relaxed);
