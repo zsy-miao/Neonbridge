@@ -1246,8 +1246,20 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         cap_refresh(&mut copies);
     }
     // Outside the lock: title reads can fault into the title's handlers (test79).
+    // CPU fills are timed and counted (the refresh line counts only GPU
+    // copies; test172 could not tell what its host-copy fills cost).
+    let fill_start = std::time::Instant::now();
+    let fill_bytes: u64 = fills.iter().map(|f| f.2).sum();
     for (mapped, address, bytes, _staging) in &fills {
         unsafe { fill(*mapped, *address, *bytes) };
+    }
+    if !fills.is_empty() {
+        static FILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!("shadow fills #{n}: {} CPU pieces, {fill_bytes} bytes, {:.2} ms",
+                fills.len(), fill_start.elapsed().as_secs_f64() * 1000.0));
+        }
     }
     drop(fills);
     for b in &filled {
