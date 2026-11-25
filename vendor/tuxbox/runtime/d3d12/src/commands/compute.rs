@@ -216,6 +216,12 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     }
     branches::count(branches::QUERY);
     let query = branches::Phase::new(branches::WALK);
+    if let Some(end) = walk_cache(guest, None) {
+        drop(query);
+        let span = end.saturating_sub(guest).min(0x10000).max(1);
+        let _p = branches::Phase::new(branches::IMPORT);
+        return root_import(list, state, guest, span);
+    }
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if unsafe { VirtualQuery(Some(guest as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
         static UNMAPPED: std::sync::Once = std::sync::Once::new();
@@ -239,10 +245,37 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
         }
         end = next.BaseAddress as u64 + next.RegionSize as u64;
     }
+    walk_cache(guest, Some((region.BaseAddress as u64, end)));
     drop(query);
     let span = end.saturating_sub(guest).min(0x10000).max(1);
     let _p = branches::Phase::new(branches::IMPORT);
     root_import(list, state, guest, span)
+}
+
+/// test165: 200 root view binds in 10 s took 653 ms in the VirtualQuery walk
+/// (3.3 ms each: a query scans its whole region under the address-space lock,
+/// and these regions are GiB views). A walked committed span (region base to
+/// the end it reached) is kept for 1 s; a bind inside it takes that end
+/// without querying. TUXBOX_ROOT_WALK_CACHE=0 walks every bind as before.
+fn walk_cache(guest: u64, store: Option<(u64, u64)>) -> Option<u64> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_WALK_CACHE") != Some("0")) {
+        return None;
+    }
+    static SPANS: Mutex<Vec<(u64, u64, Instant)>> = Mutex::new(Vec::new());
+    let mut spans = SPANS.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    spans.retain(|s| now.duration_since(s.2) < Duration::from_secs(1));
+    if let Some((start, end)) = store {
+        if spans.len() >= 256 {
+            spans.remove(0);
+        }
+        spans.push((start, end, now));
+        return None;
+    }
+    spans.iter().rev().find(|s| s.0 <= guest && guest < s.1).map(|s| s.1)
 }
 
 /// root_address branch counts and time per phase, logged every 10 s
