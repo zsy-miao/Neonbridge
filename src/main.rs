@@ -11,6 +11,7 @@
 
 mod awake;
 mod ctl;
+mod dxc;
 mod game_settings;
 mod picker;
 mod replay;

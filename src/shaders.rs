@@ -763,6 +763,17 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             if target != "lib_6_3" {
                 dxc.args(["-E", "main"]);
             }
+            if crate::dxc::enabled() {
+                // In-process (src/dxc.rs): the same arguments without the
+                // file names, no dxc.exe start and dxcompiler.dll load per program.
+                let args = dxc.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+                let source = fs::read(&hlsl).map_err(|e| ToolError::Other(format!("read {}: {e}", hlsl.display())))?;
+                return match crate::dxc::compile(&tools.dxc, source, args, Duration::from_secs(secs), give_up) {
+                    Ok(bytes) => fs::write(&output, bytes).map_err(|e| ToolError::Other(format!("write {}: {e}", output.display()))),
+                    Err(crate::dxc::Error::Compiler(msg)) => Err(ToolError::Exit(1, msg.chars().take(600).collect::<String>().trim().to_owned())),
+                    Err(crate::dxc::Error::Other(msg)) => Err(ToolError::Other(msg)),
+                };
+            }
             run_until(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(secs), give_up)
         };
         // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
