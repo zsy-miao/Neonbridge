@@ -646,7 +646,15 @@ pub(crate) unsafe fn variant(device: *mut c_void, bound: &Bound, targets: Target
             }
         }
     };
-    match super::stream::background::ready(&entry.0) {
+    // test168: 4 variants dropped their first draws while still being made.
+    // The draw waits for its build (within the frame's first-use budget, up
+    // to 500 ms) as a compute bind does. TUXBOX_SLOT57_VARIANT_WAIT=0 drops.
+    let built = if crate::env_toggle!("TUXBOX_SLOT57_VARIANT_WAIT") != Some("0") {
+        super::stream::background::wait_for(&entry.0, std::time::Duration::from_millis(500))
+    } else {
+        super::stream::background::ready(&entry.0)
+    };
+    match built {
         Some(built) => Some((built.pipeline().native.clone(), entry.1)),
         None => {
             static SEEN: Mutex<Vec<(u64, Targets)>> = Mutex::new(Vec::new());
