@@ -9690,8 +9690,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     // both enables the first address VGPR is the index and the next the byte
     // offset. TuxBox 242121b (brcly, Apache-2.0); TB_RAW_IDXEN=0 refuses IDXEN.
     // A heap raw view whose sibling typed view names a stride scales the index by
-    // it (TuxBox 7b815f2); TB_RAW_IDXEN_STRICT=1 refuses an unproven byte index
-    // and indexed stores as upstream does.
+    // it (TuxBox 7b815f2). An unproven byte index or an indexed store is
+    // refused, as TuxBox 63343eb does; TB_RAW_IDXEN_LOOSE=1 takes the index
+    // as bytes anyway.
     fn raw_address(&mut self, ins: &Insn) -> Result<String, String> {
         let offen = ins.aux.mask & 1 != 0;
         let idxen = ins.aux.mask & 2 != 0;
@@ -9701,7 +9702,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let vector = if idxen {
             let stride = matches!(self.res.get(&self.cur_idx).and_then(|v| v.first()), Some(Res::HeapRaw(_)))
                 .then(|| self.sibling_stride(ins)).flatten();
-            if std::env::var("TB_RAW_IDXEN_STRICT").is_ok_and(|v| v.trim() == "1")
+            if !std::env::var("TB_RAW_IDXEN_LOOSE").is_ok_and(|v| v.trim() == "1")
                 && ((stride.is_none() && !self.raw_byte_index.contains(&ins.offset))
                     || !ins.mnemonic.starts_with("buffer_load_dword"))
             {
