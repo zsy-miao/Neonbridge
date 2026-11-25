@@ -311,6 +311,39 @@ pub(super) fn linked(
     })
 }
 
+/// Who holds the right to publish one digest: a bucket lock, or the key itself.
+enum Claim {
+    #[allow(dead_code)]
+    Bucket(std::sync::MutexGuard<'static, ()>),
+    #[allow(dead_code)]
+    Key(KeyClaim),
+}
+
+/// One digest in translation; dropped when its request returns.
+struct KeyClaim(String);
+
+static IN_FLIGHT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+impl KeyClaim {
+    fn try_new(key: &str) -> Option<Self> {
+        let mut keys = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if keys.iter().any(|k| k == key) {
+            return None;
+        }
+        keys.push(key.to_owned());
+        Some(Self(key.to_owned()))
+    }
+}
+
+impl Drop for KeyClaim {
+    fn drop(&mut self) {
+        let mut keys = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = keys.iter().position(|k| *k == self.0) {
+            keys.swap_remove(i);
+        }
+    }
+}
+
 fn request(
     key: &str,
     stage: Stage,
@@ -339,8 +372,26 @@ fn request(
     // up to its patience and then hands its pipeline on.
     let patient = PATIENCE.with(|p| p.get()).is_some();
     let polled = Instant::now();
-    let mut busy = LOCKS[bucket].try_lock();
-    while matches!(busy, Err(std::sync::TryLockError::WouldBlock))
+    // test153: binds were handed on as untranslatable with the bucket busy,
+    // its holder a compile-pool thread translating a different program that
+    // only shared the digest's first byte. The lock exists to serialize one
+    // digest, so it is now claimed per key; a busy claim means this very
+    // program is being translated. TUXBOX_SHADER_KEY_LOCK=0 uses the 32
+    // buckets again.
+    let per_key = crate::env_toggle!("TUXBOX_SHADER_KEY_LOCK") != Some("0");
+    let take = || -> Option<Claim> {
+        if per_key {
+            KeyClaim::try_new(key).map(Claim::Key)
+        } else {
+            match LOCKS[bucket].try_lock() {
+                Ok(guard) => Some(Claim::Bucket(guard)),
+                Err(std::sync::TryLockError::Poisoned(error)) => Some(Claim::Bucket(error.into_inner())),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+            }
+        }
+    };
+    let mut busy = take();
+    while busy.is_none()
         && (!UNBOUNDED.with(|u| u.get()) || patient)
         && (if patient {
             !out_of_patience(polled)
@@ -351,12 +402,11 @@ fn request(
         })
     {
         std::thread::sleep(Duration::from_millis(1));
-        busy = LOCKS[bucket].try_lock();
+        busy = take();
     }
     let _guard = match busy {
-        Ok(guard) => guard,
-        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
-        Err(std::sync::TryLockError::WouldBlock) => {
+        Some(claim) => claim,
+        None => {
             if patient {
                 MISSED.with(|m| m.set(true));
                 reason("translator bucket busy past the ready worker's wait (handed to the compile pool)");
@@ -373,7 +423,15 @@ fn request(
                 }
                 return None;
             }
-            LOCKS[bucket].lock().unwrap_or_else(|error| error.into_inner())
+            loop {
+                if let Some(claim) = take() {
+                    break claim;
+                }
+                if !per_key {
+                    break Claim::Bucket(LOCKS[bucket].lock().unwrap_or_else(|error| error.into_inner()));
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
     };
     if let Some(bytes) = read_portable_file(&result, stage) {
