@@ -17,6 +17,10 @@ pub(super) struct ImportedHeap {
     /// Heap offset of the title address the import was asked for: 0 for an
     /// address import, the section offset for a section import (section_heap).
     origin: u64,
+    /// Counted live until the import drops (memory line "live now: heap
+    /// imports"): test169's non-local use grew with heap imports created
+    /// (+358 MiB a line, 7185 MiB made) but nothing said how many stayed.
+    _live: Option<crate::diagnostics::memory::Live>,
     _pin: ImportPin,
     /// Pages under it were remapped (retire_imports_over): it maps the old ones.
     stale: std::sync::atomic::AtomicBool,
@@ -24,7 +28,7 @@ pub(super) struct ImportedHeap {
 
 impl ImportedHeap {
     fn new(native: ID3D12Heap, pin: ImportPin) -> Self {
-        Self { native, origin: 0, _pin: pin, stale: Default::default() }
+        Self { native, origin: 0, _live: None, _pin: pin, stale: Default::default() }
     }
 
     /// The title remapped pages under this heap since it was opened.
@@ -358,8 +362,9 @@ pub(super) fn import_buffer_with_heap(
         let host: ID3D12Device3 = device.native.cast()?;
         let native = unsafe { host.OpenExistingHeapFromAddress(region.AllocationBase) }
             .inspect_err(|e| import_failure("OpenExistingHeapFromAddress", base, size, e))?;
-        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
-        Arc::new(ImportedHeap::new(native, pin))
+        let mut heap = ImportedHeap::new(native, pin);
+        heap._live = Some(crate::diagnostics::memory::live(crate::diagnostics::memory::Category::HeapImport, size));
+        Arc::new(heap)
     };
     let mut resource = None;
     unsafe { device.native.CreatePlacedResource(&heap.native, heap.origin + offset, &host_desc, state, None, &mut resource)? };
@@ -1000,7 +1005,7 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
         return Err(E_INVALIDARG.into());
     }
     if let Some(heap) = section_heap(device, base, size, &pin) {
-        return Ok(Arc::new(ImportedHeap { native: heap.0, origin: heap.1, _pin: pin, stale: Default::default() }));
+        return Ok(Arc::new(ImportedHeap { native: heap.0, origin: heap.1, _live: None, _pin: pin, stale: Default::default() }));
     }
     {
         let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
@@ -1039,8 +1044,9 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
         import_failure("OpenExistingHeapFromAddress1", base, size, e);
         if e.code() == E_INVALIDARG { refuse(); }
     })?;
-    crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
-    Ok(Arc::new(ImportedHeap::new(native, pin)))
+    let mut heap = ImportedHeap::new(native, pin);
+    heap._live = Some(crate::diagnostics::memory::live(crate::diagnostics::memory::Category::HeapImport, size));
+    Ok(Arc::new(heap))
 }
 
 /// TUXBOX_POOL_SECTION_IMPORT (xmem TuxBoxPageSection, both halves): title
