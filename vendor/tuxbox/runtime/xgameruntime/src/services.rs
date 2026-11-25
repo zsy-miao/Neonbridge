@@ -82,22 +82,23 @@ fn callback_at_completion() -> bool {
 }
 
 /// Record a completed operation and run the block's callback on its queue.
-/// TUXBOX_XASYNC_EARLY_CALLBACK=0 reads the callback after publishing the status.
+/// TUXBOX_XASYNC_EARLY_CALLBACK=0 reads the callback and queue after publishing the status.
 unsafe fn complete(block: *mut c_void, status: i32, size: usize, payload: Payload) -> i32 {
     if block.is_null() {
         return INVALID;
     }
     // SAFETY: the guest keeps its XAsyncBlock alive until completion; its
     // third word is the completion routine.
-    let read = || unsafe { block.cast::<usize>().add(2).read() };
+    // The queue handle (its first word) is read with it, for the same reason:
+    // a call begun on the block after the status publishes may set another
+    // queue (VIctory d01b170).
+    let read = || unsafe { (block.cast::<usize>().read(), block.cast::<usize>().add(2).read()) };
     let early = callback_at_completion().then(read);
     OPERATIONS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(block as usize, Operation { status, size, payload });
-    let callback = early.unwrap_or_else(read);
-    // SAFETY: a nonnull XAsyncBlock begins with its queue handle.
-    let queue = unsafe { block.cast::<usize>().read() };
+    let (queue, callback) = early.unwrap_or_else(read);
     let record = Box::into_raw(Box::new(Delivery { block: block as usize, callback })).cast::<c_void>();
     if unsafe { queue::submit_completion(queue, record, deliver) } != OK {
         // No usable queue: deliver synchronously, as the console does when the
