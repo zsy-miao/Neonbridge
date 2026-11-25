@@ -340,7 +340,14 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     // (test38-45: clears only; test46 with the stub drew).
     // TUXBOX_SLOT57=placeholder answers the placeholder.
     // TUXBOX_SLOT57_REAL=1 implies it and attaches a lazy real pipeline.
-    let real = super::slot57::real();
+    // Slot 67's description is a serialized console PSO, not slot 57's
+    // state-block record: test154 logged 26 "state block A too short" lines
+    // from decoding it as one (its +0x10/+0x20 are 0x1c/0x14). Only slot 57
+    // is decoded or gets a real pipeline; slot 67 answers E_NOTIMPL unless
+    // TUXBOX_SLOT57=placeholder, so FidelityFX retries slot 62.
+    // TUXBOX_SLOT67_AS57=1 treats it as slot 57 as before.
+    let as57 = N == 57 || crate::env_toggle!("TUXBOX_SLOT67_AS57") == Some("1");
+    let real = as57 && super::slot57::real();
     let stub = !real && crate::env_toggle!("TUXBOX_SLOT57") != Some("placeholder");
     if call == 0 {
         let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS13::default();
@@ -351,7 +358,9 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
         unsafe { describe_state_blocks(N, call, desc) };
     }
     // Decoded depth-stencil, input layout and program heads, once per record (TUXBOX_SLOT57_DSS=0 off).
-    super::slot57::log_record(N, desc);
+    if as57 {
+        super::slot57::log_record(N, desc);
+    }
     if hr.is_err() {
         return hr;
     }
