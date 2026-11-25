@@ -319,7 +319,7 @@ pub(super) fn import_buffer_with_heap(
         D3D12_RESOURCE_FLAGS(0x400)
     } else { D3D12_RESOURCE_FLAG_NONE };
     let host_desc = D3D12_RESOURCE_DESC {
-        Flags: desc.Flags | D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER | tight,
+        Flags: host_flags(desc.Flags) | D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER | tight,
         ..*desc
     };
     let info = unsafe { device.native.GetResourceAllocationInfo(0, &[host_desc]) };
@@ -525,7 +525,7 @@ pub(super) unsafe extern "system" fn place_virtual_layout(
         return E_NOTIMPL;
     }
     let mut host = *desc;
-    host.Flags = D3D12_RESOURCE_FLAGS(host.Flags.0 & !0x2_0000);
+    host.Flags = host_flags(host.Flags);
     // A Series buffer can start between native placement boundaries. Bind a
     // slightly larger host buffer to the same pages and translate offsets at
     // every resource/view entry point. The guest still sees its original VA.
@@ -668,7 +668,7 @@ fn commit_guest_pages(start: u64, bytes: u64) -> bool {
 
 fn stand_in_buffer(device: &Device, desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES)
     -> windows::core::Result<ID3D12Resource> {
-    let host = D3D12_RESOURCE_DESC { Flags: D3D12_RESOURCE_FLAGS(desc.Flags.0 & !0x2_0000), ..*desc };
+    let host = D3D12_RESOURCE_DESC { Flags: host_flags(desc.Flags), ..*desc };
     let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
     let mut native = None;
     unsafe { device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &host, state, None, &mut native)? };
@@ -718,6 +718,17 @@ fn import_or_back(device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC, sta
         }
         Err(error) => Err(error),
     }
+}
+
+/// Console-only flag bits (0x100000, 0x200000, 0x20000) never reach a host
+/// buffer call: masked to HOST_FLAGS as TuxBox 9ba53f9 does (Valdi320,
+/// Apache-2.0); vkd3d-proton logged them as unknown resource flags.
+/// TUXBOX_HOST_FLAG_MASK=0 clears only 0x20000, as before.
+fn host_flags(flags: D3D12_RESOURCE_FLAGS) -> D3D12_RESOURCE_FLAGS {
+    if crate::env_toggle!("TUXBOX_HOST_FLAG_MASK") == Some("0") {
+        return D3D12_RESOURCE_FLAGS(flags.0 & !0x2_0000);
+    }
+    D3D12_RESOURCE_FLAGS(flags.0 & super::format::HOST_FLAGS)
 }
 
 type ImportKey = (usize, u64, u64);
