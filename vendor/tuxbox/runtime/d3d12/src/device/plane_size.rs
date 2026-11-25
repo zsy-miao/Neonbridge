@@ -20,8 +20,18 @@ fn plane_bytes(width: u64, height: u64, bytes: u64, slices: u64) -> u64 {
 }
 
 /// Texel bytes of the colour formats answered when multisampled.
+/// Xbox2Windows a6879558 (MIT, credit to its authors) adds R32G32B32A32,
+/// R16G16, R32, R16 and R8/A8 and D24S8; TUXBOX_PLANE_SIZE_MORE=0 drops them.
+fn more() -> bool {
+    crate::env_toggle!("TUXBOX_PLANE_SIZE_MORE") != Some("0")
+}
+
 fn colour_texel_bytes(format: i32) -> u64 {
     match format {
+        1..=4 if more() => 16,
+        33..=43 if more() => 4,
+        53..=59 if more() => 2,
+        60..=65 if more() => 1,
         9..=14 => 8,
         23..=32 | 87..=93 => 4,
         _ => 0,
@@ -40,7 +50,7 @@ fn shape(desc: &D3D12_RESOURCE_DESC) -> bool {
 }
 
 /// The console size of a description in these families, else None. Bounded
-/// by the shape: below 2^45, no overflow.
+/// by the shape (at most 128 bytes of samples a texel): below 2^47, no overflow.
 pub(super) fn console_size(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_ALLOCATION_INFO> {
     if !shape(desc) {
         return None;
@@ -49,6 +59,7 @@ pub(super) fn console_size(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_
     let (samples, slices) = (u64::from(desc.SampleDesc.Count), u64::from(desc.DepthOrArraySize));
     let size = match desc.Format.0 {
         19..=22 => plane_bytes(w, h, 4 * samples, slices) + plane_bytes(w, h, samples, slices),
+        44..=47 if more() => plane_bytes(w, h, 4 * samples, slices) + plane_bytes(w, h, samples, slices),
         118..=120 => plane_bytes(w, h, 2 * samples, slices) + plane_bytes(w, h, samples, slices),
         f if samples > 1 && colour_texel_bytes(f) != 0 => plane_bytes(w, h, colour_texel_bytes(f) * samples, slices),
         _ => return None,
