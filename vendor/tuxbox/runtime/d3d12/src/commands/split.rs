@@ -152,6 +152,8 @@ pub(super) struct Segments {
     spares: Vec<ID3D12GraphicsCommandList>,
     /// The host allocator the recording uses.
     allocator: Option<ID3D12CommandAllocator>,
+    /// The host allocator of the last Reset, split or not (reopen_closed).
+    host: Option<ID3D12CommandAllocator>,
     pub(super) replay: Replay,
     /// Waits moved to the start of the current host list (hoist).
     extra: Vec<Arc<memory_wait::Segment>>,
@@ -195,12 +197,18 @@ impl Drop for Segments {
 impl Segments {
     /// A new recording on `allocator`: the closed segments become spares.
     pub(super) fn reset(&mut self, allocator: Option<ID3D12CommandAllocator>) {
+        self.host = allocator.clone();
         self.allocator = allocator.filter(|_| on());
         for (list, _) in self.closed.drain(..) {
             if self.spares.len() < CAPACITY { self.spares.push(list); } else { retire(list); }
         }
         self.replay = Replay::default();
         self.extra.clear();
+    }
+
+    /// The host allocator of the last Reset (reopen_closed).
+    pub(super) fn host_allocator(&self) -> Option<ID3D12CommandAllocator> {
+        self.host.clone()
     }
 
     /// The host list submitted first for this recording.

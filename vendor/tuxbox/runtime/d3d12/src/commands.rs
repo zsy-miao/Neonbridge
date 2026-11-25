@@ -560,11 +560,41 @@ impl Recording {
                 self.phase = ListState::Open;
             }
             ListState::Open => {}
+            ListState::Closed if crate::env_toggle!("TUXBOX_REOPEN_CLOSED") != Some("0")
+                && let Some(allocator) = self.segments.host_allocator() =>
+            {
+                // palmetto 8dc42f40 (GPL-3.0, credit to its authors): a recording
+                // call on a closed list reopens it with a native Reset on its
+                // allocator, as the console's allocator-owned recording allows,
+                // then the bound state is restored as a split does.
+                // TUXBOX_REOPEN_CLOSED=0 refuses the call as before (2e53f61).
+                let pipeline = match self.bindings.pipeline.as_ref() {
+                    Some(compute_bindings::Pipeline::Regular(pso, ..)) if !self.pipeline_pending => Some(pso.clone()),
+                    _ => None,
+                };
+                if let Err(error) = unsafe { native.Reset(&allocator, pipeline.as_ref()) } {
+                    crate::diagnostics::log_line(format_args!("closed list reopen failed {:#010x}", error.code().0));
+                    { self.error = error.code(); self.error_at = (file!(), line!()); }
+                    return false;
+                }
+                memory_wait::list_reset(native.as_raw() as usize);
+                self.prefix = memory_wait::Prefix::default();
+                self.segments.reset(Some(allocator));
+                let kind = unsafe { native.GetType() };
+                if kind != D3D12_COMMAND_LIST_TYPE_COPY {
+                    unsafe { self.bindings.restore_all(native) };
+                }
+                self.phase = ListState::Open;
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "reopened a closed list with a native Reset for a recording call from guest RVA {:#x} ({n} so far; TUXBOX_REOPEN_CLOSED=0 off)",
+                        crate::survey::title_rva().unwrap_or(0)));
+                }
+            }
             ListState::Closed => {
-                // palmetto 8dc42f40 reopens a closed list on the next recording
-                // call, as the console's allocator-owned recording allows. GTA
-                // resets its lists through our Reset (no such failure seen up to
-                // test100), so this only reports it if a title ever does it.
+                // 2e53f61: reported, not emulated (TUXBOX_REOPEN_CLOSED=0 or no allocator).
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let n = N.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 4 || n.is_power_of_two() {
