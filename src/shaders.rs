@@ -493,6 +493,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 return Ok(Outcome::Unsupported(msg));
             }
             Err(ToolError::Exit(c, msg)) => return Err(format!("xshader failed ({c}): {msg}")),
+            Err(ToolError::Other(msg)) if msg == "timed out" => return Err("xshader: timed out after 120 s".into()),
             Err(ToolError::Other(msg)) => return Err(format!("xshader: {msg}")),
         }
         let translate_ms = translate_started.elapsed().as_millis() as u64;
@@ -885,7 +886,14 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                         Outcome::Reused(_) => &stats.reused,
                         Outcome::Cached => &stats.cached,
                         Outcome::Unsupported(m) => { stats.note("unsupported", &m); &stats.unsupported }
-                        Outcome::Failed(m) => { stats.note("failed", &m); &stats.failed }
+                        Outcome::Failed(m) => {
+                            // Named, so a timeout can be reproduced (the summary groups by reason only).
+                            if m.contains("timed out") {
+                                println!("[launch] Xbox shader {key}: {m}");
+                            }
+                            stats.note("failed", &m);
+                            &stats.failed
+                        }
                     };
                     counter.fetch_add(1, Ordering::Relaxed);
                     done.fetch_add(1, Ordering::Relaxed);
