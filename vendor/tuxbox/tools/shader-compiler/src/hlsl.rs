@@ -228,6 +228,42 @@ fn table_arrays_on() -> bool {
     std::env::var("TB_TABLE_ARRAYS").map_or(true, |v| v.trim() != "0")
 }
 
+/// Whether dwords 1-2 of the descriptor loaded into s[base..] at `idx` are
+/// read as data later (not only by the image/buffer op that consumes the
+/// descriptor): the tb_slot_views fill is emitted only then, so programs that
+/// never read them stay as they were (da94591 changed ~25% of programs).
+/// TB_HEAP_VIEW_WORDS_ALWAYS=1 fills after every such load as da94591 did.
+fn words_read_as_data(insns: &[Insn], idx: usize, base: u8) -> bool {
+    if std::env::var("TB_HEAP_VIEW_WORDS_ALWAYS").is_ok_and(|v| v.trim() == "1") {
+        return true;
+    }
+    let (w1, w2) = (base + 1, base + 2);
+    let mut live = [true, true];
+    for op in &insns[idx + 1..] {
+        if !matches!(op.enc, Enc::Mimg | Enc::Mubuf | Enc::Mtbuf | Enc::Smem) {
+            for o in &op.src {
+                if let Opnd::Sgpr(n) = *o {
+                    let wide = op.mnemonic.ends_with("_b64") || op.mnemonic.ends_with("_u64") || op.mnemonic.ends_with("_i64");
+                    if (live[0] && (n == w1 || wide && n == base)) || (live[1] && (n == w2 || wide && n == w1)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        for o in &op.dst {
+            if let Opnd::Sgpr(n) = *o {
+                let wide = op.mnemonic.ends_with("_b64") || op.mnemonic.ends_with("_u64") || op.mnemonic.ends_with("_i64") || op.enc == Enc::Smem;
+                if n == w1 || wide && n == base { live[0] = false; }
+                if n == w2 || wide && n == w1 { live[1] = false; }
+            }
+        }
+        if live == [false, false] {
+            return false;
+        }
+    }
+    false
+}
+
 /// TB_INLINE_SAMPLER_CHOICE=0: inline sampler words that differ between two
 /// joining paths are dropped and the image op refused, as before.
 fn inline_choice_on() -> bool {
@@ -366,10 +402,27 @@ fn view_marks_on() -> bool {
 /// SetSampleMaskX's quad mask (d3d12 ccafab1, device/quad_mask.rs): a pixel
 /// shader declares `tb_quad_mask` (b0, space32766, the mask's low and high
 /// words) and discards a pixel whose 16-bit lane, p = ((y & 1) << 1) | (x & 1),
-/// is 0. Opt-in with TB_QUAD_MASK=1: the discard costs every pixel shader
-/// its early depth test.
+/// is 0. The discard costs a pixel shader its early depth test, so it is a
+/// per-pipeline variant: the runtime requests it (`<source>_qm.quadmask`,
+/// `--quad-mask`) only for a pipeline drawn under a mask that is not full, and
+/// every other translation stays byte-identical. TB_QUAD_MASK=1 forces it on
+/// every pixel shader.
 fn quad_mask_on() -> bool {
-    std::env::var("TB_QUAD_MASK").is_ok_and(|v| v.trim() == "1")
+    QUAD_MASK_REQUEST.with(std::cell::Cell::get) || std::env::var("TB_QUAD_MASK").is_ok_and(|v| v.trim() == "1")
+}
+
+thread_local! {
+    /// Set while a quad-mask variant is translated (`with_quad_mask`).
+    static QUAD_MASK_REQUEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `run` as a quad-mask variant translation (see `quad_mask_on`).
+pub fn with_quad_mask<T>(run: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset { fn drop(&mut self) { QUAD_MASK_REQUEST.with(|c| c.set(false)); } }
+    QUAD_MASK_REQUEST.with(|c| c.set(true));
+    let _reset = Reset;
+    run()
 }
 
 /// TB_LOOP_PER_COUNTER=0 restores the one shared, never-reset tb_guard that
@@ -8320,7 +8373,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         // TB_HEAP_VIEW_WORDS=0 leaves them.
                         if ins.op == 2 && !std::env::var("TB_HEAP_VIEW_WORDS").is_ok_and(|v| v.trim() == "0") {
                             if let Opnd::Sgpr(base) = dst {
-                                if base <= 101 {
+                                if base <= 101 && words_read_as_data(&self.insns, idx, base) {
                                     self.slot_views = true;
                                     let index = r(&dst)?;
                                     let t = format!("tb_sv{}", ins.offset);
