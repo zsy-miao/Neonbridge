@@ -227,16 +227,7 @@ fn cached_translation(cache: &Path, key: &str, stage: Stage) -> Option<Vec<u8>> 
     let bytes = read_portable_file(&file, stage)?;
     // Host writers replace both files atomically, but can publish between
     // these two reads. Validate exactly what the pipeline will consume.
-    let digest = source_digest(&bytes)?;
-    if digest.as_bytes() != expected {
-        return None;
-    }
-    if super::slots::enabled()
-        && let Ok(text) = fs::read_to_string(file.with_extension("slots"))
-    {
-        super::slots::note(&digest, &text);
-    }
-    Some(bytes)
+    (source_digest(&bytes)?.as_bytes() == expected).then_some(bytes)
 }
 
 /// One line per refused shader a title thread waits on, with the
@@ -586,6 +577,16 @@ pub(crate) enum HeapSource { Const(u32), Root(u32, u32, i64), Cbv(u32, u32, i64)
 /// The heap descriptors a program reads and writes (TUXBOX_SHADOW_UAV_REMARK).
 #[derive(Debug, Default)]
 pub(crate) struct HeapAccess { pub(crate) writes: Vec<HeapSource>, pub(crate) reads: Vec<HeapSource> }
+
+/// The UAV-from-SRV slots text the launcher published for `source`
+/// (`<source>.slots`, see shader_cache::slots), from the session or the
+/// compiler cache.
+pub(crate) fn slots_text(source: &str) -> Option<String> {
+    let dir = session()?;
+    let name = format!("{source}.slots");
+    fs::read_to_string(dir.join(&name)).ok()
+        .or_else(|| fs::read_to_string(compiler_cache(dir)?.join(&name)).ok())
+}
 
 /// The heap access reflection the launcher published for `source`, from the
 /// session or the compiler cache. None: unknown (no file, older xshader).

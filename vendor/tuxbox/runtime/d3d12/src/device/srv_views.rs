@@ -60,3 +60,18 @@ pub(crate) fn copy(dst: usize, src: usize, count: usize, stride: usize) {
 pub(crate) fn get(handle: usize) -> Option<Kept> {
     VIEWS.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.get(&handle).cloned()
 }
+
+/// Host roots made by compute_table::srv_as_uav, with the slots each holds as UAVs.
+static TABLES: Mutex<Option<HashMap<usize, std::sync::Arc<[super::shader_cache::slots::Slot]>>>> = Mutex::new(None);
+
+pub(crate) fn note_table(root: &ID3D12RootSignature, slots: std::sync::Arc<[super::shader_cache::slots::Slot]>) {
+    // The pipeline holds the root for its life; the key is not reused while it lives.
+    TABLES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default)
+        .insert(windows::core::Interface::as_raw(root) as usize, slots);
+}
+
+/// The UAV slots of a host root made for them.
+#[allow(dead_code)]
+pub(crate) fn table_slots(root: &ID3D12RootSignature) -> Option<std::sync::Arc<[super::shader_cache::slots::Slot]>> {
+    TABLES.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.get(&(windows::core::Interface::as_raw(root) as usize)).cloned()
+}

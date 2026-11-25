@@ -713,6 +713,120 @@ fn append_corroborated_ranges(
     }
 }
 
+/// SRV-as-UAV piece 3: the guest root with each `.slots` slot (an SRV the
+/// program stores to, see shader_cache::slots) split out of its SRV range
+/// as a one-descriptor UAV range at the same table offset, for this
+/// pipeline only. Its tables still point at the guest heap; the dispatch
+/// puts a UAV in each such slot (piece 4). None: a slot does not fall in
+/// an SRV range of a finite table, or names no register.
+pub(super) fn srv_as_uav(
+    device: &ID3D12Device,
+    original: &RootSource,
+    slots: &[super::shader_cache::slots::Slot],
+    node: u32,
+) -> Result<Option<Arc<ComputeTable>>> {
+    let Ok(signature) = parse_rts0(original.payload()) else { return Ok(None) };
+    if signature.version != 2 || slots.iter().any(|s| s.register.is_none()) {
+        return Ok(None);
+    }
+    let bytes = original.serialized();
+    unsafe {
+        let mut reader = None::<ID3D12VersionedRootSignatureDeserializer>;
+        D3D12CreateVersionedRootSignatureDeserializer(
+            bytes.as_ptr().cast(), bytes.len(), &ID3D12VersionedRootSignatureDeserializer::IID, (&raw mut reader).cast(),
+        )?;
+        let reader = reader.ok_or(E_POINTER)?;
+        let mut desc = *reader.GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_1)?;
+        let source = desc.Anonymous.Desc_1_1;
+        if source.NumParameters as usize != signature.params.len() || source.pParameters.is_null() {
+            return Err(E_INVALIDARG.into());
+        }
+        let mut parameters = std::slice::from_raw_parts(source.pParameters, signature.params.len()).to_vec();
+        let mut stored = vec![Vec::new(); signature.params.len()];
+        let mut lengths = vec![0u32; signature.params.len()];
+        let mut accessed_views = Vec::new();
+        for (index, param) in signature.params.iter().enumerate() {
+            let RootParamKind::Table(declared) = &param.kind else { continue };
+            let Some((extent, views)) = finite_table(declared) else {
+                if slots.iter().any(|s| s.param as usize == index) { return Ok(None); }
+                continue;
+            };
+            let mine: Vec<_> = slots.iter().filter(|s| s.param as usize == index).collect();
+            if mine.is_empty() {
+                continue;
+            }
+            let table = parameters[index].Anonymous.DescriptorTable;
+            let guest = std::slice::from_raw_parts(table.pDescriptorRanges, table.NumDescriptorRanges as usize);
+            // Resolve append offsets so split ranges keep their places.
+            let mut next = 0u32;
+            let mut ranges: Vec<D3D12_DESCRIPTOR_RANGE1> = guest.iter().map(|r| {
+                let start = if r.OffsetInDescriptorsFromTableStart == u32::MAX { next } else { r.OffsetInDescriptorsFromTableStart };
+                next = start.saturating_add(r.NumDescriptors);
+                D3D12_DESCRIPTOR_RANGE1 { OffsetInDescriptorsFromTableStart: start, ..*r }
+            }).collect();
+            for slot in &mine {
+                let Some(at) = ranges.iter().position(|r| r.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV
+                    && (r.OffsetInDescriptorsFromTableStart..r.OffsetInDescriptorsFromTableStart + r.NumDescriptors).contains(&slot.slot))
+                else { return Ok(None) };
+                let r = ranges.remove(at);
+                let start = r.OffsetInDescriptorsFromTableStart;
+                let before = slot.slot - start;
+                let after = r.NumDescriptors - before - 1;
+                if before != 0 {
+                    ranges.push(D3D12_DESCRIPTOR_RANGE1 { NumDescriptors: before, ..r });
+                }
+                ranges.push(D3D12_DESCRIPTOR_RANGE1 {
+                    RangeType: D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+                    NumDescriptors: 1,
+                    BaseShaderRegister: slot.register.unwrap_or(0),
+                    RegisterSpace: slot.space,
+                    Flags: D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE,
+                    OffsetInDescriptorsFromTableStart: slot.slot,
+                });
+                if after != 0 {
+                    ranges.push(D3D12_DESCRIPTOR_RANGE1 {
+                        NumDescriptors: after,
+                        BaseShaderRegister: r.BaseShaderRegister + before + 1,
+                        OffsetInDescriptorsFromTableStart: slot.slot + 1,
+                        ..r
+                    });
+                }
+            }
+            stored[index] = ranges;
+            parameters[index].Anonymous.DescriptorTable = D3D12_ROOT_DESCRIPTOR_TABLE1 {
+                NumDescriptorRanges: stored[index].len() as u32,
+                pDescriptorRanges: stored[index].as_ptr(),
+            };
+            lengths[index] = extent;
+            accessed_views.extend(views.into_iter().map(|range| (index, range)));
+        }
+        desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let _padded = pad_root_constants(&mut desc);
+        let mut blob = None;
+        D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
+        let blob = blob.ok_or(E_POINTER)?;
+        let bytes = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
+        let native = device.CreateRootSignature(node, bytes)?;
+        Ok(Some(Arc::new(ComputeTable {
+            native,
+            original: original.clone(),
+            layout: RootSource::new(bytes),
+            lengths,
+            accessed_views,
+            index_map: None,
+            desc_table: None,
+            view_formats: None,
+            slot_views: None,
+            slot_words: None,
+            table_words: None,
+            bvh_raw: None,
+            root_strides: None,
+            view_marks: None,
+            quad_mask: None,
+        })))
+    }
+}
+
 /// Exclusive end of a finite descriptor table, plus the SRV and UAV spans in it.
 fn finite_table(
     ranges: &[tuxbox_dxbc::rootsig::RootRange],

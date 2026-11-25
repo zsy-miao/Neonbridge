@@ -660,6 +660,26 @@ unsafe fn make_compute(
         }
         _ => reflected,
     };
+    // SRV-as-UAV (shader_cache::slots, TUXBOX_SRV_AS_UAV=1): a program that
+    // stores to slots its guest root types SRV gets that root with those
+    // slots as UAVs; the dispatch fills them (srv_uav_tables).
+    let reflected = match (&translation, root, reflected) {
+        (Some(_), Some(root), None) if scene_root.is_none() => match super::shader_cache::slots::for_guest(bytes) {
+            Some(slots) => match super::compute_table::srv_as_uav(&this.native, &root.state, &slots, desc.NodeMask) {
+                Ok(Some(table)) => {
+                    super::srv_views::note_table(&table.native, slots);
+                    Some(table)
+                }
+                Ok(None) => {
+                    crate::diagnostics::log_line(format_args!("srv as uav: slots {slots:?} not in an SRV range of a finite guest table; left as SRVs"));
+                    None
+                }
+                Err(error) => return error.code(),
+            },
+            None => None,
+        },
+        (_, _, reflected) => reflected,
+    };
     let code = translation.as_deref().unwrap_or(bytes);
     super::view_marks::note_pipeline(super::view_marks::writes(code), super::view_marks::declared(code));
     let mut host = D3D12_COMPUTE_PIPELINE_STATE_DESC {
