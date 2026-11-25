@@ -72,7 +72,17 @@ pub(crate) fn parse_address(text: &str) -> Option<(usize, Option<usize>)> {
     };
     let hex = |s: &str| usize::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok();
     let address = match at.trim().strip_prefix("game+") {
-        Some(rva) => BASE.load(Ordering::Relaxed).checked_add(hex(rva)?)?,
+        // An RVA past the exe's image is not the title's: prewarm178's
+        // pipeline builder loads this DLL into neonbridge.exe (1.7 MB), where
+        // the default credit watch game+0x75e5ed8 was free memory, and reading
+        // it crashed the build at its start.
+        Some(rva) => {
+            let rva = hex(rva)?;
+            if rva >= image_size() {
+                return None;
+            }
+            BASE.load(Ordering::Relaxed).checked_add(rva)?
+        }
         None => hex(at)?,
     };
     let len = match len {
@@ -82,12 +92,18 @@ pub(crate) fn parse_address(text: &str) -> Option<(usize, Option<usize>)> {
     Some((address, len))
 }
 
-pub(crate) fn label(address: usize) -> String {
+/// The exe's SizeOfImage (0 before `start`).
+fn image_size() -> usize {
     let base = BASE.load(Ordering::Relaxed);
-    let size = if base == 0 { 0 } else {
+    if base == 0 { 0 } else {
         super::crash_detail::read::<u32>(base + 0x3c)
             .and_then(|nt| super::crash_detail::read::<u32>(base + nt as usize + 24 + 56)).unwrap_or(0) as usize
-    };
+    }
+}
+
+pub(crate) fn label(address: usize) -> String {
+    let base = BASE.load(Ordering::Relaxed);
+    let size = image_size();
     if address >= base && address < base + size { format!("game+{:#x}", address - base) } else { format!("{address:#x}") }
 }
 
@@ -126,7 +142,7 @@ fn slots(address: usize, len: usize) -> Vec<(usize, u64)> {
 
 fn write_watch(value: &str) {
     let Some((address, len)) = parse_address(value) else {
-        super::log_line(format_args!("write watch: cannot read {value:?} (game+0xRVA or 0xVA, optional :len)"));
+        super::log_line(format_args!("write watch: cannot read {value:?} (game+0xRVA inside the exe's image, or 0xVA, optional :len); not armed"));
         return;
     };
     let len = len.unwrap_or(8).clamp(1, 32);
