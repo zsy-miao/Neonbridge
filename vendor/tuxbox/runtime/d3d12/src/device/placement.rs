@@ -343,6 +343,16 @@ fn uncovered(images: &Images, gone: &Texture) -> Vec<Arc<Texture>> {
     chosen
 }
 
+/// A 3D texture whose console mip chain ends in a packed tail: XG and PC
+/// drivers pack volume tails differently, so it stays off pages and takes the
+/// committed detile path (xcl 971c0e5 `console_has_packed_3d_mips`, GPL-2.0,
+/// credit to ivall). TUXBOX_PACKED_3D_OFF_PAGES=0 places it on pages as before.
+fn packed_3d_tail(desc: &D3D12_RESOURCE_DESC) -> bool {
+    desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D && desc.MipLevels > 1
+        && crate::env_toggle!("TUXBOX_PACKED_3D_OFF_PAGES") != Some("0")
+        && color_plane(&console_layout(desc)).is_ok_and(|p| p.unpacked_mip_count() < u32::from(desc.MipLevels))
+}
+
 /// Whether `small`'s size is one of `big`'s mip levels (rebox fe7f1d4
 /// `view_is_part`, GPL-2.0, credit to its authors).
 fn is_part(big: &D3D12_RESOURCE_DESC, small: &D3D12_RESOURCE_DESC) -> bool {
@@ -715,7 +725,7 @@ impl Texture {
         // waited on before the first upload overwrites it.
         // Span heaps first (alias.rs): the textures over the same guest bytes
         // share heap bytes, as on the console.
-        let paged = pages::place(device, address, &host, size, clear);
+        let paged = if packed_3d_tail(desc) { None } else { pages::place(device, address, &host, size, clear) };
         let on_pages = paged.is_some();
         // A texture that fails below gives its pages back.
         struct Unplace(Option<usize>);
