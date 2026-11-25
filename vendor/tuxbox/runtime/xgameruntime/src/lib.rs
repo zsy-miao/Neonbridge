@@ -4,6 +4,7 @@ mod probe;
 mod queue;
 mod services;
 mod title_temp;
+mod text_entry;
 
 use std::ffi::{c_char, c_void};
 use std::ptr;

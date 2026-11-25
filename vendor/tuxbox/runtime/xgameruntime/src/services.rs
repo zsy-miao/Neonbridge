@@ -1302,20 +1302,53 @@ pub(super) extern "system" fn ui_notification_hint(_: &Object, _position: u32) {
 
 /// 17: XGameUiShowTextEntryAsync(async, title, description, defaultText, inputScope, maxTextLength).
 pub(super) unsafe extern "system" fn ui_text_entry_async(
-    _: &Object, block: *mut c_void, title: *const i8, _description: *const i8, default: *const i8, _scope: u32, max: u32,
+    _: &Object, block: *mut c_void, title: *const i8, description: *const i8, default: *const i8, _scope: u32, max: u32,
 ) -> i32 {
     let title = unsafe { text(title).unwrap_or_default() };
     if std::env::var("TUXBOX_TEXT_ENTRY_CANCEL").is_ok_and(|v| v.trim() == "1") {
         super::report(format_args!("text entry \"{title}\": cancelled (TUXBOX_TEXT_ENTRY_CANCEL=1)"));
         return unsafe { complete(block, ABORT, 0, Payload::Empty) };
     }
-    let mut answer = std::env::var("TUXBOX_TEXT_ENTRY").ok().unwrap_or_else(|| unsafe { text(default) }.unwrap_or_default());
-    if max > 0 {
-        answer = answer.chars().take(max as usize).collect();
+    let default = unsafe { text(default) }.unwrap_or_default();
+    let clip = move |answer: String| if max > 0 { answer.chars().take(max as usize).collect() } else { answer };
+    // TUXBOX_TEXT_ENTRY overrides: the answer without asking. Otherwise a host
+    // dialog asks the player, as the console's keyboard does (fxceless 9d94a1c,
+    // ztrx xgameui.rs:147); TUXBOX_TEXT_ENTRY_DIALOG=0 answers the default text.
+    let asked = match std::env::var("TUXBOX_TEXT_ENTRY") {
+        Ok(answer) => Some(answer),
+        Err(_) if std::env::var("TUXBOX_TEXT_ENTRY_DIALOG").is_ok_and(|v| v.trim() == "0") => Some(default.clone()),
+        Err(_) => None,
+    };
+    if let Some(answer) = asked {
+        let answer = clip(answer);
+        super::report(format_args!("text entry \"{title}\": answered \"{answer}\" (TUXBOX_TEXT_ENTRY sets the answer)"));
+        let size = answer.len() + 1;
+        return unsafe { complete(block, OK, size, Payload::Text(answer)) };
     }
-    super::report(format_args!("text entry \"{title}\": answered \"{answer}\" (TUXBOX_TEXT_ENTRY sets the answer)"));
-    let size = answer.len() + 1;
-    unsafe { complete(block, OK, size, Payload::Text(answer)) }
+    let description = unsafe { text(description) }.unwrap_or_default();
+    // Modal, so on a thread of its own: the call is async and the title's
+    // thread keeps running; the block lives until completion.
+    if block.is_null() { return INVALID; }
+    // Pending until the player answers: XAsyncGetStatus polls it meanwhile.
+    OPERATIONS.lock().unwrap_or_else(|e| e.into_inner())
+        .insert(block as usize, Operation { status: E_PENDING, size: 0, payload: Payload::Empty });
+    let block = block as usize;
+    std::thread::spawn(move || {
+        let block = block as *mut c_void;
+        match crate::text_entry::ask(&title, &description, &default, max) {
+            Some(answer) => {
+                let answer = clip(answer);
+                super::report(format_args!("text entry \"{title}\": typed \"{answer}\""));
+                let size = answer.len() + 1;
+                unsafe { complete(block, OK, size, Payload::Text(answer)) };
+            }
+            None => {
+                super::report(format_args!("text entry \"{title}\": cancelled in the dialog"));
+                unsafe { complete(block, ABORT, 0, Payload::Empty) };
+            }
+        }
+    });
+    OK
 }
 /// 19: XGameUiShowTextEntryResult(async, bufferSize, buffer, bufferUsed*).
 pub(super) unsafe extern "system" fn ui_text_entry_result(_: &Object, block: *mut c_void, size: u32, out: *mut u8, used: *mut u32) -> i32 {
