@@ -681,7 +681,7 @@ unsafe fn emit_container(name: &str, context: *mut c_void, callback: Option<Cont
 /// XGameSaveGetRemainingQuota(provider, quota*) (slot 7).
 pub(super) unsafe extern "system" fn save_quota(_: &Object, _provider: *const u8, out: *mut i64) -> i32 {
     if out.is_null() { return POINTER; }
-    unsafe { out.write(SAVE_QUOTA) };
+    unsafe { out.write(remaining_quota(&save_root())) };
     OK
 }
 /// XGameSaveGetRemainingQuotaAsync(provider, async) (slot 8).
@@ -692,7 +692,7 @@ pub(super) unsafe extern "system" fn save_quota_async(_: &Object, _provider: *co
 pub(super) unsafe extern "system" fn save_quota_result(_: &Object, block: *mut c_void, out: *mut i64) -> i32 {
     if out.is_null() { return POINTER; }
     match take(block) {
-        Ok(Payload::Quota) => { unsafe { out.write(SAVE_QUOTA) }; OK }
+        Ok(Payload::Quota) => { unsafe { out.write(remaining_quota(&save_root())) }; OK }
         Ok(_) => INVALID,
         Err(status) => status,
     }
@@ -947,7 +947,14 @@ fn space_check(pending: &Update, blobs: &std::path::Path) -> Option<i32> {
     if used.saturating_sub(freed) + incoming > SAVE_QUOTA as u64 {
         return Some(QUOTA_EXCEEDED);
     }
-    let mut probe = blobs.to_path_buf();
+    let free = disk_free(blobs)?;
+    // A small margin for the display name and file system bookkeeping.
+    (incoming + (64 << 10) > free).then_some(OUT_OF_LOCAL_STORAGE)
+}
+
+/// Free bytes on the host disk holding `path` (its nearest existing ancestor).
+fn disk_free(path: &std::path::Path) -> Option<u64> {
+    let mut probe = path.to_path_buf();
     while !probe.exists() {
         if !probe.pop() { return None; }
     }
@@ -956,8 +963,21 @@ fn space_check(pending: &Update, blobs: &std::path::Path) -> Option<i32> {
     let ok = unsafe {
         windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, core::ptr::null_mut(), core::ptr::null_mut())
     };
-    // A small margin for the display name and file system bookkeeping.
-    (ok != 0 && incoming + (64 << 10) > free).then_some(OUT_OF_LOCAL_STORAGE)
+    (ok != 0).then_some(free)
+}
+
+/// What XGameSaveGetRemainingQuota answers: the 256 MiB title quota minus
+/// what the saves already use, capped by the host disk's free space (ztrx
+/// xgamesave.rs:393). A fixed 256 MiB told a title with saves on disk it had
+/// room it did not. TUXBOX_SAVE_QUOTA_FIXED=1 answers 256 MiB as before.
+/// `root` is the containers' folder, or SaveFiles' for slot 32.
+fn remaining_quota(root: &str) -> i64 {
+    if std::env::var("TUXBOX_SAVE_QUOTA_FIXED").is_ok_and(|v| v.trim() == "1") {
+        return SAVE_QUOTA;
+    }
+    let root = std::path::Path::new(root);
+    let left = (SAVE_QUOTA as u64).saturating_sub(tree_bytes(root));
+    disk_free(root).map_or(left, |free| left.min(free)) as i64
 }
 
 /// Apply a pending update. Atomic (default): every write is staged first in a
@@ -1192,7 +1212,7 @@ pub(super) unsafe extern "system" fn save_files_folder_result(_: &Object, block:
 /// XGameSaveFilesGetRemainingQuota(user, configurationId, quota*) (slot 32).
 pub(super) unsafe extern "system" fn save_files_quota(_: &Object, _user: *mut c_void, _scid: *const i8, out: *mut i64) -> i32 {
     if out.is_null() { return POINTER; }
-    unsafe { out.write(SAVE_QUOTA) };
+    unsafe { out.write(remaining_quota(&format!("{}SaveFiles", storage_path()))) };
     OK
 }
 
