@@ -470,9 +470,31 @@ static TRANSLATE_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 static DXC_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static DXC_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The five slowest dxc compiles (ms, key) of this launcher: where a
-/// prewarm's seconds go, by program.
-static SLOWEST_DXC: std::sync::Mutex<Vec<(u64, String)>> = std::sync::Mutex::new(Vec::new());
+/// The ten slowest dxc compiles (ms, key, HLSL bytes) of this launcher:
+/// where a prewarm's seconds go, by program.
+static SLOWEST_DXC: std::sync::Mutex<Vec<(u64, String, u64)>> = std::sync::Mutex::new(Vec::new());
+static HLSL_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+thread_local! {
+    /// The HLSL size of the program this thread's compile sent to dxc.
+    static LAST_HLSL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// shader-worker.log: one line per dxc compile (key, ms, HLSL bytes) and
+/// the slowest ten at the end, so a prewarm's dxc time can be measured per
+/// program (the xshader TB_* switch comparisons). NEONBRIDGE_DXC_TIMES_LOG=0
+/// leaves the per-compile lines out.
+static COMPILE_LOG: std::sync::Mutex<Option<fs::File>> = std::sync::Mutex::new(None);
+
+pub fn set_compile_log(path: &Path, truncate: bool) {
+    let file = if truncate { fs::File::create(path) } else { fs::OpenOptions::new().create(true).append(true).open(path) };
+    *COMPILE_LOG.lock().unwrap_or_else(|e| e.into_inner()) = file.ok();
+}
+
+fn compile_log(line: &str) {
+    if let Some(f) = COMPILE_LOG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let _ = std::io::Write::write_all(f, format!("{line}\n").as_bytes());
+    }
+}
 
 fn note_times(outcome: &Outcome, key: &str) {
     let (xs, dxc) = match outcome {
@@ -485,13 +507,18 @@ fn note_times(outcome: &Outcome, key: &str) {
         TRANSLATE_N.fetch_add(1, Ordering::Relaxed);
     }
     if let Some(ms) = dxc {
+        let bytes = LAST_HLSL.with(|b| b.get());
         DXC_MS.fetch_add(ms, Ordering::Relaxed);
         DXC_N.fetch_add(1, Ordering::Relaxed);
+        HLSL_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        if std::env::var("NEONBRIDGE_DXC_TIMES_LOG").as_deref() != Ok("0") {
+            compile_log(&format!("dxc {key}: {ms} ms, HLSL {bytes} bytes"));
+        }
         let mut slow = SLOWEST_DXC.lock().unwrap_or_else(|e| e.into_inner());
-        if slow.len() < 5 || slow.last().is_some_and(|l| ms > l.0) {
-            slow.push((ms, key.to_owned()));
+        if slow.len() < 10 || slow.last().is_some_and(|l| ms > l.0) {
+            slow.push((ms, key.to_owned(), bytes));
             slow.sort_by(|a, b| b.0.cmp(&a.0));
-            slow.truncate(5);
+            slow.truncate(10);
         }
     }
 }
@@ -503,9 +530,15 @@ fn job_times(workers: usize) -> String {
         + &{
             let slow = SLOWEST_DXC.lock().unwrap_or_else(|e| e.into_inner());
             let top: u64 = slow.iter().map(|s| s.0).sum();
-            format!("; dxc is {:.0}% of the work; slowest dxc compiles ({:.0}% of dxc time): {}", 100.0 * dx as f64 / (dx + xs).max(1) as f64,
+            let hb = HLSL_BYTES.load(Ordering::Relaxed);
+            compile_log(&format!("dxc totals: {dn} compiles, {:.1} s ({} ms each), HLSL {} KiB ({} KiB each); slowest {}:", dx as f64 / 1000.0, dx / dn.max(1), hb >> 10, (hb / dn.max(1)) >> 10, slow.len()));
+            for (ms, k, b) in slow.iter() {
+                compile_log(&format!("  {k}: {ms} ms, HLSL {b} bytes"));
+            }
+            format!("; dxc is {:.0}% of the work; HLSL {} KiB sent ({} KiB each); slowest dxc compiles ({:.0}% of dxc time; keys in shader-worker.log): {}", 100.0 * dx as f64 / (dx + xs).max(1) as f64,
+                hb >> 10, (hb / dn.max(1)) >> 10,
                 100.0 * top as f64 / dx.max(1) as f64,
-                slow.iter().map(|(ms, k)| format!("{} {:.1} s", &k[..k.len().min(16)], *ms as f64 / 1000.0)).collect::<Vec<_>>().join(", "))
+                slow.iter().map(|(ms, k, b)| format!("{} {:.1} s {} KiB", &k[..k.len().min(16)], *ms as f64 / 1000.0, b >> 10)).collect::<Vec<_>>().join(", "))
         }
 }
 
@@ -827,6 +860,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
         // unoptimised DXIL compiles in seconds and the driver optimises it again.
         let dxc_started = std::time::Instant::now();
+        LAST_HLSL.with(|b| b.set(fs::metadata(&hlsl).map(|m| m.len()).unwrap_or(0)));
         // test112: dxc was 98% of shader time (401 s for 252 compiles, one took
         // 92 s), starving pipelines the title waited on. -O1 now gets
         // NEONBRIDGE_DXC_O1_SECS (10) before the -O0 retry, not 120.

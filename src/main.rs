@@ -305,6 +305,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 println!("[launch] shader worker: {} + {}; session {}", xshader.display(), dxc.display(), session.display());
                 let log_path = out.join("shader-worker.log");
                 let _ = fs::remove_file(&log_path);
+                shaders::set_compile_log(&log_path, false);
                 let sink = std::sync::Mutex::new(fs::OpenOptions::new().create(true).append(true).open(&log_path)?);
                 match shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
                     move |line| { let _ = writeln!(sink.lock().unwrap(), "{line}"); }) {
@@ -571,6 +572,8 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     // rewritten in place, its plain summary lines after it.
     progress::set_inline(true);
     let started = Instant::now();
+    shaders::set_compile_log(&out.join("shader-worker.log"), true);
+    println!("[prewarm] per-compile dxc times: {}", out.join("shader-worker.log").display());
     let worker = shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
         |line| println!("[prewarm] {line}"))?;
     let st = worker.stop();
