@@ -39,6 +39,7 @@ pub(crate) use fence::hang_lines as fence_hang_lines;
 mod graphics;
 mod heap;
 mod reserved;
+pub(crate) mod root_tables;
 mod derived;
 pub(crate) mod indirect;
 pub(crate) mod media;

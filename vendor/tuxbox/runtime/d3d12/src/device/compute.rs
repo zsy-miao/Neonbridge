@@ -283,12 +283,21 @@ pub(super) unsafe extern "system" fn create_root_signature(
     // SAFETY: serialized signature bytes are borrowed only for this call.
     let bytes = unsafe { slice::from_raw_parts(blob, length) };
     crate::diagnostics::rootsig::note(bytes);
+    // Title root SRVs/UAVs as one-view tables (root_tables.rs, opt-in).
+    let rewritten = if super::root_tables::enabled() { super::root_tables::rewrite(bytes) } else { None };
+    let (bytes, tabled) = match &rewritten {
+        Some((b, t)) => (b.as_slice(), Some(t.clone())),
+        None => (bytes, None),
+    };
     match unsafe {
         this.native
             .CreateRootSignature::<ID3D12RootSignature>(node, bytes)
     } {
         // SAFETY: the returned guest child owns both its native interface and device.
         Ok(native) => unsafe {
+            if let Some(tabled) = tabled {
+                super::root_tables::remember(&native, tabled);
+            }
             allocate(
                 &ROOT,
                 &[ID3D12DeviceChild::IID, ID3D12RootSignature::IID],
