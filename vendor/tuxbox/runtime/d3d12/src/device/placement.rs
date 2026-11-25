@@ -568,6 +568,14 @@ pub(super) fn console_layout(desc: &D3D12_RESOURCE_DESC) -> D3D12_RESOURCE_DESC 
         return *desc;
     }
     match desc.Layout.0 {
+        // Layout 0 is the layout library's pick by kind: 1D linear, depth
+        // 64KB_Z_X, render target 64KB_R_X, else 4KB_S (VIctory
+        // victory-gpu resource.rs:150-157 `texture_layout`, GPL-3.0, credit
+        // to its authors). TUXBOX_LAYOUT0_BY_KIND=0 maps it to 4KB_S always.
+        0 if crate::env_toggle!("TUXBOX_LAYOUT0_BY_KIND") == Some("0") => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x105), ..*desc },
+        0 if desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x100), ..*desc },
+        0 if desc.Flags.0 & 2 != 0 => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x118), ..*desc },
+        0 if desc.Flags.0 & 1 != 0 => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x11b), ..*desc },
         0 => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x105), ..*desc },
         1 => D3D12_RESOURCE_DESC { Layout: D3D12_TEXTURE_LAYOUT(0x100), ..*desc },
         _ => *desc,

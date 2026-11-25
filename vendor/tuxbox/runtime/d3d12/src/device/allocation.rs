@@ -149,7 +149,10 @@ fn console_item(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_ALLOCATION_
     if super::plane_size::enabled() && let Some(answer) = super::plane_size::console_size(desc) {
         return Some(answer);
     }
-    if !matches!(desc.Layout.0, 0 | 1 | 0x100..=0x10a) {
+    // Any 0x100 | swizzle mode is a console layout (VIctory resource.rs:156);
+    // TUXBOX_LAYOUT0_BY_KIND=0 keeps the old 0x100..=0x10a window.
+    let swizzled = if crate::env_toggle!("TUXBOX_LAYOUT0_BY_KIND") == Some("0") { desc.Layout.0 <= 0x10a } else { desc.Layout.0 & !0xff == 0x100 };
+    if !(matches!(desc.Layout.0, 0 | 1) || (desc.Layout.0 >= 0x100 && swizzled)) {
         return None;
     }
     let console = super::placement::console_layout(desc);
