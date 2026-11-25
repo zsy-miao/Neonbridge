@@ -1547,6 +1547,47 @@ enum WarmLine {
 /// =0 turns it off), so hours of compiling survive a deleted or clobbered cache.
 /// robocopy in the background at idle priority: only new or changed files are
 /// copied, nothing is ever deleted from the backup.
+/// Shader cache format of each runtime (WIRING.md): runtimes of one format seed each other.
+fn cache_format(name: &str) -> Option<&'static str> {
+    match name {
+        "klbf" | "victory" | "vibrport" | "vitoriabr" | "scarlettport" => Some("VSH1"),
+        "flamingo" | "belobug" => Some("VSH2"),
+        _ => None,
+    }
+}
+
+/// A runtime whose cache is empty starts from the biggest cache of the same
+/// format instead of zero: copied (never shared), so its own warm then only
+/// redoes what its fork compiles differently. NEONBRIDGE_CACHE_SEED=0 off.
+fn seed_cache(name: &str, cache: &Path) {
+    if std::env::var("NEONBRIDGE_CACHE_SEED").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let Some(fmt) = cache_format(name) else { return };
+    if fs::read_dir(cache).map(|mut d| d.next().is_some()).unwrap_or(false) {
+        return;
+    }
+    fn size(p: &Path) -> u64 {
+        fs::read_dir(p).map(|d| d.flatten().map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() => size(&e.path()),
+            Ok(m) => m.len(),
+            _ => 0,
+        }).sum()).unwrap_or(0)
+    }
+    let best = ["klbf", "victory", "vibrport", "vitoriabr", "scarlettport", "flamingo", "belobug"]
+        .into_iter()
+        .filter(|o| *o != name && cache_format(o) == Some(fmt))
+        .map(|o| (size(&self::cache(o)), o))
+        .max();
+    let Some((bytes, from)) = best.filter(|b| b.0 > 0) else { return };
+    println!("[launch] {name}: empty shader cache, seeding from {from} ({fmt}, {} MB)", bytes >> 20);
+    let ok = Command::new("robocopy").arg(self::cache(from)).arg(cache).args(["/E", "/R:0", "/W:0", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/MT:4"])
+        .stdout(std::process::Stdio::null()).status().map(|s| s.code().unwrap_or(16) < 8).unwrap_or(false);
+    if !ok {
+        println!("[launch] {name}: cache seed failed; warming from zero");
+    }
+}
+
 fn backup_cache(cache: &Path) {
     let setting = std::env::var("NEONBRIDGE_CACHE_BACKUP").unwrap_or_default();
     if setting.trim() == "0" {
@@ -1802,6 +1843,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     };
     let cache = cache(name);
     let _ = fs::create_dir_all(&cache);
+    seed_cache(name, &cache);
     backup_cache(&cache); // what the last run added
     // Verify the dump before a run (read-only, ScarlettPort's verify): problems are
     // printed and a bad dump is named on the loader; the run still goes ahead.
