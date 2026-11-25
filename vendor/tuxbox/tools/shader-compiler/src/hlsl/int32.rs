@@ -1,8 +1,8 @@
 //! Ordinary VOP3 integer forms with a 32-bit result: the signed no-carry
 //! add/subtract, the 16x16+32 multiply-add and the sums of absolute
-//! differences (SAD) over bytes, halves and words. Like the newer 16-bit forms
-//! they are initially limited to VGPR sources without modifiers; in
-//! particular clamp (signed saturation) is refused.
+//! differences (SAD) over bytes, halves and words. Sources are VGPRs without
+//! modifiers, with integer immediates also allowed for add/subtract.
+//! Clamp (signed saturation) is refused.
 use super::{int16::half, r, Enc, Insn, Opnd};
 
 pub(super) fn handles(ins: &Insn) -> bool {
@@ -16,9 +16,16 @@ pub(super) fn expression(ins: &Insn) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let mad = ins.mnemonic.starts_with("v_mad_");
-    let arity = if mad || ins.mnemonic.starts_with("v_sad_") { 3 } else { 2 };
+    // TuxBox 5891be3: add/subtract also take integer immediates.
+    // TB_INT32_IMM=0 refuses them again.
+    let add_sub = matches!(ins.mnemonic.as_str(), "v_add_nc_i32" | "v_sub_nc_i32");
+    let imm_ok = add_sub && std::env::var("TB_INT32_IMM").map_or(true, |v| v.trim() != "0");
+    let arity = if add_sub { 2 } else { 3 };
     if !ins.is_complete() || ins.raw.len() < 2 || ins.src.len() < arity
-        || !ins.src[..arity].iter().all(|s| matches!(s, Opnd::Vgpr(_))) {
+        || !ins.src[..arity].iter().all(|s| {
+            matches!(s, Opnd::Vgpr(_))
+                || (imm_ok && matches!(s, Opnd::ConstInt(_) | Opnd::Literal(_)))
+        }) {
         return Err("unsupported ordinary 32-bit integer source or encoding".into());
     }
     let (w0, w1) = (ins.raw[0], ins.raw[1]);
@@ -96,6 +103,22 @@ mod tests {
         let expr = expression(&native(0xd773_1807, 0x041a_0b04)).unwrap().unwrap();
         assert_eq!(expr, "((v4 >> 16) * (v5 >> 16) + v6)");
         assert!(expression(&native(0xd77f_0807, 0x0202_0b04)).is_err());
+    }
+
+    #[test]
+    fn signed_add_and_subtract_accept_immediate_operands() {
+        use crate::hlsl::float64::tests::translate;
+        use crate::Stage;
+
+        // LLVM gfx1030: v_add_nc_i32 v7, v4, -1
+        //              v_sub_nc_i32 v8, 0x80000000, v7
+        let hlsl = translate(
+            Stage::Compute,
+            &[0xd77f_0007, 0x0001_8304, 0xd776_0008, 0x0002_0eff, 0x8000_0000],
+        )
+        .unwrap();
+        assert!(hlsl.contains("v4 + 0xffffffffu"), "{hlsl}");
+        assert!(hlsl.contains("0x80000000u - v7"), "{hlsl}");
     }
 
     #[test]
