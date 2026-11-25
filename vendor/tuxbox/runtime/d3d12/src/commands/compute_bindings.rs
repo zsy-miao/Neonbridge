@@ -863,6 +863,7 @@ impl Bindings {
         written: &mut Vec<std::ops::Range<usize>>,
         fallback: &mut Vec<std::ops::Range<usize>>,
         touched: &mut Vec<std::ops::Range<usize>>,
+        dynamic: &mut Vec<std::ops::Range<usize>>,
     ) {
         use crate::device::shader_cache::HeapSource;
         let Some(access) = self.heap_access.as_ref() else { return };
@@ -874,6 +875,9 @@ impl Bindings {
         // list's sampled heap ranges placement::submit hands the shadow
         // eviction (Coder5's touch_views): direct heap reads were invisible to it.
         for source in access.reads.iter().chain(&access.writes) {
+            if matches!(source, HeapSource::Dynamic | HeapSource::Cbv(..)) {
+                super::descriptors::include_range(dynamic, heap.cpu.clone());
+            }
             let range = match *source {
                 HeapSource::Const(index) => slot(i64::from(index)),
                 HeapSource::Root(param, dword, add) => {

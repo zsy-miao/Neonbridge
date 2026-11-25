@@ -4,7 +4,7 @@ mod cbv_snapshot;
 pub(crate) mod shadow;
 pub(super) use byte_offset::AddressViews;
 pub(crate) use shadow::Shadows;
-pub(crate) use shadow::{uav_fallback, uav_remark, uav_submitted, uav_view, uav_copy};
+pub(crate) use shadow::{dynamic_heaps_submitted, uav_fallback, uav_remark, uav_submitted, uav_view, uav_copy};
 
 use super::{Device, identity, resource};
 use crate::proxy::fail_call;

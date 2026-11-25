@@ -1217,6 +1217,30 @@ fn fallback_cap() -> u64 {
     *MB.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_REMARK_FALLBACK_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(64)) << 20
 }
 
+/// Heap CPU ranges the submitted lists' programs index per lane (or by a
+/// root CBV word), gathered at ExecuteCommandLists before placement::submit:
+/// every shadow view in them may be read or written. Taken by the stale
+/// shadow eviction (TUXBOX_SHADOW_EVICT_STALE), which keeps those copies.
+static DYNAMIC_HEAPS: Mutex<Vec<std::ops::Range<usize>>> = Mutex::new(Vec::new());
+
+pub(crate) fn dynamic_heaps_submitted(ranges: &[std::ops::Range<usize>]) {
+    if ranges.is_empty() {
+        return;
+    }
+    let mut all = lock(&DYNAMIC_HEAPS);
+    for range in ranges {
+        if !all.contains(range) {
+            all.push(range.clone());
+        }
+    }
+}
+
+/// The dynamic heap ranges submitted since the last take.
+#[allow(dead_code)] // for touch_views (TUXBOX_SHADOW_EVICT_STALE)
+pub(crate) fn take_dynamic_heaps() -> Vec<std::ops::Range<usize>> {
+    std::mem::take(&mut *lock(&DYNAMIC_HEAPS))
+}
+
 /// A list's whole-heap fallback ranges (see heap_writes): their shadow UAVs
 /// are marked a capped share per write-back, so the fallback cannot copy
 /// every writable shadow back each pass (test15/test173: 640-855 MB).

@@ -145,6 +145,8 @@ struct Recording {
     written_views: Vec<Range<usize>>,
     /// Heap ranges a per-lane heap write reaches (shadow::uav_fallback).
     fallback_views: Vec<Range<usize>>,
+    /// Heaps this recording's programs index per lane (shadow::dynamic_heaps).
+    dynamic_heaps: Vec<Range<usize>>,
     /// TUXBOX_LIST_RING=1: guest caller RVAs of the latest recording calls,
     /// dumped when the host Close rejects the list.
     ring: std::collections::VecDeque<usize>,
@@ -462,7 +464,7 @@ impl Recording {
             && crate::device::uav_remark()
         {
             self.bindings.uav_tables::<COMPUTE>(heap, &mut self.written_views);
-            self.bindings.heap_writes::<COMPUTE>(heap, &mut self.written_views, &mut self.fallback_views, &mut self.sampled_heaps);
+            self.bindings.heap_writes::<COMPUTE>(heap, &mut self.written_views, &mut self.fallback_views, &mut self.sampled_heaps, &mut self.dynamic_heaps);
         }
         if let Some(heap) = &self.resource_heap
             && self.bindings.sample_tables::<COMPUTE>(heap, &mut self.sampled_heaps).is_none()
@@ -896,6 +898,7 @@ unsafe extern "system" fn reset(
         state.sampled_heaps.clear();
         state.written_views.clear();
         state.fallback_views.clear();
+        state.dynamic_heaps.clear();
         state.ring.clear();
         state.stalled_writes.clear();
         state.cpu_copies.clear();
@@ -2970,6 +2973,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             shader_views.extend(state.sampled_heaps.iter().cloned());
             crate::device::uav_submitted(&state.written_views);
             crate::device::uav_fallback(&state.fallback_views);
+            crate::device::dynamic_heaps_submitted(&state.dynamic_heaps);
             trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
             cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
             swap_lists.borrow_mut().push(list as *const List as usize);
@@ -3547,6 +3551,7 @@ pub(crate) unsafe fn wrap_command_list(
             sampled_heaps: Vec::new(),
             written_views: Vec::new(),
             fallback_views: Vec::new(),
+            dynamic_heaps: Vec::new(),
             ring: std::collections::VecDeque::new(),
             stalled_writes: Vec::new(),
             cpu_copies: Vec::new(),
