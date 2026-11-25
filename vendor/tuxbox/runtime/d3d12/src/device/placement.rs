@@ -1095,24 +1095,34 @@ pub(super) struct Placements {
 /// a list recorded once and never reset would otherwise keep each heap it
 /// named alive (and its driver commit) after the title released the images.
 #[derive(Default)]
-pub(crate) struct TargetHeaps(Vec<std::sync::Weak<super::heap::RenderHeap>>);
+pub(crate) struct TargetHeaps(Vec<(std::sync::Weak<super::heap::RenderHeap>, bool)>);
 
 impl TargetHeaps {
+    /// The recording ends (Reset): each heap it bound a target on counts as
+    /// cleared there or not (RenderHeap::cleared, the residency line).
     pub(crate) fn clear(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        for (heap, cleared) in &self.0 {
+            if let Some(heap) = heap.upgrade() {
+                if *cleared { heap.cleared.fetch_add(1, Relaxed); } else { heap.uncleared.fetch_add(1, Relaxed); }
+            }
+        }
         self.0.clear();
     }
 
-    fn note(&mut self, heap: Arc<super::heap::RenderHeap>) {
+    fn note(&mut self, heap: Arc<super::heap::RenderHeap>, cleared: bool) {
         heap.touch();
         let weak = Arc::downgrade(&heap);
-        if !self.0.iter().any(|h| h.ptr_eq(&weak)) && self.0.try_reserve(1).is_ok() {
-            self.0.push(weak);
+        if let Some(entry) = self.0.iter_mut().find(|(h, _)| h.ptr_eq(&weak)) {
+            entry.1 |= cleared;
+        } else if self.0.try_reserve(1).is_ok() {
+            self.0.push((weak, cleared));
         }
     }
 
     /// The submit of a list that recorded these targets: each heap is used now.
     pub(crate) fn retouch(&self) {
-        for heap in self.0.iter().filter_map(std::sync::Weak::upgrade) {
+        for heap in self.0.iter().filter_map(|(h, _)| h.upgrade()) {
             heap.touch();
         }
     }
@@ -1125,7 +1135,15 @@ pub(crate) fn target_retouch() -> bool {
 
 fn note_target(device: &Device, handle: usize, heaps: &mut TargetHeaps) {
     if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
-        heaps.note(heap);
+        heaps.note(heap, false);
+    }
+}
+
+/// A clear of the RTV or DSV at `handle` was recorded.
+pub(crate) unsafe fn note_clear(device: *mut c_void, handle: usize, heaps: &mut TargetHeaps) {
+    let device = unsafe { &*device.cast::<Device>() };
+    if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
+        heaps.note(heap, true);
     }
 }
 

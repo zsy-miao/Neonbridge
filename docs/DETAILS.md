@@ -60,6 +60,9 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `NEONBRIDGE_BLOCKING_PREWARM` (0): 1 prewarms the seen set before the game; by default it runs in a background idle-priority thread that stands aside while the title waits on a shader.
 - `NEONBRIDGE_DXC_UPGRADE_IN_GAME` (0): 1 runs the `-O1` upgrade queue while the title runs; `NEONBRIDGE_DXC_UPGRADE_DRAIN` (1): 0 skips the detached `--drain-upgrades` that empties it between runs.
 - `NEONBRIDGE_PREWARM_UPGRADE_O0` (0): 1 lets the explicit prewarm recompile cached `-O0` DXIL at `-O1`.
+- `NEONBRIDGE_DRAIN_COPY` (1): the `-O1` upgrade drainer runs from its own copy (`neonbridge-drain.exe`) so a build's taskkill no longer ends it; 0 runs the launcher's exe. `NEONBRIDGE_DRAIN_YIELD_GAME` (1): the drainer steps aside while the game runs and logs to `drain.log`; 0 off.
+- `NEONBRIDGE_XSHADER_SKIP` (1): xshader's cargo run is skipped when its sources hash as at the last good build; 0 always runs cargo. `NEONBRIDGE_XSHADER_PARALLEL` (1): xshader builds beside the runtime build; 0 builds after it.
+- `NEONBRIDGE_CACHE_REUSE_PUBLISHED` (1): a cache publish whose rename loses to another worker's identical file uses the published one (VIctory-zhai 37e90b3, after fxceless 43f465b); 0 fails the compile.
 - `NEONBRIDGE_SEEN_LINKS` (1): 0 writes empty `seen/` markers instead of hard links to `requests/`.
 - `NEONBRIDGE_WATCH_HANG` / `--watch-hang SPEC` (off): samples title globals (game+RVA, 1-8 bytes) every 100 ms from outside the process.
 - `NEONBRIDGE_DXC_O1_SECS` (10): `-O1` time before the `-O0` retry.
@@ -128,7 +131,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_OVERLAP_STRICT` (0), `TUXBOX_PAGE_MAPPING_STRICT` (0): 1 drops overlapping or refused batches.
 - `TUXBOX_SLOT35_DIRECT_ONLY` (0), `TUXBOX_QSLOT35` (drop): slot-35 submissions.
 - `TUXBOX_FENCE_CELL_MAX` (1): 0 stores the fence cell as read.
-- `TUXBOX_UPLOAD_PER_QUEUE` (1), `TUXBOX_PLACED_CROSS_WAITS` (0): placed upload queues.
+- `TUXBOX_UPLOAD_PER_QUEUE` (1), `TUXBOX_PLACED_CROSS_WAITS` (1): placed upload queues and cross-queue placed-texture fence waits; 0 turns each off.
 - `TUXBOX_SPLIT_AT_WAITS` (1): 0 skips waits after rendering work.
 - `TUXBOX_SPLIT_CAP` (uncapped): caps list splits.
 - `TUXBOX_WAIT_HOIST` (1), `TUXBOX_WAIT_SKIP_BARRIER` (1): unsplittable waits hoisted; skipped waits get a UAV barrier.
@@ -168,7 +171,10 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_INNER_DEPTH_OWN` (1): a depth image placed inside another's range gets its own render heap (leonida d16eb1ff0); 0 aliases.
 - `TUXBOX_PLACED_LAYOUT_MAP` (1): console layout words (0x100+) forward as UNKNOWN / ROW_MAJOR; 0 forwards them raw.
 - `TUXBOX_PACKED_ALIAS_COPY` (1): an R9G9B9E5 texture over a UAV-only R32_UINT twin is copied from it before a read; 0 reads title memory.
-- `TUXBOX_PLACED_DEVICE` (1): xmem device-backed title ranges (step 1, inert until d3d12 registers ranges); 0 off.
+- `TUXBOX_PLACED_DEVICE` (1): a 64 KiB-aligned buffer the title places in its GPU page pool (slot 44 or 133) gets a DEFAULT-heap buffer, CPU touches fault its pages open and they are copied up before each submit (LMIII/VItoriaBr/leonida, credit); turn-downs log why; 0 imports as before.
+- `TUXBOX_ROOT_WALK_CACHE` (1): a root view's committed span is kept 1 s so binds inside it skip VirtualQuery; 0 walks every bind. `TUXBOX_ROOT_SPAN_IMPORT` (1): a walked root view imports the 32 MiB-aligned window of its span (up to 64 MiB) so nearby binds reuse it (test167: 1285 ms per 10 s on 64 KiB imports); 0 imports 64 KiB.
+- `TUXBOX_SLOT_WORDS` (1): `tb_slot_words` (t6, space32766) holds 32 bytes of console GFX10 words (V#/T#) per heap slot; 0 leaves it out. `TUXBOX_TABLE_WORDS` (1): `tb_tw{p}` (space32765) is a raw root SRV over the title memory at root parameter p, or the table's encoded slot words for a descriptor table; 0 leaves the bindings out.
+- `TUXBOX_MODE0_64K` (1): a 2D layout-0x100 texture every model refuses is sized as the console's 64 KiB chain (ScarlettCompat b92f060); 0 refuses. `TUXBOX_ALLOC_UAV_RETRY` (1): a description refused only for ALLOW_UNORDERED_ACCESS is sized without the bit (ScarlettCompat e6588c4); 0 keeps the refusal.
 - `TUXBOX_ADDRESS_UAV` (1), `TUXBOX_ADDRESS_UAV_CHECKS` (1), `TUXBOX_UAV_IMPORTS` (1), `TUXBOX_UAV_REIMPORT` (1).
 - `TUXBOX_TYPED_UAV_GUARD` (1), `TUXBOX_OFF_ELEMENT_RAW` (1), `TUXBOX_HEAP_NULL_TAIL` (1).
 - `TUXBOX_SLOT_VIEWS` (1), `TUXBOX_VIEW_MARKS` (1): slot_views table and write marks.
@@ -180,6 +186,8 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_SHADOW_CPU` (1), `TUXBOX_SHADOW_FILL_CHECKED` (1).
 - `TUXBOX_SHADOW_HASH_COMMITTED` (bits): `query` uses VirtualQuery, `0` reads directly.
 - `TUXBOX_SHADOW_HASH_LOCKED` (0), `TUXBOX_SHADOW_DROP_LOCKED` (0), `TUXBOX_SHADOW_PRUNE_EVERY` (0), `TUXBOX_SHADOW_RELEASE_ON_REMAP` (1).
+- `TUXBOX_SHADOW_HASH_MB` (4): a shadow refresh hashes at most this many MiB of aged checks, the rest owed and due next refresh; 0 hashes all. `TUXBOX_SHADOW_SKIP` (1): unchanged-shadow hash skip; 0 off.
+- `TUXBOX_WATCH_HANDOFF_ONCE` (1): the write watch merges hand-off pages once per refresh by binary search; 0 merges per scan. `TUXBOX_WATCH_OWE_WATCHED` (1): a reset page is owed to the other side only inside a range it watched; 0 owes every page.
 - `TUXBOX_SHADOW_RECENT` (4): a writable shadow is written back and refreshed whole only while written in the last N write-backs; 0 keeps the sticky mark. test159: loading screen at 143 fps, submit 0.8 ms, shadow copies near 0.
 - `TUXBOX_SHADOW_WATCH` (1): unwritten read-only shadow pieces are skipped, and the watch turns itself off after a refresh that watches nothing or takes over 2 ms; 0 copies them all.
 - `TUXBOX_REFRESH_VRAM_SCALE` (1): the refresh read budget scales with the device-local budget (ScarlettPort f14d3ff); 0 keeps the fixed budget.
@@ -202,7 +210,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_PAGES_TRIM_EMPTY` (1), `TUXBOX_PAGES_PACK` (1), `TUXBOX_PAGES_TRIM_PCT` (95), `TUXBOX_PAGES_TRIM2_PCT` (110).
 - `TUXBOX_PAGES_IDLE_S` (5), `TUXBOX_PAGES_IDLE_MIN_KB` (1024), `TUXBOX_PAGES_TILED_CHECK` (1), `TUXBOX_PAGES_CONTIGUOUS` (1).
 - `TUXBOX_RENDER_HEAP_PRIORITY` (1), `TUXBOX_RENDER_HEAP_EVICT` (0).
-- `TUXBOX_COMMITTED_WRITEBACK` (0): 1 enables committed write-back.
+- `TUXBOX_COMMITTED_WRITEBACK` (1): committed-texture write-back on CPU touch; 0 off.
 - `TUXBOX_CLAIM_SAME_KEEP` (1).
 - `TUXBOX_SNAPSHOT_BIG_MB` (16), `TUXBOX_SNAPSHOT_BIG_MS` (500), `TUXBOX_SNAPSHOT_MAX_MB` (256), `TUXBOX_WRITEBACK_MAX_MB` (on).
 - `TUXBOX_REFRESH_READ_MB` (32), `TUXBOX_REFRESH_READ_MS` (4), `TUXBOX_REFRESH_ROTATE` (1), `TUXBOX_DEFER_OWED` (1), `TUXBOX_REFRESH_BUSY_SCALE` (3).
@@ -211,6 +219,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_PLACED_OOM_RETRY` (1), `TUXBOX_PLACED_OOM_STRICT` (0), `TUXBOX_PUBLICATION_STRICT` (0).
 - `TUXBOX_WATCH_GAP_MB` (64).
 - `TUXBOX_DETILE_FAST` (1): 0 copies placed uploads run by run. test153: submit fell from 27 ms to about 1 ms per frame; 39 fps until a hang at present #2699.
+- `TUXBOX_PLANE_DECODE_SKIP` (1): a video plane already read since Bink's last completed decode is skipped, once that count has moved; 0 reads every plane every refresh.
 - `TUXBOX_UPLOAD_WORKERS` (1 = inline), `TUXBOX_UPLOAD_LIST_POOL` (1): detile worker threads; 0 creates copy lists per refresh.
 
 ### xmem
@@ -220,7 +229,9 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_XMEM_UNMAP_FALLBACK` (1), `TUXBOX_XMEM_DEFER_UNMAP` (1), `TUXBOX_XMEM_UNMAP_RETRY` (0).
 - `TUXBOX_XMEM_DEVICE_ALLOC` (1), `TUXBOX_XMEM_GRAPHICS_BUDGET` (1).
 - `TUXBOX_JOIN87_DETAIL` (1): failed join unmaps name the GPU imports over them.
-- `TUXBOX_UNMAP87_REGION` (1): an unmap failing 87 logs the view's region, neighbours and working-set flags; 0 off.
+- `TUXBOX_UNMAP87_REGION` (1): an unmap failing 87 logs the view's region, neighbours, working-set flags and file reads in flight into it; 0 off.
+- `TUXBOX_JOIN_FREEZE` (1): a join freezes the other threads only for a retry after it failed 87 unfrozen (xbox-emulator phys_runs.rs, credit); 0 off. test166 (freeze on every join) hung in boot state 1 with 0 presents from the freeze cost; 4adc117 fixes it.
+- `TUXBOX_BINK_BUF_WATCH` (0x5d0000000): each Bink open logs the allocations its HBINK points into and this page with its newest unmap; =0 off.
 - `TUXBOX_XMEM_UNMAP_TRACE` (1): ring of the last 4096 unmapped ranges (TuxBoxUnmapTrace); 0 records nothing.
 
 ### d3d12: pipelines
@@ -275,6 +286,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_CHAD_STRICT` (0), `TUXBOX_XMA` (1), `TUXBOX_XMA_LOOP_SKIP_NEXT` (1), `TUXBOX_APU_FREE` (1), `TUXBOX_AUDIO_LOCK_PATCH` (1).
 - `TUXBOX_XAPU_CLAMP` (1), `TUXBOX_XAPU_REBOX_LAYOUT` (0), `TUXBOX_XAUDIO_VOICE_FLAGS` (1).
 - `TUXBOX_RUNTIME_FEATURE` (1): XGameRuntimeIsFeatureAvailable is served (leonida); 0 answers E_NOINTERFACE.
+- `TUXBOX_BINK_SOUND_STATS` (1): wraps BINKSND Ready/Lock/Unlock (+0x170..+0x180), logs first calls, a 10 s line of rates, the title's queue and mixer state, and failed sound opens; 0 off. test167 (JOIN_FREEZE=0) reached the loading screen (741 presents), then crashed at game+0x1a9b33f under the Bink sound open_wrapper (null +0x638) at the player-select A press; 305 render heaps, 2 freed; the shader worker's run folders were missing.
 - `TUXBOX_BINK_LEAD` (1), `TUXBOX_BINK_CATCHUP` (cap 4; 0 off, not exercised in test153), `TUXBOX_BINK_WAIT_CATCHUP` (1), `TUXBOX_BINK_PLANE_FENCE_MS` (8), `TUXBOX_BINK_SKIP_SIGNAL` (1).
 
 ### Diagnostics
@@ -298,6 +310,9 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_HANG_FIND` (0x23cf104,0x43c3d5d,0x43c421e): hang-time group waits and Subrender workers; 0 off. `TUXBOX_SUBRENDER_DUMP` (1): a 5 s heartbeat stall dumps the loading-screen Subrender handshake and GPU channel once; 0 off.
 - `TUXBOX_WATCH_HANG` (1): 100 ms in-process sampler of the title's main state, loading flag and heartbeat (five-star --watch-hang); 0 off.
 - `TUXBOX_WRITE_WATCH` (ring credits, game+0x75e5ed8): counts writes from the taker 0x2a42d0 and logs every other writer RIP up to 4 times with its game returns; 0 off. test159 named game+0x24825a7 as the ring-credit releaser, and ended at 119 s on an int3 at game+0x14a6390.
+- `TUXBOX_HANG_SECONDS_BOOT` (30): a stall before the first present prints every thread's stack once after N s; 0 off.
+- `TUXBOX_LOG_TIME` (1): every stderr line ends with `[t=S s]` since process creation; 0 off.
+- `TUXBOX_COMMIT_WALK_EVERY` (6): the commit breakdown walk runs every Nth memory line or after 256 MiB of commit movement; 1 walks every line. The residency line counts render heaps freed; the root views line counts new buffer imports.
 - `TUXBOX_D3D12_SDK` (off): Agility SDK dir for a debug device; `TUXBOX_D3D12_SDK_GLOBAL` (0), `TUXBOX_D3D12_SDK_VERSION` (from D3D12Core.dll).
 
 ### xshader (`TB_*`)
@@ -325,6 +340,7 @@ Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is
 - `TB_VIEW_MARKS` (1), `TB_BVH_RAW` (1): exact BVH node tests over raw views (five-star rdna_bvh.hlsli), `TB_BVH_ROOT` (1): root T#s too; `TB_BVH_NO_HIT` (1): unresolved BVH reads miss instead of refusing. 0 turns each off.
 - `TB_WAVE64_MASK_LIVENESS` (1), `TB_SPLIT_WAVE64_MULTI` (1): split wave64 for 65..1024-thread groups; `TB_MASK_DATA_WAVE` (1): a mask read as a number pins wave64; `TB_LIFT_GUARDED_BARRIER` (1). 0 turns each off.
 - `TB_HEAP_VIEW_WORDS` (1): heap buffer loads get dwords 1-2 from `tb_slot_views`, only when read as data (`TB_HEAP_VIEW_WORDS_ALWAYS` (0): 1 after every load); `TB_RAW_IDXEN_STORE` (1), `TB_ROOT_RAW_STRIDE` (1). 0 turns each off.
+- `TB_TABLE_WORDS` (1): a root-table descriptor read as data loads the guest's words from `tb_tw<t>`; 0 reads the stale SGPRs. `TB_DESC_DATA_ARITY` (1): the descriptor-as-data check reads only the sources an op uses; 0 reads all three. `TB_WAVE_LOOP_QUAD_SWIZZLE` (1): a QDMode ds_swizzle_b32 in a compute loop reads its quad lane with WaveReadLaneAt; 0 refuses.
 - `TB_CFG_SPLIT` (unset: DPP quad-exchange programs only): xcl make_reducible node splitting; 1 all interleaved programs, 0 off.
 - `TB_TABLE_ARRAYS` (1), `TB_VGPR_HEAP_DESC` (1), `TB_EXECZ_INLINE_WORDS` (1), `TB_DF_STICKY_CONFLICT` (1), `TB_CB_MUBUF_SOFFSET` (1), `TB_D16_INT_IMAGE` (1), `TB_BPERMUTE_UNIFORM_SCC` (1), `TB_WIDE_IMAGE_ATOMICS` (1), `TB_WAVE_LOOP_SWIZZLE` (1), `TB_MESH_LOOPS` (1): 0 restores each old refusal or behavior.
 

@@ -1459,6 +1459,7 @@ unsafe extern "system" fn clear_rtv(
         { state.error = error; state.error_at = (file!(), line!()); }
         return;
     }
+    unsafe { placement::note_clear(parent(&list.parent), handle.ptr, &mut state.target_heaps) };
     unsafe {
         (list.native.vtable().ClearRenderTargetView)(
             list.native.as_raw(),

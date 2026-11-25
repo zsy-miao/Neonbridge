@@ -1142,7 +1142,14 @@ fn tiled_alias(device: &Device, base: u64, host: &D3D12_RESOURCE_DESC) -> window
 
 pub(super) struct RenderHeap {
     native: ID3D12Heap,
+    /// guest range [start, end) it backs (the aliasing count in `summary`)
+    start: u64,
     end: u64,
+    /// recordings that bound a target on it and cleared or discarded one
+    /// there (`cleared`), or bound one without (`uncleared`): the share of
+    /// idle heaps whose contents are never read before a clear
+    pub(super) cleared: std::sync::atomic::AtomicU64,
+    pub(super) uncleared: std::sync::atomic::AtomicU64,
     /// holds a render target or depth image (`rank`)
     renderable: std::sync::atomic::AtomicBool,
     /// made for a depth image in the opaque (unknown) layout (`inner_depth`)
@@ -1258,7 +1265,7 @@ impl RenderHeaps {
         unsafe { device.CreateHeap(&desc, &mut native)? };
         let native = native.ok_or(E_POINTER)?;
         rank(device, &native, renderable, desc.SizeInBytes);
-        let heap = Arc::new(RenderHeap { native, end: stop, renderable: renderable.into(),
+        let heap = Arc::new(RenderHeap { native, start, end: stop, cleared: 0.into(), uncleared: 0.into(), renderable: renderable.into(),
             opaque_depth, bytes: desc.SizeInBytes, device: device.as_raw() as usize,
             used: residency::now_ms().into(), evicted: false.into(),
             _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes) });
@@ -1358,10 +1365,43 @@ pub(super) mod residency {
             if idle >= 30000 { add(&mut idle30); }
             if heap.renderable.load(Relaxed) { add(&mut renderable); }
         }
+        // Idle 5 s+ heaps whose recordings always cleared a target there
+        // (a free-and-recreate sweep would lose nothing), and heaps whose
+        // guest range another live heap also covers (aliased placements each
+        // paying for the same console bytes).
+        let mut always = (0u64, 0u64);
+        let mut ranges: Vec<(u64, u64, u64)> = Vec::new();
+        for heap in live.iter().filter_map(Weak::upgrade) {
+            ranges.push((heap.start, heap.end, heap.bytes));
+            if !heap.evicted.load(Relaxed) && now.saturating_sub(heap.used.load(Relaxed)) >= 5000
+                && heap.uncleared.load(Relaxed) == 0 && heap.cleared.load(Relaxed) > 0 {
+                always.0 += 1;
+                always.1 += heap.bytes;
+            }
+        }
+        ranges.sort_unstable();
+        let (mut aliased, mut covered_to) = ((0u64, 0u64, 0u64), 0u64);
+        for &(start, end, bytes) in &ranges {
+            if start < covered_to {
+                aliased.0 += 1;
+                aliased.1 += bytes;
+                aliased.2 += covered_to.min(end) - start;
+            }
+            covered_to = covered_to.max(end);
+        }
+        let union: u64 = {
+            let (mut sum, mut to) = (0u64, 0u64);
+            for &(start, end, _) in &ranges {
+                let from = start.max(to);
+                if end > from { sum += end - from; }
+                to = to.max(end);
+            }
+            sum
+        };
         let m = |t: (u64, u64)| format!("{} ({} MiB)", t.0, t.1 >> 20);
-        format!("render heaps resident {}, of those idle 5 s+ {}, idle 30 s+ {}, renderable {}; evicted {}; freed so far {} (tracking {})",
+        format!("render heaps resident {}, of those idle 5 s+ {}, idle 30 s+ {}, renderable {}; evicted {}; freed so far {}; idle 5 s+ and always cleared before use {}; overlapping another live heap's guest range {} (overlap {} MiB; guest ranges covered {} MiB) (tracking {})",
             m(resident), m(idle5), m(idle30), m(renderable), m(evicted),
-            m((FREED.load(Relaxed), FREED_BYTES.load(Relaxed))), tracking())
+            m((FREED.load(Relaxed), FREED_BYTES.load(Relaxed))), m(always), m((aliased.0, aliased.1)), aliased.2 >> 20, union >> 20, tracking())
     }
     static RESTORED: AtomicU64 = AtomicU64::new(0);
     static PASSES: AtomicU64 = AtomicU64::new(0);
