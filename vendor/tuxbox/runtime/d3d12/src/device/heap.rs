@@ -1270,6 +1270,17 @@ impl RenderHeaps {
     }
 }
 
+/// Heaps freed (the last image on them released), for the residency line:
+/// shows whether the title's released or superseded images ever free their
+/// device memory (test165: 568 heaps, 3138 MiB, 512 made of which nearly
+/// all still alive).
+impl Drop for RenderHeap {
+    fn drop(&mut self) {
+        residency::FREED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        residency::FREED_BYTES.fetch_add(self.bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl RenderHeap {
     /// A use recorded now, without making it resident (the evictor's flush).
     pub(super) fn stamp(&self) {
@@ -1327,6 +1338,8 @@ pub(super) mod residency {
     static HOLD_UNTIL: AtomicU64 = AtomicU64::new(0);
     static EVICTED: AtomicU64 = AtomicU64::new(0);
     static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
+    pub(super) static FREED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static FREED_BYTES: AtomicU64 = AtomicU64::new(0);
 
     /// Render heaps by residency and idle time, for the residency line.
     pub(crate) fn summary() -> String {
@@ -1346,8 +1359,9 @@ pub(super) mod residency {
             if heap.renderable.load(Relaxed) { add(&mut renderable); }
         }
         let m = |t: (u64, u64)| format!("{} ({} MiB)", t.0, t.1 >> 20);
-        format!("render heaps resident {}, of those idle 5 s+ {}, idle 30 s+ {}, renderable {}; evicted {} (tracking {})",
-            m(resident), m(idle5), m(idle30), m(renderable), m(evicted), tracking())
+        format!("render heaps resident {}, of those idle 5 s+ {}, idle 30 s+ {}, renderable {}; evicted {}; freed so far {} (tracking {})",
+            m(resident), m(idle5), m(idle30), m(renderable), m(evicted),
+            m((FREED.load(Relaxed), FREED_BYTES.load(Relaxed))), tracking())
     }
     static RESTORED: AtomicU64 = AtomicU64::new(0);
     static PASSES: AtomicU64 = AtomicU64::new(0);
