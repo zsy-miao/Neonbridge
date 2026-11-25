@@ -1594,9 +1594,12 @@ fn heap_clamp_all() -> bool {
 /// its s_load writes no SGPR, so an ALU read of those SGPRs (a record count,
 /// an address) would read stale values: such a shader is refused (atlas gap
 /// "descriptors read as data"; fxceless lower.rs refuses a scalar read it
-/// cannot give data for). TB_DESC_AS_DATA=1 translates it as before.
+/// cannot give data for). Opt-in, TB_DESC_AS_DATA=0: on by default it
+/// refused ~630 programs whose reads are float VALU math, so the dataflow's
+/// optimistic descriptor tags reach SGPRs holding data; translated as before
+/// until that is told apart.
 fn desc_as_data_refused() -> bool {
-    !std::env::var("TB_DESC_AS_DATA").is_ok_and(|v| v.trim() == "1")
+    std::env::var("TB_DESC_AS_DATA").is_ok_and(|v| v.trim() == "0")
 }
 
 fn resinfo_cube() -> bool {
@@ -6655,7 +6658,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     fn emit_insn(&mut self, idx: usize, ins: &Insn, is_ps: bool, br: Option<usize>) -> Result<(), String> {
         if self.desc_data.contains(&idx) && desc_as_data_refused() {
-            return Err("a statically resolved descriptor's words read as data (TB_DESC_AS_DATA=1 allows)".into());
+            return Err("a statically resolved descriptor's words read as data (TB_DESC_AS_DATA=0 refuses)".into());
         }
         self.emit_insn_body(idx, ins, is_ps, br)?;
         if self.vote_defs.contains(&idx) {
