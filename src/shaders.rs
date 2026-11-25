@@ -267,6 +267,8 @@ pub fn stale_summary() -> String {
 
 /// dxc outputs reused by the normalised HLSL key alone (not the exact text).
 pub static NORMALISED_REUSES: AtomicUsize = AtomicUsize::new(0);
+/// Reuses of -O0 DXIL (a `.o0` marker beside it); the rest of the reuses are -O1.
+pub static O0_REUSES: AtomicUsize = AtomicUsize::new(0);
 
 /// HLSL with `//` and `/* */` comments removed, each line trimmed with its
 /// runs of spaces and tabs made one space, and blank lines dropped. Line
@@ -887,7 +889,11 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             }
         };
         if let Some((bytes, from)) = found {
-            upgrade(crate::dxil_upgrade::marker(from).exists());
+            let o0 = crate::dxil_upgrade::marker(from).exists();
+            if o0 {
+                O0_REUSES.fetch_add(1, Ordering::Relaxed);
+            }
+            upgrade(o0);
             // Into this build's cache as a compile would store it (renamed in whole).
             let (copy, stamp) = (work.join("reused.cso"), work.join("reused.sha256"));
             fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
@@ -1506,6 +1512,9 @@ impl Worker {
             log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
                 seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
                 stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+            let o0 = O0_REUSES.load(Ordering::Relaxed);
+            log(format!("seen prewarm: DXIL: {} reused at -O1, {o0} reused at -O0 (queued for the -O1 upgrade), {} fresh dxc compiles",
+                stats.reused.load(Ordering::Relaxed).saturating_sub(o0), stats.prewarmed.load(Ordering::Relaxed)));
             // The churn line: how much of this xshader's output was new HLSL.
             // 1273355's 515 s prewarm compiled 1141 and reused 25, from an
             // xshader change three revs back (59ad7f5's helper pruning).
