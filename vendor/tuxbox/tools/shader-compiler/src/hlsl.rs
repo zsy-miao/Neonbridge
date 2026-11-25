@@ -10582,6 +10582,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     fn emit_mimg(&mut self, idx: usize, ins: &Insn) -> Result<(), String> {
+        // gather4h / gather4h_pck / gather8h_pck fetch a horizontal row of texels,
+        // not Gather's 2x2 footprint; refused until the row's position and rounding
+        // are measured (xcl 61ce2f9, sennecools, PR #437, GPL-2, copied with credit).
+        if ins.mnemonic.starts_with("image_gather4h") || ins.mnemonic.starts_with("image_gather8h") {
+            return Err(format!("{}: horizontal gather unsupported", ins.mnemonic));
+        }
         if self.packed.as_ref().is_some_and(|p| p.wide_images.contains(&idx)) {
             return packed_root::ps09_raster::emit_wide_image(self, ins, "wide_u10");
         }
