@@ -189,21 +189,26 @@ impl MeshLayout {
                 // A raw buffer read straight from the parameter's user SGPRs where the
                 // guest root declares a descriptor table (test176 mesh shader 96bd6026:
                 // [0x100, 0, t0, 1, 0x30b04] on table param 3): the console hands the
-                // shader the parameter's 64-bit address as a buffer base: the table's own
-                // slots. Read them through the runtime's table-words view of that
-                // parameter (`tb_tw<p>`: t<p>, space32765; d3d12 table_words.rs, GFX10
-                // words 32 bytes a slot), so the root keeps its table. TUXBOX_MESH_TABLE_AS_RAW=0
-                // refuses it.
+                // shader the parameter's 64-bit address as a buffer base. Rebind the
+                // parameter as that root SRV. TUXBOX_MESH_TABLE_AS_RAW=0 refuses it.
                 RootParamKind::Table(_)
                     if class == 0x100
                         && offset == 0
                         && mesh_table_as_raw()
                         && user.contains(&[1, 0, 2, register, location >> 8]) =>
                 {
-                    if result.raw.insert(sgpr, (u32::try_from(index).ok()?, TABLE_WORDS_SPACE)).is_some() {
+                    if result.raw.insert(sgpr, (register, space)).is_some() {
                         return None;
                     }
                     raw_tables.insert(index);
+                    result.replacements.insert(
+                        index,
+                        RootParamKind::Descriptor {
+                            kind: 3,
+                            register,
+                            space,
+                        },
+                    );
                 }
                 RootParamKind::Constants {
                     register: original,
@@ -394,9 +399,6 @@ mod tests {
 fn mesh_typed_buffer() -> bool {
     std::env::var("TUXBOX_MESH_TYPED_BUFFER").map_or(true, |v| v.trim() != "0")
 }
-
-/// Register space of the runtime's per-parameter table-words views.
-pub const TABLE_WORDS_SPACE: u32 = 32765;
 
 fn mesh_table_as_raw() -> bool {
     std::env::var("TUXBOX_MESH_TABLE_AS_RAW").map_or(true, |v| v.trim() != "0")
