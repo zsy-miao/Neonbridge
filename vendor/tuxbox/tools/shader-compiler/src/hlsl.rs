@@ -6636,6 +6636,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     // the wave. The ballot word holding this lane is its wave32's exec mask, also
                     // inside a guarded region (the reference folds to 0 only outside one).
                     // TB_FF1_EXEC_WAVE=0 keeps the lane's own bit.
+                    // A lane mask's first set lane, from the ballot (see `mixed_mask`).
+                    "s_ff1_i32_b32" | "s_ff1_i32_b64" if s[0] != Opnd::ExecLo && self.mixed_masks.contains_key(&idx) => {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(mixed_mask::MARK);
+                        self.line(&format!("uint4 t{t}b = WaveActiveBallot(({a} & 1u) != 0u);"));
+                        let e = if m == "s_ff1_i32_b64" { ff1_b64_expr(&format!("t{t}b.x"), &format!("t{t}b.y")) } else { format!("firstbitlow(t{t}b.x)") };
+                        self.ws(&d, &e)
+                    }
                     "s_ff1_i32_b32"
                         if s[0] == Opnd::ExecLo
                             && !self.resolve_wave32

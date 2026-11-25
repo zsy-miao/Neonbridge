@@ -40,6 +40,13 @@ pub(super) fn mask_position(masks: &BTreeSet<u8>, ins: &Insn) -> Option<usize> {
     if ins.mnemonic.starts_with("s_bitcmp") && ins.src.first().is_some_and(|o| is_lane_mask(masks, o)) {
         return Some(0);
     }
+    // s_ff1 of VCC or a tracked mask finds the wave's first set lane, not this
+    // lane's bit (Xbox2Windows a81a6f07, MIT). EXEC has its own lowerings.
+    if ins.mnemonic.starts_with("s_ff1_i32_b")
+        && ins.src.first().is_some_and(|o| *o != Opnd::ExecLo && is_lane_mask(masks, o))
+    {
+        return Some(0);
+    }
     if bitwise(ins).is_none() || ins.src.len() != 2 {
         return None;
     }
