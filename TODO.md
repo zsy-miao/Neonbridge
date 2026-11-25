@@ -82,12 +82,12 @@ Open work. Each item is tested in a run of its own.
 
 ### runtime/launcher
 - Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
-- leonida 273b3bdf9 (c63e099): also wrap ReadFileEx/ReadFileScatter, and pin before the read.
-- 28e3f08: keep the window's own protection.
 - b69a488: re-evaluate f1b5622 now that the AnyPS5 ban is lifted.
 - Credits: c608da2 should cite ff39277; 04a7bee's rebox figure is 13 GiB; 65fc79e's rebox credit is wrong.
 
 ## Done / not needed
+- not needed: leonida 273b3bdf9 (c63e099): neither the exe nor any 6m DLL imports ReadFileEx/ReadFileScatter; ReadFile already commits before the read (read_commit.rs:77).
+- not needed: 28e3f08 keep the window's protection (leonida 8d4dd7a8/80ed5dd3: protect & ~(WRITECOMBINE|NOCACHE|GUARD), NOACCESS -> READWRITE): every window xmem accepts (virtual_memory.rs:438, 0x801/0x04/0x2004/0x2404/0x10404/0x22004) reduces to PAGE_READWRITE, which views already get.
 - ported or not needed (reasons in refwatch-verify-verdicts.md): xcl c7f6933 fb9d059 6c9f947 18423c3 4070ae1 4b0af47 79fde18-partial; VIctory-zhai f07016a 0f11320 7f26331; five-star evict-windows 4fdfaed ff3914e c915760; TuxBox 97b8ad3; X2W 84c66897 (address views read the same memory) da888e46/efe54732/323ccf6f 28337fa6/9a6fd7ff 6d8ab3d3 9d013a48; leonida aa23d709c 22f2a04af/22171d092 545e8d51f f2268abea/255f17001; ScarlettCompat 446b178; ScarlettPort 7581c87; rebox 5d01c25; VItoriaBr c0b60a0.
 - not needed: 0460750, audit found it unneeded.
 - not needed: dd0f8b2, TuxBox calls its asserts symptom hiding.
