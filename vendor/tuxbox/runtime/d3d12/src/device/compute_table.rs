@@ -42,6 +42,11 @@ pub(crate) struct ComputeTable {
     /// (t4, space32766), the bitmap's root UAV (u0) the next one (see
     /// view_marks).
     pub(crate) view_marks: Option<u32>,
+    /// TUXBOX_MESH_HOISTED_SRV: guest descriptor-table parameters this root
+    /// made root SRVs (a mesh shader's FSSM 0x100 record: the console driver
+    /// hoists the raw buffer in the table's first slot into user SGPRs);
+    /// each draw binds that buffer's address there (with_reflected_table).
+    pub(crate) hoisted: Vec<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -355,6 +360,7 @@ fn reflected_tables(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            hoisted: Vec::new(),
         })))
     }
 }
@@ -463,6 +469,7 @@ fn extend_root_from(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            hoisted: Vec::new(),
         })))
     }
 }
@@ -597,6 +604,7 @@ pub(super) fn with_runtime_tables(
             table_words: tw_slot,
             view_marks: marks_slot,
             quad_mask: quad_slot,
+            hoisted: table.map(|t| t.hoisted.clone()).unwrap_or_default(),
             bvh_raw: bvh_slot,
             root_strides: strides_slot,
         }))
@@ -709,6 +717,7 @@ fn append_corroborated_ranges(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            hoisted: Vec::new(),
         })))
     }
 }
@@ -839,6 +848,7 @@ pub(super) fn srv_as_uav(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            hoisted: Vec::new(),
         })))
     }
 }

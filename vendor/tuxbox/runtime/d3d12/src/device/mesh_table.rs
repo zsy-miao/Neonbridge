@@ -59,6 +59,7 @@ pub(super) fn reflected(
         }
         let mut params = std::slice::from_raw_parts(source.pParameters, root.params.len()).to_vec();
         let mut range_storage = vec![Vec::new(); params.len()];
+        let mut hoisted = Vec::new();
         for (index, change) in layout.replacements {
             let parameter = &mut params[index];
             parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH;
@@ -99,6 +100,22 @@ pub(super) fn reflected(
                 }
                 RootParamKind::Descriptor {
                     register, space, ..
+                } if parameter.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE => {
+                    // A table the shader reads as one raw buffer (FSSM 0x100):
+                    // a root SRV, bound per draw to the table's first view.
+                    if crate::env_toggle!("TUXBOX_MESH_HOISTED_SRV") == Some("0") {
+                        return Ok(None);
+                    }
+                    parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+                    parameter.Anonymous.Descriptor = D3D12_ROOT_DESCRIPTOR1 {
+                        ShaderRegister: register,
+                        RegisterSpace: space,
+                        Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
+                    };
+                    hoisted.push(index as u32);
+                }
+                RootParamKind::Descriptor {
+                    register, space, ..
                 } => {
                     parameter.Anonymous.Descriptor.ShaderRegister = register;
                     parameter.Anonymous.Descriptor.RegisterSpace = space;
@@ -133,6 +150,7 @@ pub(super) fn reflected(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            hoisted,
         })))
     }
 }

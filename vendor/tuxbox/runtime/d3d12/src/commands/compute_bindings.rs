@@ -637,6 +637,41 @@ impl Bindings {
                 stride_table = Some((*slot, address));
             }
         }
+        // Hoisted table parameters (mesh FSSM 0x100): the title address of
+        // the buffer view in the bound table's first slot, as a root SRV.
+        let mut hoisted_views = Vec::new();
+        if !COMPUTE {
+            for &slot in &table.hoisted {
+                let base = bases.get(slot as usize).copied().flatten().or_else(|| self.graphics_tables.get(&slot).map(|b| b.native));
+                let title = base.and_then(|b| heap.table(b.ptr, &(0..1)))
+                    .and_then(|cpu| crate::device::slot_views::get(cpu.start))
+                    .map(|e| u64::from(e[0]) | u64::from(e[1]) << 32)
+                    .filter(|&va| va != 0);
+                let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+                let resolved = title.and_then(|va| unsafe { crate::device::table_words_address(owner, va) });
+                let address = match resolved {
+                    Some((buffer, address)) => {
+                        let held_buffer = ID3D12Pageable::from(buffer);
+                        let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+                        if !held.contains(&held_buffer) {
+                            held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                            held.push(held_buffer);
+                        }
+                        address
+                    }
+                    None => {
+                        static UNRESOLVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let n = UNRESOLVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        if n.is_power_of_two() {
+                            crate::diagnostics::log_line(format_args!(
+                                "mesh hoisted SRV: root parameter {slot} has no buffer view in its table's first slot (title address {title:?}); bound null ({n} so far; TUXBOX_MESH_HOISTED_SRV=0 off)"));
+                        }
+                        0
+                    }
+                };
+                hoisted_views.push((slot, address));
+            }
+        }
         let list = &guest.native;
         unsafe {
             if COMPUTE {
@@ -681,8 +716,14 @@ impl Bindings {
                 list.SetGraphicsRootSignature(&table.native);
                 self.apply_graphics_arguments(list);
                 for (&slot, bound) in &self.graphics_tables {
+                    if table.hoisted.contains(&slot) {
+                        continue;
+                    }
                     let base = bases.get(slot as usize).copied().flatten().unwrap_or(bound.native);
                     list.SetGraphicsRootDescriptorTable(slot, base);
+                }
+                for &(slot, address) in &hoisted_views {
+                    list.SetGraphicsRootShaderResourceView(slot, address);
                 }
                 if let Some((slot, address)) = index_map {
                     list.SetGraphicsRootShaderResourceView(slot, address);

@@ -161,6 +161,11 @@ pub(crate) fn stride_at(va: u64) -> u32 {
     stride
 }
 
+/// The entry of the view at `handle` (title address, length, stride), if any.
+pub(crate) fn get(handle: usize) -> Option<Entry> {
+    state().codes.get(&handle).copied()
+}
+
 /// A view was created at `handle`.
 pub(crate) fn write(handle: usize, code: Entry) {
     // Its V# for shaders reading descriptor words as data (slot_words); a
