@@ -500,7 +500,20 @@ fn place_locked(
         };
         let span = sp.get_mut(key);
         span.used = Instant::now();
-        let offset = if exact() { va - span.lo } else { (va - span.lo) / align * align };
+        // test148: 16 1-row format-29 textures (133x1, 261x1) at vas off a
+        // 4 KiB boundary got no small alignment, so their exact offset
+        // (+0xd400) broke the 64 KiB placement rule and CreatePlacedResource
+        // refused them (E_INVALIDARG). An exact offset off the resource's
+        // alignment is placed at the aligned offset below it, as with
+        // TUXBOX_ALIAS_EXACT=0 (the contents come from title memory either
+        // way). TUXBOX_ALIAS_EXACT_UNALIGNED=1 passes the exact offset.
+        let exact_offset = va - span.lo;
+        let offset = if exact() && (exact_offset.is_multiple_of(align)
+            || crate::env_toggle!("TUXBOX_ALIAS_EXACT_UNALIGNED") == Some("1")) {
+            exact_offset
+        } else {
+            exact_offset / align * align
+        };
         let mut native: Option<ID3D12Resource> = None;
         let heap = span.heap.as_ref().ok_or(PLACE)?;
         let hr = unsafe { device.CreatePlacedResource(heap, offset, &desc, D3D12_RESOURCE_STATE_COMMON, clear.map(core::ptr::from_ref), &mut native) };
