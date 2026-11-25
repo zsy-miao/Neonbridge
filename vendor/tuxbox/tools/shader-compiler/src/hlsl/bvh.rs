@@ -5,18 +5,43 @@ pub(super) fn on() -> bool {
     std::env::var("TB_BVH_RAW").is_ok_and(|v| v.trim() == "1")
 }
 
+/// Reads behind MemLoad: the heap slot's raw view (tb_bvh_root = ~0u) and the
+/// runtime's root raw views (10cbdc6: the k-th SRV root parameter at
+/// t5+k space32766 over the title memory at its address, the T# base; no
+/// length is passed, so GetDimensions bounds the read; a parameter that is no
+/// placed AS reads the null sink's zeros).
+pub(super) fn mem(heap: bool, roots: &std::collections::BTreeSet<u32>) -> String {
+    let mut s = String::from("static uint tb_bvh_slot;
+static uint tb_bvh_va;
+static uint tb_bvh_root;
+");
+    for k in roots {
+        s += &format!("ByteAddressBuffer tb_bvh_raw{k} : register(t{}, space32766);
+", 5 + k);
+    }
+    s += "uint tb_bvh_mem(uint at) {
+    uint n;
+";
+    for k in roots {
+        s += &format!("    if (tb_bvh_root == {k}u) {{ tb_bvh_raw{k}.GetDimensions(n); return at + 4u <= n ? tb_bvh_raw{k}.Load(at & ~3u) : 0u; }}
+");
+    }
+    if heap {
+        s += "    if (tb_bvh_root == 0xffffffffu) { ByteAddressBuffer b = ResourceDescriptorHeap[tb_bvh_slot];
+        return at + 4u <= tb_slot_views.Load(tb_bvh_slot * 16u + 8u) ? b.Load(at & ~3u) : 0u; }
+";
+    }
+    s + "    return 0u;
+}
+"
+}
+
 pub(super) const HELPERS: &str = r#"// Copied from five-star-recomp src/FiveStar.Shaders/Translation/Runtime/rdna_bvh.hlsli
 // (GPL-3.0-or-later, Five Star Recomp contributors; AMD GPURT IntersectCommon.hlsl model),
 // with credit. Changes: MemLoad reads the BVH's raw heap view (runtime TUXBOX_BVH_RAW_SRV,
 // 404c70c), node offsets are relative to the T# base, null child pointers and a zero
 // triangle denominator miss (so zeroed memory cannot loop or hit).
-static uint tb_bvh_slot;
-static uint tb_bvh_va;
-uint MemLoad(uint a, uint o) {
-    ByteAddressBuffer b = ResourceDescriptorHeap[tb_bvh_slot];
-    uint at = a + o + tb_bvh_va;
-    return at + 4u <= tb_slot_views.Load(tb_bvh_slot * 16u + 8u) ? b.Load(at & ~3u) : 0u;
-}
+uint MemLoad(uint a, uint o) { return tb_bvh_mem(a + o + tb_bvh_va); }
 static const uint BVH_INVALID = 0xffffffffu;
 
 float bvh_maxnum(float a, float b) { return isnan(a) ? b : isnan(b) ? a : max(a, b); }

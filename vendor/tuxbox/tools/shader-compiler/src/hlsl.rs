@@ -887,6 +887,9 @@ struct Emitter<'a> {
     loop_depth: u32,
     /// The BVH node test helpers are needed (TB_BVH_RAW).
     bvh_raw: bool,
+    /// BVH programs through a heap slot; root T#s: instruction index -> k (t5+k).
+    bvh_heap: bool,
+    bvh_root: BTreeMap<usize, u32>,
     /// Offsets of s_loads from a BVH address that read zeros (TB_BVH_NO_HIT).
     bvh_zero_smem: std::cell::RefCell<BTreeSet<usize>>,
     /// EXEC was last set by `s_wqm_b* exec, exec`: whole quads are active (X2W a351c0fb).
@@ -3149,6 +3152,12 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
             || matches!(i.mnemonic.as_str(), "v_and_b32" | "v_or_b32" | "v_min_u32" | "v_max_u32" | "v_min_f32" | "v_max_f32" | "v_add_nc_u32" | "v_add_f32"));
     let required_wave_size = if em.pixel_wave { None } else { required_wave_size };
     let required_wave_size = required_wave_size.or(scan_width).or(register_wave_size).or((requires_ballot || !em.vote_uses.is_empty()).then_some(64)).or((uses_quad_add && !(em.pixel_wave && em.insns.iter().all(|i| i.op != OP_ROW_MIRROR || i.enc != Enc::Vop1)) || uses_bpermute || group_extrema).then_some(32));
+    // VIctory lower.rs `reads_mask_as_data` (GPL-3.0, credit to its authors): a lane
+    // mask read as a number (our mixed masks, a ballot word per 32 lanes) needs the
+    // console's wave width, or a wave32 host splits each guest wave's mask in two.
+    // Only when nothing above set a width. TB_MASK_DATA_WAVE=0 leaves it unset.
+    let required_wave_size = required_wave_size.or((!resolve_wave32 && !em.pixel_wave && !em.mixed_masks.is_empty()
+        && !std::env::var("TB_MASK_DATA_WAVE").is_ok_and(|v| v.trim() == "0")).then_some(64));
     em.required_wave_size = required_wave_size;
     // Whether a wave64 VS / PS keeps its result when each 32-lane half runs
     // as a wave of its own (xcl dfc5578 / 5796cc4 / 43a5550, see `partition`):
@@ -3693,6 +3702,8 @@ impl<'a> Emitter<'a> {
             wqm_exec: false,
             bvh_zero_smem: Default::default(),
             bvh_raw: false,
+            bvh_heap: false,
+            bvh_root: BTreeMap::new(),
             ex,
             insns,
             res: HashMap::new(),
@@ -4847,6 +4858,28 @@ impl<'a> Emitter<'a> {
 
     /// Raw SRV behind a root descriptor whose GPU address arrives in user SGPR `sgpr`:
     /// the one FSSM class-0x100 row at that SGPR and the one PSV raw SRV at its register.
+    /// k of the root SRV parameter whose address arrives in `sgpr`: how many SRV
+    /// root parameters (kind 3) come before it (runtime 10cbdc6 binds it at t5+k).
+    fn root_srv_index(&self, sgpr: u8) -> Option<u32> {
+        let mut rows = tuxbox_dxbc::compute_table::records(&self.ex.fssm)?
+            .filter(|&[class, _, _, _, loc]| class == 0x100 && (loc >> 8) & 0xff == u32::from(sgpr));
+        let [_, _, register, _, _] = rows.next()?;
+        if rows.next().is_some() {
+            return None;
+        }
+        let rs = self.ex.root_sig.as_ref()?;
+        let mut k = 0;
+        for p in &rs.params {
+            if let tuxbox_dxbc::rootsig::RootParamKind::Descriptor { kind: 3, register: r, .. } = p.kind {
+                if r == register {
+                    return Some(k);
+                }
+                k += 1;
+            }
+        }
+        None
+    }
+
     fn root_raw_srv(&mut self, sgpr: u8) -> Option<Res> {
         let mut rows = tuxbox_dxbc::compute_table::records(&self.ex.fssm)?
             .filter(|&[class, _, _, _, loc]| class == 0x100 && (loc >> 8) & 0xff == u32::from(sgpr));
@@ -5815,6 +5848,20 @@ impl<'a> Emitter<'a> {
                     && ins.src.last().and_then(sg).is_some_and(|rs| heap_descriptor(sym, rs, 4)) => {
                     let rs = ins.src.last().and_then(sg).ok_or("bvh: bad srsrc")?;
                     self.res.insert(idx, vec![Res::HeapRaw(rs)]);
+                    continue;
+                }
+                // Root form (runtime 10cbdc6, TUXBOX_BVH_RAW_SRV=1): a T# from a root
+                // SRV parameter reads the raw view at t5+k space32766, k its place
+                // among the root's SRV parameters. TB_BVH_ROOT=0 keeps the no-hit fallback.
+                Enc::Mimg if matches!(ins.op, 230 | 231) && bvh::on() && self.ex.stage == Stage::Compute
+                    && !std::env::var("TB_BVH_ROOT").is_ok_and(|v| v.trim() == "0")
+                    && ins.src.last().and_then(sg).and_then(|rs| match sym.get(&rs) {
+                        Some(Sym::Table(t)) => Some(*t),
+                        _ => None,
+                    }).and_then(|t| self.root_srv_index(t)).is_some() => {
+                    let t = match ins.src.last().and_then(sg).and_then(|rs| sym.get(&rs).copied()) { Some(Sym::Table(t)) => t, _ => unreachable!() };
+                    let k = self.root_srv_index(t).ok_or("bvh: root SRV")?;
+                    self.bvh_root.insert(idx, k);
                     continue;
                 }
                 Enc::Mimg if matches!(ins.op, 230 | 231) && bvh_no_hit() => continue,
@@ -11827,7 +11874,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     fn emit_mimg(&mut self, idx: usize, ins: &Insn) -> Result<(), String> {
         let a16 = ins.raw.get(1).is_some_and(|w1| (w1 >> 30) & 1 != 0);
-        if let (true, false, Some(Res::HeapRaw(slot))) = (matches!(ins.op, 230 | 231), a16, self.res.get(&idx).and_then(|v| v.first()).copied()) {
+        let root_k = self.bvh_root.get(&idx).copied();
+        let heap_slot = match self.res.get(&idx).and_then(|v| v.first()).copied() { Some(Res::HeapRaw(s)) => Some(s), _ => None };
+        if let (true, false, true) = (matches!(ins.op, 230 | 231), a16, root_k.is_some() || heap_slot.is_some()) {
             // five-star-recomp rdna_bvh.hlsli (hlsl/bvh.rs): node, extent, origin, direction,
             // inverse direction; the 64-bit form has a two-dword node pointer. T# sort on,
             // grow 0, I/J return: the constants every observed program uses.
@@ -11837,11 +11886,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let b = if wide { 1 } else { 0 };
             let Some(Opnd::Vgpr(vd)) = ins.dst.first().cloned() else { return Err("bvh: bad vdata".into()) };
             self.bvh_raw = true;
-            self.slot_views = true;
-            self.regs.insert(format!("s{slot}"));
             let t = self.tmp;
             self.tmp += 1;
-            self.line(&format!("tb_bvh_slot = s{slot}; tb_bvh_va = 0u;"));
+            if let Some(k) = root_k {
+                self.line(&format!("tb_bvh_root = {k}u; tb_bvh_va = 0u;"));
+            } else if let Some(slot) = heap_slot {
+                self.bvh_heap = true;
+                self.slot_views = true;
+                self.regs.insert(format!("s{slot}"));
+                self.line(&format!("tb_bvh_root = 0xffffffffu; tb_bvh_slot = s{slot}; tb_bvh_va = 0u;"));
+            }
             self.line(&format!("uint4 t{t} = bvh_intersect_ray(uint4(0u, 0x80000000u, 0u, 0x890003ffu), {}, {}, asfloat({}), {}, {}, {});",
                 v(0)?, if wide { v(1)? } else { "0u".into() }, v(1 + b)?, f3(2 + b)?, f3(5 + b)?, f3(8 + b)?));
             for k in 0..4u8 {
@@ -13162,6 +13216,8 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
 ");
         }
         if self.bvh_raw {
+            let roots: BTreeSet<u32> = self.bvh_root.values().copied().collect();
+            h.push_str(&bvh::mem(self.bvh_heap, &roots));
             h.push_str(bvh::HELPERS);
         }
         if self.view_marks && self.writes_all_marked() {
