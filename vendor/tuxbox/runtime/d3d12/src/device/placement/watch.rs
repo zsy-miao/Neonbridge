@@ -34,6 +34,32 @@ static MERGED_SCANS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 static SAVED_SCANS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// (scans of merged ranges, write-watch calls they saved), for the memory line.
+/// TUXBOX_WATCH_CLIP=0: a merged span is scanned whole, and one range at a
+/// time when the OS refuses it (b16f2f9).
+fn clip_on() -> bool {
+    crate::env_toggle!("TUXBOX_WATCH_CLIP") != Some("0")
+}
+
+/// `ranges` (sorted, disjoint) grouped by the allocation each lies in: one
+/// piece per allocation, from its first range's start to its last's end.
+fn clip(ranges: &[Range<u64>]) -> Vec<Range<u64>> {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
+    let allocation = |a: u64| {
+        let mut info = MEMORY_BASIC_INFORMATION::default();
+        // SAFETY: VirtualQuery only reads the address space map.
+        (unsafe { VirtualQuery(Some(a as _), &mut info, size_of_val(&info)) } != 0).then(|| info.AllocationBase as u64)
+    };
+    let mut out: Vec<(Option<u64>, Range<u64>)> = Vec::new();
+    for r in ranges {
+        let base = allocation(r.start);
+        match out.last_mut() {
+            Some((b, piece)) if base.is_some() && *b == base && allocation(r.end - 1) == base => piece.end = r.end,
+            _ => out.push((base, r.clone())),
+        }
+    }
+    out.into_iter().map(|(_, r)| r).collect()
+}
+
 pub(crate) fn scan_stats() -> (u64, u64) {
     use std::sync::atomic::Ordering::Relaxed;
     (MERGED_SCANS.load(Relaxed), SAVED_SCANS.load(Relaxed))
@@ -87,7 +113,20 @@ impl Watch {
                 end += 1;
             }
             let span = merged[start].start..merged[end - 1].end;
-            if end - start == 1 || !self.scan(take, span.clone()) {
+            if end - start > 1 && clip_on() {
+                // xcl 712bbbe watch_ranges (GPL-3): the span is clipped to
+                // the allocations it meets, a piece in each, so no scan
+                // crosses one and none is refused for it.
+                let pieces = clip(&merged[start..end]);
+                let mut all = true;
+                for piece in &pieces {
+                    all &= self.scan(take, piece.clone());
+                }
+                if all && pieces.len() < end - start {
+                    MERGED_SCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    SAVED_SCANS.fetch_add((end - start - pieces.len()) as u64, std::sync::atomic::Ordering::Relaxed);
+                }
+            } else if end - start == 1 || !self.scan(take, span.clone()) {
                 for range in &merged[start..end] {
                     self.scan(take, range.clone());
                 }
