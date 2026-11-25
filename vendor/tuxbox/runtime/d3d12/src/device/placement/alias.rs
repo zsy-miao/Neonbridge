@@ -468,6 +468,16 @@ fn place_locked(
     if align > PLACEMENT_ALIGN {
         return Err(ALIGN);
     }
+    // test148: 16 1-row format-29 textures (133x1, 261x1) at vas off a 4 KiB
+    // boundary took 64 KiB alignment, so their exact heap offset (+0xd400)
+    // broke the placement rule and CreatePlacedResource refused them
+    // (E_INVALIDARG). xbox-emulator alias.rs:576 places a texture in a span
+    // only when its va keeps the alignment; any other is its own resource.
+    // Such a va now goes to that fallback without the refused call.
+    // TUXBOX_ALIAS_VA_ALIGNED=0 asks the driver as before.
+    if exact() && !va.is_multiple_of(align) && crate::env_toggle!("TUXBOX_ALIAS_VA_ALIGNED") != Some("0") {
+        return Err(ALIGN);
+    }
     let id = device.as_raw() as usize;
     let mut idle;
     let made = {
@@ -500,20 +510,7 @@ fn place_locked(
         };
         let span = sp.get_mut(key);
         span.used = Instant::now();
-        // test148: 16 1-row format-29 textures (133x1, 261x1) at vas off a
-        // 4 KiB boundary got no small alignment, so their exact offset
-        // (+0xd400) broke the 64 KiB placement rule and CreatePlacedResource
-        // refused them (E_INVALIDARG). An exact offset off the resource's
-        // alignment is placed at the aligned offset below it, as with
-        // TUXBOX_ALIAS_EXACT=0 (the contents come from title memory either
-        // way). TUXBOX_ALIAS_EXACT_UNALIGNED=1 passes the exact offset.
-        let exact_offset = va - span.lo;
-        let offset = if exact() && (exact_offset.is_multiple_of(align)
-            || crate::env_toggle!("TUXBOX_ALIAS_EXACT_UNALIGNED") == Some("1")) {
-            exact_offset
-        } else {
-            exact_offset / align * align
-        };
+        let offset = if exact() { va - span.lo } else { (va - span.lo) / align * align };
         let mut native: Option<ID3D12Resource> = None;
         let heap = span.heap.as_ref().ok_or(PLACE)?;
         let hr = unsafe { device.CreatePlacedResource(heap, offset, &desc, D3D12_RESOURCE_STATE_COMMON, clear.map(core::ptr::from_ref), &mut native) };
