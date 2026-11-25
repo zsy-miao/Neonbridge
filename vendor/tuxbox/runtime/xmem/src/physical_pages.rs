@@ -1352,6 +1352,39 @@ impl Pool {
             }
             if self.aperture(at) != aperture && !self.rooted(&section) { return Ok(false); }
         }
+        // test144-148: 84-121 joins a run failed 87. A GPU import only ever
+        // joins the range it asks for, so the next import a page further
+        // overlaps the last view of the one before (0xfa9c00000..0xfa9c20000,
+        // then 0xfa9c10000..), which that import's heap pins: the unmap is
+        // refused, the join undone, and the range read through a shadow copy.
+        // A join now (a) runs on past `hi` over further pages of the same
+        // section run, up to TUXBOX_JOIN_AHEAD_MB (32; 0 off), stopping at a
+        // pinned view, so a later import nests in one view; and (b) is not
+        // tried over a pinned view (TUXBOX_JOIN_SKIP_PINNED=0 tries).
+        let ahead = join_ahead();
+        if ahead != 0 {
+            let limit = hi.saturating_add(ahead);
+            while hi < limit {
+                let end = self.views.get(&hi).copied().unwrap_or(hi + PAGE);
+                let ok = (hi..end).step_by(PAGE).all(|at| {
+                    self.mappings.get(&at).and_then(|t| self.pages.get(t)).is_some_and(|page| {
+                        !page.mapped && Arc::ptr_eq(&page.section, &section) && page.offset == offset + (at - lo) as u64
+                    }) && (self.aperture(at) == aperture || self.rooted(&section))
+                });
+                if !ok || end > limit || imports::live_over(hi, end) {
+                    break;
+                }
+                hi = end;
+            }
+        }
+        if std::env::var("TUXBOX_JOIN_SKIP_PINNED").map_or(true, |v| v.trim() != "0") && imports::live_over(lo, hi) {
+            static PINNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = PINNED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 8 || n.is_power_of_two() {
+                crate::loader::log(&format!("join range {lo:#x}..{hi:#x}: a GPU heap import pins a view in it, not joined ({n} so far; TUXBOX_JOIN_SKIP_PINNED=0 tries)"));
+            }
+            return Ok(false);
+        }
         // The OS views in the range: shared views as recorded, other pages singly.
         let mut pieces = Vec::new();
         let mut at = lo;
@@ -1416,6 +1449,11 @@ impl Pool {
 /// (OpenExistingHeapFromAddress): the GPU keeps the pages it saw at import,
 /// so physical pages mapped or unmapped inside one later diverge silently.
 /// Each such range is reported loudly once (TUXBOX_IMPORT_REMAP_CHECK=0 off).
+fn join_ahead() -> usize {
+    static MB: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MB.get_or_init(|| std::env::var("TUXBOX_JOIN_AHEAD_MB").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(32)) << 20
+}
+
 mod imports {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
@@ -1426,6 +1464,13 @@ mod imports {
     fn enabled() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ON.get_or_init(|| std::env::var("TUXBOX_IMPORT_REMAP_CHECK").map_or(true, |v| v.trim() != "0"))
+    }
+
+    /// Whether a live GPU heap import overlaps [lo, hi): its views are
+    /// pinned, and Windows refuses to unmap them (error 87).
+    pub(super) fn live_over(lo: usize, hi: usize) -> bool {
+        let ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner());
+        ranges.range(..(hi, 0)).any(|(&(a, b), &(n, _))| n != 0 && a < hi && lo < b)
     }
 
     pub(super) fn note(start: usize, bytes: usize, add: bool) {
