@@ -1116,10 +1116,9 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                         Outcome::Cached => &stats.cached,
                         Outcome::Unsupported(m) => { stats.note("unsupported", &m); &stats.unsupported }
                         Outcome::Failed(m) => {
-                            // Named, so a timeout can be reproduced (the summary groups by reason only).
-                            if m.contains("timed out") {
-                                println!("[launch] Xbox shader {key}: {m}");
-                            }
+                            // Every failure named by key, so any one can be replayed
+                            // (the summary groups by reason only).
+                            println!("[launch] Xbox shader {key}: {m}");
                             stats.note("failed", &m);
                             &stats.failed
                         }
