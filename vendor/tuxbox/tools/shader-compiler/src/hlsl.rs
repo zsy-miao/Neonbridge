@@ -4979,7 +4979,7 @@ impl<'a> Emitter<'a> {
                         // The heap does not name a view's component type. Sampling needs a
                         // float view; a texel load does not (see `heap_load_ty`).
                         let cube = dim == 3;
-                        let size = dim == 1 && ins.mnemonic == "image_get_resinfo";
+                        let size = ins.mnemonic == "image_get_resinfo" && (dim == 1 || (matches!(dim, 0 | 2 | 4 | 5) && std::env::var("TB_RESINFO_DIMS").map_or(true, |v| v.trim() != "0")));
                         let lod = self.pixel_heap && dim == 1 && ins.mnemonic == "image_get_lod";
                         // A texel store passes its registers on unconverted, whatever the view.
                         let store = ins.mnemonic == "image_store" && dim == 1 && self.compute_heap
@@ -11020,6 +11020,36 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             _ => return Err("unresolved image".into()),
         };
+        // Heap 1D, 3D and array queries take the view of their own dimension. RDNA
+        // returns (width, height, depth or layers, mips); a 1D array gives its
+        // layers in y (xcl cafda82, GPL-2, copied with credit: Mesa moves z into y
+        // on GFX9 only), and z keeps them too, as xcl does.
+        if ins.mnemonic == "image_get_resinfo" && !a16 && !d16 && matches!(dim, 0 | 2 | 4 | 5)
+            && std::env::var("TB_RESINFO_DIMS").map_or(true, |v| v.trim() != "0")
+        {
+            if let Some(Res::HeapTexture(src, _)) = rs.first() {
+                let view = match dim { 0 => HeapView::Tex1D, 2 => HeapView::Tex3D, 4 => HeapView::Tex1DArray, _ => HeapView::Tex2DArray };
+                let tex = self.bind_heap(view, *src);
+                let t = self.tmp;
+                self.tmp += 1;
+                let Opnd::Vgpr(vd) = ins.dst[0] else { return Err("bad resinfo destination".into()) };
+                let mip = r(&ins.src[0])?;
+                self.line(&format!("uint w{t}, h{t} = 1u, d{t} = 1u, levels{t};"));
+                match dim {
+                    0 => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, levels{t});")),
+                    4 => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, h{t}, levels{t}); d{t} = h{t};")),
+                    _ => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, h{t}, d{t}, levels{t});")),
+                }
+                let mut dst = vd;
+                for (bit, field) in [(1, "w"), (2, "h"), (4, "d"), (8, "levels")] {
+                    if ins.aux.mask & bit != 0 {
+                        self.wv(&Opnd::Vgpr(dst), &format!("{field}{t}"))?;
+                        dst = dst.wrapping_add(1);
+                    }
+                }
+                return Ok(());
+            }
+        }
         if ins.mnemonic == "image_get_resinfo" {
             if dim != 1 || a16 || d16 || ins.aux.mask & 4 != 0 {
                 return Err("image_get_resinfo supports 2D width, height and mip count".into());
