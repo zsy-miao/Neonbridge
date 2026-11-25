@@ -717,12 +717,13 @@ pub(crate) fn mark_written(device: &Device, resource: *mut core::ffi::c_void) {
 /// forth every submission (refresh and write-back), ~380 MB a submit over
 /// PCIe and ~100 ms of GPU time a frame against test134's 23. A list is
 /// submitted within a few write-backs of its recording, so RECENT covers it.
-/// TUXBOX_SHADOW_RECENT=0 keeps the sticky mark; =N sets the window (4).
+/// Opt-in (test149: shadows were not the 100 ms): TUXBOX_SHADOW_RECENT=N
+/// sets the window; unset or 0 keeps the sticky mark.
 static WRITE_BACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn recent_window() -> Option<u64> {
     static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    let n = *N.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_RECENT").and_then(|v| v.trim().parse().ok()).unwrap_or(4));
+    let n = *N.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_RECENT").and_then(|v| v.trim().parse().ok()).unwrap_or(0));
     (n != 0).then_some(n)
 }
 

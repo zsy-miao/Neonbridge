@@ -1023,13 +1023,14 @@ fn capture_wait(list: &List, outcome: &str, address: u64, target: u64) {
 pub(super) unsafe fn submit(queue: &Queue, host: &[*mut c_void], splits: Splits) -> Result<()> {
     let run = |lists: &[*mut c_void]| {
         if !lists.is_empty() {
-            unsafe {
+            // TUXBOX_GPU_SEGMENTS=1 times each segment on the GPU.
+            crate::diagnostics::gpu_segments::around(&queue.native, lists.len(), || unsafe {
                 (queue.native.vtable().ExecuteCommandLists)(
                     queue.native.as_raw(),
                     lists.len() as u32,
                     lists.as_ptr(),
                 )
-            };
+            });
             crate::dred::check(&queue.native, "guest command lists");
             writers::progress(&queue.native, lists);
         }

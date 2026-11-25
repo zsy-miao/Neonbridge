@@ -631,6 +631,7 @@ pub(crate) mod null_causes;
 pub(crate) mod sampler;
 pub(crate) mod memory;
 pub(crate) mod queue_waits;
+pub(crate) mod gpu_segments;
 pub(crate) mod frame_work;
 pub(crate) mod transient_pool;
 pub(crate) mod tdr;
