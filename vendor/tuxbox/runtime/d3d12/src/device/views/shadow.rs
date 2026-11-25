@@ -1044,6 +1044,46 @@ fn shadow_watch() -> Option<&'static Mutex<crate::device::placement::watch::Watc
     }).as_ref()
 }
 
+type Copy = (ID3D12Resource, u64, u64, u64, Arc<TextureAddress>);
+
+/// test172: one refresh at t=70.2 s copied 268 MB in 9 copies and the device
+/// was removed 7.5 s later. Each refresh copies at most TUXBOX_SHADOW_REFRESH_MB
+/// (default 64; 0 = no cap) and the rest wait, oldest first, for the next
+/// refresh (VItoriaBr faca57e, credit to its authors: stop before another
+/// 64 MiB item once some bytes are done). The first copy always goes.
+fn cap_refresh(copies: &mut Vec<Copy>) {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let cap = *MB.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_REFRESH_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(64)) << 20;
+    if cap == 0 {
+        return;
+    }
+    static OWED: Mutex<Vec<Copy>> = Mutex::new(Vec::new());
+    let mut owed = lock(&OWED);
+    if owed.is_empty() && copies.iter().map(|c| c.3).sum::<u64>() <= cap {
+        return;
+    }
+    // Owed copies first; a newer copy of the same piece replaces an owed one.
+    let mut all: Vec<Copy> = std::mem::take(&mut *owed);
+    all.retain(|o| Arc::strong_count(&o.4) > 1 && !copies.iter().any(|c| Arc::ptr_eq(&c.4, &o.4) && c.2 == o.2));
+    all.append(copies);
+    let mut done = 0u64;
+    let mut rest = Vec::new();
+    for c in all {
+        if done > 0 && done + c.3 > cap {
+            rest.push(c);
+        } else {
+            done += c.3;
+            copies.push(c);
+        }
+    }
+    static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n < 4 || (n + 1).is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("shadow refresh cap #{}: {} copies, {done} bytes now, {} copies owed to the next refresh (TUXBOX_SHADOW_REFRESH_MB=0 copies all)", n + 1, copies.len(), rest.len()));
+    }
+    *owed = rest;
+}
+
 unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> Result<()> {
     let shadows = &device.state.shadows;
     let kind = unsafe { queue.GetDesc() }.Type;
@@ -1201,6 +1241,9 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 "shadow {} #{}: {live} live, {skipped} unchanged skipped, {aged} aged skipped (TUXBOX_SHADOW_AGING=0 copies them), {unwritten} unwritten pieces skipped (TUXBOX_SHADOW_WATCH=0 copies them), {} copies, {total} bytes",
                 if back { "write-back" } else { "refresh" }, n + 1, copies.len()));
         }
+    }
+    if !back {
+        cap_refresh(&mut copies);
     }
     // Outside the lock: title reads can fault into the title's handlers (test79).
     for (mapped, address, bytes, _staging) in &fills {
