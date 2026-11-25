@@ -169,10 +169,17 @@ impl Pages {
         let started = std::time::Instant::now();
         let mut tokens = self.tokens.clone();
         loop {
-            for (i, token) in tokens.iter_mut().enumerate() {
-                if *token == 0 {
-                    // SAFETY: as at enqueue; the title owns its page table.
-                    *token = unsafe { (self.array as *const u64).add(i).read_unaligned() };
+            // Read without dereferencing (xcl db6d692, PR #509, credit to
+            // its authors): this runs on the queue worker, and a title that
+            // decommitted its array since enqueue faulted here and ended
+            // the process. An unreadable array leaves the entries 0, which
+            // fails the request.
+            let mut now = vec![0u64; tokens.len()];
+            if read_own(self.array, &mut now) {
+                for (token, now) in tokens.iter_mut().zip(now) {
+                    if *token == 0 {
+                        *token = now;
+                    }
                 }
             }
             if !tokens.contains(&0) || started.elapsed() >= std::time::Duration::from_millis(wait) {
@@ -1197,6 +1204,18 @@ mod eof_tests {
 /// pages while requests run, and an inflate into a page just unmapped
 /// crashed it. Every region of [at, at + len) must be committed and writable.
 /// TUXBOX_XCRD_CHECK_DEST=0 skips the check.
+/// Copies `out.len()` words at `at` of this process's memory; false when any
+/// of it is unreadable (ReadProcessMemory fails instead of faulting).
+fn read_own(at: usize, out: &mut [u64]) -> bool {
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    let bytes = core::mem::size_of_val(out);
+    let mut read = 0usize;
+    // SAFETY: `out` is a writable buffer of `bytes` bytes.
+    unsafe { ReadProcessMemory(GetCurrentProcess(), at as *const _, out.as_mut_ptr().cast(), bytes, Some(&raw mut read)) }.is_ok()
+        && read == bytes
+}
+
 fn writable(at: usize, len: usize) -> bool {
     use windows::Win32::System::Memory::*;
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
