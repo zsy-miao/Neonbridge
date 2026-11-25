@@ -579,11 +579,12 @@ pub(crate) enum HeapSource { Const(u32), Root(u32, u32, i64), Cbv(u32, u32, i64)
 pub(crate) struct HeapAccess { pub(crate) writes: Vec<HeapSource>, pub(crate) reads: Vec<HeapSource> }
 
 /// The UAV-from-SRV slots text the launcher published for `source`
-/// (`<source>.slots`, see shader_cache::slots), from the session or the
+/// (its `uav_from_srv` lines in `<source>.heap`, see shader_cache::slots), from the session or the
 /// compiler cache.
 pub(crate) fn slots_text(source: &str) -> Option<String> {
     let dir = session()?;
-    let name = format!("{source}.slots");
+    // Coder4 ea97bf2: the uav_from_srv lines ride in the .heap sidecar.
+    let name = format!("{source}.heap");
     fs::read_to_string(dir.join(&name)).ok()
         .or_else(|| fs::read_to_string(compiler_cache(dir)?.join(&name)).ok())
 }
@@ -599,6 +600,8 @@ pub(crate) fn heap_access(source: &str) -> Option<std::sync::Arc<HeapAccess>> {
     for line in text.lines() {
         let words: Vec<&str> = line.split_whitespace().collect();
         let [op, kind, rest @ ..] = words.as_slice() else { continue };
+        // SRV-as-UAV lines share the file (shader_cache::slots), not accesses.
+        if *op == "uav_from_srv" { continue; }
         let n = |i: usize| rest.get(i).and_then(|w| w.parse::<i64>().ok());
         let source = match *kind {
             "const" => n(0).and_then(|v| u32::try_from(v).ok()).map_or(HeapSource::Dynamic, HeapSource::Const),

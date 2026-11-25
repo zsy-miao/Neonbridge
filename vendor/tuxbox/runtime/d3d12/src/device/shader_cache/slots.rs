@@ -1,12 +1,12 @@
-//! UAV-from-SRV slots: xshader's `<key>.slots` sidecar (published by the
-//! launcher beside `<key>.cso`) names the guest root table slots a program
+//! UAV-from-SRV slots: the `uav_from_srv` lines of xshader's `<key>.heap`
+//! sidecar (Coder4 ea97bf2; published by the launcher beside `<key>.cso`) names the guest root table slots a program
 //! stores to while the guest root (RTS0) types them SRV (Coder4's
 //! image_store programs 1233c986, 753c5178, 2211091a: s5+0x20 -> t240). One
-//! line per slot: `uav_from_srv param=<root param> slot=<descriptor index>
-//! space=<s> register=<u register> offset=<bytes> range=<n>`. offset is the
-//! byte offset in the guest table and range the index into the root
-//! parameter's ranges; slot defaults to offset / 32 (a T# is 32 bytes) and
-//! param to 0. The runtime binds such a slot as a UAV of the same resource.
+//! line per slot: `uav_from_srv param=<root param> space=<s> offset=<bytes>
+//! range=<n>`: offset is the byte offset in that table (slot = offset / 32,
+//! a T# being 32 bytes, unless slot= is given) and range the index into the
+//! parameter's ranges; the HLSL declares RWTexture u<that range's register +
+//! the slot's index in it> in the same space (register= overrides). The runtime binds such a slot as a UAV of the same resource.
 //! TUXBOX_SRV_AS_UAV=1 on (off until every piece has landed).
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

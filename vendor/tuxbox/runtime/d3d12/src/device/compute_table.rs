@@ -726,7 +726,7 @@ pub(super) fn srv_as_uav(
     node: u32,
 ) -> Result<Option<Arc<ComputeTable>>> {
     let Ok(signature) = parse_rts0(original.payload()) else { return Ok(None) };
-    if signature.version != 2 || slots.iter().any(|s| s.register.is_none()) {
+    if signature.version != 2 {
         return Ok(None);
     }
     let bytes = original.serialized();
@@ -765,12 +765,28 @@ pub(super) fn srv_as_uav(
                 D3D12_DESCRIPTOR_RANGE1 { OffsetInDescriptorsFromTableStart: start, ..*r }
             }).collect();
             for slot in &mine {
+                // The guest range named by its index (earlier splits keep the
+                // guest ranges' order before them only when slots are sorted, so
+                // look it up by its original offset).
+                let Some(named) = guest.get(slot.range as usize) else { return Ok(None) };
+                let named_start = {
+                    let mut next = 0u32;
+                    let mut found = None;
+                    for (i, r) in guest.iter().enumerate() {
+                        let start = if r.OffsetInDescriptorsFromTableStart == u32::MAX { next } else { r.OffsetInDescriptorsFromTableStart };
+                        next = start.saturating_add(r.NumDescriptors);
+                        if i == slot.range as usize { found = Some(start); }
+                    }
+                    found
+                };
                 let Some(at) = ranges.iter().position(|r| r.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV
+                    && r.RegisterSpace == named.RegisterSpace
                     && (r.OffsetInDescriptorsFromTableStart..r.OffsetInDescriptorsFromTableStart + r.NumDescriptors).contains(&slot.slot))
                 else { return Ok(None) };
                 let r = ranges.remove(at);
                 let start = r.OffsetInDescriptorsFromTableStart;
                 let before = slot.slot - start;
+                let register = slot.register.unwrap_or(named.BaseShaderRegister + slot.slot.saturating_sub(named_start.unwrap_or(start)));
                 let after = r.NumDescriptors - before - 1;
                 if before != 0 {
                     ranges.push(D3D12_DESCRIPTOR_RANGE1 { NumDescriptors: before, ..r });
@@ -778,7 +794,7 @@ pub(super) fn srv_as_uav(
                 ranges.push(D3D12_DESCRIPTOR_RANGE1 {
                     RangeType: D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
                     NumDescriptors: 1,
-                    BaseShaderRegister: slot.register.unwrap_or(0),
+                    BaseShaderRegister: register,
                     RegisterSpace: slot.space,
                     Flags: D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE,
                     OffsetInDescriptorsFromTableStart: slot.slot,
