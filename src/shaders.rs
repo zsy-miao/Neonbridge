@@ -28,12 +28,17 @@ const MAX_SHADER_BYTES: u64 = 64 << 20;
 pub static GAME_PID: AtomicU32 = AtomicU32::new(0);
 
 /// An explicit `neonbridge --prewarm` (main.rs prewarm_only): nothing waits on
-/// its compiles, so -O1 gets 120 s (NEONBRIDGE_DXC_O1_SECS still sets it) and
-/// -O0 DXIL already cached (`.o0`) is compiled again at -O1.
+/// its compiles, so -O1 gets 120 s (NEONBRIDGE_DXC_O1_SECS still sets it).
 pub static PREWARM_ONLY: AtomicBool = AtomicBool::new(false);
 
+/// Whether the explicit prewarm compiles cached -O0 DXIL (`.o0`) again at -O1
+/// instead of reusing it: opt-in, NEONBRIDGE_PREWARM_UPGRADE_O0=1. On by
+/// default it made the 6f69363 prewarm recompile ~2000 `.o0` entries of
+/// unchanged HLSL (1.5/s), and the -O1 passes that ran past 120 s stored -O0
+/// again, so every prewarm repeated them. The -O0 DXIL is reused and the
+/// background upgrade queue (dxil_upgrade.rs, 900 s at idle priority) makes it -O1.
 fn upgrading() -> bool {
-    PREWARM_ONLY.load(Ordering::Relaxed) && std::env::var("NEONBRIDGE_PREWARM_UPGRADE_O0").as_deref() != Ok("0")
+    PREWARM_ONLY.load(Ordering::Relaxed) && std::env::var("NEONBRIDGE_PREWARM_UPGRADE_O0").as_deref() == Ok("1")
 }
 
 /// The private commit of `pid` and, with `children`, of the processes it
