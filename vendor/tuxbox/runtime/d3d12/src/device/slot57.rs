@@ -307,7 +307,10 @@ fn dss_logging() -> bool {
 /// implies the placeholder path (TUXBOX_SLOT57=placeholder): the title gets
 /// the placeholder with a lazy upgrade built at first bind.
 pub(super) fn real() -> bool {
-    crate::env_toggle!("TUXBOX_SLOT57_REAL") != Some("0")
+    // test170: REAL on was black at 144 fps even with refused records on
+    // E_NOTIMPL; test169 (off) drew the art. Off by default, as ztrx answers
+    // slots 57/67 (victory-gpu device.rs unknown_pipeline). =1 turns it on.
+    crate::env_toggle!("TUXBOX_SLOT57_REAL") == Some("1")
 }
 
 fn head(p: &[u8]) -> String {

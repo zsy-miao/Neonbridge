@@ -364,7 +364,8 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     if hr.is_err() {
         return hr;
     }
-    if N == 67 && crate::env_toggle!("TUXBOX_SLOT67_REAL") != Some("0") {
+    // Off by default with SLOT57_REAL (test170; ztrx unknown_pipeline). =1 on.
+    if N == 67 && crate::env_toggle!("TUXBOX_SLOT67_REAL") == Some("1") {
         return unsafe { slot67_real(this, desc, call, iid, out) };
     }
     if stub {
