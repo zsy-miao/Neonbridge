@@ -23,6 +23,9 @@ pub(super) struct Bindings {
     /// Root views bound as one-view tables (root_tables), by (compute, slot).
     /// The BufferView beside each keeps the address (scene detection).
     view_tables: BTreeMap<(bool, u32), D3D12_GPU_DESCRIPTOR_HANDLE>,
+    /// Every root view bound on a tabled parameter with its import, so a heap
+    /// change can write it into the new heap (rebind_views).
+    view_sources: BTreeMap<(bool, u32), (BufferView, Option<ID3D12Resource>)>,
     /// SetSampleMaskX's quad mask (None: none set), for translated pixel
     /// shaders that declare it (quad_mask).
     pub(super) quad_mask: Option<u64>,
@@ -93,6 +96,12 @@ pub(super) enum BufferView {
     Uav(u64),
 }
 
+/// TUXBOX_VIEW_TABLE_REBIND=0: a tabled root view with no slot is bound as a
+/// root descriptor and a heap change drops tabled views, as before.
+fn view_rebind() -> bool {
+    crate::env_toggle!("TUXBOX_VIEW_TABLE_REBIND") != Some("0")
+}
+
 impl BufferView {
     pub(super) unsafe fn apply<const COMPUTE: bool>(self, list: &ID3D12GraphicsCommandList, slot: u32) {
         match self {
@@ -156,6 +165,7 @@ impl Bindings {
         if self.compute.as_ref() != root {
             self.compute_args.clear();
             self.view_tables.retain(|&(compute, _), _| !compute);
+            self.view_sources.retain(|&(compute, _), _| !compute);
             self.layout = layout.cloned();
             self.compute = root.cloned();
         }
@@ -168,6 +178,7 @@ impl Bindings {
             self.graphics_constants.clear();
             self.graphics_buffers.clear();
             self.view_tables.retain(|&(compute, _), _| compute);
+            self.view_sources.retain(|&(compute, _), _| compute);
             self.graphics = root.cloned();
         }
     }
@@ -214,6 +225,11 @@ impl Bindings {
         &mut self, list: &ID3D12GraphicsCommandList, slot: u32, view: BufferView, buffer: Option<&ID3D12Resource>,
     ) {
         self.view_tables.remove(&(COMPUTE, slot));
+        self.view_sources.remove(&(COMPUTE, slot));
+        let tabled = matches!(view, BufferView::Srv(_) | BufferView::Uav(_)) && self.view_tabled::<COMPUTE>(slot);
+        if tabled && view_rebind() {
+            self.view_sources.insert((COMPUTE, slot), (view, buffer.cloned()));
+        }
         let table = match view {
             BufferView::Srv(va) | BufferView::Uav(va) if self.view_tabled::<COMPUTE>(slot) => {
                 let uav = matches!(view, BufferView::Uav(_));
@@ -234,6 +250,11 @@ impl Bindings {
                 unsafe { root_table::<COMPUTE>(list, slot, handle) };
                 self.view_tables.insert((COMPUTE, slot), handle);
             }
+            // A root descriptor call on a parameter the signature made a table
+            // writes a GPU address where a descriptor handle belongs, and the
+            // next draw reads through it (test157: the first list hung on its
+            // first draw). It is left unbound until a heap gives it a slot.
+            None if tabled && view_rebind() => {}
             None => unsafe { view.apply::<COMPUTE>(list, slot) },
         }
         self.buffer::<COMPUTE>(slot, view);
@@ -244,6 +265,20 @@ impl Bindings {
             match guest {
                 Some(va) => { self.root_guests.insert(slot, va); }
                 None => { self.root_guests.remove(&slot); }
+            }
+        }
+    }
+
+    /// After SetDescriptorHeaps: root views outlive a heap change on the host,
+    /// so each tabled one is written into the new heap's private slots and
+    /// bound again (the title never rebinds them).
+    pub(super) fn rebind_views(&mut self, list: &ID3D12GraphicsCommandList) {
+        let sources: Vec<_> = self.view_sources.iter().map(|(&k, (v, b))| (k, *v, b.clone())).collect();
+        for ((compute, slot), view, buffer) in sources {
+            if compute {
+                self.bind_buffer::<true>(list, slot, view, buffer.as_ref());
+            } else {
+                self.bind_buffer::<false>(list, slot, view, buffer.as_ref());
             }
         }
     }
@@ -259,6 +294,7 @@ impl Bindings {
     unsafe fn replay_buffer<const COMPUTE: bool>(&self, list: &ID3D12GraphicsCommandList, slot: u32, view: BufferView) {
         match self.view_tables.get(&(COMPUTE, slot)) {
             Some(&handle) => unsafe { root_table::<COMPUTE>(list, slot, handle) },
+            None if view_rebind() && self.view_sources.contains_key(&(COMPUTE, slot)) => {}
             None => unsafe { view.apply::<COMPUTE>(list, slot) },
         }
     }

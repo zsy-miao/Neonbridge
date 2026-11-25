@@ -162,6 +162,7 @@ pub(super) unsafe extern "system" fn bind_heaps(
     unsafe {
         (list.native.vtable().SetDescriptorHeaps)(list.native.as_raw(), count, native.as_ptr())
     };
+    state.bindings.rebind_views(&list.native);
 }
 
 pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
