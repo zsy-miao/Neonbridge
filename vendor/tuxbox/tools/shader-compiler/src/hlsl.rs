@@ -10611,9 +10611,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // whose offset runs past the element is out of range on RDNA
         // (OOB_SELECT 0): loads read 0 and stores are dropped, where the
         // flat addressing above reached into the next element.
-        // TB_STRUCT_OFFSET_OOB=0 keeps the flat addressing.
+        // That holds only for OOB_SELECT 0 (five-star rdna_prelude.hlsli
+        // buf_limit: select 1/3 skip the offset-vs-stride check, select 2
+        // checks num_records == 0 alone). This path resolves the descriptor
+        // statically and never sees dword3, so the select is unknown and the
+        // check would drop valid select 1/3 accesses (8c0372e): it is opt-in,
+        // TB_IDXEN_STRIDE_GUARD=1 applies it as select 0.
         let guard = |k: u32| -> Option<String> {
-            if !idxen || std::env::var("TB_STRUCT_OFFSET_OOB").is_ok_and(|v| v.trim() == "0") {
+            if !idxen || !std::env::var("TB_IDXEN_STRIDE_GUARD").is_ok_and(|v| v.trim() == "1") {
                 return None;
             }
             Some(match &voff {
