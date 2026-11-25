@@ -28,12 +28,27 @@ static WATCH: AtomicUsize = AtomicUsize::new(0);
 static WATCH_LEN: AtomicUsize = AtomicUsize::new(0);
 static HITS: AtomicU32 = AtomicU32::new(0);
 static HIT_CAP: AtomicU32 = AtomicU32::new(64);
+/// The default credit watch: filter the taker and repeat writers.
+static CREDITS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WRITERS: std::sync::Mutex<Vec<(usize, u32)>> = std::sync::Mutex::new(Vec::new());
+static TAKES: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) fn start() {
     let base = unsafe { GetModuleHandleW(None) }.map_or(0, |m| m.0 as usize);
     BASE.store(base, Ordering::Relaxed);
-    if let Ok(value) = std::env::var("TUXBOX_WRITE_WATCH") {
-        write_watch(&value);
+    // Default (user order, default-on): the loading-screen render's GPU
+    // channel ring credits, game+0x75e5ed8, which 0x2a42d0 waits for at
+    // 0x2a442d and whose releaser is reached only through a pointer. Writes
+    // from 0x2a42d0 itself (the taker) are counted, not logged, and each
+    // other writer RIP is logged at most 4 times, so the releaser shows.
+    // TUXBOX_WRITE_WATCH=0 off.
+    match std::env::var("TUXBOX_WRITE_WATCH") {
+        Ok(value) if value.trim() == "0" => {}
+        Ok(value) => write_watch(&value),
+        Err(_) => {
+            CREDITS.store(true, Ordering::Relaxed);
+            write_watch("game+0x75e5ed8:8");
+        }
     }
     if let Ok(value) = std::env::var("TUXBOX_PAGE_CHECK") {
         page_check(&value);
@@ -178,6 +193,35 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     // Single step with one of our four DR6 bits set: a watched write just retired.
     if record.ExceptionCode.0 as u32 != 0x8000_0004 || c.Dr6 & 0xf == 0 {
         return CONTINUE_SEARCH;
+    }
+    if CREDITS.load(Ordering::Relaxed) {
+        let rva = (c.Rip as usize).wrapping_sub(BASE.load(Ordering::Relaxed));
+        if (0x2a_42d0..0x2a_4700).contains(&rva) {
+            TAKES.fetch_add(1, Ordering::Relaxed);
+            c.Dr6 = 0;
+            return CONTINUE_EXECUTION;
+        }
+        // try_lock: a writer interrupted while logging must not deadlock.
+        let Ok(mut writers) = WRITERS.try_lock() else {
+            c.Dr6 = 0;
+            return CONTINUE_EXECUTION;
+        };
+        let seen = match writers.iter().position(|w| w.0 == rva) {
+            Some(i) => { writers[i].1 += 1; writers[i].1 }
+            None if writers.len() < 64 => { writers.push((rva, 1)); 1 }
+            None => u32::MAX,
+        };
+        drop(writers);
+        if seen > 4 {
+            c.Dr6 = 0;
+            return CONTINUE_EXECUTION;
+        }
+        let stack: Vec<String> = (0..48)
+            .filter_map(|i| super::crash_detail::read::<usize>(c.Rsp as usize + i * 8))
+            .map(label).filter(|l| l.starts_with("game+")).take(8).collect();
+        super::log_line(format_args!(
+            "credit watch: {} written by {} ({seen} of 4 logged for it; {} takes by 0x2a42d0 so far), stack game returns {}",
+            label(WATCH.load(Ordering::Relaxed)), label(c.Rip as usize), TAKES.load(Ordering::Relaxed), stack.join(" < ")));
     }
     let hit = HITS.fetch_add(1, Ordering::Relaxed) + 1;
     if hit <= HIT_CAP.load(Ordering::Relaxed) {
