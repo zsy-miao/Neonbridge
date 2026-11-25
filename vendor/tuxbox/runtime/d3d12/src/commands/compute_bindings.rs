@@ -364,6 +364,28 @@ impl Bindings {
         root.as_ref()?.paged_tables.as_deref()
     }
 
+    /// The host addresses of the root UAVs a dispatch of the bound compute
+    /// root and pipeline can write, or None when it may write through
+    /// anything else: no root layout, a directly indexed root, a reflected
+    /// or scene pipeline, a descriptor table with UAV ranges bound, or heap
+    /// writes in its reflection (see `stale_writes` in commands.rs).
+    pub(super) fn root_uav_writes(&self) -> Option<Vec<u64>> {
+        let layout = self.layout.as_ref()?;
+        // The root bounds what any pipeline on it writes (a pending one too):
+        // root UAVs and UAV table ranges, unless it is directly indexed or a
+        // table is unbounded (uav_tables lists only finite ranges).
+        if layout.direct_resources || layout.paged_tables.is_none() || self.heap_access.is_some() || self.reflected_table::<true>().is_some() || self.scene_root().is_some() {
+            return None;
+        }
+        if layout.uav_tables.iter().any(|(slot, _)| matches!(self.compute_args.get(slot), Some(Argument::Table(_)))) {
+            return None;
+        }
+        Some(self.compute_args.values().filter_map(|a| match a {
+            Argument::Buffer(BufferView::Uav(va)) => Some(*va),
+            _ => None,
+        }).collect())
+    }
+
     /// (directly indexed, every table bounded) of the bound root, if any.
     pub(super) fn paged_shape<const COMPUTE: bool>(&self) -> Option<(bool, bool)> {
         let root = if COMPUTE { &self.layout } else { &self.graphics_layout };

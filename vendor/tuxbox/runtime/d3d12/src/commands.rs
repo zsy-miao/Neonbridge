@@ -115,6 +115,10 @@ struct Recording {
     /// buffers it would have written, indirect arguments and counts among
     /// them, hold what they held before (see `indirect_guard`).
     skipped_compute: bool,
+    /// What the skipped dispatches could have written: the host addresses of
+    /// their root UAVs, or None once one could write through anything else
+    /// (TUXBOX_INDIRECT_STALE_NARROW).
+    skipped_writes: Option<Vec<u64>>,
     /// The bound pipeline's key while a frame is captured (diagnostics capture).
     capture_pipeline: Option<Arc<str>>,
     /// Root views (bit = root index) whose title address did not resolve,
@@ -220,7 +224,14 @@ impl Recording {
         let before = self.error;
         self.compute_dispatch_inner(list, || { ran.set(true); dispatch() });
         if !ran.get() {
+            let first = !self.skipped_compute;
             self.skipped_compute = true;
+            let writes = if self.unresolved_roots[1] != 0 { None } else { self.bindings.root_uav_writes() };
+            self.skipped_writes = match (first, self.skipped_writes.take(), writes) {
+                (true, _, writes) => writes,
+                (false, Some(mut had), Some(more)) => { had.extend(more); Some(had) }
+                _ => None,
+            };
         }
         if !crate::diagnostics::capture::active() {
             return;
@@ -880,6 +891,7 @@ unsafe extern "system" fn reset(
         state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
         state.pending_pipeline = initial.filter(|_| state.pipeline_pending).map_or(0, |p| p as *const device::compute::Pipeline as usize);
         state.skipped_compute = false;
+        state.skipped_writes = None;
         state.capture_pipeline = initial.and_then(|p| device::compute::current(p).1.key.clone())
             .filter(|_| crate::diagnostics::capture::active());
         state.unresolved_roots = [0; 2];
@@ -1790,6 +1802,7 @@ unsafe extern "system" fn execute_indirect(
         let Some(offset) = compute::buffer_offset(buffer, count_offset, 4) else { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; };
         (Some(&buffer.native), offset)
     };
+    let stale = stale && stale_writes(&state, &arguments.native, count);
     if !(argument_offset | count_offset).is_multiple_of(4) { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; }
     // A call that will be dropped (pipeline still being made, an unresolved
     // root view) skips the clamp: its copy and dispatch fed records nothing
@@ -1944,6 +1957,39 @@ fn indirect_guard(state: &Recording, max_count: u32) -> (u32, bool) {
     }
     let cap = *MAX.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(65536));
     (max_count.min(cap), state.skipped_compute)
+}
+
+/// Whether the dispatches this recording skipped could have written this
+/// ExecuteIndirect's arguments or count. test177: one dispatch refused at
+/// 409.284 s emptied its list's later ExecuteIndirects as stale whatever
+/// they read. A skipped dispatch that can write only through root UAVs (no
+/// directly indexed root, no reflected or scene pipeline, no UAV table bound,
+/// no heap writes; Bindings::root_uav_writes) leaves stale only a call
+/// whose arguments or count buffer holds one of those addresses. Any other
+/// skipped dispatch keeps every later call stale. Aliasing is not seen: a
+/// root UAV on another resource over the same memory is not caught.
+/// TUXBOX_INDIRECT_STALE_NARROW=0 keeps every call after a skip stale.
+fn stale_writes(state: &Recording, arguments: &ID3D12Resource, count: Option<&ID3D12Resource>) -> bool {
+    if crate::env_toggle!("TUXBOX_INDIRECT_STALE_NARROW") == Some("0") {
+        return true;
+    }
+    let Some(writes) = state.skipped_writes.as_ref() else { return true };
+    let covers = |resource: &ID3D12Resource| {
+        let base = unsafe { resource.GetGPUVirtualAddress() };
+        let width = unsafe { resource.GetDesc() }.Width;
+        writes.iter().any(|&va| va >= base && va - base < width)
+    };
+    let stale = covers(arguments) || count.is_some_and(covers);
+    if !stale {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "ExecuteIndirect after a skipped dispatch runs: that dispatch wrote only root UAVs ({} addresses), none in its arguments or count ({n} so far; TUXBOX_INDIRECT_STALE_NARROW=0 keeps it stale)",
+                writes.len()));
+        }
+    }
+    stale
 }
 
 /// Whether an ExecuteIndirect with stale arguments runs. Every one after a
@@ -3563,6 +3609,7 @@ pub(crate) unsafe fn wrap_command_list(
             pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
             pending_pipeline: initial.filter(|p| device::compute::current(p).2).map_or(0, |p| p as *const device::compute::Pipeline as usize),
             skipped_compute: false,
+            skipped_writes: None,
             capture_pipeline: None,
             unresolved_roots: [0; 2],
             clamp_budget: None,
