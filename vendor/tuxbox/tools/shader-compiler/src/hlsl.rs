@@ -26,6 +26,7 @@ pub const MIXED_MASK_MARK: &str = mixed_mask::MARK;
 mod wave_alloc;
 mod group_extrema;
 mod compare;
+mod partition;
 mod uniform_texel;
 mod pixel_quad;
 mod mubuf_offsets;
@@ -2754,6 +2755,21 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     let required_wave_size = if em.pixel_wave { None } else { required_wave_size };
     let required_wave_size = required_wave_size.or(scan_width).or(register_wave_size).or((requires_ballot || !em.vote_uses.is_empty()).then_some(64)).or((uses_quad_add && !(em.pixel_wave && em.insns.iter().all(|i| i.op != OP_ROW_MIRROR || i.enc != Enc::Vop1)) || uses_bpermute || group_extrema).then_some(32));
     em.required_wave_size = required_wave_size;
+    // Whether a wave64 VS / PS keeps its result when each 32-lane half runs
+    // as a wave of its own (xcl dfc5578 / 5796cc4 / 43a5550, see `partition`):
+    // recorded in the HLSL for the refusal census; nothing translates by it
+    // yet, as in xcl. TB_PARTITION=0 skips it.
+    if matches!(ex.stage, Stage::Vertex | Stage::Pixel) && !resolve_wave32
+        && std::env::var("TB_PARTITION").map_or(true, |v| v.trim() != "0")
+    {
+        let note = match partition::classify(&em.insns) {
+            Ok(()) => "    // tb_partition: exact
+".to_string(),
+            Err(why) => format!("    // tb_partition: {}
+", why.join("; ")),
+        };
+        em.body.insert_str(0, &note);
+    }
     // DS bit-mask mode operates on the low five lane bits in wave32 and wave64.
     // Map guest lanes by workgroup index, independently of the Vulkan subgroup layout.
     em.compute_swizzle = ex.stage == Stage::Compute && scan_width.is_none() && !resolve_wave32
