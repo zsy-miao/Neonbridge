@@ -441,6 +441,9 @@ int tb_frexp_exp64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x
 uint2 tb_frexp_mant64(uint2 x) { uint e = (x.y >> 20) & 0x7ffu; uint2 m = uint2(x.x, x.y & 0xfffffu); if (e == 0x7ffu || (e == 0u && (m.x | m.y) == 0u)) return x; if (e == 0u) { m = tb_shl64(m, (uint)(52 - tb_top64(m))); m.y &= 0xfffffu; } return uint2(m.x, (x.y & 0x80000000u) | (1022u << 20) | m.y); }
 float tb_ldexp(float x, int n) { if (((asuint(x) >> 23) & 0xffu) == 0xffu) return x; n = clamp(n, -320, 320); int k1 = clamp(n, -126, 127); n -= k1; int k2 = clamp(n, -126, 127); n -= k2; int k3 = clamp(n, -126, 127); precise float r = x * asfloat((uint)(k1 + 127) << 23); r = r * asfloat((uint)(k2 + 127) << 23); r = r * asfloat((uint)(k3 + 127) << 23); return r; }
 float tb_mad(float a, float b, float c) { precise float s = a * b + c; return s; }
+float tb_ftz(float x) { return ((asuint(x) & 0x7f800000u) == 0u) ? asfloat(asuint(x) & 0x80000000u) : x; }
+float tb_madz(float a, float b, float c) { precise float p = tb_ftz(tb_ftz(a) * tb_ftz(b)); precise float s = p + tb_ftz(c); return tb_ftz(s); }
+float tb_madlz(float a, float b, float c) { float x = tb_ftz(a), y = tb_ftz(b); precise float p = tb_ftz((x == 0.0 || y == 0.0) ? 0.0 : x * y); precise float s = p + tb_ftz(c); return tb_ftz(s); }
 "#;
 
 /// Number of VGPRs occupied by the MIMG data operand. Gather selects a channel
@@ -1571,6 +1574,18 @@ fn typed_half4() -> bool {
 
 fn mad_unfused() -> bool {
     std::env::var("TB_MAD_UNFUSED").map_or(true, |v| v.trim() != "0")
+}
+
+/// gfx10 v_mad/v_mac/v_madmk/v_madak have no denormals: inputs, the rounded
+/// product and the sum flush to signed zero (xbox-emulator tombox-xshader
+/// hlsl/mode.rs `tb_madz` / `tb_madlz`, GPL-3.0, copied without its NaN
+/// quieting). TB_MAD_FTZ=0 keeps denormals as before.
+fn mad_ftz() -> bool {
+    std::env::var("TB_MAD_FTZ").map_or(true, |v| v.trim() != "0")
+}
+
+fn mad_name() -> &'static str {
+    if mad_ftz() { "tb_madz" } else { "tb_mad" }
 }
 
 fn mask_high_shadow() -> bool {
@@ -9421,12 +9436,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // product before the sum; a bare `a * b + c` lets dxc fuse them.
             // Xbox2Windows f7b7297d (#1768, Jess-Doit, MIT), re-derived as
             // `precise` (TB_MAD_UNFUSED=0 leaves the expression unmarked).
+            "v_mac_f32" if legacy && mad_unfused() && mad_ftz() => Some(format!("tb_madlz({}, {}, asfloat({dn}))", fa()?, fb()?)),
+            "v_mad_f32" if legacy && mad_unfused() && mad_ftz() => Some(format!("tb_madlz({}, {}, {})", fa()?, fb()?, fc()?)),
             "v_mac_f32" if legacy && mad_unfused() => Some(format!("tb_mad(1.0, tb_mull({}, {}), asfloat({dn}))", fa()?, fb()?)),
-            "v_mac_f32" if mad_unfused() => Some(format!("tb_mad({}, {}, asfloat({dn}))", fa()?, fb()?)),
-            "v_madmk_f32" if mad_unfused() => Some(format!("tb_mad({}, {k}, {})", fa()?, fb()?)),
-            "v_madak_f32" if mad_unfused() => Some(format!("tb_mad({}, {}, {k})", fa()?, fb()?)),
+            "v_mac_f32" if mad_unfused() => Some(format!("{}({}, {}, asfloat({dn}))", mad_name(), fa()?, fb()?)),
+            "v_madmk_f32" if mad_unfused() => Some(format!("{}({}, {k}, {})", mad_name(), fa()?, fb()?)),
+            "v_madak_f32" if mad_unfused() => Some(format!("{}({}, {}, {k})", mad_name(), fa()?, fb()?)),
             "v_mad_f32" if legacy && mad_unfused() => Some(format!("tb_mad(1.0, tb_mull({}, {}), {})", fa()?, fb()?, fc()?)),
-            "v_mad_f32" if mad_unfused() => Some(format!("tb_mad({}, {}, {})", fa()?, fb()?, fc()?)),
+            "v_mad_f32" if mad_unfused() => Some(format!("{}({}, {}, {})", mad_name(), fa()?, fb()?, fc()?)),
             "v_mac_f32" | "v_fmac_f32" if legacy => Some(format!("tb_mull({}, {}) + asfloat({dn})", fa()?, fb()?)),
             "v_mac_f32" | "v_fmac_f32" => Some(format!("{} * {} + asfloat({dn})", fa()?, fb()?)),
             "v_madmk_f32" | "v_fmamk_f32" => Some(format!("{} * {k} + {}", fa()?, fb()?)),
