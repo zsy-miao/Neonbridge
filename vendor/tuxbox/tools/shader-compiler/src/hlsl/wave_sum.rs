@@ -13,7 +13,9 @@ pub(super) const DPP8_EXCHANGE: u32 = 0x7fe7;
 /// No branch, EXEC modification, early return, LDS or unknown operands.
 /// Static descriptor loads and a single terminal store can be admitted;
 /// the main emitter still resolves their resource and address metadata.
-/// Each DPP8 source lane remains inside the group; constant readlane is
+/// DPP8 FI=0 and FI=1 are equivalent here: every selected source lane
+/// is active, and no instruction may change EXEC. Each source stays within
+/// its octet. Constant readlane is
 /// only allowed at 32 threads where wave32/wave64 agree for lanes 0..31.
 pub(super) fn straight_exchange(insns: &mut [Insn], group: [u32; 3]) -> bool {
     if !matches!(group, [32, 1, 1] | [64, 1, 1]) || insns.len() > 4096
@@ -28,11 +30,12 @@ pub(super) fn straight_exchange(insns: &mut [Insn], group: [u32; 3]) -> bool {
         if stored && !matches!(i.mnemonic.as_str(), "s_waitcnt" | "s_nop" | "s_endpgm") {
             return false;
         }
-        if i.enc == Enc::Vop2 && i.src.first() == Some(&Opnd::Raw(233)) {
+        if i.enc == Enc::Vop2 && matches!(i.src.first(), Some(Opnd::Raw(233 | 234))) {
             if !matches!(i.mnemonic.as_str(), "v_add_nc_u32" | "v_and_b32" |
-                "v_or_b32" | "v_min_u32" | "v_max_u32")
+                "v_or_b32" | "v_xor_b32" | "v_min_u32" | "v_max_u32" |
+                "v_min_i32" | "v_max_i32")
                 || !matches!(i.dst[..], [Opnd::Vgpr(_)])
-                || !matches!(i.src[..], [Opnd::Raw(233), Opnd::Vgpr(_)])
+                || !matches!(i.src[..], [Opnd::Raw(233 | 234), Opnd::Vgpr(_)])
                 || i.raw.len() != 2 { return false; }
             found = true;
         } else if i.mnemonic == "v_readlane_b32" {
@@ -63,7 +66,7 @@ pub(super) fn straight_exchange(insns: &mut [Insn], group: [u32; 3]) -> bool {
     }
     if !found { return false; }
     for i in insns {
-        if i.enc == Enc::Vop2 && i.src.first() == Some(&Opnd::Raw(233)) {
+        if i.enc == Enc::Vop2 && matches!(i.src.first(), Some(Opnd::Raw(233 | 234))) {
             let control = i.raw[1];
             i.op = DPP8_EXCHANGE;
             i.src[0] = Opnd::Vgpr(control as u8);

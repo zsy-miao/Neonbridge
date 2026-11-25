@@ -7735,8 +7735,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 "v_add_nc_u32" => format!("t{t} + {b}"),
                 "v_and_b32" => format!("t{t} & {b}"),
                 "v_or_b32" => format!("t{t} | {b}"),
+                "v_xor_b32" => format!("t{t} ^ {b}"),
                 "v_min_u32" => format!("min(t{t}, {b})"),
                 "v_max_u32" => format!("max(t{t}, {b})"),
+                "v_min_i32" => format!("asuint(min(asint(t{t}), asint({b})))"),
+                "v_max_i32" => format!("asuint(max(asint(t{t}), asint({b})))"),
                 _ => return Err("unsupported DPP8 exchange operation".into()),
             };
             return self.wv(&d, &value);
