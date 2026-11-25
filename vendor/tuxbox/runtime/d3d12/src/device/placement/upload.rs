@@ -20,9 +20,27 @@ struct Upload {
     buffer: ID3D12Resource,
     /// The buffer's pool bucket (0: not pooled).
     bucket: u64,
-    _allocator: ID3D12CommandAllocator,
+    allocator: ID3D12CommandAllocator,
     list: ID3D12CommandList,
+    /// The same list as recorded, for the list pool (`Transfer::lists`).
+    graphics: ID3D12GraphicsCommandList,
     _textures: Vec<ID3D12Resource>,
+}
+
+/// Copy allocators and lists of finished uploads, reset for the next refresh
+/// instead of one CreateCommandAllocator + CreateCommandList per refresh.
+/// TUXBOX_UPLOAD_LIST_POOL=0 makes new ones each time.
+fn list_pool() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_LIST_POOL") != Some("0"))
+}
+const LIST_POOL_MAX: usize = 8;
+
+/// Threads detiling one refresh's changed levels into disjoint parts of its
+/// upload buffer (TUXBOX_UPLOAD_WORKERS, default 1 = inline; at most 16).
+fn upload_workers() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_WORKERS").and_then(|v| v.trim().parse().ok()).unwrap_or(1usize).clamp(1, 16))
 }
 
 pub(super) struct Transfer {
@@ -41,6 +59,7 @@ pub(super) struct Transfer {
     cursor: usize,
     pool: Vec<(u64, ID3D12Resource)>,
     pool_bytes: u64,
+    lists: Vec<(ID3D12CommandAllocator, ID3D12GraphicsCommandList)>,
 }
 
 // Upload buffer recycling, from omonkeyz/xbox-emulator
@@ -164,6 +183,7 @@ impl Transfer {
             cursor: 0,
             pool: Vec::new(),
             pool_bytes: 0,
+            lists: Vec::new(),
         })
     }
 
@@ -185,10 +205,13 @@ impl Transfer {
             .front()
             .is_some_and(|(tick, _)| *tick <= completed)
         {
-            if let Some((_, upload)) = self.pending.pop_front()
-                && upload.bucket != 0
-            {
-                pool_give(&mut self.pool, &mut self.pool_bytes, upload.bucket, upload.buffer, POOL_CAP_BYTES);
+            if let Some((_, upload)) = self.pending.pop_front() {
+                if list_pool() && self.lists.len() < LIST_POOL_MAX {
+                    self.lists.push((upload.allocator.clone(), upload.graphics.clone()));
+                }
+                if upload.bucket != 0 {
+                    pool_give(&mut self.pool, &mut self.pool_bytes, upload.bucket, upload.buffer, POOL_CAP_BYTES);
+                }
             }
         }
     }
@@ -291,7 +314,7 @@ impl Transfer {
             }
         }
         let record_site = crate::diagnostics::cost::site();
-        let upload = Upload::record(device, &changes, &mut self.pool, &mut self.pool_bytes)?;
+        let upload = Upload::record(device, &changes, &mut self.pool, &mut self.pool_bytes, &mut self.lists)?;
         drop(record_site);
         for mips in changes.chunk_by(|a, b| Arc::ptr_eq(&a.texture, &b.texture)) {
             // A guest may use a different queue on each submission. Order
@@ -358,7 +381,9 @@ impl Drop for Transfer {
 }
 
 impl Upload {
-    fn record(device: &ID3D12Device, changes: &[Change], pool: &mut Vec<(u64, ID3D12Resource)>, pool_bytes: &mut u64) -> Result<Self> {
+    fn record(device: &ID3D12Device, changes: &[Change], pool: &mut Vec<(u64, ID3D12Resource)>, pool_bytes: &mut u64,
+        lists: &mut Vec<(ID3D12CommandAllocator, ID3D12GraphicsCommandList)>) -> Result<Self> {
+        let alloc_site = crate::diagnostics::cost::site();
         let alignment = u64::from(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
         let mut total = 0u64;
         let mut offsets = Vec::with_capacity(changes.len());
@@ -399,10 +424,20 @@ impl Upload {
                 None,
             )?,
         };
-        let allocator = unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY)? };
-        let list: ID3D12GraphicsCommandList =
-            unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, &allocator, None)? };
-        crate::dred::name(&list, "tuxbox placed texture upload");
+        let reused = lists.pop().and_then(|(allocator, list)| unsafe {
+            (allocator.Reset().is_ok() && list.Reset(&allocator, None).is_ok()).then_some((allocator, list))
+        });
+        let (allocator, list) = match reused {
+            Some(pair) => pair,
+            None => {
+                let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY)? };
+                let list: ID3D12GraphicsCommandList =
+                    unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, &allocator, None)? };
+                crate::dred::name(&list, "tuxbox placed texture upload");
+                (allocator, list)
+            }
+        };
+        drop(alloc_site);
         let mut mapped = core::ptr::null_mut();
         let empty = D3D12_RANGE::default();
         unsafe {
@@ -411,12 +446,15 @@ impl Upload {
         // SAFETY: this CPU-writeable buffer covers 'size' bytes; this command
         // list has not been executed and the pointer is scoped to the mapping.
         let output = unsafe { core::slice::from_raw_parts_mut(mapped.cast::<u8>(), size) };
+        let detile_site = crate::diagnostics::cost::site();
+        let detiled = detile_all(changes, &offsets, output);
+        drop(detile_site);
+        let copy_site = crate::diagnostics::cost::site();
         let mut destinations = Vec::new();
-        let result: Result<()> = changes
+        let result: Result<()> = detiled.and_then(|()| changes
             .iter()
             .zip(offsets)
             .try_for_each(|(change, offset)| {
-                change.detile(&mut output[offset as usize..])?;
                 let texture = &change.texture;
                 let mut footprint = texture.mips[change.level].footprint;
                 footprint.Offset = offset;
@@ -445,7 +483,8 @@ impl Upload {
                     destinations.push(texture.native.clone());
                 }
                 Ok(())
-            });
+            }));
+        drop(copy_site);
         unsafe {
             buffer.Unmap(0, None);
         }
@@ -456,8 +495,9 @@ impl Upload {
         Ok(Self {
             buffer,
             bucket,
-            _allocator: allocator,
             list: list.cast()?,
+            graphics: list,
+            allocator,
             _textures: destinations,
         })
     }
@@ -586,4 +626,50 @@ impl Texture {
 pub(super) fn drain_any() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_DRAIN_ANY") != Some("0"))
+}
+
+/// Detiles every change into its part of the upload buffer, on
+/// `upload_workers()` scoped threads when there is more than one change.
+/// Parts are disjoint: offsets ascend and each part ends at the next offset.
+fn detile_all(changes: &[Change], offsets: &[u64], output: &mut [u8]) -> Result<()> {
+    let workers = upload_workers().min(changes.len());
+    if workers <= 1 {
+        for (change, &offset) in changes.iter().zip(offsets) {
+            change.detile(&mut output[offset as usize..])?;
+        }
+        return Ok(());
+    }
+    let mut parts: Vec<(&Change, &mut [u8])> = Vec::with_capacity(changes.len());
+    let mut rest = output;
+    let mut at = 0u64;
+    for (i, change) in changes.iter().enumerate() {
+        let end = offsets.get(i + 1).copied().unwrap_or(at + rest.len() as u64);
+        let skip = (offsets[i] - at) as usize;
+        let (_, tail) = std::mem::take(&mut rest).split_at_mut(skip);
+        let (part, tail) = tail.split_at_mut((end - offsets[i]) as usize);
+        parts.push((change, part));
+        rest = tail;
+        at = end;
+    }
+    let total: u64 = changes.iter().map(|c| c.texture.mips[c.level].bytes).sum();
+    let share = total.div_ceil(workers as u64).max(1);
+    let mut groups: Vec<Vec<(&Change, &mut [u8])>> = (0..workers).map(|_| Vec::new()).collect();
+    let (mut g, mut filled) = (0, 0u64);
+    for (change, part) in parts {
+        if filled >= share && g + 1 < workers {
+            g += 1;
+            filled = 0;
+        }
+        filled += change.texture.mips[change.level].bytes;
+        groups[g].push((change, part));
+    }
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = groups.into_iter().filter(|g| !g.is_empty()).map(|group| scope.spawn(move || {
+            for (change, part) in group {
+                change.detile(part)?;
+            }
+            Ok::<(), windows::core::Error>(())
+        })).collect();
+        handles.into_iter().try_for_each(|h| h.join().unwrap_or_else(|_| Err(E_FAIL.into())))
+    })
 }
