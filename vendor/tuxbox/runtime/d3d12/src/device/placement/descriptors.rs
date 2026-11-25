@@ -30,15 +30,45 @@ impl<V> Default for DescriptorMap<V> {
 impl<V> DescriptorMap<V> {
     /// Hold replaced values until in-flight GPU work has finished with them.
     fn retire(&self, replaced: impl IntoIterator<Item = V>) {
-        let now = Instant::now();
-        let expired: Vec<(Instant, V)> = {
-            let mut queue = lock(&self.1);
-            queue.extend(replaced.into_iter().map(|v| (now, v)));
-            let keep = queue.partition_point(|(at, _)| now.duration_since(*at) >= RETIRE_GRACE);
-            queue.drain(..keep).collect()
-        };
         // Dropped outside the lock: a backing's Drop takes other registries' locks.
-        drop(expired);
+        drop(self.retire_deferred(replaced));
+    }
+
+    fn retire_deferred(&self, replaced: impl IntoIterator<Item = V>) -> Vec<V> {
+        let now = Instant::now();
+        let mut queue = lock(&self.1);
+        queue.extend(replaced.into_iter().map(|v| (now, v)));
+        let keep = queue.partition_point(|(at, _)| now.duration_since(*at) >= RETIRE_GRACE);
+        queue.drain(..keep).map(|(_, v)| v).collect()
+    }
+
+    /// Remove host view tracking for an evicted visible descriptor span,
+    /// returning any expired retired entries for the caller to drop outside external locks.
+    pub(crate) fn clear_deferred(&self, stride: usize, dst: usize, count: u32) -> Vec<V> {
+        if count == 0 || stride == 0 {
+            return Vec::new();
+        }
+        let Some(end) = (count as usize)
+            .checked_mul(stride)
+            .and_then(|span| dst.checked_add(span))
+        else {
+            return Vec::new();
+        };
+        let removed: Vec<V> = {
+            let mut views = lock(&self.0);
+            if views.is_empty() {
+                return Vec::new();
+            }
+            views
+                .extract_if(dst..end, |_, _| true)
+                .map(|(_, v)| v)
+                .collect()
+        };
+        if removed.is_empty() {
+            Vec::new()
+        } else {
+            self.retire_deferred(removed)
+        }
     }
 }
 
@@ -47,9 +77,20 @@ pub(crate) struct DescriptorRange<V> {
     pub(crate) range: Range<usize>,
 }
 
+impl<V> DescriptorRange<V> {
+    #[allow(dead_code)]
+    pub(crate) fn clear(&self, stride: usize, dst: usize, count: u32) {
+        drop(self.clear_deferred(stride, dst, count));
+    }
+
+    pub(crate) fn clear_deferred(&self, stride: usize, dst: usize, count: u32) -> Vec<V> {
+        self.views.clear_deferred(stride, dst, count)
+    }
+}
+
 impl<V: Clone> DescriptorRange<V> {
-    pub(crate) fn copy_to(&self, stride: usize, dst: usize, src: usize, count: u32) {
-        self.views.copy(stride, std::iter::once((dst, count)), std::iter::once((src, count)));
+    pub(crate) fn copy_to_deferred(&self, stride: usize, dst: usize, src: usize, count: u32) -> Vec<V> {
+        self.views.copy_deferred(stride, std::iter::once((dst, count)), std::iter::once((src, count)))
     }
 }
 
@@ -147,10 +188,19 @@ impl<V: Clone> DescriptorMap<V> {
         destinations: impl Iterator<Item = (usize, u32)>,
         sources: impl Iterator<Item = (usize, u32)>,
     ) {
+        drop(self.copy_deferred(stride, destinations, sources));
+    }
+
+    pub(crate) fn copy_deferred(
+        &self,
+        stride: usize,
+        destinations: impl Iterator<Item = (usize, u32)>,
+        sources: impl Iterator<Item = (usize, u32)>,
+    ) -> Vec<V> {
         let mut replaced = Vec::new();
         let mut views = lock(&self.0);
         if views.is_empty() {
-            return;
+            return Vec::new();
         }
         // The source and destination descriptor counts match, but their range
         // boundaries need not. Null size arrays default to one slot per range.
@@ -181,6 +231,10 @@ impl<V: Clone> DescriptorMap<V> {
             };
         }
         drop(views);
-        if !replaced.is_empty() { self.retire(replaced); }
+        if replaced.is_empty() {
+            Vec::new()
+        } else {
+            self.retire_deferred(replaced)
+        }
     }
 }

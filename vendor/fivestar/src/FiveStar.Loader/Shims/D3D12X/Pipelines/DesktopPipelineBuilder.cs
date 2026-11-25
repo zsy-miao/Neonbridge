@@ -38,6 +38,7 @@ internal static unsafe class DesktopPipelineBuilder
         stream.AddWords(PipelineStateSubObjectType.SampleMask, [unchecked((int)description.SampleMask)]);
         stream.AddBytes(PipelineStateSubObjectType.Rasterizer, DesktopStateRules.Rasterizer(description.Rasterizer, description.DepthStencil));
         stream.AddBytes(PipelineStateSubObjectType.DepthStencil1, StatePadding.DepthStencil(description.DepthStencil));
+        DebugLayer.DepthUavs.NoteDepthState(programs, description.DepthStencil);
 
         if (mesh)
         {

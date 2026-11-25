@@ -6,7 +6,7 @@
 # compatibility is still in development; ProjectScarlett is verified on Linux
 # under Proton only (README.md:5-6, 19).
 name = "tuxbox"
-about = "TuxBox 1d821cb (Apache-2.0), brcly's upstream build"
+about = "TuxBox 7b22d71 (Apache-2.0), brcly's upstream build"
 upstream = "https://github.com/brcly/TuxBox"
 # README.md:16 / docs/PROJECTSCARLETT.md:20-24: build every provider (needs
 # Python 3.10+, Rust 1.95 with x86_64-pc-windows-msvc, VS Build Tools C++ and

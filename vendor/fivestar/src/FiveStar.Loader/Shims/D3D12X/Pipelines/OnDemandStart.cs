@@ -235,7 +235,7 @@ internal sealed class OnDemandStart
         Binding.WindowGuard.Index = index;
 
         var ownLog = Path.Combine(Root, TimedCompiler.LogName);
-        List<string> logs = [ownLog];
+        List<string> logs = [ownLog, .. TimedCompiler.Logs(Root).Where(path => path != ownLog)];
         TranslatedProgramLibrary? ahead = null;
 
         // The ahead-of-time translation reads its user data from a root CBV.
@@ -246,7 +246,7 @@ internal sealed class OnDemandStart
         }
 
         var slow = SlowCompiles.Read(logs, _compiler.Options.CompileTimeout);
-        var compiler = new TimedCompiler(_compiler, ownLog, TimeProvider.System);
+        var compiler = new TimedCompiler(_compiler, ownLog, TimeProvider.System, Environment.ProcessId);
         var picker = new ProgramVariantPicker(new ShaderManifest([]), adapter, warnings);
         var workers = new ProgramWorkers(
             Jobs,

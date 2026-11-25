@@ -36,6 +36,7 @@ internal static unsafe class WarmPipelinesCommand
             new MemoryLimit(options.MinimumFreeMemory, options.MaximumCommit, null, log).Start();
         }
 
+        RunShards(options, log);
         var folders = HostComposition.CreatePipelineFolders(options);
 
         if (folders.Programs is null || (folders.Translated is null && folders.OnDemand is null) || folders.Cache is null)
@@ -83,6 +84,25 @@ internal static unsafe class WarmPipelinesCommand
         }
     }
 
+    /// <summary>
+    /// With more than one warm-up process (<c>--warm-processes</c>, by default one per 16 GB of RAM), runs the shards
+    /// first (<see cref="WarmShards"/>); this process then takes what they left: the pipelines of 4 MiB of DXIL or more.
+    /// </summary>
+    private static void RunShards(HostOptions options, LoaderLog log)
+    {
+        if (options.WarmShard is not null)
+        {
+            return;
+        }
+
+        int count = options.WarmProcesses ?? WarmShards.ProcessesFor(WarmMemoryGuard.TotalPhysical());
+
+        if (count > 1 && !WarmShards.Run(options, count, log))
+        {
+            log.Warn("warm-up: a shard ended early (memory limit or Ctrl+C); this process goes on with what is left");
+        }
+    }
+
     private static int Warm(HostOptions options, PipelineFolders folders, nint device2, nint root, PipelineLibraryCache cache, LoaderLog log)
     {
         var warnings = new OnceLog(log);
@@ -92,7 +112,8 @@ internal static unsafe class WarmPipelinesCommand
         var builds = new PipelineBuildQueue(1, PipelineBuildQueue.AnyTime);
         var standIns = new StandInPipelines(PipelineSlots.CreationBudget, builds, builds, warnings);
         var factory = new PipelineFactory(device2, root, library, new ProgramSignatures(folders.Programs!), warnings, null, standIns, cache) { OnDemand = onDemand, LinkInline = true };
-        var warmup = new PipelineWarmup(factory, cache, folders.Cache!, log);
+        var shard = options.WarmShard ?? (0, 1);
+        var warmup = new PipelineWarmup(factory, cache, folders.Cache!, log) { BuildsHeavy = shard.Count == 1 };
 
         // The pipelines earlier boots asked for, in first-use order, then (unless --warm-used-only) the console cache's.
         var used = PipelineJournal.Read(folders.Cache!);
@@ -104,6 +125,7 @@ internal static unsafe class WarmPipelinesCommand
         }
 
         targets = Matching(targets.Where((_, position) => position % Math.Max(1, options.WarmStep) == 0).ToList(), options.WarmMatches, index);
+        targets = targets.Where((_, position) => WarmShards.InShard(position, shard.Shard, shard.Count)).ToList();
         var jobs = options.WarmJobs ?? Math.Clamp(Environment.ProcessorCount / PipelineSlots.CoresPerBuildThread, 1, DefaultJobs);
         log.Info($"warm-up: {targets.Count} pipelines ({used.Count} from {PipelineJournal.FileName} first) on {jobs} threads into {folders.Cache}");
 

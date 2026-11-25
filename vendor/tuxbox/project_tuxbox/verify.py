@@ -30,7 +30,8 @@ SUITES = (*BASE_SUITES, "d3d12-mesh", *OPTIONAL_PROVIDERS)
 # The scenarios of `lanes.exe --selftest`, one gate each.
 LANES_SCENARIOS = ("labels", "cross-queue", "compute-frame", "skipped-command", "copy-memory", "shared-texture",
                    "indirect-dispatch", "texture-readback",
-                   "ray-tracing-builder", "thread-dimensions")
+                   "ray-tracing-builder", "thread-dimensions",
+                   "descriptor-reclaim")
 
 
 class LanesShader:
@@ -705,6 +706,7 @@ GATE_LABELS = {
     "lanes-benchmark": "Lanes frame, submission, fence handover, copy and pipeline timings",
     "lanes-selftest-ray-tracing-builder": "Single, copied and batched builds through XboxBvhBuilder",
     "lanes-selftest-thread-dimensions": "Slot 80 thread-dimension dispatch converted using the bound PSO group size",
+    "lanes-selftest-descriptor-reclaim": "Shader-visible descriptor slot reclamation across completed, in-flight, ClearState, and OOM lists",
     "lanes-shader-cache-prepared": "A console shader translated before launch, loaded from the prepared cache",
     "lanes-shader-cache-compiled": "A console shader translated by the host worker while the game runs",
     "lanes-shader-cache-reused": "The worker's translation reused on the next launch without compiling",

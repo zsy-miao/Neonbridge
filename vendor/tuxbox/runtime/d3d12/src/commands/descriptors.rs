@@ -149,6 +149,7 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
     if !state.can_record(&list.native) {
         return;
     }
+    let state = &mut *state;
     let logical = base;
     let base = if let Some(arena) = &state.descriptor_arena && arena.contains(base.ptr) {
         let Some(Some(length)) = state.bindings.paged_layout::<COMPUTE>().and_then(|t| t.get(index as usize)) else {
@@ -158,7 +159,7 @@ pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
         };
         // The selected PSO may supply a more precise descriptor layout.
         // Defer reading guest records until draw or dispatch.
-        match arena.gpu_table(base.ptr, *length, &[]) {
+        match arena.gpu_table(base.ptr, *length, &[], &mut state.descriptor_leases) {
             Ok(handle) => handle,
             Err(error) => { state.error = error.code(); return; }
         }

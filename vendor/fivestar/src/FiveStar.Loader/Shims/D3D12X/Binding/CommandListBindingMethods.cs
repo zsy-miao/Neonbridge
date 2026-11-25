@@ -367,6 +367,11 @@ internal static unsafe class CommandListBindingMethods
             GpuBreadcrumbs.Before(self, MarkedKind.Dispatch, x, y, z);
             nint inner = self->Inner;
             ((delegate* unmanaged<nint, uint, uint, uint, void>)ComObject.Slot(inner, DesktopDispatch))(inner, x, y, z);
+
+            if (RtStandIns.Enabled)
+            {
+                RtStandIns.AfterDispatch(self, RectangleListState.Of(self)->Pipeline);
+            }
         }
         catch (Exception exception)
         {
@@ -450,7 +455,7 @@ internal static unsafe class CommandListBindingMethods
 
     /// <summary>After the argument clamp's dispatch: the list's compute root signature, user data and pipeline again.</summary>
     [HotPath]
-    private static void RestoreCompute(XboxObject* self)
+    internal static void RestoreCompute(XboxObject* self)
     {
         if (CommandListBindings.Of(self)->ComputeRoot != 0)
         {
@@ -553,6 +558,13 @@ internal static unsafe class CommandListBindingMethods
         if (!PipelinePending(self, draw: false))
         {
             return false;
+        }
+
+        var standIns = ShimContext.Runtime.D3D12X.Pipelines?.StandIns;
+
+        if (RtStandIns.Enabled && standIns is not null)
+        {
+            RtStandIns.AtSkip(self, standIns.Name(ListActivity.Of(self)->StandIn));
         }
 
         if (SkipComputeChains)
@@ -829,7 +841,8 @@ internal static unsafe class CommandListBindingMethods
     [HotPath]
     private static void MirrorReach(XboxObject* self, CommandListBindings* bindings, bool compute)
     {
-        var entries = TableReaches.Of(RectangleListState.Of(self)->Pipeline);
+        nint pipeline = RectangleListState.Of(self)->Pipeline;
+        var entries = TableReaches.Of(pipeline);
 
         if (entries.Length == 0)
         {
@@ -837,6 +850,12 @@ internal static unsafe class CommandListBindingMethods
         }
 
         uint* data = compute ? bindings->Compute : bindings->Graphics;
+
+        if (DepthUavs.Any)
+        {
+            DepthUavs.CheckFirstUse(pipeline, data, ShimContext.Runtime.D3D12X.Bindings.Window.Data);
+        }
+
         var heaps = ShimContext.Runtime.D3D12X.DescriptorHeaps;
 
         foreach (var entry in entries)

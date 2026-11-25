@@ -155,6 +155,7 @@ any case (`QueueProgress`), so this costs nothing until a stall. The game's code
 | `private by protection` | 0x4 read-write, 0x404 read-write write-combined (upload and custom heaps), ... |
 | `anonymous by size` | counts and bytes per size class, and the committed sizes that hold the most |
 | `heaps` | HeapSummary of every process heap |
+| `heap segments by heap` | the private bytes labeled heap, by the heap each segment belongs to (HEAP_SEGMENT.Heap), top 5, each named: the process heap (every CRT's malloc, the game's shipped one and the loader's native memory), made at a game frame (`HeapCreate` from mapped code passes through `HeapShims`), or made by a system or driver DLL. A 15.6 GB machine held 9.02 GB in 601 heap allocations after 18 minutes with nothing to say whose (issue #13) |
 | `since the last map` | new and gone allocations, by owner and size |
 | `largest` | the 20 largest: base, owner, committed of reserved, protection; an anonymous one with the modules its first page points into (`[nvgpucomp64.dll x3]`) |
 | `gpu memory` | QueryVideoMemoryInfo per adapter: local and non-local usage and budget |

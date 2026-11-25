@@ -22,6 +22,9 @@ internal sealed unsafe class PipelineWarmup
     private static readonly TimeSpan SlowBuild = TimeSpan.FromSeconds(20);
 
     private const long BytesPerMebibyte = 1L << 20;
+    private const int FailureWriteAttempts = 20;
+
+    private static readonly TimeSpan FailureWriteDelay = TimeSpan.FromMilliseconds(50);
     private const ulong BytesPerGibibyte = 1UL << 30;
 
     private static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(30);
@@ -45,6 +48,12 @@ internal sealed unsafe class PipelineWarmup
         _log = log;
         _refused = ReadFailures(_failurePath);
     }
+
+    /// <summary>
+    /// Whether this run builds pipelines of <see cref="PipelineFactory.HeavyShaderBytes"/> or more; a shard of a split
+    /// warm-up leaves them to its parent's last pass, so no two such compiles meet (counted as left out).
+    /// </summary>
+    public bool BuildsHeavy { get; init; } = true;
 
     /// <summary>What the run did so far.</summary>
     public WarmTally Tally => _tally;
@@ -150,6 +159,15 @@ internal sealed unsafe class PipelineWarmup
             return;
         }
 
+        if (recipe.Stream.ShaderBytes >= PipelineFactory.HeavyShaderBytes && !BuildsHeavy)
+        {
+            recipe.Stream.Dispose();
+            _seen.TryRemove(key, out _);
+            _tally.Count(WarmOutcome.Deferred);
+
+            return;
+        }
+
         if (recipe.Stream.ShaderBytes >= PipelineFactory.HeavyShaderBytes)
         {
             _heavy.Add((recipe, key));
@@ -208,9 +226,24 @@ internal sealed unsafe class PipelineWarmup
 
     private void RecordFailure(string key, int hr, string names)
     {
+        // The shards of a split warm-up append to the same file: shared, and tried again while another holds it.
         lock (_failures)
         {
-            File.AppendAllLines(_failurePath, [$"{key} {HResult.Format(hr)} {names}"]);
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    using var file = new FileStream(_failurePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    using var writer = new StreamWriter(file);
+                    writer.WriteLine($"{key} {HResult.Format(hr)} {names}");
+
+                    return;
+                }
+                catch (IOException) when (attempt < FailureWriteAttempts)
+                {
+                    Thread.Sleep(FailureWriteDelay);
+                }
+            }
         }
     }
 

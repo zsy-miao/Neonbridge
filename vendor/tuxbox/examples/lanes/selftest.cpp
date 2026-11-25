@@ -11,6 +11,7 @@
 #include <vector>
 #include "course_shader.h"
 #include "xbox_shader.h"
+#include "reclaim_shader.h"
 #include <algorithm>
 #include <memory>
 
@@ -34,6 +35,7 @@ constexpr size_t slot_copy_memory = 62, slot_write32 = 71, slot_write64 = 72, sl
                  slot_dispatch_flagged = 80, slot_copy_texture = 83, slot_build = 119,
                  slot_emit_sizes = 120, slot_sync_top = 131, slot_sync_bottom = 132;
 constexpr size_t slot_compute_root = 33, device_create_compute = 62, device_create_stream = 86;
+constexpr size_t slot_bind_heaps = 32, slot_compute_table = 35, queue_wait = 17;
 constexpr size_t slot_execute_indirect = 61, slot_root_constants = 39, slot_root_uav = 45;
 constexpr size_t queue_signal = 16, queue_execute_frame = 35, device_place = 44, device_create_list = 73;
 
@@ -55,6 +57,10 @@ using ExecuteIndirect_ = void (WINAPI*)(ID3D12GraphicsCommandList*, ID3D12Comman
                                          ID3D12Resource*, UINT64, ID3D12Resource*, UINT64);
 using SetConstants = void (WINAPI*)(ID3D12GraphicsCommandList*, UINT, UINT, const void*, UINT);
 using SetUav = void (WINAPI*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_VIRTUAL_ADDRESS);
+using BindHeaps = void (WINAPI*)(ID3D12GraphicsCommandList*, UINT, ID3D12DescriptorHeap* const*);
+using SetTable = void (WINAPI*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_DESCRIPTOR_HANDLE);
+using WaitQueue = HRESULT (WINAPI*)(ID3D12CommandQueue*, ID3D12Fence*, UINT64);
+using GpuHandle = UINT64 (WINAPI*)(ID3D12DescriptorHeap*);
 using EmitSizes = void (WINAPI*)(ID3D12GraphicsCommandList*,
                                  const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC*, UINT,
                                  const D3D12_GPU_VIRTUAL_ADDRESS*);
@@ -806,6 +812,331 @@ void thread_dimensions(ID3D12Device* device) {
     }
 }
 
+// Exercise shader-visible descriptor slot reclamation on an oversized paged heap:
+// (1) sustained >2x turnover with mixed table lengths, (2) overlapping in-flight
+// Reset() survival, (3) ClearState pin retention, (4) re-binding an evicted slot
+// with fresh view data, and (5) fail-closed E_OUTOFMEMORY without corruption.
+void descriptor_reclaim(ID3D12Device* device) {
+    constexpr UINT block_16k = 16384;
+    constexpr UINT block_8k = 8192;
+    constexpr UINT num_16k_blocks = 128;
+    constexpr UINT heap_descriptors = num_16k_blocks * block_16k; // 2,097,152 > 1,000,000 native limit
+    constexpr UINT max_dispatches = 1024;
+    constexpr UINT sentinel = 0xdeadbeefu;
+
+    D3D12_DESCRIPTOR_HEAP_DESC heap_desc{
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, heap_descriptors, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 1};
+    ComPtr<ID3D12DescriptorHeap> view_heap;
+    check(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&view_heap)), "create oversized view heap");
+    const UINT stride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    if (!stride) throw std::runtime_error("zero view descriptor stride");
+    const SIZE_T cpu_base = method<frame_abi::CpuHandle>(view_heap.Get(), 9)(view_heap.Get());
+    const UINT64 gpu_base = method<GpuHandle>(view_heap.Get(), 10)(view_heap.Get());
+    auto cpu_at = [&](UINT index) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+        return {cpu_base + SIZE_T(index) * stride};
+    };
+    auto gpu_at = [&](UINT index) -> D3D12_GPU_DESCRIPTOR_HANDLE {
+        return {gpu_base + UINT64(index) * stride};
+    };
+
+    auto make_pipeline = [&](UINT table_len, ComPtr<ID3D12RootSignature>& rs, ComPtr<ID3D12PipelineState>& pso) {
+        D3D12_DESCRIPTOR_RANGE ranges[3]{};
+        ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, 0};
+        ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 1};
+        ranges[2] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, table_len - 1};
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        param.DescriptorTable = {3, ranges};
+        D3D12_ROOT_SIGNATURE_DESC sig{1, &param, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+        ComPtr<ID3DBlob> blob;
+        check(D3D12SerializeRootSignature(&sig, D3D_ROOT_SIGNATURE_VERSION_1, &blob, nullptr),
+              "serialize reclaim root signature");
+        check(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&rs)),
+              "create reclaim root signature");
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc{};
+        pso_desc.pRootSignature = rs.Get();
+        pso_desc.CS = {reclaim_dxil, sizeof(reclaim_dxil)};
+        check(method<CreateComputePipeline>(device, device_create_compute)(
+                  device, &pso_desc, 0, nullptr, IID_PPV_ARGS(&pso)),
+              "create reclaim compute pipeline");
+    };
+    ComPtr<ID3D12RootSignature> rs16, rs8;
+    ComPtr<ID3D12PipelineState> pso16, pso8;
+    make_pipeline(block_16k, rs16, pso16);
+    make_pipeline(block_8k, rs8, pso8);
+
+    auto cb_key = [](UINT k) { return 0x1000u + k * 7u + 3u; };
+    auto cb_salt = [](UINT k) { return 0x50000u + k * 13u + 5u; };
+    auto src_word = [](UINT k) { return 0x200u + k * 19u + 11u; };
+    auto expected_word = [&](UINT k) { return src_word(k) * 131u + cb_key(k) * 17u + cb_salt(k); };
+
+    std::vector<UINT> cb_bytes(size_t(max_dispatches) * 64, 0);
+    std::vector<UINT> src_words(max_dispatches, 0);
+    std::vector<UINT> seed_words(max_dispatches, sentinel);
+    std::vector<UINT> expected_out(max_dispatches, sentinel);
+    for (UINT k = 0; k < max_dispatches; ++k) {
+        cb_bytes[size_t(k) * 64 + 0] = cb_key(k);
+        cb_bytes[size_t(k) * 64 + 1] = cb_salt(k);
+        src_words[k] = src_word(k);
+    }
+    const UINT64 out_bytes = UINT64(max_dispatches) * sizeof(UINT);
+    auto cb_pool = buffer(device, D3D12_HEAP_TYPE_UPLOAD, UINT64(max_dispatches) * 256,
+                          D3D12_RESOURCE_STATE_GENERIC_READ);
+    auto src_pool = buffer(device, D3D12_HEAP_TYPE_UPLOAD, out_bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
+    auto seed_buf = buffer(device, D3D12_HEAP_TYPE_UPLOAD, out_bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
+    auto dst_buf = buffer(device, D3D12_HEAP_TYPE_DEFAULT, out_bytes, D3D12_RESOURCE_STATE_COPY_DEST,
+                          D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto readback_buf = buffer(device, D3D12_HEAP_TYPE_READBACK, out_bytes, D3D12_RESOURCE_STATE_COPY_DEST);
+    compute_fixture::upload(cb_pool.Get(), cb_bytes.data(), cb_bytes.size() * sizeof(UINT));
+    compute_fixture::upload(src_pool.Get(), src_words.data(), size_t(out_bytes));
+    compute_fixture::upload(seed_buf.Get(), seed_words.data(), size_t(out_bytes));
+
+    const UINT64 cb_va = cb_pool->GetGPUVirtualAddress();
+    auto author_table = [&](UINT slot_base, UINT table_len, UINT data_idx, UINT out_idx) {
+        D3D12_CONSTANT_BUFFER_VIEW_DESC cbv{cb_va + UINT64(data_idx) * 256, 256};
+        device->CreateConstantBufferView(&cbv, cpu_at(slot_base + 0));
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Buffer.FirstElement = data_idx;
+        srv.Buffer.NumElements = 1;
+        srv.Buffer.StructureByteStride = sizeof(UINT);
+        device->CreateShaderResourceView(src_pool.Get(), &srv, cpu_at(slot_base + 1));
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uav.Buffer.FirstElement = out_idx;
+        uav.Buffer.NumElements = 1;
+        uav.Buffer.StructureByteStride = sizeof(UINT);
+        device->CreateUnorderedAccessView(dst_buf.Get(), nullptr, &uav, cpu_at(slot_base + table_len - 1));
+        expected_out[out_idx] = expected_word(data_idx);
+    };
+    auto bind_and_dispatch = [&](ID3D12GraphicsCommandList* list, UINT slot_base, UINT table_len, bool set_pso = true) {
+        ID3D12DescriptorHeap* heaps[]{view_heap.Get()};
+        method<BindHeaps>(list, slot_bind_heaps)(list, 1, heaps);
+        ID3D12RootSignature* rs = table_len == block_16k ? rs16.Get() : rs8.Get();
+        ID3D12PipelineState* pso = table_len == block_16k ? pso16.Get() : pso8.Get();
+        method<SetRoot>(list, slot_compute_root)(list, rs);
+        if (set_pso) list->SetPipelineState(pso);
+        method<SetTable>(list, slot_compute_table)(list, 0, gpu_at(slot_base));
+        list->Dispatch(1, 1, 1);
+    };
+
+    Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    Queue compute(device, D3D12_COMMAND_LIST_TYPE_COMPUTE);
+    direct.list->CopyBufferRegion(dst_buf.Get(), 0, seed_buf.Get(), 0, out_bytes);
+    compute_fixture::transition(direct.list.Get(), dst_buf.Get(),
+                                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    direct.submit();
+    direct.finish("seed reclaim output buffer");
+
+    auto verify_outputs = [&](UINT check_count, const char* phase) {
+        direct.reopen();
+        compute_fixture::transition(direct.list.Get(), dst_buf.Get(),
+                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        direct.list->CopyBufferRegion(readback_buf.Get(), 0, dst_buf.Get(), 0, out_bytes);
+        compute_fixture::transition(direct.list.Get(), dst_buf.Get(),
+                                    D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        direct.submit();
+        direct.finish(phase);
+        D3D12_RANGE range{0, SIZE_T(out_bytes)}, empty{};
+        const UINT* mapped = nullptr;
+        check(readback_buf->Map(0, &range, reinterpret_cast<void**>(const_cast<UINT**>(&mapped))),
+              "map reclaim readback");
+        for (UINT i = 0; i < check_count; ++i) {
+            if (mapped[i] != expected_out[i]) {
+                const UINT got = mapped[i];
+                readback_buf->Unmap(0, &empty);
+                char msg[192];
+                std::snprintf(msg, sizeof(msg), "%s mismatch at output %u: expected 0x%08x, found 0x%08x",
+                              phase, i, expected_out[i], got);
+                throw std::runtime_error(msg);
+            }
+        }
+        readback_buf->Unmap(0, &empty);
+    };
+
+    // 1. Sustained turnover (> 2x shader-visible limit) mixing 8K and 16K spans.
+    //    Emit 32 8K tables (blocks 0..16) interleaved with 16K blocks 16..67,
+    //    then 61 16K blocks 67..128 so all of 0..67 are evicted by the end.
+    struct TableJob { UINT slot_base; UINT len; UINT idx; };
+    std::vector<TableJob> jobs;
+    jobs.reserve(144);
+    UINT next_idx = 0;
+    for (UINT i = 0; i < 32; ++i) {
+        jobs.push_back({i * block_8k, block_8k, next_idx++});
+        jobs.push_back({(16 + i) * block_16k, block_16k, next_idx++});
+    }
+    for (UINT b = 48; b < 128; ++b) {
+        jobs.push_back({b * block_16k, block_16k, next_idx++});
+    }
+    for (const auto& job : jobs) author_table(job.slot_base, job.len, job.idx, job.idx);
+    auto release_leases = [](Queue& q) {
+        q.reopen();
+        q.close();
+    };
+    for (size_t offset = 0; offset < jobs.size(); offset += 8) {
+        if (offset > 0) compute.reopen();
+        const size_t batch_end = std::min(offset + 8, jobs.size());
+        for (size_t i = offset; i < batch_end; ++i)
+            bind_and_dispatch(compute.list.Get(), jobs[i].slot_base, jobs[i].len);
+        compute.submit();
+        compute.finish("sustained descriptor turnover batch");
+    }
+    release_leases(compute);
+    verify_outputs(next_idx, "sustained turnover");
+
+    // 2. Overlapping / double-buffered in-flight safety across CPU Reset():
+    //    L1 (20 tables) is queued behind gate_fence, L0 (30 tables) runs & finishes
+    //    on direct (so L1's last_used is OLDER than L0's), L2 (15 tables) queues
+    //    behind gate_fence, L1->Reset() drops L1's recording leases while L1 is
+    //    still in-flight, and L3 (25 tables) forces eviction of L0 without touching L1/L2.
+    const UINT sub2_base = next_idx;
+    for (UINT b = 0; b < 90; ++b) {
+        author_table(b * block_16k, block_16k, next_idx, next_idx);
+        ++next_idx;
+    }
+    auto make_list = [&](D3D12_COMMAND_LIST_TYPE type, ComPtr<ID3D12CommandAllocator>& alloc,
+                         ComPtr<ID3D12GraphicsCommandList>& list) {
+        check(device->CreateCommandAllocator(type, IID_PPV_ARGS(&alloc)), "create extra allocator");
+        const UINT list_desc[] = {static_cast<UINT>(type), 0, 1, 0};
+        check(method<frame_abi::CreateList>(device, device_create_list)(
+                  device, list_desc, alloc.Get(), nullptr, IID_PPV_ARGS(&list)),
+              "create extra list");
+    };
+    {
+        ComPtr<ID3D12Fence> gate_fence;
+        check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gate_fence)), "create gate fence");
+        check(method<WaitQueue>(compute.queue.Get(), queue_wait)(compute.queue.Get(), gate_fence.Get(), 1),
+              "stall compute queue on gate fence");
+
+        ComPtr<ID3D12CommandAllocator> alloc_l1, alloc_l2, alloc_l3;
+        ComPtr<ID3D12GraphicsCommandList> list_l1, list_l2;
+        make_list(D3D12_COMMAND_LIST_TYPE_COMPUTE, alloc_l1, list_l1);
+        make_list(D3D12_COMMAND_LIST_TYPE_COMPUTE, alloc_l2, list_l2);
+        check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&alloc_l3)),
+              "create spare L3 allocator");
+
+        check(list_l1->Reset(alloc_l1.Get(), nullptr), "open L1");
+        for (UINT b = 0; b < 20; ++b) bind_and_dispatch(list_l1.Get(), b * block_16k, block_16k);
+        check(list_l1->Close(), "close L1");
+        {
+            ID3D12CommandList* batch[]{list_l1.Get()};
+            compute.queue->ExecuteCommandLists(1, batch);
+        }
+
+        direct.reopen();
+        for (UINT b = 20; b < 50; ++b) bind_and_dispatch(direct.list.Get(), b * block_16k, block_16k);
+        direct.submit();
+        direct.finish("subtest 2 L0");
+        release_leases(direct);
+
+        check(list_l2->Reset(alloc_l2.Get(), nullptr), "open L2");
+        for (UINT b = 50; b < 65; ++b) bind_and_dispatch(list_l2.Get(), b * block_16k, block_16k);
+        check(list_l2->Close(), "close L2");
+        {
+            ID3D12CommandList* batch[]{list_l2.Get()};
+            compute.queue->ExecuteCommandLists(1, batch);
+        }
+
+        // Reset L1 on the CPU while L1 is still in-flight behind gate_fence!
+        check(list_l1->Reset(alloc_l3.Get(), nullptr), "reset L1 while in-flight");
+        for (UINT b = 65; b < 90; ++b) bind_and_dispatch(list_l1.Get(), b * block_16k, block_16k);
+        check(list_l1->Close(), "close L3");
+        {
+            ID3D12CommandList* batch[]{list_l1.Get()};
+            compute.queue->ExecuteCommandLists(1, batch);
+        }
+        check(gate_fence->Signal(1), "release gate fence");
+        compute.signal();
+        compute.finish("overlapping L1/L2/L3 execution");
+    }
+    verify_outputs(sub2_base + 90, "overlapping in-flight reset");
+
+    // 3. ClearState pin retention:
+    //    Fill 0..61 on direct, open CL and bind+dispatch table A (block 61),
+    //    call ClearState, refresh 1..61 on direct (making A oldest), then bind
+    //    60 new tables 62..122 (ending with table B at block 121) inside CL.
+    for (UINT b = 0; b < 122; ++b) {
+        author_table(b * block_16k, block_16k, next_idx, next_idx);
+        ++next_idx;
+    }
+    direct.reopen();
+    for (UINT b = 0; b < 61; ++b) bind_and_dispatch(direct.list.Get(), b * block_16k, block_16k);
+    direct.submit();
+    direct.finish("subtest 3 fill");
+    release_leases(direct);
+
+    compute.reopen();
+    bind_and_dispatch(compute.list.Get(), 61u * block_16k, block_16k); // table A (block 61)
+    compute.list->ClearState(pso16.Get());
+
+    direct.reopen();
+    for (UINT b = 1; b < 61; ++b) bind_and_dispatch(direct.list.Get(), b * block_16k, block_16k);
+    direct.submit();
+    direct.finish("subtest 3 refresh 1..61");
+    release_leases(direct);
+
+    // Bind 60 new tables 62..122 after ClearState; keep pso16 from ClearState(pso16).
+    for (UINT b = 62; b < 122; ++b)
+        bind_and_dispatch(compute.list.Get(), b * block_16k, block_16k, false);
+    compute.submit();
+    compute.finish("subtest 3 ClearState CL");
+    verify_outputs(next_idx, "ClearState pin retention");
+
+    // 4. Re-bind after eviction with fresh view data at logical block 0 (evicted in step 3).
+    const UINT fresh_out = next_idx++;
+    author_table(0, block_16k, fresh_out, fresh_out);
+    compute.reopen();
+    bind_and_dispatch(compute.list.Get(), 0, block_16k);
+    compute.submit();
+    compute.finish("re-bind evicted slot 0");
+    release_leases(compute);
+    verify_outputs(next_idx, "re-bind evicted slot");
+
+    // 5. Fail-closed OOM control:
+    //    Pin block 0 in open list L_pinned, then pin 62 more unique tables (total 63 * 16K
+    //    = 1,032,192 > 1,000,000 limit) in open list L_oom and confirm Close() returns
+    //    E_OUTOFMEMORY without corrupting L_pinned or preventing post-Reset recovery.
+    const UINT pinned_out = next_idx++;
+    const UINT recovery_out = next_idx++;
+    author_table(0, block_16k, pinned_out, pinned_out);
+    author_table(1 * block_16k, block_16k, recovery_out, recovery_out);
+
+    ComPtr<ID3D12CommandAllocator> alloc_pin, alloc_oom;
+    ComPtr<ID3D12GraphicsCommandList> list_pin, list_oom;
+    make_list(D3D12_COMMAND_LIST_TYPE_COMPUTE, alloc_pin, list_pin);
+    make_list(D3D12_COMMAND_LIST_TYPE_COMPUTE, alloc_oom, list_oom);
+
+    check(list_pin->Reset(alloc_pin.Get(), nullptr), "open pinned control list");
+    bind_and_dispatch(list_pin.Get(), 0, block_16k);
+
+    check(list_oom->Reset(alloc_oom.Get(), nullptr), "open OOM control list");
+    for (UINT b = 1; b <= 62; ++b) bind_and_dispatch(list_oom.Get(), b * block_16k, block_16k);
+    const HRESULT oom_hr = list_oom->Close();
+    if (oom_hr != E_OUTOFMEMORY) {
+        char msg[128];
+        std::snprintf(msg, sizeof(msg), "expected E_OUTOFMEMORY on unsubmitted pin overflow, got 0x%08lx",
+                      static_cast<unsigned long>(oom_hr));
+        throw std::runtime_error(msg);
+    }
+
+    check(list_pin->Close(), "close pinned control list after OOM");
+    {
+        ID3D12CommandList* batch[]{list_pin.Get()};
+        compute.queue->ExecuteCommandLists(1, batch);
+    }
+    check(list_oom->Reset(alloc_oom.Get(), nullptr), "reset failed OOM list");
+    bind_and_dispatch(list_oom.Get(), 1 * block_16k, block_16k);
+    check(list_oom->Close(), "close recovery list");
+    {
+        ID3D12CommandList* batch[]{list_oom.Get()};
+        compute.queue->ExecuteCommandLists(1, batch);
+    }
+    compute.signal();
+    compute.finish("pinned control and post-OOM recovery");
+    verify_outputs(next_idx, "fail-closed OOM control");
+}
+
 struct Scenario {
     const wchar_t* name;
     void (*run)(ID3D12Device*);
@@ -821,6 +1152,7 @@ constexpr Scenario scenarios[] = {
     {L"texture-readback", texture_readback},
     {L"ray-tracing-builder", ray_tracing_builder},
     {L"thread-dimensions", thread_dimensions},
+    {L"descriptor-reclaim", descriptor_reclaim},
     {L"xbox-shader", xbox_shader_scenario},
 };
 
@@ -871,7 +1203,8 @@ std::string narrow(const wchar_t* text) {
 const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue",      L"compute-frame",
                                              L"skipped-command",   L"copy-memory",      L"shared-texture",
                                              L"indirect-dispatch", L"texture-readback", L"ray-tracing-builder",
-                                             L"thread-dimensions", L"xbox-shader"};
+                                             L"thread-dimensions", L"descriptor-reclaim",
+                                             L"xbox-shader"};
 const unsigned selftest_scenario_count = static_cast<unsigned>(std::size(selftest_scenarios));
 static_assert(std::size(selftest_scenarios) == std::size(scenarios));
 

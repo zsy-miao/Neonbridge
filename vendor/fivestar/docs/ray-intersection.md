@@ -64,9 +64,16 @@ J' are picked from `{t_denom − I − J, I, J}` by the triangle_id byte of the 
 Without `--raytracing` a pipeline whose programs trace rays stays a stand-in (`RayTracingPrograms`): never built nor
 loaded from the pipeline cache, its draws and dispatches skipped and logged once, as `--skip-pipelines` does. A
 program is known to trace rays when it is translated (its HLSL includes `rdna_bvh.hlsli`), and in later boots or from
-the compile host by a marker beside its DXIL in the program cache, `<name>.rt`. Boot w65b, with the node misses below
+the compile host by a marker beside its DXIL in the program cache, `<name>.rt` (`<name>.rt0` for one that does not).
+A program without a marker (its DXIL made by a boot before the markers: w66b sent a held
+`standard_emissive_layer~CS_RaytracingResolve` to one of its four driver compile slots) is read from its console code
+(an `image_bvh` instruction) before a build and before a pipeline-cache load, so a held pipeline takes no compile
+slot and is not loaded from the cache; a game thread creating a pipeline reads only what is known and the markers.
+The warm-up, the journal's pre-builds and the cache go through the same build and load. Boot w65b, with the node misses below
 but the passes running, still lost the device about 100 s after the world loaded; with these pipelines skipped boots
 ran 300 to 600 s. VIctory holds such pipelines until its builder has run (its PR #2311; facts only). Programs of `--translated-dir` have no marker and are not held back.
+
+The lighting still reads what the held passes would have written, so their texture outputs get a constant instead (`RtStandIns`, default on without `--raytracing`, off with `--no-rt-stand-ins`). At a skipped dispatch of a ray-traced shadow pass (`shadowmask~CS_TraceShadowRays_*`, `rtdirectionalshadows~*`) every texture UAV of its compute tables (the root signature's UAV ranges, 8 records each at most) is written fully lit; planar reflections (`CS_PPR_Raytrace`) black; and the screen-probe light, whose rays are held, is overwritten with a 0.6 grey after `CS_ScreenProbes_TemporalResolve` runs (as VIctory's ambient stand-in: ZJOU-VICTORY 1fc58f3 after Belobug 4f45ab8, vitutu1 c3faf2a; facts only), R9G9B9E5-packed for its R32_UINT view. A small compute program (`UavFill`) writes the value by heap index, a float4 for float, unorm and snorm views and a uint for uint views (sint views are left), knowing each view from `CreateUnorderedAccessView` (`UavViews`, by desktop descriptor). Passes that write only raw buffers (the probe rays, the deferred gather) are left alone.
 
 
 The loader builds no acceleration structure without `--raytracing` (XboxBvhBuilder builds nothing), so programs it

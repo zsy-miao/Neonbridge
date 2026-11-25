@@ -180,12 +180,25 @@ internal sealed class BodyWriter
         if (!IsTwoPhaseMesh)
         {
             lines.Add("  uint pc = 0, pc_resume = 0;");
-            lines.AddRange(Dispatch(dropOutputs: false));
+            lines.AddRange(Dispatch(dropOutputs: false).Select(FenceOnly));
 
             return;
         }
 
         lines.AddRange(Phases(Dispatch));
+    }
+
+    /// <summary>
+    /// An s_barrier inside the dispatch switch keeps only its memory fence: each thread runs the switch on its own, so a
+    /// thread that ended (pc = PC_END) or sits in another block never reaches the barrier others wait in, and the group
+    /// hangs (XCL counts live waves, VIctory keeps only the fence where not every lane reaches the barrier; facts only).
+    /// The console's s_barrier waits for the waves that have not ended. Only programs whose control flow could not be
+    /// structured take this form (4 of 400 compute programs sampled hold a barrier there); WARP's compiler also crashed
+    /// on such barriers.
+    /// </summary>
+    private static string FenceOnly(string line)
+    {
+        return line.Replace("GroupMemoryBarrierWithGroupSync();", "GroupMemoryBarrier();   // dispatch switch: fence only", StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -29,7 +29,7 @@ flowchart LR
   tables["bcpack-tables"] --> textures
   verify --> textures["textures"]
   verify --> gdk["gdk-abi"]
-  translate --> warm["pipeline-warm"]
+  extract["shader-extract"] --> warm["pipeline-warm"]
   cache --> warm
 ```
 
@@ -43,7 +43,7 @@ flowchart LR
 | `pipeline-cache` | `fivestar shader psocache` of the console pipeline cache, matched to the programs | `pipelines` (`pipelines.json`, `code/`) |
 | `textures` | `fivestar texture extract` of every page file, with the imported BCPack tables when present | `textures/<page file path>/*.dds` |
 | `gdk-abi` | `fivestar platform gdk-abi` from the PC GDK's `xgameruntime.lib`, for `fivestar-loader --gdk-abi`. Without a GDK it finishes with a note | `loader/gdk-abi.txt` |
-| `pipeline-warm` | `fivestar-loader --warm-pipelines --warm-used-only` of `shaders.rpf` with `--warm-step` = `--step`: builds the pipelines earlier boots used (the loader's `pipeline-cache/pipelines-used.bin`) with the desktop driver ([d3d12x-pipelines.md](d3d12x-pipelines.md#warm-up)), so the next boot loads them; without that file there is nothing to do, since the game builds its pipelines on first use. `--warm-all` also builds every pipeline of the console pipeline cache (about 9 hours). `fivestar run` does not wait for it | `pipeline-cache` |
+| `pipeline-warm` | `fivestar-loader --warm-pipelines --warm-used-only` of `shaders.rpf` with `--warm-step` = `--step`: builds the pipelines earlier boots used (the loader's `pipeline-cache/pipelines-used.bin`) with the desktop driver ([d3d12x-pipelines.md](d3d12x-pipelines.md#warm-up)), so the next boot loads them; without that file there is nothing to do, since the game builds its pipelines on first use. Its programs come from the same folders as `fivestar run`'s boot (the extracted programs, made on demand into `program-cache`; the translation only with `--translate-ahead`), so the pipelines are the ones the boot asks for, and a finished run stamps `journal-warm.txt` as `fivestar run --warm` does ([running.md](running.md#after-a-translator-update)). `--warm-all` also builds every pipeline of the console pipeline cache (about 9 hours). `fivestar run` does not wait for it | `pipeline-cache` |
 
 `variants.json` lists every compiled program with its DXIL forms (native, wave32 variant or mesh superstep form, mesh fallback) and wave
 floor, so the runtime picks the form for the GPU without reading HLSL (see

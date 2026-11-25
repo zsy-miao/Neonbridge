@@ -10,6 +10,7 @@ mod wave;
 pub(super) use layout::{any_hit_range, leaf_constants, leaf_span};
 pub(super) use leaf::{leaf_body, writes};
 #[cfg(test)]
+#[path = "../tests/ray/continuation.rs"]
 mod tests;
 use super::{alu, operand, resources};
 use crate::rdna2::{Enc, Insn, Opnd, instructions};

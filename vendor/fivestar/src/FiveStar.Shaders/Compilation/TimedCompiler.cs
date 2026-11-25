@@ -20,11 +20,15 @@ public sealed class TimedCompiler : IShaderCompiler, IDisposable
     private readonly Lock _gate = new();
     private readonly TimeProvider _time;
 
-    public TimedCompiler(IShaderCompiler inner, string logPath, TimeProvider time)
+    /// <param name="inner">The compiler that compiles.</param>
+    /// <param name="logPath">The log, shared by every process that compiles into its folder.</param>
+    /// <param name="time">The clock.</param>
+    /// <param name="processTag">Names this process's own log when another process holds the shared one (its id).</param>
+    public TimedCompiler(IShaderCompiler inner, string logPath, TimeProvider time, int processTag)
     {
         _inner = inner;
         _time = time;
-        _log = new StreamWriter(logPath, append: true) { AutoFlush = true };
+        _log = new StreamWriter(Open(logPath, processTag)) { AutoFlush = true };
     }
 
     public DxcOptions Options => _inner.Options;
@@ -59,6 +63,36 @@ public sealed class TimedCompiler : IShaderCompiler, IDisposable
     public void Dispose()
     {
         _log.Dispose();
+    }
+
+    /// <summary>
+    /// The log, appended to; when another process that compiles into the same folder holds it (the warm-up's shards, a
+    /// boot beside a warm-up), a log of this process's own beside it (<c>compile-times.&lt;pid&gt;.tsv</c>): opening the one log
+    /// threw in the second process and ended it.
+    /// </summary>
+    private static FileStream Open(string logPath, int processTag)
+    {
+        try
+        {
+            return new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+        }
+        catch (IOException)
+        {
+            string own = Path.ChangeExtension(logPath, $"{processTag}{Path.GetExtension(logPath)}");
+
+            return new FileStream(own, FileMode.Append, FileAccess.Write, FileShare.Read);
+        }
+    }
+
+    /// <summary>The logs in <paramref name="folder"/>: the shared one and those of processes that found it held.</summary>
+    public static IEnumerable<string> Logs(string folder)
+    {
+        if (!Directory.Exists(folder))
+        {
+            return [];
+        }
+
+        return Directory.EnumerateFiles(folder, Path.GetFileNameWithoutExtension(LogName) + "*" + Path.GetExtension(LogName));
     }
 
     private static string Result(CompileOutcome outcome)

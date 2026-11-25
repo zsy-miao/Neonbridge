@@ -23,7 +23,7 @@ src/FiveStar.Cli --`).
 ## Command
 
 ```
-fivestar run <dump folder> [--work <dir>] [--debug] [--timeout <s>] [-- <loader options>]
+fivestar run <dump folder> [--work <dir>] [--debug] [--timeout <s>] [--warm] [-- <loader options>]
 fivestar doctor <dump folder> [same options]
 ```
 
@@ -32,6 +32,7 @@ fivestar doctor <dump folder> [same options]
 | `--work <dir>` | work folder; default `%LOCALAPPDATA%\FiveStar\<titleid>-<version>`, the same as `fivestar setup` |
 | `--debug` | the D3D12 debug layer and DRED (`fivestar-loader --d3d12-debug`); needs the Graphics Tools optional feature |
 | `--timeout <s>` | end the game after s seconds (`--run-timeout`, exit code 3) |
+| `--warm` | after a translator update, build the pipelines earlier boots used before the boot ([below](#after-a-translator-update)) |
 | `--shaders <dir> --translated <dir>` | use existing extracted programs and translated DXIL instead of building them; the translated folder needs `rect-gs/` |
 | `--loader <exe>` | `fivestar-loader.exe`; default `FIVESTAR_LOADER`, then the folder of `fivestar`, then the build tree |
 | `--dxc`, `--gdk-lib`, `--bcpack-tables`, `--jobs` | as for [setup](setup.md) |
@@ -83,6 +84,28 @@ flowchart LR
    `--no-pipeline-cache`. At the end run prints a summary from the loader's lines, for example
    `fivestar-loader exit code 3: 293 presents, 0 faults, 43 warnings; full log ...`. Ctrl+C reaches the loader as well;
    run waits for it to end before the summary.
+
+## After a translator update
+
+A pipeline's place in the disk cache is named by its DXIL, so a new translator build (a new `fivestar-loader` with
+changed shader translation) leaves every pipeline earlier boots used unbuilt: the game then waits 20 to 60 s of driver
+compile at each one's first use, which is why a world load can take ten minutes after an update. `run` and `doctor`
+compare the translator beside the loader with the one the last warm-up built for (`journal-warm.txt` in the pipeline
+cache) and, when they differ and the journal (`pipelines-used.bin`) has entries, print a `note` with the count and an
+estimate. `fivestar run --warm` then builds them before the boot: `fivestar-loader --warm-pipelines --warm-used-only`
+with the boot's shader folders, program cache, pipeline cache and loader options (so the programs are made in the
+same modes), split over one process per 16 GB of RAM (1 to 4; `--warm-processes` after `--` sets it), with a
+`warm-up shards` progress line every 30 s and its log in `logs\warm-<time>.log`. A run stopped with Ctrl+C or by a
+memory limit keeps what it built and the boot does not start; the next `run --warm` resumes.
+
+| Machine | Processes | 5,000 journal pipelines |
+|---|---|---|
+| 64 GB | 3 | about 21 minutes (measured, RTX 4090: 1,837 built, the rest already cached) |
+| 32 GB | 2 | about 32 minutes |
+| 16 GB | 1 | about an hour; add `-- --min-free-memory 4` to stop it before the machine runs out |
+
+The estimate is about 1.3 journal pipelines a second per process; a journal that is mostly new to the cache takes
+longer. Without `--warm` the game builds them as before, at first use.
 
 ## First run in the game
 

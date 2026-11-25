@@ -167,6 +167,8 @@ internal sealed class LoaderRuntime : IDisposable
 
     public void Dispose()
     {
+        // Shims and logs no longer reach a disposed runtime (whose log writer its owner may close next).
+        ShimContext.Deactivate(this);
         Identity.RestorePeb();
         Gdk.Dispose();
         Input.Dispose();

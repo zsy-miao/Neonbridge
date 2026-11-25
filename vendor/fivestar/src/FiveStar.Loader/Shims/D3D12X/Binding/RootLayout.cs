@@ -16,6 +16,9 @@ internal unsafe struct RootLayout
     /// <summary>D3D12_MAX_ROOT_COST: no root signature has more parameters (d3d12.h).</summary>
     public const int MaxParameters = 64;
 
+    /// <summary>UAV ranges of tables kept (<see cref="UavRanges"/>); later ones are not.</summary>
+    public const int MaxUavRanges = 16;
+
     public int Count;
     public fixed byte Kinds[MaxParameters];
     public fixed byte Offsets[MaxParameters];
@@ -23,6 +26,12 @@ internal unsafe struct RootLayout
 
     /// <summary>Descriptors a table parameter spans (the end of its last range), at most <see cref="DescriptorWindow.MaxTableRecords"/>.</summary>
     public fixed ushort Extents[MaxParameters];
+
+    /// <summary>The tables' UAV ranges: <see cref="UavParameters"/>, first record and record count each (stand-in fills, <see cref="RtStandIns"/>).</summary>
+    public int UavRanges;
+    public fixed byte UavParameters[MaxUavRanges];
+    public fixed ushort UavStarts[MaxUavRanges];
+    public fixed ushort UavCounts[MaxUavRanges];
 
     /// <summary>The user SGPRs all parameters take, packed in order.</summary>
     public readonly int Sgprs()

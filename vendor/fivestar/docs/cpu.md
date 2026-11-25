@@ -35,7 +35,11 @@ functions run is not known.
 loader installs with `--run` and keeps in front of the game's own handlers: when mapped code adds a first handler
 (Bink does at every video), the loader registers its handler again before it removes the old registration, so a
 fault on another thread meanwhile is never without it (it was, briefly, and a CLWB that faulted then ended the
-process with 0xC000001D, issue #13). For 0xC000001D it decodes the bytes at
+process with 0xC000001D, issue #13). That still left one gap: a fault whose dispatch had passed the head of the list
+before the new registration went there reached the old one only after it left, and a CLZERO 18 minutes into a boot
+ended the process the same way. So the loader also registers the emulation alone as the last vectored handler (the
+backstop, never removed): whatever runs first and continues the search, every emulated instruction (CLZERO,
+MONITORX/MWAITX, CLWB, EXTRQ, INSERTQ) reaches it. For 0xC000001D it decodes the bytes at
 RIP and accepts only these encodings; anything else continues to the fault report and the game's handlers.
 
 | Instruction | Emulation |

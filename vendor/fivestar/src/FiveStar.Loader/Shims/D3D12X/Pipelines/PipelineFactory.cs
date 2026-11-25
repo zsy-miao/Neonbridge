@@ -330,7 +330,8 @@ internal sealed unsafe class PipelineFactory
             built?.Invoke(pipeline);
         };
 
-        if (!SkippedPipelines.Skips(names) && Cache is not null && !HResult.Failed(Cache.Load(stream, iid, result)))
+        // A pipeline the cache holds from a boot with --raytracing, or from before ray-tracing pipelines were held, is not loaded.
+        if (!SkippedPipelines.Skips(names) && !RayTracingPrograms.Skips(names, RayTracingPrograms.Folder, scan: true) && Cache is not null && !HResult.Failed(Cache.Load(stream, iid, result)))
         {
             stream.Dispose();
             named(*result);
@@ -559,7 +560,8 @@ internal sealed unsafe class PipelineFactory
     /// </summary>
     public PipelineResult Build(DesktopStream stream, Guid iid, string what)
     {
-        if (SkippedPipelines.Skips(what))
+        // Before the compile budget and the driver: a held ray-tracing pipeline takes no compile slot.
+        if (SkippedPipelines.Skips(what) || RayTracingPrograms.Skips(what, RayTracingPrograms.Folder, scan: true))
         {
             stream.Dispose();
 

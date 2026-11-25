@@ -139,7 +139,7 @@ internal sealed class CommandLineParser
                 return SetCapturePresents();
             case "--present-test":
                 return SetPresentTest();
-            case "--raytracing" or "--raytracing-gpu":
+            case "--raytracing" or "--raytracing-gpu" or "--no-rt-stand-ins":
                 return SetRayTracing(option);
             case "--xdsp-convolution":
                 return SetXDspConvolution();
@@ -181,10 +181,8 @@ internal sealed class CommandLineParser
                 return DisablePipelineCache();
             case "--warm-pipelines":
                 return SetWarmSource();
-            case "--warm-jobs":
-                return SetWarmJobs();
-            case "--warm-step":
-                return SetWarmStep();
+            case "--warm-jobs" or "--warm-step" or "--warm-processes" or "--warm-shard":
+                return SetWarmSplit(option);
             case "--warm-match":
                 return Add(_options.WarmMatches);
             case "--eager-pipelines":
@@ -233,6 +231,31 @@ internal sealed class CommandLineParser
     private bool SetWarmSource()
     {
         _options.WarmSource = Path.GetFullPath(Next());
+
+        return true;
+    }
+
+    /// <summary>--warm-jobs n, --warm-step k, --warm-processes n, or --warm-shard i/n (set by a split warm-up's parent).</summary>
+    private bool SetWarmSplit(string option)
+    {
+        if (option == "--warm-jobs")
+        {
+            return SetWarmJobs();
+        }
+
+        if (option == "--warm-step")
+        {
+            return SetWarmStep();
+        }
+
+        if (option == "--warm-processes")
+        {
+            _options.WarmProcesses = int.Parse(Next(), CultureInfo.InvariantCulture);
+
+            return true;
+        }
+
+        _options.WarmShard = WarmShards.ParseShard(Next()) ?? throw new CommandLineException("--warm-shard takes i/n with 0 <= i < n");
 
         return true;
     }
@@ -847,9 +870,16 @@ internal sealed class CommandLineParser
         return true;
     }
 
-    /// <summary>--raytracing (the DLL's CPU paths) or --raytracing-gpu (the inventory of its GPU builder).</summary>
+    /// <summary>--raytracing (the DLL's CPU paths), --raytracing-gpu (the inventory of its GPU builder) or --no-rt-stand-ins.</summary>
     private bool SetRayTracing(string option)
     {
+        if (option == "--no-rt-stand-ins")
+        {
+            _options.NoRtStandIns = true;
+
+            return true;
+        }
+
         if (option == "--raytracing-gpu")
         {
             _options.RayTracingGpuInventory = true;

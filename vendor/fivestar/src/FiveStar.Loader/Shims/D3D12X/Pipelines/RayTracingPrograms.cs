@@ -20,6 +20,9 @@ internal static partial class RayTracingPrograms
     /// <summary>The marker's extension, beside <c>&lt;name&gt;.dxil</c>.</summary>
     public const string MarkerExtension = ".rt";
 
+    /// <summary>The marker of a program that does not trace rays.</summary>
+    public const string NoMarkerExtension = ".rt0";
+
     /// <summary>What a program that traces rays includes.</summary>
     private const string BvhInclude = "rdna_bvh.hlsli";
 
@@ -32,25 +35,18 @@ internal static partial class RayTracingPrograms
     /// <summary>The program cache folder the markers are in; null before programs are made on demand.</summary>
     public static string? Folder { get; set; }
 
+    /// <summary>
+    /// Reads whether a program traces rays from its console code (<see cref="ProgramProducer"/>: an image_bvh
+    /// instruction), for a program whose DXIL a boot before the markers made: w66b's held
+    /// standard_emissive_layer~CS_RaytracingResolve, found compiled, took one of the four driver compile slots. Null when
+    /// the program cannot be read.
+    /// </summary>
+    public static Func<string, bool?>? Scanner { get; set; }
+
     /// <summary>Records whether the program <paramref name="name"/> translated to <paramref name="hlsl"/> traces rays, with its marker.</summary>
     public static void Note(string name, string hlsl, string folder)
     {
-        bool traces = Traces(hlsl);
-        Known[name] = traces;
-
-        if (!traces)
-        {
-            return;
-        }
-
-        try
-        {
-            File.WriteAllBytes(Path.Combine(folder, name + MarkerExtension), []);
-        }
-        catch (IOException)
-        {
-            // Another process wrote it.
-        }
+        Record(name, Traces(hlsl), folder);
     }
 
     /// <summary>Reads the marker of a program another process made (the compile host) again.</summary>
@@ -65,14 +61,33 @@ internal static partial class RayTracingPrograms
         return hlsl.Contains(BvhInclude, StringComparison.Ordinal);
     }
 
-    /// <summary>True when the pipeline of <paramref name="names"/> traces rays and stays a stand-in; the first time, logged.</summary>
+    /// <summary>
+    /// True when the pipeline of <paramref name="names"/> traces rays and stays a stand-in; the first time, logged.
+    /// Known programs and markers only, so a game thread creating a pipeline reads no program.
+    /// </summary>
     public static bool Skips(string names)
     {
-        return Skips(names, Folder);
+        return Skips(names, Folder, scanner: null);
     }
 
-    /// <summary>As <see cref="Skips(string)"/>, reading markers in <paramref name="folder"/>.</summary>
-    public static bool Skips(string names, string? folder)
+    /// <summary>
+    /// As <see cref="Skips(string)"/>, reading markers in <paramref name="folder"/> and, with <paramref name="scan"/>, the
+    /// console code of a program without one (before a build or a pipeline-cache load: nothing traces rays unseen).
+    /// </summary>
+    public static bool Skips(string names, string? folder, bool scan)
+    {
+        Func<string, bool?>? scanner = null;
+
+        if (scan)
+        {
+            scanner = Scanner;
+        }
+
+        return Skips(names, folder, scanner);
+    }
+
+    /// <summary>As <see cref="Skips(string, string?, bool)"/> with the given <paramref name="scanner"/> (null: markers only).</summary>
+    public static bool Skips(string names, string? folder, Func<string, bool?>? scanner)
     {
         if (!StandIns)
         {
@@ -81,7 +96,7 @@ internal static partial class RayTracingPrograms
 
         foreach (Match program in ProgramPattern().Matches(names))
         {
-            if (!Is(program.Value, folder))
+            if (!Is(program.Value, folder, scanner))
             {
                 continue;
             }
@@ -98,12 +113,81 @@ internal static partial class RayTracingPrograms
     }
 
     /// <summary>
-    /// Whether a program traces rays: noted, or its marker is in the program cache. A program not made yet reads as not;
-    /// making it notes it (<see cref="Note"/>, or <see cref="Refresh"/> for the compile host's).
+    /// Whether a program traces rays: noted, or its marker in the program cache (<c>.rt</c> traces, <c>.rt0</c> does
+    /// not), or by <paramref name="scanner"/> from its console code (then marked). Unknown without one reads as not.
     /// </summary>
-    private static bool Is(string program, string? folder)
+    private static bool Is(string program, string? folder, Func<string, bool?>? scanner)
     {
-        return Known.GetOrAdd(program, name => folder is not null && File.Exists(Path.Combine(folder, name + MarkerExtension)));
+        if (Known.TryGetValue(program, out bool known))
+        {
+            return known;
+        }
+
+        bool? marked = Marked(program, folder);
+
+        if (marked is bool value)
+        {
+            Known[program] = value;
+
+            return value;
+        }
+
+        if (scanner?.Invoke(program) is not bool traces)
+        {
+            return false;
+        }
+
+        Record(program, traces, folder);
+
+        return traces;
+    }
+
+    /// <summary>A program's marker: true for <c>.rt</c>, false for <c>.rt0</c>, null for none (or no folder).</summary>
+    private static bool? Marked(string program, string? folder)
+    {
+        if (folder is null)
+        {
+            return null;
+        }
+
+        if (File.Exists(Path.Combine(folder, program + MarkerExtension)))
+        {
+            return true;
+        }
+
+        if (File.Exists(Path.Combine(folder, program + NoMarkerExtension)))
+        {
+            return false;
+        }
+
+        return null;
+    }
+
+    /// <summary>Records what a program does and its marker (<c>.rt</c> or <c>.rt0</c>) when there is a folder.</summary>
+    private static void Record(string name, bool traces, string? folder)
+    {
+        Known[name] = traces;
+
+        if (folder is null)
+        {
+            return;
+        }
+
+        string extension = NoMarkerExtension;
+
+        if (traces)
+        {
+            extension = MarkerExtension;
+        }
+
+        try
+        {
+            File.WriteAllBytes(Path.Combine(folder, name + extension), []);
+        }
+        catch (IOException)
+        {
+            // Another process wrote it.
+        }
     }
 
     /// <summary>A program's name in a pipeline's names (which add link and trim suffixes and " + ").</summary>

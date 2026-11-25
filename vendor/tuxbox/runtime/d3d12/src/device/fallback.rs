@@ -91,13 +91,5 @@ fn bump(counts: &mut Vec<(&'static str, u64)>, kind: &'static str) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn counts_each_kind_separately() {
-        let mut counts = Vec::new();
-        assert_eq!(super::bump(&mut counts, "compute"), 1);
-        assert_eq!(super::bump(&mut counts, "compute"), 2);
-        assert_eq!(super::bump(&mut counts, "raster stream"), 1);
-        assert_eq!(super::bump(&mut counts, "compute"), 3);
-    }
-}
+#[path = "../tests/device/fallback.rs"]
+mod tests;

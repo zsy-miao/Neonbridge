@@ -324,6 +324,8 @@ def build_target(tools, target, dxc, d3d12_reference=None):
         package.mkdir(parents=True, exist_ok=True)
         subprocess.run([dxc, "-T", "cs_6_0", "-E", "main", "-O3", "-Fh", "course_shader.h",
                         "-Vn", "course_dxil", str(src / "course.hlsl")], cwd=objects, check=True)
+        subprocess.run([dxc, "-T", "cs_6_0", "-E", "main", "-O3", "-Fh", "reclaim_shader.h",
+                        "-Vn", "reclaim_dxil", str(src / "reclaim.hlsl")], cwd=objects, check=True)
         course = tools.compile(src / "course.cpp", objects, f"/I{objects}")
         screen = tools.compile(src / "screen.cpp", objects)
         controls = tools.compile(src / "input.cpp", objects)

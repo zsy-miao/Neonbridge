@@ -5,7 +5,7 @@
 # the opening cutscene's UI, dialogue and sound at 30 fps; the 3D world draws into
 # the G-buffer but lighting and composition do not reach the screen yet.
 name = "fivestar"
-about = "Five Star Recomp 7d0393d (GPL-3.0+); first setup takes 1 to several hours and needs over 100 GB free (run --setup knowingly)"
+about = "Five Star Recomp 3634930 (GPL-3.0+); first setup takes 1 to several hours and needs over 100 GB free (run --setup knowingly)"
 upstream = "https://github.com/ThatRecompDev/five-star-recomp"
 # docs/running.md:7-10: needs the .NET 10 SDK (global.json 10.0.203), the Windows
 # SDK (dxc) and the PC GDK (xgameruntime.lib). Release instead of the docs' debug.
@@ -21,6 +21,8 @@ options = [
   "--work <dir> (default %LOCALAPPDATA%\\FiveStar\\<titleid>-<version>): work folder, docs/running.md:32",
   "--debug: D3D12 debug layer and DRED (needs the Graphics Tools optional feature), docs/running.md:33",
   "--timeout <s>: end the game after s seconds, docs/running.md:34",
+  "--warm: after a translator update, build the pipelines earlier boots used before the boot, docs/running.md:35",
+  "-- --no-rt-stand-ins: loader option; held ray-tracing passes get no stand-in outputs (default: shadows lit, reflections black, probe light grey), src/FiveStar.Loader/Host/CommandLineParser.cs:142",
   "--bcpack-tables <file>: BCPack tables you supply, for exact BC7/BC6H/BC3 textures, README.md Textures",
 ]
 # README.md "Preparing your dump": checks the dump, extracts and translates the

@@ -68,13 +68,14 @@ pub(super) unsafe extern "system" fn clear_uav<const FLOAT: bool>(
         crate::diagnostics::log_once(&SKIPPED, || "skipped UAV clear of a Scarlett depth image".to_owned());
         return;
     }
-    let (gpu, cpu) = if let Some(arena) = &recording.descriptor_arena
+    let state = &mut *recording;
+    let (gpu, cpu) = if let Some(arena) = &state.descriptor_arena
         && arena.contains(gpu.ptr)
     {
-        let handle = match arena.gpu(gpu.ptr, 1) {
+        let handle = match arena.gpu(gpu.ptr, 1, &mut state.descriptor_leases) {
             Ok(handle) => handle,
             Err(error) => {
-                recording.error = error.code();
+                state.error = error.code();
                 return;
             }
         };

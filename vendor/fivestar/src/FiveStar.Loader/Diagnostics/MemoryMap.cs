@@ -19,6 +19,7 @@ internal sealed class MemoryMap
     private const int TopSizes = 8;
     private const int TopProtections = 6;
     private const int TopHeaps = 5;
+    private const string HeapLabel = "heap";
     private const int MaxHeaps = 256;
     private const double BytesPerGigabyte = 1L << 30;
     private const double BytesPerMegabyte = 1L << 20;
@@ -85,6 +86,7 @@ internal sealed class MemoryMap
         _log.Info($"{Prefix}anonymous by size: {SizeClassesOf(privateAllocations)}; commonest sizes: {CommonSizes(privateAllocations.Where(a => a.Label == Anonymous))}");
 
         _log.Info($"{Prefix}heaps: {HeapUsage.Summary(heaps, TopHeaps)}");
+        _log.Info($"{Prefix}{HeapOwners.Summary(HeapSegments(privateAllocations, heaps), _images, TopHeaps)}");
         _log.Info($"{Prefix}since the last map: {Changes(privateAllocations)}");
         _log.Info($"{Prefix}largest: {Largest(privateAllocations)}");
         _log.Info($"{Prefix}{VideoMemory.Summary()}");
@@ -111,10 +113,16 @@ internal sealed class MemoryMap
 
         if (heaps.Contains(allocation.Base) || allocation.Signature == HeapSegmentSignature || allocation.Signature == SegmentHeapSignature)
         {
-            return "heap";
+            return HeapLabel;
         }
 
         return Anonymous;
+    }
+
+    /// <summary>The private bytes of every allocation labeled heap, by the heap it belongs to.</summary>
+    private static IEnumerable<(nint Owner, long Bytes)> HeapSegments(List<MemoryAllocation> allocations, HashSet<nint> heaps)
+    {
+        return allocations.Where(a => a.Label == HeapLabel).Select(a => (HeapOwners.Owner(a.Base, a.Signature, heaps), a.Private));
     }
 
     private static HashSet<nint> HeapHandles()

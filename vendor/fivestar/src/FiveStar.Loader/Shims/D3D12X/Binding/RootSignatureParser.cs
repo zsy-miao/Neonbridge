@@ -45,6 +45,10 @@ internal static class RootSignatureParser
     private const uint Unbounded = uint.MaxValue;
     private const int MaxSgprs = byte.MaxValue;
 
+    /// <summary>D3D12_DESCRIPTOR_RANGE_TYPE_UAV, and the records of a UAV range kept (an unbounded one included).</summary>
+    private const uint UavRange = 1;
+    private const uint MaxUavRecords = 8;
+
     public static bool TryParse(ReadOnlySpan<byte> blob, out RootLayout layout)
     {
         layout = default;
@@ -105,7 +109,7 @@ internal static class RootSignatureParser
             }
 
             int payload = (int)U32(part[(parameters + (index * ParameterHeader))..], PayloadField);
-            uint extent = TableExtent(part, payload, rangeBytes);
+            uint extent = TableExtent(part, payload, rangeBytes, index, ref layout);
 
             if (extent == 0)
             {
@@ -119,7 +123,7 @@ internal static class RootSignatureParser
     }
 
     /// <summary>The end of a table's last range, capped at <see cref="DescriptorWindow.MaxTableRecords"/> (also for unbounded ranges); 0 when the table lies outside the part.</summary>
-    private static uint TableExtent(ReadOnlySpan<byte> part, int payload, int rangeBytes)
+    private static unsafe uint TableExtent(ReadOnlySpan<byte> part, int payload, int rangeBytes, int parameter, ref RootLayout layout)
     {
         if (payload < 0 || payload + RangeOffsetField + sizeof(uint) > part.Length)
         {
@@ -142,6 +146,15 @@ internal static class RootSignatureParser
             uint count = U32(entry, RangeCountField);
             uint offset = U32(entry, rangeBytes - sizeof(uint));
             ulong start = offset == Append ? end : offset;
+
+            if (U32(entry, 0) == UavRange && layout.UavRanges < RootLayout.MaxUavRanges && start < DescriptorWindow.MaxTableRecords)
+            {
+                layout.UavParameters[layout.UavRanges] = (byte)parameter;
+                layout.UavStarts[layout.UavRanges] = (ushort)start;
+                layout.UavCounts[layout.UavRanges] = (ushort)Math.Min(count, MaxUavRecords);
+                layout.UavRanges++;
+            }
+
             end = count == Unbounded ? DescriptorWindow.MaxTableRecords : Math.Max(end, start + count);
         }
 

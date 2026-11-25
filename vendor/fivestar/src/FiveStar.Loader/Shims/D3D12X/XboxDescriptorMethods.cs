@@ -35,6 +35,9 @@ internal static unsafe class XboxDescriptorMethods
     /// <summary>D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES: the desktop heap types are 0 (CBV_SRV_UAV) to 3 (DSV) (d3d12.h).</summary>
     private const uint DesktopHeapTypes = 4;
 
+    /// <summary>D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL (d3d12.h).</summary>
+    private const int AllowDepthStencil = 0x2;
+
     private static XboxDeviceFactory D3D12X => ShimContext.Runtime.D3D12X;
 
     /// <summary>
@@ -262,7 +265,7 @@ internal static unsafe class XboxDescriptorMethods
 
             if (!TargetViewDescriptions.TakesUnorderedAccess(desktop, out var desc))
             {
-                WarnNullUnorderedAccessView(desc);
+                WarnNullUnorderedAccessView(desc, resource, description, handle);
                 create(inner, 0, 0, TargetViewDescriptions.NullUnorderedAccessView(description, copy), Destination(handle));
 
                 return;
@@ -288,7 +291,14 @@ internal static unsafe class XboxDescriptorMethods
                 NoteUnorderedAccess(resource, description, handle, record);
             }
 
-            create(inner, desktop, objects.Unwrap(counter), TargetViewDescriptions.UnorderedAccessView(desktop, fitted, copy), destination);
+            void* view = TargetViewDescriptions.UnorderedAccessView(desktop, fitted, copy);
+
+            if (RtStandIns.Enabled)
+            {
+                UavViews.Note(destination, desc, view);
+            }
+
+            create(inner, desktop, objects.Unwrap(counter), view, destination);
         }
         catch (Exception exception)
         {
@@ -378,8 +388,17 @@ internal static unsafe class XboxDescriptorMethods
         TransientPoolViews.Note(handle, game, ((BufferViewDescription*)description)->UavFirstElement, record);
     }
 
-    private static void WarnNullUnorderedAccessView(ResourceDescription desc)
+    /// <summary>Warns once; a depth texture's UAV is also noted by resource and heap index (<see cref="DepthUavs"/>).</summary>
+    private static void WarnNullUnorderedAccessView(ResourceDescription desc, nint resource, void* description, nint handle)
     {
+        var game = D3D12X.Objects.AsResource(resource);
+
+        if ((desc.Flags & AllowDepthStencil) != 0 && game != null && D3D12X.DescriptorHeaps.Find(handle, out uint index) is not null)
+        {
+            int viewFormat = description == null ? 0 : *(int*)description;
+            DepthUavs.Note(game->GameAddress, index, $"depth texture at 0x{game->GameAddress:x} ({desc.Width}x{desc.Height}, format {desc.Format}, view format {viewFormat})");
+        }
+
         D3D12X.Warnings.Warn("uav-no-flag", $"[d3d12_xs] CreateUnorderedAccessView: a texture made without ALLOW_UNORDERED_ACCESS ({desc.Width}x{desc.Height}, format {desc.Format}, flags 0x{desc.Flags:x}); null view written");
     }
 

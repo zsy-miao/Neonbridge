@@ -364,4 +364,5 @@ pub(super) fn bounded_latches(em: &Emitter<'_>) -> Option<BTreeSet<usize>> {
 }
 
 #[cfg(test)]
+#[path = "../tests/hlsl/wave_loops.rs"]
 mod tests;

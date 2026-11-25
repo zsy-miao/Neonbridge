@@ -1,6 +1,28 @@
 //! Guest command lists and queues. Embedded guest COM pointers are translated
 //! before a batch reaches the desktop API.
 
+mod recording;
+mod barriers;
+mod copies;
+mod markers;
+mod submit;
+mod present;
+use barriers::transition;
+use barriers::enhanced_barriers;
+use barriers::flush_texture_cache;
+use barriers::extended_cache_barrier;
+use copies::copy_texture;
+use copies::copy_resource;
+use markers::write_marker;
+use markers::write_value64;
+use submit::translate_batch;
+use submit::reject;
+use submit::execute_frame;
+use submit::execute;
+use submit::queue_fence;
+use submit::signal_x;
+use present::present;
+
 use core::{ffi::c_void, mem, ops::Range, ptr, slice};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -62,6 +84,7 @@ struct Recording {
     bound_placed_targets: Vec<Arc<Texture>>,
     resource_heap: Option<descriptors::ResourceHeap>,
     descriptor_arena: Option<Arc<device::descriptor_paging::Arena>>,
+    descriptor_leases: device::descriptor_paging::DescriptorLeases,
     indexed_arenas: Vec<Arc<device::descriptor_paging::Arena>>,
     scalar_descriptors: std::collections::HashSet<descriptors::ScalarDescriptor>,
     sampled_heaps: Vec<Range<usize>>,
@@ -72,242 +95,7 @@ struct Recording {
 }
 
 impl Recording {
-    fn track_texture(accesses: &mut Vec<Arc<Texture>>, texture: &Arc<Texture>) -> Result<(), HRESULT> {
-        if !accesses.iter().any(|known| Arc::ptr_eq(known, texture)) {
-            accesses.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
-            accesses.push(Arc::clone(texture));
-        }
-        Ok(())
-    }
 
-    fn prepare_copy(
-        &mut self,
-        destination: Option<&Arc<Texture>>,
-        source: Option<&Arc<Texture>>,
-    ) -> Result<(), HRESULT> {
-        for (accesses, texture) in [
-            (&mut self.placed_reads, source),
-            (&mut self.placed_writes, destination),
-        ] {
-            if let Some(texture) = texture {
-                Self::track_texture(accesses, texture)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Leave out one command TuxBox cannot express. Failing the list instead
-    /// would also drop its other work, including the fence writes other queues
-    /// wait for, and a stalled queue trips the title's GPU watchdog.
-    fn skip(what: &str, error: HRESULT) {
-        static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let count = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        if count <= 16 || count.is_power_of_two() {
-            crate::diagnostics::log(&format!(
-                "skipped {what} ({:#010x}, #{count}, guest caller {:#x})",
-                error.0, crate::survey::title_rva().unwrap_or(0),
-            ));
-        }
-    }
-
-    fn compute_dispatch(&mut self, list: &List, dispatch: impl FnOnce()) {
-        let null_usage = self.bindings.null_usage.clone();
-        let dispatch = move || {
-            dispatch();
-            if let Some(tag) = &null_usage {
-                crate::diagnostics::display::record_null(tag, false);
-            }
-        };
-        if let Some(table) = self.bindings.reflected_table::<true>() {
-            if let Err(error) = self.bindings.with_reflected_table::<true>(
-                table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(),
-                &mut self.sampled_heaps, &self.resources, dispatch,
-            ) {
-                Self::skip("compute dispatch with a reflected table", error.code());
-            }
-            return;
-        }
-        if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<true>() {
-            Self::skip("compute dispatch: pipeline has no paged descriptor layout", E_NOTIMPL);
-            return;
-        }
-        if let Err(error) = self.bindings.refresh_inline_tables::<true>(self.descriptor_arena.as_deref()) {
-            Self::skip("compute dispatch: descriptor table refresh", error.code());
-            return;
-        }
-        self.sample_tables::<true>();
-        let Some(root) = self.bindings.scene_root() else {
-            dispatch();
-            return;
-        };
-        let result = self.bindings.scene_resource(list)
-            .and_then(|scene| {
-                if let Some([instances, normals]) = &scene.geometry {
-                    raytracing::retain(self, &[&scene.scene.0, &instances.0, &normals.0])?;
-                } else {
-                    raytracing::retain(self, &[&scene.scene.0])?;
-                }
-                Ok(scene)
-            })
-            .and_then(|scene| {
-                let va = scene.scene.1;
-                let geometry = scene.geometry.as_ref().map(|[instances, normals]| [instances.1, normals.1]);
-                if scene.recheck_on_submit()
-                    && !matches!(self.scene_commands.last(), Some(raytracing::SceneCommand::Check(last)) if *last == scene)
-                {
-                    self.scene_commands.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
-                    self.scene_commands.push(raytracing::SceneCommand::Check(scene));
-                }
-                unsafe { self.bindings.dispatch_scene(&list.native, root, va, geometry, dispatch) };
-                crate::diagnostics::log_once(&root.program.first_dispatch, || {
-                    format!("recorded inline compute shader {} dispatch with scene GPU VA {va:#x}", root.program.source_hash)
-                });
-                Ok(())
-            });
-        if let Err(error) = result {
-            Self::skip("compute dispatch: inline ray scene binding", error.code());
-        }
-    }
-
-    fn draw(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
-        let null_usage = self.bindings.null_usage.clone();
-        let display_bound = self.display_bound;
-        let draw = move || {
-            draw();
-            if rasterizes {
-                crate::diagnostics::display::draw(display_bound, null_usage.is_some());
-                if let Some(tag) = &null_usage {
-                    crate::diagnostics::display::record_null(tag, display_bound);
-                }
-            }
-        };
-        if rasterizes {
-            for target in &self.bound_placed_targets {
-                if let Err(error) = Self::track_texture(&mut self.placed_writes, target) {
-                    self.error = error;
-                    return;
-                }
-            }
-        }
-        let trace = |state: &mut Self| {
-            if let Some(trace) = &state.bindings.draw_trace {
-                trace.recorded(|| state.bindings.raster_inputs(state.resource_heap.as_ref(), state.descriptor_arena.as_deref(), state.display_bound));
-                if let Some(target) = &state.trace_target
-                    && let Some(label) = trace.sample_label()
-                    && let Some(sample) = crate::present::sampler::record(
-                        &list.native, target, D3D12_RESOURCE_STATE_RENDER_TARGET,
-                    )
-                {
-                    state.trace_samples.push((label, sample));
-                }
-            }
-        };
-        if let Some(table) = self.bindings.reflected_table::<false>() {
-            if self.stencil_slot.is_some() {
-                Self::skip("draw: stencil export with a reflected table", E_NOTIMPL);
-                return;
-            }
-            if let Some(binding) = table.index_map {
-                // These PSOs have one descriptor table followed by one root
-                // constants parameter. The native ISA selects its scalar
-                // buffer with a word (and optional mask) from that parameter.
-                let descriptor = self.bindings.graphics_constant(1, binding.scalar_word)
-                    .and_then(|word| self.resource_heap.as_ref()?.scalar_descriptor(
-                        word & binding.scalar_mask, self.descriptor_arena.as_deref(),
-                    ));
-                let Some(descriptor) = descriptor else {
-                    Self::skip("draw: no scalar descriptor for the indexed load", E_INVALIDARG);
-                    return;
-                };
-                if self.scalar_descriptors.try_reserve(1).is_err() {
-                    self.error = E_OUTOFMEMORY;
-                    return;
-                }
-                self.scalar_descriptors.insert(descriptor);
-                if let Some(arena) = &self.descriptor_arena
-                    && !self.indexed_arenas.iter().any(|used| Arc::ptr_eq(used, arena))
-                {
-                    if self.indexed_arenas.try_reserve(1).is_err() {
-                        self.error = E_OUTOFMEMORY;
-                        return;
-                    }
-                    self.indexed_arenas.push(arena.clone());
-                }
-            }
-            if let Err(error) = self.bindings.with_reflected_table::<false>(
-                table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(), &mut self.sampled_heaps, &self.resources, draw,
-            ) {
-                Self::skip("draw with a reflected table", error.code());
-            } else { trace(self); }
-            return;
-        }
-        if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<false>() {
-            Self::skip("draw: pipeline has no paged descriptor layout", E_NOTIMPL);
-            return;
-        }
-        if let Err(error) = self.bindings.refresh_inline_tables::<false>(self.descriptor_arena.as_deref()) {
-            Self::skip("draw: descriptor table refresh", error.code());
-            return;
-        }
-        self.sample_tables::<false>();
-        if let Some(slot) = self.stencil_slot
-            && self.dsv_bound
-        {
-            let status = self
-                .stencil_targets
-                .as_ref()
-                .ok_or_else(|| windows::core::Error::from(E_NOTIMPL))
-                .and_then(|t| t.draw(&list.native, slot, draw));
-            if let Err(e) = status {
-                Self::skip("draw: stencil export", e.code());
-            } else { trace(self); }
-        } else {
-            draw();
-            trace(self);
-        }
-    }
-    fn sample_tables<const COMPUTE: bool>(&mut self) {
-        if let Some(heap) = &self.resource_heap
-            && self.bindings.sample_tables::<COMPUTE>(heap, &mut self.sampled_heaps).is_none()
-        {
-            self.sample_heap();
-        }
-    }
-
-    fn sample_heap(&mut self) {
-        if let Some(heap) = &self.resource_heap {
-            descriptors::include_range(&mut self.sampled_heaps, heap.cpu.clone());
-        }
-    }
-
-    fn can_record(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
-        if !self.ensure_open(native) { return false; }
-        if let Err(error) = self.prefix.finish(native) {
-            self.error = error.code();
-            return false;
-        }
-        true
-    }
-
-    fn ensure_open(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
-        if self.error.is_err() {
-            return false;
-        }
-        match &self.phase {
-            ListState::Fresh(allocator, initial) => {
-                // The factory closed the empty native list to release its allocator.
-                // Reopen with its original bindings when the first operation records.
-                if let Err(error) = unsafe { native.Reset(allocator, initial.as_ref()) } {
-                    self.error = error.code();
-                    return false;
-                }
-                self.phase = ListState::Open;
-            }
-            ListState::Open => {}
-            ListState::Closed => self.error = E_FAIL,
-        }
-        self.error.is_ok()
-    }
 }
 
 // Xbox callers can emit native command packets when space is available.
@@ -384,6 +172,11 @@ impl Drop for RecordingGuard<'_> {
     }
 }
 
+struct RetireQueueFence {
+    fence: ID3D12Fence,
+    next: std::sync::atomic::AtomicU64,
+}
+
 // FD3D12CommandListFence::Signal reads the type at queue+0x10 before
 // selecting the flush flags. The queue's Xbox prefix precedes private state.
 #[repr(C)]
@@ -397,6 +190,23 @@ struct QueueState {
     page_worker: OnceLock<page_mapping::Worker>,
     wait_worker: OnceLock<memory_wait::Worker>,
     presentation: Presentation,
+    retire_fence: OnceLock<RetireQueueFence>,
+}
+
+impl QueueState {
+    fn retire_fence(&self, queue: &ID3D12CommandQueue) -> windows::core::Result<&RetireQueueFence> {
+        if let Some(rf) = self.retire_fence.get() {
+            return Ok(rf);
+        }
+        let mut device: Option<ID3D12Device> = None;
+        unsafe { queue.GetDevice(&mut device)? };
+        let device = device.ok_or(E_FAIL)?;
+        let fence: ID3D12Fence = unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? };
+        Ok(self.retire_fence.get_or_init(|| RetireQueueFence {
+            fence,
+            next: std::sync::atomic::AtomicU64::new(0),
+        }))
+    }
 }
 
 type Queue = Proxy<ID3D12CommandQueue, QueueState>;
@@ -404,31 +214,6 @@ const _: () = assert!(mem::offset_of!(Queue, state) + mem::offset_of!(QueueState
 
 fn parent(device: &Option<IUnknown>) -> *mut c_void {
     device.as_ref().map_or(ptr::null_mut(), Interface::as_raw)
-}
-
-// Validate and translate the entire batch before submission. Small batches use
-// stack storage and larger ones can report E_OUTOFMEMORY to the guest.
-fn translate_batch<T: Default, G, C>(
-    guest: &[G],
-    mut context: C,
-    mut translate: impl FnMut(&G, &mut C) -> Result<T, HRESULT>,
-    submit: impl FnOnce(&[T], C) -> Result<(), HRESULT>,
-) -> Result<(), HRESULT> {
-    let mut stack: [T; 8];
-    let mut heap = Vec::new();
-    let host = if guest.len() <= 8 {
-        stack = std::array::from_fn(|_| T::default());
-        &mut stack[..guest.len()]
-    } else {
-        heap.try_reserve_exact(guest.len())
-            .map_err(|_| E_OUTOFMEMORY)?;
-        heap.resize_with(guest.len(), T::default);
-        heap.as_mut_slice()
-    };
-    for (dst, src) in host.iter_mut().zip(guest) {
-        *dst = translate(src, &mut context)?;
-    }
-    submit(host, context)
 }
 
 unsafe extern "system" fn get_type(list: &List) -> D3D12_COMMAND_LIST_TYPE {
@@ -484,6 +269,7 @@ unsafe extern "system" fn reset(
         state.bound_placed_targets.clear();
         state.resource_heap = None;
         state.descriptor_arena = None;
+        state.descriptor_leases.clear();
         state.indexed_arenas.clear();
         state.scalar_descriptors.clear();
         state.sampled_heaps.clear();
@@ -598,286 +384,6 @@ const _: () = {
     assert!(size_of::<CopyLocation>() == 48 && mem::offset_of!(CopyLocation, data) == 16);
 };
 
-unsafe extern "system" fn transition(
-    list: &List,
-    count: u32,
-    barriers: *const D3D12_RESOURCE_BARRIER,
-) {
-    let mut state = recording(list);
-    if !state.can_record(&list.native) || count == 0 {
-        return;
-    }
-    if barriers.is_null() {
-        state.error = E_INVALIDARG;
-        return;
-    }
-    // The guest supplies count readable barriers. Read a transition payload
-    // only after checking the union tag.
-    let guest = unsafe { slice::from_raw_parts(barriers, count as usize) };
-    let result = translate_batch(
-        guest,
-        Vec::new(),
-        |barrier, handoffs| {
-            if barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING
-                && barrier.Flags == D3D12_RESOURCE_BARRIER_FLAG_NONE
-            {
-                let alias = unsafe { &barrier.Anonymous.Aliasing };
-                let native = |guest: &Option<ID3D12Resource>| match guest {
-                    Some(object) => {
-                        unsafe { device::resource(object.as_raw(), parent(&list.parent)) }
-                            .map(Interface::as_raw)
-                            .ok_or(E_INVALIDARG)
-                    }
-                    None => Ok(ptr::null_mut()),
-                };
-                return Ok(RecordedBarrier {
-                    aliasing: AliasingBarrier {
-                        kind: barrier.Type,
-                        flags: barrier.Flags,
-                        before: native(&alias.pResourceBefore)?,
-                        after: native(&alias.pResourceAfter)?,
-                    },
-                });
-            }
-            if barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_UAV
-                && barrier.Flags == D3D12_RESOURCE_BARRIER_FLAG_NONE
-            {
-                // A null UAV orders all UAV accesses. Only the first pointer of
-                // this union member is initialized by the guest.
-                let guest = unsafe { &barrier.Anonymous.UAV.pResource };
-                let resource = match guest.as_ref() {
-                    Some(object) => {
-                        let r = unsafe {
-                            device::resource_proxy(object.as_raw(), parent(&list.parent))
-                        }
-                        .ok_or(E_INVALIDARG)?;
-                        if device::blas::is_structure(r) {
-                            // A guest AS pool may contain individually relocated structures.
-                            // Order their host writes even when the barrier was recorded first.
-                            ptr::null_mut()
-                        } else {
-                            r.state
-                                .depth()
-                                .map_or(&r.native, |pair| &pair.image)
-                                .as_raw()
-                        }
-                    }
-                    None => ptr::null_mut(),
-                };
-                return Ok(RecordedBarrier {
-                    transition: TransitionBarrier {
-                        kind: barrier.Type,
-                        flags: barrier.Flags,
-                        resource,
-                        ..Default::default()
-                    },
-                });
-            }
-            if barrier.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION
-                || !matches!(
-                    barrier.Flags,
-                    D3D12_RESOURCE_BARRIER_FLAG_NONE
-                        | D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY
-                        | D3D12_RESOURCE_BARRIER_FLAG_END_ONLY
-                )
-            {
-                crate::diagnostics::recording_error(format_args!(
-                    "resource barrier type {} flags {:#x}",
-                    barrier.Type.0, barrier.Flags.0
-                ));
-                return Err(E_NOTIMPL);
-            }
-            let mut host = unsafe { ptr::from_ref(barrier).cast::<TransitionBarrier>().read() };
-            let resource = unsafe { device::resource_proxy(host.resource, parent(&list.parent)) }
-                .ok_or(E_INVALIDARG)?;
-            let different = host.before != host.after;
-            let needs_dimension = (host.before.0 | host.after.0) & device::BUFFER_READ_BITS != 0;
-            let texture = needs_dimension
-                && unsafe { resource.native.GetDesc().Dimension }
-                    != D3D12_RESOURCE_DIMENSION_BUFFER;
-            host.before = device::host_state(host.before, texture);
-            host.after = device::host_state(host.after, texture);
-            if resource.state.unbacked_uav() {
-                // The host depth image has no unordered access; see unbacked_uav.
-                for state in [&mut host.before, &mut host.after] {
-                    if *state == D3D12_RESOURCE_STATE_UNORDERED_ACCESS {
-                        *state = D3D12_RESOURCE_STATE_COMMON;
-                    }
-                }
-            }
-            if let Some(pair) = resource.state.depth()
-                && (host.before == D3D12_RESOURCE_STATE_UNORDERED_ACCESS
-                    || host.after == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
-            {
-                if !matches!(
-                    host.subresource,
-                    0 | 1 | D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES
-                ) {
-                    return Err(E_INVALIDARG);
-                }
-                if host.flags != D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY && different {
-                    handoffs.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
-                    let index = unsafe { ptr::from_ref(barrier).offset_from(barriers) } as usize;
-                    handoffs.push((index, &resource.native, pair));
-                }
-                host.resource = ptr::null_mut();
-            } else if let Some(placed) = resource.state.placed() {
-                if !placement::supported_state(host.before, placed.flags())
-                    || !placement::supported_state(host.after, placed.flags())
-                {
-                    crate::diagnostics::recording_error(format_args!(
-                        "placed texture transition {:#x} to {:#x}",
-                        host.before.0, host.after.0
-                    ));
-                    return Err(E_NOTIMPL);
-                }
-                // Read promotions can accumulate implicitly. An explicit barrier
-                // orders writes against other uses within the same batch.
-                host.resource = if different
-                    && [host.before, host.after].iter().any(|state|
-                        matches!(*state, D3D12_RESOURCE_STATE_COPY_DEST | D3D12_RESOURCE_STATE_RENDER_TARGET))
-                {
-                    resource.native.as_raw()
-                } else {
-                    ptr::null_mut()
-                };
-            } else if different && host.before == host.after {
-                host.resource = ptr::null_mut();
-            } else {
-                host.resource = resource.native.as_raw();
-            }
-            Ok(RecordedBarrier { transition: host })
-        },
-        |host, handoffs| unsafe {
-            let mut handoffs = handoffs.into_iter().peekable();
-            let mut first = 0;
-            let submit = |run: &[RecordedBarrier]| {
-                if !run.is_empty() {
-                    (list.native.vtable().ResourceBarrier)(
-                        list.native.as_raw(),
-                        run.len() as u32,
-                        run.as_ptr().cast(),
-                    );
-                }
-            };
-            for (index, barrier) in host.iter().enumerate() {
-                if barrier.kind == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION
-                    && barrier.transition.resource.is_null()
-                {
-                    submit(&host[first..index]);
-                    if let Some((_, resource, pair)) = handoffs.next_if(|(at, _, _)| *at == index) {
-                        depth::handoff(&list.native, resource, pair, &barrier.transition);
-                    }
-                    first = index + 1;
-                }
-            }
-            submit(&host[first..]);
-            Ok(())
-        },
-    );
-    if let Err(error) = result {
-        state.error = error;
-    }
-}
-
-fn enhanced_barriers(native: &ID3D12GraphicsCommandList) -> Option<ID3D12GraphicsCommandList7> {
-    if !matches!(
-        unsafe { native.GetType() },
-        D3D12_COMMAND_LIST_TYPE_DIRECT | D3D12_COMMAND_LIST_TYPE_COMPUTE
-    ) {
-        return None;
-    }
-    let mut device: Option<ID3D12Device> = None;
-    unsafe { native.GetDevice(&mut device) }.ok()?;
-    let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS12::default();
-    unsafe {
-        device?.CheckFeatureSupport(
-            D3D12_FEATURE_D3D12_OPTIONS12,
-            ptr::from_mut(&mut options).cast(),
-            size_of_val(&options) as u32,
-        )
-    }
-    .ok()?;
-    if options.EnhancedBarriersSupported.as_bool() {
-        native.cast().ok()
-    } else {
-        None
-    }
-}
-
-unsafe extern "system" fn flush_texture_cache(list: &List, mask: u32, address: u64, bytes: u64) {
-    let mut state = recording(list);
-    if !state.can_record(&list.native) {
-        return;
-    }
-    // The mask selects the caches to flush. Both can use the same host
-    // global memory barrier, which also covers subranges and empty ranges.
-    if !matches!(mask, 0xc0_0000 | 0x3000) {
-        crate::diagnostics::recording_error(format_args!(
-            "texture cache flush mask {mask:#x} address {address:#x} bytes {bytes:#x}"
-        ));
-        state.error = E_NOTIMPL;
-        return;
-    }
-    if address.checked_add(bytes).is_none() {
-        crate::diagnostics::recording_error(format_args!(
-            "overflowing texture cache flush address {address:#x} bytes {bytes:#x}"
-        ));
-        state.error = E_INVALIDARG;
-        return;
-    }
-    if address != 0 || bytes != 0xff_ffff_ff00 {
-        static RANGE_FLUSH: std::sync::Once = std::sync::Once::new();
-        crate::diagnostics::log_once(&RANGE_FLUSH, || {
-            format!("texture cache range flush mask {mask:#x} address {address:#x} bytes {bytes:#x}")
-        });
-    }
-    global_cache_barrier(list, &mut state);
-}
-
-// The extended list accepts separate cache/engine masks before the VA range.
-// A host global barrier covers the full range and every participating stage.
-unsafe extern "system" fn extended_cache_barrier(
-    list: &List, _cache: u32, _engines: u32, address: u64, bytes: u64,
-) {
-    let mut state = recording(list);
-    if !state.can_record(&list.native) {
-        return;
-    }
-    if address.checked_add(bytes).is_none() {
-        state.error = E_INVALIDARG;
-        return;
-    }
-    global_cache_barrier(list, &mut state);
-}
-
-fn global_cache_barrier(list: &List, state: &mut Recording) {
-    let Some(native) = list
-        .state
-        .enhanced_barriers
-        .get_or_init(|| enhanced_barriers(&list.native))
-    else {
-        crate::diagnostics::recording_error(format_args!("enhanced global barriers unavailable"));
-        state.error = E_NOTIMPL;
-        return;
-    };
-    let barrier = D3D12_GLOBAL_BARRIER {
-        SyncBefore: D3D12_BARRIER_SYNC_ALL,
-        SyncAfter: D3D12_BARRIER_SYNC_ALL,
-        AccessBefore: D3D12_BARRIER_ACCESS_COMMON,
-        AccessAfter: D3D12_BARRIER_ACCESS_COMMON,
-    };
-    let group = D3D12_BARRIER_GROUP {
-        Type: D3D12_BARRIER_TYPE_GLOBAL,
-        NumBarriers: 1,
-        Anonymous: D3D12_BARRIER_GROUP_0 {
-            pGlobalBarriers: &barrier,
-        },
-    };
-    // SAFETY: the native open list consumes the stack-backed group during Barrier.
-    unsafe { native.Barrier(&[group]) };
-}
-
 unsafe extern "system" fn clear_rtv(
     list: &List,
     handle: D3D12_CPU_DESCRIPTOR_HANDLE,
@@ -945,159 +451,6 @@ unsafe extern "system" fn discard(
             )
         };
     }
-}
-
-unsafe fn copy_location<'a>(
-    location: *const CopyLocation,
-    device: *mut c_void,
-) -> Option<(CopyLocation, Option<&'a Arc<Texture>>)> {
-    let location = unsafe { location.as_ref() }?;
-    if !matches!(
-        location.kind,
-        D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX | D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT
-    ) {
-        return None;
-    }
-    let resource = unsafe { device::resource_proxy(location.resource, device) }?;
-    let mut host = CopyLocation { resource: resource.native.as_raw(), ..*location };
-    if let Some((base, length)) = resource.state.buffer_window() {
-        if host.kind != D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT { return None; }
-        let placed = unsafe { &mut host.data.PlacedFootprint };
-        let f = &placed.Footprint;
-        let desc = D3D12_RESOURCE_DESC {
-            Dimension: if f.Depth > 1 { D3D12_RESOURCE_DIMENSION_TEXTURE3D } else { D3D12_RESOURCE_DIMENSION_TEXTURE2D },
-            Width: f.Width.into(), Height: f.Height, DepthOrArraySize: f.Depth.try_into().ok()?,
-            MipLevels: 1, Format: f.Format, SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            ..Default::default()
-        };
-        let mut owner: Option<ID3D12Device> = None;
-        let (mut rows, mut row_bytes) = (0, 0);
-        unsafe {
-            resource.native.GetDevice(&mut owner).ok()?;
-            owner?.GetCopyableFootprints(&desc, 0, 1, 0, None, Some(&mut rows), Some(&mut row_bytes), None);
-        }
-        let pitch = u64::from(f.RowPitch);
-        let lines = u64::from(rows).checked_mul(u64::from(f.Depth))?;
-        let bytes = lines.checked_sub(1)?.checked_mul(pitch)?.checked_add(row_bytes)?;
-        if row_bytes > pitch || placed.Offset.checked_add(bytes)? > length { return None; }
-        placed.Offset = placed.Offset.checked_add(base)?;
-    }
-    Some((host, resource.state.placed()))
-}
-
-unsafe extern "system" fn copy_texture(
-    list: &List,
-    dst: *const CopyLocation,
-    x: u32,
-    y: u32,
-    z: u32,
-    src: *const CopyLocation,
-    region: *const D3D12_BOX,
-    flags: u32,
-) {
-    let mut state = recording(list);
-    if !state.can_record(&list.native) {
-        return;
-    }
-    if flags != 0 {
-        crate::diagnostics::recording_error(format_args!("CopyTextureRegion flags {flags:#x}"));
-        state.error = E_NOTIMPL;
-        return;
-    }
-    let device = parent(&list.parent);
-    let (Some((dst, destination)), Some((src, source))) =
-        (unsafe { copy_location(dst, device) }, unsafe {
-            copy_location(src, device)
-        })
-    else {
-        state.error = E_INVALIDARG;
-        return;
-    };
-    if let Err(error) = state.prepare_copy(destination, source) {
-        state.error = error;
-        return;
-    }
-    crate::diagnostics::display::copy(dst.resource);
-    unsafe {
-        (list.native.vtable().CopyTextureRegion)(
-            list.native.as_raw(),
-            ptr::from_ref(&dst).cast(),
-            x,
-            y,
-            z,
-            ptr::from_ref(&src).cast(),
-            region,
-        );
-    }
-}
-
-// Frosty's pool allocator and its buffer and texture copy routines all use
-// slot 84 with destination, source and zero options.
-unsafe extern "system" fn copy_resource(
-    list: &List,
-    dst: *mut c_void,
-    src: *mut c_void,
-    options: u32,
-) {
-    let mut state = recording(list);
-    if !state.can_record(&list.native) {
-        return;
-    }
-    if options != 0 {
-        crate::diagnostics::recording_error(format_args!(
-            "slot 84 CopyResource options {options:#x}"
-        ));
-        state.error = E_NOTIMPL;
-        return;
-    }
-    let owner = parent(&list.parent);
-    // SAFETY: each guest argument is a live COM object or null. Only resource
-    // proxies owned by the list's device yield borrowed native interfaces.
-    let (Some(dst), Some(src)) = (unsafe { device::resource_proxy(dst, owner) }, unsafe {
-        device::resource_proxy(src, owner)
-    }) else {
-        state.error = E_INVALIDARG;
-        return;
-    };
-    crate::diagnostics::display::copy(dst.native.as_raw());
-    let (d, s) = unsafe { (dst.native.GetDesc(), src.native.GetDesc()) };
-    if dst.state.buffer_window().is_some() || src.state.buffer_window().is_some() {
-        let (to, size) = dst.state.buffer_window().unwrap_or((0, d.Width));
-        let (from, other) = src.state.buffer_window().unwrap_or((0, s.Width));
-        if d.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || s.Dimension != d.Dimension || size != other
-            || (dst.native == src.native && to < from + size && from < to + size) {
-            state.error = E_INVALIDARG;
-            return;
-        }
-        unsafe { list.native.CopyBufferRegion(&dst.native, to, &src.native, from, size) };
-        return;
-    }
-    if dst.native == src.native
-        || d.Dimension != s.Dimension
-        || d.DepthOrArraySize != s.DepthOrArraySize
-        || d.MipLevels != s.MipLevels
-        || d.SampleDesc != s.SampleDesc
-        // D3D12 also allows reinterpret copies between some differently sized
-        // block-compressed and uncompressed textures. Leave those to the driver.
-        || (d.Format == s.Format && (d.Width != s.Width || d.Height != s.Height))
-    {
-        state.error = E_INVALIDARG;
-        return;
-    }
-    if let Err(error) = state.prepare_copy(dst.state.placed(), src.state.placed()) {
-        state.error = error;
-        return;
-    }
-    // SAFETY: both native resources belong to this open command list's device.
-    // The guest supplies their copy states via barriers and owns their lifetimes.
-    unsafe { list.native.CopyResource(&dst.native, &src.native) };
-    static FIRST_COPY: std::sync::Once = std::sync::Once::new();
-    crate::diagnostics::log_once(&FIRST_COPY, || {
-        format!(
-            "recorded CopyResource (dimension {}, {} x {} x {}, {} mips)",
-            s.Dimension.0, s.Width, s.Height, s.DepthOrArraySize, s.MipLevels
-        )
-    });
 }
 
 // DriverHintX (Scarlett slot 101, GDK d3d12_xs.h). The desktop driver manages
@@ -1169,74 +522,8 @@ unsafe extern "system" fn execute_indirect(
     }
 }
 
-// Write32BitValueBottomOfPipeX: store a value once earlier GPU work finishes.
-// The flush argument selects console caches; the desktop driver manages its own.
-unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, _flush: u32, flags: u32) {
-    let mut state = recording(list);
-    if !state.ensure_open(&list.native) {
-        // Keep what a failed list would have written, to explain a stall.
-        state.labels.push(memory_wait::Label::write(address, u64::from(value)));
-        return;
-    }
-    let result = if flags != 0 || address == 0 || !address.is_multiple_of(4) {
-        Err(E_INVALIDARG.into())
-    } else {
-        write_dword(list, &mut state, address, value)
-            .map(|()| {
-                state.labels.push(memory_wait::Label::write(address, u64::from(value)));
-                memory_wait::trace_write("Write32BitValueBottomOfPipeX", address, 4, u64::from(value));
-            })
-    };
-    if let Err(error) = result {
-        crate::diagnostics::recording_error(format_args!(
-            "Write32BitValueBottomOfPipeX address={address:#x} value={value:#x} flags={flags:#x}"
-        ));
-        state.error = error.code();
-    }
-}
-
 /// `D3D12XBOX_WRITE_VALUE_BOP_FLAG_GPU_TIMESTAMP`.
 const BOP_GPU_TIMESTAMP: u32 = 1;
-
-// Write64BitValueBottomOfPipeX: a GPU timestamp, or a value such as the fence
-// labels other queues wait on with Wait64BitValueX.
-unsafe extern "system" fn write_value64(list: &List, address: u64, value: u64, flush: u32, flags: u32) {
-    let mut state = recording(list);
-    if !state.ensure_open(&list.native) {
-        // Keep what a failed list would have written, to explain a stall.
-        state.labels.push(memory_wait::Label::write(address, value));
-        return;
-    }
-    let result = if address == 0 || !address.is_multiple_of(8) {
-        Err(E_INVALIDARG.into())
-    } else if flags == BOP_GPU_TIMESTAMP {
-        queries::timestamp(list, &mut state, address)
-    } else if flags != 0 {
-        Err(E_NOTIMPL.into())
-    } else {
-        // Desktop immediate writes are 32 bits wide. Store the high half first,
-        // so a counter below 2^32 changes in one step.
-        write_dword(list, &mut state, address + 4, (value >> 32) as u32)
-            .and_then(|()| write_dword(list, &mut state, address, value as u32))
-            .map(|()| {
-                state.labels.push(memory_wait::Label::write(address, value));
-                memory_wait::trace_write("Write64BitValueBottomOfPipeX", address, 8, value);
-            })
-    };
-    if let Err(error) = result {
-        crate::diagnostics::recording_error(format_args!(
-            "Write64BitValueBottomOfPipeX address={address:#x} value={value:#x} flush={flush:#x} flags={flags:#x}"
-        ));
-        state.error = error.code();
-    }
-}
-
-fn write_dword(list: &List, state: &mut Recording, address: u64, value: u32) -> windows::core::Result<()> {
-    let (resource, dest) = unsafe { device::command_buffer_address(parent(&list.parent), address, 4)? };
-    if let Some(buffer) = &resource { raytracing::retain(state, &[buffer])?; }
-    let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest, Value: value };
-    state.prefix.push(&list.native, memory_wait::Packet::Marker(write))
-}
 
 // XboxBvhBuilder emits this when its inline packet space is exhausted, with
 // the same words it otherwise writes as a 0x4003cc00 packet: counts X, Y, Z
@@ -1382,249 +669,6 @@ unsafe fn guest_list<'a>(object: *mut c_void, device: *mut c_void) -> Option<&'a
     }
 }
 
-fn reject(queue: &Queue, error: HRESULT) {
-    let _ = queue.state.placement.error.compare_exchange(
-        S_OK.0,
-        error.0,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    );
-    unsafe {
-        OutputDebugStringA(s!(
-            "Project TuxBox: direct queue rejected a guest command-list batch\n"
-        ))
-    };
-}
-
-unsafe extern "system" fn execute_frame(
-    queue: &Queue, count: u32, lists: *const *mut c_void, frame_token: u64, flags: u32,
-) {
-    // Both flags select how the console assembles its GPU packets. Bit 0
-    // suppresses a hardware buffer switch and bit 1 chains indirect buffers.
-    // The desktop queue owns its packet storage and takes the ordered list
-    // array in one submission. The frame token labels that submission.
-    // Direct and compute queues both submit this way. Each list's type is
-    // checked against the queue with the rest of the batch.
-    if flags & !3 != 0 {
-        crate::diagnostics::recording_error(format_args!("extended command-list submission flags {flags:#x}"));
-        reject(queue, E_NOTIMPL);
-        return;
-    }
-    unsafe { execute_batch(queue, count, lists, Some((frame_token, flags))) };
-}
-
-unsafe extern "system" fn execute(queue: &Queue, count: u32, lists: *const *mut c_void) {
-    unsafe { execute_batch(queue, count, lists, None) };
-}
-
-unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, frame: Option<(u64,u32)>) {
-    let mut submitted = queue
-        .state
-        .submission
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    *submitted = true;
-    if queue.state.placement.error.load(Ordering::Acquire) < 0 || count == 0 {
-        return;
-    }
-    if lists.is_null() {
-        reject(queue, E_INVALIDARG);
-        return;
-    }
-    let guest = unsafe { slice::from_raw_parts(lists, count as usize) };
-    // Mirrors exist only when a constant-buffer or address-SRV import failed.
-    // The count is zero for every boot that has not hit that path.
-    crate::device::snapshot_cbv_mirrors();
-    let mut list_index = 0;
-    let trace_samples = std::cell::RefCell::new(Vec::new());
-    // The lists in this batch that write or wait on fence labels.
-    let batch = std::cell::RefCell::new(String::new());
-    let result = translate_batch(
-        guest,
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
-        |&item, (textures, writes, shader_views, scene_lists, splits)| {
-            let list = unsafe { guest_list(item, parent(&queue.parent)) }.ok_or(E_INVALIDARG)?;
-            let state = recording(list);
-            if !matches!(state.phase, ListState::Closed)
-                || state.error.is_err()
-                || unsafe { list.native.GetType() } != queue.state.kind
-            {
-                return Err(E_INVALIDARG);
-            }
-            // A descriptor write after Close can exhaust the map's native
-            // heap. Never submit an indexed access with an unpublished entry.
-            for arena in &state.indexed_arenas {
-                arena.check_index_capacity().map_err(|e| e.code())?;
-            }
-            for descriptor in &state.scalar_descriptors {
-                let owner = list.parent.as_ref().ok_or(E_INVALIDARG)?;
-                if !unsafe { device::is_constant_buffer(owner, descriptor.cpu) } {
-                    crate::diagnostics::recording_error(format_args!(
-                        "indexed shader scalar load requires a CBV at logical resource descriptor {}", descriptor.index
-                    ));
-                    return Err(E_INVALIDARG);
-                }
-            }
-            memory_wait::note_list(
-                ptr::from_ref(list).addr(),
-                memory_wait::Fate::Submitted(queue.state.kind.0),
-                &state.labels,
-            );
-            if !state.labels.is_empty() {
-                use std::fmt::Write;
-                let _ = write!(batch.borrow_mut(), " {:#x}", ptr::from_ref(list).addr());
-            }
-            splits.try_reserve(state.prefix.segments.len()).map_err(|_| E_OUTOFMEMORY)?;
-            splits.extend(state.prefix.segments.iter().map(|s| (list_index, s.clone())));
-            list_index += 1;
-            if !state.scene_commands.is_empty() {
-                scene_lists.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
-                scene_lists.push(list);
-            }
-            textures
-                .try_reserve(state.placed_reads.len())
-                .map_err(|_| E_OUTOFMEMORY)?;
-            textures.extend(state.placed_reads.iter().cloned());
-            writes
-                .try_reserve(state.placed_writes.len())
-                .map_err(|_| E_OUTOFMEMORY)?;
-            writes.extend(state.placed_writes.iter().cloned());
-            shader_views.extend(state.sampled_heaps.iter().cloned());
-            trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
-            Ok(list.native.as_raw())
-        },
-        |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
-            let holds = (!splits.is_empty())
-                .then(|| placement::held::Waits::new(splits.len().into()));
-            let waits = holds.clone();
-            unsafe {
-                placement::submit(
-                    parent(&queue.parent),
-                    &queue.native,
-                    &queue.state.placement,
-                    &mut textures,
-                    &mut writes,
-                    &shader_views,
-                    holds,
-                    || {
-                        // Placement dependencies are settled. Publish scene writes and
-                        // snapshot each instance table in recorded order across lists.
-                        let submission = if scene_lists.is_empty() {
-                            None
-                        } else {
-                            let owner = queue.parent.as_ref().ok_or(E_INVALIDARG)?;
-                            Some(device::blas::begin_submission(owner))
-                        };
-                        for list in scene_lists {
-                            let state = recording(list);
-                            for command in &state.scene_commands {
-                                command.prepare(list)?;
-                            }
-                        }
-                        memory_wait::submit(queue, host, splits, waits)?;
-                        queue_trace::note(
-                            &queue.native,
-                            queue.state.kind.0,
-                            format!("batch of {count} lists, with labels:{}", batch.borrow()),
-                            None,
-                        );
-                        if !trace_samples.borrow().is_empty() {
-                            let mut device: Option<ID3D12Device> = None;
-                            queue.native.GetDevice(&mut device)?;
-                            let device = device.ok_or(E_INVALIDARG)?;
-                            let fence: ID3D12Fence = device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
-                            queue.native.Signal(&fence, 1)?;
-                            fence.SetEventOnCompletion(1, windows::Win32::Foundation::HANDLE::default())?;
-                            for (label, sample) in trace_samples.borrow().iter() {
-                                sample.report(label);
-                            }
-                        }
-                        if let Some(submission) = submission {
-                            submission.commit();
-                        }
-                        crate::diagnostics::submitted(queue.state.kind, count);
-                        Ok(())
-                    },
-                )
-            }
-            .map_err(|error| error.code())
-        },
-    );
-    if let Err(error) = result {
-        reject(queue, error);
-    } else if let Some((token, flags)) = frame {
-        static FIRST: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
-        crate::diagnostics::log_once(&FIRST[flags as usize], || format!(
-            "submitted frame batch flags={flags:#x} token={token} count={count} first_lists={:?}",
-            &guest[..guest.len().min(4)]
-        ));
-    }
-}
-
-unsafe extern "system" fn queue_fence<const WAIT: bool>(
-    queue: &Queue,
-    fence: *mut c_void,
-    value: u64,
-) -> HRESULT {
-    let mut submitted = queue
-        .state
-        .submission
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    *submitted = true;
-    let hr = HRESULT(queue.state.placement.error.load(Ordering::Acquire));
-    if hr.is_err() {
-        return hr;
-    }
-    let owner = parent(&queue.parent);
-    let native;
-    let fence = match unsafe { device::fence(fence, owner) } {
-        Some(fence) => fence,
-        None => {
-            native = match unsafe { device::media::native_child::<ID3D12Fence>(fence, owner) } {
-                Ok(fence) => fence,
-                Err(error) => return error.code(),
-            };
-            &native
-        }
-    };
-    let method = if WAIT {
-        queue.native.vtable().Wait
-    } else {
-        queue.native.vtable().Signal
-    };
-    let status = unsafe { method(queue.native.as_raw(), fence.as_raw(), value) };
-    if status.is_ok() {
-        queue_trace::note(
-            &queue.native,
-            queue.state.kind.0,
-            if WAIT { "title wait".into() } else { "title signal".into() },
-            Some((fence.clone(), value)),
-        );
-    }
-    if !WAIT && status.is_ok() {
-        static FIRST: std::sync::Once = std::sync::Once::new();
-        crate::diagnostics::log_once(&FIRST, || format!(
-            "queued guest fence signal value={value} queue_type={} fence={:p}", queue.state.kind.0, fence.as_raw()
-        ));
-    }
-    status
-}
-
-// Frosty's direct/compute path requests its flush before the fence and the
-// copy path passes zero. Native queue Signal orders completion of prior work.
-unsafe extern "system" fn signal_x(
-    queue: &Queue,
-    fence: *mut c_void,
-    value: u64,
-    flush: u32,
-) -> HRESULT {
-    if !matches!(flush, 0 | 0x0800_0000) {
-        return E_NOTIMPL;
-    }
-    unsafe { queue_fence::<false>(queue, fence, value) }
-}
-
 #[repr(C)]
 struct PresentPlane {
     token: u64,
@@ -1654,121 +698,6 @@ struct PresentParameters {
 
 const _: () = assert!(mem::size_of::<RetailPresentPlane>() == 72);
 const _: () = assert!(mem::size_of::<PresentParameters>() == 32);
-
-unsafe extern "system" fn present(
-    queue: &Queue,
-    count: u32,
-    planes: *const PresentPlane,
-    params: *const PresentParameters,
-) -> HRESULT {
-    let result = unsafe { present_planes(queue, count, planes, params) };
-    if result.is_err() {
-        static FIRST: std::sync::Once = std::sync::Once::new();
-        crate::diagnostics::log_once(&FIRST, || format!("PresentX failed planes={count} HRESULT={:#010x}", result.0));
-        if result == windows::Win32::Graphics::Dxgi::DXGI_ERROR_ACCESS_LOST {
-            // The desktop window was closed. A console title has no such event
-            // and would otherwise wait for this frame's flip until its own
-            // watchdog fires. Treat the close as a request to quit.
-            crate::diagnostics::log_once(&std::sync::Once::new(), || "presentation window closed; exiting title".into());
-            use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
-            let _ = unsafe { TerminateProcess(GetCurrentProcess(), 0) };
-        }
-        // A rejected present still ends this frame for the title's pacing.
-        if count >= 1 && let Some(plane) = unsafe { planes.as_ref() } {
-            unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
-        }
-    }
-    result
-}
-
-/// Say every ten seconds how many frames reached the screen.
-fn frame_heartbeat(token: u64) {
-    static FRAMES: Mutex<Option<(std::time::Instant, u64, u64)>> = Mutex::new(None);
-    let mut state = FRAMES.lock().unwrap_or_else(|e| e.into_inner());
-    let (since, recent, total) = state.get_or_insert_with(|| (std::time::Instant::now(), 0, 0));
-    *recent += 1;
-    *total += 1;
-    let elapsed = since.elapsed().as_secs_f32();
-    if elapsed >= 10.0 {
-        crate::diagnostics::log(&format!(
-            "presented {recent} frames in {elapsed:.0}s, {total} in total, token={token}"
-        ));
-        *since = std::time::Instant::now();
-        *recent = 0;
-    }
-}
-
-unsafe fn present_planes(
-    queue: &Queue, count: u32, planes: *const PresentPlane, params: *const PresentParameters,
-) -> HRESULT {
-    let mut submitted = queue
-        .state
-        .submission
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    *submitted = true;
-    let hr = HRESULT(queue.state.placement.error.load(Ordering::Acquire));
-    if hr.is_err() {
-        return hr;
-    }
-    if queue.state.kind != D3D12_COMMAND_LIST_TYPE_DIRECT {
-        return E_NOTIMPL;
-    }
-    if count == 0 || planes.is_null() {
-        return E_INVALIDARG;
-    }
-    if count != 1 {
-        return E_NOTIMPL;
-    }
-    let plane = unsafe { &*planes };
-    if plane.resource_count == 0 || plane.resources.is_null() {
-        return E_INVALIDARG;
-    }
-    if plane.resource_count != 1 {
-        return E_NOTIMPL;
-    }
-    let Some(source) = (unsafe { device::resource(*plane.resources, parent(&queue.parent)) })
-    else {
-        return E_INVALIDARG;
-    };
-    if let Some(params) = unsafe { params.as_ref() } {
-        if !(0.0..=100.0).contains(&params.immediate_threshold_percent) {
-            return E_INVALIDARG;
-        }
-        let full = unsafe { &*planes.cast::<RetailPresentPlane>() };
-        let desc = unsafe { source.GetDesc() };
-        let rect = unsafe { full.source_rects.as_ref() };
-        let destination = unsafe { full.destination.as_ref() };
-        static FIRST: std::sync::Once = std::sync::Once::new();
-        crate::diagnostics::log_once(&FIRST, || format!(
-            "present plane {}x{} source {rect:?} destination {destination:?} color {} parameters {:?}",
-            desc.Width, desc.Height, full.color_space, params.options
-        ));
-        if rect.is_some_and(|r| r.left != 0 || r.top != 0 || r.right as u64 != desc.Width || r.bottom as u32 != desc.Height)
-            || destination.is_some_and(|r| *r != [0.0, 0.0, 1.0, 1.0])
-            || full.color_space != 0 || full.remaining != [0; 7] || params.options != [0; 7] {
-            return E_NOTIMPL;
-        }
-    }
-    let result = queue.state.presentation.present(&queue.native, source);
-    if result == S_OK {
-        frame_heartbeat(plane.token);
-    }
-    // Frame pacing must advance even if the host present failed; the title
-    // otherwise waits forever for this token's flip.
-    unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
-    if result == S_OK {
-        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        static EARLY: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
-        if COUNT.load(Ordering::Relaxed) < EARLY.len() {
-            let index = COUNT.fetch_add(1, Ordering::Relaxed);
-            if let Some(site) = EARLY.get(index) {
-                crate::diagnostics::log_once(site, || format!("completed PresentX #{} token={} source={:p}",index+1,plane.token,unsafe { *plane.resources }));
-            }
-        }
-    }
-    result
-}
 
 static QUEUE_SLOTS: Slots<64> = {
     let mut slots = child_slots::<ID3D12CommandQueue, QueueState, 64>();
@@ -1850,6 +779,7 @@ pub(crate) unsafe fn wrap_command_list(
             bound_placed_targets: Vec::new(),
             resource_heap: None,
             descriptor_arena: None,
+            descriptor_leases: Default::default(),
             indexed_arenas: Vec::new(),
             scalar_descriptors: Default::default(),
             sampled_heaps: Vec::new(),
@@ -1913,6 +843,7 @@ pub(crate) unsafe fn wrap_command_queue(
         page_worker: OnceLock::new(),
         wait_worker: OnceLock::new(),
         presentation: Presentation::default(),
+        retire_fence: OnceLock::new(),
     };
     unsafe {
         allocate(

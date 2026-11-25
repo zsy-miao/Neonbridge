@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using FiveStar.Cli.Exe;
+using FiveStar.Cli.Run;
 
 namespace FiveStar.Cli.Setup;
 
@@ -13,7 +14,10 @@ namespace FiveStar.Cli.Setup;
 /// <c>fivestar-loader --warm-pipelines</c>. By default only the pipelines earlier boots used (the loader's
 /// <c>pipelines-used.bin</c>; without one there is nothing to do, since the game builds pipelines on first use), with
 /// <c>--warm-all</c> also every pipeline of the console pipeline cache. An interrupted run keeps every pipeline built
-/// so far, and the next run resumes.
+/// so far, and the next run resumes. The programs come from the same folders as the boot of <c>fivestar run</c> (the
+/// extracted programs made on demand into the work folder's program cache, the translation only with
+/// <c>--translate-ahead</c>), so their DXIL and the pipelines' keys are the boot's; a finished run stamps the cache with
+/// the translator it built for, as <c>fivestar run --warm</c> does (<see cref="JournalWarmUp"/>).
 /// </summary>
 internal sealed class PipelineWarmStep : ISetupStep
 {
@@ -24,6 +28,7 @@ internal sealed class PipelineWarmStep : ISetupStep
 
     private const string SegmentPattern = "*.psolib";
     private const string LoaderOption = "loader";
+    private const string DxcOption = "dxc";
 
     /// <summary>The setup option that warms every pipeline of the console pipeline cache too.</summary>
     public const string WarmAllFlag = "warm-all";
@@ -40,7 +45,7 @@ internal sealed class PipelineWarmStep : ISetupStep
 
     public string Title => "Build the desktop pipelines into the pipeline cache";
 
-    public IReadOnlyList<string> DependsOn => [ShaderTranslateStep.StepName, PipelineCacheStep.StepName];
+    public IReadOnlyList<string> DependsOn => [ShaderExtractStep.StepName, PipelineCacheStep.StepName];
 
     public TimeSpan Estimate(SetupContext context)
     {
@@ -93,22 +98,8 @@ internal sealed class PipelineWarmStep : ISetupStep
         Directory.CreateDirectory(context.LogFolder);
         var log = Path.Combine(context.LogFolder, $"pipeline-warm-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         var start = new ProcessStartInfo(Loader(context)!) { UseShellExecute = false };
-        string[] arguments =
-        [
-            "--warm-pipelines", context.ShaderArchive,
-            "--shader-dir", context.ProgramFolder,
-            "--translated-dir", context.TranslationFolder,
-            "--pipeline-cache", context.PipelineLibraryFolder,
-            "--warm-step", context.Every.ToString(CultureInfo.InvariantCulture),
-            "--log", log,
-        ];
 
-        if (!All(context))
-        {
-            start.ArgumentList.Add("--warm-used-only");
-        }
-
-        foreach (var argument in arguments)
+        foreach (var argument in Arguments(context, log))
         {
             start.ArgumentList.Add(argument);
         }
@@ -121,7 +112,42 @@ internal sealed class PipelineWarmStep : ISetupStep
             return StepResult.Failed($"fivestar-loader --warm-pipelines exit code {process.ExitCode} (see {log}); run setup again to resume");
         }
 
+        JournalWarmUp.Stamp(context.PipelineLibraryFolder, JournalWarmUp.Translator(Loader(context)!));
+
         return StepResult.Done($"pipelines in {context.PipelineLibraryFolder} ({StepText.Size(StepText.FolderSize(context.PipelineLibraryFolder))})");
+    }
+
+    /// <summary>The loader arguments: the boot's folders of <c>fivestar run</c> (<see cref="FiveStar.Cli.Run.LoaderCommandLine"/>), the sample, the log.</summary>
+    public static List<string> Arguments(SetupContext context, string log)
+    {
+        var arguments = new List<string>
+        {
+            "--warm-pipelines", context.ShaderArchive,
+            "--shader-dir", context.ProgramFolder,
+            "--program-cache", context.ProgramCacheFolder,
+            "--pipeline-cache", context.PipelineLibraryFolder,
+            "--warm-step", context.Every.ToString(CultureInfo.InvariantCulture),
+            "--log", log,
+        };
+
+        if (!All(context))
+        {
+            arguments.Add("--warm-used-only");
+        }
+
+        if (context.Arguments.Flag(SetupCommand.TranslateAheadFlag))
+        {
+            arguments.AddRange(["--translated-dir", context.TranslationFolder]);
+        }
+
+        var dxc = context.Arguments.Option(DxcOption);
+
+        if (dxc is not null)
+        {
+            arguments.AddRange(["--dxc", Path.GetFullPath(dxc)]);
+        }
+
+        return arguments;
     }
 
     private static bool All(SetupContext context) => context.Arguments.Flag(WarmAllFlag);

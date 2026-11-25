@@ -485,12 +485,22 @@ pub unsafe extern "system" fn write_pages(tokens: *const u64, count: usize, offs
     let (mut index, mut within, mut done) = (offset / PAGE, offset % PAGE, 0usize);
     while done < len {
         let chunk = (PAGE - within).min(len - done);
-        let Some(page) = pool.pages.get_mut(&tokens[index]) else {
-            return failure(ERROR_INVALID_ADDRESS);
+        let token = tokens[index];
+        // A page mapped into a legacy reservation holds its live bytes in that
+        // private committed copy, not in its section. Write there, or the next
+        // unmap saves the stale copy over this write.
+        let legacy = match pool.pages.get(&token) {
+            Some(page) if page.mapped => pool.mappings.iter().find(|&(_, t)| *t == token).map(|(&at, _)| at),
+            Some(_) => None,
+            None => return failure(ERROR_INVALID_ADDRESS),
         };
+        let page = pool.pages.get_mut(&token).expect("checked above");
         // SAFETY: `data` has `len` bytes; `chunk` stays inside one page.
         let src = unsafe { data.add(done) };
-        if !page.saved.is_empty() {
+        if let Some(at) = legacy {
+            // SAFETY: the legacy mapping committed this page read-write.
+            unsafe { ptr::copy_nonoverlapping(src, (at + within) as *mut u8, chunk) };
+        } else if !page.saved.is_empty() {
             unsafe { ptr::copy_nonoverlapping(src, page.saved.as_mut_ptr().add(within), chunk) };
         } else {
             if let Err(e) = page.section.write_at(page.offset + within as u64, src, chunk) {

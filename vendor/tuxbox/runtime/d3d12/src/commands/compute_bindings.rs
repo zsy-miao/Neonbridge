@@ -261,7 +261,8 @@ impl Bindings {
 
     pub(super) fn with_reflected_table<const COMPUTE: bool>(
         &self, table: &ComputeTable, guest: &super::List,
-        arena: Option<&crate::device::descriptor_paging::Arena>,
+        arena: Option<&Arc<crate::device::descriptor_paging::Arena>>,
+        leases: &mut crate::device::descriptor_paging::DescriptorLeases,
         heap: Option<&super::descriptors::ResourceHeap>, reads: &mut Vec<std::ops::Range<usize>>,
         resources: &crate::device::MediaResources, dispatch: impl FnOnce(),
     ) -> Result<()> {
@@ -278,7 +279,7 @@ impl Bindings {
                 table
             } else { self.graphics_tables.get(&slot).ok_or(E_INVALIDARG)? };
             bases[index] = Some(match arena.filter(|a| a.contains(bound.logical.ptr)) {
-                Some(arena) => arena.gpu_table(bound.logical.ptr, length, table.layout.inline_ranges(index))?,
+                Some(arena) => arena.gpu_table(bound.logical.ptr, length, table.layout.inline_ranges(index), leases)?,
                 None => bound.native,
             });
         }
@@ -287,7 +288,7 @@ impl Bindings {
             // Global indices originate in shader data. Any resident SRV can
             // sample placed textures and needs the usual pre-submit upload.
             super::descriptors::include_range(reads, heap.cpu.clone());
-            Some((binding.slot, heap.index_map(guest, arena, resources)?))
+            Some((binding.slot, heap.index_map(guest, arena.map(Arc::as_ref), resources)?))
         } else {
             if table.layout.direct_resources {
                 super::descriptors::include_range(reads, heap.cpu.clone());
@@ -381,7 +382,9 @@ impl Bindings {
     }
 
     pub(super) fn refresh_inline_tables<const COMPUTE: bool>(
-        &self, arena: Option<&crate::device::descriptor_paging::Arena>,
+        &self,
+        arena: Option<&Arc<crate::device::descriptor_paging::Arena>>,
+        leases: &mut crate::device::descriptor_paging::DescriptorLeases,
     ) -> Result<()> {
         let Some(arena) = arena.filter(|arena| arena.uses_inline_records()) else {
             return Ok(());
@@ -399,7 +402,7 @@ impl Bindings {
                 self.graphics_tables.get(&slot)
             };
             if let Some(bound) = bound.filter(|bound| arena.contains(bound.logical.ptr)) {
-                arena.gpu_table(bound.logical.ptr, *length, self.inline_ranges::<COMPUTE>(slot as usize))?;
+                arena.gpu_table(bound.logical.ptr, *length, self.inline_ranges::<COMPUTE>(slot as usize), leases)?;
             }
         }
         Ok(())

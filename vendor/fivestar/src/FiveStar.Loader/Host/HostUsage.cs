@@ -93,7 +93,9 @@ internal static class HostUsage
                                  then every pipeline of the console pipeline cache, into the disk cache (with
                                  --shader-dir, --translated-dir), resuming where a run stopped
           --warm-used-only       warm-up: only the pipelines earlier boots asked for
-          --warm-jobs <n>        pipelines the warm-up builds at once (default 4)
+          --warm-jobs <n>        pipelines the warm-up builds at once (default 4; split over the processes)
+          --warm-processes <n>   warm-up processes, each building every n-th pipeline into the same cache, pipelines of
+                                 4 MiB of DXIL or more left to a last pass (default one per 16 GB of RAM, 1 to 4)
           --warm-step <k>        warm-up: every k-th pipeline only
           --warm-match <text>    warm-up: only pipelines with a program whose name contains text (repeatable)
           --gdk-abi <file>       XGameRuntime thunk ABI table: "clsid iid slot FunctionName" per line;
@@ -152,6 +154,8 @@ internal static class HostUsage
                                  rehydration into game memory (off: desktop sizes, nothing written)
           --raytracing-gpu       run XboxBvhBuilder.dll's constructor for an inventory of its 52 GPU builder pipelines:
                                  stand-ins never built, no builder program runs (docs/bvh-builder.md)
+          --no-rt-stand-ins      held ray-tracing passes leave their outputs as they are (default without --raytracing:
+                                 shadow masks fully lit, reflections black, the screen-probe light a grey)
           --xdsp-convolution     run the XDsp convolution effects on the CPU (default: silence; response format inferred)
           --audio-capture <wav>  record what the game plays (process loopback, 48 kHz stereo) and print how much had sound
           --desktop-timers       keep 15.6 ms timer ticks (default with --run: 1 ms, which the game's audio mixer needs)

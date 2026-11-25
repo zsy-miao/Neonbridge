@@ -67,6 +67,9 @@ pub(crate) struct Shader {
     /// ([`Shader::walks`]).
     #[cfg(windows)]
     walks: OnceLock<bool>,
+    /// Its result gets the depth-shaded ambient light fallback ([`crate::ambient`]).
+    #[cfg(windows)]
+    pub(crate) resolves_light: bool,
 }
 
 impl std::fmt::Debug for Shader {
@@ -119,6 +122,10 @@ fn shader(stage: &'static str, bytes: &[u8]) -> Arc<Shader> {
                 translated: OnceLock::new(),
                 #[cfg(windows)]
                 walks: OnceLock::new(),
+                #[cfg(windows)]
+                resolves_light: bytes
+                    .windows(crate::ambient::PROGRAM.len())
+                    .any(|w| w == crate::ambient::PROGRAM),
             })
         })
         .clone()

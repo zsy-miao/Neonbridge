@@ -2,7 +2,7 @@
 
 TuxBox is licensed under the Apache License 2.0. A contribution in a pull request is licensed under the same terms. Third-party materials keep their own terms. [License](LICENSE) · [Third-party notices](docs/REFERENCES.md#shader-compiler-attribution)
 
-Open pull requests against `main`.
+Open pull requests against `main`. [Source layout](docs/SOURCE_LAYOUT.md) explains where code goes.
 
 ## Prepare a checkout
 

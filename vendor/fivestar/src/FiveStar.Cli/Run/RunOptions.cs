@@ -27,12 +27,15 @@ internal sealed record RunOptions(
 
     private const string OptionPrefix = "--";
 
-    private static readonly HashSet<string> Flags = [DebugFlag, Setup.SetupCommand.TranslateAheadFlag];
+    private static readonly HashSet<string> Flags = [DebugFlag, Setup.SetupCommand.TranslateAheadFlag, JournalWarmUp.Flag];
 
     private static readonly HashSet<string> ValueOptions = ["work", "timeout", "shaders", "translated", "loader", "dxc", "gdk-lib", "jobs", "bcpack-tables"];
 
     /// <summary>Whether prebuilt shader folders replace the shader steps of setup.</summary>
     public bool PrebuiltShaders => Programs is not null;
+
+    /// <summary>Whether the pipelines earlier boots used are built before the boot when the translator changed (<see cref="JournalWarmUp"/>).</summary>
+    public bool Warm => Tools.Flag(JournalWarmUp.Flag);
 
     /// <summary>Whether every program is translated before the boot, not by the loader on first use.</summary>
     public bool TranslateAhead => Tools.Flag(Setup.SetupCommand.TranslateAheadFlag);

@@ -36,4 +36,13 @@ internal static class ShimContext
     {
         Volatile.Write(ref _runtime, runtime);
     }
+
+    /// <summary>
+    /// Clears <paramref name="runtime"/> as the active one when it still is: logging through a disposed runtime wrote to
+    /// its closed writer (tests whose runtimes overlap: MeshWaveProbeTests, RayTracingProgramsTests).
+    /// </summary>
+    public static void Deactivate(LoaderRuntime runtime)
+    {
+        Interlocked.CompareExchange(ref _runtime, null, runtime);
+    }
 }

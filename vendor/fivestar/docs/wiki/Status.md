@@ -24,7 +24,10 @@ base addresses; the descriptor window now mirrors that layout (views and sampler
 game's buffer addresses). Since the evening of 25 November the final composite fills the screen: the game copies
 descriptor records into its heap itself, and a table bind now mirrors them past the root signature's range (the
 composite reads record 41 of a 7-record table). The lit image it shows is still red-only: the lighting programs read
-records up to 180 of their tables, and mirroring those is being tested. The overwrite of the game's
+records up to 180 of their tables, and mirroring those is being tested. On 25 November the device removals that ended
+every boot ~25–35 s after the world started loading were traced to the game's ray-tracing compute passes walking
+acceleration structures we never build; those pipelines now stay stand-ins unless `--raytracing` is given, and a boot
+ran 18 minutes in the world with no removal. Literal samplers (shadow comparison, clamp) now get their own samplers. The overwrite of the game's
 memory pools that ended boots about 100 s in is fixed (a particle pass wrote through a
 misplaced buffer view), and every entry point the game calls now catches its own exceptions. With warm caches the
 cutscene's G-buffer passes now mostly run (about 14,700 draws recorded against 4,700 skipped in a 15 s window), but

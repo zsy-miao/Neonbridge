@@ -147,6 +147,15 @@ internal static unsafe class Kernel32
     [DllImport(Library)]
     public static extern uint GetProcessHeaps(uint count, nint* heaps);
 
+    [DllImport(Library, SetLastError = true)]
+    public static extern nint HeapCreate(uint options, nuint initialSize, nuint maximumSize);
+
+    [DllImport(Library, SetLastError = true)]
+    public static extern int HeapDestroy(nint heap);
+
+    [DllImport(Library)]
+    public static extern nint GetProcessHeap();
+
     /// <summary>HeapSummary: <paramref name="summary"/> is a HEAP_SUMMARY with cb set.</summary>
     [DllImport(Library)]
     public static extern int HeapSummary(nint heap, uint flags, HeapSummaryInfo* summary);

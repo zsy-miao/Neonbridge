@@ -238,6 +238,15 @@ and not retried while their key stays the same. Builds over 20 s are named in th
 counts. `--warm-step K` takes every K-th record, `--warm-match` only records with a program whose name contains the
 text. With `--d3d12-debug` the runtime's reason for each refused pipeline goes to the log. Its builds go through the same compile budget as a boot's, `--min-free-memory` and `--max-commit` end it (and its helper processes) as they end a boot, and with `--host-pipelines` its heavy compiles run in pipeline hosts, so a quiet-slot pre-build after a merge stays within memory: `fivestar-loader --warm-pipelines <shaders.rpf> --warm-used-only --shader-dir <fssm> --program-cache <dir> --pipeline-cache <dir> --warm-jobs 2 --host-pipelines --min-free-memory 6 --max-commit 100 --log warm.log`. `fivestar setup` runs it as the `pipeline-warm` step ([setup.md](setup.md)).
 
+**Processes.** `--warm-processes <n>` (default one per 16 GB of RAM, 1 to 4: 3 on a 64 GB machine) splits the warm-up
+over that many processes of the loader (`WarmShards`, `--warm-shard i/n`), each building every n-th pipeline into the
+same cache with its share of the threads and of `--max-driver-compiles`; their lines reach the log prefixed with their
+shard, and every 30 s a `warm-up shards` line gives the run's progress and the time left. One process admits one compile
+of more than 2 MB at a time, so the 4-thread warm-up of a 4,195-pipeline journal held at 0.8 pipelines a second (2,651
+refusals of that rule in 28 minutes, while its compiles grew private bytes by only 1.5 GB); n processes admit n. Pipelines
+of 4 MiB of DXIL or more are left to a last pass in the parent, one at a time, after the shards end. A shard ended by a
+memory limit or Ctrl+C leaves its pipelines to that pass or to a new run, which skips what the cache holds.
+
 Slot 86 streams and slot 55 derives are not in the console cache; the journal brings them to the warm-up.
 
 **Journal.** A boot appends every description whose pipeline a command list first sets (all five slots, derives

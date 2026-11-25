@@ -51,7 +51,10 @@ internal sealed class ProgramProducer
     {
         _programs = programs;
         _folder = folder;
+
+        // Programs that trace rays are known by their markers here, or read from their console code.
         RayTracingPrograms.Folder = folder;
+        RayTracingPrograms.Scanner = TracesRays;
         _picker = picker;
         _compiler = compiler;
         _slow = slow;
@@ -99,6 +102,26 @@ internal sealed class ProgramProducer
 
     /// <summary>The folder the DXIL goes to.</summary>
     public string Folder => _folder;
+
+    /// <summary>Whether a program's console code holds an image_bvh instruction (it traces rays); null when it cannot be read.</summary>
+    public bool? TracesRays(string name)
+    {
+        var path = Path.Combine(_programs, DebugLayer.MeshProbes.Source(name) + ProgramExtension);
+
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return _loader.Load(path, null).Program?.Instructions.Any(instruction => instruction.Text.StartsWith("image_bvh", StringComparison.Ordinal));
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Whether the program's DXIL is in the folder.</summary>
     public bool Exists(string name)
@@ -385,7 +408,7 @@ internal sealed class ProgramProducer
         if (fast >= 0)
         {
             // --fast-waves: the program runs natively on narrower waves, approximately.
-            ShimContext.Runtime.D3D12X.Warnings.Warn($"fast-waves-{name}", $"[d3d12_xs] fast waves {name}: {hlsl[fast..hlsl.IndexOf('\n', fast)]}");
+            Note($"fast-waves-{name}", $"[d3d12_xs] fast waves {name}: {hlsl[fast..hlsl.IndexOf('\n', fast)]}");
         }
 
         int at = hlsl.IndexOf(FiveStar.Shaders.Translation.TranslationOptions.SuperstepCostComment, StringComparison.Ordinal);
@@ -397,7 +420,25 @@ internal sealed class ProgramProducer
 
         int start = at + FiveStar.Shaders.Translation.TranslationOptions.SuperstepCostComment.Length;
         int end = hlsl.IndexOf('\n', start);
-        ShimContext.Runtime.D3D12X.Warnings.Warn($"superstep-{name}", $"[d3d12_xs] superstep program {name}: {hlsl[start..end]}");
+        Note($"superstep-{name}", $"[d3d12_xs] superstep program {name}: {hlsl[start..end]}");
+    }
+
+    /// <summary>
+    /// A note once per key through the runtime's warnings, or the log in the warm-up, which has no runtime: asking for
+    /// one threw, and every superstep program a cold warm-up made failed with that.
+    /// </summary>
+    private static void Note(string key, string message)
+    {
+        var runtime = ShimContext.ActiveRuntime;
+
+        if (runtime is null)
+        {
+            ShimContext.Log?.Info($"  {message}");
+
+            return;
+        }
+
+        runtime.D3D12X.Warnings.Warn(key, message);
     }
 
     /// <summary>A --probe-pipeline program's source with the probe code (empty when it cannot take it); any other as it is.</summary>
