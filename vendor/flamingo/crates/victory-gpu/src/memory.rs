@@ -38,7 +38,7 @@
 //! memory module of the layer knows and this one does not ask yet.
 //!
 //! shortcut: a copy that is numbered is kept for the rest of the run, and
-//! there are at most [`COPIES`] of them (4 MiB windows mostly: 4 GiB at
+//! there are at most [`copies`] of them (4 MiB windows mostly: 4 GiB at
 //! most). Every dispatch of such a shader brings all numbered copies up to
 //! date and, if it can store, declares all of them written (the bytes are
 //! compared on the CPU afterwards, as for any unordered access view): a
@@ -56,7 +56,20 @@ use crate::shadow::Shadow;
 
 /// Copies that can be numbered (the run of heap slots is one longer). A
 /// listed frame of the opening cutscene names about 50 windows.
-const COPIES: u32 = 4095;
+/// Flamingo: at most this many numbered copies (`VICTORY_MEMORY_COPIES`,
+/// 1023 by default, at most 16383). With the structure builder on, 1023 ran
+/// out within two minutes (run 122) and 4095 did not (run 123); without it,
+/// 4095 took the frame from 95 to 105-110 ms and broke the picture in three
+/// runs of three (126-128: every copy is brought up to date for each list).
+fn copies() -> u32 {
+    static N: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("VICTORY_MEMORY_COPIES")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map_or(1023, |n| n.clamp(1, 16383))
+    })
+}
 /// Frames before a retired copy's place is given to another copy.
 const REUSE_FRAMES: u64 = 4;
 /// A window of memory outside buffers (`shadow.rs`).
@@ -181,7 +194,7 @@ impl Memory {
             .map(|&(n, _)| n);
         let n = match self.copies.iter().zip(&self.live).position(|(c, &live)| live && Arc::ptr_eq(c, &shadow)) {
             Some(n) => n,
-            None if reusable.is_some() || self.copies.len() < COPIES as usize => {
+            None if reusable.is_some() || self.copies.len() < copies() as usize => {
                 let n = match reusable {
                     Some(n) => {
                         self.free.pop_front();
@@ -221,7 +234,7 @@ impl Memory {
             None => {
                 static ONCE: std::sync::Once = std::sync::Once::new();
                 ONCE.call_once(|| {
-                    tracing::warn!(COPIES, "title memory by address: no number left for another copy; its pages read zeros")
+                    tracing::warn!(copies = copies(), "title memory by address: no number left for another copy; its pages read zeros")
                 });
                 return;
             }
@@ -383,7 +396,7 @@ pub(crate) fn ready(
         Some(run) => run,
         None => {
             // Held for the heap's life: not given back with a list's slots.
-            let base = heap.dynamic(COPIES + 1)?;
+            let base = heap.dynamic(copies() + 1)?;
             heap.null_raw_uav_at(base);
             (base, Vec::new())
         }

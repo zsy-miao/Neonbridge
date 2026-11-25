@@ -1702,6 +1702,7 @@ mod tests {
         list[0] = real[0];
         void(queue, 0x30);
         list[0] = 0; // the title reuses its table after the submit
+        std::hint::black_box(&list);
         assert_eq!(wait(array, 0), S_OK);
         let mapped =
             xmem::XMemVirtualAlloc(std::ptr::null_mut(), PAGE, 0x2000 | 0x2040_0000, 0, 0x04);

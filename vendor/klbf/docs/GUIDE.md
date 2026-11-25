@@ -112,6 +112,16 @@ Then step 6, step 7 again, and step 8.
 
 Still stuck? Open an [issue](https://github.com/PastiiJay/klbf-lab/issues) with your graphics card, driver version, Windows version and the last lines PowerShell printed.
 
+
+## Linux / Proton (community notes)
+
+KLBF Lab is tested on Windows. Community players run it under Proton on AMD cards (RX 7800 XT, RX 6900 XT); it reaches the game world but is slower. Two tips from them:
+
+- **Seconds per frame while the GPU is idle and `wineserver` uses a whole core**: the slowdown is in Wine, not in KLBF Lab. A `wineserver` that keeps the views in a tree fixes it: [CachyOS/wine-cachyos#50](https://github.com/CachyOS/wine-cachyos/pull/50). (Found and written up by @zocram4cc, measured by @Adiker in [#19](https://github.com/PastiiJay/klbf-lab/issues/19).)
+- **`X3506` / `vs_5_1` in the log**: put the x64 `d3dcompiler_47.dll` from a recent Windows SDK (`Redist\D3D\x64`) next to `victory.exe` and add `d3dcompiler_47=n,b` to Wine's DLL overrides (from @gmankab).
+
+Report Linux results in an [issue](https://github.com/PastiiJay/klbf-lab/issues) with your distro, Proton version, GPU and driver.
+
 ---
 
 Thanks to [@HishamMuhammed](https://github.com/HishamMuhammed), whose questions shaped this guide.

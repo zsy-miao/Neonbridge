@@ -1233,6 +1233,21 @@ pub(super) unsafe fn before_execute(queue: &ID3D12CommandQueue) {
 #[cfg(test)]
 pub(super) static VRAM_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Tile identities of one mapped resource: title pages, then extra pages.
+/// A device-wide byte count also falls when unrelated idle pages are swept.
+#[cfg(test)]
+pub(super) fn mapped_tiles_for(device: usize, resource: usize) -> Option<(Vec<(u32, u32)>, Vec<(u32, u32)>)> {
+    let g = PAGES.lock().unwrap();
+    let p = g.get(&device)?.as_ref()?;
+    let target = p.targets.get(&resource)?;
+    if !target.mapped {
+        return None;
+    }
+    let used = target.used.iter().map(|key| p.pages.get(key).map(|page| page.tile)).collect::<Option<Vec<_>>>()?;
+    let extra = target.used_extra.iter().map(|key| p.extra_pages.get(key).map(|page| page.tile)).collect::<Option<Vec<_>>>()?;
+    (used.len() + extra.len() == target.total as usize).then_some((used, extra))
+}
+
 #[cfg(test)]
 pub(super) fn page_bytes_for(device: usize) -> (usize, usize) {
     let g = PAGES.lock().unwrap();

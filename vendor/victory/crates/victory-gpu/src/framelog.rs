@@ -319,7 +319,7 @@ fn page_faults() -> u64 {
 }
 
 /// The PC's free physical memory, in MiB.
-fn free_mb() -> u64 {
+pub(crate) fn free_mb() -> u64 {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     // SAFETY: plain data the call fills in.
     let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };

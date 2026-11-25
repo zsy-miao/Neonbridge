@@ -4,7 +4,7 @@
 # stay off unless set in the environment, which passes them on.
 name = "victory"
 rank = 3   # launcher list order (Master)
-about = "VIctory-fxceless d510ee4 (GPL-3.0), the emulator victory"
+about = "VIctory-fxceless 085ee7c (GPL-3.0), the emulator victory"
 upstream = "https://github.com/fxceless/victory-fork"
 # fxceless's victory has no Agility opt-in (no D3D12SDKVersion/D3D12SDKPath
 # exports, unlike ScarlettPort's copy): it runs on the system's D3D12.
@@ -22,8 +22,8 @@ cache_env = "VICTORY_CACHE_DIR"
 agility = false
 
 options = [
-  "VICTORY_FAST_CORES=0|1 (default 1): the submit and copy-back threads ask for the fast cores of a hybrid CPU (fxceless d510ee4), read at crates/victory-gpu/src/framelog.rs:219",
-  "VICTORY_DISK_CORES=slow (default off): the DirectStorage workers ask for the slow cores (fxceless d510ee4), read at crates/victory-hle/src/modules/dstorage.rs:499",
+  "VICTORY_FAST_CORES=0|1 (default 1): the submit and copy-back threads ask for the fast cores of a hybrid CPU (fxceless 085ee7c), read at crates/victory-gpu/src/framelog.rs:219",
+  "VICTORY_DISK_CORES=slow (default off): the DirectStorage workers ask for the slow cores (fxceless 085ee7c), read at crates/victory-hle/src/modules/dstorage.rs:499",
 ]
 # ScarlettPort play-victory.ps1:51-59 settings, not this author's: optional (README.md:44 names RELAY=2 as a newer switch).
 preset_scarlettport_settings = ["VICTORY_OWN_UPSCALER=1", "VICTORY_NO_WATCHDOG=1", "VICTORY_RELAY=2", "VICTORY_SYNC_PRECISE=1", "VICTORY_READ_SETTLE_PRECISE=1", "VICTORY_PIPELINE_WAIT_MS=0"]

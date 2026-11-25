@@ -85,22 +85,45 @@ impl Host {
                 let adapter: IDXGIAdapter = factory.EnumWarpAdapter().map_err(err)?;
                 D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
             } else {
-                D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
-                // A machine without a graphics card gives the software
-                // adapter as its default device (a hosted test runner,
-                // whose first adapter is a display stub that cannot make a
-                // device): that is no hardware device, and the tests that
-                // ask for one skip it, as they do where there is none.
-                if let Some(made) = &device {
-                    let factory: IDXGIFactory4 =
-                        CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).map_err(err)?;
-                    if let Ok(adapter) = factory.EnumAdapterByLuid::<IDXGIAdapter1>(made.GetAdapterLuid())
-                        && let Ok(desc) = adapter.GetDesc1()
-                        && (desc.Flags & 2 != 0 || (desc.VendorId == 0x1414 && desc.DeviceId == 0x8c))
-                    {
-                        return Err("the default device is the software adapter".to_owned());
-                    }
+                // The high-performance adapter: on a laptop the default one
+                // is the integrated GPU. `VICTORY_TEST_ADAPTER=n` takes the
+                // n-th hardware adapter in that order instead (to run the
+                // tests on another GPU of the machine).
+                let factory: IDXGIFactory6 =
+                    CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).map_err(err)?;
+                let adapter = (0..)
+                    .map_while(|i| {
+                        factory
+                            .EnumAdapterByGpuPreference::<IDXGIAdapter1>(
+                                i,
+                                DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                            )
+                            .ok()
+                    })
+                    // No software adapter: WARP, or the Basic Render Driver a
+                    // machine without a graphics card offers (vendor 0x1414,
+                    // device 0x8c); the tests that ask for hardware skip.
+                    .filter(|a| {
+                        a.GetDesc1().is_ok_and(|d| {
+                            d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0
+                                && !(d.VendorId == 0x1414 && d.DeviceId == 0x8c)
+                        })
+                    })
+                    .nth(
+                        std::env::var("VICTORY_TEST_ADAPTER")
+                            .ok()
+                            .and_then(|n| n.parse().ok())
+                            .unwrap_or(0),
+                    )
+                    .ok_or("no hardware adapter")?;
+                // (Named in test output, to show which GPU the tests ran on.)
+                if cfg!(test)
+                    && let Ok(d) = adapter.GetDesc1()
+                {
+                    let name = String::from_utf16_lossy(&d.Description);
+                    eprintln!("hardware adapter: {}", name.trim_end_matches('\0'));
                 }
+                D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
             }
             let device = device.ok_or("no device")?;
             let mut sm = D3D12_FEATURE_DATA_SHADER_MODEL {

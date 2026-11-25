@@ -752,10 +752,14 @@ void main() {
         event: HANDLE,
         clamp: Clamp,
         worker: Clamp,
+        _serial: std::sync::MutexGuard<'static, ()>,
     }
 
     impl WarpHarness {
         fn new() -> Option<Self> {
+            let serial = crate::host::WARP_SERIAL
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             // SAFETY: plain DXGI WARP query and D3D12 test harness setup.
             unsafe {
                 let factory: IDXGIFactory4 =
@@ -794,6 +798,7 @@ void main() {
                     event,
                     clamp,
                     worker,
+                    _serial: serial,
                 })
             }
         }
@@ -962,10 +967,78 @@ void main() {
     /// compare before it, also a change back.
     #[test]
     fn warp_card_compare_stores_the_hash_it_made_when_told() {
+        // Both forms: a thread a piece, and a group a piece (the default).
+        card_compare_on_warp(crate::host::CARD_COMPARE, |pieces| pieces.div_ceil(64));
+        card_compare_on_warp(crate::host::CARD_COMPARE_WIDE, |pieces| pieces);
+    }
+
+    /// Every one-byte change is found, in the piece it is in, with a copy
+    /// that does not start on a piece boundary (`skew`) and a span that
+    /// does not start at piece 0: both forms of the compare.
+    #[test]
+    fn warp_card_compare_finds_every_byte_with_skew() {
+        for (source, groups) in [
+            (crate::host::CARD_COMPARE, (|p: u32| p.div_ceil(64)) as fn(u32) -> u32),
+            (crate::host::CARD_COMPARE_WIDE, |p| p),
+        ] {
+            let Some(mut warp) = WarpHarness::new() else {
+                return;
+            };
+            let compare = compile_cs(&warp.device, source).expect("the card compare must compile on WARP");
+            const PIECE: usize = 64 << 10;
+            const SKEW: u32 = 0x3450;
+            const FIRST: u32 = 1;
+            const PIECES: u32 = 4;
+            let size = PIECE * 6;
+            let (_now, now_ptr, now_gpu) = warp.shared_buffer(size as u64);
+            let (_hashes, _, hashes_gpu) = warp.shared_buffer(16 * 8);
+            let (_differs, differs_ptr, differs_gpu) = warp.shared_buffer(64);
+            let content: Vec<u8> = (0..size).map(|i| (i * 131 + i / 7) as u8).collect();
+            // SAFETY: the mapping holds `size` bytes.
+            unsafe { std::ptr::copy_nonoverlapping(content.as_ptr(), now_ptr, size) };
+            let run = |warp: &mut WarpHarness, mode: u32| -> Vec<u32> {
+                // SAFETY: as in `card_compare_on_warp`.
+                unsafe {
+                    for i in 0..PIECES as usize {
+                        differs_ptr.cast::<u32>().add(i).write_volatile(7);
+                    }
+                    warp.list.SetComputeRootSignature(&compare.root);
+                    warp.list.SetPipelineState(&compare.pso);
+                    let constants = [FIRST, SKEW, size as u32, PIECES, 0, mode];
+                    warp.list.SetComputeRoot32BitConstants(0, 6, constants.as_ptr().cast(), 0);
+                    warp.list.SetComputeRootShaderResourceView(1, now_gpu);
+                    warp.list.SetComputeRootUnorderedAccessView(2, hashes_gpu);
+                    warp.list.SetComputeRootUnorderedAccessView(3, differs_gpu);
+                    warp.list.Dispatch(groups(PIECES), 1, 1);
+                }
+                warp.submit_and_wait();
+                // SAFETY: as above.
+                (0..PIECES as usize).map(|i| unsafe { differs_ptr.cast::<u32>().add(i).read_volatile() }).collect()
+            };
+            run(&mut warp, 0);
+            assert_eq!(run(&mut warp, 1), vec![0; PIECES as usize]);
+            // Piece `FIRST + i` of the copy covers offsets [lo, hi) as the
+            // compare cuts them; a byte there changed flags that piece alone.
+            for (k, step) in [0usize, 1, 15, 16, 1023, 1024, 4095, 30001, 65535].iter().enumerate() {
+                let i = (k % PIECES as usize) as u32;
+                let lo = ((FIRST + i) as usize * PIECE).saturating_sub(SKEW as usize);
+                let at = lo + step % (PIECE - 16);
+                // SAFETY: inside the mapping.
+                unsafe { now_ptr.add(at).write_volatile(content[at] ^ 0x5a) };
+                let flagged = run(&mut warp, 1);
+                assert_eq!(flagged[i as usize], 1, "{source:.20}: byte {at:#x} of piece {i} not found");
+                // SAFETY: inside the mapping.
+                unsafe { now_ptr.add(at).write_volatile(content[at]) };
+                assert_eq!(run(&mut warp, 1), vec![0; PIECES as usize]);
+            }
+        }
+    }
+
+    fn card_compare_on_warp(source: &str, groups: fn(u32) -> u32) {
         let Some(mut warp) = WarpHarness::new() else {
             return;
         };
-        let compare = compile_cs(&warp.device, crate::host::CARD_COMPARE).expect("the card compare must compile on WARP");
+        let compare = compile_cs(&warp.device, source).expect("the card compare must compile on WARP");
         const PIECE: usize = 64 << 10;
         const PIECES: u32 = 3;
         let size = PIECE * PIECES as usize;
@@ -991,7 +1064,7 @@ void main() {
                 warp.list.SetComputeRootShaderResourceView(1, now_gpu);
                 warp.list.SetComputeRootUnorderedAccessView(2, hashes_gpu);
                 warp.list.SetComputeRootUnorderedAccessView(3, differs_gpu);
-                warp.list.Dispatch(PIECES.div_ceil(64), 1, 1);
+                warp.list.Dispatch(groups(PIECES), 1, 1);
             }
             warp.submit_and_wait();
             // SAFETY: as above.
@@ -1019,6 +1092,124 @@ void main() {
         set(content[at]);
         assert_eq!(run(&mut warp, 2), [0, 1, 0]);
         assert_eq!(run(&mut warp, 2), [0, 0, 0]);
+    }
+
+    /// The merge on the card (`crate::host::CARD_MERGE`), on the software
+    /// adapter, with the masks `crate::shadow` lays out: random bytes on
+    /// the card's side and on the CPU's, and random runs of a few bytes
+    /// (some of one byte, some across dwords, mask dwords and blocks, one
+    /// of a whole block) in stretches that do not start at the copy's
+    /// first byte nor at the mask's. Afterwards every byte in a run is the
+    /// CPU side's and every other byte of the copy is what the card had,
+    /// also where both dispatches of a stretch cut in two meet.
+    #[test]
+    fn warp_card_merge_changes_the_masked_bytes_and_no_other() {
+        use crate::shadow::{MASK_BLOCK, mask_fill, mask_stretches};
+        let Some(mut warp) = WarpHarness::new() else {
+            return;
+        };
+        let merge = compile_cs(&warp.device, crate::host::CARD_MERGE).expect("the card merge must compile on WARP");
+        let size = MASK_BLOCK * 8;
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let (_card, card_ptr, card_gpu) = warp.shared_buffer(size as u64);
+        let (_title, title_ptr, title_gpu) = warp.shared_buffer(size as u64);
+        let was: Vec<u8> = (0..size).map(|_| random() as u8).collect();
+        let title: Vec<u8> = (0..size).map(|_| random() as u8).collect();
+        // Runs in blocks 1, 2 (touching: one stretch), 4 and 6; none in 0,
+        // 3, 5 and 7.
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for block in [1usize, 2, 4] {
+            let mut at = block * MASK_BLOCK + (random() % 40) as usize;
+            while at < (block + 1) * MASK_BLOCK - 16 {
+                let n = 1 + (random() % 9) as usize;
+                runs.push((at, at + n));
+                at += n + 1 + (random() % 90) as usize;
+            }
+        }
+        // By hand: across the line between blocks 1 and 2, the first and
+        // the last byte of block 4, and all of block 6.
+        runs.push((2 * MASK_BLOCK - 3, 2 * MASK_BLOCK + 2));
+        runs.push((4 * MASK_BLOCK, 4 * MASK_BLOCK + 1));
+        runs.push((5 * MASK_BLOCK - 1, 5 * MASK_BLOCK));
+        runs.push((6 * MASK_BLOCK, 7 * MASK_BLOCK));
+        let runs = crate::shadow::joined(runs);
+        let mut blocks = crate::shadow::MaskBlocks::new();
+        for &(from, to) in &runs {
+            for i in from..to {
+                let mask = blocks.entry(i / MASK_BLOCK).or_insert_with(|| vec![0u8; MASK_BLOCK / 8].into_boxed_slice());
+                mask[i % MASK_BLOCK / 8] |= 1 << (i % 8);
+            }
+        }
+        assert_eq!(crate::shadow::mask_runs(&blocks), runs);
+        // The masks start 4,096 bytes into their buffer, behind another
+        // copy's that is all ones: none of it may be read for this copy.
+        const MASK_AT: usize = 4096;
+        let (stretches, mask_end) = mask_stretches(&blocks, MASK_AT);
+        assert_eq!(
+            stretches.iter().map(|s| (s.at / MASK_BLOCK, s.bytes / MASK_BLOCK)).collect::<Vec<_>>(),
+            [(1, 2), (4, 1), (6, 1)]
+        );
+        let (_mask, mask_ptr, mask_gpu) = warp.shared_buffer(mask_end as u64 + 4096);
+        // SAFETY: the mappings hold what is written.
+        unsafe {
+            std::ptr::copy_nonoverlapping(was.as_ptr(), card_ptr, size);
+            std::ptr::copy_nonoverlapping(title.as_ptr(), title_ptr, size);
+            let mask = std::slice::from_raw_parts_mut(mask_ptr, mask_end + 4096);
+            mask.fill(0xff);
+            mask_fill(&mut mask[..mask_end], &stretches, &blocks);
+            assert!(mask[..MASK_AT].iter().all(|&b| b == 0xff));
+        }
+        // SAFETY: our open list, live buffers, the merge's own root
+        // signature; the mappings hold what is read and written.
+        unsafe {
+            warp.list.SetComputeRootSignature(&merge.root);
+            warp.list.SetPipelineState(&merge.pso);
+            warp.list.SetComputeRootShaderResourceView(1, title_gpu);
+            warp.list.SetComputeRootShaderResourceView(2, mask_gpu);
+            warp.list.SetComputeRootUnorderedAccessView(3, card_gpu);
+            for stretch in &stretches {
+                // In two dispatches where the stretch has two blocks, as
+                // `Host::card_before` cuts the long ones.
+                let mut done = 0;
+                while done < stretch.bytes {
+                    let n = (stretch.bytes - done).min(MASK_BLOCK);
+                    let words = (n / 32) as u32;
+                    let constants = [(stretch.at + done) as u32, (stretch.mask_at + done / 8) as u32, words];
+                    warp.list.SetComputeRoot32BitConstants(0, 3, constants.as_ptr().cast(), 0);
+                    warp.list.Dispatch(words.div_ceil(64), 1, 1);
+                    done += n;
+                }
+            }
+        }
+        warp.submit_and_wait();
+        let mut wanted = was.clone();
+        let mut masked = 0;
+        for &(from, to) in &runs {
+            wanted[from..to].copy_from_slice(&title[from..to]);
+            masked += to - from;
+        }
+        assert!(masked > MASK_BLOCK && runs.len() > 3000, "{masked} bytes in {} runs", runs.len());
+        // SAFETY: the mapping holds `size` bytes.
+        let now = unsafe { std::slice::from_raw_parts(card_ptr.cast_const(), size) };
+        if let Some(at) = (0..size).find(|&i| now[i] != wanted[i]) {
+            let in_a_run = runs.iter().any(|r| r.0 <= at && at < r.1);
+            panic!(
+                "byte {at:#x} is {:#x}; the card had {:#x}, the title has {:#x}, and it is {} a run",
+                now[at],
+                was[at],
+                title[at],
+                if in_a_run { "in" } else { "outside" }
+            );
+        }
+        // The CPU's side is only read.
+        // SAFETY: the mapping holds `size` bytes.
+        assert!(unsafe { std::slice::from_raw_parts(title_ptr.cast_const(), size) } == &title[..]);
     }
 
     /// The fetch inside flights (`crate::host::CARD_FETCH`), on the software
@@ -1531,13 +1722,12 @@ void main() {
         );
         assert_eq!(after_src, initial_src, "src_args must remain untouched");
 
-        let mut kept = 0usize;
+        let mut kept = Vec::new();
         let mut zeroed = 0usize;
         for i in 0..RECORDS as usize {
             let rec = &out_words[i * 6..(i + 1) * 6];
             if rec[0] == (1 << 22) && rec[1] == 16 {
-                assert!(i == 1 || i == 2, "the first two real draws fit the budget");
-                kept += 1;
+                kept.push(i);
             } else {
                 assert_eq!((rec[0], rec[1]), (0, 0), "excess draw must be zeroed");
                 zeroed += 1;
@@ -1547,7 +1737,14 @@ void main() {
             assert_eq!(rec[4], 5000 + i as u32);
             assert_eq!(rec[5], 0xCAFE_0000 | (i as u32));
         }
-        assert_eq!((kept, zeroed), (2, (RECORDS as usize) - 2));
+        // Two groups of 64 race for the single budget word: whichever group
+        // reaches the CAS first fits its first two real draws in lane order
+        // (1 and 2 for group 0 since slot 0 is empty, or 64 and 65 for group 1).
+        assert!(
+            kept == [1, 2] || kept == [64, 65],
+            "the winning group's first two real draws must fit in lane order, got {kept:?}"
+        );
+        assert_eq!(zeroed, (RECORDS as usize) - 2);
     }
 
     /// Exercises `HostList::indirect_scratch`, `bound`, the scratch buffer's

@@ -554,7 +554,7 @@ mod tests {
                 f.push(*kind);
                 let n = packed.len() as u32 + 12;
                 u32s(&mut f, &[n, 0x000D_DCE7, n, payload.len() as u32]);
-                f.extend_from_slice(&packed);
+                f.extend_from_slice(packed);
                 f.extend_from_slice(&(0x1000 + (slot * 16 + i) as u64).to_le_bytes());
                 f.extend_from_slice(&[0; 0x90]);
                 u32s(&mut f, &[4, 0x0101]);

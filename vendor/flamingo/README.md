@@ -121,6 +121,34 @@ For Discord Rich Presence, put your own Discord application id in
 `%LOCALAPPDATA%\flamingo\discord_app_id.txt` (FLAMINGO.md has the steps).
 `FLAMINGO_DISCORD=0` turns it off.
 
+## Reporting a problem (logging build)
+
+When something goes wrong (a black screen, a crash, missing pictures), a log tells us what
+happened on your PC. `flamingo-log.cmd` makes one:
+
+1. Install [Rust](https://rustup.rs) and [Git](https://git-scm.com) if you have not.
+2. Get the newest code: `git clone https://github.com/realblastex/flamingo` (or, in a clone you
+   already have, `git pull`).
+3. Drag the title's executable from your own dump onto `flamingo-log.cmd` in the repository's
+   folder, or run it from a command prompt:
+
+   ```
+   flamingo-log.cmd "D:\path\to\your\dump\the-title.exe"
+   ```
+
+   It builds Flamingo (several minutes the first time), runs it with the settings above and
+   its log on, and remembers the path for next time (`flamingo-game.txt`).
+4. Play until the problem shows (for a black screen, wait a minute in it), then close the game
+   window.
+5. The log is saved in the `logs` folder as `flamingo-<date>-<time>.log`, with a `.zip` of it
+   next to it (Explorer opens there). Attach the `.zip` to your issue, and say what you saw and
+   when.
+
+The log starts with your Windows version, processor, memory and graphics cards with their
+driver versions. It also holds file paths of your PC, which can include your Windows user
+name: look it over before you share it. `set FLAMINGO_SERIES_X=1` before running uses the
+Series X profile instead of Series S.
+
 ## Credits
 
 - **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors is the base

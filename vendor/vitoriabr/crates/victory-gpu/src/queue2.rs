@@ -643,10 +643,14 @@ void main() {
         pso: ID3D12PipelineState,
         /// Direct lists sent and not waited for yet.
         flown: Vec<CopyList>,
+        _serial: std::sync::MutexGuard<'static, ()>,
     }
 
     impl Warp {
         fn new(bits: u32) -> Option<Warp> {
+            let serial = crate::host::WARP_SERIAL
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             // SAFETY: plain DXGI and D3D12 set-up on the software adapter.
             unsafe {
                 let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
@@ -708,6 +712,7 @@ void main() {
                     root,
                     pso,
                     flown: Vec::new(),
+                    _serial: serial,
                 })
             }
         }

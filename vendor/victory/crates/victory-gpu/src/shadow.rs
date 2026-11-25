@@ -71,6 +71,9 @@ pub(crate) struct Shadow {
     card: Option<Card>,
     /// A window of title memory outside buffers, not a title buffer's copy.
     window: bool,
+    /// A window whose one buffer is in a GPU upload heap ([`window_upload`]):
+    /// its bytes, counted with the windows on the card.
+    uploaded: u64,
     /// With `crate::inplace`: not a copy at all. `buffer` is placed in a
     /// heap opened on the title memory itself, so shaders read and write
     /// the title's own bytes and nothing is copied either way. The heap,
@@ -329,31 +332,104 @@ fn window_card_most() -> u64 {
 /// Bytes alive of windows' card sides ([`window_card_most`]).
 static WINDOW_CARD_BYTES: AtomicU64 = AtomicU64::new(0);
 
+/// Whether windows that go to the card's memory are one buffer in a GPU
+/// upload heap, which the CPU fills directly (`VICTORY_WINDOW_UPLOAD=1`;
+/// off by default), where the device has such heaps
+/// (`Host::gpu_upload_buffer`).
+///
+/// A window on the card ([`window_card_most`]) is two buffers: the CPU's
+/// side in the PC's memory, which takes title memory as before, and the
+/// card's side, which a list of ours brings up to date before each
+/// submission (`Host::card_before`: its copies are part of "our
+/// send-and-hash lists", 11 to 14 ms of the card's frame in runs 270 and
+/// 271). No shader writes a window (run 91, and every run since: "0.0 MB
+/// compared in 0 ranges of windows"), so nothing is ever looked for in one
+/// or fetched from one: the CPU's side is only a stop on the way. With
+/// the card's memory mapped through a resizable BAR the stop goes: title
+/// memory is copied into the card's memory where shaders read it, with no
+/// second buffer in the PC's memory and no copy on the card. The same
+/// limits hold as for windows on the card (the most asked, the card's
+/// room), and a window turned down or not makeable stays in the PC's
+/// memory as before.
+fn window_upload() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_WINDOW_UPLOAD").is_some_and(|v| v == "1"))
+}
+
+/// A window's buffer in a GPU upload heap and where it is mapped, if
+/// [`window_upload`] says so and a window of `size` bytes may go to the
+/// card ([`window_card_room`]).
+fn window_upload_for(size: u64) -> Option<(ID3D12Resource, *mut u8)> {
+    if !window_upload() || !host()?.gpu_upload() {
+        return None;
+    }
+    if !window_card_room(size, "in a GPU upload heap:") {
+        return None;
+    }
+    let made = host()?.gpu_upload_buffer(size);
+    if made.is_none() {
+        WINDOW_CARD_BYTES.fetch_sub(size, Ordering::Relaxed);
+    }
+    made
+}
+
 /// A buffer in the card's memory for a window of `size` bytes, if it is to
 /// be there ([`window_card_most`]).
 fn window_card_for(size: u64) -> Option<ID3D12Resource> {
-    let most = window_card_most();
-    if most == 0 || !cards() {
+    if !window_card_room(size, "on the card:") {
         return None;
     }
-    let host = host()?;
-    if !host.card_ready() {
-        return None;
-    }
-    if let Some([budget, used, ..]) = host.video_memory()
-        && used + size > budget / 10 * 8
-    {
-        return None;
-    }
-    if WINDOW_CARD_BYTES.fetch_add(size, Ordering::Relaxed) + size > most {
-        WINDOW_CARD_BYTES.fetch_sub(size, Ordering::Relaxed);
-        return None;
-    }
-    let buffer = host.uav_buffer(size);
+    let buffer = host()?.uav_buffer(size);
     if buffer.is_none() {
         WINDOW_CARD_BYTES.fetch_sub(size, Ordering::Relaxed);
     }
     buffer
+}
+
+/// Whether a window of `size` bytes may go to the card's memory
+/// ([`window_card_most`], the card's room); if so its bytes are counted
+/// there from now, and the caller makes the buffer (or takes them off
+/// again). `how` is the word for the log.
+fn window_card_room(size: u64, how: &str) -> bool {
+    let most = window_card_most();
+    if most == 0 || !cards() {
+        return false;
+    }
+    let Some(host) = host() else { return false };
+    if !host.card_ready() {
+        return false;
+    }
+    // Windows that went to the card, and those turned down for the card's
+    // room or for the most asked: said at the first of each and then now
+    // and again, so a run shows what the switch did.
+    static COUNTS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+    let say = |which: usize, what: &str| {
+        let n = COUNTS[which].fetch_add(1, Ordering::Relaxed) + 1;
+        if n == 1 || n.is_multiple_of(64) {
+            tracing::info!(
+                "windows outside buffers and the card's memory (VICTORY_CARD_WINDOWS_MB={}): {what} one of {} KiB; so far {} on the card ({} MB), {} turned down for the card's room, {} for the most asked",
+                most >> 20,
+                size >> 10,
+                COUNTS[0].load(Ordering::Relaxed),
+                WINDOW_CARD_BYTES.load(Ordering::Relaxed) >> 20,
+                COUNTS[1].load(Ordering::Relaxed),
+                COUNTS[2].load(Ordering::Relaxed)
+            );
+        }
+    };
+    if let Some([budget, used, ..]) = host.video_memory()
+        && used + size > budget / 10 * 8
+    {
+        say(1, "no room on the card for");
+        return false;
+    }
+    if WINDOW_CARD_BYTES.fetch_add(size, Ordering::Relaxed) + size > most {
+        WINDOW_CARD_BYTES.fetch_sub(size, Ordering::Relaxed);
+        say(2, "the most is reached at");
+        return false;
+    }
+    say(0, how);
+    true
 }
 
 /// The copies in the card's memory whose CPU side changed since they were
@@ -2001,6 +2077,61 @@ mod merge_tests {
         assert_eq!(runs, [(0, 1), (3, 1)], "the GPU's bytes only");
     }
 
+    /// The runs are the ones a walk byte by byte finds, for lengths around
+    /// the steps of eight and sixty-four the compare takes, and for bytes
+    /// that differ one here and there, in stretches, and nearly everywhere.
+    #[test]
+    fn changed_runs_are_the_ones_a_walk_byte_by_byte_finds() {
+        let by_bytes = |now: &[u8], was: &[u8]| {
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            for i in 0..now.len().min(was.len()) {
+                if now[i] != was[i] {
+                    match runs.last_mut() {
+                        Some(last) if last.0 + last.1 == i => last.1 += 1,
+                        _ => runs.push((i, 1)),
+                    }
+                }
+            }
+            runs
+        };
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..20_000u32 {
+            let n = match case % 4 {
+                0 => (next() % 20) as usize,
+                1 => 56 + (next() % 20) as usize,
+                2 => 120 + (next() % 20) as usize,
+                _ => (next() % 700) as usize,
+            };
+            let was: Vec<u8> = (0..n).map(|_| next() as u8).collect();
+            let mut now = was.clone();
+            // One byte in `rarity` differs; some cases also get a stretch
+            // that differs throughout, and some differ nearly everywhere.
+            let rarity = [1, 2, 3, 9, 40, 300][(next() % 6) as usize];
+            for b in now.iter_mut() {
+                if next() % rarity == 0 {
+                    *b ^= 1 + (next() % 255) as u8;
+                }
+            }
+            if n > 0 && next() % 3 == 0 {
+                let from = (next() as usize) % n;
+                let to = (from + (next() % 90) as usize).min(n);
+                for b in &mut now[from..to] {
+                    *b = !*b;
+                }
+            }
+            // (A byte may also keep a zero difference inside a stretch.)
+            assert_eq!(changed_runs(&now, &was), by_bytes(&now, &was), "case {case}, {n} bytes");
+        }
+        // Slices of unlike lengths: the shorter one's bytes.
+        assert_eq!(changed_runs(&[1, 2, 3, 4, 5, 6, 7, 8, 9], &[1, 2, 0]), vec![(2, 1)]);
+    }
+
     /// The runs hold exactly the bytes that differ: putting them into the
     /// old bytes gives the new ones, and no run holds an equal byte.
     #[test]
@@ -2045,6 +2176,9 @@ impl Drop for Shadow {
             KEPT_BYTES.fetch_sub(self.len, Ordering::Relaxed);
         }
         let window = self.window;
+        if self.uploaded != 0 {
+            WINDOW_CARD_BYTES.fetch_sub(self.uploaded, Ordering::Relaxed);
+        }
         if let Some(card) = &mut self.card {
             if window {
                 WINDOW_CARD_BYTES.fetch_sub(card.size, Ordering::Relaxed);
@@ -2413,6 +2547,7 @@ impl Shadow {
             },
             card: None,
             window: false,
+            uploaded: 0,
             place: None,
         }
     }
@@ -3929,6 +4064,20 @@ fn loose(address: u64, end: u64, unsized_ask: bool, any: bool) -> Option<Arc<Sha
     // window is the title's own memory, with nothing to copy.
     if let Some(placed) = crate::inplace::place_for(start, len, true) {
         let shadow = Arc::new(Shadow::placed(placed, start, len, true));
+        note(&shadow);
+        map.insert((start, len), shadow.clone());
+        return Some(shadow);
+    }
+    // In a GPU upload heap, if asked for and there is room: one buffer in
+    // the card's memory, which the CPU fills and shaders read.
+    if let Some((buffer, data)) = window_upload_for(len) {
+        crate::host::name(&buffer, || format!("title memory {start:#x}+{len:#x} in a GPU upload heap"));
+        // SAFETY: a live buffer.
+        let gpu = unsafe { buffer.GetGPUVirtualAddress() };
+        let mut shadow = Shadow::new(buffer, data, gpu, start, len);
+        shadow.window = true;
+        shadow.uploaded = len;
+        let shadow = Arc::new(shadow);
         note(&shadow);
         map.insert((start, len), shadow.clone());
         return Some(shadow);

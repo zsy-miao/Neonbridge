@@ -73,6 +73,8 @@ pub(crate) struct Usage {
     pub heap_samplers: bool,
     /// A 64-bit atomic.
     pub atomic64: bool,
+    /// A rasterizer-ordered UAV handle.
+    pub rov: bool,
 }
 
 /// What makes two instructions without an effect the same value.
@@ -1004,6 +1006,8 @@ impl Module {
                 let name = name.strip_prefix("dx.op.").unwrap_or(name);
                 if name.starts_with("wave") || name.starts_with("quad") {
                     u.wave_ops = true;
+                } else if name == "annotateHandle" {
+                    u.rov |= annotation(V::Inst(i)).is_some_and(|(kind, _)| kind & 0x2000 != 0);
                 } else if name == "createHandleFromHeap" {
                     match args.get(2).and_then(|&s| self.int_k(s)) {
                         Some((_, 0)) => u.heap_views = true,

@@ -58,6 +58,18 @@ pub(crate) fn listed(n: u64) -> bool {
 /// stays empty.
 #[cfg(feature = "diagnostics")]
 pub(crate) fn op(list: usize, what: impl FnOnce() -> String) {
+    // A frame shot (`crate::shot`) keeps every line of its frame.
+    if crate::shot::keeping_lines() {
+        let text = what();
+        crate::shot::line(list, &text);
+        return op_listed(list, move || text);
+    }
+    op_listed(list, what);
+}
+
+/// [`op`] for the frames [`listed`] and the lines before the world.
+#[cfg(feature = "diagnostics")]
+fn op_listed(list: usize, what: impl FnOnce() -> String) {
     use std::io::Write;
     let frame = crate::queue::presented() + 1;
     if !listed(frame) {
@@ -212,6 +224,24 @@ fn save_as(name: &str, width: u32, height: u32, pitch: usize, bgra: bool, rows: 
     }
 }
 
+/// A PNG of `w` by `h` 8-bit RGB pixels; `raw` is its rows, each after a
+/// filter byte 0 (for `crate::shot`, whose pictures have names and sizes
+/// of their own).
+pub(crate) fn png_rgb(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut header = Vec::new();
+    header.extend(w.to_be_bytes());
+    header.extend(h.to_be_bytes());
+    header.extend([8, 2, 0, 0, 0]); // 8-bit RGB
+    chunk(&mut png, b"IHDR", &header);
+    let mut compressed = vec![0u8; zlib_rs::compress_bound(raw.len())];
+    let (idat, rc) = zlib_rs::compress_slice(&mut compressed, raw, zlib_rs::DeflateConfig::new(3));
+    debug_assert_eq!(rc, zlib_rs::ReturnCode::Ok);
+    chunk(&mut png, b"IDAT", idat);
+    chunk(&mut png, b"IEND", &[]);
+    png
+}
+
 fn chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     png.extend((data.len() as u32).to_be_bytes());
     let start = png.len();
@@ -244,7 +274,7 @@ pub(crate) fn read_back(
 
 /// As [`read_back`], of subresource `sub` (the stencil plane of a
 /// one-level, one-slice depth-stencil texture is subresource 1).
-fn read_back_of(
+pub(crate) fn read_back_of(
     device: &ID3D12Device,
     list: &ID3D12GraphicsCommandList,
     texture: &ID3D12Resource,
@@ -560,7 +590,7 @@ fn small_float(bits: u32, man: u32) -> f32 {
 /// as channel values scaled so the largest finite one is white (single
 /// channels: lowest black, highest white, as grey). `None` for formats not
 /// handled.
-fn to_rgba(format: u32, w: usize, h: usize, pitch: usize, rows: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn to_rgba(format: u32, w: usize, h: usize, pitch: usize, rows: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(w * h * 4);
     let px = |x: usize, y: usize, n: usize| &rows[y * pitch + x * n..][..n];
     let u16_at = |b: &[u8], i: usize| u16::from_le_bytes([b[2 * i], b[2 * i + 1]]);

@@ -2176,8 +2176,27 @@ mod tests {
                 assert_eq!(read_sub(r, 0), subresources(base + off, &xg::Texture::new(&d).unwrap())[0].data, "4 KiB neighbour at +{off:#x} crosstalk");
             }
             let pages_before_reuse = dev_pages();
+            // Binding sweeps pages idle for two seconds, so the device-wide count can fall
+            // here even when this placement shares the extra tile it already has.
+            let first = adj[1].as_raw() as usize;
+            let before = super::super::vram::mapped_tiles_for(dev_key, first);
             let reused = place_tex(base + 0x4000, &d16);
-            assert_eq!(dev_pages(), pages_before_reuse, "reusing unaligned va must share extra_pages tile");
+            if super::super::vram::is_placed_texture(first) {
+                let before = before.expect("the first unaligned placement is mapped");
+                assert!(!before.1.is_empty(), "a 16 KiB texture in a 64 KiB page uses an extra tile");
+                assert_eq!(
+                    super::super::vram::mapped_tiles_for(dev_key, first).as_ref(),
+                    Some(&before),
+                    "the first placement keeps its tiles when the va is placed again",
+                );
+                assert_eq!(
+                    super::super::vram::mapped_tiles_for(dev_key, reused.as_raw() as usize).as_ref().map(|t| &t.1),
+                    Some(&before.1),
+                    "reusing unaligned va must share extra_pages tile",
+                );
+            } else {
+                assert_eq!(dev_pages(), pages_before_reuse, "reusing unaligned va must share extra_pages tile");
+            }
             // Overwrite the first 64 KiB (covering +0x0000, +0x4000 (both adj[1] & reused), +0x8000, +0xC000)
             // WITHOUT releasing adj/reused: dead extra_pages (+0x4000, +0x8000) must drop immediately!
             let cover = place_tex(base, &d64);

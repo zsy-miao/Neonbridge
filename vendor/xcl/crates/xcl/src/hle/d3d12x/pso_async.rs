@@ -4,7 +4,7 @@
 //! pipeline (shaders that draw nothing) at once and the real one is built on a worker; binding
 //! (`SetPipelineState`, console list replay, the two-pass lookups) uses the real one as soon
 //! as it is there. A graphics pipeline draws nothing until then; a compute pipeline is waited
-//! for at its first bind (a skipped dispatch would corrupt what it computes).
+//! for where it is used, a `Dispatch` at its submit (a skipped dispatch would corrupt what it computes).
 //! `XCL_ASYNC_PSO=0` builds every pipeline in the call, as before.
 
 use std::collections::HashMap;
@@ -40,6 +40,8 @@ struct Pending {
 #[derive(Default)]
 struct Demand {
     wanted: bool,
+    /// a call put off to the submit needs it (`need_by_submit`)
+    by_submit: bool,
     /// thread id of the preload worker (lowest priority) building it, 0 = none
     preload_thread: u32,
 }
@@ -267,6 +269,13 @@ pub fn enabled() -> bool {
 /// Builds the real pipeline: its raw pointer, 0 = failed.
 pub type Job = Box<dyn FnOnce() -> usize + Send>;
 
+/// pipelines a submit will wait for: the workers take these before their queue (`need_by_submit`)
+static NEEDED: Mutex<std::collections::VecDeque<Arc<Pending>>> = Mutex::new(std::collections::VecDeque::new());
+
+fn next_needed() -> Option<Arc<Pending>> {
+    NEEDED.lock().unwrap().pop_front()
+}
+
 /// Drop an unstarted orphaned job outside all locks and wake any concurrent waiter.
 fn drop_unstarted_job(p: &Pending) {
     let job = p.job.lock().unwrap().take();
@@ -294,6 +303,9 @@ fn queue() -> &'static Mutex<mpsc::Sender<Work>> {
             let _ = std::thread::Builder::new().name(format!("xcl-pso-{k}")).stack_size(64 << 20).spawn(move || loop {
                 let next = rx.lock().unwrap().recv();
                 let Ok(work) = next else { return };
+                while let Some(p) = next_needed() {
+                    build_queued(&p);
+                }
                 work();
             });
         }
@@ -302,18 +314,20 @@ fn queue() -> &'static Mutex<mpsc::Sender<Work>> {
 }
 
 fn enqueue(p: Arc<Pending>) {
-    let _ = queue().lock().unwrap().send(Box::new(move || {
-        // (released by the title meanwhile)
-        if p.orphan.load(Ordering::Acquire) {
-            drop_unstarted_job(&p);
-            return;
-        }
-        // (None: a bind took it and builds it itself)
-        let job = p.job.lock().unwrap().take();
-        if let Some(job) = job {
-            build(&p, job, false);
-        }
-    }));
+    let _ = queue().lock().unwrap().send(Box::new(move || build_queued(&p)));
+}
+
+fn build_queued(p: &Arc<Pending>) {
+    // (released by the title meanwhile)
+    if p.orphan.load(Ordering::Acquire) {
+        drop_unstarted_job(p);
+        return;
+    }
+    // (None: a bind took it and builds it itself)
+    let job = p.job.lock().unwrap().take();
+    if let Some(job) = job {
+        build(p, job, false);
+    }
 }
 
 /// The caller also drains its batch. Multiple workers can therefore build
@@ -669,6 +683,34 @@ mod used_tests {
         assert_eq!(resolve_wait_for(waited, None), 0x5B5B);
         let _ = released(spared);
         let _ = released(waited);
+    }
+
+    #[test]
+    fn a_pipeline_a_submit_needs_is_built_before_the_queue() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let backlog = 8 * crate::gpu::recomp::dxc::compile_threads();
+        let standins: Vec<usize> = (0..=backlog).map(|i| 0x7E57_E000usize + i).collect();
+        for &standin in &standins {
+            let order = order.clone();
+            submit(standin, true, Box::new(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                order.lock().unwrap().push(standin);
+                0x6161
+            }));
+        }
+        let last = *standins.last().unwrap();
+        need_by_submit(last);
+        let start = std::time::Instant::now();
+        while standins.iter().any(|&s| is_pending(s)) && start.elapsed() < std::time::Duration::from_secs(30) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let order = order.lock().unwrap();
+        assert_eq!(order.len(), standins.len());
+        let at = order.iter().position(|&s| s == last).unwrap();
+        assert!(at < order.len() / 2, "made last and needed by a submit, it was built {at} of {}", order.len());
+        for &standin in &standins {
+            let _ = released(standin);
+        }
     }
 
     /// A bind waits for a pipeline still being built no longer than its budget and goes on with
@@ -1168,6 +1210,22 @@ pub fn released(pso: usize) -> usize {
 /// `pso` is a stand-in whose real pipeline is still being built.
 pub fn is_pending(pso: usize) -> bool {
     entry(pso).is_some_and(|p| !*p.done.lock().unwrap())
+}
+
+/// One of the title's threads is about to wait for `pso`.
+pub fn want(pso: usize) {
+    if let Some(p) = entry(pso) {
+        p.want();
+    }
+}
+
+/// A call with `pso` was put off to the submit: its build goes before the workers' queue.
+pub fn need_by_submit(pso: usize) {
+    let Some(p) = entry(pso) else { return };
+    if !std::mem::replace(&mut p.demand.lock().unwrap().by_submit, true) {
+        NEEDED.lock().unwrap().push_back(p);
+        let _ = queue().lock().unwrap().send(Box::new(|| ()));
+    }
 }
 
 /// (built in the background, failed, still building)
