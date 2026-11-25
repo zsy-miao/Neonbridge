@@ -1567,12 +1567,15 @@ fn seed_cache(name: &str, cache: &Path) {
         return;
     }
     let Some(fmt) = cache_format(name) else { return };
-    for from in ["klbf", "victory", "vibrport", "vitoriabr", "scarlettport", "flamingo", "belobug"] {
-        if from == name || cache_format(from) != Some(fmt) {
-            continue;
-        }
+    let mut froms: Vec<(&str, PathBuf)> = ["klbf", "victory", "vibrport", "vitoriabr", "scarlettport", "flamingo", "belobug"]
+        .into_iter().filter(|f| *f != name && cache_format(f) == Some(fmt)).map(|f| (f, self::cache(f))).collect();
+    // The old shared cache (6ixpack\cache) is VSH1: a key it has loads, a stale one is rejected and compiled.
+    if fmt == "VSH1" {
+        froms.push(("the old shared cache", pack().join("cache")));
+    }
+    for (from, root) in froms {
         for sub in ["shaders", "pipelines"] {
-            let src = self::cache(from).join(sub);
+            let src = root.join(sub);
             if !src.is_dir() {
                 continue;
             }
