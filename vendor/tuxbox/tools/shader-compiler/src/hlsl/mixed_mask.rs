@@ -41,7 +41,8 @@ pub(super) fn mask_position(masks: &BTreeSet<u8>, ins: &Insn) -> Option<usize> {
         return Some(0);
     }
     // s_ff1 of VCC or a tracked mask finds the wave's first set lane, not this
-    // lane's bit (Xbox2Windows a81a6f07, MIT). EXEC has its own lowerings.
+    // lane's bit (xcl f90033c, s_ff1 of a mask in lower/wave.rs). EXEC has
+    // its own lowerings.
     if ins.mnemonic.starts_with("s_ff1_i32_b")
         && ins.src.first().is_some_and(|o| *o != Opnd::ExecLo && is_lane_mask(masks, o))
     {
@@ -52,7 +53,8 @@ pub(super) fn mask_position(masks: &BTreeSet<u8>, ins: &Insn) -> Option<usize> {
     }
     let number = |o: &Opnd| match *o {
         Opnd::Sgpr(n) => !masks.contains(&n) && !(n > 0 && masks.contains(&(n - 1))),
-        // Constants and NULL too, 0 and all ones included (xcl 15fff3b): a
+        // Constants and NULL too, 0 and all ones included (xcl 15fff3b
+        // operands; the whole-wave SCC is xcl 438d420): a
         // per-lane SCC of `exec ^ -1` is 1 in every lane, the wave's is 0
         // when every lane is in EXEC. A negative inline constant's high word
         // is all ones, a literal's is zero (`hi`).

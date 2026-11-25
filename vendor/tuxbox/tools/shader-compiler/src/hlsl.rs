@@ -5722,8 +5722,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     /// After a mask op whose SCC is this lane's bit: the wave's SCC, so an SCC
     /// branch or select after it is uniform like the EXEC and VCC branches, and
-    /// a group barrier under it is reached by every lane (VIctory e9765a7: group
-    /// barriers in divergent flow hang the GPU). Gated like `exec_vote`.
+    /// a group barrier under it is reached by every lane (xcl 438d420, mixed
+    /// mask/number SCC, and 1c971de, SccKind::Any over the wave). Gated like
+    /// `exec_vote`.
     fn vote_scc(&mut self, i: usize) {
         if self.scc_votes.contains(&i) && self.exec_vote(9).is_some() {
             self.line("#if __SHADER_TARGET_MAJOR >= 6");
@@ -8084,8 +8085,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             (_, Some(found)) => found,
             _ => {
                 // A packed half with no signature element reads 0 instead of
-                // refusing the pixel shader (fxceless lower.rs 9055-9063, via
-                // ztrx/VItoriaBr). p1 writes a 0 partial; p2 writes a 0 half.
+                // refusing the pixel shader (VItoriaBr f95856d, packed f16
+                // padding halves). p1 writes a 0 partial; p2 writes a 0 half.
                 let dst = ins.dst.first().cloned().ok_or("no dst")?;
                 if !is_p2 {
                     return self.wv(&dst, "0u");
@@ -8389,7 +8390,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 "v_sqrt_f16" => format!("sqrt({a})"),
                 "v_rsq_f16" => format!("rsqrt({a})"),
                 "v_exp_f16" => format!("exp2({a})"),
-                // Xbox2Windows 9cec06e4 (MIT): the binary16 transcendentals.
+                // The binary16 transcendentals (leonida rdna2spirv v_log_f16).
                 "v_log_f16" => format!("log2({a})"),
                 "v_floor_f16" => format!("floor({a})"),
                 "v_ceil_f16" => format!("ceil({a})"),
@@ -8412,7 +8413,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             return self.wv(&d, &hres(e));
         }
-        // Binary16 frexp (Xbox2Windows 9cec06e4, MIT): the half widens to f32
+        // Binary16 frexp (leonida 43c737f45): the half widens to f32
         // exactly, and its mantissa in [0.5, 1) narrows back exactly. The
         // exponent is an i16 in the low half; 0, Inf and NaN give 0.
         if ins.aux.sdwa.is_none() && matches!(m.as_str(), "v_frexp_mant_f16" | "v_frexp_exp_i16_f16") {
