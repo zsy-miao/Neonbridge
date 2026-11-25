@@ -1390,6 +1390,8 @@ pub(super) mod residency {
         let after = after_ms();
         if after != 0 && age.as_millis() as u64 > after / 2 {
             HOLD_UNTIL.fetch_max(now_ms() + after, Relaxed);
+            HOLDS.fetch_add(1, Relaxed);
+            HOLD_AGE_MAX.fetch_max(age.as_millis() as u64, Relaxed);
         }
     }
 
@@ -1397,9 +1399,35 @@ pub(super) mod residency {
     /// `flush` stamps the uses submissions queued; it runs after the chosen
     /// heaps are flagged and counted, so a submission queued before it is
     /// seen by the recheck, and one queued after it sees `any_evicted`.
+    /// Lists whose age held eviction, and the oldest such age (ms).
+    static HOLDS: AtomicU64 = AtomicU64::new(0);
+    static HOLD_AGE_MAX: AtomicU64 = AtomicU64::new(0);
+
+    /// Why an over-budget pass evicted nothing, every 10 s at most, so a
+    /// run names the blocker. TUXBOX_EVICT_BLOCKER_LINE=0 off.
+    fn blocked(why: std::fmt::Arguments) {
+        static LAST: AtomicU64 = AtomicU64::new(0);
+        if crate::env_toggle!("TUXBOX_EVICT_BLOCKER_LINE") == Some("0") {
+            return;
+        }
+        let now = now_ms();
+        let last = LAST.load(Relaxed);
+        if now.saturating_sub(last) < 10_000 || LAST.compare_exchange(last, now, Relaxed, Relaxed).is_err() {
+            return;
+        }
+        crate::diagnostics::log_line(format_args!(
+            "render heaps: over budget, none evicted: {why} (holds by list age {}, oldest list {} ms; TUXBOX_EVICT_BLOCKER_LINE=0 off)",
+            HOLDS.load(Relaxed), HOLD_AGE_MAX.load(Relaxed)));
+    }
+
     pub(crate) fn evict_idle(device: &ID3D12Device, flush: impl Fn()) {
         let after = after_ms();
-        if !enabled() || after == 0 || now_ms() < HOLD_UNTIL.load(Relaxed) {
+        if !enabled() || after == 0 {
+            return;
+        }
+        let hold = HOLD_UNTIL.load(Relaxed);
+        if now_ms() < hold {
+            blocked(format_args!("held by list age for {} ms more", hold - now_ms()));
             return;
         }
         let _held = RESIDENCY.lock().unwrap_or_else(|e| e.into_inner());
@@ -1423,8 +1451,10 @@ pub(super) mod residency {
             }
         }
         if flagged.is_empty() {
+            blocked(format_args!("no heap unused for {} ms", after));
             return;
         }
+        let candidates = flagged.len();
         flush();
         for (heap, used) in flagged {
             if heap.used.load(SeqCst) != used {
@@ -1435,6 +1465,7 @@ pub(super) mod residency {
             }
         }
         if chosen.is_empty() {
+            blocked(format_args!("all {candidates} idle heaps were in use by queued submissions (in flight)"));
             return;
         }
         let list: Vec<Option<ID3D12Pageable>> = chosen.iter().map(|h| h.native.cast().ok()).collect();
