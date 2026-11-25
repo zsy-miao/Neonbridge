@@ -41,7 +41,12 @@ pub(crate) struct PipelineData {
     pub(crate) compute: bool,
     /// The guest stream it was made from, for CreateDerivedPipelineStateX.
     pub(in crate::device) derive_from: Option<std::sync::Arc<super::stream::background::OwnedStream>>,
+    /// The slot 57 record it was made from (TUXBOX_SLOT57_REAL=1): draws
+    /// pick a variant for the list's targets (slot57::variant).
+    pub(crate) slot57: Option<std::sync::Arc<super::slot57::Bound>>,
 }
+
+pub(crate) use super::slot57::{Bound as Slot57, Targets as Slot57Targets, targets as slot57_targets, variant as slot57_variant};
 
 /// The host pipeline and state to bind: a worker's rebuild once it exists.
 /// The flag is set while a lazy pipeline is still being made: the list
@@ -356,8 +361,8 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     let Some(placeholder) = super::stream::background::placeholder(this) else {
         return E_NOTIMPL;
     };
-    let state = PipelineData { lazy: true, ..Default::default() };
-    let upgrade = if real { unsafe { super::slot57::upgrade(this, desc) } } else { super::stream::background::never() };
+    let (upgrade, slot57) = if real { unsafe { super::slot57::upgrade(this, desc) } } else { (super::stream::background::never(), None) };
+    let state = PipelineData { lazy: true, slot57, ..Default::default() };
     let _ = state.upgrade.set(upgrade);
     if call < 4 && !real {
         crate::diagnostics::log_line(format_args!(

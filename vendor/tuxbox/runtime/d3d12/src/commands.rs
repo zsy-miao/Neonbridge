@@ -84,6 +84,11 @@ struct Recording {
     stencil_slot: Option<u32>,
     stencil_targets: Option<stencil::Targets>,
     dsv_bound: bool,
+    /// TUXBOX_SLOT57_REAL=1: the bound slot 57 record, the bound target
+    /// formats and the title's own stencil reference (graphics::draw_slot57).
+    slot57: Option<Arc<device::compute::Slot57>>,
+    slot57_targets: device::compute::Slot57Targets,
+    stencil_reference: u32,
     display_bound: bool,
     /// A bound render target has the presented plane's size (rebox 8af34bf).
     display_sized: bool,
@@ -827,6 +832,9 @@ unsafe extern "system" fn reset(
             targets.unbind();
         }
         state.dsv_bound = false;
+        state.slot57 = None;
+        state.slot57_targets = Default::default();
+        state.stencil_reference = 0;
         state.trace_target = None;
         state.trace_samples.clear();
         state.placed_reads.clear();
@@ -3406,6 +3414,9 @@ pub(crate) unsafe fn wrap_command_list(
             stencil_slot: initial.and_then(|p| device::compute::current(p).1.stencil_slot),
             stencil_targets: None,
             dsv_bound: false,
+            slot57: None,
+            slot57_targets: Default::default(),
+            stencil_reference: 0,
             display_bound: false,
             display_sized: false,
             trace_target: None,

@@ -1346,6 +1346,7 @@ pub(super) unsafe extern "system" fn rtv(
         b.FirstElement = rebase_view(window, adjusted.Format.0, 0, b.FirstElement, b.NumElements);
         &adjusted
     } else { desc };
+    super::slot57::note_view(handle.ptr, unsafe { desc.as_ref() }.map(|d| d.Format).or_else(|| resource.map(|r| unsafe { r.GetDesc() }.Format)));
     unsafe {
         device
             .native
@@ -1425,6 +1426,7 @@ pub(super) unsafe extern "system" fn dsv(
             });
         device.state.depth_views.set(handle.ptr, surface);
     }
+    super::slot57::note_view(handle.ptr, unsafe { desc.as_ref() }.map(|d| d.Format).or_else(|| resource.map(|r| unsafe { r.GetDesc() }.Format)));
     unsafe {
         device
             .native

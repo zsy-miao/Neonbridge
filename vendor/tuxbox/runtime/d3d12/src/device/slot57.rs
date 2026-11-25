@@ -410,9 +410,130 @@ fn opaque() -> D3D12_BLEND_DESC {
     blend
 }
 
-/// Render target format until list formats reach the build (palmetto's default).
+/// Render target format of the create-time variant (palmetto's default).
 const RT_FORMAT: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT =
     windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
+
+/// A command list's bound render-target and depth formats (host formats,
+/// OMSetRenderTargets), which pick a record's pipeline variant (Xbox2Windows
+/// d3d12_draw.inl pipeline_for / pass_dsv_format, MIT).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+pub(crate) struct Targets {
+    pub count: u32,
+    pub rtv: [i32; 8],
+    /// 0 (DXGI_FORMAT_UNKNOWN) when no DSV is bound.
+    pub dsv: i32,
+    /// A bound handle whose view format was never recorded.
+    pub unknown: bool,
+}
+
+impl Targets {
+    /// The create-time variant: one RGBA8 target, no depth.
+    fn legacy() -> Self {
+        let mut t = Targets { count: 1, ..Default::default() };
+        t.rtv[0] = RT_FORMAT.0;
+        t
+    }
+}
+
+/// Host view format of each RTV/DSV handle, written at view creation
+/// (TUXBOX_SLOT57_REAL=1 only).
+static VIEW_FORMATS: std::sync::Mutex<Option<std::collections::HashMap<usize, i32>>> = std::sync::Mutex::new(None);
+
+pub(super) fn note_view(handle: usize, format: Option<windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT>) {
+    if !real() {
+        return;
+    }
+    let mut map = VIEW_FORMATS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = map.get_or_insert_with(Default::default);
+    match format {
+        Some(f) => { map.insert(handle, f.0); }
+        None => { map.remove(&handle); }
+    }
+}
+
+/// The formats an OMSetRenderTargets binds; None when the flag is off.
+pub(crate) unsafe fn targets(
+    device: *mut c_void, count: u32, rtvs: *const D3D12_CPU_DESCRIPTOR_HANDLE, contiguous: bool,
+    dsv: *const D3D12_CPU_DESCRIPTOR_HANDLE,
+) -> Option<Targets> {
+    if !real() {
+        return None;
+    }
+    let device = unsafe { &*device.cast::<super::Device>() };
+    let stride = if contiguous && count > 1 {
+        (unsafe { device.native.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) }) as usize
+    } else { 0 };
+    let map = VIEW_FORMATS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut unknown = false;
+    let mut look = |handle: usize| match map.as_ref().and_then(|m| m.get(&handle)) {
+        Some(&f) => f,
+        None => { unknown = true; 0 }
+    };
+    let count = count.min(8);
+    let mut rtv = [0i32; 8];
+    for (i, slot) in rtv.iter_mut().enumerate().take(count as usize) {
+        // SAFETY: the caller checked rtvs holds count handles (or one when contiguous).
+        let handle = if contiguous { unsafe { (*rtvs).ptr }.wrapping_add(i * stride) } else { unsafe { (*rtvs.add(i)).ptr } };
+        *slot = look(handle);
+    }
+    let dsv = unsafe { dsv.as_ref() }.map_or(0, |h| look(h.ptr));
+    Some(Targets { count, rtv, dsv, unknown })
+}
+
+/// A slot 57 record a pipeline was made from, with its key computed once.
+pub(crate) struct Bound {
+    record: Record,
+    key: u64,
+}
+
+/// The variant of `bound` for `targets`: its pipeline once made and the
+/// stencil reference to set around its draws (Xbox2Windows d3d12_draw.inl
+/// pipeline_for and depth_state_apply.h, MIT). None while it is still being
+/// made or was refused: the draw is dropped, logged once per variant.
+pub(crate) unsafe fn variant(device: *mut c_void, bound: &Bound, targets: Targets) -> Option<(ID3D12PipelineState, Option<u8>)> {
+    use std::sync::{Arc, Mutex};
+    type Entry = (Arc<super::stream::Upgrade>, Option<u8>);
+    static VARIANTS: Mutex<Option<std::collections::HashMap<(u64, Targets), Entry>>> = Mutex::new(None);
+    let entry = {
+        let mut map = VARIANTS.lock().unwrap_or_else(|e| e.into_inner());
+        let map = map.get_or_insert_with(Default::default);
+        match map.get(&(bound.key, targets)) {
+            Some(e) => e.clone(),
+            None => {
+                let device = unsafe { &*device.cast::<super::Device>() };
+                let made = if targets.unknown {
+                    Err("a bound RTV or DSV has no recorded view format".to_string())
+                } else {
+                    unsafe { build(device, &bound.record, targets) }
+                };
+                let e = match made {
+                    Ok(e) => e,
+                    Err(why) => {
+                        crate::diagnostics::log_line(format_args!(
+                            "slot 57 record {:016x} variant {targets:?}: refused: {why}; its draws are dropped (TUXBOX_SLOT57_REAL=1)", bound.key));
+                        (super::stream::background::never(), None)
+                    }
+                };
+                map.insert((bound.key, targets), e.clone());
+                e
+            }
+        }
+    };
+    match super::stream::background::ready(&entry.0) {
+        Some(built) => Some((built.pipeline().native.clone(), entry.1)),
+        None => {
+            static SEEN: Mutex<Vec<(u64, Targets)>> = Mutex::new(Vec::new());
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            if seen.len() < 64 && !seen.contains(&(bound.key, targets)) {
+                seen.push((bound.key, targets));
+                crate::diagnostics::log_line(format_args!(
+                    "slot 57 record {:016x} variant {targets:?}: not made yet, draw dropped (logged once; TUXBOX_SLOT57_REAL=1)", bound.key));
+            }
+            None
+        }
+    }
+}
 
 /// The upgrade for one record: a lazy stream pipeline (Xbox2Windows
 /// d3d12_draw.inl translation_for / pipeline_for, MIT; palmetto
@@ -420,11 +541,11 @@ const RT_FORMAT: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT =
 /// through create_pipeline, so the wrapped VS/PS go through raster_with_root
 /// with the record's root (+0x00) via the root proxy. Records with the same
 /// VS, PS, block A, B, root and formats share one upgrade.
-unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Arc<super::stream::Upgrade>, String> {
+unsafe fn build(device: &super::Device, record: &Record, targets: Targets) -> Result<(std::sync::Arc<super::stream::Upgrade>, Option<u8>), String> {
     use std::sync::{Arc, Mutex};
     use super::stream::{Upgrade, background};
     use windows::core::Interface;
-    static CACHE: Mutex<Vec<(u64, Arc<Upgrade>)>> = Mutex::new(Vec::new());
+    static CACHE: Mutex<Vec<(u64, Arc<Upgrade>, Option<u8>)>> = Mutex::new(Vec::new());
     if record.vs.is_empty() || record.ps.is_empty() {
         return Err("VS or PS program unreadable".into());
     }
@@ -437,11 +558,11 @@ unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Ar
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (&record.vs, &record.ps, &record.a, &record.b, record.root, RT_FORMAT.0, 0u32).hash(&mut h);
+        (&record.vs, &record.ps, &record.a, &record.b, record.root, targets).hash(&mut h);
         h.finish()
     };
-    if let Some((_, slot)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) {
-        return Ok(slot.clone());
+    if let Some(slot) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, ..)| *k == key) {
+        return Ok((slot.1.clone(), slot.2));
     }
     let layout = if record.b.is_empty() { Vec::new() } else { elements(&record.b)? };
     let descs: Vec<D3D12_INPUT_ELEMENT_DESC> = layout.iter().map(|e| D3D12_INPUT_ELEMENT_DESC {
@@ -460,9 +581,8 @@ unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Ar
     } else {
         opaque()
     };
-    // No DSV until list formats reach the build: depth and stencil off, so
-    // slot57::depth_stencil and its stencil reference are not applied yet.
-    // TODO: per-list RTV/DSV variants and OMSetStencilRef around draws (X2W).
+    // Depth and stencil only with a DSV bound (Xbox2Windows d3d12_draw.inl
+    // pass_dsv_format, MIT); off otherwise, as the create-time variant has.
     let keep = D3D12_DEPTH_STENCILOP_DESC {
         StencilFailOp: D3D12_STENCIL_OP_KEEP,
         StencilDepthFailOp: D3D12_STENCIL_OP_KEEP,
@@ -479,14 +599,17 @@ unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Ar
         FrontFace: keep,
         BackFace: keep,
     };
+    let (depth, reference) = if targets.dsv != 0 { depth_stencil(&record.a)? } else { (depth, None) };
     let raster = D3D12_RASTERIZER_DESC {
         FillMode: D3D12_FILL_MODE_SOLID,
         CullMode: D3D12_CULL_MODE_NONE,
         DepthClipEnable: TRUE,
         ..Default::default()
     };
-    let mut formats = D3D12_RT_FORMAT_ARRAY { NumRenderTargets: 1, ..Default::default() };
-    formats.RTFormats[0] = RT_FORMAT;
+    let mut formats = D3D12_RT_FORMAT_ARRAY { NumRenderTargets: targets.count, ..Default::default() };
+    for (to, &from) in formats.RTFormats.iter_mut().zip(&targets.rtv).take(targets.count as usize) {
+        *to = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT(from);
+    }
     let mut stream = Vec::new();
     push(&mut stream, 0, &(record.root as *mut c_void));
     push(&mut stream, 1, &D3D12_SHADER_BYTECODE { pShaderBytecode: vs.as_ptr().cast(), BytecodeLength: vs.len() });
@@ -498,6 +621,9 @@ unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Ar
     push(&mut stream, 12, &D3D12_INPUT_LAYOUT_DESC { pInputElementDescs: descs.as_ptr(), NumElements: descs.len() as u32 });
     push(&mut stream, 14, &D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE.0);
     push(&mut stream, 15, &formats);
+    if targets.dsv != 0 {
+        push(&mut stream, 16, &windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT(targets.dsv));
+    }
     push(&mut stream, 17, &windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 });
     let mut words = vec![0usize; stream.len().div_ceil(size_of::<usize>())];
     // SAFETY: words holds at least stream.len() bytes.
@@ -510,21 +636,28 @@ unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Ar
     // checked root) is live for this call; the copy owns its own.
     let owned = unsafe { background::OwnedStream::copy(&desc) }.ok_or("stream copy refused")?;
     let slot = background::lazy((*identity).clone(), background::Work::Stream(owned));
-    CACHE.lock().unwrap_or_else(|e| e.into_inner()).push((key, slot.clone()));
-    Ok(slot)
+    CACHE.lock().unwrap_or_else(|e| e.into_inner()).push((key, slot.clone(), reference));
+    Ok((slot, reference))
 }
 
 /// Stage 2: the upgrade the placeholder carries. On any failure the
 /// placeholder keeps a never-built upgrade (draws dropped, as before) and
 /// the reason is logged once per record, 32 lines at most.
-pub(super) unsafe fn upgrade(device: &super::Device, desc: *const c_void) -> std::sync::Arc<super::stream::Upgrade> {
+/// Also returns the record, for the per-list variants of its draws.
+pub(super) unsafe fn upgrade(device: &super::Device, desc: *const c_void) -> (std::sync::Arc<super::stream::Upgrade>, Option<std::sync::Arc<Bound>>) {
     use std::sync::Mutex;
     let result = match decode(desc) {
-        Some(record) => unsafe { build(device, &record) }.map_err(|why| (record.hash(), why)),
+        Some(record) => match unsafe { build(device, &record, Targets::legacy()) } {
+            Ok((slot, _)) => Ok((slot, record)),
+            Err(why) => Err((record.hash(), why)),
+        },
         None => Err((0, "record unreadable".to_string())),
     };
     match result {
-        Ok(slot) => slot,
+        Ok((slot, record)) => {
+            let key = record.hash();
+            (slot, Some(std::sync::Arc::new(Bound { record, key })))
+        }
         Err((hash, why)) => {
             static SEEN: Mutex<Vec<u64>> = Mutex::new(Vec::new());
             let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -533,7 +666,7 @@ pub(super) unsafe fn upgrade(device: &super::Device, desc: *const c_void) -> std
                 crate::diagnostics::log_line(format_args!(
                     "slot 57 record {hash:016x}: real pipeline refused: {why}; placeholder (TUXBOX_SLOT57_REAL=1)"));
             }
-            super::stream::background::never()
+            (super::stream::background::never(), None)
         }
     }
 }

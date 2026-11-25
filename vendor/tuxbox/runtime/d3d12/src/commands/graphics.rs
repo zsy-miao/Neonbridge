@@ -78,7 +78,40 @@ pub(super) fn bind_host(
     state.null_pipeline = crate::diagnostics::display::is_null_pipeline(native.as_raw());
     state.bindings.pipeline = Some(host.into());
     state.bindings.draw_trace = data.draw_trace.clone();
+    state.slot57 = host.state.slot57.clone();
     unsafe { list.native.SetPipelineState(native) };
+}
+
+/// TUXBOX_SLOT57_REAL=1: a draw with a slot 57 record bound sets the
+/// record's variant for the list's RTV/DSV formats, and its decoded stencil
+/// reference around the draw, then restores the title's own (Xbox2Windows
+/// d3d12_draw.inl pipeline_for and depth_state_apply.h, MIT). A variant not
+/// made yet drops the draw, as the placeholder did. Other pipelines draw as before.
+fn draw_slot57(list: &List, state: &mut super::Recording, rasterizes: bool, draw: impl FnOnce()) {
+    let Some(bound) = state.slot57.clone() else {
+        return state.draw(list, rasterizes, draw);
+    };
+    // A refused call earlier in the list (pending, no pipeline) still drops.
+    if state.pipeline_pending && state.pending_pipeline == 0 {
+        return state.draw(list, rasterizes, draw);
+    }
+    let Some((pso, reference)) = (unsafe {
+        crate::device::compute::slot57_variant(parent(&list.parent), &bound, state.slot57_targets)
+    }) else {
+        return;
+    };
+    unsafe { list.native.SetPipelineState(&pso) };
+    let saved = (state.pipeline_pending, state.pending_pipeline);
+    state.pipeline_pending = false;
+    state.pending_pipeline = 0;
+    if let Some(r) = reference {
+        unsafe { list.native.OMSetStencilRef(u32::from(r)) };
+    }
+    state.draw(list, rasterizes, draw);
+    if reference.is_some() {
+        unsafe { list.native.OMSetStencilRef(state.stencil_reference) };
+    }
+    (state.pipeline_pending, state.pending_pipeline) = saved;
 }
 
 pub(super) unsafe extern "system" fn viewports(
@@ -153,6 +186,9 @@ pub(super) unsafe extern "system" fn targets(
         return;
     }
     state.dsv_bound = !dsv.is_null();
+    if let Some(t) = unsafe { crate::device::compute::slot57_targets(parent(&list.parent), count, rtvs, contiguous.as_bool(), dsv) } {
+        state.slot57_targets = t;
+    }
     state.display_sized = state.bound_placed_targets.iter()
         .any(|t| { let (w, h) = t.extent(); crate::diagnostics::display_sized(w, h) });
     if let Some(h) = unsafe { dsv.as_ref() } {
@@ -211,7 +247,7 @@ pub(super) unsafe extern "system" fn draw(
 ) {
     let mut state = recording(list);
     if state.can_record_graphics(&list.native) {
-        state.draw(list, vertices != 0 && instances != 0, || unsafe {
+        draw_slot57(list, &mut state, vertices != 0 && instances != 0, || unsafe {
             list.native
                 .DrawInstanced(vertices, instances, start_vertex, start_instance);
             static FIRST: std::sync::Once = std::sync::Once::new();
@@ -435,7 +471,7 @@ pub(super) unsafe extern "system" fn draw_indexed(
 ) {
     let mut state = recording(list);
     if state.can_record_graphics(&list.native) {
-        state.draw(list, indices != 0 && instances != 0, || unsafe {
+        draw_slot57(list, &mut state, indices != 0 && instances != 0, || unsafe {
             list.native
                 .DrawIndexedInstanced(indices, instances, first, base_vertex, first_instance);
             static FIRST: std::sync::Once = std::sync::Once::new();
@@ -457,6 +493,7 @@ pub(super) unsafe extern "system" fn stencil_ref(list: &List, reference: u32) {
     let mut state = recording(list);
     if state.can_record_graphics(&list.native) {
         state.segments.replay.stencil(reference);
+        state.stencil_reference = reference;
         unsafe { list.native.OMSetStencilRef(reference) };
     }
 }
