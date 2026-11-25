@@ -6,7 +6,11 @@
 //! root SRV over the title memory at the address the title bound at guest
 //! root parameter `p` (a root CBV, SRV or UAV), up to the end of its
 //! allocation or 64 KiB, whichever is less, and reads guest dword j at byte
-//! off + 4j. An unresolved or unbound parameter reads the null sink. Space
+//! off + 4j. A descriptor-table parameter's heap cells hold host records
+//! (descriptor_paging InlineDescriptor), not console words, so it gets the
+//! encoded GFX10 words of its slots instead (slot_words, from the table's
+//! first slot, 32 bytes a slot as on the console). An unresolved or unbound
+//! parameter reads the null sink. Space
 //! 32765 holds only private static samplers otherwise, so its t registers
 //! are free.
 //!

@@ -537,8 +537,26 @@ impl Bindings {
         if let Some((first, params)) = &table.table_words {
             let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
             for (k, param) in params.iter().enumerate() {
-                let resolved = self.root_vas.get(&(COMPUTE, *param))
-                    .and_then(|&va| unsafe { crate::device::table_words_address(owner, va) });
+                // A descriptor-table parameter points at heap cells, which
+                // hold host records, not console words: it reads the encoded
+                // words of its slots (slot_words, 32 bytes a slot like the
+                // console's descriptors) from the table's first slot.
+                let tabled = bases.get(*param as usize).copied().flatten().and_then(|base| {
+                    let stride = heap.table_stride();
+                    let (start, count, gpu) = match arena {
+                        Some(arena) => {
+                            let visible = arena.visible();
+                            (unsafe { visible.GetCPUDescriptorHandleForHeapStart() }.ptr, unsafe { visible.GetDesc() }.NumDescriptors,
+                             unsafe { visible.GetGPUDescriptorHandleForHeapStart() }.ptr)
+                        }
+                        None => (heap.cpu.start, heap.table_slots(), heap.gpu_start()),
+                    };
+                    let slot = base.ptr.checked_sub(gpu)? / stride as u64;
+                    let (buffer, address) = unsafe { crate::device::slot_words_address(owner, start, count, stride) }.ok()?;
+                    Some((buffer, address + slot * size_of::<crate::device::slot_words::Words>() as u64))
+                });
+                let resolved = tabled.or_else(|| self.root_vas.get(&(COMPUTE, *param))
+                    .and_then(|&va| unsafe { crate::device::table_words_address(owner, va) }));
                 let address = match resolved {
                     Some((buffer, address)) => {
                         let held_buffer = ID3D12Pageable::from(buffer);

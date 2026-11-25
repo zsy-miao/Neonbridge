@@ -72,6 +72,7 @@ impl ResourceHeap {
     }
 
     pub(super) fn table_stride(&self) -> usize { self.stride }
+    pub(super) fn gpu_start(&self) -> u64 { self.gpu }
 
     pub(super) fn table(&self, base: u64, slots: &Range<u32>) -> Option<Range<usize>> {
         let offset = usize::try_from(base.checked_sub(self.gpu)?).ok()?;
