@@ -30,6 +30,7 @@ pub(crate) mod depth;
 mod descriptor_copy;
 pub(crate) mod desc_table;
 pub(crate) mod view_formats;
+pub(crate) mod srv_views;
 pub(crate) mod view_marks;
 pub(crate) mod slot_views;
 pub(crate) mod slot_words;

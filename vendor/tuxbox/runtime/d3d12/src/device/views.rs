@@ -1022,6 +1022,7 @@ pub(super) unsafe extern "system" fn srv(
         let desc = raw.as_ref().map_or(desc, |raw| &raw const *raw);
         unsafe { device.native.CreateShaderResourceView(target, Some(desc), handle) };
         report_bad_view("SRV", &device.native, target, unsafe { desc.as_ref() });
+        super::srv_views::record(handle.ptr, target, unsafe { desc.as_ref() });
     }
     device.state.imported_views.store(handle.ptr, alias.map(|(native, original)| DescriptorBacking::BufferAlias { native, original })
         .or_else(|| slot_holds().then(|| texture.cloned()).flatten().map(|t| DescriptorBacking::Placed { _texture: t })));
