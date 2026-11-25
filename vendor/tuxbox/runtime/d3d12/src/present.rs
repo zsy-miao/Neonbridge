@@ -389,6 +389,16 @@ impl SwapChain {
                 wait_for(&self.fence, self.next)?;
                 let lit = sample.report("present");
                 static LIT_SOURCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                // Launcher timeline: the first lit present, and the first lit
+                // one after the loading screen ended past state 3 (crash.rs).
+                if lit > 0.01 {
+                    if LIT_SOURCES.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                        crate::diagnostics::log_line(format_args!("TIMELINE: first lit present {present_number_now}", present_number_now = self.next));
+                    }
+                    if crate::diagnostics::crash::GAMEPLAY_ARMED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                        crate::diagnostics::log_line(format_args!("TIMELINE: first gameplay frame (present {})", self.next));
+                    }
+                }
                 if lit > 0.01 && LIT_SOURCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 5 {
                     LIT_WINDOW_DUE.store(true, std::sync::atomic::Ordering::Relaxed);
                 }

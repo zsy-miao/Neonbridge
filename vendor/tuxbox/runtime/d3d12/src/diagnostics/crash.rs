@@ -378,6 +378,14 @@ fn watch_hang() {
             static TURNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
             let n = TURNS.fetch_add(1, Ordering::Relaxed) / 2 + 1;
             super::log_line(format_args!("TIMELINE: loading screen {} {n}", if now[2] != Some(0) { "on" } else { "off" }));
+            // 0x1 -> 0x0 after the title reached state 0x3: the next lit
+            // present is the first gameplay frame (present.rs logs it).
+            if last[2] == Some(1) && now[2] == Some(0) && SEEN_STATE3.load(Ordering::Relaxed) && !GAMEPLAY_LOGGED.swap(true, Ordering::Relaxed) {
+                GAMEPLAY_ARMED.store(true, Ordering::Relaxed);
+            }
+        }
+        if now[0] == Some(3) {
+            SEEN_STATE3.store(true, Ordering::Relaxed);
         }
         if now != last && lines < 4096 {
             lines += 1;
@@ -829,3 +837,9 @@ mod waits {
         String::new()
     }
 }
+
+/// The loading screen ended after state 0x3: the next lit present logs
+/// TIMELINE: first gameplay frame (present.rs).
+pub(crate) static GAMEPLAY_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GAMEPLAY_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SEEN_STATE3: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
