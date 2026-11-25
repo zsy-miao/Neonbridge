@@ -2790,8 +2790,18 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                     .or_else(|| unwrap(item, parent(&queue.parent), &media::SLOTS))
             }
             .ok_or(E_INVALIDARG)?;
-            let state = recording(list);
+            let mut state = recording(list);
             placement::list_submitted(state.opened.elapsed());
+            // A closed list submitted again holds eviction only for its age
+            // since the last submit: its heaps are stamped at each submit
+            // (touch_render_views), so a list recorded once and resubmitted
+            // no longer looks ever older and holds eviction for good
+            // (test154: 564 render heaps idle 30 s+, none evicted, 8075/6983
+            // MiB device-local). TUXBOX_HOLD_FROM_SUBMIT=0 measures from the
+            // recording's start.
+            if crate::env_toggle!("TUXBOX_HOLD_FROM_SUBMIT") != Some("0") {
+                state.opened = std::time::Instant::now();
+            }
             if crate::diagnostics::transient_pool::enabled() {
                 pool_lists.borrow_mut().push(list.native.as_raw() as usize);
             }
