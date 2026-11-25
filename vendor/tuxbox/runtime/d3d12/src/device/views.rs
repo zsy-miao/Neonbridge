@@ -74,7 +74,7 @@ pub(super) unsafe extern "system" fn cbv(
                 value.BufferLocation = gpu;
                 owner = Some(chunk);
             } else {
-            match buffer_at(device, address, u64::from(value.SizeInBytes), 1, false) {
+            match buffer_at(device, address, u64::from(value.SizeInBytes), 1, false, false) {
                 Ok(buffer) => {
                     if let Some(buffer) = &buffer {
                         value.BufferLocation = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
@@ -422,11 +422,17 @@ pub(super) struct AddressSrv {
 }
 const _: () = assert!(std::mem::offset_of!(AddressSrv, address) == 40);
 
+/// TUXBOX_UAV_REIMPORT=0: an address UAV over an import without unordered
+/// access goes through the written-back copy, as before (TuxBox ff2cdfb).
+fn uav_reimport() -> bool {
+    crate::env_toggle!("TUXBOX_UAV_REIMPORT") != Some("0")
+}
+
 fn uav_imports() -> bool {
     crate::env_toggle!("TUXBOX_UAV_IMPORTS") != Some("0")
 }
 
-fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool)
+fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool, uav: bool)
     -> windows::core::Result<Option<std::sync::Arc<TextureAddress>>> {
     use windows::Win32::Foundation::E_INVALIDARG;
     use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
@@ -441,7 +447,11 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
         let host = unsafe { entry.native.GetDesc() };
         if host.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
             && entry.offset(address).is_multiple_of(u64::from(stride))
-            && entry.offset(address).checked_add(bytes).is_some_and(|end| end <= host.Width) {
+            && entry.offset(address).checked_add(bytes).is_some_and(|end| end <= host.Width)
+            // TuxBox ff2cdfb (Valdi320, Apache-2.0): an import reused for a
+            // UAV must allow unordered access; else the range is imported
+            // again with it, not served through a written-back copy.
+            && (!uav || (host.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS).0 != 0) {
             return Ok(Some(entry));
         }
     }
@@ -475,7 +485,7 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
         // unordered access (legal for a cross-adapter buffer);
         // TUXBOX_UAV_IMPORTS=0 imports them without it, as before.
         Flags: (if tight { D3D12_RESOURCE_FLAGS(0x400) } else { D3D12_RESOURCE_FLAG_NONE })
-            | if uav_imports() { D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS } else { D3D12_RESOURCE_FLAG_NONE },
+            | if uav_imports() || uav { D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS } else { D3D12_RESOURCE_FLAG_NONE },
         MipLevels: 1, Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
         SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, ..Default::default()
     };
@@ -530,7 +540,7 @@ impl RecentBuffers {
 
 pub(crate) unsafe fn command_buffer_address(device: *mut c_void, address: u64, bytes: u64) -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
     let device = unsafe { &*device.cast::<Device>() };
-    let Some(buffer) = buffer_at(device, address, bytes, 1, false)? else { return Ok((None, address)) };
+    let Some(buffer) = buffer_at(device, address, bytes, 1, false, false)? else { return Ok((None, address)) };
     device.state.recent_buffers.keep(&buffer);
     let host = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
     Ok((Some(buffer.native.clone()), host))
@@ -692,7 +702,7 @@ pub(super) unsafe extern "system" fn address_srv(
             unsafe { VirtualQuery(Some(desc.address as _), &mut r, size_of_val(&r)) };
             (r.AllocationBase.addr(), r.BaseAddress.addr(), r.RegionSize, r.State.0, r.Protect.0)
         };
-        let entry = match buffer_at(device, desc.address, resource_desc.Width, placement_stride, true) {
+        let entry = match buffer_at(device, desc.address, resource_desc.Width, placement_stride, true, false) {
             Ok(entry) => entry.expect("required buffer import"),
             Err(e) if !cbv_fallback() => fail_call(format_args!("import SRV at {:#x}, {} bytes stride={stride} fmt={} first={} count={} failed {:?} ({}; region {:#x?}, placement stride {})",
                 desc.address, resource_desc.Width, view.Format.0, buffer.FirstElement, buffer.NumElements, e.code(), mode.name(), region(), placement_stride)),
@@ -1570,7 +1580,7 @@ pub(super) unsafe extern "system" fn address_uav(
     // TUXBOX_UAV_IMPORTS, or a placed resource's) cannot hold the view:
     // it goes through the written-back copy instead.
     let uav_capable = |e: &TextureAddress| (unsafe { e.native.GetDesc() }.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS).0 != 0;
-    let entry = match buffer_at(device, desc.address, width, element as u32, false) {
+    let entry = match buffer_at(device, desc.address, width, element as u32, false, uav_reimport()) {
         Ok(Some(entry)) if entry.offset(desc.address).is_multiple_of(element) && uav_capable(&entry) => {
             unsafe { view.Anonymous.Buffer.FirstElement += entry.offset(desc.address) / element };
             entry
