@@ -1483,6 +1483,37 @@ pub(super) unsafe extern "system" fn sampler_x(
     // taken for them too. Default fxceless; TUXBOX_SAMPLER_DECODE=victory
     // keeps the old decode below.
     let fx = crate::env_toggle!("TUXBOX_SAMPLER_DECODE") != Some("victory");
+    // five-star-recomp ConsoleSamplerDescription.cs (2080992, GPL-3.0, credit
+    // to its authors) reads the words from the title's only caller, which
+    // fills them (0x1412b96b0): mag w[1] and min w[2] are 1 point, 2 linear,
+    // 3 anisotropic; mip w[3] 1 point, 2 linear; the bias is at +0x30, w[12]
+    // (w[11] is not written); anisotropy w[13] & 0x1f; w[16] is the title's
+    // comparison when it compares, else 1 (NEVER), so every other value is a
+    // comparison sampler (ALWAYS too). fxceless read 1 as bilinear and 2 as
+    // anisotropic: test153's (1,1,2) samplers, point with linear mips, became
+    // trilinear and its (2,2,1) bilinear ones anisotropic.
+    // TUXBOX_SAMPLER_FIVESTAR=0 decodes as fxceless (or victory) above.
+    if crate::env_toggle!("TUXBOX_SAMPLER_FIVESTAR") != Some("0") {
+        let comparison = !matches!(w[16], 0 | 1) && w[5] == 0;
+        let reduction = if comparison { 1 } else { match w[5] { 1 => 2, 2 => 3, _ => 0 } };
+        let linear = |f: u32| i32::from(f == 2 || f == 3);
+        let aniso = w[1] == 3 || w[2] == 3;
+        let bits = if aniso { 0x55 } else { linear(w[2]) << 4 | linear(w[1]) << 2 | i32::from(w[3] == 2) };
+        let host = D3D12_SAMPLER_DESC {
+            Filter: D3D12_FILTER(bits | reduction << 7),
+            AddressU: D3D12_TEXTURE_ADDRESS_MODE(w[6] as _),
+            AddressV: D3D12_TEXTURE_ADDRESS_MODE(w[7] as _),
+            AddressW: D3D12_TEXTURE_ADDRESS_MODE(w[8] as _),
+            MinLOD: f32::from_bits(w[9]), MaxLOD: f32::from_bits(w[10]),
+            MipLODBias: f32::from_bits(w[12]),
+            MaxAnisotropy: if aniso { (w[13] & 0x1f).clamp(1, 16) } else { 1 },
+            ComparisonFunc: D3D12_COMPARISON_FUNC(w[16] as _),
+            BorderColor: [w[17], w[18], w[19], w[20]].map(f32::from_bits),
+        };
+        let host = if crate::env_toggle!("TUXBOX_SAMPLER_SANITIZE") == Some("0") { host } else { sanitized(host, w[3], comparison) };
+        unsafe { sampler(device, &host, handle) };
+        return;
+    }
     let comparison = if fx { (2..=7).contains(&w[16]) && w[5] == 0 } else { w[16] != D3D12_COMPARISON_FUNC_NEVER.0 as u32 && w[16] != 0 };
     // Unknown reductions and filters fall back to standard / linear (logged
     // once each) instead of stopping the title; TUXBOX_UNMAPPED=failfast stops.

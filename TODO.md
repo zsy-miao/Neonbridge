@@ -54,7 +54,7 @@ Open work. Each item is tested in a run of its own.
 - ref better: 689199f (a placeholder pipeline drops draws; blend 19/20 done).
 - five-star b828157 (e1ce01d): release every pending memory wait at each present (79dff41 releases only waits no queued list writes).
 - Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
-- Sampler decode (views.rs:1346): the mag/min order, aniso rule, compare range and the w[12] bias differ from fxceless sampler.rs:11-48. Verify against live words.
+- Sampler decode: five-star ConsoleSamplerDescription (from the title's filler 0x1412b96b0) is default (TUXBOX_SAMPLER_FIVESTAR=0 back to fxceless): filters 1 point/2 linear/3 aniso, bias w[12], compare = any w[16] past NEVER. Confirm in the next run's slot 61 words that no filter word is 0.
 - Small fixes:
   - confirm GTA VI never calls Scarlett slot 59;
   - 88dbc97/d97535c: parity-only unless their notices fire.
