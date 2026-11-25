@@ -1667,6 +1667,29 @@ fn compact_wanted(insns: usize) -> bool {
     insns >= 20_000 && std::env::var("TB_COMPACT").map_or(true, |v| v.trim() != "0")
 }
 
+/// xcl compact.rs `wanted` on raw instruction words, before anything is
+/// emitted: at least 20,000 instructions, under 30% of them in distinct
+/// blocks.
+fn compact_repeats(insns: &[Insn]) -> bool {
+    if !compact_wanted(insns.len()) {
+        return false;
+    }
+    let targets = branch_targets(insns);
+    let mut seen: std::collections::HashSet<Vec<u32>> = std::collections::HashSet::new();
+    let (mut once, mut start) = (0usize, 0usize);
+    for i in 1..=insns.len() {
+        let cut = i == insns.len() || targets.contains(&(insns[i].offset as i64))
+            || (insns[i - 1].enc == Enc::Sopp && (Emitter::branch_cond(insns[i - 1].op).is_some() || insns[i - 1].op == 1));
+        if cut {
+            // Blocks are keyed by the words of their instructions.
+            let key: Vec<u32> = insns[start..i].iter().flat_map(|x| x.raw.iter().copied()).collect();
+            if seen.insert(key) { once += i - start; }
+            start = i;
+        }
+    }
+    once * 10 < insns.len() * 3
+}
+
 fn table_bits(n: usize) -> u32 {
     (usize::BITS - n.saturating_sub(1).leading_zeros()).max(1)
 }
@@ -1674,6 +1697,9 @@ fn table_bits(n: usize) -> u32 {
 /// A block's text with its own temporaries (t<k>, k >= `tmp0`) numbered from
 /// zero, so two copies of one block compare equal.
 fn canonical_text(text: &str, tmp0: usize) -> String {
+    // The `// 0x<offset> <mnemonic>` comments name each copy's own address.
+    let text: String = text.split_inclusive('\n').filter(|l| !l.trim_start().starts_with("// 0x")).collect();
+    let text = text.as_str();
     let b = text.as_bytes();
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
     let mut out = String::with_capacity(text.len());
@@ -1683,15 +1709,14 @@ fn canonical_text(text: &str, tmp0: usize) -> String {
         if b[i] == b't' && (i == 0 || !ident(b[i - 1])) && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
             let mut j = i + 1;
             while j < b.len() && b[j].is_ascii_digit() { j += 1; }
-            if j == b.len() || !ident(b[j]) {
-                if let Ok(k) = text[i + 1..j].parse::<usize>() {
-                    if k >= tmp0 {
-                        let fresh = map.len();
-                        let c = *map.entry(k).or_insert(fresh);
-                        out.push_str(&format!("t#{c}"));
-                        i = j;
-                        continue;
-                    }
+            // A temporary may carry a suffix (`t12l`, `t12_0`): keep it.
+            if let Ok(k) = text[i + 1..j].parse::<usize>() {
+                if k >= tmp0 {
+                    let fresh = map.len();
+                    let c = *map.entry(k).or_insert(fresh);
+                    out.push_str(&format!("t#{c}#"));
+                    i = j;
+                    continue;
                 }
             }
         }
@@ -1729,6 +1754,9 @@ fn compact_plan(blocks: &[(String, Next, usize)], starts: &[usize], n: usize, bl
     let step: Vec<u32> = to.iter().map(|x| steps.binary_search(x).expect("step") as u32).collect();
     let (class_bits, step_bits) = (table_bits(rep.len()), table_bits(steps.len()));
     let words = (nb * (class_bits + step_bits) as usize).div_ceil(32) + 1 + steps.len() * 2;
+    if std::env::var_os("TB_COMPACT_DEBUG").is_some() {
+        eprintln!("compact: {nb} blocks, {} classes, {} steps, {once}/{all} insns once, {words} words", rep.len(), steps.len());
+    }
     (class_bits + step_bits <= 32 && once * 10 < all * 3 && words <= 8192)
         .then_some(CompactPlan { class, step, rep, steps, class_bits, step_bits })
 }
@@ -6137,7 +6165,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // The dispatch form cannot hold implicit-derivative sampling (pixel shaders) or DPP quad
         // exchanges, so those keep the structured form whatever its size.
         let can_dispatch = !is_ps && !self.insns.iter().any(is_quad_exchange);
-        if can_dispatch && STRUCTURED_OFF.with(|c| c.get()) {
+        // A large program of mostly repeated blocks takes the dispatch form
+        // so its blocks can share code (see `compact_plan`); structured, it
+        // stays one copy per block (35af8e6d: 12.7 MB of HLSL).
+        if can_dispatch && (STRUCTURED_OFF.with(|c| c.get()) || compact_repeats(&self.insns)) {
             return self.emit_body_dispatch(is_ps, 0);
         }
         let start = self.body.len();
