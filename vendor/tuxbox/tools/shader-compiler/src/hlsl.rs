@@ -271,6 +271,20 @@ fn typed_fmt_table() -> bool {
 /// known (no integer use inferred, or a heap view) is refused instead of
 /// stored as float4, so a 32_UINT target cannot take float-converted values.
 /// Inferred uint/int views already store the raw dwords.
+/// Back-edge cap for a structured guest loop: 128 PS, 256 VS/MS, 4096 CS, as
+/// fxceless lower.rs 10541-10544 does (via ztrx/VItoriaBr), so a runaway loop
+/// ends before a TDR. TB_LOOP_CAP overrides it for every stage.
+fn loop_cap(stage: Stage) -> u32 {
+    if let Some(v) = std::env::var("TB_LOOP_CAP").ok().and_then(|v| v.trim().parse().ok()) {
+        return v;
+    }
+    match stage {
+        Stage::Pixel => 128,
+        Stage::Compute => 4096,
+        _ => 256,
+    }
+}
+
 fn exp_vm_last() -> bool {
     std::env::var("TB_EXP_VM_LAST").map_or(true, |v| v.trim() != "0")
 }
@@ -5922,10 +5936,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
                 let exits: Vec<String> = labels.iter().filter(|&&t| t > i).map(|t| format!("j{t}")).collect();
                 let exit = if exits.is_empty() { String::new() } else { format!(" && !({})", exits.join(" || ")) };
+                let guard_text = format!(" && ++tb_guard < {}u", loop_cap(self.ex.stage));
                 let guard = if self.wave_cull || self.light_grid || probe_trace || self.packed.as_ref().is_some_and(|p| p.copy_backedges.contains(&i) || p.bounded_backedges.contains(&i)) {
                     ""
                 } else {
-                    " && ++tb_guard < 65536u"
+                    guard_text.as_str()
                 };
                 if view_cull.is_some_and(|p| p.back == ins.offset) {
                     // The guest iterates cb0[12] views. Retired lanes must
@@ -5984,7 +5999,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.line("uint tb_pc = 0u; uint tb_guard = 0u;");
             self.line(&format!("[loop] while (tb_pc != {n}u && tb_guard++ < 1000000u) {{"));
         } else {
-            self.line(&format!("uint tb_pc = {entry}u; [loop] while (tb_pc != {n}u) {{"));
+            self.line(&format!("uint tb_pc = {entry}u; uint tb_guard = 0u; [loop] while (tb_pc != {n}u && tb_guard++ < 1000000u) {{"));
         }
         self.loop_depth += 1;
         // Flat `if (tb_sel == K)` tests on a snapshot of the block id (FXC mishandles a
@@ -7891,7 +7906,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let (reg, chan) = match (param, packed) {
             (Param::Full(reg), _) => (*reg, chan),
             (_, Some(found)) => found,
-            _ => return Err(format!("PS attr{attr} has no signature register")),
+            _ => {
+                // A packed half with no signature element reads 0 instead of
+                // refusing the pixel shader (fxceless lower.rs 9055-9063, via
+                // ztrx/VItoriaBr). p1 writes a 0 partial; p2 writes a 0 half.
+                let dst = ins.dst.first().cloned().ok_or("no dst")?;
+                if !is_p2 {
+                    return self.wv(&dst, "0u");
+                }
+                let keep = r(&dst)?;
+                self.touch(&dst);
+                return self.wv(&dst, &place(&keep, "0u"));
+            }
         };
         let (ei, k) = sig_lookup(&self.ex.input_sig, reg, chan)
             .ok_or_else(|| format!("PS attr{attr} has no signature register"))?;
