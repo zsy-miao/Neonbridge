@@ -13424,14 +13424,16 @@ uint tb_heap_index(uint i) { return i; }
     }
 
     /// Whether this kernel gets the split wave64 form on 32-lane GPUs: a wave64
-    /// compute program whose group is one console wave of 33..64 threads.
+    /// compute program whose group is one console wave of 33..64 threads, or
+    /// several console waves (TB_SPLIT_WAVE64_MULTI).
     fn split_wave64(&self) -> bool {
         let threads: u32 = compute_group(self.ex).iter().product();
         self.is_cs && self.required_wave_size == Some(64) && !self.portable_wave64
-            && !self.resolve_wave32 && (33..=64).contains(&threads)
-            // The exchange needs 67 words of groupshared memory next to the LDS.
+            && !self.resolve_wave32
+            && ((33..=64).contains(&threads) || (65..=1024).contains(&threads) && split_wave64::multi())
+            // The exchange's groupshared words (per console wave) next to the LDS.
             && (!self.uses_lds || self.reflected_lds_words.or_else(|| wave_cull::lds_words(self))
-                .is_some_and(|words| words + split_wave64::WORDS + 64 <= 8192))
+                .is_some_and(|words| words + split_wave64::WORDS * split_wave64::waves(threads) + 64 <= 8192))
             && std::env::var("TB_SPLIT_WAVE64").map_or(true, |v| v.trim() != "0")
     }
 

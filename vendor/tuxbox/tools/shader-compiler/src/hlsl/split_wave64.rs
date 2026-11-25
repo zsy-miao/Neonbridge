@@ -23,8 +23,22 @@
 //! parity of the exchange, since the other half is at most one exchange
 //! ahead. TB_WAVE64_SPIN=0 meets at a group barrier instead.
 
-/// Groupshared words the exchange declares.
+/// Groupshared words the exchange declares per console wave (plus one).
 pub(super) const WORDS: u32 = 1 + 2 + 4 + 128;
+
+/// Groups of more than one console wave (xcl docs/wave64-on-wave32.md
+/// "Several console waves per group", GPL-2.0, copied with credit): each
+/// pair of hardware waves meets through its own counters and slots, always
+/// by the bounded spin (a group barrier would wait for the other console
+/// waves too). TB_SPLIT_WAVE64_MULTI=0 keeps the split to 33..64 threads.
+pub(super) fn multi() -> bool {
+    spin() && std::env::var("TB_SPLIT_WAVE64_MULTI").map_or(true, |v| v.trim() != "0")
+}
+
+/// Console waves in a group of `threads`.
+pub(super) fn waves(threads: u32) -> u32 {
+    threads.div_ceil(64)
+}
 
 fn spin() -> bool {
     std::env::var("TB_WAVE64_SPIN").map_or(true, |v| v.trim() != "0")
@@ -35,15 +49,21 @@ fn spin() -> bool {
 /// the rest of it (the emitter's helpers included) through the exchange.
 pub(super) fn prelude([tx, ty, tz]: [u32; 3]) -> String {
     let threads = tx * ty * tz;
-    let spin = u32::from(spin());
+    let w = waves(threads);
+    let chunks = threads.div_ceil(32);
+    // Several console waves always meet by the spin.
+    let spin = u32::from(spin() || w > 1);
+    let (c2, w4, v128) = (2 * w, 4 * w, 128 * w);
     format!(r#"#ifdef TB_NO_WAVESIZE_64
 // Split wave64 (xcl 3ecf4cf / 77a5eee / e40ac38, GPL-2.0): this console wave
 // runs as two 32-lane halves of one thread group.
 groupshared uint tb_x_next;
-groupshared uint tb_x_c[2];
-groupshared uint tb_x_w[4];
-groupshared uint tb_x_v[128];
+groupshared uint tb_x_c[{c2}];
+groupshared uint tb_x_w[{w4}];
+groupshared uint tb_x_v[{v128}];
 static uint tb_x_half = 0u;
+// This pair's console wave: its counters, words and lanes.
+static uint tb_x_wave = 0u;
 // Exchanges so far (the same in both halves), the other half's lanes, and
 // whether the other half failed to arrive in time.
 static uint tb_x_k = 0u;
@@ -52,13 +72,20 @@ static bool tb_x_dead = false;
 // Hardware waves need not hold consecutive thread indices: each takes the
 // next 32 console threads as it arrives.
 uint3 tb_x_start(uint3 hw) {{
-    if (hw.x + {tx}u * (hw.y + {ty}u * hw.z) == 0u) {{ tb_x_next = 0u; tb_x_c[0] = 0u; tb_x_c[1] = 0u; }}
+    if (hw.x + {tx}u * (hw.y + {ty}u * hw.z) == 0u) {{ tb_x_next = 0u; for (uint i = 0u; i < {c2}u; i++) tb_x_c[i] = 0u; }}
     GroupMemoryBarrierWithGroupSync();
-    tb_x_other = {threads}u - WaveActiveCountBits(true);
-    uint base = 0u;
-    if (WaveIsFirstLane()) InterlockedAdd(tb_x_next, 1u, base);
-    tb_x_half = WaveReadLaneFirst(base) & 1u;
-    uint t = tb_x_half * 32u + WaveGetLaneIndex();
+    // Full hardware waves take the next 32 console threads as they arrive; a
+    // partial one (the group's last threads) takes the last chunk.
+    uint base = {chunks}u - 1u;
+    bool full = WaveActiveCountBits(true) == 32u;
+    if (full && WaveIsFirstLane()) InterlockedAdd(tb_x_next, 1u, base);
+    base = full ? WaveReadLaneFirst(base) : {chunks}u - 1u;
+    tb_x_half = base & 1u;
+    tb_x_wave = base >> 1u;
+    // The partner chunk's lanes (0 when it does not exist: its ballot bits are 0).
+    uint pb = (base ^ 1u) * 32u;
+    tb_x_other = pb < {threads}u ? min({threads}u - pb, 32u) : 0u;
+    uint t = base * 32u + WaveGetLaneIndex();
     return uint3(t % {tx}u, (t / {tx}u) % {ty}u, t / ({tx}u * {ty}u));
 }}
 uint tb_x_lane() {{ return tb_x_half * 32u + WaveGetLaneIndex(); }}
@@ -68,17 +95,17 @@ bool tb_x_meet() {{
     uint k = tb_x_k;
     tb_x_k = k + 1u;
 #if {spin}
-    if (tb_x_dead) return false;
+    if (tb_x_dead || tb_x_other == 0u) return false;
     GroupMemoryBarrier();
     uint lanes = WaveActiveCountBits(true);
     uint ok = 1u;
     if (WaveIsFirstLane()) {{
         uint o;
-        InterlockedAdd(tb_x_c[tb_x_half], lanes, o);
+        InterlockedAdd(tb_x_c[tb_x_wave * 2u + tb_x_half], lanes, o);
         uint need = (k + 1u) * tb_x_other;
         [loop] for (uint n = 0u; ; n++) {{
             uint c;
-            InterlockedAdd(tb_x_c[tb_x_half ^ 1u], 0u, c);
+            InterlockedAdd(tb_x_c[tb_x_wave * 2u + (tb_x_half ^ 1u)], 0u, c);
             if ((int)(c - need) >= 0) break;
             if (n >= (1u << 20)) {{ ok = 0u; break; }}
         }}
@@ -92,7 +119,7 @@ bool tb_x_meet() {{
 }}
 // One word per half: each half gives its value, both read both.
 uint2 tb_x_pair(uint mine) {{
-    uint s = (tb_x_k & 1u) * 2u;
+    uint s = tb_x_wave * 4u + (tb_x_k & 1u) * 2u;
     tb_x_w[s + tb_x_half] = mine;
     uint o = tb_x_meet() ? tb_x_w[s + (tb_x_half ^ 1u)] : 0u;
     return tb_x_half != 0u ? uint2(o, mine) : uint2(mine, o);
@@ -103,7 +130,7 @@ bool tb_x_all(bool b) {{ uint4 m = tb_x_ballot(b); uint4 a = tb_x_ballot(true); 
 uint tb_x_count(bool b) {{ uint4 m = tb_x_ballot(b); return countbits(m.x) + countbits(m.y); }}
 // Any lane, uniform or not: every lane gives its value.
 uint tb_x_read(uint v, uint l) {{
-    uint s = (tb_x_k & 1u) * 64u;
+    uint s = tb_x_wave * 128u + (tb_x_k & 1u) * 64u;
     tb_x_v[s + tb_x_lane()] = v;
     bool met = tb_x_meet();
     uint r = tb_x_v[s + (l & 63u)];
@@ -111,7 +138,7 @@ uint tb_x_read(uint v, uint l) {{
 }}
 // Lanes l and l ^ 32 of one value in one exchange (xcl 9e2c7a5).
 uint2 tb_x_read2(uint v, uint l) {{
-    uint s = (tb_x_k & 1u) * 64u;
+    uint s = tb_x_wave * 128u + (tb_x_k & 1u) * 64u;
     tb_x_v[s + tb_x_lane()] = v;
     bool met = tb_x_meet();
     uint a = tb_x_v[s + (l & 63u)], b = tb_x_v[s + ((l ^ 32u) & 63u)];
