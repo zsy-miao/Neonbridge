@@ -2927,6 +2927,13 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
                 }
                 return Ok(std::ptr::null_mut());
             }
+            // A word a memory wait reads at the title address (its pages do
+            // not import, memory_wait title_word) is written by this list
+            // only into a shadow: the CPU makes those writes too once the
+            // batch has run (as for a left-out list's), so the wait sees them.
+            if memory_wait::title_words_any() {
+                orphan_writes.borrow_mut().extend(state.value_writes.iter().copied().filter(|w| memory_wait::title_word_at(w.0)));
+            }
             // A descriptor write after Close can exhaust the map's native
             // heap. Never submit an indexed access with an unpublished entry.
             for arena in &state.indexed_arenas {

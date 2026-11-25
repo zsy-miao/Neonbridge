@@ -83,6 +83,21 @@ impl Drop for Word {
     }
 }
 
+/// Words read at the title address (`Word::title_word`): a list's marker
+/// and value writes to them go to a shadow on the GPU, so the CPU repeats
+/// them at the title address after the batch (commands.rs submit).
+static TITLE_WORDS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+static TITLE_WORDS_ANY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(super) fn title_words_any() -> bool {
+    TITLE_WORDS_ANY.load(Ordering::Acquire)
+}
+
+/// Whether a write at `address` lands in a word read at the title address.
+pub(super) fn title_word_at(address: u64) -> bool {
+    TITLE_WORDS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|&w| address <= w && w < address + 8)
+}
+
 impl Word {
     fn map(list: &List, address: u64, wide: bool) -> Result<Self> {
         let bytes = word_bytes(wide);
@@ -116,6 +131,11 @@ impl Word {
         if n <= 4 || n.is_power_of_two() {
             crate::diagnostics::log_line(format_args!(
                 "GPU memory wait {address:#x}: its buffer cannot be mapped, the word is read at the title address ({n} so far; TUXBOX_WAIT_TITLE_WORD=0 drops it)"));
+        }
+        let mut words = TITLE_WORDS.lock().unwrap_or_else(|e| e.into_inner());
+        if !words.contains(&address) && words.len() < 256 {
+            words.push(address);
+            TITLE_WORDS_ANY.store(true, Ordering::Release);
         }
         Some(Self { resource: None, mapped: address as usize, wide })
     }
