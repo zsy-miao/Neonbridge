@@ -8997,7 +8997,27 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     return Err("scratch-memory load unsupported".into());
                 }
                 if !self.insns.iter().any(|i| i.mnemonic == "s_getpc_b64") {
-                    return Err("global/flat load in a shader that never takes its PC".into());
+                    // TB_BVH_FLAT_ZERO (default on, =0 refuses): a BVH program's per-lane read
+                    // of its acceleration-structure header (address = BVH T# base << 8 | 48,
+                    // test179: 20 programs) reads zeros with the no-hit fallback, like the
+                    // scalar header read (`bvh_zero_smem`): an empty structure, every ray misses.
+                    let bvh = bvh_no_hit() && self.insns.iter().any(|i| i.enc == Enc::Mimg && matches!(i.op, 230 | 231))
+                        && std::env::var("TB_BVH_FLAT_ZERO").map_or(true, |v| v.trim() != "0");
+                    if !bvh {
+                        return Err("global/flat load in a shader that never takes its PC".into());
+                    }
+                    let n: u8 = match m {
+                        "flat_load_dword" => 1,
+                        "flat_load_dwordx2" => 2,
+                        "flat_load_dwordx3" => 3,
+                        _ => 4,
+                    };
+                    let Some(Opnd::Vgpr(vd)) = d else { return Err("bad vdst".into()) };
+                    self.line("// BVH header read: zeros (no-hit fallback)");
+                    for k in 0..n {
+                        self.wv(&Opnd::Vgpr(vd + k), "0u")?;
+                    }
+                    return Ok(());
                 }
                 self.uses_code = true;
                 let n: u8 = match m {

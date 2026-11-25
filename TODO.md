@@ -26,6 +26,7 @@ Open work. Each item is tested in a run of its own.
   - leftover cross-lane refusals
   - votes in resolve_wave32, wave_cull and packed: no cache mark carries their refusals (unresolved wave/scan ballot, conflicting wave widths); these are our own recognizers with no ref counterpart. A program they refuse still has the split wave64 form (now any group size). Revisit only if a mark appears.
 - BVH intersection (7 refusals). Needs console BVH nodes from the runtime.
+  - Stand-in: TB_BVH_FLAT_ZERO reads zeros for getpc-less flat loads in BVH programs (no hit). Replace with TB_MEM_DIR page-directory reads (tb_mem_load) once the runtime half lands, then port the node tests (MESIA intersect.rs / bvh.rs).
 
 ## Research
 - Partition classifier (3d8ad77) records tb_partition; no ref translates by it (xcl declares the module, never calls it). Parked until one does.
