@@ -126,7 +126,18 @@ pub(crate) fn any_evicted() -> bool {
 /// Stamps the copies behind the descriptors in `ranges`, and makes an
 /// evicted one resident again before the submission runs.
 pub(crate) fn touch_views(device: &Device, ranges: &[std::ops::Range<usize>]) {
-    if !evict_stale_on() || ranges.is_empty() {
+    if !evict_stale_on() {
+        return;
+    }
+    // Heaps a list indexes per lane or through a root CBV (Coder6 b37d4af):
+    // their views are used without a table range naming them.
+    let dynamic = take_dynamic_heaps();
+    let all: Vec<std::ops::Range<usize>>;
+    let ranges = if dynamic.is_empty() { ranges } else {
+        all = ranges.iter().cloned().chain(dynamic).collect();
+        &all[..]
+    };
+    if ranges.is_empty() {
         return;
     }
     let now = now_ms();
@@ -1236,7 +1247,6 @@ pub(crate) fn dynamic_heaps_submitted(ranges: &[std::ops::Range<usize>]) {
 }
 
 /// The dynamic heap ranges submitted since the last take.
-#[allow(dead_code)] // for touch_views (TUXBOX_SHADOW_EVICT_STALE)
 pub(crate) fn take_dynamic_heaps() -> Vec<std::ops::Range<usize>> {
     std::mem::take(&mut *lock(&DYNAMIC_HEAPS))
 }
