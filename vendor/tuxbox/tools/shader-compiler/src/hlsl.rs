@@ -863,6 +863,9 @@ struct Emitter<'a> {
     vote_uses: BTreeMap<usize, usize>,
     reflected_lds_words: Option<u32>,
     hoisted_swizzle: Option<usize>,
+    /// S_BARRIERs reached inside a per-thread guard: a group sync there is
+    /// non-uniform on the host, so they lower to a memory fence only.
+    fence_only: BTreeSet<usize>,
     indexed_lane: bool,
     /// Complete 32-thread wave using independent one-word vector comparison masks.
     single_wave32: bool,
@@ -3363,6 +3366,7 @@ impl<'a> Emitter<'a> {
             vote_uses: BTreeMap::new(),
             reflected_lds_words: None,
             hoisted_swizzle: None,
+            fence_only: BTreeSet::new(),
             indexed_lane: false,
             single_wave32: false,
             resolve_wave32: false,
@@ -6197,6 +6201,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             {
                 active.clear();
             }
+            // A barrier some threads of the group may never reach leaves the
+            // others waiting on the host. Keep only its memory fence (fxceless
+            // lower.rs 1391-1419, via ztrx/VItoriaBr). TB_FENCE_GUARDED=0 restores
+            // the group sync.
+            if self.is_cs && ins.mnemonic == "s_barrier" && !active.is_empty()
+                && std::env::var("TB_FENCE_GUARDED").map_or(true, |v| v.trim() != "0")
+            {
+                self.fence_only.insert(i);
+            }
             if self.compute_swizzle && exchanges(ins) && !active.is_empty() {
                 self.end_guard(&mut open);
                 cur.clear();
@@ -6820,7 +6833,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             Enc::Sopp if ins.op == 0x10 => self.emit_sendmsg(ins),
             Enc::Sopp if ins.op == 0x0a && self.is_cs => {
-                if self.packed.as_ref().is_some_and(|p| p.device_sync_barriers.contains(&idx)) {
+                if self.fence_only.contains(&idx) {
+                    self.line("GroupMemoryBarrier();");
+                } else if self.packed.as_ref().is_some_and(|p| p.device_sync_barriers.contains(&idx)) {
                     self.line("AllMemoryBarrierWithGroupSync();");
                 } else {
                     self.line("GroupMemoryBarrierWithGroupSync();");
