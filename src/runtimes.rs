@@ -1785,6 +1785,15 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     let cache = cache(name);
     let _ = fs::create_dir_all(&cache);
     backup_cache(&cache); // what the last run added
+    // Verify the dump before a run (read-only, ScarlettPort's verify): problems are
+    // printed and a bad dump is named on the loader; the run still goes ahead.
+    // NEONBRIDGE_VERIFY=0 skips it.
+    if matches!(task, Task::Run) && std::env::var("NEONBRIDGE_VERIFY").map_or(true, |v| v.trim() != "0") {
+        let dir = if game.is_dir() { game.to_path_buf() } else { game.parent().map(Path::to_path_buf).unwrap_or_default() };
+        if crate::verify::print(&dir, false) == crate::verify::Level::Bad {
+            crate::splash::status(0.02, "Game files look incomplete (see the log); starting anyway");
+        }
+    }
     if matches!(task, Task::Run) && choice.mix.is_none() {
         auto_setup(name, &root, &spec, &game);
     }
