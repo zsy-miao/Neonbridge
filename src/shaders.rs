@@ -27,6 +27,15 @@ const MAX_SHADER_BYTES: u64 = 64 << 20;
 /// of this process that the worker's own size below leaves out.
 pub static GAME_PID: AtomicU32 = AtomicU32::new(0);
 
+/// An explicit `neonbridge --prewarm` (main.rs prewarm_only): nothing waits on
+/// its compiles, so -O1 gets 120 s (NEONBRIDGE_DXC_O1_SECS still sets it) and
+/// -O0 DXIL already cached (`.o0`) is compiled again at -O1.
+pub static PREWARM_ONLY: AtomicBool = AtomicBool::new(false);
+
+fn upgrading() -> bool {
+    PREWARM_ONLY.load(Ordering::Relaxed) && std::env::var("NEONBRIDGE_PREWARM_UPGRADE_O0").as_deref() != Ok("0")
+}
+
 /// The private commit of `pid` and, with `children`, of the processes it
 /// started but the title (this worker's xshader and dxc).
 fn private_bytes(pid: u32, children: bool) -> u64 {
@@ -739,6 +748,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             fs::write(&tmp, bytes).and_then(|_| fs::rename(&tmp, session.join(format!("{key}.cso")))).map_err(|e| format!("publish to {}: {e}", session.display()))
         };
         if let (Ok(bytes), Ok(sum)) = (fs::read(&dest), fs::read(&checksum))
+            && !(upgrading() && crate::dxil_upgrade::marker(&dest).exists())
             && bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() {
             remember(cache, key, &bytes);
             publish(&bytes)?;
@@ -834,6 +844,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             let (bytes, sum) = (fs::read(path).ok()?, fs::read(path.with_extension("sha256")).ok()?);
             (bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes)).then_some(bytes)
         };
+        let stored = |path: &PathBuf| (!(upgrading() && crate::dxil_upgrade::marker(path).exists())).then(|| stored(path)).flatten();
         let found = reused.as_ref().and_then(|p| Some((stored(p)?, p))).or_else(|| {
             let found = normalised.as_ref().and_then(|p| Some((stored(p)?, p)))?;
             NORMALISED_REUSES.fetch_add(1, Ordering::Relaxed);
@@ -898,7 +909,8 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // test112: dxc was 98% of shader time (401 s for 252 compiles, one took
         // 92 s), starving pipelines the title waited on. -O1 now gets
         // NEONBRIDGE_DXC_O1_SECS (10) before the -O0 retry, not 120.
-        let o1_secs = std::env::var("NEONBRIDGE_DXC_O1_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0).unwrap_or(10);
+        let o1_secs = std::env::var("NEONBRIDGE_DXC_O1_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0)
+            .unwrap_or(if PREWARM_ONLY.load(Ordering::Relaxed) { 120 } else { 10 });
         // test130/131 died at the scene load (the title's own watchdog, game
         // +0x23cf620 "GPU Loc Sig") with its render jobs blocked in pipeline
         // binds on these replies: 14 of 229 compiles spent their 10 s on an
@@ -981,6 +993,9 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             if fs::write(&tmp, &bytes).and_then(|_| fs::write(path.with_extension("sha256"), sha256(&bytes)))
                 .and_then(|_| fs::rename(&tmp, path)).is_err() {
                 let _ = fs::remove_file(&tmp);
+            } else if !dxil_o0 {
+                // -O1 over an -O0 entry: no longer one.
+                let _ = fs::remove_file(&up);
             }
         }
         fs::rename(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
@@ -1246,7 +1261,8 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     // NEONBRIDGE_PREWARM_TAIL_S (20; 0 waits for all) more: their dxc is ended and
     // the title asks for them while it runs, so a few stragglers never hold the launch.
     let tail = AtomicBool::new(false);
-    let tail_secs = std::env::var("NEONBRIDGE_PREWARM_TAIL_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(20);
+    let tail_secs = std::env::var("NEONBRIDGE_PREWARM_TAIL_S").ok().and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(if PREWARM_ONLY.load(Ordering::Relaxed) { 0 } else { 20 });
     let total = jobs.len();
     let say = |line: String| {
         println!("[launch] {line}");

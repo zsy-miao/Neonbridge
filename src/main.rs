@@ -532,6 +532,7 @@ fn xshader_commit(tuxbox: &Path) -> String {
 /// translates the whole shaders.rpf archive; the time cap is off unless
 /// NEONBRIDGE_PREWARM_MAX_S is set.
 fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Error>> {
+    shaders::PREWARM_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
     // SAFETY: no other thread of ours runs yet.
     unsafe {
         if std::env::var_os("NEONBRIDGE_PREWARM_MAX_S").is_none() {
