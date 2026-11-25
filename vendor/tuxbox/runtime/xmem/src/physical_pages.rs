@@ -627,8 +627,16 @@ impl Pool {
             let now = START.elapsed().as_millis() as u64;
             if now >= NEXT.load(Ordering::Relaxed) {
                 NEXT.store(now + 15_000, Ordering::Relaxed);
-                crate::loader::log(&format!("map calls: {} single-page, {} multi-page; {}",
-                    CALLS[0].load(Ordering::Relaxed), CALLS[1].load(Ordering::Relaxed), self.single_view_stats()));
+                // test177: title-mapped VA grew 1.8 -> 10.8 GB and nothing
+                // said whether the title still held those pages. Live pool:
+                // pages allocated, of them mapped, addresses mapped (an alias
+                // counts again in a VA walk), pages at 2+ addresses.
+                let mapped_pages = self.pages.values().filter(|p| p.aliases > 0).count();
+                let aliased = self.pages.values().filter(|p| p.aliases > 1).count();
+                crate::loader::log(&format!("map calls: {} single-page, {} multi-page; live pool: {} pages allocated ({} MiB), {} mapped, {} addresses mapped ({} MiB), {} pages at 2+ addresses; {}",
+                    CALLS[0].load(Ordering::Relaxed), CALLS[1].load(Ordering::Relaxed),
+                    self.pages.len(), self.pages.len() * PAGE >> 20, mapped_pages, self.mappings.len(), self.mappings.len() * PAGE >> 20, aliased,
+                    self.single_view_stats()));
             }
         }
         self.mappings
