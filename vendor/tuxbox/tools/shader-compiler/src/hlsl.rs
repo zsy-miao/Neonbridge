@@ -883,6 +883,8 @@ struct Emitter<'a> {
     is_cs: bool,
     /// Nesting depth of emitted HLSL loops at the current instruction.
     loop_depth: u32,
+    /// Offsets of s_loads from a BVH address that read zeros (TB_BVH_NO_HIT).
+    bvh_zero_smem: std::cell::RefCell<BTreeSet<usize>>,
     /// EXEC was last set by `s_wqm_b* exec, exec`: whole quads are active (X2W a351c0fb).
     wqm_exec: bool,
     is_gs: bool,
@@ -3660,6 +3662,7 @@ impl<'a> Emitter<'a> {
             packed: None,
             loop_depth: 0,
             wqm_exec: false,
+            bvh_zero_smem: Default::default(),
             ex,
             insns,
             res: HashMap::new(),
@@ -5460,6 +5463,18 @@ impl<'a> Emitter<'a> {
                     let table = match sym.get(&b) {
                         Some(Sym::Table(t)) => *t,
                         None if !written.contains(&b) => b as u8,
+                        // A BVH program reads its acceleration-structure header through
+                        // an address built from the BVH T# (base << 8 | 48, test153
+                        // 6247ee64 / 0f58543e). With the no-hit fallback it reads zeros:
+                        // an empty structure, consistent with every ray missing.
+                        None if bvh_no_hit() && insns.iter().any(|i| i.enc == Enc::Mimg && matches!(i.op, 230 | 231)) => {
+                            self.bvh_zero_smem.borrow_mut().insert(ins.offset);
+                            for k in 0..n {
+                                sym.remove(&(d + k as u16));
+                                written.insert(d + k as u16);
+                            }
+                            continue;
+                        }
                         other => {
                             return Err(format!(
                                 "s_load at {:#x}: base s{b} is not a root table pointer ({other:?})",
@@ -8005,6 +8020,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     self.line(&format!("// ({what}: no shader clock, reads 0)"));
                     self.ws(&Opnd::Sgpr(base), "0u")?;
                     self.ws(&Opnd::Sgpr(base.checked_add(1).ok_or("s_memtime pair overflows")?), "0u")?;
+                    return Ok(());
+                }
+                if ins.op <= 4 && self.bvh_zero_smem.borrow().contains(&ins.offset) {
+                    let Some(Opnd::Sgpr(base)) = d else { return Err("bvh s_load: bad destination".into()) };
+                    for k in 0..(1u8 << ins.op) {
+                        self.ws(&Opnd::Sgpr(base + k), "0u")?;
+                    }
                     return Ok(());
                 }
                 if ins.op <= 4 {
