@@ -1516,10 +1516,6 @@ fn vop1_f64_on() -> bool {
     std::env::var("TB_VOP1_F64").map_or(true, |v| v.trim() != "0")
 }
 
-fn nc_i32_on() -> bool {
-    std::env::var("TB_NC_I32").map_or(true, |v| v.trim() != "0")
-}
-
 /// Saturating float-to-int conversions (TB_CVT_SATURATE=0 uses the plain HLSL casts).
 fn cvt_saturate() -> bool {
     std::env::var("TB_CVT_SATURATE").map_or(true, |v| v.trim() != "0")
@@ -9429,10 +9425,6 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             "v_add_nc_u32" => format!("({a} + {b})"),
             "v_sub_nc_u32" => format!("({a} - {b})"),
             "v_subrev_nc_u32" => format!("({b} - {a})"),
-            // VOP3-only signed forms: the same wrapping sum without a carry-out. The clamp bit
-            // (signed saturation) is refused. After X2W 4fe59c25; TB_NC_I32=0 refuses both.
-            "v_add_nc_i32" if nc_i32_on() && ins.aux.imm == 0 => format!("({a} + {b})"),
-            "v_sub_nc_i32" if nc_i32_on() && ins.aux.imm == 0 => format!("({a} - {b})"),
             "v_min_u32" => format!("min({a}, {b})"),
             "v_max_u32" => format!("max({a}, {b})"),
             "v_min_i32" => format!("asuint(min(asint({a}), asint({b})))"),
