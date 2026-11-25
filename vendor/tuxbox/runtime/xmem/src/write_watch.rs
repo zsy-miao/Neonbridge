@@ -20,6 +20,39 @@ static OWED_TITLE: Mutex<BTreeSet<usize>> = Mutex::new(BTreeSet::new());
 static OWED_TUXBOX: Mutex<BTreeSet<usize>> = Mutex::new(BTreeSet::new());
 /// One query-and-hand-over at a time, so no page falls between the two sets.
 static QUERY: Mutex<()> = Mutex::new(());
+/// Ranges each side has ever queried or reset (base -> bytes): [title, runtime].
+static WATCHED: Mutex<[std::collections::BTreeMap<usize, usize>; 2]> = Mutex::new([std::collections::BTreeMap::new(), std::collections::BTreeMap::new()]);
+
+/// test165: the 4K intro's watch refresh took 17 ms in one call. Every page
+/// one side reset was kept for the other, even in ranges the other never
+/// watches (the title watches none of Bink's planes, the runtime none of the
+/// title's own streaming), so both owed sets grew without bound and every
+/// query paid for it. A page is now owed only to a side that has watched a
+/// range holding it. TUXBOX_WATCH_OWE_WATCHED=0 owes every page as before.
+fn owe_watched() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_WATCH_OWE_WATCHED").map_or(true, |v| v.trim() != "0"))
+}
+
+fn note_watched(side: usize, base: usize, bytes: usize) {
+    let mut w = lock(&WATCHED);
+    let e = w[side].entry(base).or_insert(0);
+    *e = (*e).max(bytes);
+}
+
+/// Pages of `pages` (ascending) inside a range `side` has watched.
+fn owed_to(side: usize, pages: &[usize]) -> Vec<usize> {
+    if !owe_watched() {
+        return pages.to_vec();
+    }
+    let w = lock(&WATCHED);
+    pages.iter().copied().filter(|&p| {
+        // Nested or overlapping ranges: any of the nearest bases below covers it.
+        w[side].range(..=p).rev().take(64).any(|(&b, &n)| p < b.saturating_add(n))
+            // A range may start inside the page (its base rounded down).
+            || w[side].range(p..p + 0x1000).next().is_some()
+    }).collect()
+}
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -42,10 +75,12 @@ unsafe fn query(
     reset: bool, base: *const c_void, bytes: usize, out: *mut *mut c_void, count: *mut usize, granularity: *mut u32,
     mine: &Mutex<BTreeSet<usize>>, theirs: &Mutex<BTreeSet<usize>>,
 ) -> u32 {
+    let (me, other) = if std::ptr::eq(mine, &OWED_TITLE) { (0, 1) } else { (1, 0) };
     if count.is_null() || out.is_null() || granularity.is_null() {
         return unsafe { GetWriteWatch(if reset { RESET } else { 0 }, base, bytes, out, count, granularity) };
     }
     let _one = lock(&QUERY);
+    note_watched(me, base as usize, bytes);
     let mut gran = 0;
     let os = match unsafe { os_pages(reset, base, bytes, &mut gran) } {
         Ok(p) => p,
@@ -53,7 +88,8 @@ unsafe fn query(
     };
     let range = base as usize..(base as usize).saturating_add(bytes);
     if reset {
-        lock(theirs).extend(os.iter().copied());
+        let owed = owed_to(other, &os);
+        lock(theirs).extend(owed);
     }
     let mut owed = lock(mine);
     let mut all: BTreeSet<usize> = os.into_iter().collect();
@@ -86,7 +122,9 @@ pub(crate) unsafe extern "system" fn title_reset(base: *const c_void, bytes: usi
     let mut gran = 0;
     match unsafe { os_pages(true, base, bytes, &mut gran) } {
         Ok(pages) => {
-            lock(&OWED_TUXBOX).extend(pages);
+            note_watched(0, base as usize, bytes);
+            let owed = owed_to(1, &pages);
+            lock(&OWED_TUXBOX).extend(owed);
             let range = base as usize..(base as usize).saturating_add(bytes);
             let mut owed = lock(&OWED_TITLE);
             let gone: Vec<usize> = owed.range(range).copied().collect();
