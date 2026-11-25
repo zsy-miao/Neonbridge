@@ -1610,7 +1610,11 @@ unsafe extern "system" fn execute_indirect(
         (Some(&buffer.native), offset)
     };
     if !(argument_offset | count_offset).is_multiple_of(4) { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; }
-    if max_count != 0 && !state.pipeline_pending && clamp_enabled()
+    // A call that will be dropped (pipeline still being made, an unresolved
+    // root view) skips the clamp: its copy and dispatch fed records nothing
+    // reads (VIctory 4e60ea3, GPL-3.0, credit to its authors).
+    let compute = usize::from(signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH);
+    if max_count != 0 && !state.pipeline_pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
         && let Some(host) = list.state.raytracing.as_ref()
     {
         let clamped = indirect_clamp::bound(
