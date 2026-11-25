@@ -39,10 +39,8 @@ Open work. Each item is tested in a run of its own.
 - The master runs the ref watch.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
   - ref watch (storage) to port:
-    - xshader (Coder4): VItoriaBr 67bb579 (select between two immediate samplers by a static-sampler range); rebox 18c049c (a buffer V# below 4 GiB not in GPU memory reads as empty: a float base word faulted the GPU); five-star 97dafaa (64-bit image atomics as uint64 typed atomics).
+    - d3d12 (runtime, not xshader): rebox 18c049c (a guest buffer V# below 4 GiB that is not runtime GPU memory maps as empty: a float base word, 0x3f800000, faulted the GPU); our runtime has no such check.
     - d3d12 (Coder5): leonida d16eb1ff0 (a depth placement inside another one's extent gets its own image), 89fdb83e0 (a console DS texture with UAV is created without it); ScarlettCompat 93c0f96 (map the console layout word before CreatePlacedResourceX).
-  - xshader: TuxBox 1397cb6 with X2W a351c0fb/b8889849/a90c0fb: allow pixel_wave DPP16 quad exchange in loops (hlsl.rs:6286), gated on proven whole-quad EXEC (s_wqm_b64 exec,exec).
-  - xshader: xcl 1f8d4be: POPS ROV (operand 239 / hwreg 25 -> RasterizerOrdered PS UAVs).
   - runtime (optional): xcl 79fde18: add compile time to the compute_failure log (device/compute.rs:660).
 
 ## Housekeeping
