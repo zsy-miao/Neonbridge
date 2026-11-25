@@ -132,6 +132,26 @@ pub(crate) unsafe fn patch_module(module: *mut c_void) -> usize {
     }
 }
 
+/// Routes ucrtbase's ReadFile through `read_file`. The exe reads through the
+/// CRT too (it imports api-ms-win-crt-stdio: fread, _read), and ucrtbase's
+/// own ReadFile import was not hooked, so a CRT read into a lazy title view
+/// no CPU had touched failed in the kernel (998) and came back short (video
+/// atlas gap 1: the hook covered the exe's and title DLLs' imports only; xcl
+/// inline-hooks kernelbase!ReadFile, vfs_hooks.rs:529-537, GPL-3.0, credit
+/// to its authors). TUXBOX_READ_COMMIT_CRT=0 leaves ucrtbase alone.
+pub(crate) unsafe fn install_crt() {
+    if !enabled() || std::env::var("TUXBOX_READ_COMMIT_CRT").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    unsafe extern "system" {
+        fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+    }
+    let name: Vec<u16> = "ucrtbase.dll".encode_utf16().chain([0]).collect();
+    let ucrt = unsafe { GetModuleHandleW(name.as_ptr()) };
+    let n = unsafe { patch_module(ucrt) };
+    crate::loader::log(&format!("read commit: {n} ucrtbase ReadFile import(s) commit lazy title pages first (TUXBOX_READ_COMMIT_CRT=0 skips)"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
