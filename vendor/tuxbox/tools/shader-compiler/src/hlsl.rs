@@ -803,6 +803,9 @@ struct Emitter<'a> {
     /// slot, class | dxgi << 8 (0 float/unknown, 1 UINT, 2 SINT), for typed heap
     /// buffer views. TB_TYPED_FMT=0 keeps the float4-only path.
     view_formats: bool,
+    /// Declares tb_slot_views (t3, space32766): 16 B per host heap slot, the
+    /// last dword the view's element stride (runtime slot_views.rs, b1155aa).
+    slot_views: bool,
     /// Compute sampler heap base SGPR (FSSM user-data class 6).
     sampler_heap_base: Option<u8>,
     /// Sampler slots read from that heap: bound from SamplerDescriptorHeap in main.
@@ -3601,6 +3604,7 @@ impl<'a> Emitter<'a> {
             heap_load_ty: HashMap::new(),
             heap_sampler_slots: BTreeSet::new(),
             view_formats: false,
+            slot_views: false,
             heap_map: ex.root_sig.as_ref().is_some_and(|root| root.params.iter().any(|p| matches!(p.kind,
                 crate::meta::RootParamKind::Descriptor { kind: 3, register: 0, space: 32766 }))),
             heap_words: 0,
@@ -10228,8 +10232,22 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             return Err("raw buffer IDXEN needs the console descriptor stride".into());
         }
         let vector = if idxen {
-            let stride = matches!(self.res.get(&self.cur_idx).and_then(|v| v.first()), Some(Res::HeapRaw(_)))
-                .then(|| self.sibling_stride(ins)).flatten();
+            let heap_raw = match self.res.get(&self.cur_idx).and_then(|v| v.first()) { Some(Res::HeapRaw(src)) => Some(*src), _ => None };
+            let mut stride = heap_raw.and_then(|_| self.sibling_stride(ins)).map(|k| format!("{k}u"));
+            // VItoriaBr b62bbc0 (SLOT_VIEWS, GPL-3.0, credit to its authors): a
+            // heap raw view with no proven stride reads the element stride the
+            // runtime recorded for its heap slot in tb_slot_views (t3,
+            // space32766; 0 = unknown, taken as bytes). test152: DXBC 8a4d8b4d
+            // (buffer_load_dwordx4 @ 0xf0) was refused here. Loads only.
+            // TB_RAW_IDXEN_SLOT=0 refuses as before.
+            let slot_src = heap_raw.filter(|_| stride.is_none() && !self.raw_byte_index.contains(&ins.offset)
+                && ins.mnemonic.starts_with("buffer_load_dword")
+                && !std::env::var("TB_RAW_IDXEN_SLOT").is_ok_and(|v| v.trim() == "0"));
+            if let Some(src) = slot_src {
+                self.slot_views = true;
+                self.regs.insert(format!("s{src}"));
+                stride = Some(format!("max(tb_slot_views.Load(s{src} * 16u + 12u), 1u)"));
+            }
             if !std::env::var("TB_RAW_IDXEN_LOOSE").is_ok_and(|v| v.trim() == "1")
                 && ((stride.is_none() && !self.raw_byte_index.contains(&ins.offset))
                     || !ins.mnemonic.starts_with("buffer_load_dword"))
@@ -10237,7 +10255,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 return Err("raw buffer IDXEN needs the console descriptor stride".into());
             }
             let mut index = r(&ins.src[0])?;
-            if let Some(stride) = stride { index = format!("({index} * {stride}u)"); }
+            if let Some(stride) = stride { index = format!("({index} * {stride})"); }
             if offen {
                 let Opnd::Vgpr(base) = ins.src[0] else {
                     return Err("raw buffer index needs a VGPR".into());
@@ -12781,6 +12799,10 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
         }
         if self.view_formats {
             h.push_str("ByteAddressBuffer tb_view_formats : register(t2, space32766);
+");
+        }
+        if self.slot_views {
+            h.push_str("ByteAddressBuffer tb_slot_views : register(t3, space32766);
 ");
         }
         if self.view_marks {
