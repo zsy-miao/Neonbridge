@@ -11715,8 +11715,19 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             return Ok(());
         }
-        let byte = format!("{} + {soffset} + {}u", if offen { r(&ins.src[0])? } else { "0u".into() }, ins.aux.imm as u32);
-        if idxen {
+        let mut byte = format!("{} + {soffset} + {}u", if offen { r(&ins.src[0])? } else { "0u".into() }, ins.aux.imm as u32);
+        // ztrx 578d459 (meshlet culling read its scene buffers as the wrong kind of
+        // view): an IDXEN access reads a raw view of the slot at index * the slot's
+        // element stride (tb_slot_views) + byte, not a StructuredBuffer of the host
+        // view's own stride, which a title's raw or typed view does not have.
+        // The runtime makes the slot's raw view (Coder5's TUXBOX_RAW_STRUCTURED).
+        // OFFEN with IDXEN keeps the structured form. TB_IDXEN_RAW=0 off.
+        let idxen_raw = idxen && !offen && std::env::var("TB_IDXEN_RAW").map_or(true, |v| v.trim() != "0");
+        if idxen_raw {
+            let stride = self.slot_stride(src);
+            byte = format!("{} * {stride} + {byte}", r(&ins.src[0])?);
+        }
+        if idxen && !idxen_raw {
             // Structured view: the descriptor stride advances the element index.
             let words = (ins.aux.imm as u32 / 4 + u32::from(width)).max(64);
             self.heap_words = self.heap_words.max(words);
