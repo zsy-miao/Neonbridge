@@ -638,6 +638,7 @@ unsafe fn make_compute(
         super::pipeline_cache::compute(&this.native, descriptor)
     };
     let mut native = create(&host);
+    let first = native.as_ref().err().map(|e| e.code());
     if translation.is_some() && reflected.is_none() && scene_root.is_none() && native.is_err() {
         // Structural checks cannot validate DXIL instructions or root bindings.
         // Let the adapter handle the original guest shader if it rejects the cache.
@@ -660,7 +661,16 @@ unsafe fn make_compute(
     }
     if let Err(error) = &native {
         if let Some(root) = root { super::compute_table::capture_stage_root(bytes, &root.state); }
-        crate::diagnostics::compute_failure(bytes, error.code().0, "host CreateComputePipelineState rejected it");
+        // test149: two host rejections (E_INVALIDARG) named nothing, so the
+        // DXIL that failed, its root and the source digest the shader worker
+        // logs are given here; the debug layer (TUXBOX_D3D12_SDK) names the
+        // reason. The guest-shader retry used to hide the first failure.
+        let root_kind = if scene_root.is_some() { "scene root" } else if reflected.is_some() { "runtime tables" } else { "title root" };
+        let digest = super::shader_cache::source_digest(bytes).map(|d| d.to_string()).unwrap_or_default();
+        let why = format!(
+            "host CreateComputePipelineState rejected it: {} ({} bytes) on the {root_kind}, first create {:?}, source SHA-256 {digest}",
+            if translation.is_some() { "translated DXIL" } else { "guest shader" }, code.len(), first.map(|c| format!("{:#010x}", c.0)));
+        crate::diagnostics::compute_failure(bytes, error.code().0, &why);
         if let Some(status) = unsafe { null_compute(this, root.map(|p| &p.native), desc, out) } {
             return status;
         }
