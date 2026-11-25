@@ -784,9 +784,15 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             if target != "lib_6_3" {
                 dxc.args(["-E", "main"]);
             }
-            if crate::dxc::enabled() {
-                // In-process (src/dxc.rs): the same arguments without the
-                // file names, no dxc.exe start and dxcompiler.dll load per program.
+            // In-process (src/dxc.rs): the same arguments without the file
+            // names, no dxc.exe start and dxcompiler.dll load per program. Not
+            // for -O1: its 10 s cut-off cannot kill an in-process compile, and
+            // the 0577d56 prewarm (in-process from 570e0aa) held 9.4 GB private
+            // in the launcher itself, no dxc children, 53 threads for 10 jobs:
+            // every -O1 past its time kept compiling (up to ~0.7 GB each) beside
+            // its -O0 retry, uncounted, so the worker ceiling held the prewarm at
+            // 0.3 programs/s. dxc.exe takes -O1 and is killed at its time.
+            if crate::dxc::enabled() && opt != "-O1" {
                 let args = dxc.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
                 let source = fs::read(&hlsl).map_err(|e| ToolError::Other(format!("read {}: {e}", hlsl.display())))?;
                 return match crate::dxc::compile(&tools.dxc, source, args, Duration::from_secs(secs), give_up, false) {
