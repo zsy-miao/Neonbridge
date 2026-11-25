@@ -7747,6 +7747,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let is_p2 = m == "v_interp_p2_f16";
         let (attr, chan, high) = Self::f16_interp_descriptor(ins.raw[1]);
         let clamp = (ins.raw[0] >> 15) & 1 != 0;
+        // p2_f16: VOP3 omod scales in f32 before the one rounding to half, and
+        // op_sel[3] (dword0 bit 14) writes the high half (VIctory 4436fca).
+        let omod = ["", " * 2.0", " * 4.0", " * 0.5"][((ins.raw[1] >> 27) & 3) as usize];
+        let to_high = is_p2 && (ins.raw[0] >> 14) & 1 != 0;
+        let place = |keep: &str, bits: &str| if to_high {
+            format!("(({keep} & 0xffffu) | ({bits} << 16))")
+        } else {
+            format!("(({keep} & 0xffff0000u) | {bits})")
+        };
         let param = self.ps_attrs.get(attr).ok_or_else(|| format!("PS attr{attr} has no signature register"))?;
         // A packed half-float component arrives as the float it stands for.
         let packed = param.component(chan, high);
@@ -7778,10 +7787,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if !is_p2 {
                 return self.wv(&dst, &format!("asuint({field})"));
             }
-            let value = if clamp { format!("saturate({field})") } else { field.clone() };
+            let value = format!("({field}{omod})");
+            let value = if clamp { format!("saturate({value})") } else { value };
             let keep = r(&dst)?;
             self.touch(&dst);
-            return self.wv(&dst, &format!("(({keep} & 0xffff0000u) | tb_f16_rne({value}))"));
+            return self.wv(&dst, &place(&keep, &format!("tb_f16_rne({value})")));
         }
         let dst = ins.dst.first().cloned().ok_or("no dst")?;
         let name_d = name(&dst)?;
@@ -7803,11 +7813,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             let j = f(&ins.src[1])?;
             let partial = r(&ins.src[2])?;
-            let full = format!("(asfloat({partial}) + {j} * ({p2v} - {p0}))");
+            let full = format!("((asfloat({partial}) + {j} * ({p2v} - {p0})){omod})");
             let full = if clamp { format!("saturate({full})") } else { full };
             let bits = format!("tb_f16_rne({full})");
             self.line("#if __SHADER_TARGET_MAJOR >= 6");
-            self.wv(&dst, &format!("(({name_d} & 0xffff0000u) | {bits})"))?;
+            self.wv(&dst, &place(&name_d, &bits))?;
             self.line("#else");
             self.wv(&dst, &fallback)?;
             self.line("#endif");
