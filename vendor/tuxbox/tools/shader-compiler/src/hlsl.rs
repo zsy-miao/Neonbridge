@@ -8082,6 +8082,30 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         let byte_offset = if ins.aux.imm == 0 { value }
                             else { format!("({value} + {:#x}u)", ins.aux.imm as u32) };
                         self.ws(&dst, &format!("tb_heap_index({byte_offset} >> 5)"))?;
+                        // VItoriaBr b62bbc0 (SLOT_VIEWS, GPL-3.0, credit to its authors):
+                        // a buffer descriptor at a computed heap index has its words read as
+                        // data (record count, stride, address high) from the runtime's
+                        // per-slot table tb_slot_views (title VA lo/hi, bytes, stride;
+                        // b1155aa). Dword 0 keeps the heap index the resource binding uses;
+                        // dwords 1-2 are V# encoded (base hi | stride << 16, records:
+                        // elements when strided, else bytes). They were left stale.
+                        // TB_HEAP_VIEW_WORDS=0 leaves them.
+                        if ins.op == 2 && !std::env::var("TB_HEAP_VIEW_WORDS").is_ok_and(|v| v.trim() == "0") {
+                            if let Opnd::Sgpr(base) = dst {
+                                if base <= 101 {
+                                    self.slot_views = true;
+                                    let index = r(&dst)?;
+                                    let t = format!("tb_sv{}", ins.offset);
+                                    self.line(&format!("uint4 {t} = tb_slot_views.Load4({index} * 16u);"));
+                                    let w1 = sreg_opnd(base + 1);
+                                    let w2 = sreg_opnd(base + 2);
+                                    self.touch(&w1);
+                                    self.touch(&w2);
+                                    self.ws(&w1, &format!("(({t}.y & 0xffffu) | (min({t}.w, 0x3fffu) << 16))"))?;
+                                    self.ws(&w2, &format!("(({t}.w != 0u) ? ({t}.z / {t}.w) : {t}.z)"))?;
+                                }
+                            }
+                        }
                         return Ok(());
                     }
                     if let Some(Res::HeapSamplerLoad(offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
