@@ -47,8 +47,6 @@ Open work. Each item is tested in a run of its own.
 - The master runs the ref watch.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
   - xshader: TuxBox 1397cb6 with X2W a351c0fb/b8889849/a90c0fb: allow pixel_wave DPP16 quad exchange in loops (hlsl.rs:6286), gated on proven whole-quad EXEC (s_wqm_b64 exec,exec).
-  - xshader: xcl 74fe4c2: v_div_fixup_f16 (opcodes.rs:991; tb_div_fixup + tb_f16_rne near hlsl.rs:9573).
-  - xshader: X2W 6f784a50: v_dot2_u32_u16 and v_dot4_u32_u8 (next to v_dot4_i32_i8, hlsl.rs:8835).
   - xshader: xcl 1f8d4be: POPS ROV (operand 239 / hwreg 25 -> RasterizerOrdered PS UAVs).
   - runtime (optional): xcl 79fde18: add compile time to the compute_failure log (device/compute.rs:660).
 
@@ -81,6 +79,8 @@ Open work. Each item is tested in a run of its own.
 - b69a488: re-evaluate f1b5622 now that the AnyPS5 ban is lifted.
 
 ## Done / not needed
+- xshader: xcl 74fe4c2 v_div_fixup_f16 ported (9250d13, TB_DIV_FIXUP_F16=0 off).
+- xshader: X2W 6f784a50 v_dot2_u32_u16 / v_dot4_u32_u8 ported (70d0b20, TB_DOT_UNSIGNED=0 off).
 - not needed: leonida 273b3bdf9 (c63e099): neither the exe nor any 6m DLL imports ReadFileEx/ReadFileScatter; ReadFile already commits before the read (read_commit.rs:77).
 - not needed: 28e3f08 keep the window's protection (leonida 8d4dd7a8/80ed5dd3: protect & ~(WRITECOMBINE|NOCACHE|GUARD), NOACCESS -> READWRITE): every window xmem accepts (virtual_memory.rs:438, 0x801/0x04/0x2004/0x2404/0x10404/0x22004) reduces to PAGE_READWRITE, which views already get.
 - ported or not needed (reasons in refwatch-verify-verdicts.md): xcl c7f6933 fb9d059 6c9f947 18423c3 4070ae1 4b0af47 79fde18-partial; VIctory-zhai f07016a 0f11320 7f26331; five-star evict-windows 4fdfaed ff3914e c915760; TuxBox 97b8ad3; X2W 84c66897 (address views read the same memory) da888e46/efe54732/323ccf6f 28337fa6/9a6fd7ff 6d8ab3d3 9d013a48; leonida aa23d709c 22f2a04af/22171d092 545e8d51f f2268abea/255f17001; ScarlettCompat 446b178; ScarlettPort 7581c87; rebox 5d01c25; VItoriaBr c0b60a0.
