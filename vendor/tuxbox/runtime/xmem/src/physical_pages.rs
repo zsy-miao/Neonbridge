@@ -1393,7 +1393,10 @@ impl Pool {
             static JOINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = JOINS.fetch_add(1, Ordering::Relaxed) + 1;
             if joined.is_err() || n <= 16 || n.is_power_of_two() {
-                crate::loader::log(&format!("join range {lo:#x}..{hi:#x} ({} views): {joined:?} ({n} joins so far)", pieces.len()));
+                // The OS call that failed (unmap, coalesce, map or commit), so
+                // an Err(87) names its step instead of only its code.
+                let step = if joined.is_err() { format!(", last failed OS step {:?}", shared_pages::take_os_error()) } else { String::new() };
+                crate::loader::log(&format!("join range {lo:#x}..{hi:#x} ({} views): {joined:?}{step} ({n} joins so far)", pieces.len()));
             }
         }
         joined?;
