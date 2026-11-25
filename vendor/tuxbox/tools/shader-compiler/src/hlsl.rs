@@ -6115,6 +6115,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let d = ins.dst.first().cloned();
         self.line(&format!("// {:#06x} {m}", ins.offset));
         self.cur_idx = idx;
+        // GDS=1 addresses the global data share, not the group's LDS: refuse every
+        // memory DS form rather than read or overwrite groupshared data (xcl
+        // e642921, GPL-2, copied with credit). Swizzle and permute use no memory.
+        if ins.enc == Enc::Ds && ins.raw.first().is_some_and(|w| w & (1 << 17) != 0)
+            && !matches!(m, "ds_swizzle_b32" | "ds_bpermute_b32" | "ds_permute_b32")
+        {
+            return Err(format!("{m}: GDS is unsupported"));
+        }
         if m == "tb_reflection_far_query" {
             reflection_far::emit(self, ins);
             return Ok(());
