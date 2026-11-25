@@ -260,7 +260,12 @@ static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
 /// the old catch-up. Now default 4 again, at the before-decode site that
 /// fixed the garble: a movie keeps its real-time rate (and Bink's soundtrack,
 /// fed per decoded frame, its rate: test152 played the 4K intro at 12 of 30
-/// frames/s, 3 s audio gaps) whatever the title's fps. TUXBOX_BINK_CATCHUP=0 off.
+/// frames/s, 3 s audio gaps) whatever the title's fps. Default 0 again:
+/// ztrx (which reaches the prologue with audio) has no Bink catch-up either,
+/// and test171 showed the catch-up costs the title's thread ~150 ms/s while
+/// the movie's audio moves to the output at most 8 KB per title frame
+/// (game+0x9efd90 into the 0x2000-capped sink), so title fps, not decodes,
+/// bounds the audio. TUXBOX_BINK_CATCHUP=4 restores it.
 /// Where the catch-up decodes. After the title's BinkNextFrame (the
 /// old place) its extra decodes land in the registered plane ring while the
 /// frame just decoded has not yet been submitted, so d3d12's read of that
@@ -280,7 +285,7 @@ fn catch_up_before_decode() -> bool {
 fn catch_up_cap() -> u32 {
     use std::sync::OnceLock;
     static CAP: OnceLock<u32> = OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(4))
+    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
 }
 
 /// Frames ahead of its clock a movie is decoded to: TUXBOX_BINK_LEAD (default 1).
