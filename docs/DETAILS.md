@@ -130,6 +130,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_WAIT_HOIST` (1), `TUXBOX_WAIT_SKIP_BARRIER` (1): unsplittable waits hoisted; skipped waits get a UAV barrier.
 - `TUXBOX_QUAD_MASK_REFUSE` (0): 1 refuses quad sample masks.
 - `TUXBOX_FORGET_RELEASED_LISTS` (1): 0 keeps a released list's recording.
+- `TUXBOX_DEVICE11_SLOT59` (1): 0 maps slot 59 to ExecuteIndirect, not the InsertGpuMarker no-op.
 
 ### d3d12: GPU memory waits and presentation
 
@@ -140,6 +141,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_PRESENT_LAG` (2): presents a queue may lag, 0 off; `TUXBOX_PRESENT_WAIT_MS` (5000); `TUXBOX_PRESENT_HELD_MS` (250).
 - `TUXBOX_PRESENT_TYPELESS` (1): 0 refuses typeless present surfaces.
 - `TUXBOX_RETIRE_WAITS_ALL` (0): 1 waits on every queue before completion writes.
+- `TUXBOX_PRESENT_BGRX` (1): 0 refuses B8G8R8X8 presents (drawn into BGRA with alpha 1).
 
 ### d3d12: resources, views and imports
 
@@ -170,10 +172,12 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_SLOT_HOLDS_TEXTURE` (1), `TUXBOX_PART_VIEWS_STAY` (1), `TUXBOX_MESH_TOPOLOGY_UNDEFINED` (1).
 - `TUXBOX_BCPACK_VICTORY` (1), `TUXBOX_BCPACK_BC7_ENTRY0` (1); `TUXBOX_BCPACK` (grey): `refuse` refuses bad streams.
 - `TUXBOX_HEAP_FAIL_LOG` (1).
+- `TUXBOX_IDENTITY_GUARD` (1): 0 gives unpaged heaps no null guard slot.
+- `TUXBOX_PACKED_READ_NOTE` (1): R9G9B9E5 read notes (unpublished write, zero memory).
 
 ### d3d12: page pools, placed textures and write-back
 
-- `TUXBOX_PAGES_RECYCLE` (4096), `TUXBOX_PAGES_SIGNAL_EACH` (0).
+- `TUXBOX_PAGES_RECYCLE` (4096), `TUXBOX_PAGES_RECYCLE_MB` (256, 0 count only), `TUXBOX_PAGES_RECYCLE_SECS` (10, 0 never), `TUXBOX_PAGES_SIGNAL_EACH` (0).
 - `TUXBOX_PAGES_EVICT` (0), `TUXBOX_SPAN_EVICT_PCT`, `TUXBOX_SPAN_EVICT_S` (10), `TUXBOX_PAGES_SYSTEM_PCT` (off), `TUXBOX_PAGES_DEMOTE` (1).
 - `TUXBOX_PAGES_TRIM_EMPTY` (1), `TUXBOX_PAGES_PACK` (1), `TUXBOX_PAGES_TRIM_PCT` (95), `TUXBOX_PAGES_TRIM2_PCT` (110).
 - `TUXBOX_PAGES_IDLE_S` (5), `TUXBOX_PAGES_IDLE_MIN_KB` (1024), `TUXBOX_PAGES_TILED_CHECK` (1), `TUXBOX_PAGES_CONTIGUOUS` (1).
@@ -186,6 +190,8 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_WRITEBACK_INFLIGHT_MB` (512), `TUXBOX_READERS_MERGE` (1).
 - `TUXBOX_PLACED_OOM_RETRY` (1), `TUXBOX_PLACED_OOM_STRICT` (0), `TUXBOX_PUBLICATION_STRICT` (0).
 - `TUXBOX_WATCH_GAP_MB` (64).
+- `TUXBOX_DETILE_FAST` (1): 0 copies placed uploads run by run. test153: submit fell from 27 ms to about 1 ms per frame; 39 fps until a hang at present #2699.
+- `TUXBOX_UPLOAD_WORKERS` (1 = inline), `TUXBOX_UPLOAD_LIST_POOL` (1): detile worker threads; 0 creates copy lists per refresh.
 
 ### xmem
 
@@ -193,6 +199,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_READ_COMMIT` (1), `TUXBOX_READ_COMMIT_CRT` (1).
 - `TUXBOX_XMEM_UNMAP_FALLBACK` (1), `TUXBOX_XMEM_DEFER_UNMAP` (1), `TUXBOX_XMEM_UNMAP_RETRY` (0).
 - `TUXBOX_XMEM_DEVICE_ALLOC` (1), `TUXBOX_XMEM_GRAPHICS_BUDGET` (1).
+- `TUXBOX_JOIN87_DETAIL` (1): failed join unmaps name the GPU imports over them.
 
 ### d3d12: pipelines
 
@@ -236,7 +243,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_SAVE_READ_LOCK` (1), `TUXBOX_SAVE_QUOTA_FIXED` (0).
 - `TUXBOX_CHAD_STRICT` (0), `TUXBOX_XMA` (1), `TUXBOX_XMA_LOOP_SKIP_NEXT` (1), `TUXBOX_APU_FREE` (1), `TUXBOX_AUDIO_LOCK_PATCH` (1).
 - `TUXBOX_XAPU_CLAMP` (1), `TUXBOX_XAPU_REBOX_LAYOUT` (0), `TUXBOX_XAUDIO_VOICE_FLAGS` (1).
-- `TUXBOX_BINK_LEAD` (1), `TUXBOX_BINK_CATCHUP` (0), `TUXBOX_BINK_WAIT_CATCHUP` (1), `TUXBOX_BINK_PLANE_FENCE_MS` (8), `TUXBOX_BINK_SKIP_SIGNAL` (1).
+- `TUXBOX_BINK_LEAD` (1), `TUXBOX_BINK_CATCHUP` (cap 4; 0 off, not exercised in test153), `TUXBOX_BINK_WAIT_CATCHUP` (1), `TUXBOX_BINK_PLANE_FENCE_MS` (8), `TUXBOX_BINK_SKIP_SIGNAL` (1).
 
 ### Diagnostics
 
@@ -254,6 +261,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_FALLBACK` (off): `flat`; `TUXBOX_NULL_SHADERS`, `TUXBOX_NULL_BISECT` (off): swap shaders out to find a bad one.
 - `TUXBOX_BREAK_RVAS` (off): log registers at these RVAs.
 - `TUXBOX_DRED` (0).
+- `TUXBOX_FENCE_WAIT_LOG_MS` (2000): log title fence waits held longer, 0 off.
 - `TUXBOX_D3D12_SDK` (off): Agility SDK dir for a debug device; `TUXBOX_D3D12_SDK_GLOBAL` (0), `TUXBOX_D3D12_SDK_VERSION` (from D3D12Core.dll).
 
 ### xshader (`TB_*`)
@@ -277,6 +285,7 @@ Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is
 - `TB_FENCE_GUARDED` (1), `TB_FENCE_CAPPED` (0).
 - `TB_SPLIT_WAVE64` (1), `TB_WAVE64_FOLD` (1), `TB_WAVE64_SPIN` (1).
 - `TB_MESH_DROP_UNREAD` (1).
+- `TB_QUAD_MASK` (0): 1 adds the SetSampleMaskX quad mask prologue to pixel shaders.
 
 ## Credits
 
