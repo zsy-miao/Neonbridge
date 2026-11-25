@@ -1964,6 +1964,10 @@ fn mad_ftz() -> bool {
     std::env::var("TB_MAD_FTZ").map_or(true, |v| v.trim() != "0")
 }
 
+fn denorm_ftz() -> bool {
+    std::env::var("TB_DENORM_FTZ").map_or(true, |v| v.trim() != "0")
+}
+
 fn mad_name() -> &'static str {
     if mad_ftz() { "tb_madz" } else { "tb_mad" }
 }
@@ -6866,7 +6870,23 @@ impl<'a> Emitter<'a> {
         h.push_str(CUBE_HELPERS);
         h.push_str(rounding::HELPER);
         h.push_str(if self.single_wave32 { HALF_RNE_STRAIGHT_LINE } else { HALF_RNE });
-        h.push_str(HALF_HELPERS);
+        // TB_DENORM_FTZ (default on, =0 off): a program that never writes the MODE
+        // register runs its f32 ops under the constant flush mode (0xc0: f32 denormals
+        // flushed), so it is compiled with `-denorm ftz` (the launcher reads the marker
+        // line) and the hardware flushes inputs and results; tb_ftz, used only by the
+        // tb_madz / tb_madlz products and sums, becomes the identity (fe9c9850: 2069
+        // tb_madz, five flushes each).
+        // Limited to programs of TB_NATIVE_CMP_MIN_INSNS (8000) or more instructions,
+        // whose driver compiles are the slow ones.
+        let big = self.insns.len() >= std::env::var("TB_NATIVE_CMP_MIN_INSNS").ok()
+            .and_then(|v| v.trim().parse().ok()).unwrap_or(8000usize);
+        if denorm_ftz() && big && !self.regs.contains("tb_fp_mode") {
+            h.push_str(&HALF_HELPERS.replace(
+                "float tb_ftz(float x) { return ((asuint(x) & 0x7f800000u) == 0u) ? asfloat(asuint(x) & 0x80000000u) : x; }",
+                "// tb:denorm-ftz\nfloat tb_ftz(float x) { return x; }"));
+        } else {
+            h.push_str(HALF_HELPERS);
+        }
         if self.insns.iter().any(|i| i.mnemonic.starts_with("v_cmp") && (i.mnemonic.ends_with("_f64") || i.mnemonic.ends_with("_f32") || i.mnemonic.ends_with("_f16"))) {
             h.push_str(compare::FLOAT_HELPERS);
         }

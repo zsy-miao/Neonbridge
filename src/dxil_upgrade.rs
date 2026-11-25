@@ -111,6 +111,9 @@ fn upgrade(dxc: &Path, defines: &[String], job: &Path, secs: u64) -> Result<(), 
     if target != "lib_6_3" {
         args.extend(["-E".to_owned(), "main".to_owned()]);
     }
+    if crate::shaders::denorm_ftz_marked(&source) {
+        args.extend(["-denorm".to_owned(), "ftz".to_owned()]);
+    }
     let bytes = if crate::dxc::enabled() {
         let hlsl = fs::read(&source).map_err(|e| e.to_string())?;
         match crate::dxc::compile(dxc, hlsl, args, Duration::from_secs(secs), &yield_now, true) {

@@ -37,6 +37,11 @@ pub static PREWARM_ONLY: AtomicBool = AtomicBool::new(false);
 /// unchanged HLSL (1.5/s), and the -O1 passes that ran past 120 s stored -O0
 /// again, so every prewarm repeated them. The -O0 DXIL is reused and the
 /// background upgrade queue (dxil_upgrade.rs, 900 s at idle priority) makes it -O1.
+/// xshader TB_DENORM_FTZ marker: the program wants `-denorm ftz`.
+pub(crate) fn denorm_ftz_marked(hlsl: &Path) -> bool {
+    fs::read(hlsl).is_ok_and(|b| b.windows(16).any(|w| w == b"// tb:denorm-ftz"))
+}
+
 fn upgrading() -> bool {
     PREWARM_ONLY.load(Ordering::Relaxed) && std::env::var("NEONBRIDGE_PREWARM_UPGRADE_O0").as_deref() == Ok("1")
 }
@@ -949,6 +954,11 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             }
             if target != "lib_6_3" {
                 dxc.args(["-E", "main"]);
+            }
+            // xshader TB_DENORM_FTZ: a constant-flush-mode program asks for hardware
+            // f32 denormal flushing (its tb_ftz is the identity).
+            if denorm_ftz_marked(&hlsl) {
+                dxc.args(["-denorm", "ftz"]);
             }
             // In-process (src/dxc.rs): the same arguments without the file
             // names, no dxc.exe start and dxcompiler.dll load per program. Not

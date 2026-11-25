@@ -131,6 +131,9 @@ fn translate(key: &str, dxbc: &Path, out: &Path, xshader: &Path, dxc: Option<&Pa
     if target != "lib_6_3" {
         cmd.args(["-E", "main"]);
     }
+    if crate::shaders::denorm_ftz_marked(&hlsl) {
+        cmd.args(["-denorm", "ftz"]);
+    }
     let result = run(cmd.arg("-Fo").arg(&object).arg(&hlsl), Duration::from_secs(120));
     let _ = fs::remove_file(&object);
     match result {
