@@ -397,6 +397,7 @@ fn load_or_make(
     name: Option<String>,
     load: impl FnOnce(&ID3D12PipelineLibrary1, &HSTRING) -> Result<ID3D12PipelineState>,
     make: impl FnOnce() -> Result<ID3D12PipelineState>,
+    fields: impl FnOnce() -> String,
 ) -> Result<ID3D12PipelineState> {
     // Drivers that compile inside the call can recurse deeply (Proton).
     // five-star afdd699: the driver compile waits for the memory it may take.
@@ -448,7 +449,21 @@ fn load_or_make(
     }
     if let Some(names) = names() {
         let names = names.lock().unwrap_or_else(|e| e.into_inner());
-        if names.known.contains(&text) { &MISSED_KNOWN } else { &MISSED_NEW }.fetch_add(1, Ordering::Relaxed);
+        let known = names.known.contains(&text);
+        let n = if known { &MISSED_KNOWN } else { &MISSED_NEW }.fetch_add(1, Ordering::Relaxed) + 1;
+        drop(names);
+        // TUXBOX_PIPELINE_MISS_LOG (=0 off): the first 16 misses of each kind,
+        // then powers of two, with the load's result and the name's inputs.
+        if (n <= 16 || n.is_power_of_two()) && crate::env_toggle!("TUXBOX_PIPELINE_MISS_LOG") != Some("0") {
+            let why = match &loaded {
+                None => "no library".to_string(),
+                Some(Err(e)) => format!("{:#x}", e.code().0),
+                Some(Ok(_)) => "loaded".to_string(),
+            };
+            crate::diagnostics::log_line(format_args!(
+                "pipeline library miss ({} #{n}): name {text}, load {why}, {shader_bytes} shader bytes; fields {}",
+                if known { "named by an earlier run" } else { "new name" }, fields()));
+        }
     }
     let join = crate::env_toggle!("TUXBOX_PIPELINE_JOIN") != Some("0");
     let flight = if join {
@@ -545,6 +560,7 @@ pub(super) unsafe fn stream(
         name,
         |library, name| unsafe { library.LoadPipeline(name, desc) },
         || unsafe { host.CreatePipelineState(desc) },
+        || unsafe { super::stream::native_fields(desc) },
     )
 }
 
@@ -560,6 +576,11 @@ pub(super) unsafe fn compute(
         name,
         |library, name| unsafe { library.LoadComputePipeline(name, desc) },
         || unsafe { host.CreateComputePipelineState(desc) },
+        || {
+            let cs = &desc.CS;
+            let code = unsafe { core::slice::from_raw_parts(cs.pShaderBytecode.cast::<u8>(), cs.BytecodeLength) };
+            format!("cs {} node {} flags {:#x}", super::shader_cache::source_digest(code).unwrap_or_default(), desc.NodeMask, desc.Flags.0)
+        },
     )
 }
 

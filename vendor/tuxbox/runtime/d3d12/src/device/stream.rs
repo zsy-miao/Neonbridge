@@ -399,6 +399,21 @@ pub(super) unsafe fn native_name(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> Opt
     unsafe { canonical(None, desc) }
 }
 
+/// The library name's inputs, per record: `tag:` and the first 12 hex of
+/// its canonical text's digest (pipeline_cache's miss log, for diffing a
+/// journal replay's desc against the title's field by field).
+pub(super) unsafe fn native_fields(desc: &D3D12_PIPELINE_STATE_STREAM_DESC) -> String {
+    let Some((text, parts)) = (unsafe { canonical_parts(None, desc) }) else { return "unparsed".into() };
+    let mut out = String::new();
+    let mut from = 0;
+    for (tag, end) in parts {
+        let digest = shader_cache::source_digest(text[from..end].as_bytes()).unwrap_or_default();
+        out.push_str(&format!("{tag}:{} ", &digest[..digest.len().min(12)]));
+        from = end;
+    }
+    out
+}
+
 unsafe fn create(
     device: &Device,
     desc: &D3D12_PIPELINE_STATE_STREAM_DESC,
