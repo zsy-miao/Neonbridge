@@ -934,10 +934,19 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // launch (test152 sat at 1336/1338 on two programs a full prewarm of
         // the same rev had already timed out on); changed HLSL is a new path.
         // NEONBRIDGE_DXC_RETRY_FAILED=1 retries them.
+        // Only a compile error is kept: dxc's own "error:" text on stderr. A
+        // kill (taskkill while a prewarm stops: exit 1, empty stderr), a
+        // timeout or a silent exit is not a verdict on the HLSL; marks written
+        // for those before (293a605) are dropped as they are found. The
+        // prewarm's tail cut-off, not this mark, keeps slow programs off the launch.
+        let compile_error = |m: &str| m.contains("error:") || m.contains("error X");
         let failed_mark = reused.as_ref().map(|p| p.with_extension("dxcfail"));
-        if std::env::var("NEONBRIDGE_DXC_RETRY_FAILED").as_deref() != Ok("1")
-            && let Some(reason) = failed_mark.as_ref().and_then(|p| fs::read_to_string(p).ok()) {
-            return Err(format!("{} (kept from an earlier run for this HLSL; NEONBRIDGE_DXC_RETRY_FAILED=1 retries)", reason.trim()));
+        if let Some(reason) = failed_mark.as_ref().and_then(|p| fs::read_to_string(p).ok()) {
+            if !compile_error(&reason) {
+                let _ = failed_mark.as_ref().map(fs::remove_file);
+            } else if std::env::var("NEONBRIDGE_DXC_RETRY_FAILED").as_deref() != Ok("1") {
+                return Err(format!("{} (kept from an earlier run for this HLSL; NEONBRIDGE_DXC_RETRY_FAILED=1 retries)", reason.trim()));
+            }
         }
         let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Acquire));
         let keep_failure = |reason: &str| {
@@ -961,15 +970,13 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 return Err("dxc: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
             Err(ToolError::Exit(c, msg)) => {
                 let reason = format!("dxc failed ({c}): {msg}");
-                keep_failure(&reason);
+                if compile_error(&msg) {
+                    keep_failure(&reason);
+                }
                 return Err(reason);
             }
             Err(ToolError::Other(msg)) => {
-                let reason = format!("dxc: {msg}");
-                if msg == "timed out" {
-                    keep_failure("dxc: timed out at -O1 and -O0");
-                }
-                return Err(reason);
+                return Err(format!("dxc: {msg}"));
             }
         }
         let dxc_ms = dxc_started.elapsed().as_millis() as u64;
