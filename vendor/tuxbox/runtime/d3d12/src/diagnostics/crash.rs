@@ -434,6 +434,18 @@ fn subrender_lines(base: usize, read: &dyn Fn(usize, usize) -> Option<u64>) -> V
     let f = |v: Option<u64>| v.map_or("?".to_string(), |v| format!("{v:#x}"));
     let mut out = vec![format!(
         "subrender: queue word {} (heartbeat still 5 s; TUXBOX_SUBRENDER_DUMP=0 off)", f(read(base + 0x9c3_be58, 8)))];
+    // The render's GPU channel (palmetto frontier_4fb0aec: the type-0
+    // channel at game+0x75e0e98, its fence proxy at +0x10, token at +0x20).
+    // The frame thread's 0x2a42d0 waits at 0x2a442d for a credit in the
+    // word at game+0x75e5ed8 (high dword: free slots of its 0x100-entry
+    // ring, index at game+0x75e5ed4); credits come back as the channel's
+    // entries retire (0x55ac400). +0x5038/+0x503c are the indices 0x50bb280
+    // compares before reading the token.
+    let channel = base + 0x75e_0e98;
+    out.push(format!(
+        "subrender: channel 0: fence {}, token {}, indices {}/{}, ring credits {}, ring index {}",
+        f(read(channel + 0x10, 8)), f(read(channel + 0x20, 8)), f(read(channel + 0x5038, 4)),
+        f(read(channel + 0x503c, 4)), f(read(base + 0x75e_5ed8, 8)), f(read(base + 0x75e_5ed4, 4))));
     for i in 0..8usize {
         let g = base + 0x9c3_be78 + i * 0x30;
         out.push(format!(
