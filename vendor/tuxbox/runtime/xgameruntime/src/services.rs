@@ -787,6 +787,7 @@ fn container_name(container: usize) -> Option<String> {
 unsafe fn emit_blobs(container: usize, prefix: &str, context: *mut c_void, callback: Option<BlobCallback>) -> i32 {
     let Some(name) = container_name(container) else { return INVALID };
     let Some(callback) = callback else { return OK };
+    let _shared = match lock_saves_shared() { Ok(l) => l, Err(busy) => return busy };
     for (blob, size) in list_blobs(&name).into_iter().filter(|b| b.0.starts_with(prefix)) {
         let info = BlobInfo { name: intern(&blob), size: size as u32 };
         if !unsafe { callback(&info, context) } { break; }
@@ -807,6 +808,7 @@ pub(super) unsafe extern "system" fn save_enumerate_blobs_by_name(
 
 /// Read the named blobs (every blob when `names` is None).
 fn read_blobs(container: &str, names: Option<Vec<String>>) -> Result<Vec<(String, Vec<u8>)>, i32> {
+    let _shared = lock_saves_shared()?;
     let names = names.unwrap_or_else(|| list_blobs(container).into_iter().map(|b| b.0).collect());
     let dir = container_dir(container).join("blobs");
     names.into_iter().map(|name| {
@@ -1013,6 +1015,21 @@ fn redirected(path: &std::path::Path) -> bool {
 /// Any failure that is not a grant (lock or sharing violation, IO_PENDING, or
 /// anything else) is busy, retried briefly before giving up.
 fn lock_saves() -> Result<std::fs::File, i32> {
+    lock_save_root(true)
+}
+
+/// The same lock held shared, by readers: a listing or read sees another
+/// process's publish whole or not at all (Xbox2Windows 5550ec2b, re-derived).
+/// None when TUXBOX_SAVE_READ_LOCK=0 or saves are not atomic (reads unlocked
+/// as before); Err(busy) when a publish held it the whole retry.
+fn lock_saves_shared() -> Result<Option<std::fs::File>, i32> {
+    if !atomic_saves() || std::env::var("TUXBOX_SAVE_READ_LOCK").is_ok_and(|v| v.trim() == "0") {
+        return Ok(None);
+    }
+    lock_save_root(false).map(Some)
+}
+
+fn lock_save_root(exclusive: bool) -> Result<std::fs::File, i32> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
     let path = std::path::Path::new(&save_root()).join(".lock");
@@ -1021,7 +1038,7 @@ fn lock_saves() -> Result<std::fs::File, i32> {
     for _ in 0..100 {
         let mut overlapped: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { core::mem::zeroed() };
         let granted = unsafe {
-            LockFileEx(file.as_raw_handle() as _, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &mut overlapped)
+            LockFileEx(file.as_raw_handle() as _, if exclusive { LOCKFILE_EXCLUSIVE_LOCK } else { 0 } | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &mut overlapped)
         };
         if granted != 0 {
             return Ok(file);
