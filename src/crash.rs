@@ -42,8 +42,26 @@ fn field(line: &str, key: &str) -> Option<String> {
     Some(v.chars().take_while(|c| !matches!(c, '"' | ' ' | ',')).collect())
 }
 
+/// The line without its ANSI colour codes (ESC [ ... letter).
+fn plain(l: &str) -> String {
+    let mut o = String::with_capacity(l.len());
+    let mut it = l.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '' && it.peek() == Some(&'[') {
+            for d in it.by_ref() {
+                if d.is_ascii_alphabetic() { break; }
+            }
+        } else {
+            o.push(c);
+        }
+    }
+    o
+}
+
 /// The reason the run ended, if its log shows one.
 pub fn explain(lines: &[String]) -> Option<String> {
+    let lines: Vec<String> = lines.iter().map(|l| plain(l)).collect();
+    let lines = &lines[..];
     let mut out = Vec::new();
     let exc = lines.iter().rposition(|l| l.contains("unhandled exception 0x"));
     if let Some(i) = exc {
@@ -137,7 +155,7 @@ mod tests {
     #[test]
     fn names_the_missing_method_before_a_breakpoint() {
         let log: Vec<String> = [
-            "2026 WARN victory_gpu::object: method not implemented object=\"device\" slot=0x330 caller=\"+0x75962\"",
+            "[33m WARN[0m victory_gpu::object: method not implemented [3mobject[0m[2m=[0m\"device\" [3mslot[0m[2m=[0m0x330 [3mcaller[0m[2m=[0m\"+0x75962\"",
             "VIctory: first-chance exception 0x80000003 at victory-image-b99f.dll+0x56abfa5",
             "VIctory: unhandled exception 0x80000003 at victory-image-b99f.dll+0x56abfa5",
             "INFO victory_hle::modules::net: HTTP connection blocked destination=submit.backtrace.io:443",
@@ -150,6 +168,15 @@ mod tests {
         assert!(why.contains("slot 0x330 (method 102)"));
         assert!(why.contains("+0x75962"));
         assert!(why.contains("crash report"));
+    }
+
+    #[test]
+    fn reads_coloured_log_lines() {
+        let log = vec![
+            "\x1b[33m WARN\x1b[0m method not implemented \x1b[3mobject\x1b[0m\x1b[2m=\x1b[0m\"device\" \x1b[3mslot\x1b[0m\x1b[2m=\x1b[0m0x330 \x1b[3mcaller\x1b[0m\x1b[2m=\x1b[0m\"+0x75962\"".to_string(),
+            "VIctory: unhandled exception 0x80000003 at x.dll+0x56abfa5".to_string(),
+        ];
+        assert!(explain(&log).unwrap().contains("device method the runtime does not implement: slot 0x330 (method 102), from the game's code at +0x75962"));
     }
 
     #[test]

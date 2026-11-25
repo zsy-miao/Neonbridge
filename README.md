@@ -44,6 +44,11 @@ Tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB 
 2. **[Flamingo](https://github.com/realblastex/flamingo)**: Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs
 3. **[VIctory-fxceless](https://github.com/fxceless/victory-fork)**: Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker
 4. **[VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT)**: **Does not work on our PC yet**, with or without Neonbridge: run alone exactly as its README says, the game still stops itself about 20 s in, every time (it asks for graphics-device method 102, which VI-BR-PORT does not have). Its author tests on an RTX 4060 Ti; ours is an RTX 4060
+   - The launcher's crash reason (latest run):
+     - **The game stopped itself:** breakpoint `0x80000003` at `victory-image.dll+0x56abfa5`, i.e. its own check failed.
+     - **Just before:** it called graphics-device method 102 (`slot 0x330`, from the game's code at `+0x75962`), which the runtime does not implement.
+     - The game then tried to upload its crash report; the runtime blocked it (no network).
+     - Upstream has no fix yet (no fork implements method 102).
 5. **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)**: No
 6. **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**: Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far
 7. **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**: Yes: intro at 30 fps, 3D scenes at 2–3 fps
