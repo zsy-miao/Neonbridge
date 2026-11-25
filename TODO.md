@@ -20,7 +20,6 @@ Open work. Each item is tested in a run of its own.
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
 
 ## xshader
-- Five programs fail DXC with "^". Name them from the next prewarm's failure log (9a70469).
 - xcl 7bea019 (split-wave64 mask liveness per block).
 - Gaps:
   - descriptors read as data (at least refuse them)
