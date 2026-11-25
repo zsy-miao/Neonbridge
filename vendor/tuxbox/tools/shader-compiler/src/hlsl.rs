@@ -4743,6 +4743,25 @@ impl<'a> Emitter<'a> {
             }
         }
         // A retyped slot is a UAV for every access; one also read as an SRV is not one view.
+        // TB_SRV_AS_UAV_READ (default on, =0 refuses): reads of a retyped slot are served from the
+        // same RWTexture (test17x 1233c986: table offset 0x20 read as t240 and stored), so one UAV
+        // view covers both and `uav_from_srv` binds it.
+        if std::env::var("TB_SRV_AS_UAV_READ").map_or(true, |v| v.trim() != "0") {
+            let moved: Vec<u32> = self.srv_as_uav.iter()
+                .filter(|&&(_, space, _, _, register)| self.tex.contains_key(&register) && self.binding_spaces.get(&(0, register)) == Some(&space))
+                .map(|&(_, _, _, _, register)| register).collect();
+            for register in moved {
+                let dim = self.tex.remove(&register).unwrap_or(1);
+                if self.uav.get(&register).is_some_and(|&d| d != dim) {
+                    return Err(format!("retyped UAV u{register} read and stored with two dimensions"));
+                }
+                self.uav.insert(register, dim);
+                self.binding_spaces.remove(&(0, register));
+                let fix = |r: &mut Res| if let Res::Tex(s, d) = *r { if s == register { *r = Res::Uav(s, d); } };
+                for v in self.res.values_mut() { v.iter_mut().for_each(fix); }
+                for m in self.msel.values_mut() { m.tex.iter_mut().for_each(|(_, r)| fix(r)); }
+            }
+        }
         for &(_, space, off, _, register) in &self.srv_as_uav {
             if self.tex.contains_key(&register) && self.binding_spaces.get(&(0, register)) == Some(&space) {
                 return Err(format!("SRV slot at table offset {off:#x} is both read as t{register} and stored"));
