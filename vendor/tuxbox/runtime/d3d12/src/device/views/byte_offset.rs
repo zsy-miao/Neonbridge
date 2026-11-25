@@ -113,6 +113,12 @@ impl AddressViews {
         let structured = b.StructureByteStride;
         (b.FirstElement, b.NumElements, b.StructureByteStride) = bytes.storage_elements(stride)?;
         restrided(structured, b.StructureByteStride, bytes.offset, self.name());
+        if as_raw(structured, b.StructureByteStride, &bytes) {
+            view.Format = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_TYPELESS;
+            let b = unsafe { &mut view.Anonymous.Buffer };
+            (b.FirstElement, b.NumElements, b.StructureByteStride) = (bytes.offset / 4, (bytes.size / 4) as u32, 0);
+            b.Flags |= D3D12_BUFFER_SRV_FLAG_RAW;
+        }
         unsafe {
             device
                 .native
@@ -159,6 +165,14 @@ impl AddressViews {
         let structured = b.StructureByteStride;
         (b.FirstElement, b.NumElements, b.StructureByteStride) = bytes.storage_elements(stride)?;
         restrided(structured, b.StructureByteStride, bytes.offset, self.name());
+        let mut counter = counter;
+        if as_raw(structured, b.StructureByteStride, &bytes) {
+            view.Format = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_TYPELESS;
+            let b = unsafe { &mut view.Anonymous.Buffer };
+            (b.FirstElement, b.NumElements, b.StructureByteStride, b.CounterOffsetInBytes) = (bytes.offset / 4, (bytes.size / 4) as u32, 0, 0);
+            b.Flags |= D3D12_BUFFER_UAV_FLAG_RAW;
+            counter = None;
+        }
         unsafe {
             device
                 .native
@@ -241,6 +255,18 @@ const _: () = {
 /// declared stride does not match: indexed reads and writes land elsewhere
 /// in the view. Logged (first 8, then powers of two) to show whether the
 /// title makes such views.
+/// five-star 955a679 BufferViewRanges.AsRaw (GPL-3.0, ThatRecompDev): a
+/// structured view off an element boundary becomes a raw view over the same
+/// bytes (R32_TYPELESS, RAW, no stride or counter) instead of one re-strided
+/// to the common divisor, which the shader indexes by its own stride and so
+/// reads and writes elsewhere. Only for a dword-aligned range.
+/// TUXBOX_OFF_ELEMENT_RAW=0 keeps the re-strided view.
+fn as_raw(structured: u32, made: u32, bytes: &ByteRange) -> bool {
+    structured != 0 && structured != made && bytes.offset.is_multiple_of(4) && bytes.size.is_multiple_of(4)
+        && bytes.size / 4 <= u64::from(u32::MAX)
+        && crate::env_toggle!("TUXBOX_OFF_ELEMENT_RAW") != Some("0")
+}
+
 fn restrided(structured: u32, made: u32, offset: u64, mode: &str) {
     if structured == 0 || structured == made {
         return;
