@@ -100,6 +100,30 @@ fn upload_buckets_are_pooled_by_size_under_the_cap() {
 /// the read budget) and how many changed: the first 64 lines, then every
 /// 1024th, and again the first 64 once Bink has finished a decode (test142's
 /// 64 all came before the movie's first frame). TUXBOX_PLANE_TRACE=0 is quiet.
+fn is_plane(texture: &Texture) -> bool {
+    matches!(texture.desc.Format.0, 49 | 61) && texture.desc.Width >= 256
+}
+
+type BinkPlanesRead = unsafe extern "system" fn(u64);
+
+/// The d3d12 half of the Bink plane fence: a video plane read in full while
+/// Bink was idle tells xmem (TuxBoxBinkPlanesRead, bb6d002) the decode count
+/// it holds, so the opt-in catch-up (TUXBOX_BINK_CATCHUP) waits for the read
+/// before it decodes extra frames over it. A no-op without the export.
+/// TUXBOX_BINK_PLANES_READ=0 off.
+fn bink_planes_read(decoded: u64) {
+    static F: std::sync::OnceLock<Option<BinkPlanesRead>> = std::sync::OnceLock::new();
+    if crate::env_toggle!("TUXBOX_BINK_PLANES_READ") == Some("0") {
+        return;
+    }
+    let Some(f) = *F.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxBinkPlanesRead")).map(|f| core::mem::transmute::<_, BinkPlanesRead>(f))
+    }) else { return };
+    unsafe { f(decoded) };
+}
+
 fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget: bool) {
     use std::sync::atomic::{AtomicU64, Ordering};
     let desc = &texture.desc;
@@ -120,6 +144,29 @@ fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget:
         "plane texture at title {:#x} ({}x{} format {}): refresh {read}, {changed} changed{}{} (line {})",
         texture.address, desc.Width, desc.Height, desc.Format.0,
         if out_of_budget { ", read budget spent" } else { "" }, super::bink_note(), n + 1));
+}
+
+fn is_plane(texture: &Texture) -> bool {
+    matches!(texture.desc.Format.0, 49 | 61) && texture.desc.Width >= 256
+}
+
+/// Tells xmem a decode's video planes were read in full while Bink was idle
+/// (TuxBoxBinkPlanesRead), so its catch-up fence may decode over that ring
+/// slot. TUXBOX_BINK_PLANES_REPORT=0 never reports (the fence stays off).
+fn planes_read(decoded: u64) {
+    type PlanesRead = unsafe extern "system" fn(u64);
+    if crate::env_toggle!("TUXBOX_BINK_PLANES_REPORT") == Some("0") {
+        return;
+    }
+    static F: std::sync::OnceLock<Option<PlanesRead>> = std::sync::OnceLock::new();
+    let f = *F.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxBinkPlanesRead")).map(|f| core::mem::transmute::<_, PlanesRead>(f))
+    });
+    if let Some(f) = f {
+        unsafe { f(decoded) };
+    }
 }
 
 impl Transfer {
@@ -205,19 +252,33 @@ impl Transfer {
         let started = std::time::Instant::now();
         let start = if rotate && count != 0 { self.cursor % count } else { 0 };
         let mut stopped = None;
+        // coder-audio's plane fence (xmem TUXBOX_BINK_PLANE_FENCE_MS): the
+        // completed-decode count seen while Bink was idle before this pass.
+        let bink_before = super::bink_state().filter(|&(busy, _)| busy == 0).map(|(_, done)| done);
+        let mut planes_whole = false;
         for k in 0..count {
             let i = (start + k) % count;
             if limited && budget != 0 && ms != 0 && k != 0 && started.elapsed() >= std::time::Duration::from_millis(ms) {
                 budget = 0;
             }
             let before = changes.len();
+            let plane = is_plane(&textures[i]).then(super::bink_state).flatten();
             let skip = textures[i].changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
+            if skip == 0 && let Some((0, done)) = plane {
+                bink_planes_read(done);
+            }
             skipped += skip;
             mips += textures[i].mips.len();
             plane_trace(&textures[i], skip, changes.len() - before, budget == 0 && limited);
+            planes_whole |= skip == 0 && is_plane(&textures[i]);
             if limited && stopped.is_none() && budget == 0 {
                 stopped = Some(i);
             }
+        }
+        if planes_whole && let Some(done) = bink_before
+            && super::bink_state() == Some((0, done))
+        {
+            planes_read(done);
         }
         drop(read_site);
         self.cursor = stopped.unwrap_or(start);
