@@ -135,5 +135,13 @@ pub(crate) fn host_layout(layout: D3D12_BARRIER_LAYOUT) -> D3D12_BARRIER_LAYOUT 
 }
 
 pub(super) fn host_initial_layout(desc: &D3D12_RESOURCE_DESC, layout: D3D12_BARRIER_LAYOUT) -> D3D12_BARRIER_LAYOUT {
-    if unbacked_uav(desc) { host_layout(layout) } else { layout }
+    // test159: a 768x768x6 R16 depth cube placed in UNORDERED_ACCESS was
+    // refused E_NOTIMPL (heap.rs place_gpu_target) and the title hit its int3
+    // at game+0x14a6390 on the null resource. host_initial_state already rests
+    // a twinned depth texture in COMMON while its twin holds the writes; the
+    // barrier-layout path now does the same. TUXBOX_TWIN_UAV_LAYOUT=0 refuses.
+    if unbacked_uav(desc)
+        || (super::depth::twins() && super::depth::paired(desc)
+            && crate::env_toggle!("TUXBOX_TWIN_UAV_LAYOUT") != Some("0"))
+    { host_layout(layout) } else { layout }
 }
