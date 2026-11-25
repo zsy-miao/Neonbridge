@@ -297,8 +297,12 @@ fn loop_cap(stage: Stage) -> u32 {
 /// base + ((phase + x) >> 16) for its first and last byte x, base and phase
 /// being the slot's two dwords in `tb_view_marks` (t4, space32766); base
 /// 0xFFFFFFFF marks nothing, bits clamp to (1 << 22) - 1. Typed and
-/// structured heap stores (no stride in the shader) and static slots (no
-/// heap index) are not marked yet. Opt-in with TB_VIEW_MARKS=1.
+/// structured heap stores take the element stride from tb_slot_views (t3,
+/// b1155aa; 0 read as 1). A buffer write with no heap index to mark by
+/// (static slots, buffer atomics, global/flat stores) leaves the whole
+/// shader unmarked: it declares neither binding (the mark code sits under
+/// `#ifdef TB_VIEW_MARKS`), so the runtime keeps its whole write-back.
+/// Opt-in with TB_VIEW_MARKS=1.
 fn view_marks_on() -> bool {
     std::env::var("TB_VIEW_MARKS").is_ok_and(|v| v.trim() == "1")
 }
@@ -887,6 +891,8 @@ struct Emitter<'a> {
     view_marks: bool,
     /// The heap SGPR of the raw store being emitted, for its marks.
     mark_slot: Option<u16>,
+    /// Offsets of the buffer writes that marked their pages.
+    marked_at: BTreeSet<usize>,
     compute_swizzle: bool,
     vote_defs: BTreeSet<usize>,
     vote_uses: BTreeMap<usize, usize>,
@@ -3670,6 +3676,7 @@ impl<'a> Emitter<'a> {
             uses_quad: false,
             view_marks: false,
             mark_slot: None,
+            marked_at: BTreeSet::new(),
             compute_swizzle: false,
             vote_defs: BTreeSet::new(),
             vote_uses: BTreeMap::new(),
@@ -10447,15 +10454,30 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     /// Marks the pages of a `bytes`-byte store at view byte `x` through the heap
     /// view at SGPR `slot` (see [`view_marks_on`]); a lane that does not store
     /// marks nothing.
-    fn mark_view_write(&mut self, slot: u16, x: &str, bytes: u32) {
+    fn mark_view_write(&mut self, ins: &Insn, slot: u16, x: &str, span: &str) {
         if !view_marks_on() {
             return;
         }
         self.view_marks = true;
+        self.marked_at.insert(ins.offset);
         self.regs.insert(format!("s{slot}"));
         let t = self.tmp;
         self.tmp += 1;
-        self.line(&format!("if (exec_lo & 1u) {{ uint tb_mb{t} = tb_view_marks.Load(s{slot} * 8u); if (tb_mb{t} != 0xffffffffu) {{ uint tb_mf{t} = tb_view_marks.Load(s{slot} * 8u + 4u) + ({x}); uint tb_m0{t} = min(tb_mb{t} + (tb_mf{t} >> 16), 4194303u); uint tb_m1{t} = min(tb_mb{t} + ((tb_mf{t} + {}u) >> 16), 4194303u); uint tb_mo{t}; tb_view_writes.InterlockedOr((tb_m0{t} >> 5) * 4u, 1u << (tb_m0{t} & 31u), tb_mo{t}); if (tb_m1{t} != tb_m0{t}) tb_view_writes.InterlockedOr((tb_m1{t} >> 5) * 4u, 1u << (tb_m1{t} & 31u), tb_mo{t}); }} }}", bytes.max(1) - 1));
+        self.line("#ifdef TB_VIEW_MARKS");
+        self.line(&format!("if (exec_lo & 1u) {{ uint tb_mb{t} = tb_view_marks.Load(s{slot} * 8u); if (tb_mb{t} != 0xffffffffu) {{ uint tb_mf{t} = tb_view_marks.Load(s{slot} * 8u + 4u) + ({x}); uint tb_m0{t} = min(tb_mb{t} + (tb_mf{t} >> 16), 4194303u); uint tb_m1{t} = min(tb_mb{t} + ((tb_mf{t} + ({span})) >> 16), 4194303u); uint tb_mo{t}; tb_view_writes.InterlockedOr((tb_m0{t} >> 5) * 4u, 1u << (tb_m0{t} & 31u), tb_mo{t}); if (tb_m1{t} != tb_m0{t}) tb_view_writes.InterlockedOr((tb_m1{t} >> 5) * 4u, 1u << (tb_m1{t} & 31u), tb_mo{t}); }} }}"));
+        self.line("#endif");
+    }
+
+    /// The element stride of the heap view at SGPR `slot` (tb_slot_views).
+    fn slot_stride(&mut self, slot: u16) -> String {
+        self.slot_views = true;
+        format!("max(tb_slot_views.Load(s{slot} * 16u + 12u), 1u)")
+    }
+
+    /// Whether every buffer write of the shader marked its pages.
+    fn writes_all_marked(&self) -> bool {
+        self.insns.iter().filter(|i| ["buffer_store", "tbuffer_store", "buffer_atomic", "global_store", "global_atomic", "flat_store", "flat_atomic"]
+            .iter().any(|p| i.mnemonic.starts_with(p))).all(|i| self.marked_at.contains(&i.offset))
     }
 
     /// Raw transfer through a heap index held in `src` (compute heap). Stores use the
@@ -10647,9 +10669,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let t = self.tmp;
             self.tmp += 1;
             self.line(&format!("if (exec_lo & 1u) {{ uint t{t}c = tb_view_formats.Load(s{src} * 4u) & 255u;                 if (t{t}c == 1u) {{ RWBuffer<uint4> t{t}u = ResourceDescriptorHeap[s{src}]; t{t}u[{index}] = uint4({words}); }}                 else if (t{t}c == 2u) {{ RWBuffer<int4> t{t}i = ResourceDescriptorHeap[s{src}]; t{t}i[{index}] = asint(uint4({iwords})); }}                 else {buf}[{index}] = float4({}); }}", value.join(", ")));
-            return Ok(());
+        } else {
+            self.line(&format!("if (exec_lo & 1u) {buf}[{index}] = float4({});", value.join(", ")));
         }
-        self.line(&format!("if (exec_lo & 1u) {buf}[{index}] = float4({});", value.join(", ")));
+        if view_marks_on() {
+            let stride = self.slot_stride(src);
+            self.mark_view_write(ins, src, &format!("({index}) * {stride}"), &format!("{stride} - 1u"));
+        }
         Ok(())
     }
 
@@ -10681,7 +10707,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
         }
         if let (false, Some(slot)) = (load, self.mark_slot) {
-            self.mark_view_write(slot, &address, 4 * u32::from(width));
+            self.mark_view_write(ins, slot, &address, &format!("{}u", 4 * u32::from(width) - 1));
         }
         if load {
             for k in 0..width {
@@ -10805,6 +10831,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     if k < width { let o = reg(k)?; self.touch(&o); parts.push(r(&o)?); } else { parts.push("0u".into()); }
                 }
                 self.line(&format!("if (exec_lo & 1u) tb_hb{t}[{element}] = uint4({});", parts.join(", ")));
+                if view_marks_on() {
+                    let stride = self.slot_stride(src);
+                    self.mark_view_write(ins, src, &format!("({element}) * {stride}"), &format!("{stride} - 1u"));
+                }
             }
             return Ok(());
         }
@@ -10824,6 +10854,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     self.line(&format!("if (exec_lo & 1u) {at} = {};", r(&o)?));
                 }
             }
+            if !load && view_marks_on() {
+                let stride = self.slot_stride(src);
+                self.mark_view_write(ins, src, &format!("tb_he{t} * {stride} + tb_hw{t} * 4u"), &format!("{}u", 4 * u32::from(width) - 1));
+            }
         } else {
             self.line(&format!("{rw}ByteAddressBuffer tb_hb{t} = ResourceDescriptorHeap[{index}];"));
             self.line(&format!("uint tb_ha{t} = {byte};"));
@@ -10836,7 +10870,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
             }
             if !load {
-                self.mark_view_write(src, &format!("tb_ha{t}"), 4 * u32::from(width));
+                self.mark_view_write(ins, src, &format!("tb_ha{t}"), &format!("{}u", 4 * u32::from(width) - 1));
             }
         }
         if load {
@@ -12815,8 +12849,9 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
             h.push_str("ByteAddressBuffer tb_slot_views : register(t3, space32766);
 ");
         }
-        if self.view_marks {
-            h.push_str("ByteAddressBuffer tb_view_marks : register(t4, space32766);
+        if self.view_marks && self.writes_all_marked() {
+            h.push_str("#define TB_VIEW_MARKS
+ByteAddressBuffer tb_view_marks : register(t4, space32766);
 RWByteAddressBuffer tb_view_writes : register(u0, space32766);
 ");
         }
