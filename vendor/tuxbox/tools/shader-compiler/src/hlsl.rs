@@ -6,12 +6,12 @@
 //! Recognized wave64 ballots consumed as integer data retain both mask words. Descriptor-table pointers in user SGPRs are tracked symbolically: an
 //! `s_load_dwordxN` from a never-written SGPR is a descriptor fetch from a root table, and
 //! the way the descriptor is consumed (s_buffer_load → CBV, MIMG resource → SRV, MIMG
-//! sampler → sampler) classifies the table. Slots map 1:1 to HLSL registers because the
-//! title's root signature (UE layout) uses one SRV/CBV/sampler table per stage from
-//! register 0.
+//! sampler → sampler) classifies the table. Root tables and heap views follow the
+//! title's own root signature (FSSM records), not a fixed layout.
 //!
-//! Scope: forward-only control flow (no loops yet). Anything not understood returns `Err`
-//! naming the instruction — the caller must fall back; nothing is guessed.
+//! Scope: structured forward branches and loops (back edges), with EXEC and VCC votes; see
+//! the per-module notes for wave64 splits, lane exchanges and heap views. Anything not
+//! understood returns `Err` naming the instruction, and the runtime keeps its fallback.
 
 use crate::meta::SigElement;
 use crate::rdna2::{disassemble, Enc, Insn, Opnd};
@@ -271,6 +271,10 @@ fn typed_fmt_table() -> bool {
 /// known (no integer use inferred, or a heap view) is refused instead of
 /// stored as float4, so a 32_UINT target cannot take float-converted values.
 /// Inferred uint/int views already store the raw dwords.
+fn exp_vm_last() -> bool {
+    std::env::var("TB_EXP_VM_LAST").map_or(true, |v| v.trim() != "0")
+}
+
 fn fmt_store_strict() -> bool {
     std::env::var("TB_FMT_STORE_STRICT").is_ok_and(|v| v.trim() == "1")
 }
@@ -2273,7 +2277,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         }
         Some(32)
     } else { required_wave_size };
-    let uses_bpermute = insns.iter().any(|ins| ins.mnemonic == "ds_bpermute_b32");
+    let uses_bpermute = insns.iter().any(|ins| matches!(ins.mnemonic.as_str(), "ds_bpermute_b32" | "ds_permute_b32"));
     // EXEC and VCC branches vote across the wave (Emitter::exec_vote), so the
     // host wave stays whole and absent source lanes are masked at the read
     // (leonida ds_lane_read). SCC branches can still split it per lane.
@@ -2541,6 +2545,9 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
                 || packed_root::matches_program(&ex.isa, 56932, 0x5504968d23557c53)))
     {
         em.body = exec_group::group(&em.body);
+    }
+    if em.body.contains("tb_vm_live") {
+        em.body.insert_str(0, "    uint tb_vm_live = 1u;\n");
     }
     if hair_cluster_export {
         em.body.insert_str(0, "    uint4 hair_record = 0;\n");
@@ -7547,6 +7554,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.line(&format!("uint t{t} = WaveReadLaneAt(((exec_lo & 1u) != 0u) ? {data} : 0u, tb_here{t} ? tb_src{t} : WaveGetLaneIndex()); if (!tb_here{t}) t{t} = 0u;"));
                 self.wv(&d.ok_or("no permute destination")?, &format!("t{t}"))
             }
+            // Forward permute: each active lane i writes its data to lane
+            // ((addr_i + offset) >> 2) & 31, the higher source lane winning, and an
+            // unwritten lane reads 0 (RDNA2 ISA DS_PERMUTE_B32). Same verified wave32
+            // layout as ds_bpermute (five-star-recomp LdsEmitter.cs:245, re-derived).
+            Enc::Ds if m == "ds_permute_b32" => {
+                if self.required_wave_size != Some(32) || ins.raw[0] & 0x3ff00 != 0 {
+                    return Err("forward permute requires a verified wave32 compute layout".into());
+                }
+                let t = self.tmp;
+                self.tmp += 1;
+                let (addr, data) = (r(&s[0])?, r(&s[1])?);
+                self.line(&format!("uint t{t} = 0u; uint tb_act{t} = WaveActiveBallot((exec_lo & 1u) != 0u).x;"));
+                self.line(&format!("[unroll] for (uint k{t} = 0u; k{t} < 32u; k{t}++) {{ uint a{t} = WaveReadLaneAt({addr}, k{t}); uint v{t} = WaveReadLaneAt({data}, k{t}); if (((tb_act{t} >> k{t}) & 1u) != 0u && (((a{t} + {}u) >> 2) & 31u) == WaveGetLaneIndex()) t{t} = v{t}; }}", ins.aux.imm));
+                self.wv(&d.ok_or("no permute destination")?, &format!("t{t}"))
+            }
             Enc::Ds if m == "ds_swizzle_b32" => {
                 if self.resolve_wave32 {
                     let off = ins.aux.imm as u32;
@@ -11618,9 +11640,19 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             Some(v)
         };
+        // Valid-mask export (VM=1): the EXEC of the last one decides which pixels
+        // survive, so a later, wider VM=1 export revives a lane and VM=0 leaves it
+        // alone (xcl dc0d25f, GPL-2, copied with credit). The kill happens at the
+        // DONE export. TB_EXP_VM_LAST=0 discards at each VM=1 export.
         if is_ps && ins.aux.imm2 & 4 != 0 {
-            // Valid-mask export: lanes that are inactive here are killed (pixel discard).
-            self.line("if ((exec_lo & 1u) == 0u) discard;");
+            if exp_vm_last() {
+                self.line("tb_vm_live = exec_lo & 1u;");
+            } else {
+                self.line("if ((exec_lo & 1u) == 0u) discard;");
+            }
+        }
+        if is_ps && exp_vm_last() && ins.aux.imm2 & 2 != 0 {
+            self.line("if (tb_vm_live == 0u) discard;");
         }
         if is_ps && target == 9 {
             return Ok(()); // null export (no colour written)
