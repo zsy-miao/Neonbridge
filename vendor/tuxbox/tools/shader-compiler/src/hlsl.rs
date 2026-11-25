@@ -11668,7 +11668,10 @@ uint tb_heap_index(uint i) { return i; }
             // Map word 0: 0 = identity, 1 = mapped, 0x80000000 | count = mapped with
             // `count` entries, so a stray guest index clamps onto the last entry
             // instead of reading past the map (VIctory #483, Xbox2Windows a7ce0018).
-            h.push_str("ByteAddressBuffer tb_heap_map : register(t0, space32766);\nstruct TBHeapConstants { uint4 data[4096]; };\nuint tb_heap_index(uint i) { uint w = tb_heap_map.Load(0); if (w == 0u) return i; if ((w & 0x80000000u) != 0u) i = min(i, (w & 0x7fffffffu) - 1u); return tb_heap_map.Load(4u+i*4u); }\n");
+            // 0x40000000 | count = identity clamped to `count` views, the last a
+            // null view the runtime keeps there, for a stray index past a heap that
+            // fits (VIctory saw 0xffff80 remove the device; fxceless 31714de).
+            h.push_str("ByteAddressBuffer tb_heap_map : register(t0, space32766);\nstruct TBHeapConstants { uint4 data[4096]; };\nuint tb_heap_index(uint i) { uint w = tb_heap_map.Load(0); if (w == 0u) return i; if ((w & 0xc0000000u) == 0x40000000u) return min(i, (w & 0x3fffffffu) - 1u); if ((w & 0x80000000u) != 0u) i = min(i, (w & 0x7fffffffu) - 1u); return tb_heap_map.Load(4u+i*4u); }\n");
         }
         for (slot, dwords) in &self.cb_size {
             let space = self.space_suffix(2, *slot);
