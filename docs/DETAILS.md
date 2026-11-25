@@ -54,7 +54,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `NEONBRIDGE_SHADER_THREADS` (prewarm: cores-2, game: 8): shader worker threads.
 - `NEONBRIDGE_PREWARM_SEEN` (1): 0 skips the seen-set prewarm.
 - `NEONBRIDGE_PREWARM_MAX_S` (600; `--prewarm`/`--pipelines`: 0): prewarm time cap, 0 none.
-- `NEONBRIDGE_PREWARM_DXC_O0` (0): 1 prewarms at `-O0`.
+- `NEONBRIDGE_PREWARM_DXC_O0` (1 while the `-O1` upgrade drainer is on): the prewarm compiles at `-O0` and the drainer upgrades to `-O1`; 0 keeps `-O1` first.
 - `NEONBRIDGE_URGENT_SHADERS` (1): 0 serves shaders in directory order.
 - `NEONBRIDGE_DXC_URGENT_O0` (1): 0 compiles urgent shaders at `-O1`.
 - `NEONBRIDGE_BLOCKING_PREWARM` (0): 1 prewarms the seen set before the game; by default it runs in a background idle-priority thread that stands aside while the title waits on a shader.
@@ -69,6 +69,9 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `NEONBRIDGE_DXC_INPROC` (1): 0 spawns `dxc.exe` for every compile.
 - `NEONBRIDGE_DXC_UPGRADE` (1): 0 keeps `-O0` results.
 - `NEONBRIDGE_DXC_UPGRADE_SECS` (300): upgrade compile budget.
+- `NEONBRIDGE_TIMELINE` (1): `<log>.timeline.txt` beside each run log, one line per milestone (launch, runtime loaded, first present, BinkOpen, watch-hang, fps every 30 s, exit, and game `TIMELINE:` lines); 0 writes none.
+- `NEONBRIDGE_REQUEST_RECHECK` (1): the shader worker skips a request whose file vanished after the listing; 0 treats it as failed.
+- `NEONBRIDGE_AUTO_PRESS_ANY_FOCUS` (1): auto and ctl presses reach the title's primary pad when its window is not foreground (real input stays foreground-gated); 0 presses only while foreground. `TUXBOX_AUTO_PRESSES` (1): auto A presses, one every 3 s.
 - `NEONBRIDGE_DXIL_REUSE` (1): 0 compiles every program.
 - `NEONBRIDGE_DXIL_REUSE_NORMALISED` (1): 0 keys DXIL by exact HLSL text.
 - `NEONBRIDGE_XSHADER_SOURCE_KEY` (1): 0 keys the cache on xshader.exe bytes.
@@ -158,6 +161,11 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_DEPTH_CLEAR_CLAMP` (0), `TUXBOX_DEPTH_DEFAULT_SRV` (1), `TUXBOX_MAP_HEAP_CHECK` (1).
 - `TUXBOX_DEPTH_TWINS` (1): full depth/stencil UAV twins; 0 off.
 - `TUXBOX_ROOT_SPAN_REGIONS` (1), `TUXBOX_NULL_ROOT_SINK` (1), `TUXBOX_REMAPPED_CBV_COPY` (1), `TUXBOX_CBV_CLAMP_END` (1).
+- `TUXBOX_HOST_COPIES` (1): placed and viewed title buffers are host copies filled before each submission, writable ones merged back after the fence (no title range opened as a heap); 0 imports by address.
+- `TUXBOX_SHADOW_COVER` (1): a view placed inside a live host copy's range (256-byte offset, matching writability) reuses that copy, one copy per title buffer (ztrx/VIctory victory-gpu shadow.rs, GPL-3.0, credit); 0 a copy per view. test172 without it: 6120 live copies, 4338 MiB rising ~60 MiB/s, GPU removed at t=77.75 s from memory exhaustion, 1.9 fps, submit 384-803 ms.
+- `TUXBOX_WATCH_CLIP_CACHE` (1): the write watch clip caches each VirtualQuery region 1 s; 0 queries every range.
+- `TUXBOX_WRITEBACK_IMAGE_GUARD` (1): write-backs and writable host copies never land in a loaded module image (refusals logged once per image); 0 off.
+- `TUXBOX_ZTRX_SLOTS` (1): DispatchMeshX (older #98 / newer #100) runs DispatchMesh(x,1,1) and ResetX at older #137, per ztrx list.rs; 0 makes DispatchMeshX a no-op. `TUXBOX_SLOT_TRACE` (1): first-call trace of list slots 59..148 per table (list, two args, game+rva); 0 off.
 - `TUXBOX_ROOT_STALE_CLEAR` (drop): `sink` draws with zeros, `0` refuses.
 - `TUXBOX_ROOT_COMMIT_PAGE` (0): 1 commits only the first page of a root view.
 - `TUXBOX_ROOT_VIEW_TABLES` (1): root SRV/UAVs are one-view tables; 0 off. `TUXBOX_VIEW_TABLE_REBIND` (1): a tabled parameter is never bound as a root view (test157's boot hang) and tabled views are rewritten and rebound after a heap change; 0 restores the old fallback. test159 (c50a2d4, every default on): no GPU hang.
@@ -230,13 +238,19 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_XMEM_DEVICE_ALLOC` (1), `TUXBOX_XMEM_GRAPHICS_BUDGET` (1).
 - `TUXBOX_JOIN87_DETAIL` (1): failed join unmaps name the GPU imports over them.
 - `TUXBOX_UNMAP87_REGION` (1): an unmap failing 87 logs the view's region, neighbours, working-set flags and file reads in flight into it; 0 off.
-- `TUXBOX_JOIN_FREEZE` (1): a join freezes the other threads only for a retry after it failed 87 unfrozen (xbox-emulator phys_runs.rs, credit); 0 off. test166 (freeze on every join) hung in boot state 1 with 0 presents from the freeze cost; 4adc117 fixes it.
+- `TUXBOX_JOIN_FREEZE` (0; 1 on): a join freezes the other threads only for a retry after it failed 87 unfrozen (xbox-emulator phys_runs.rs, credit); 0 off. test166 (freeze on every join) hung in boot state 1 with 0 presents from the freeze cost; 4adc117 fixes it.
+- `TUXBOX_JOIN_FREEZE_GIVEUP` (1): joins stop freezing after 3 frozen retries in a row fail 87; 0 keeps freezing. No frozen retry has cured an 87 (test168, test171).
+- `TUXBOX_POOL_SECTION_IMPORT` (0), `TUXBOX_POOL_SECTION_COMMIT` (0): 1 hands d3d12 title sections (TuxBoxPageSection) for OpenExistingHeapFromFileMapping imports, as SEC_COMMIT roots; off so eager joins run, since the 6236 MiB pool as SEC_COMMIT overcharges commit.
+- `TUXBOX_WATCH_JOURNAL` (1): write watch keeps one journal of each 64 KiB block's last write and per-reader read marks (ztrx victory-gpu watch.rs, credit); blocks read in full by both readers are dropped. 0 keeps the owed sets. `TUXBOX_WATCH_STATS` (1): write watch line every 10 s per side (queries, MiB, pages, lock/query time, refused queries); 0 off.
 - `TUXBOX_BINK_BUF_WATCH` (0x5d0000000): each Bink open logs the allocations its HBINK points into and this page with its newest unmap; =0 off.
 - `TUXBOX_XMEM_UNMAP_TRACE` (1): ring of the last 4096 unmapped ranges (TuxBoxUnmapTrace); 0 records nothing.
 
 ### d3d12: pipelines
 
-- `TUXBOX_SLOT57_REAL` (1), `TUXBOX_SLOT67_REAL` (1): slot 57 state-block records and slot 67 console compute PSOs are built for real; 0 turns each off. `TUXBOX_SLOT57` (real): `placeholder` answers slot 67 with a placeholder; `TUXBOX_SLOT67_AS57` (0): 1 decodes slot 67 as slot 57.
+- `TUXBOX_SLOT57_REAL` (0), `TUXBOX_SLOT67_REAL` (0): 1 builds slot 57 state-block records and slot 67 console compute PSOs for real; off they answer E_NOTIMPL as ztrx does (test170 with REAL on was black at 144 fps). `TUXBOX_SLOT57` (real): `placeholder` answers slot 67 with a placeholder; `TUXBOX_SLOT67_AS57` (0): 1 decodes slot 67 as slot 57.
+- `TUXBOX_SLOT57_REFUSED_NOTIMPL` (1): a record build() refuses answers E_NOTIMPL; 0 a placeholder. `TUXBOX_SLOT57_VARIANT_WAIT` (1): a variant in progress is waited for up to 500 ms; 0 drops its draw. `TUXBOX_SLOT57_DUMP` (0): 1 writes each record's code slots to `%TEMP%	uxbox-slot57-<hash>-s<n>.bin`.
+- `TUXBOX_CB_DUAL_SOURCE_RT0` (1): RT1-7 beside a dual-source RT0 are left unblended (Xbox2Windows, MIT); 0 keeps them.
+- `TUXBOX_JOURNAL_BUFFERED` (1), `TUXBOX_JOURNAL_WARM` (1): the pipeline journal reads through an 8 MiB buffer on its own thread from precache load; 0 seeks per frame / opens at the first pipeline.
 - `TUXBOX_SLOT57_ANY_SLOT` (1): a missing VS/PS is taken from any code slot whose FSSM header names the stage; 0 reads slots 0 and 1 only.
 - `TUXBOX_PIPELINE_THREAD_CAP` (1): compile threads capped to a quarter of the cores; 0 keeps half plus a quarter.
 - `TUXBOX_COMPILE_LANE` (1): driver compiles of 256 KiB DXIL or more run on one long-lived lane thread; 0 compiles on the calling worker.
@@ -287,7 +301,8 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_XAPU_CLAMP` (1), `TUXBOX_XAPU_REBOX_LAYOUT` (0), `TUXBOX_XAUDIO_VOICE_FLAGS` (1).
 - `TUXBOX_RUNTIME_FEATURE` (1): XGameRuntimeIsFeatureAvailable is served (leonida); 0 answers E_NOINTERFACE.
 - `TUXBOX_BINK_SOUND_STATS` (1): wraps BINKSND Ready/Lock/Unlock (+0x170..+0x180), logs first calls, a 10 s line of rates, the title's queue and mixer state, and failed sound opens; 0 off. test167 (JOIN_FREEZE=0) reached the loading screen (741 presents), then crashed at game+0x1a9b33f under the Bink sound open_wrapper (null +0x638) at the player-select A press; 305 render heaps, 2 freed; the shader worker's run folders were missing.
-- `TUXBOX_BINK_LEAD` (1), `TUXBOX_BINK_CATCHUP` (cap 4; 0 off, not exercised in test153), `TUXBOX_BINK_WAIT_CATCHUP` (1), `TUXBOX_BINK_PLANE_FENCE_MS` (8), `TUXBOX_BINK_SKIP_SIGNAL` (1).
+- `TUXBOX_XAPU_EAGER` (1): lenient XAPU answers (rebox, re-derived): a Process keeps up to frame_count frames, an undecodable packet gives silence; 0 strict. `TUXBOX_SPATIAL_LEVEL` (1): every 10 s, spatial objects' buffer peaks (periods over -60 dB) and volumes; 0 off.
+- `TUXBOX_BINK_LEAD` (1), `TUXBOX_BINK_CATCHUP` (0; 4 restores the cap: test171 spent ~150 ms/s on it), `TUXBOX_BINK_WAIT_CATCHUP` (1), `TUXBOX_BINK_PLANE_FENCE_MS` (8), `TUXBOX_BINK_SKIP_SIGNAL` (1).
 
 ### Diagnostics
 
