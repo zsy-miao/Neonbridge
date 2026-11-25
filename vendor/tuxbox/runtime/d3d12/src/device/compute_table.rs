@@ -22,6 +22,10 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding buffer view addresses per heap slot
     /// (t3, space32766; see slot_views).
     pub(crate) slot_views: Option<u32>,
+    /// Root slot of the root SRV holding view-mark entries per heap slot
+    /// (t4, space32766), the bitmap's root UAV (u0) the next one (see
+    /// view_marks).
+    pub(crate) view_marks: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -328,6 +332,7 @@ fn reflected_tables(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            view_marks: None,
         })))
     }
 }
@@ -429,6 +434,7 @@ fn extend_root_from(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            view_marks: None,
         })))
     }
 }
@@ -439,12 +445,13 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool, slots: bool,
+    desc: bool, formats: bool, slots: bool, marks: bool,
 ) -> Result<Arc<ComputeTable>> {
     let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
     let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
     let add_slots = slots && !table.is_some_and(|t| t.slot_views.is_some());
-    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots) {
+    let add_marks = marks && !table.is_some_and(|t| t.view_marks.is_some());
+    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -484,6 +491,15 @@ pub(super) fn with_runtime_tables(
             parameters.push(root_srv(super::slot_views::REGISTER, super::slot_views::SPACE));
             Some(parameters.len() as u32 - 1)
         } else { table.and_then(|t| t.slot_views) };
+        // Write marks (view_marks, VIctory cd94d35): the table, then the bitmap.
+        let marks_slot = if add_marks {
+            parameters.push(root_srv(super::view_marks::TABLE_REGISTER, super::view_marks::SPACE));
+            parameters.push(D3D12_ROOT_PARAMETER1 {
+                ParameterType: D3D12_ROOT_PARAMETER_TYPE_UAV,
+                ..root_srv(super::view_marks::BITMAP_REGISTER, super::view_marks::SPACE)
+            });
+            Some(parameters.len() as u32 - 2)
+        } else { table.and_then(|t| t.view_marks) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let mut blob = None;
@@ -501,6 +517,7 @@ pub(super) fn with_runtime_tables(
             desc_table: desc_slot,
             view_formats: formats_slot,
             slot_views: slots_slot,
+            view_marks: marks_slot,
         }))
     }
 }
@@ -604,6 +621,7 @@ fn append_corroborated_ranges(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            view_marks: None,
         })))
     }
 }

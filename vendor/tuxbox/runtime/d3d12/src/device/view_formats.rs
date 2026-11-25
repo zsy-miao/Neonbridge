@@ -130,6 +130,9 @@ fn state() -> MutexGuard<'static, State> {
 
 /// A view was created at `handle`.
 pub(crate) fn write(handle: usize, code: u32) {
+    // Any view made here clears its write-mark entry; a marked view sets it
+    // after (view_marks).
+    super::view_marks::write(handle, None);
     super::slot_views::write(handle, [0; 4]);
     if !enabled() || (code == 0 && !ANY.load(Ordering::Relaxed)) {
         return;
@@ -142,6 +145,7 @@ pub(crate) fn write(handle: usize, code: u32) {
 
 /// `count` descriptors were copied from `src` to `dst`.
 pub(crate) fn copy(dst: usize, src: usize, count: usize, stride: usize) {
+    super::view_marks::copy(dst, src, count, stride);
     super::slot_views::copy(dst, src, count, stride);
     if !enabled() || !ANY.load(Ordering::Relaxed) || count == 0 || dst == src {
         return;
@@ -204,6 +208,7 @@ impl HeapGuard {
     }
 
     fn forget(&self) {
+        super::view_marks::forget(&self.ranges);
         super::slot_views::forget(&self.ranges);
         if !enabled() {
             return;

@@ -596,7 +596,8 @@ unsafe fn make_compute(
     // A stage that reads typed buffer formats gets the view_formats root SRV.
     let reflected = match (&translation, root) {
         (Some(code), Some(root)) if scene_root.is_none()
-            && (super::desc_table::declared(code) || super::view_formats::declared(code) || super::slot_views::declared(code)) =>
+            && (super::desc_table::declared(code) || super::view_formats::declared(code) || super::slot_views::declared(code)
+                || super::view_marks::declared(code)) =>
         {
             let samplers = super::desc_table::declared(code);
             if samplers {
@@ -604,6 +605,7 @@ unsafe fn make_compute(
             }
             match super::compute_table::with_runtime_tables(
                 &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code), super::slot_views::declared(code),
+                super::view_marks::declared(code),
             ) {
                 Ok(table) => Some(table),
                 Err(error) => return error.code(),
@@ -612,6 +614,7 @@ unsafe fn make_compute(
         _ => reflected,
     };
     let code = translation.as_deref().unwrap_or(bytes);
+    super::view_marks::note_pipeline(super::view_marks::writes(code), super::view_marks::declared(code));
     let mut host = D3D12_COMPUTE_PIPELINE_STATE_DESC {
         pRootSignature: ManuallyDrop::new(
             scene_root

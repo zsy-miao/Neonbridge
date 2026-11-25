@@ -425,6 +425,33 @@ impl Bindings {
             }
             None => None,
         };
+        // Write marks (view_marks): the same heap's view-mark table and the
+        // bitmap shaders mark their writes in.
+        let view_marks = match table.view_marks {
+            Some(slot) => {
+                let stride = heap.table_stride();
+                let (start, count) = match arena {
+                    Some(arena) => {
+                        let visible = arena.visible();
+                        (unsafe { visible.GetCPUDescriptorHandleForHeapStart() }.ptr, unsafe { visible.GetDesc() }.NumDescriptors)
+                    }
+                    None => (heap.cpu.start, (heap.cpu.len() / stride.max(1)) as u32),
+                };
+                let mut device = None::<ID3D12Device>;
+                unsafe { guest.native.GetDevice(&mut device)? };
+                let device = device.ok_or(E_INVALIDARG)?;
+                let (buffer, address) = crate::device::view_marks::table_address(&device, start, count, stride)?;
+                let bitmap = crate::device::view_marks::bitmap_address(&device).ok_or(E_INVALIDARG)?;
+                let held_buffer = ID3D12Pageable::from(buffer);
+                let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+                if !held.contains(&held_buffer) {
+                    held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                    held.push(held_buffer);
+                }
+                Some((slot, address, bitmap))
+            }
+            None => None,
+        };
         let list = &guest.native;
         unsafe {
             if COMPUTE {
@@ -445,6 +472,10 @@ impl Bindings {
                 }
                 if let Some((slot, address)) = slot_views {
                     list.SetComputeRootShaderResourceView(slot, address);
+                }
+                if let Some((slot, table, bitmap)) = view_marks {
+                    list.SetComputeRootShaderResourceView(slot, table);
+                    list.SetComputeRootUnorderedAccessView(slot + 1, bitmap);
                 }
                 dispatch();
                 list.SetComputeRootSignature(self.compute.as_ref());
@@ -473,6 +504,10 @@ impl Bindings {
                 }
                 if let Some((slot, address)) = slot_views {
                     list.SetGraphicsRootShaderResourceView(slot, address);
+                }
+                if let Some((slot, table, bitmap)) = view_marks {
+                    list.SetGraphicsRootShaderResourceView(slot, table);
+                    list.SetGraphicsRootUnorderedAccessView(slot + 1, bitmap);
                 }
                 dispatch();
                 list.SetGraphicsRootSignature(self.graphics.as_ref());
