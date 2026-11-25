@@ -99,13 +99,12 @@ How each runtime is built, prepared and started: [WIRING.md](WIRING.md).
 
 | Main program | Part swapped in | From |
 |---|---|---|
-| VIctory-fxceless | shader translator (`victory-shader`) | VItoriaBr |
 | VIctory-fxceless | console system layer (`victory-hle`) | VItoriaBr |
 | VIctory-fxceless | game file loader (`victory-loader`) | VItoriaBr or ScarlettPort |
 | VIctory-fxceless | program loader (`victory-pe`) | VItoriaBr |
 | VIctory-fxceless | `victory-core`, `victory-game` or `victory-formats` | ScarlettPort |
 
-**No mix has been tested yet.** Mixes with Flamingo, KLBF Lab or Belobug parts haven't even been compile-checked. A mix that fails to compile is remembered and refused next time.
+The shader translator, shader cache reader and pipeline builder (`victory-shader`, `victory-gpu`, `victory-pipeline`) always come from the main program, so its shader cache keeps working. **No mix has been tested yet.** Mixes with Flamingo, KLBF Lab or Belobug parts haven't even been compile-checked. A mix that fails to compile is remembered and refused next time.
 
 ## Watch on your phone (Tailscale)
 

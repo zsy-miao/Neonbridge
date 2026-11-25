@@ -28,6 +28,12 @@ use std::path::{Path, PathBuf};
 /// The app: apps/victory, the exe, and the workspace files with it.
 pub const APP: &str = "app";
 
+/// The shader translator, the shader/pipeline cache reader (victory-gpu
+/// shader_cache.rs) and the pipeline builder always come from the app's tree:
+/// cache keys come from that translator (measured: different trees share 0
+/// keys), so the base's cache stays valid whatever else is mixed in.
+pub const PINNED: [&str; 3] = ["victory-shader", "victory-gpu", "victory-pipeline"];
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mix {
     /// "app" and each crate name -> the runtime whose tree supplies it.
@@ -59,6 +65,11 @@ impl Mix {
     pub fn filled(&self, base: &str) -> Mix {
         let mut parts = self.parts.clone();
         let app = parts.entry(APP.into()).or_insert_with(|| base.to_owned()).clone();
+        for c in PINNED {
+            if has(&app, c) {
+                parts.insert(c.into(), app.clone());
+            }
+        }
         for c in crates() {
             if parts.contains_key(&c) {
                 continue;
@@ -282,6 +293,11 @@ pub fn conflicts(mix: &Mix) -> Vec<String> {
 /// Lays out and builds the mix (once), returning its victory.exe.
 pub fn build(mix: &Mix) -> Result<PathBuf, Box<dyn Error>> {
     let app = mix.app().ok_or("a mix names no app tree")?.to_owned();
+    for c in PINNED {
+        if let Some(t) = mix.parts.get(c).filter(|t| **t != app) {
+            return Err(format!("mix: {c} must come from the base ({app}), not {t}: the base's shader cache only matches its own translator and reader").into());
+        }
+    }
     for (part, tree) in &mix.parts {
         if !has(tree, part) {
             return Err(format!("mix: {tree} has no {}", src_of(part).display()).into());
