@@ -229,7 +229,12 @@ fn pump(context: Context, voice: &mut Voice) {
         if voice.pcm.len() < SAMPLES_PER_BLOCK && !decode(context, voice) {
             return;
         }
-        let write = context.field(0, 27, 5);
+        // A write or read block at or past the ring's end is taken modulo
+        // the ring: unwrapped, the first write landed past the ring and no
+        // write block ever equalled the read block, so a looping stream
+        // filled forever holding the voice (VIctory 7a5d85e + 1054fe8,
+        // GPL-3.0, credit to its authors).
+        let write = context.field(0, 27, 5) % size;
         let Some(out) = crate::heap_host(context.get(7).wrapping_add(write * BLOCK_BYTES as u32), BLOCK_BYTES) else {
             return;
         };
@@ -241,7 +246,7 @@ fn pump(context: Context, voice: &mut Voice) {
         bump(&STATS.blocks);
         let write = (write + 1) % size;
         context.set_field(0, 27, 5, write);
-        if write == context.field(9, 0, 5) {
+        if write == context.field(9, 0, 5) % size {
             context.set_field(1, 31, 1, 0);
         }
     }
