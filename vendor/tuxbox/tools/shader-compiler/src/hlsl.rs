@@ -864,6 +864,9 @@ struct Emitter<'a> {
     vote_uses: BTreeMap<usize, usize>,
     reflected_lds_words: Option<u32>,
     hoisted_swizzle: Option<usize>,
+    /// ALU instructions reading a statically resolved descriptor's words as
+    /// data (see `desc_as_data`).
+    desc_data: BTreeSet<usize>,
     /// S_BARRIERs reached inside a per-thread guard: a group sync there is
     /// non-uniform on the host, so they lower to a memory fence only.
     fence_only: BTreeSet<usize>,
@@ -1585,6 +1588,15 @@ fn typed_half4() -> bool {
 /// The runtime writes that header. TB_HEAP_CLAMP_ALL=0 ignores it.
 fn heap_clamp_all() -> bool {
     std::env::var("TB_HEAP_CLAMP_ALL").map_or(true, |v| v.trim() != "0")
+}
+
+/// A descriptor fetched from a root table is resolved at translation time and
+/// its s_load writes no SGPR, so an ALU read of those SGPRs (a record count,
+/// an address) would read stale values: such a shader is refused (atlas gap
+/// "descriptors read as data"; fxceless lower.rs refuses a scalar read it
+/// cannot give data for). TB_DESC_AS_DATA=1 translates it as before.
+fn desc_as_data_refused() -> bool {
+    !std::env::var("TB_DESC_AS_DATA").is_ok_and(|v| v.trim() == "1")
 }
 
 fn resinfo_cube() -> bool {
@@ -3382,6 +3394,7 @@ impl<'a> Emitter<'a> {
             vote_uses: BTreeMap::new(),
             reflected_lds_words: None,
             hoisted_swizzle: None,
+            desc_data: BTreeSet::new(),
             fence_only: BTreeSet::new(),
             indexed_lane: false,
             single_wave32: false,
@@ -5492,6 +5505,11 @@ impl<'a> Emitter<'a> {
                 Enc::Vop1 if ins.mnemonic == "v_nop" => {}
 
                 _ => {
+                    if matches!(ins.enc, Enc::Sop1 | Enc::Sop2 | Enc::Sopc | Enc::Sopk | Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vopc)
+                        && ins.src.iter().filter_map(sg).any(|n| matches!(sym.get(&n), Some(Sym::Desc { .. } | Sym::Multi { .. })))
+                    {
+                        self.desc_data.insert(idx);
+                    }
                     for d in &ins.dst {
                         if let Opnd::Vgpr(v) = d {
                             sym.remove(&(2000 + *v as u16));
@@ -6630,6 +6648,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     fn emit_insn(&mut self, idx: usize, ins: &Insn, is_ps: bool, br: Option<usize>) -> Result<(), String> {
+        if self.desc_data.contains(&idx) && desc_as_data_refused() {
+            return Err("a statically resolved descriptor's words read as data (TB_DESC_AS_DATA=1 allows)".into());
+        }
         self.emit_insn_body(idx, ins, is_ps, br)?;
         if self.vote_defs.contains(&idx) {
             let mask = r(&ins.dst[0])?;
