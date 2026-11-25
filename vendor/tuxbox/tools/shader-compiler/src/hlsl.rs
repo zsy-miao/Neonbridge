@@ -32,6 +32,7 @@ mod pixel_quad;
 mod mubuf_offsets;
 mod split_wave64;
 mod mask_liveness;
+mod bvh;
 mod code_offset;
 mod scalar_bits;
 #[cfg(test)]
@@ -883,6 +884,8 @@ struct Emitter<'a> {
     is_cs: bool,
     /// Nesting depth of emitted HLSL loops at the current instruction.
     loop_depth: u32,
+    /// The BVH node test helpers are needed (TB_BVH_RAW).
+    bvh_raw: bool,
     /// Offsets of s_loads from a BVH address that read zeros (TB_BVH_NO_HIT).
     bvh_zero_smem: std::cell::RefCell<BTreeSet<usize>>,
     /// EXEC was last set by `s_wqm_b* exec, exec`: whole quads are active (X2W a351c0fb).
@@ -3686,6 +3689,7 @@ impl<'a> Emitter<'a> {
             loop_depth: 0,
             wqm_exec: false,
             bvh_zero_smem: Default::default(),
+            bvh_raw: false,
             ex,
             insns,
             res: HashMap::new(),
@@ -5797,6 +5801,12 @@ impl<'a> Emitter<'a> {
                     if out.len() > 1 {
                         self.bsel.insert(idx, (rs, out));
                     }
+                }
+                Enc::Mimg if matches!(ins.op, 230 | 231) && bvh::on() && self.compute_heap
+                    && ins.src.last().and_then(sg).is_some_and(|rs| heap_descriptor(sym, rs, 4)) => {
+                    let rs = ins.src.last().and_then(sg).ok_or("bvh: bad srsrc")?;
+                    self.res.insert(idx, vec![Res::HeapRaw(rs)]);
+                    continue;
                 }
                 Enc::Mimg if matches!(ins.op, 230 | 231) && bvh_no_hit() => continue,
                 Enc::Mimg if matches!(ins.op, 230 | 231) => {
@@ -11777,6 +11787,29 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     fn emit_mimg(&mut self, idx: usize, ins: &Insn) -> Result<(), String> {
+        let a16 = ins.raw.get(1).is_some_and(|w1| (w1 >> 30) & 1 != 0);
+        if let (true, false, Some(Res::HeapRaw(slot))) = (matches!(ins.op, 230 | 231), a16, self.res.get(&idx).and_then(|v| v.first()).copied()) {
+            // five-star-recomp rdna_bvh.hlsli (hlsl/bvh.rs): node, extent, origin, direction,
+            // inverse direction; the 64-bit form has a two-dword node pointer. T# sort on,
+            // grow 0, I/J return: the constants every observed program uses.
+            let wide = ins.op == 231;
+            let v = |i: usize| -> Result<String, String> { r(ins.src.get(i).ok_or("bvh: short vaddr")?) };
+            let f3 = |i: usize| -> Result<String, String> { Ok(format!("asfloat(uint3({}, {}, {}))", v(i)?, v(i + 1)?, v(i + 2)?)) };
+            let b = if wide { 1 } else { 0 };
+            let Some(Opnd::Vgpr(vd)) = ins.dst.first().cloned() else { return Err("bvh: bad vdata".into()) };
+            self.bvh_raw = true;
+            self.slot_views = true;
+            self.regs.insert(format!("s{slot}"));
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("tb_bvh_slot = s{slot}; tb_bvh_va = 0u;"));
+            self.line(&format!("uint4 t{t} = bvh_intersect_ray(uint4(0u, 0x80000000u, 0u, 0x890003ffu), {}, {}, asfloat({}), {}, {}, {});",
+                v(0)?, if wide { v(1)? } else { "0u".into() }, v(1 + b)?, f3(2 + b)?, f3(5 + b)?, f3(8 + b)?));
+            for k in 0..4u8 {
+                self.wv(&Opnd::Vgpr(vd + k), &format!("t{t}.{}", XYZW[k as usize]))?;
+            }
+            return Ok(());
+        }
         if matches!(ins.op, 230 | 231) && bvh_no_hit() {
             // No-hit fallback: every node test returns 0xffffffff x4 (a missed box
             // child / an instance node, five-star-recomp docs/ray-intersection.md), so
@@ -13088,6 +13121,9 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
         if self.slot_views {
             h.push_str("ByteAddressBuffer tb_slot_views : register(t3, space32766);
 ");
+        }
+        if self.bvh_raw {
+            h.push_str(bvh::HELPERS);
         }
         if self.view_marks && self.writes_all_marked() {
             h.push_str("#define TB_VIEW_MARKS
