@@ -92,4 +92,4 @@ The family shares one binding ABI, so a crate from one tree can usually replace 
 
 ## Known gaps seen here
 
-- **VI-BR-PORT:** the game stops itself on a breakpoint about 20 s in, after the menus, right after calling a graphics-device method that VI-BR-PORT does not implement (`method not implemented object="device" slot=0x330`). Seen on an RTX 4060 8 GB, every run, with its author's settings; the other runtimes never call it. It does not work with Neonbridge yet.
+- **VI-BR-PORT:** the game stops itself on a breakpoint about 20 s in, after the menus, right after calling a graphics-device method that VI-BR-PORT does not implement (`method not implemented object="device" slot=0x330`). Seen on an RTX 4060 8 GB, every run, also when run alone exactly as its README says (so not caused by Neonbridge); the other runtimes never call it.
