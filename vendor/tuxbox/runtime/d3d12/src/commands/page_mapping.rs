@@ -112,6 +112,7 @@ impl Mappings {
             owned.extend_from_slice(ranges);
             copied.push((batch.destination, owned));
         }
+        note_remap_targets(&spans);
         Ok(Self {
             source,
             pages,
@@ -276,6 +277,32 @@ static ANY_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 
 /// Whether pages under a GPU-imported range overlapping [lo, hi) were
 /// remapped (the import keeps the old ones; see device views cbv_snapshot).
+/// Title ranges CopyPageMappingsBatchX has ever mapped pages into, merged
+/// (start -> end). heap.rs never opens these as heaps: a heap opened over
+/// them pins their views, and the next remap there fails (test145-147).
+static REMAP_TARGETS: Mutex<std::collections::BTreeMap<u64, u64>> = Mutex::new(std::collections::BTreeMap::new());
+
+fn note_remap_targets(spans: &[Range<u64>]) {
+    let mut targets = REMAP_TARGETS.lock().unwrap_or_else(|e| e.into_inner());
+    for r in spans {
+        let (mut lo, mut hi) = (r.start, r.end);
+        let touching: Vec<u64> = targets.range(..=hi).rev()
+            .take_while(|&(_, &end)| end >= lo).map(|(&start, _)| start).collect();
+        for start in touching {
+            let end = targets.remove(&start).unwrap_or(start);
+            lo = lo.min(start);
+            hi = hi.max(end);
+        }
+        targets.insert(lo, hi);
+    }
+}
+
+/// Whether [lo, hi) overlaps a range CopyPageMappingsBatchX remaps.
+pub(crate) fn remap_target_over(lo: u64, hi: u64) -> bool {
+    let targets = REMAP_TARGETS.lock().unwrap_or_else(|e| e.into_inner());
+    targets.range(..hi).next_back().is_some_and(|(_, &end)| end > lo)
+}
+
 pub(crate) fn remapped_import_over(lo: u64, hi: u64) -> bool {
     if !ANY_PINNED.load(Ordering::Relaxed) {
         return false;

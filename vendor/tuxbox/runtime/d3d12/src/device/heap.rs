@@ -927,14 +927,32 @@ pub(super) fn refused_page(address: u64, size: u64, record: bool) -> bool {
 /// d3d12_vulkan_device.cpp:256-330), VIctory-fxceless (victory-gpu
 /// shadow.rs) and five-star-recomp read title pages through copies, and xcl
 /// (gpu/uma.rs) opens only its own committed VirtualAlloc windows. Physical
-/// page views (MEM_MAPPED) are now never opened as heaps; callers fall back
-/// to their shadow or backed copies. TUXBOX_IMPORT_REMAPPABLE=1 opens them
-/// as before.
+/// Only ranges a remap has targeted are kept from being opened as heaps
+/// (shadowing every MEM_MAPPED view cost the intro its frame rate); their
+/// callers fall back to shadow or backed copies. TUXBOX_IMPORT_REMAPPABLE=1
+/// opens everything, =mapped refuses every physical page view.
 fn remappable(base: u64, size: u64) -> bool {
-    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_MAPPED, VirtualQuery};
-    if crate::env_toggle!("TUXBOX_IMPORT_REMAPPABLE") == Some("1") {
+    match crate::env_toggle!("TUXBOX_IMPORT_REMAPPABLE") {
+        Some("1") => return false,
+        // The first form: every physical page view (moved 5 GiB of imports
+        // onto shadow copies; test149 intro 14 fps on shadow traffic).
+        Some("mapped") => return mapped(base, size),
+        _ => {}
+    }
+    if !crate::commands::page_mapping::remap_target_over(base, base.saturating_add(size.max(1))) {
         return false;
     }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "heap import: {size:#x} bytes at {base:#x} lie where CopyPageMappingsBatchX remaps pages, read through a copy instead ({n} so far; TUXBOX_IMPORT_REMAPPABLE=1 opens them)"));
+    }
+    true
+}
+
+fn mapped(base: u64, size: u64) -> bool {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_MAPPED, VirtualQuery};
     let end = base.saturating_add(size.max(1));
     let mut at = base;
     while at < end {
@@ -943,12 +961,6 @@ fn remappable(base: u64, size: u64) -> bool {
             return false;
         }
         if region.Type == MEM_MAPPED {
-            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if n <= 4 || n.is_power_of_two() {
-                crate::diagnostics::log_line(format_args!(
-                    "heap import: {size:#x} bytes at {base:#x} are physical page views a remap may replace, read through a copy instead ({n} so far; TUXBOX_IMPORT_REMAPPABLE=1 opens them)"));
-            }
             return true;
         }
         let next = region.BaseAddress as u64 + region.RegionSize as u64;
