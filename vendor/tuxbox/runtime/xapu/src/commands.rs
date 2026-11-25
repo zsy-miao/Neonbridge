@@ -21,6 +21,11 @@ fn lenient() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_EAGER").is_ok_and(|v| v.trim() == "1"))
 }
 
+fn clamp() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_CLAMP").map_or(true, |v| v.trim() != "0"))
+}
+
 /// Frames kept from a packet of `frames`: from `first` on, at most `count`.
 fn kept(frames: usize, first: usize, count: usize) -> (usize, usize) {
     let first = first.min(frames);
@@ -232,7 +237,17 @@ impl Stream {
                         let skipped = field(32).min(frames);
                         return Ok((skipped * channels, (frames - skipped) * channels * 4));
                     }
-                    let (first, count) = kept(frames, field(32), field(36));
+                    // rebox xapu.c:222-230 (GPL-2.0, credit to its authors):
+                    // frame_count 0 keeps every decoded frame, and what does
+                    // not fit the output is clamped to capacity/(ch*4), not
+                    // refused. TUXBOX_XAPU_CLAMP=0 keeps the TOO_SMALL answer.
+                    let (first, count) = if clamp() {
+                        let asked = if field(36) == 0 { frames } else { field(36) };
+                        let (first, count) = kept(frames, field(32), asked);
+                        (first, count.min(capacity / (channels.max(1) * 4)))
+                    } else {
+                        kept(frames, field(32), field(36))
+                    };
                     if count * channels * 4 > capacity {
                         return Err(TOO_SMALL);
                     }
@@ -247,7 +262,11 @@ impl Stream {
                 // Not decoded: silence of the length asked for, if it fits.
                 let decoded = match decoded {
                     Err(BAD_PACKET) if lenient() => {
-                        let frames = field(36).min(capacity / (channels.max(1) * 4));
+                        // rebox xapu.c:222: frame_count 0 asks for the
+                        // connection's frames_per_output, else 960; ours is
+                        // always 0 (connect refuses a nonzero one), so 960.
+                        let asked = if field(36) == 0 && clamp() { 960 } else { field(36) };
+                        let frames = asked.min(capacity / (channels.max(1) * 4));
                         self.pcm.clear();
                         self.pcm.resize(frames * channels, 0.0);
                         static SILENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
