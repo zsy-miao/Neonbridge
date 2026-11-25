@@ -831,6 +831,7 @@ pub(super) unsafe extern "system" fn address_srv(
     } else {
         let mut view = view;
         super::placement::pages::clamp_view(native, &mut view);
+        super::raw_views::srv(&mut view);
         unsafe { device.native.CreateShaderResourceView(native, Some(&view), handle) };
         report_bad_view("address SRV", &device.native, native, Some(&view));
     }
@@ -1004,6 +1005,9 @@ pub(super) unsafe extern "system" fn srv(
             }
             None => desc,
         };
+        let mut raw = unsafe { desc.as_ref() }.copied();
+        if let Some(raw) = raw.as_mut() { super::raw_views::srv(raw); }
+        let desc = raw.as_ref().map_or(desc, |raw| &raw const *raw);
         unsafe { device.native.CreateShaderResourceView(target, Some(desc), handle) };
         report_bad_view("SRV", &device.native, target, unsafe { desc.as_ref() });
     }
@@ -1328,6 +1332,9 @@ unsafe fn checked_uav(device: &Device, resource: Option<&ID3D12Resource>, counte
         Some(null) => (None, None, core::ptr::from_ref(null)),
         None => (resource, counter, desc),
     };
+    let mut raw = unsafe { desc.as_ref() }.copied();
+    if let Some(raw) = raw.as_mut() { super::raw_views::uav(raw, counter.is_some()); }
+    let desc = raw.as_ref().map_or(desc, |raw| &raw const *raw);
     let before = unsafe { device.native.GetDeviceRemovedReason() }.is_ok();
     unsafe { device.native.CreateUnorderedAccessView(resource, counter, Some(desc), handle) };
     if before && unsafe { device.native.GetDeviceRemovedReason() }.is_err() {
@@ -1778,6 +1785,7 @@ pub(super) unsafe extern "system" fn address_uav(
     }
     shadow::mark_written(device, entry.native.as_raw());
     super::view_marks::write(handle.ptr, shadow::marks_entry(device, entry.native.as_raw(), Some(unsafe { view.Anonymous.Buffer.FirstElement } * element)));
+    super::raw_views::uav(&mut view, false);
     unsafe { device.native.CreateUnorderedAccessView(Some(&entry.native), None, Some(&view), handle) };
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
     static FIRST: std::sync::Once = std::sync::Once::new();
