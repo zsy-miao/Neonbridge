@@ -591,14 +591,39 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>, game: Option<&Path>) -> 
     // Needs the game folder's staged d3d12_xs.dll (--game).
     // NEONBRIDGE_PREWARM_PIPELINES=0 runs dxc only, as before.
     if std::env::var("NEONBRIDGE_PREWARM_PIPELINES").as_deref() != Ok("0") {
-        match game.filter(|g| g.join("d3d12_xs.dll").is_file()) {
+        // The PSO build loads d3d12_xs.dll into this process. The game
+        // folder's copy is whatever the last launch staged: prewarm177 loaded
+        // one staged before 3a1e515 and built nothing for real (106047 created
+        // lazily, 2 stored). The runtime is built from the tree (or taken from
+        // --prebuilt) and loaded from there now; NEONBRIDGE_PREWARM_STAGED_DLL=1
+        // loads the game folder's copy as before.
+        let fresh = if std::env::var("NEONBRIDGE_PREWARM_STAGED_DLL").as_deref() == Ok("1") {
+            None
+        } else {
+            match prebuilt {
+                Some(dir) => Some(dir.to_path_buf()),
+                None => match build_providers(tuxbox, &out) {
+                    Ok(_) => Some(out.clone()),
+                    Err(e) => {
+                        println!("[prewarm] pipelines not built: building the runtime failed: {e}");
+                        Some(PathBuf::new())
+                    }
+                },
+            }
+        };
+        let dir = match fresh {
+            Some(dir) => Some(dir).filter(|d| d.join("d3d12_xs.dll").is_file()),
+            None => game.filter(|g| g.join("d3d12_xs.dll").is_file()).map(Path::to_path_buf),
+        };
+        match dir.as_deref() {
             Some(game) => {
                 let name = session.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                println!("[prewarm] pipelines: runtime {}", game.join("d3d12_xs.dll").display());
                 if let Err(e) = build_pipelines(game, &name) {
                     println!("[prewarm] pipelines not built: {e}");
                 }
             }
-            None => println!("[prewarm] pipelines not built: pass --game <folder with the staged d3d12_xs.dll> (NEONBRIDGE_PREWARM_PIPELINES=0 skips this)"),
+            None => println!("[prewarm] pipelines not built: no d3d12_xs.dll to load (NEONBRIDGE_PREWARM_PIPELINES=0 skips this)"),
         }
     }
     let st = worker.stop();
