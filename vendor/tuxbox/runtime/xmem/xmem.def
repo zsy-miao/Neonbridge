@@ -40,6 +40,10 @@ EXPORTS
     TuxBoxValidatePinnedPageMappings PRIVATE
     TuxBoxJoinPageRange PRIVATE
     TuxBoxCommitRange PRIVATE
+    TuxBoxDeviceRange PRIVATE
+    TuxBoxDeviceFaultCallback PRIVATE
+    TuxBoxProtectDevicePages PRIVATE
+    TuxBoxProtectDeviceAliases PRIVATE
     TuxBoxUncloakWindows PRIVATE
     TuxBoxTakeWriteWatch PRIVATE
     TuxBoxBinkState PRIVATE
