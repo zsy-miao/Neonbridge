@@ -35,7 +35,7 @@ pub(crate) fn enabled() -> bool {
 struct Guards {
     /// Clean (guarded, unwritten) block -> its aliases (itself included)
     /// and the protection each had.
-    clean: BTreeMap<usize, Vec<(usize, u32)>>,
+    clean: BTreeMap<usize, Vec<(usize, usize, u32)>>,
     /// Any guarded alias block -> the block it was taken for.
     alias_of: BTreeMap<usize, usize>,
 }
@@ -75,10 +75,10 @@ fn lock() -> Held {
 fn open(g: &mut Guards, at: usize) -> bool {
     let Some(&owner) = g.alias_of.get(&(at & !(BLOCK - 1))) else { return false };
     if let Some(aliases) = g.clean.remove(&owner) {
-        for (a, old) in aliases {
-            g.alias_of.remove(&a);
+        for (a, len, old) in aliases {
+            g.alias_of.remove(&(a & !(BLOCK - 1)));
             let mut was = 0;
-            unsafe { VirtualProtect(a as *const c_void, BLOCK, old, &mut was) };
+            unsafe { VirtualProtect(a as *const c_void, len, old, &mut was) };
         }
     }
     true
@@ -141,6 +141,12 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
         while block < end {
             if g.clean.contains_key(&block) {
                 census::add(&census::CLEAN);
+            } else if runs() && committed_runs(block).is_empty() {
+                // Nothing committed: nothing written there to copy; a
+                // later commit (lazy_commit -> writing) shows here as a
+                // block with committed runs, reported then (test177: 82%
+                // of reported blocks were these, re-reported every query).
+                census::add(&census::NOT_COMMITTED);
             } else {
                 census::add(&census::REPORTED);
                 let from = block.max(start & !0xfff);
@@ -191,6 +197,31 @@ fn protect(g: &mut Guards, block: usize, aliases: &[usize]) {
         if g.alias_of.contains_key(&a) && a != block {
             continue;
         }
+        if runs() {
+            // Each committed read-write run of the block: a block whose
+            // first page is only reserved (lazy commit) is guarded too.
+            let mut any = false;
+            for (r, len, protect) in committed_runs(a) {
+                if protect & 0xff != PAGE_READWRITE {
+                    if a == block {
+                        census::add(&census::NOT_RW);
+                        census::LAST_PROTECT.store(u64::from(protect), std::sync::atomic::Ordering::Relaxed);
+                    }
+                    continue;
+                }
+                let mut old = 0;
+                if unsafe { VirtualProtect(r as *const c_void, len, (protect & !0xff) | PAGE_READONLY, &mut old) } != 0 {
+                    done.push((r, len, old));
+                    any = true;
+                } else if a == block {
+                    census::add(&census::PROTECT_FAILED);
+                }
+            }
+            if a == block && !any {
+                break;
+            }
+            continue;
+        }
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
         if unsafe { VirtualQuery(a as *const c_void, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } == 0
             || info.State != MEM_COMMIT
@@ -209,24 +240,53 @@ fn protect(g: &mut Guards, block: usize, aliases: &[usize]) {
         }
         let mut old = 0;
         if unsafe { VirtualProtect(a as *const c_void, BLOCK, (info.Protect & !0xff) | PAGE_READONLY, &mut old) } != 0 {
-            done.push((a, old));
+            done.push((a, BLOCK, old));
         } else if a == block {
             census::add(&census::PROTECT_FAILED);
             break;
         }
     }
-    if done.iter().any(|&(a, _)| a == block) {
-        for &(a, _) in &done {
-            g.alias_of.insert(a, block);
+    if done.iter().any(|&(a, _, _)| a & !(BLOCK - 1) == block) {
+        for &(a, _, _) in &done {
+            g.alias_of.insert(a & !(BLOCK - 1), block);
         }
         g.clean.insert(block, done);
         census::add(&census::GUARDED);
     } else {
-        for (a, old) in done {
+        for (a, len, old) in done {
             let mut was = 0;
-            unsafe { VirtualProtect(a as *const c_void, BLOCK, old, &mut was) };
+            unsafe { VirtualProtect(a as *const c_void, len, old, &mut was) };
         }
     }
+}
+
+/// TUXBOX_SECTION_WATCH_RUNS (default on): guard a block's committed runs,
+/// not only a block whose first page is committed, and skip reporting a
+/// block with nothing committed.
+fn runs() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_SECTION_WATCH_RUNS").map_or(true, |v| v.trim() != "0"))
+}
+
+/// The committed runs `(start, len, protect)` of the 64 KiB block at `block`.
+fn committed_runs(block: usize) -> Vec<(usize, usize, u32)> {
+    let mut out = Vec::new();
+    let mut at = block;
+    while at < block + BLOCK {
+        let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+        if unsafe { VirtualQuery(at as *const c_void, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 {
+            break;
+        }
+        let end = (info.BaseAddress as usize + info.RegionSize).min(block + BLOCK);
+        if end <= at {
+            break;
+        }
+        if info.State == MEM_COMMIT {
+            out.push((at, end - at, info.Protect));
+        }
+        at = end;
+    }
+    out
 }
 
 /// Ranges a kernel write may still be filling (overlapped ReadFile and
@@ -273,15 +333,15 @@ pub(crate) fn remapped(at: usize, len: usize) {
             // back, the remapped ones too: a remap that kept the old view
             // (a re-commit, a failed map) keeps our read-only, and with its
             // guard forgotten a write there was an unhandled AV (test174).
-            for (a, old) in aliases {
-                g.alias_of.remove(&a);
+            for (a, len, old) in aliases {
+                g.alias_of.remove(&(a & !(BLOCK - 1)));
                 let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
                 let ours = unsafe { VirtualQuery(a as *const c_void, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } != 0
                     && info.State == MEM_COMMIT
                     && info.Protect & 0xff == PAGE_READONLY;
                 if ours {
                     let mut was = 0;
-                    unsafe { VirtualProtect(a as *const c_void, BLOCK, old, &mut was) };
+                    unsafe { VirtualProtect(a as *const c_void, len, old, &mut was) };
                 }
             }
         }
