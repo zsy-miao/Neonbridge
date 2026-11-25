@@ -3462,6 +3462,16 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
                 let plain = i.mnemonic == "ds_swizzle_b32" && i.raw[0] & (1 << 17) == 0;
                 let bitmask = plain && i.aux.imm as u32 & 0x8000 == 0;
                 let quad = plain && i.aux.imm as u32 & 0x8000 != 0 && wave_loop_quad_swizzle();
+                // TB_WAVE_LOOP_GROUP_READ (default on, =0 refuses): a lane read inside a guest
+                // loop keeps its group exchange (two barriers) when the group is exactly one
+                // 64-lane guest wave: every guest branch is scalar, so all of the group's
+                // invocations run the loop the same number of times and meet each barrier
+                // together (test179 e2597c / 26d809 / 9550b5, v_readlane in the outer loop).
+                let one_wave = count == 64 && i.mnemonic == GROUP_READ
+                    && std::env::var("TB_WAVE_LOOP_GROUP_READ").map_or(true, |v| v.trim() != "0");
+                if one_wave {
+                    continue;
+                }
                 if !((bitmask || quad) && wave_loop_swizzle()) {
                     return Err("compute swizzle inside a loop".into());
                 }
