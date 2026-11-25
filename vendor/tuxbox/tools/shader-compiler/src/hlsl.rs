@@ -1604,7 +1604,10 @@ fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, read
     }
     let [Opnd::Sgpr(d)] = ins.dst[..] else { return; };
     let wide = m.ends_with("_b64") || m.starts_with("v_cmp");
-    masks.retain(|&n| !(n == d || (wide && n == d + 1) || n + 1 == d));
+    // A multi-dword scalar load overwrites every register it fills: a mask
+    // there is gone (Xbox2Windows 7ebe57e7, MIT, re-derived).
+    masks.retain(|&n| !(n == d || (wide && n == d + 1) || n + 1 == d
+        || (n > d && writes_scalar(ins, n)) || (n + 1 > d && writes_scalar(ins, n + 1))));
     let mask = m.starts_with("v_cmp")
         || m.ends_with("_saveexec_b64")
         || (matches!(m, "s_mov_b64" | "s_and_b64" | "s_or_b64" | "s_andn2_b64" | "s_xor_b64")
