@@ -19,6 +19,12 @@ const STALE: i32 = 0x838a0004u32 as i32;
 const VIRTUAL: usize = PORTS + 2;
 const DEVICES: usize = VIRTUAL + 1;
 const HISTORY: usize = 256;
+const DEVICE_HISTORY: usize = 32;
+fn device_history() -> bool {
+    static ON: LazyLock<bool> =
+        LazyLock::new(|| std::env::var_os("TUXBOX_GI_DEVICE_HISTORY").is_none_or(|v| v != "0"));
+    *ON
+}
 const INPUT_IID: GUID = GUID::from_u128(0x11be2a7e_4254_445a_9c09_ffc40f006918);
 const DEVICE_IID: GUID = GUID::from_u128(0x31dd86fb_4c1b_408a_868f_439b3cd47125);
 const READING_IID: GUID = GUID::from_u128(0x2156947a_e1fa_4de0_a30b_d812931dbd8d);
@@ -57,6 +63,8 @@ struct Pool {
     devices: [Arc<Object>; DEVICES],
     latest: [Option<Arc<Object>>; DEVICES],
     history: VecDeque<Arc<Object>>,
+    /// The last DEVICE_HISTORY readings of each device (TUXBOX_GI_DEVICE_HISTORY).
+    device_history: [VecDeque<Arc<Object>>; DEVICES],
     number: u64,
     mouse: MouseMotion,
     scan_at: u64,
@@ -196,6 +204,7 @@ impl Pool {
             }),
             latest: Default::default(),
             history: VecDeque::with_capacity(HISTORY),
+            device_history: Default::default(),
             number: 0,
             mouse: MouseMotion::default(),
             scan_at: 0,
@@ -369,6 +378,11 @@ impl Pool {
                 self.history.pop_front();
             }
             self.history.push_back(reading.clone());
+            let own = &mut self.device_history[slot];
+            if own.len() == DEVICE_HISTORY {
+                own.pop_front();
+            }
+            own.push_back(reading.clone());
             self.latest[slot] = Some(reading);
         }
     }
@@ -499,6 +513,29 @@ unsafe extern "system" fn gi_read(
     } else {
         if reference.is_null() {
             return E_INVALIDARG;
+        }
+        // Each device keeps its own last 32 readings and a reference is
+        // stale only once older than its device's oldest, as VIctory-fxceless
+        // gameinput.rs (GPL-3.0, credit) does: in one shared 256 a busy mouse
+        // pushed the pad's previous reading out. TUXBOX_GI_DEVICE_HISTORY=0
+        // walks the shared history again.
+        if device_history() {
+            let reference = unsafe { &*reference };
+            let Value::Reading(reading) = &reference.value else { return E_INVALIDARG };
+            let Value::Device { slot, .. } = &reading.device.value else { return E_INVALIDARG };
+            let own = &state.device_history[*slot];
+            if own.front().is_none_or(|oldest| reading.number < oldest.reading().number) {
+                return STALE;
+            }
+            let number = reading.number;
+            let found = if direction > 0 {
+                own.iter().filter(|r| r.reading().number > number).find(matches)
+            } else {
+                own.iter().rev().filter(|r| r.reading().number < number).find(matches)
+            };
+            let Some(found) = found else { return NO_READING };
+            unsafe { out.write(Arc::into_raw(found.clone())) };
+            return S_OK;
         }
         let Some(index) = state
             .history
