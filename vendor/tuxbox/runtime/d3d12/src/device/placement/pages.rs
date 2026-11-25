@@ -288,6 +288,28 @@ struct Pages {
     pool_system: Vec<bool>,
     /// evicted because none of its tiles is in use (`trim_empty`)
     pool_empty: Vec<bool>,
+    /// compaction copies the GPU may still run: (fence value, what they hold)
+    compacted: Vec<(u64, Vec<ID3D12Resource>, ID3D12CommandAllocator, ID3D12GraphicsCommandList)>,
+}
+
+static COMPACTED_POOLS: AtomicU64 = AtomicU64::new(0);
+
+/// TUXBOX_PAGES_COMPACT (default on, =0 off): over budget, the pages of the
+/// sparsest idle pool move to free tiles of other pools, so it drains and
+/// `trim_empty` evicts it. test173 ended with 71 pools (4544 MiB) for 1202 MiB
+/// of tiles in use at device local 7551 of 7188 MiB: the pools grew to the
+/// load's 4233 MiB peak, and long-lived textures then held a few tiles in
+/// nearly every pool, so only 5 ever emptied; demoting the other 60 (lower
+/// residency priority) left them charged. Only pools whose textures are all
+/// sampled ones (no render target, depth or UAV) and that no submission used
+/// for TUXBOX_SPAN_EVICT_S are moved, so nothing writes a page while it is
+/// copied. The copy goes through two reserved buffers mapped onto the old and
+/// the new tiles (tile bytes shared by resources at one address, as every
+/// page here already is), on the pages queue before the targets are mapped
+/// again, and title work waits for that fence as for any mapping.
+fn compact_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_COMPACT") != Some("0"))
 }
 
 static EMPTY_EVICTED: AtomicU64 = AtomicU64::new(0);
@@ -327,6 +349,7 @@ impl Pages {
             pool_evicted: Vec::new(),
             pool_system: Vec::new(),
             pool_empty: Vec::new(),
+            compacted: Vec::new(),
         })
     }
 
@@ -344,6 +367,115 @@ impl Pages {
     /// free list is ordered so new tiles come from the fullest pools first
     /// and the sparsest pools are taken from last, so they drain to empty.
     /// TUXBOX_PAGES_PACK=0 keeps the old order.
+    /// One pass of `compact_on`: moves the pages of the sparsest idle pool
+    /// (at most a quarter full) that is not in `busy`.
+    unsafe fn compact(&mut self, dev: &ID3D12Device, busy: &[bool], idle_s: f64) {
+        let done = self.fence.GetCompletedValue();
+        self.compacted.retain(|c| c.0 > done);
+        let now = std::time::Instant::now();
+        self.pool.drain_cooling(now);
+        let n = self.pools.len();
+        let mut used = vec![0usize; n];
+        for p in self.pages.values().chain(self.extra_pages.values()) {
+            used[p.tile.0 as usize] += 1;
+        }
+        let mut written = vec![false; n];
+        for t in self.targets.values().filter(|t| t.mapped && !t.system_ok) {
+            for &h in &t.heaps {
+                written[h as usize] = true;
+            }
+        }
+        let Some(h) = (0..n)
+            .filter(|&h| used[h] != 0 && used[h] <= POOL_PAGES as usize / 4 && !busy.get(h).copied().unwrap_or(false)
+                && !written[h] && !self.pool_empty[h] && now.duration_since(self.pool_used[h]).as_secs_f64() >= idle_s)
+            .min_by_key(|&h| used[h])
+        else { return };
+        let count = used[h];
+        let free_elsewhere = self.pool.free_total - self.pool.free_by_heap[h].len();
+        if free_elsewhere < count {
+            return;
+        }
+        // The new tiles come from other pools: this one's free list is set aside.
+        let own_free = std::mem::take(&mut self.pool.free_by_heap[h]);
+        self.pool.free_total -= own_free.len();
+        let fresh = self.take_batch(dev, count, None, false, now);
+        self.pool.free_total += own_free.len();
+        self.pool.free_by_heap[h] = own_free;
+        let Some(fresh) = fresh else { return };
+        if fresh.iter().any(|t| t.0 as usize == h) || fresh.len() != count {
+            self.pool.return_tiles(&fresh);
+            return;
+        }
+        let keys: Vec<PageKey> = self.pages.iter().filter(|(_, p)| p.tile.0 as usize == h).map(|(&a, _)| PageKey::Own(a))
+            .chain(self.extra_pages.iter().filter(|(_, p)| p.tile.0 as usize == h).map(|(&(va, i), _)| PageKey::Extra(va, i)))
+            .collect();
+        let tile_of = |s: &Self, k: PageKey| match k {
+            PageKey::Own(a) => s.pages[&a].tile,
+            PageKey::Extra(va, i) => s.extra_pages[&(va, i)].tile,
+        };
+        let old: Vec<Tile> = keys.iter().map(|&k| tile_of(self, k)).collect();
+        let reserved = |tiles: usize| -> Option<ID3D12Resource> {
+            let desc = D3D12_RESOURCE_DESC {
+                Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: (tiles * PAGE) as u64, Height: 1, DepthOrArraySize: 1, MipLevels: 1,
+                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR, ..Default::default()
+            };
+            let mut r: Option<ID3D12Resource> = None;
+            dev.CreateReservedResource(&desc, D3D12_RESOURCE_STATE_COMMON, None, &mut r).ok()?;
+            r
+        };
+        let fail = |s: &mut Self, why: &str| {
+            s.pool.return_tiles(&fresh);
+            crate::diagnostics::log_line(format_args!("placed textures: compacting a page pool failed: {why} (TUXBOX_PAGES_COMPACT=0 off)"));
+        };
+        let (Some(from), Some(to)) = (reserved(count), reserved(count)) else { return fail(self, "reserved buffer") };
+        let Ok(alloc) = dev.CreateCommandAllocator::<ID3D12CommandAllocator>(D3D12_COMMAND_LIST_TYPE_DIRECT) else { return fail(self, "allocator") };
+        let Ok(list) = dev.CreateCommandList::<_, _, ID3D12GraphicsCommandList>(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &alloc, None) else { return fail(self, "command list") };
+        self.map(&from, &old, 0);
+        self.map(&to, &fresh, 0);
+        list.CopyBufferRegion(&to, 0, &from, 0, (count * PAGE) as u64);
+        if list.Close().is_err() {
+            return fail(self, "close");
+        }
+        self.queue.ExecuteCommandLists(&[Some(list.cast().expect("command list"))]);
+        for (&k, &t) in keys.iter().zip(&fresh) {
+            match k {
+                PageKey::Own(a) => self.pages.get_mut(&a).expect("page").tile = t,
+                PageKey::Extra(va, i) => self.extra_pages.get_mut(&(va, i)).expect("page").tile = t,
+            }
+        }
+        // Every target on the pool is mapped again from its first mapped tile.
+        let moved: Vec<usize> = self.targets.iter().filter(|(_, t)| t.mapped && t.heaps.contains(&(h as u32))).map(|(&k, _)| k).collect();
+        for key in &moved {
+            let t = &self.targets[key];
+            let tiles: Vec<Tile> = t.used.iter().map(|a| self.pages[a].tile).chain(t.used_extra.iter().map(|k| self.extra_pages[k].tile)).collect();
+            let levels = t.levels;
+            let raw = *key as *mut c_void;
+            let Some(res) = ID3D12Resource::from_raw_borrowed(&raw) else { continue };
+            let res = res.clone();
+            self.map(&res, &tiles, levels);
+            let mut heaps: Vec<u32> = tiles.iter().map(|t| t.0).collect();
+            heaps.sort_unstable();
+            heaps.dedup();
+            if let Some(t) = self.targets.get_mut(key) {
+                t.heaps = heaps;
+            }
+        }
+        self.value += 1;
+        let _ = self.queue.Signal(&self.fence, self.value);
+        self.signaled = self.value;
+        for &t in &old {
+            self.pool.push_cooling(t, now);
+        }
+        self.compacted.push((self.value, vec![from, to], alloc, list));
+        let total = COMPACTED_POOLS.fetch_add(1, Relaxed) + 1;
+        if total <= 8 || total.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "placed textures: compacted page pool {h}: {count} pages ({} MiB) of {} textures moved to other pools ({total} pools so far; TUXBOX_PAGES_COMPACT=0 off)",
+                count * PAGE >> 20, moved.len()));
+        }
+    }
+
     unsafe fn trim_empty(&mut self, dev: &ID3D12Device, over_budget: bool) {
         let pack = crate::env_toggle!("TUXBOX_PAGES_PACK") != Some("0");
         let trim = over_budget && crate::env_toggle!("TUXBOX_PAGES_TRIM_EMPTY") != Some("0");
@@ -1246,6 +1378,9 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
     };
     if due {
         let over = super::alias::over_budget(device);
+        if over && compact_on() {
+            unsafe { pages.compact(device, &keep, after) };
+        }
         unsafe { pages.trim_empty(device, over) };
         if over {
             evict(pages, &keep, after, None);
