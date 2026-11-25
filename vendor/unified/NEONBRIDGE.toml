@@ -1,0 +1,70 @@
+# Neonbridge launcher spec for vendor/unified: Itsbatt's victory-unified, fxceless victory-fork
+# 0b0074e plus Belobug (ambient, quad reads, hoisted clamps), DexNom/VIctory (shader, cubemap,
+# PSO, range-lock streaming) and its own descriptor-lifetime fix. Build and run are its README.md
+# "Quick Play"; the environment is its scripts/play.ps1 (tuned on an RTX 3070 8 GB).
+name = "unified"
+rank = 8   # launcher list order (Master): 7th on the gta6-pc-race tracker
+about = "victory-unified 73b22cc (GPL-3.0): 8 GB NVIDIA fork; ~58 min without a crash into the camp mission at 2-3 fps (its author's RTX 3070 8 GB); not yet run here"
+upstream = "https://github.com/Itsbatt/victory-unified"
+build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md Quick Play (+--locked)
+watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
+exe = "target/release/victory.exe"   # scripts/play.ps1:10
+diag_build = []   # its README names no diagnostics build
+run = ["run", "{game_exe}", "--execute"]   # scripts/play.ps1:47 (Series X profile)
+prewarm = ["translate", "{game}", "--warm", "all", "--jobs", "{jobs}"]   # its base victory-fork's warm (apps/victory/src/translate.rs:160)
+game_env = "VICTORY_GAME_DIR"
+cache_env = "VICTORY_CACHE_DIR"
+agility = false
+
+options = [
+  "VICTORY_AMBIENT=<level> (its default 1.25): indirect-light floor, README.md",
+  "VICTORY_MAX_FPS=<n> (its default 30): frame cap, crates/victory-gpu/src/queue.rs",
+  "VICTORY_ASYNC_PRESENT=1 crashed in nvwgf2umx.dll on its author's RTX 3070 (kept off)",
+]
+
+[env]   # scripts/play.ps1:19-46, its own settings
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\6ixpack\save"   # Neonbridge: one save/settings folder for the victory family
+VICTORY_ASYNC_SUBMIT = "1"
+VICTORY_QUEUE2 = "1"
+VICTORY_QUEUE2_LANDING_MB = "128"
+VICTORY_REFRESH_ONCE = "1"
+VICTORY_COPY_PLAIN = "1"
+VICTORY_CARD_BUFFERS_MIN_MB = "1"
+VICTORY_CARD_BUFFERS_MB = "768"
+VICTORY_MERGE_GAP = "64"
+VICTORY_MERGE_RUNS = "4096"
+VICTORY_JOIN_COPIES = "1"
+VICTORY_CARD_REHASH_RUNS = "1"
+VICTORY_VIEW_KNOWN = "1"
+VICTORY_UNWATCHED_FRAMES = "4"
+VICTORY_DISK_CORES = "slow"
+VICTORY_PIPELINE_WAIT_MS = "24"
+VICTORY_AMBIENT = "1.25"
+VICTORY_MAX_FPS = "30"
+VICTORY_HOIST_CLAMPS = "7"
+VICTORY_INDIRECT_WINDOW = "0"
+VICTORY_LATE_WAIT_LISTS = "64"
+VICTORY_LEVELS_ON_DEMAND = "1"
+VICTORY_TEXTURE_NO_WAIT = "1"
+VICTORY_TEXTURE_BUDGET_MB = "1920"
+VICTORY_TEXTURE_STAGE_MB = "192"
+VICTORY_TEXTURE_STAGE_MS = "120"
+VICTORY_LOG = "info"
+RUST_BACKTRACE = "1"
+
+[controls]   # crates/victory-hle/src/modules/gameinput.rs (Space is also A)
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter / Space"
+b = "Backspace"
+x = "X"
+y = "Y"
+lb = "Q"
+rb = "E"
+lt = "Z"
+rt = "C"
+ls = "F"
+rs = "H"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

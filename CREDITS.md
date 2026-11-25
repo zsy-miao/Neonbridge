@@ -14,6 +14,7 @@ Neonbridge is a launcher around other people's work. Each vendored tree under `v
 | `vendor/flamingo` | [Flamingo](https://github.com/realblastex/flamingo) | realblastex and the VIctory contributors | GPL-3.0 | `866d277917bb572d9f9c8b464e6f24fec1b2572d` |
 | `vendor/klbf` | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | PastiiJay and the VIctory contributors | GPL-3.0 | `39b99cd66faafe6701d86090d5e7e53957f5c88c` |
 | `vendor/belobug` | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | Belobug and the VIctory contributors | GPL-3.0 | `000ffdd4ee0ff085596b798958bce534a69b4f07` |
+| `vendor/unified` | [victory-unified](https://github.com/Itsbatt/victory-unified) | Itsbatt, with fxceless, Belobug, DexNom, Zettrox and the VIctory contributors | GPL-3.0-or-later | `73b22ccd628ecd94324121be336be700d0190cd5` |
 
 All of the VIctory forks build on [VIctory](https://github.com/Marvisak/VIctory) by Marvisak and its contributors.
 

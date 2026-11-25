@@ -2,7 +2,7 @@
 
 How Neonbridge builds, prepares and starts each runtime in `vendor/`. Every setting below is its author's own (the source is noted in its `vendor/<name>/NEONBRIDGE.toml`); the only things Neonbridge adds are listed under [What Neonbridge adds](#what-neonbridge-adds).
 
-All seven are builds of [VIctory](https://github.com/Marvisak/VIctory) (Marvisak): the same `victory.exe` with the same commands (`run`, `translate`, `warm`). They differ in their fixes, their switches and their shader cache format.
+All eight are builds of [VIctory](https://github.com/Marvisak/VIctory) (Marvisak): the same `victory.exe` with the same commands (`run`, `translate`, `warm`). They differ in their fixes, their switches and their shader cache format.
 
 ## Family tree
 
@@ -11,6 +11,7 @@ VIctory (Marvisak)
 ├── victory-fork (fxceless)          → vendor/victory
 │   ├── Flamingo (realblastex)       → vendor/flamingo
 │   ├── VI-BR-PORT (edsuuu)          → vendor/vibrport
+│   ├── victory-unified (Itsbatt)    → vendor/unified   (+ Belobug, DexNom)
 │   └── KLBF Lab (PastiiJay)         → vendor/klbf   (VIctory + victory-fork)
 ├── VIctory-Belobug-AMD (Belobug)    → vendor/belobug
 ├── VItoriaBr (uiliannn)             → vendor/vitoriabr
@@ -60,6 +61,12 @@ VIctory (Marvisak)
    - Prepare: `warm <game>`
    - Run: `run <game exe> --execute --console series-s`, with the D3D12 Agility SDK 1.614.1 beside the exe
    - Its switches: its own upscaler, `NO_WATCHDOG`, `RELAY=2`, precise sync, precompiled graphics pipelines, the `NARROW_*` and `PREP_*` set, ray tracing off
+   - Shader cache: VSH1
+8. **victory-unified** (`unified`)
+   - Build: `cargo build --release` → `target/release/victory.exe`
+   - Prepare: `translate <game> --warm all` (its base victory-fork's warm; its README names none)
+   - Run: `run <game exe> --execute` (Series X profile)
+   - Its switches, from its `scripts/play.ps1` for an RTX 3070 8 GB: `ASYNC_SUBMIT`, `QUEUE2` (128 MB landing), `HOIST_CLAMPS=7`, `AMBIENT=1.25`, `MAX_FPS=30`, `LEVELS_ON_DEMAND`, `TEXTURE_NO_WAIT`, `TEXTURE_BUDGET_MB=1920`, 768 MB card buffers and 15 more
    - Shader cache: VSH1
 
 Every switch above is a `VICTORY_` environment variable (`RELAY=1` means `VICTORY_RELAY=1`).
