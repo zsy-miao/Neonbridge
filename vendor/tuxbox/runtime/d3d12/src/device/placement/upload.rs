@@ -128,10 +128,10 @@ fn is_plane(texture: &Texture) -> bool {
 
 /// Tells xmem a decode's video planes were read in full while Bink was idle
 /// (TuxBoxBinkPlanesRead), so its catch-up fence may decode over that ring
-/// slot. TUXBOX_BINK_PLANES_REPORT=0 never reports (the fence stays off).
+/// slot. TUXBOX_BINK_PLANES_READ=0 never reports (the fence stays off).
 fn planes_read(decoded: u64) {
     type PlanesRead = unsafe extern "system" fn(u64);
-    if crate::env_toggle!("TUXBOX_BINK_PLANES_REPORT") == Some("0") {
+    if crate::env_toggle!("TUXBOX_BINK_PLANES_READ") == Some("0") {
         return;
     }
     static F: std::sync::OnceLock<Option<PlanesRead>> = std::sync::OnceLock::new();
