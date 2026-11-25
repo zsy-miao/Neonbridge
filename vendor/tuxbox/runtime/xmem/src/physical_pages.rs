@@ -1812,6 +1812,36 @@ fn install_joining_fault() {
     });
 }
 
+/// XPortPC era_gpu_alias::open_mapping / era_title_gpu (41da567, credited):
+/// a title range is reachable by the host GPU through one
+/// OpenExistingHeapFromFileMapping import of the section its pages live in,
+/// at their section offsets, so the views never need joining (join_range's
+/// unmap fails 87 in test168 even with every other thread frozen). For the
+/// page holding `address`, writes [section handle, section bytes, offset of
+/// `address` in the section, bytes from `address` that continue at
+/// consecutive offsets of the same section (capped at `want`)] and returns 1;
+/// 0 when xmem does not map the page. The handle stays xmem's: an importer
+/// keeps its own reference through the heap it opens.
+#[unsafe(export_name = "TuxBoxPageSection")]
+unsafe extern "system" fn page_section(address: usize, want: usize, out: *mut [u64; 4]) -> u32 {
+    if out.is_null() { return 0; }
+    let pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    let at = address & !(PAGE - 1);
+    let Some(page) = pool.mappings.get(&at).and_then(|t| pool.pages.get(t)) else { return 0 };
+    let Ok((handle, bytes)) = page.section.raw() else { return 0 };
+    let start = page.offset + (address - at) as u64;
+    let mut run = PAGE - (address - at);
+    let mut next = at + PAGE;
+    while run < want {
+        let Some(p) = pool.mappings.get(&next).and_then(|t| pool.pages.get(t)) else { break };
+        if !Arc::ptr_eq(&p.section, &page.section) || p.offset != page.offset + (next - at) as u64 { break; }
+        run += PAGE;
+        next += PAGE;
+    }
+    unsafe { out.write([handle as u64, bytes, start, run.min(want.max(1)) as u64]) };
+    1
+}
+
 #[unsafe(export_name = "TuxBoxJoinPageRange")]
 unsafe extern "system" fn join_page_range(base: usize, bytes: usize) -> i32 {
     install_joining_fault();

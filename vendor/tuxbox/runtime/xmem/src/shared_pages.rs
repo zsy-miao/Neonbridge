@@ -135,6 +135,12 @@ impl Section {
         Ok(self.handle.get().unwrap().as_raw_handle())
     }
 
+    /// The section's handle (created on first use) and size, for a host GPU
+    /// import of the whole section (TuxBoxPageSection).
+    pub(super) fn raw(&self) -> Result<(*mut c_void, u64), u32> {
+        Ok((self.handle()?, self.bytes))
+    }
+
     pub(super) fn map(&self, offset: u64, address: usize) -> Result<(), u32> {
         self.map_range(offset, address, PAGE)
     }
