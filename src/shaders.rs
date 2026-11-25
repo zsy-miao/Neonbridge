@@ -450,6 +450,10 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+pub fn sha256_hex(data: &[u8]) -> String {
+    sha256(data)
+}
+
 fn sha256(data: &[u8]) -> String {
     hex(&Sha256::digest(data))
 }
@@ -741,12 +745,27 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             let (bytes, sum) = (fs::read(path).ok()?, fs::read(path.with_extension("sha256")).ok()?);
             (bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes)).then_some(bytes)
         };
-        let found = reused.as_ref().and_then(stored).or_else(|| {
-            let bytes = normalised.as_ref().and_then(stored)?;
+        let found = reused.as_ref().and_then(|p| Some((stored(p)?, p))).or_else(|| {
+            let found = normalised.as_ref().and_then(|p| Some((stored(p)?, p)))?;
             NORMALISED_REUSES.fetch_add(1, Ordering::Relaxed);
-            Some(bytes)
+            Some(found)
         });
-        if let Some(bytes) = found {
+        // -O0 DXIL (dxil_upgrade.rs) goes on to this build's cache marked too, and is
+        // queued for its -O1 compile, if it is not queued already.
+        let upgrade = |dxil_o0: bool| {
+            let up = crate::dxil_upgrade::marker(&dest);
+            if !dxil_o0 {
+                let _ = fs::remove_file(&up);
+                return;
+            }
+            let _ = fs::write(&up, b"");
+            if let (Some(dir), Some(text), Some(id)) = (tools.dxil.as_ref(), source.as_deref(), reused.as_ref().and_then(|p| p.file_stem())) {
+                let paths: Vec<&Path> = reused.iter().chain(&normalised).map(|p| p.as_path()).chain([dest.as_path()]).collect();
+                crate::dxil_upgrade::enqueue(dir, &id.to_string_lossy(), &target, text, &paths);
+            }
+        };
+        if let Some((bytes, from)) = found {
+            upgrade(crate::dxil_upgrade::marker(from).exists());
             // Into this build's cache as a compile would store it (renamed in whole).
             let (copy, stamp) = (work.join("reused.cso"), work.join("reused.sha256"));
             fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
@@ -770,7 +789,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 // file names, no dxc.exe start and dxcompiler.dll load per program.
                 let args = dxc.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
                 let source = fs::read(&hlsl).map_err(|e| ToolError::Other(format!("read {}: {e}", hlsl.display())))?;
-                return match crate::dxc::compile(&tools.dxc, source, args, Duration::from_secs(secs), give_up) {
+                return match crate::dxc::compile(&tools.dxc, source, args, Duration::from_secs(secs), give_up, false) {
                     Ok(bytes) => fs::write(&output, bytes).map_err(|e| ToolError::Other(format!("write {}: {e}", output.display()))),
                     Err(crate::dxc::Error::Compiler(msg)) => Err(ToolError::Exit(1, msg.chars().take(600).collect::<String>().trim().to_owned())),
                     Err(crate::dxc::Error::Other(msg)) => Err(ToolError::Other(msg)),
@@ -804,9 +823,11 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // optimises the DXIL again, as for the urgent path above.
         // Opt-in only (NEONBRIDGE_PREWARM_DXC_O0=1, prewarm_o0).
         let first = if o0_first || urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &urgent) };
+        let mut dxil_o0 = false;
         let compiled = match first {
             Err(ToolError::Other(msg)) if msg == "timed out" => {
                 let _ = fs::remove_file(&output);
+                dxil_o0 = true;
                 dxc("-O0", 120, &|| false)
             }
             other => other,
@@ -824,6 +845,14 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let stamp = work.join("sha256");
         fs::write(&stamp, sha256(&bytes)).map_err(|e| e.to_string())?;
         for path in reused.iter().chain(&normalised) {
+            // -O0 never over an -O1 result (another worker's, since the lookup missed).
+            let up = crate::dxil_upgrade::marker(path);
+            if dxil_o0 {
+                if path.exists() && !up.exists() {
+                    continue;
+                }
+                let _ = fs::write(&up, b"");
+            }
             // Written stamp-first under a temporary name: a reader sees both or neither.
             let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
             if fs::write(&tmp, &bytes).and_then(|_| fs::write(path.with_extension("sha256"), sha256(&bytes)))
@@ -833,6 +862,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         fs::rename(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
         fs::rename(&stamp, &checksum).map_err(|e| e.to_string())?;
+        upgrade(dxil_o0);
         remember(cache, key, &bytes);
         publish(&bytes)?;
         Ok(Outcome::Compiled(translate_ms, dxc_ms))
@@ -1273,6 +1303,11 @@ impl Worker {
             prewarm(&tools, &cache, &archive, &private.join("prewarm"), prewarm_workers, &stats, None, "full prewarm (TUXBOX_PREWARM=0 skips)", deadline, &log, None);
         }
         let log = Arc::new(log);
+        // -O0 DXIL from the prewarm (and from before) is recompiled at -O1 while the game runs.
+        if let Some(dxil) = tools.dxil.clone() {
+            let log = log.clone();
+            crate::dxil_upgrade::start(tools.dxc.clone(), tools.defines.clone(), dxil, move |line| log(line));
+        }
         let tools = Arc::new(tools);
         let background = (stale && (full || !stale_seen.is_empty())).then(|| {
             let (tools, cache, archive, scratch, stats, log, stop) =

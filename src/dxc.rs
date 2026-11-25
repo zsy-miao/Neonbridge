@@ -88,10 +88,15 @@ pub fn enabled() -> bool {
 /// Compiles `src` with dxc command-line `args` (no file names) on a compile
 /// thread. Err(Other("timed out")) past `timeout`, or once `give_up` (polled
 /// every 100 ms) says so.
-pub fn compile(dxc_exe: &Path, src: Vec<u8>, args: Vec<String>, timeout: Duration, give_up: &dyn Fn() -> bool) -> Result<Vec<u8>, Error> {
+/// `low` runs the compile thread at the lowest priority (the -O1 upgrades of dxil_upgrade.rs).
+pub fn compile(dxc_exe: &Path, src: Vec<u8>, args: Vec<String>, timeout: Duration, give_up: &dyn Fn() -> bool, low: bool) -> Result<Vec<u8>, Error> {
     let create = create_fn(dxc_exe).map_err(Error::Other)?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new().name("neonbridge-dxc".into()).stack_size(DXC_STACK).spawn(move || {
+        if low {
+            use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_LOWEST};
+            unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST) };
+        }
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile_here(create, &src, &args)))
             .unwrap_or_else(|_| Err(Error::Other("panic in the compile thread".into())));
         let _ = tx.send(r);

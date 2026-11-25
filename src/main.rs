@@ -12,6 +12,7 @@
 mod awake;
 mod ctl;
 mod dxc;
+mod dxil_upgrade;
 mod game_settings;
 mod picker;
 mod progress;
