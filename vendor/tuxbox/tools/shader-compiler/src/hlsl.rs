@@ -9151,6 +9151,25 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 format!("(({dest} & 0xffffu) | ({result} << 16))")
             });
         }
+        // X2W 6f784a50 (MIT, credit): unsigned dot products, wrapping in uint.
+        // Only the default VOP3P modifiers (OP_SEL 0, OP_SEL_HI 1, no NEG, no
+        // CLAMP) are lowered; others are refused. TB_DOT_UNSIGNED=0 refuses all.
+        if matches!(m.as_str(), "v_dot2_u32_u16" | "v_dot4_u32_u8") && std::env::var("TB_DOT_UNSIGNED").map_or(true, |v| v.trim() != "0") {
+            let (w0, w1) = (ins.raw[0], ins.raw.get(1).copied().unwrap_or(0));
+            if w0 & 0xbf00 != 0x4000 || w1 >> 27 != 3 {
+                return Err(format!("unsupported {m} modifiers"));
+            }
+            let (a, b, c) = (r(&s[0])?, r(&s[1])?, r(&s[2])?);
+            let e = if m == "v_dot2_u32_u16" {
+                format!("((({a}) & 65535u) * (({b}) & 65535u) + (({a}) >> 16u) * (({b}) >> 16u) + ({c}))")
+            } else {
+                let byte = |v: &str, i: u32| format!("((({v}) >> {}u) & 255u)", 8 * i);
+                format!("({} + {} + {} + {} + ({c}))",
+                    format!("{} * {}", byte(&a, 0), byte(&b, 0)), format!("{} * {}", byte(&a, 1), byte(&b, 1)),
+                    format!("{} * {}", byte(&a, 2), byte(&b, 2)), format!("{} * {}", byte(&a, 3), byte(&b, 3)))
+            };
+            return self.wv(&d, &e);
+        }
         if matches!(m.as_str(), "v_dot4_i32_i8" | "v_dot4c_i32_i8") {
             let compact = ins.enc == Enc::Vop2 && ins.aux.sdwa.is_none();
             let mut rhs = r(&s[1])?;
