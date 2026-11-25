@@ -1743,7 +1743,7 @@ unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_D
     device.state.blas.views.store(handle.ptr, None);
     device.state.placements.views.set(handle.ptr, None, false);
     super::view_formats::write(handle.ptr, super::view_formats::srv_code(Some(&raw)));
-    super::slot_views::write(handle.ptr, super::slot_views::entry(start, raw.Format, 0, true, 0, raw.Anonymous.Buffer.NumElements));
+    super::slot_views::write(handle.ptr, super::slot_views::entry(start, raw.Format, 0, true, 0, unsafe { raw.Anonymous.Buffer.NumElements }));
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
     true
 }

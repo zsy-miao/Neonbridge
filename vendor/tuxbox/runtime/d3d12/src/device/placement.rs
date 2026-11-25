@@ -2,6 +2,7 @@
 pub(crate) mod alias;
 pub(crate) mod pages;
 mod descriptors;
+mod packed_copy;
 pub(crate) mod pool;
 mod publication;
 mod upload;
@@ -1323,7 +1324,11 @@ impl Placements {
             return Ok(texture);
         }
         same_memory_other_format(&images, address, desc);
+        let packed_owner = packed_copy::owner_of(&images, address, desc);
         let texture = Texture::new(device, &self.memory.images, address, desc, clear)?;
+        if let Some(owner) = &packed_owner {
+            packed_copy::register(device, owner, &texture);
+        }
         self.memory.device.get_or_init(|| {
             let mut registry = lock(&FLUSH_DEVICES);
             registry.retain(|device| device.strong_count() != 0);
@@ -1560,6 +1565,8 @@ pub(crate) unsafe fn submit(
         .writes
         .retain(|w| unsafe { w.published.GetCompletedValue() } < w.tick);
     pending_writes_note(submission.writes.len());
+    let copy_kind = unsafe { queue.GetDesc() }.Type;
+    let (alias_copy, alias_skip) = packed_copy::before_batch(&device.native, copy_kind, textures, writes);
     let mut refresh = Vec::new();
     refresh
         .try_reserve(textures.len())
@@ -1595,7 +1602,7 @@ pub(crate) unsafe fn submit(
             pending = true;
         }
         packed_read_note(texture, pending);
-        if !pending {
+        if !pending && !alias_skip.contains(&Arc::as_ptr(texture)) {
             refresh.push(texture.clone());
         }
     }
@@ -1671,6 +1678,11 @@ pub(crate) unsafe fn submit(
             Err(error) => return Err(error),
         }
     };
+    if let Some(copy) = alias_copy {
+        unsafe { queue.ExecuteCommandLists(&[Some(windows::core::Interface::cast(&copy.1)?)]) };
+        crate::dred::check(queue, "packed alias copy");
+        packed_copy::retain(copy, reader, tick);
+    }
     execute()?;
     if let Some((_, readback)) = &publication {
         // Separate ExecuteCommandLists calls allow simultaneous-access textures

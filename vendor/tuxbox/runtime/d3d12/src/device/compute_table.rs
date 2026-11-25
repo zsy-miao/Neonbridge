@@ -730,7 +730,7 @@ unsafe fn pad_root_constants(desc: &mut D3D12_VERSIONED_ROOT_SIGNATURE_DESC) -> 
         let padded = n.next_multiple_of(4);
         if padded != n && total + (padded - n) <= 64 {
             total += padded - n;
-            unsafe { p.Anonymous.Constants.Num32BitValues = padded };
+            p.Anonymous.Constants.Num32BitValues = padded;
             changed = true;
         }
     }
