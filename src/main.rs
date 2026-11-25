@@ -252,11 +252,15 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 match shaders::Worker::start(shaders::Tools { xshader, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
                     move |line| { let _ = writeln!(sink.lock().unwrap(), "{line}"); }) {
                     Ok(w) => Some((w, name, session, log_path)),
-                    Err(e) => { println!("[launch] shader worker not started: {e}"); None }
+                    Err(e) => return Err(no_worker(&format!("{e}"))),
                 }
             }
-            (Err(e), _) => { println!("[launch] shader worker not started: xshader build failed: {e}"); None }
-            (_, None) => { println!("[launch] shader worker not started: no Windows SDK dxc.exe with dxil.dll (or set DXC)"); None }
+            // test141: xshader's in-progress edit did not compile, the run went
+            // on without a worker, and every pipeline bound untranslated (0
+            // draws, a black screen). A run without the worker is never started
+            // by accident; TUXBOX_RUNTIME_SHADERS=0 asks for one.
+            (Err(e), _) => return Err(no_worker(&format!("xshader build failed: {e}"))),
+            (_, None) => return Err(no_worker("no Windows SDK dxc.exe with dxil.dll (or set DXC)")),
         }
     };
     if mode == Mode::BuildShaders {
@@ -453,21 +457,58 @@ fn commit_preflight() {
     }
 }
 
+/// The launch stops when the shader worker cannot start: a run without it
+/// binds every pipeline untranslated and draws nothing.
+fn no_worker(why: &str) -> Box<dyn Error> {
+    println!("[launch] shader worker not started: {why}");
+    println!("[launch] not starting the game without it (TUXBOX_RUNTIME_SHADERS=0 runs without translated shaders on purpose)");
+    format!("shader worker not started: {why}").into()
+}
+
+/// The shader-compiler sources' commit, with "+edits" when the working tree
+/// differs from it there.
+fn xshader_commit(tuxbox: &Path) -> String {
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(tuxbox).args(args).output().ok()
+        .filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+    let head = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown commit".into());
+    let dirty = git(&["status", "--porcelain", "--", "tools/shader-compiler"]).is_some_and(|s| !s.is_empty());
+    if dirty { format!("{head}+edits") } else { head }
+}
+
 /// Build the vendored TuxBox shader translator (tools/shader-compiler -> xshader.exe).
+///
+/// Each successful build is kept as `xshader-good.exe` with its commit in
+/// `xshader-good.txt`. When a build fails (another session's edit in
+/// progress, test141), the last good binary is used and said so loudly,
+/// with its commit; with none the launch stops.
 fn build_xshader(tuxbox: &Path, out: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let manifest = tuxbox.join("tools/shader-compiler/Cargo.toml");
     if !manifest.is_file() {
         return Err(format!("{} missing", manifest.display()).into());
     }
     let target_dir = out.join("xshader");
+    let good = target_dir.join("xshader-good.exe");
+    let good_note = target_dir.join("xshader-good.txt");
+    let commit = xshader_commit(tuxbox);
     // /Brepro: a rebuild of unchanged sources gives the same bytes, so the shader
     // cache (keyed by xshader's hash) survives touched files and relinks.
     let status = Command::new("cargo").args(["build", "--release", "--quiet", "--manifest-path"]).arg(&manifest)
         .arg("--target-dir").arg(&target_dir).env("RUSTFLAGS", "-C link-arg=/Brepro").status()?;
-    if !status.success() {
-        return Err(format!("cargo build of xshader failed ({status})").into());
+    let built = target_dir.join("release/xshader.exe");
+    if status.success() {
+        if fs::copy(&built, &good).is_ok() {
+            let _ = fs::write(&good_note, &commit);
+        }
+        return Ok(built);
     }
-    Ok(target_dir.join("release/xshader.exe"))
+    if good.is_file() {
+        let from = fs::read_to_string(&good_note).unwrap_or_else(|_| "an unknown commit".into());
+        for _ in 0..3 {
+            println!("[launch] !!! xshader did not build from the working tree ({commit}, {status}); using the last good xshader, built from {} !!!", from.trim());
+        }
+        return Ok(good);
+    }
+    Err(format!("cargo build of xshader failed ({status}) at {commit}, and no earlier good build is kept").into())
 }
 
 /// Block while any process runs this exe image (Start.exe /wait can return early).
