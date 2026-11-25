@@ -687,8 +687,12 @@ fn play(hwnd: HWND) {
     if let Some(p) = &preset {
         memory.push_str(&format!("preset={p}\n"));
     }
-    for (k, v) in parts.iter().flat_map(|m| m.parts.iter()) {
-        memory.push_str(&format!("part.{k}={v}\n"));
+    // Part picks are remembered only for a mix run: stale part.* lines made a
+    // plain run look like a mix.
+    if mix {
+        for (k, v) in parts.iter().flat_map(|m| m.parts.iter()) {
+            memory.push_str(&format!("part.{k}={v}\n"));
+        }
     }
     for s in &sets {
         memory.push_str(&format!("opt={s}\n"));

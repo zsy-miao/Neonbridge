@@ -298,7 +298,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     // A picker launch has no console: everything the launcher and the
     // runtime print goes to 6ixpack\logs\<runtime>_<time>.log (copied to the
     // runtime's last-run.log when it ends).
-    if gui && log.is_none() && runtime != runtimes::TUXBOX {
+    if gui && log.is_none() && runtime != runtimes::TUXBOX && runtimes::logging() {
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let path = data_dir().join("logs").join(format!("{runtime}_{secs}.log"));
         if redirect_output(&path) {

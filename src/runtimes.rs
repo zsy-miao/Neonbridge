@@ -1068,7 +1068,12 @@ fn fill(s: &str, p: &Places) -> String {
 
 /// Runs `cmd` with stdout and stderr into `log` (or this console), adding
 /// run.sh's heartbeat lines; kills it after `timeout` seconds.
-fn supervised(name: &str, mut cmd: Command, log: Option<&Path>, timeout: Option<f64>) -> Result<(), Box<dyn Error>> {
+/// NEONBRIDGE_LOG=0 is the only way to turn run logging off.
+pub fn logging() -> bool {
+    std::env::var("NEONBRIDGE_LOG").map_or(true, |v| v.trim() != "0")
+}
+
+fn supervised(name: &str, mut cmd: Command, log: Option<&Path>, timeout: Option<f64>, echo: bool) -> Result<(), Box<dyn Error>> {
     let sink: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(match log {
         Some(p) => {
             if let Some(d) = p.parent() {
@@ -1087,6 +1092,9 @@ fn supervised(name: &str, mut cmd: Command, log: Option<&Path>, timeout: Option<
             for line in BufReader::new(r).lines().map_while(Result::ok) {
                 let mut out = sink.lock().unwrap_or_else(|e| e.into_inner());
                 let _ = writeln!(out, "{line}");
+                if echo {
+                    eprintln!("{line}");
+                }
                 let mut f = frames.lock().unwrap_or_else(|e| e.into_inner());
                 crate::fps::feed(&line);
                 // The loader stays up until the title presents its first frame.
@@ -1306,8 +1314,32 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     let sets = settings(&spec, choice.preset, choice.sets)?;
     // The loader window (NEONBRIDGE_SPLASH=0: none): patches, build, setup,
     // the shader warm, then the launch; it closes at the first frame.
+    // Logging is on for every run (NEONBRIDGE_LOG=0 turns it off): with no
+    // --log (a CLI run), 6ixpack\logs\<runtime>_<time>.log, the output also
+    // echoed to this console.
+    let echo = log.is_none();
+    let log = log.or_else(|| {
+        (logging() && matches!(task, Task::Run | Task::Prewarm)).then(|| {
+            let secs = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let p = crate::data_dir().join("logs").join(format!("{name}_{secs}.log"));
+            println!("[launch] log: {}", p.display());
+            p
+        })
+    });
+    let echo = echo && log.is_some();
+    // The loader names the tree that actually runs: a mix, or the runtime's
+    // own (its about line up to the licence).
     if matches!(task, Task::Run) {
-        crate::splash::show(&format!("Preparing {name}"));
+        let what = match choice.mix {
+            Some(m) => format!("a mix (app from {})", m.app().unwrap_or(name)),
+            None => {
+                let about = about(name);
+                let tree = about.split(" (").next().unwrap_or("").split(',').next().unwrap_or("").trim().to_owned();
+                if tree.is_empty() { name.to_owned() } else { format!("{name}: {tree}") }
+            }
+        };
+        println!("[launch] runs {what}");
+        crate::splash::show(&format!("Preparing {what}"));
     }
     let built = match choice.mix {
         Some(m) => crate::mix::build(m),
@@ -1377,10 +1409,17 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         if diag() {
             env.push(("VICTORY_D3D12_DRED".to_owned(), "1".to_owned()));
         }
+        // Runtime logging on by default (victory's own VICTORY_LOG level too).
+        if logging() {
+            env.push(("VICTORY_LOG".to_owned(), "info".to_owned()));
+        }
         // One save folder for the family (mix runs too); a toml or preset may still name another.
         env.push(("VICTORY_DATA_DIR".to_owned(), family_saves().display().to_string()));
     }
     env.extend(spec.env.iter().map(|(k, v)| (k.clone(), fill(v, &places))));
+    if logging() && !env.iter().any(|(k, _)| k == "RUST_LOG") {
+        env.push(("RUST_LOG".to_owned(), "info".to_owned()));
+    }
     for (k, v) in env {
         if std::env::var_os(&k).is_none() {
             cmd.env(k, v);
@@ -1482,7 +1521,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     if matches!(task, Task::Run) && let Some(m) = choice.mix {
         crate::mix::remember_good(m);
     }
-    let result = supervised(name, cmd, log.as_deref(), timeout);
+    let result = supervised(name, cmd, log.as_deref(), timeout, echo);
     if matches!(task, Task::Run) && let Some(l) = &log {
         let _ = fs::copy(l, cache.join("last-run.log"));
     }
