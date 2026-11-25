@@ -12,6 +12,7 @@ Neonbridge is a launcher around other people's work. Each vendored tree under `v
 | `vendor/ztrx-victory` | [ztrx](https://github.com/Zettrox/ztrx) | Zettrox, Marvis (Marvisak), Duff, fxceless, 9hvn9yt2vk-netizen and the VIctory contributors | GPL-3.0 | `90b529f878a470fec9bf07b7be316bc769a12232` |
 | `vendor/xcl` | [xcl](https://github.com/ivall/xcl) | ivall, bmjask, gefydev, raylitebull and the xcl contributors | GPL-2.0-only | `082944135cd2b96288470a595861fa608eee08dc` |
 | `vendor/flamingo` | [Flamingo](https://github.com/realblastex/flamingo) | realblastex and the VIctory contributors | GPL-3.0 | `1f70cacba89a082a7cdd8d2a10113be2ea3f8396` |
+| `vendor/klbf` | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | PastiiJay and the VIctory contributors | GPL-3.0 | `31566572c5116aba424b7c8a3998abf1eaceea33` |
 | `vendor/belobug` | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | Belobug and the VIctory contributors | GPL-3.0 | `01aadd193d57e71fb4d57810eb2fdd1bc95c950b` |
 
 All of the VIctory forks build on [VIctory](https://github.com/Marvisak/VIctory) by Marvisak and its contributors.

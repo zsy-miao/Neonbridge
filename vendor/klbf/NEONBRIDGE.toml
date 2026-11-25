@@ -1,0 +1,53 @@
+# Neonbridge launcher spec for vendor/klbf: PastiiJay's KLBF Lab, a victory/victory-fork
+# build vendored clean. Build, pre-build and run settings are its README.md "Run"
+# (README.md:116-160). Its claim: new game to free roam, 77 minutes without a crash,
+# 5-9 fps on an AMD RX 9070 XT. Not yet confirmed on NVIDIA by its author.
+name = "klbf"
+rank = 1   # launcher list order (Master): first on the gta6-pc-race tracker
+about = "KLBF Lab 3156657 (GPL-3.0): claims 5-9 fps in free roam, 77 min without a crash (AMD); not yet verified here"
+upstream = "https://github.com/PastiiJay/klbf-lab"
+build = ["cargo", "build", "--release", "--locked"]   # README.md:127
+watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
+exe = "target/release/victory.exe"
+diag_build = []   # its README names no diagnostics build
+# README.md:153: without --console series-s it renders native (~5 fps) and needs no
+# FidelityFX SDK; the series-s + FSR setting is the "fsr" preset (needs VICTORY_FFX_DIR).
+run = ["run", "{game_exe}", "--execute"]
+prewarm = ["translate", "{game}", "--cache", "--pipelines", "--jobs", "{jobs}"]   # README.md:137
+game_env = "VICTORY_GAME_DIR"
+cache_env = "VICTORY_CACHE_DIR"
+agility = false
+
+options = [
+  "VICTORY_FFX_DIR=<FidelityFX SDK>\Kits\FidelityFX\signedbin: AMD FSR DLLs, README.md:119",
+  "VICTORY_LATE_WAIT=0: if the device is lost after the world loads, README.md:158",
+  "VICTORY_PAGE_LIST=enqueue|submit|late, README.md:98",
+]
+preset_fsr = ["--console=series-s"]   # README.md:150; set VICTORY_FFX_DIR first (README.md:119)
+
+[env]
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\6ixpack\save"   # Neonbridge: one save/settings folder for the victory family
+VICTORY_SHADER_OPT = "0"   # README.md:141-148, its play settings
+VICTORY_SKIP_PIPELINES = "39f0e9aeb156a61c"   # docs/klbf/skip-amd.txt
+VICTORY_LATE_WAIT = "1"
+VICTORY_WIDE_BACK = "1"
+VICTORY_PIPELINE_WAIT_MS = "24"
+VICTORY_RELAY_COPY_QUEUE = "0"
+VICTORY_PRESS_FILE = "{press}"
+
+[controls]
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter"
+b = "Backspace"
+x = "X"
+y = "Y"
+lb = "Q"
+rb = "E"
+lt = "Z"
+rt = "C"
+ls = "F"
+rs = "H"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

@@ -3,7 +3,7 @@
 # (README.md:98-114). Its claim (README.md status table): about 14 fps facing the
 # window and 9-12 fps in the room on an RTX 4070; shadowed areas dark.
 name = "flamingo"
-rank = 1   # launcher list order (Master)
+rank = 2   # launcher list order (Master)
 about = "Flamingo 1f70cac (GPL-3.0): claims 9-14 fps in the first scene; verified here: first mission at 5-7 fps, scene black"
 upstream = "https://github.com/realblastex/flamingo"
 build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--locked"]

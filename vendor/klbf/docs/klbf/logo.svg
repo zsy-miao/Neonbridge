@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f46c8"/>
+      <stop offset="1" stop-color="#c04fb0"/>
+    </linearGradient>
+    <linearGradient id="l" gradientUnits="userSpaceOnUse" x1="0" y1="142" x2="0" y2="196">
+      <stop offset="0" stop-color="#ffd400"/>
+      <stop offset="1" stop-color="#ff7a00"/>
+    </linearGradient>
+    <clipPath id="flask">
+      <path d="M96 44h48v10h-6v46l44 76c6 11-2 24-14 24H72c-12 0-20-13-14-24l44-76V54h-6z"/>
+    </clipPath>
+  </defs>
+  <rect width="240" height="240" rx="48" fill="url(#g)"/>
+  <rect x="40" y="142" width="160" height="70" fill="url(#l)" clip-path="url(#flask)"/>
+  <circle cx="108" cy="166" r="7" fill="#fff" opacity=".85"/>
+  <circle cx="132" cy="178" r="5" fill="#fff" opacity=".7"/>
+  <circle cx="124" cy="154" r="4" fill="#fff" opacity=".6"/>
+  <path d="M96 44h48v10h-6v46l44 76c6 11-2 24-14 24H72c-12 0-20-13-14-24l44-76V54h-6z" fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>
+</svg>

@@ -12,13 +12,14 @@ Best first, by how far each project's own authors say it gets. The launcher list
 
 | # | Runtime | How far it gets (its authors' own results) | Verified here |
 |---|---|---|---|
-| 1 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene (9–10 since its victory-fork merge, cold cache); shadows still dark | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
-| 2 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | About 10 fps in the first rooms; 2–4 fps in the world | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
-| 3 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | Up to 6 fps in the open world | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
-| 4 | [xcl](https://github.com/ivall/xcl) | About 5 fps in the 3D world (RTX 5090, NVIDIA branch only); menus at 30 fps | Builds; its first shader preparation runs |
-| 5 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
-| 6 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | About 4 fps in the prologue; gameplay starts | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
-| 7 | [ztrx-victory](https://github.com/Zettrox/ztrx) | 1–3 fps in the world; shadows black | No |
+| 1 | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | 5–9 fps in free roam; new game to the open world in one 77-minute session without a crash (AMD RX 9070 XT). First on the [GTA VI PC race tracker](https://github.com/vuyp/gta6-pc-race) | No (not yet tested on NVIDIA by its author) |
+| 2 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene (9–10 since its victory-fork merge, cold cache); shadows still dark | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
+| 3 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | About 10 fps in the first rooms; 2–4 fps in the world | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
+| 4 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | Up to 6 fps in the open world | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
+| 5 | [xcl](https://github.com/ivall/xcl) | About 5 fps in the 3D world (RTX 5090, NVIDIA branch only); menus at 30 fps | Builds; its first shader preparation runs |
+| 6 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
+| 7 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | About 4 fps in the prologue; gameplay starts | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
+| 8 | [ztrx-victory](https://github.com/Zettrox/ztrx) | 1–3 fps in the world; shadows black | No |
 
 ## Get started
 

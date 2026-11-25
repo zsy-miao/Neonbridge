@@ -1,0 +1,79 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+# Fixtures are standalone crates built on demand by integration tests.
+exclude = ["tests/fixtures"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+victory-core = { path = "crates/victory-core" }
+victory-pe = { path = "crates/victory-pe" }
+victory-loader = { path = "crates/victory-loader" }
+victory-hle = { path = "crates/victory-hle" }
+victory-gpu = { path = "crates/victory-gpu" }
+victory-shader = { path = "crates/victory-shader" }
+victory-formats = { path = "crates/victory-formats" }
+victory-pipeline = { path = "crates/victory-pipeline" }
+victory-game = { path = "crates/victory-game" }
+
+# External crates
+anyhow = "1.0.104"
+thiserror = "2.0.21"
+clap = { version = "4.6.9", features = ["derive"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.2"
+object = { version = "0.41.0", default-features = false, features = ["read_core", "pe", "coff", "archive", "std"] }
+windows-sys = "0.61.2"
+windows = "0.62.2"
+windows-core = "0.62.2"
+blake3 = "1.8.7"
+memchr = "2.8.3"
+# SIMD-accelerated pure-Rust zlib/deflate (Zlib license, runtime AVX2/SSE4.2 dispatch).
+zlib-rs = { version = "0.6.8", default-features = false, features = ["std"] }
+walkdir = "2.5.1"
+tempfile = "3.27.0"
+# Opus decoding for the console's audio decoder (BSD-3-Clause, pure Rust).
+opus-pure = "0.2.4"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# This fork: two style lints are let through until the newer code is tidied
+# (tuple-heavy signatures and indexed loops in the translator and GPU side).
+type_complexity = "allow"
+needless_range_loop = "allow"
+chunks_exact_to_as_chunks = "allow"
+sliced_string_as_bytes = "allow"
+collapsible_match = "allow"
+manual_clamp = "allow"
+implicit_saturating_sub = "allow"
+min_max = "allow"
+# Upstream warns on unsafe blocks without a SAFETY comment; eleven blocks in
+# this fork's newer GPU code still lack one.
+undocumented_unsafe_blocks = "allow"
+
+[profile.dev.package."*"]
+# Dependencies (hashing, parsing) are hot paths when chewing through
+# gigabytes of game data; keep them fast even in debug builds.
+opt-level = 2
+
+[profile.release]
+debug = "line-tables-only"
+
+# The development build: release code generation plus the `diagnostics`
+# feature (`cargo build --profile diag -p victory --features diagnostics`),
+# kept in its own folder so it does not evict the plain release build.
+[profile.diag]
+inherits = "release"

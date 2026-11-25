@@ -22,13 +22,14 @@ In picker order: each toml's `rank = N` (best first, by the leader's own publish
 
 | Rank | `--runtime` | What it is | Upstream |
 |---|---|---|---|
-| 1 | `flamingo` | Flamingo, a VIctory fork | realblastex/flamingo |
-| 2 | `victory` | VIctory-fxceless, the victory emulator fork | fxceless/victory-fork |
-| 3 | `vitoriabr` | VItoriaBr's VIctory fork | uiliannn/VItoriaBr |
-| 4 | `xcl` | xcl | ivall/xcl |
-| 5 | `belobug` | VIctory-Belobug-AMD, a VIctory fork tuned for AMD | Belobug/VIctory-Belobug-AMD |
-| 6 | `scarlettport` (default for `--runtime`) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
-| 7 | `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
+| 1 | `klbf` | KLBF Lab, a VIctory/victory-fork build (AMD-tested; `--preset fsr` = its Series S + AMD FSR setting, needs `VICTORY_FFX_DIR`) | PastiiJay/klbf-lab |
+| 2 | `flamingo` | Flamingo, a VIctory fork | realblastex/flamingo |
+| 3 | `victory` | VIctory-fxceless, the victory emulator fork | fxceless/victory-fork |
+| 4 | `vitoriabr` | VItoriaBr's VIctory fork | uiliannn/VItoriaBr |
+| 5 | `xcl` | xcl | ivall/xcl |
+| 6 | `belobug` | VIctory-Belobug-AMD, a VIctory fork tuned for AMD | Belobug/VIctory-Belobug-AMD |
+| 7 | `scarlettport` (default for `--runtime`) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
+| 8 | `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
 | - | `neonbridge-own` | Neonbridge (own build), hidden from the picker: TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator | brcly/TuxBox |
 
 Each runtime's default launch is exactly its author's (flags, environment, preset, cited in its toml); anything of Neonbridge's is an optional `preset_*`.
