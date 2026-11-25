@@ -464,7 +464,7 @@ fn validate_lane_ops(body: &[Insn], own: &BTreeSet<usize>, wave_control: bool) -
             || (ins.enc == Enc::Mtbuf && ins.op >= 4)
             || (ins.enc == Enc::Mubuf && !m.starts_with("buffer_load"))
             || (ins.enc == Enc::Vop1 && m.contains("lane") && m != "v_readfirstlane_b32")
-            || (ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && ins.aux.imm < 0)
+            || (ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && ins.aux.imm < 0 && !mesh_loops())
             || (wave_control && !wave_mask_operands(ins))
             || (ins.enc == Enc::Sopp
                 && !matches!(
@@ -1012,4 +1012,12 @@ mod output_budget_tests {
     fn nothing_fits_when_primitives_use_the_budget() {
         assert_eq!(mesh_vertex_budget(8, 15, 128), 0);
     }
+}
+
+/// Upstream TuxBox 63343eb dropped the refusal of backward branches here:
+/// a lane leaves a loop by its own condition, and the exchanges a loop
+/// could run a different number of times are refused above
+/// ("mesh wave exchange ... inside a loop"). TB_MESH_LOOPS=0 refuses loops.
+fn mesh_loops() -> bool {
+    std::env::var("TB_MESH_LOOPS").map_or(true, |v| v.trim() != "0")
 }
