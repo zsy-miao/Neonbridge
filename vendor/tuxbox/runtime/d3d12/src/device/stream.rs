@@ -605,7 +605,9 @@ unsafe fn create(
         let mut merged = shader_cache::HeapAccess::default();
         let mut any = false;
         for (code, _) in original.iter().flatten() {
-            if let Some(access) = shader_cache::source_digest(code).and_then(|d| shader_cache::heap_access(&d)) {
+            let Some(digest) = shader_cache::source_digest(code) else { continue };
+            pipeline.heap_pending.push(digest.clone());
+            if let Some(access) = shader_cache::heap_access(&digest) {
                 any = true;
                 merged.writes.extend(access.writes.iter().copied());
                 merged.reads.extend(access.reads.iter().copied());

@@ -29,6 +29,12 @@ pub(crate) struct PipelineData {
     pub(crate) null_kinds: Option<std::sync::Arc<super::null_kinds::NullKinds>>,
     /// The heap descriptors the program reads and writes (xshader reflection).
     pub(crate) heap_access: Option<std::sync::Arc<super::shader_cache::HeapAccess>>,
+    /// TUXBOX_HEAP_LATE: the stage digests whose `.heap` was not there at
+    /// creation (test178: 9 programs missed theirs, published later), looked
+    /// up again at binds (`late_heap_access`), at most once a second.
+    pub(crate) heap_pending: Vec<String>,
+    pub(crate) heap_late: std::sync::OnceLock<std::sync::Arc<super::shader_cache::HeapAccess>>,
+    pub(crate) heap_tried_ms: std::sync::atomic::AtomicU64,
     /// Filled by a background worker when this pipeline was created without
     /// its translation (see `stream::background`).
     pub(crate) upgrade: std::sync::OnceLock<std::sync::Arc<super::stream::Upgrade>>,
@@ -53,6 +59,37 @@ pub(crate) use super::slot57::{Bound as Slot57, Targets as Slot57Targets, target
 /// The host pipeline and state to bind: a worker's rebuild once it exists.
 /// The flag is set while a lazy pipeline is still being made: the list
 /// drops its draws and dispatches.
+/// The heap access of a pipeline bound now: its creation's, else one whose
+/// `.heap` has appeared since (TUXBOX_HEAP_LATE=0: creation's only).
+pub(crate) fn late_heap_access(data: &PipelineData) -> Option<std::sync::Arc<super::shader_cache::HeapAccess>> {
+    if data.heap_access.is_some() || data.heap_pending.is_empty() {
+        return data.heap_access.clone();
+    }
+    if let Some(found) = data.heap_late.get() {
+        return Some(found.clone());
+    }
+    if crate::env_toggle!("TUXBOX_HEAP_LATE") == Some("0") {
+        return None;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let last = data.heap_tried_ms.load(std::sync::atomic::Ordering::Relaxed);
+    if now.saturating_sub(last) < 1000
+        || data.heap_tried_ms.compare_exchange(last, now, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed).is_err()
+    {
+        return None;
+    }
+    let mut merged = super::shader_cache::HeapAccess::default();
+    let mut any = false;
+    for digest in &data.heap_pending {
+        if let Some(access) = super::shader_cache::heap_access(digest) {
+            any = true;
+            merged.writes.extend(access.writes.iter().copied());
+            merged.reads.extend(access.reads.iter().copied());
+        }
+    }
+    any.then(|| data.heap_late.get_or_init(|| std::sync::Arc::new(merged)).clone())
+}
+
 pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, bool) {
     if let Some(key) = &p.state.key
         && !p.state.used.swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -769,6 +806,7 @@ unsafe fn make_compute(
                 heap_access: super::views::uav_remark()
                     .then(|| super::shader_cache::source_digest(bytes).and_then(|d| super::shader_cache::heap_access(&d)))
                     .flatten(),
+                heap_pending: super::shader_cache::source_digest(bytes).filter(|_| super::views::uav_remark()).into_iter().collect(),
                 ..Default::default()
             },
             out,

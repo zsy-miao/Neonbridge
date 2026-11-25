@@ -78,7 +78,7 @@ pub(super) fn bind_host(
     state.null_pipeline = crate::diagnostics::display::is_null_pipeline(native.as_raw());
     state.bindings.pipeline = Some(host.into());
     state.bindings.draw_trace = data.draw_trace.clone();
-    state.bindings.heap_access = data.heap_access.clone();
+    state.bindings.heap_access = crate::device::compute::late_heap_access(data);
     state.slot57 = host.state.slot57.clone();
     state.quad_host = host as *const crate::device::compute::Pipeline as usize;
     unsafe { list.native.SetPipelineState(native) };
