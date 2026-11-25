@@ -54,8 +54,6 @@ Open work. Each item is tested in a run of its own.
 - ref better: 689199f (a placeholder pipeline drops draws; blend 19/20 done).
 - five-star b828157 (e1ce01d): release every pending memory wait at each present (79dff41 releases only waits no queued list writes).
 - five-star 226887c (f96284e): trigger on the slot-74 64-bit wait.
-- ab5af3f: snapshot every CBV no title buffer covers.
-- 2e53f61: reopen a closed list with a native Reset.
 - Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
 - Sampler decode (views.rs:1346): the mag/min order, aniso rule, compare range and the w[12] bias differ from fxceless sampler.rs:11-48. Verify against live words.
 - Small fixes:
