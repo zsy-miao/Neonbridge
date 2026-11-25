@@ -599,6 +599,15 @@ impl Read {
         // (VIctory-fxceless 578d459, GPL-3.0, credit to its authors).
         static RETRIES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         let retries = *RETRIES.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_RETRIES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(12));
+        // fxceless scopes the ladder to physical-page destinations only
+        // (VIctory-fxceless dstorage.rs write_physical): a page the title
+        // just made can come right a moment later, but a plain destination
+        // that fails writable() is unmapped title memory, and sleeping up to
+        // ~1.5 s on it stalled the queue worker for every later request.
+        // TUXBOX_DSTORAGE_RETRY_PLAIN=1 retries plain destinations as before.
+        static RETRY_PLAIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let retry_plain = *RETRY_PLAIN.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_RETRY_PLAIN").is_ok_and(|v| v.trim() == "1"));
+        let retries = if self.dest_pages.is_some() || retry_plain { retries } else { 0 };
         let mut result = self.store_once(bytes);
         let mut pause = 2u64;
         for _ in 0..retries {
