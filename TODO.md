@@ -10,7 +10,6 @@ Open work. Each item is tested in a run of its own.
 - Root view tables (37fe84c): the bind half is missing; `TUXBOX_ROOT_VIEW_TABLES=1` stays opt-in until it lands.
 - Depth twins (00b029c, 000f78a, 86f630f): the close-time pass.
 - VItoriaBr b62bbc0 (descriptor addresses by computed heap index, SLOT_VIEWS): waits on a runtime per-slot view-address table.
-- Identity-heap header for xshader's e5ae009 clamp: unpaged heaps' last slot is a real descriptor, not null (836d91f).
 - Pending A/B runs: `TUXBOX_DEPTH_TWINS=1`; `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_WAIT_HOIST` vs ad8e641; `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_PRESENT_RELEASE_ALL=1` (five-star b828157); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
