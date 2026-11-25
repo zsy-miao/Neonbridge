@@ -27,6 +27,8 @@ pub(super) struct Readback {
     _allocator: ID3D12CommandAllocator,
     buffer: ID3D12Resource,
     size: usize,
+    /// The buffer's pooled size class (0: not pooled; see `pool_mb`).
+    class: u64,
     /// Bytes counted in IN_FLIGHT until this is dropped.
     reserved: u64,
     // One footprint offset per mip (including array slices) in the readback buffer.
@@ -43,6 +45,57 @@ static IN_FLIGHT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 impl Drop for Readback {
     fn drop(&mut self) {
         IN_FLIGHT.fetch_sub(self.reserved, std::sync::atomic::Ordering::Relaxed);
+        // Dropped after `complete` read it or after its parked fence passed:
+        // the GPU is done with the buffer, so it can serve the next batch.
+        if self.class != 0 {
+            give_back(self.class, self.buffer.clone());
+        }
+    }
+}
+
+/// TUXBOX_READBACK_POOL_MB (256, 0 off): test177 created 5931 placed texture
+/// readback buffers (15019 MiB, about 120 and 700 MiB every 10 s) while at most
+/// one was alive: every write-back batch made a new committed READBACK buffer
+/// and released it after its copy, so the driver allocated and freed system
+/// commit at 70 MB/s with 491 MiB of it left. A batch now takes a buffer of
+/// its power-of-two size class (64 KiB at least) from a pool, and a finished
+/// one goes back to it while the pool holds under the cap; the rest are
+/// released as before. Classes over a quarter of the cap are never pooled.
+fn pool_mb() -> u64 {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MB.get_or_init(|| crate::env_toggle!("TUXBOX_READBACK_POOL_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(256))
+}
+
+struct Pool {
+    free: Vec<(u64, ID3D12Resource)>,
+    bytes: u64,
+}
+// SAFETY: D3D12 resources are free-threaded.
+unsafe impl Send for Pool {}
+
+static POOL: std::sync::Mutex<Pool> = std::sync::Mutex::new(Pool { free: Vec::new(), bytes: 0 });
+static POOL_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static POOL_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn size_class(bytes: u64) -> u64 {
+    let cap = pool_mb() << 20;
+    let class = bytes.max(1 << 16).next_power_of_two();
+    if cap == 0 || class > cap / 4 { 0 } else { class }
+}
+
+fn take_pooled(class: u64) -> Option<ID3D12Resource> {
+    let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    let at = pool.free.iter().position(|(c, _)| *c == class)?;
+    let (c, buffer) = pool.free.swap_remove(at);
+    pool.bytes -= c;
+    Some(buffer)
+}
+
+fn give_back(class: u64, buffer: ID3D12Resource) {
+    let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    if pool.bytes + class <= pool_mb() << 20 {
+        pool.bytes += class;
+        pool.free.push((class, buffer));
     }
 }
 
@@ -165,13 +218,32 @@ impl Readback {
             Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
             ..Default::default()
         };
-        let buffer = committed(
-            device,
-            D3D12_HEAP_TYPE_READBACK,
-            &desc,
-            D3D12_RESOURCE_STATE_COPY_DEST,
-            None,
-        )?;
+        let class = size_class(desc.Width);
+        let pooled = (class != 0).then(|| take_pooled(class)).flatten();
+        let hit = pooled.is_some();
+        let buffer = match pooled {
+            Some(buffer) => buffer,
+            None => committed(
+                device,
+                D3D12_HEAP_TYPE_READBACK,
+                &D3D12_RESOURCE_DESC { Width: if class != 0 { class } else { desc.Width }, ..desc },
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                None,
+            )?,
+        };
+        if class != 0 {
+            let (hits, misses) = if hit {
+                (POOL_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, POOL_MISSES.load(std::sync::atomic::Ordering::Relaxed))
+            } else {
+                (POOL_HITS.load(std::sync::atomic::Ordering::Relaxed), POOL_MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1)
+            };
+            let n = hits + misses;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "placed textures: readback pool: {hits} batches reused a buffer, {misses} made one, pool {} MiB (TUXBOX_READBACK_POOL_MB=0 off)",
+                    POOL.lock().unwrap_or_else(|e| e.into_inner()).bytes >> 20));
+            }
+        }
         // SAFETY: the new allocator and command list belong to this device;
         // both, the buffer and the source textures are retained to completion.
         let allocator = unsafe { device.CreateCommandAllocator(kind)? };
@@ -216,6 +288,7 @@ impl Readback {
             _allocator: allocator,
             buffer,
             size,
+            class,
             textures,
         })
     }
