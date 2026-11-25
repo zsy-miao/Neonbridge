@@ -162,6 +162,22 @@ static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
 /// ran between the title's decode and its use of the planes (test146: 166
 /// catch-up frames, garbled intros 2 and 3). TUXBOX_BINK_CATCHUP=4 restores
 /// the old catch-up.
+/// Where the opt-in catch-up decodes. After the title's BinkNextFrame (the
+/// old place) its extra decodes land in the registered plane ring while the
+/// frame just decoded has not yet been submitted, so d3d12's read of that
+/// frame's planes (at submission, from title memory) took a later frame's
+/// slot contents: the garble. Just before the title's own next decode
+/// (BinkDoFrame / BinkDoFrameAsyncMulti), the previous frame's submission is
+/// behind us and the title is about to reuse the ring itself; the extra
+/// frames decode and advance in order there, and the frame the title shows
+/// is its own decode, made after them. TUXBOX_BINK_CATCHUP_AT=next restores
+/// the old place.
+fn catch_up_before_decode() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| catch_up_cap() != 0 && std::env::var("TUXBOX_BINK_CATCHUP_AT").map_or(true, |v| v.trim() != "next"))
+}
+
 fn catch_up_cap() -> u32 {
     use std::sync::OnceLock;
     static CAP: OnceLock<u32> = OnceLock::new();
@@ -343,6 +359,10 @@ unsafe fn catch_up(movie: u64) {
 
 unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
     let real: F4 = unsafe { std::mem::transmute(REAL[index].load(Ordering::Acquire)) };
+    // Catch-up before the title's own decode: see catch_up_before_decode.
+    if matches!(index, DO_FRAME | ASYNC_MULTI) && catch_up_before_decode() && !IN_FLIGHT.load(Ordering::Relaxed) {
+        unsafe { catch_up(a) };
+    }
     // The decode is in flight from before Bink starts it until it completes.
     match index {
         DO_FRAME => { SYNC_DECODES.fetch_add(1, Ordering::AcqRel); }
@@ -380,8 +400,8 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
     }
     match index {
         ASYNC_MULTI => note_multi(a, b, c, d),
-        NEXT_FRAME => unsafe { catch_up(a) },
-        WAIT if !IN_FLIGHT.load(Ordering::Relaxed) && std::env::var_os("TUXBOX_BINK_WAIT_CATCHUP").is_none_or(|v| v != "0") => unsafe { catch_up(a) },
+        NEXT_FRAME if !catch_up_before_decode() => unsafe { catch_up(a) },
+        WAIT if !catch_up_before_decode() && !IN_FLIGHT.load(Ordering::Relaxed) && std::env::var_os("TUXBOX_BINK_WAIT_CATCHUP").is_none_or(|v| v != "0") => unsafe { catch_up(a) },
         _ => {}
     }
     result
