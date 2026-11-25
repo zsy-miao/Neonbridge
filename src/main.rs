@@ -80,7 +80,7 @@ const PROVIDERS: &[(&str, &str, &str, &[&str], &[&str])] = &[
     ("tuxbox-bvh", "XboxBvhBuilder.dll", "runtime/bvh/XboxBvhBuilder.def", &[], &[]),
     ("tuxbox-xg", "xg_xs.dll", "runtime/xg/xg_xs.def", &[], &[]),
     ("tuxbox-dxc", "dxcompiler_xs.dll", "runtime/dxc/dxcompiler_xs.def", &[], &[]),
-    ("tuxbox-d3d12", "d3d12_xs.dll", "runtime/d3d12/d3d12_xs.def", &["dxgi.lib", "d3d12.lib", "user32.lib", "d3dcompiler.lib"], &[]),
+    ("tuxbox-d3d12", "d3d12_xs.dll", "runtime/d3d12/d3d12_xs.def", &["dxgi.lib", "d3d12.lib", "user32.lib", "d3dcompiler.lib", "advapi32.lib"], &[]),
     ("tuxbox-gameinput", "GameInput.dll", "runtime/gameinput/GameInput.def", &["libcmt.lib", "user32.lib", "xinput.lib"] /* CRT first: xinput.lib also exports DllMain */, &[]),
 ];
 /// `rustc --print native-static-libs` for the MSVC target with +crt-static (TuxBox build.py).
