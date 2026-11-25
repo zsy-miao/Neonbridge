@@ -17,6 +17,7 @@ Open work. Each item is tested in a run of its own.
   - 04a7bee: never tested on, because the base env sets `TUXBOX_TITLE_MEMORY_MB=0`. B: drop it from the env, giving the 13824 MiB cap. Compare commit growth and the working set budget line. Safe.
   - 81a0a3a: never tested on, because the base env sets `TUXBOX_READ_COMMIT_CRT=0`. B: drop it from the env. Watch for short CRT reads (998) in the video atlas. Safe.
   - 65e77ca: stale shader serving is off in test runs, because the launcher sets `NEONBRIDGE_STALE_SHADERS=0` (main.rs:198,546). A/B: `NEONBRIDGE_STALE_SHADERS=1` on a run right after an xshader landing. Risk: it mixes xshader builds (see risk 65e77ca), so it voids that run's shader results.
+- A/B `TB_VIEW_MARKS=1` (498fc37, 9549a0d; needs a prewarm): shadow write-backs should copy only marked pages.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
 ## d3d12
@@ -43,6 +44,7 @@ Open work. Each item is tested in a run of its own.
 - BVH intersection (7 refusals). Needs console BVH nodes from the runtime.
 
 ## Research
+- xcl b4019c4 + 7bea019: split-wave64 mask liveness (masks read only lane by lane stay in their half; 7bea019 is that solver's per-block speed-up). Ours exchanges every mask (split_wave64.rs:12). A port of x64_masks.rs (1.2k lines, x64-recompiler IR) to hlsl is worth it only if exchange cost shows in a wave64 profile.
 - The master runs the ref watch.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
   - xshader: TuxBox 1397cb6 with X2W a351c0fb/b8889849/a90c0fb: allow pixel_wave DPP16 quad exchange in loops (hlsl.rs:6286), gated on proven whole-quad EXEC (s_wqm_b64 exec,exec).
