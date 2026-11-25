@@ -712,8 +712,12 @@ unsafe fn create_heap_logged(
         let desc = if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER
             && desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
             && desc.NumDescriptors <= desc_table::SAMPLER_HEAP_SLOTS { &visible_samplers } else { desc };
-        match unsafe { this.native.CreateDescriptorHeap::<ID3D12DescriptorHeap>(desc) } {
+        // Root view tables: private slots past the title's (root_tables).
+        let tail = root_tables::tail_for(desc);
+        let tailed = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: desc.NumDescriptors + tail, ..*desc };
+        match unsafe { this.native.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&tailed) } {
             Ok(native) => {
+                root_tables::heap_created(&native, desc.NumDescriptors, tail);
                 // Host contents of unwritten slots are undefined.
                 if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
                     null_kinds::fill(&this.native, &native, desc.NumDescriptors, desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);

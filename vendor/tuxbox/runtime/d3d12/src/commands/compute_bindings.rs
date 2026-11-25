@@ -20,6 +20,9 @@ pub(super) struct Bindings {
     graphics_buffers: BTreeMap<u32, BufferView>,
     graphics_constants: BTreeMap<(u32,u32),u32>,
     graphics_tables: BTreeMap<u32, DescriptorTable>,
+    /// Root views bound as one-view tables (root_tables), by (compute, slot).
+    /// The BufferView beside each keeps the address (scene detection).
+    view_tables: BTreeMap<(bool, u32), D3D12_GPU_DESCRIPTOR_HANDLE>,
 }
 
 // A private root descriptor captures its value when recording. A guest
@@ -106,6 +109,12 @@ impl BufferView {
     }
 }
 
+unsafe fn root_table<const COMPUTE: bool>(list: &ID3D12GraphicsCommandList, slot: u32, handle: D3D12_GPU_DESCRIPTOR_HANDLE) {
+    unsafe {
+        if COMPUTE { list.SetComputeRootDescriptorTable(slot, handle) } else { list.SetGraphicsRootDescriptorTable(slot, handle) }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct DescriptorTable {
     native: D3D12_GPU_DESCRIPTOR_HANDLE,
@@ -141,6 +150,7 @@ impl Bindings {
     ) {
         if self.compute.as_ref() != root {
             self.compute_args.clear();
+            self.view_tables.retain(|&(compute, _), _| !compute);
             self.layout = layout.cloned();
             self.compute = root.cloned();
         }
@@ -152,6 +162,7 @@ impl Bindings {
             self.graphics_tables.clear();
             self.graphics_constants.clear();
             self.graphics_buffers.clear();
+            self.view_tables.retain(|&(compute, _), _| compute);
             self.graphics = root.cloned();
         }
     }
@@ -161,6 +172,7 @@ impl Bindings {
             self.compute_args
                 .retain(|_, arg| !matches!(arg, Argument::Table(_)));
             self.graphics_tables.clear();
+            self.view_tables.clear();
             self.heaps.clear();
             self.heaps.extend_from_slice(heaps);
         }
@@ -185,6 +197,55 @@ impl Bindings {
             self.compute_args.insert(slot, Argument::Buffer(view));
         } else {
             self.graphics_buffers.insert(slot, view);
+        }
+    }
+
+    /// Binds a title root view: on a parameter the root signature made a
+    /// one-view table (device::root_tables, VIctory-fxceless GPL-3.0
+    /// bounded_root_srvs), a raw view of `buffer` from the view's address to
+    /// its end in a private slot of the bound view heap; else (or with no
+    /// slot, logged once) the root descriptor as before.
+    pub(super) fn bind_buffer<const COMPUTE: bool>(
+        &mut self, list: &ID3D12GraphicsCommandList, slot: u32, view: BufferView, buffer: Option<&ID3D12Resource>,
+    ) {
+        self.view_tables.remove(&(COMPUTE, slot));
+        let table = match view {
+            BufferView::Srv(va) | BufferView::Uav(va) if self.view_tabled::<COMPUTE>(slot) => {
+                let uav = matches!(view, BufferView::Uav(_));
+                let heap = self.heaps.iter().flatten()
+                    .find(|h| unsafe { h.GetDesc() }.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                let handle = heap.and_then(|h| crate::device::root_tables::view_slot(h, buffer, va, uav));
+                if handle.is_none() {
+                    static NONE: std::sync::Once = std::sync::Once::new();
+                    crate::diagnostics::log_once(&NONE, || format!(
+                        "root view table: no private slot in the bound view heap (slot {slot}, compute {COMPUTE}); bound as a root descriptor"));
+                }
+                handle
+            }
+            _ => None,
+        };
+        match table {
+            Some(handle) => {
+                unsafe { root_table::<COMPUTE>(list, slot, handle) };
+                self.view_tables.insert((COMPUTE, slot), handle);
+            }
+            None => unsafe { view.apply::<COMPUTE>(list, slot) },
+        }
+        self.buffer::<COMPUTE>(slot, view);
+    }
+
+    fn view_tabled<const COMPUTE: bool>(&self, slot: u32) -> bool {
+        crate::device::root_tables::enabled()
+            && (if COMPUTE { &self.compute } else { &self.graphics }).as_ref()
+                .and_then(crate::device::root_tables::tabled)
+                .is_some_and(|t| t.contains(&slot))
+    }
+
+    /// Replays a saved root view: its table when it was bound as one.
+    unsafe fn replay_buffer<const COMPUTE: bool>(&self, list: &ID3D12GraphicsCommandList, slot: u32, view: BufferView) {
+        match self.view_tables.get(&(COMPUTE, slot)) {
+            Some(&handle) => unsafe { root_table::<COMPUTE>(list, slot, handle) },
+            None => unsafe { view.apply::<COMPUTE>(list, slot) },
         }
     }
 
@@ -215,7 +276,7 @@ impl Bindings {
                         let base = overrides.get(slot as usize).copied().flatten().unwrap_or(table.native);
                         host.SetComputeRootDescriptorTable(slot, base);
                     }
-                    Argument::Buffer(view) => view.apply::<true>(host, slot),
+                    Argument::Buffer(view) => self.replay_buffer::<true>(host, slot, *view),
                     Argument::Constants(words) => {
                         for (&index, &value) in words {
                             host.SetComputeRoot32BitConstant(slot, value, index);
@@ -257,7 +318,7 @@ impl Bindings {
     }
     unsafe fn apply_graphics_arguments(&self, list:&ID3D12GraphicsCommandList) {
         for (&slot, &view) in &self.graphics_buffers {
-            unsafe { view.apply::<false>(list, slot); }
+            unsafe { self.replay_buffer::<false>(list, slot, view); }
         }
         for (&(slot, offset), &value) in &self.graphics_constants {
             unsafe { list.SetGraphicsRoot32BitConstant(slot, value, offset); }

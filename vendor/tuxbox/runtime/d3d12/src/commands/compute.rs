@@ -58,12 +58,19 @@ pub(super) unsafe extern "system" fn constants<const COMPUTE: bool>(
 
 use super::compute_bindings::BufferView;
 
+thread_local! {
+    /// The host import root_import resolved last, for a root view table's
+    /// raw view (device::root_tables).
+    static ROOT_IMPORT: std::cell::RefCell<Option<windows::Win32::Graphics::Direct3D12::ID3D12Resource>> = const { std::cell::RefCell::new(None) };
+}
+
 /// root_address: the title address did not resolve (stale clear).
 const UNRESOLVED: u64 = u64::MAX;
 
 fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: fn(u64) -> BufferView) {
     let mut state = recording(list);
     if state.can_record_for::<COMPUTE>(&list.native) {
+        ROOT_IMPORT.with(|b| b.take());
         let Some(mut address) = root_address(list, &mut state, guest) else { return };
         let bit = 1u64.checked_shl(index).unwrap_or(0);
         if address == UNRESOLVED {
@@ -75,9 +82,9 @@ fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: f
         if address == 0 && let Some(sink) = null_sink(list) {
             address = sink;
         }
+        let buffer = ROOT_IMPORT.with(|b| b.take());
         let view = view(address);
-        unsafe { view.apply::<COMPUTE>(&list.native, index) };
-        state.bindings.buffer::<COMPUTE>(index, view);
+        state.bindings.bind_buffer::<COMPUTE>(&list.native, index, view, buffer.as_ref());
     }
 }
 
@@ -197,7 +204,10 @@ fn root_import(list: &List, state: &mut super::Recording, guest: u64, span: u64)
     let result = unsafe { device::command_buffer_address(parent(&list.parent), guest, span) }
         .or_else(|_| unsafe { device::command_buffer_address(parent(&list.parent), guest, 1) })
         .and_then(|(buffer, va)| {
-            if let Some(buffer) = buffer { super::raytracing::retain(state, &[&buffer])?; }
+            if let Some(buffer) = buffer {
+                super::raytracing::retain(state, &[&buffer])?;
+                ROOT_IMPORT.with(|b| b.replace(Some(buffer)));
+            }
             Ok(va)
         });
     match result {

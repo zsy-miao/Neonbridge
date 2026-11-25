@@ -132,7 +132,7 @@ pub(super) unsafe extern "system" fn bind_heaps(
                 guest: unsafe { ID3D12Pageable::from_raw_borrowed(&object) }.unwrap().clone(),
                 cpu: views.range.clone(),
                 gpu: unsafe { heap.native.GetGPUDescriptorHandleForHeapStart() }.ptr,
-                stride: views.range.len() / unsafe { heap.native.GetDesc() }.NumDescriptors.max(1) as usize,
+                stride: views.range.len() / (unsafe { heap.native.GetDesc() }.NumDescriptors - device::root_tables::tail_len(&heap.native)).max(1) as usize,
             });
         }
         previous = Some(desc.Type);
