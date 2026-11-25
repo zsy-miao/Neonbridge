@@ -1824,7 +1824,9 @@ fn install_joining_fault() {
 /// keeps its own reference through the heap it opens.
 #[unsafe(export_name = "TuxBoxPageSection")]
 unsafe extern "system" fn page_section(address: usize, want: usize, out: *mut [u64; 4]) -> u32 {
-    if out.is_null() { return 0; }
+    // Off until d3d12's section import lands: TUXBOX_POOL_SECTION_IMPORT=1 on.
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_POOL_SECTION_IMPORT").is_ok_and(|v| v.trim() == "1"));
+    if !*ON || out.is_null() { return 0; }
     let pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     let at = address & !(PAGE - 1);
     let Some(page) = pool.mappings.get(&at).and_then(|t| pool.pages.get(t)) else { return 0 };
@@ -1839,6 +1841,17 @@ unsafe extern "system" fn page_section(address: usize, want: usize, out: *mut [u
         next += PAGE;
     }
     unsafe { out.write([handle as u64, bytes, start, run.min(want.max(1)) as u64]) };
+    // Each section handed out the first time: its size and the running total,
+    // which is what the importer makes resident against our commit.
+    static SEEN: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if !seen.contains(&(handle as u64)) {
+        seen.push(handle as u64);
+        static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let total = TOTAL.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        crate::loader::log(&format!("pool section import: section {:#x} of {} MiB at {address:#x} handed out; {} section(s), {} MiB total (TUXBOX_POOL_SECTION_IMPORT=1 on)",
+            handle as u64, bytes >> 20, seen.len(), total >> 20));
+    }
     1
 }
 
