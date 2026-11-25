@@ -25,11 +25,11 @@ Open work. Each item is tested in a run of its own.
 - Gaps:
   - descriptors read as data (at least refuse them)
   - mask-as-data ballot
-  - runtime V# stride
+  - runtime V# stride: loads done (heap raw views read tb_slot_views +12, VItoriaBr b62bbc0; sibling stride TuxBox 7b815f2). Left: IDXEN stores (refused, as TuxBox 63343eb) and root-table raw views with no slot (no ref reads a stride there). Fallback design: give root raw views a runtime stride word beside the t5+ space32766 AS views (Coder5), then lift the store refusal behind a TB_ switch.
   - safe barriers beyond guarded S_BARRIER
   - wave64 split for any group size
   - a retry ladder
-  - irreducible-CFG split
+  - irreducible-CFG split: interleaved loops already fall back to the tb_pc dispatcher (hlsl.rs:6556); the only refusal left is a compute DPP quad exchange with interleaved loops (hlsl.rs:6559). Ref: xcl gpu/dxil/cfg.rs make_reducible (splits the innermost multi-entry region, capped at 4x blocks). Port plan: when that refusal hits, check true irreducibility; if irreducible, duplicate the region's instructions past the program end with fresh offsets and retarget the extra entries (as exit_stubs moves stubs), then re-run the structured form. Behind TB_CFG_SPLIT; port only once a cache mark shows the refusal.
   - leftover cross-lane refusals
   - votes in resolve_wave32, wave_cull and packed
 - BVH intersection (7 refusals). Needs console BVH nodes from the runtime.
