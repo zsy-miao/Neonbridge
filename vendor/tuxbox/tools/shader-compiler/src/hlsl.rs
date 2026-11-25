@@ -511,6 +511,30 @@ fn typed_half_bits(h: &str) -> String {
     format!("(asuint(f16tof32(({h}) ^ ((({h}) & 0x7c00u) == 0x7c00u ? 0x4000u : 0u))) | ((({h}) & 0x7c00u) == 0x7c00u ? 0x40000000u : 0u))")
 }
 
+/// A normalized buffer field as float bits. Its ends are exactly 1.0 and
+/// -1.0 (VIctory 645391b: a host dividing through a reciprocal lands just
+/// below 1.0), and SNORM's two lowest values both read -1.0.
+/// TB_NORM_EXACT_ENDS=0 divides only, as before.
+fn norm_exact_ends() -> bool {
+    std::env::var("TB_NORM_EXACT_ENDS").map_or(true, |v| v.trim() != "0")
+}
+
+fn unorm_bits(field: &str, top: u32) -> String {
+    if norm_exact_ends() {
+        format!("asuint(({field}) == {top}u ? 1.0f : float({field}) / {top}.0f)")
+    } else {
+        format!("asuint(float({field}) / {top}.0f)")
+    }
+}
+
+fn snorm_bits(signed: &str, top: u32) -> String {
+    if norm_exact_ends() {
+        format!("asuint(({signed}) >= {top} ? 1.0f : (({signed}) <= -{top} ? -1.0f : float({signed}) / {top}.0f))")
+    } else {
+        format!("asuint(max(-1.0f, float({signed}) / {top}.0f))")
+    }
+}
+
 fn packed_typed_channel(packed: &str, format: u32, channel: u32) -> String {
     let (widths, mode): (&[u32], u32) = match format {
         30..=36 => (&[11, 11, 10], format - 30),
@@ -525,8 +549,8 @@ fn packed_typed_channel(packed: &str, format: u32, channel: u32) -> String {
     let field = format!("(({packed} >> {off}u) & {}u)", (1u32 << w) - 1);
     let signed = format!("(asint({packed} << {}u) >> {}u)", 32 - off - w, 32 - w);
     match mode {
-        0 => format!("asuint(float({field}) / {}.0f)", (1u32 << w) - 1),
-        1 => format!("asuint(max(-1.0f, float({signed}) / {}.0f))", (1u32 << (w - 1)) - 1),
+        0 => unorm_bits(&field, (1u32 << w) - 1),
+        1 => snorm_bits(&signed, (1u32 << (w - 1)) - 1),
         2 => format!("asuint(float({field}))"),
         3 => format!("asuint(float({signed}))"),
         4 => field,
@@ -9802,18 +9826,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         for channel in 0..=ins.op {
             let value = match ins.aux.imm2 {
                 // BUFFER_FORMAT_16_16_SNORM.
-                24 if channel < 2 => format!(
-                    "asuint(max(-1.0f, float(asint({packed} << {}u) >> 16) / 32767.0f))",
-                    16 - channel * 16
-                ),
+                24 if channel < 2 => snorm_bits(&format!("(asint({packed} << {}u) >> 16)", 16 - channel * 16), 32767),
                 24 => "0u".to_string(),
                 // BUFFER_FORMAT_2_10_10_10_UNORM.
                 50 => {
                     let max = if channel == 3 { 3 } else { 1023 };
-                    format!("asuint(float(({packed} >> {}u) & {max}u) / {max}.0f)", channel * 10)
+                    unorm_bits(&format!("(({packed} >> {}u) & {max}u)", channel * 10), max)
                 }
                 // BUFFER_FORMAT_8_8_8_8_UNORM / UINT.
-                56 => format!("asuint(float(({packed} >> {}u) & 255u) / 255.0f)", channel * 8),
+                56 => unorm_bits(&format!("(({packed} >> {}u) & 255u)", channel * 8), 255),
                 60 => format!("(({packed} >> {}u) & 255u)", channel * 8),
                 // BUFFER_FORMAT_32_UINT / 32_FLOAT: X only, then (0, 0, 1).
                 20 | 22 if channel == 0 => packed.clone(),
@@ -9830,7 +9851,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 71 if half4 => typed_half_bits(&format!("(({} >> {}u) & 0xffffu)", if channel < 2 { &packed } else { &packed1 }, (channel % 2) * 16)),
                 // BUFFER_FORMAT_16_16_UNORM / UINT / FLOAT.
                 23 | 27 | 29 if channel >= 2 => (if channel == 3 { if ins.aux.imm2 == 27 { "1u" } else { "asuint(1.0f)" } } else { "0u" }).to_string(),
-                23 => format!("asuint(float(({packed} >> {}u) & 65535u) / 65535.0f)", channel * 16),
+                23 => unorm_bits(&format!("(({packed} >> {}u) & 65535u)", channel * 16), 65535),
                 27 => format!("(({packed} >> {}u) & 65535u)", channel * 16),
                 29 => typed_half_bits(&format!("(({packed} >> {}u) & 0xffffu)", channel * 16)),
                 f @ 30..=49 => packed_typed_channel(&packed, f as u32, channel as u32),
