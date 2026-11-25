@@ -215,6 +215,27 @@ fn wait_for(queues: &[(ID3D12Fence, u64)]) {
     }
 }
 
+/// A copy still running when its wait gave up, with what it uses (xcl
+/// 52272a0, PR #578, credit to its authors). Dropping the allocator, list
+/// and readback under a running copy is undefined: the driver may free them
+/// at once and the GPU then faults. They are kept until the fence passes.
+struct Parked {
+    fence: ID3D12Fence,
+    value: u64,
+    _held: (ID3D12CommandAllocator, ID3D12GraphicsCommandList, ID3D12Resource),
+}
+
+// SAFETY: D3D12 objects are free-threaded; the parked ones are only released.
+unsafe impl Send for Parked {}
+
+static PARKED: Mutex<Vec<Parked>> = Mutex::new(Vec::new());
+
+/// Releases parked copies whose fence has passed.
+fn release_finished() {
+    let mut parked = PARKED.lock().unwrap_or_else(|e| e.into_inner());
+    parked.retain(|p| unsafe { p.fence.GetCompletedValue() } < p.value);
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn fill(
     device: &ID3D12Device, queue: &ID3D12CommandQueue, fence: &ID3D12Fence, value: u64,
@@ -293,7 +314,12 @@ unsafe fn fill(
     unsafe { list.Close() }?;
     unsafe { queue.ExecuteCommandLists(&[Some(list.cast()?)]) };
     unsafe { queue.Signal(fence, value) }?;
+    release_finished();
     if !wait_on(fence, value, 5000) {
+        let mut parked = PARKED.lock().unwrap_or_else(|e| e.into_inner());
+        parked.push(Parked { fence: fence.clone(), value, _held: (allocator, list, readback) });
+        crate::diagnostics::log_line(format_args!(
+            "committed write-back: a copy still ran after 5 s; its buffers are kept until it ends ({} kept)", parked.len()));
         return Err(E_FAIL.into());
     }
     let mut mapped = core::ptr::null_mut();
