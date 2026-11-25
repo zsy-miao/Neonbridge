@@ -279,8 +279,27 @@ fn within_file(offset: u64, size: usize, length: u64) -> bool {
 
 fn log(message: std::fmt::Arguments) {
     if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
-        eprintln!("TuxBox xcrdapi: {message}");
+        eprintln!("TuxBox xcrdapi: {message}{}", stamp());
     }
+}
+
+/// TUXBOX_LOG_TIME (default on, =0 off): seconds since process creation at
+/// the end of each line, as d3d12 and xmem stamp theirs, so the boot
+/// timeline places xcrdapi's reads (test168's 14-29 s gap had no times).
+pub(crate) fn stamp() -> String {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    if std::env::var("TUXBOX_LOG_TIME").as_deref() == Ok("0") {
+        return String::new();
+    }
+    let ticks = |f: FILETIME| u64::from(f.dwHighDateTime) << 32 | u64::from(f.dwLowDateTime);
+    let (mut created, mut exited, mut kernel, mut user) = Default::default();
+    let now = unsafe {
+        let _ = GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user);
+        GetSystemTimePreciseAsFileTime()
+    };
+    format!(" [t={:.3} s]", ticks(now).saturating_sub(ticks(created)) as f64 / 1e7)
 }
 
 fn once(what: &'static str, message: std::fmt::Arguments) {
