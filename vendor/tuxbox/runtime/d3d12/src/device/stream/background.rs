@@ -724,7 +724,11 @@ impl OwnedStream {
         let mut applied = vec![false; patches.len()];
         let mut stencil: Option<D3D12_DEPTH_STENCIL_DESC1> = None;
         let mut at = 0;
-        let add_missing = |out: &mut Vec<u8>, applied: &mut [bool]| -> Option<()> {
+        // A depth part added where the stream had none also sets the closing
+        // STENCIL_X record, as one already in the stream does (gap in cefdfdb;
+        // TUXBOX_DERIVED_STENCIL=0 leaves the record as it was).
+        let added_stencil = crate::env_toggle!("TUXBOX_DERIVED_STENCIL") != Some("0");
+        let add_missing = |out: &mut Vec<u8>, applied: &mut [bool], stencil: &mut Option<D3D12_DEPTH_STENCIL_DESC1>| -> Option<()> {
             for (i, (tags, payload)) in patches.iter().enumerate() {
                 if applied[i] {
                     continue;
@@ -736,18 +740,29 @@ impl OwnedStream {
                 let n = payload.len().min(bytes - offset);
                 out[start + offset..start + offset + n].copy_from_slice(&payload[..n]);
                 applied[i] = true;
+                if added_stencil && matches!(tags[0], 11 | 21) {
+                    let mut depth = D3D12_DEPTH_STENCIL_DESC1::default();
+                    let n = (bytes - offset).min(size_of::<D3D12_DEPTH_STENCIL_DESC1>());
+                    unsafe { ptr::copy_nonoverlapping(out[start + offset..].as_ptr(), (&raw mut depth).cast::<u8>(), n) };
+                    *stencil = Some(depth);
+                }
             }
             Some(())
         };
         while at < self.size {
             let tag = i32::from_le_bytes(input[at..at + 4].try_into().ok()?);
+            // Tags 27 and 28 (console records after STENCIL_X) have no known
+            // layout: refused, so the base pipeline is returned (cefdfdb).
+            if matches!(tag, 27 | 28) {
+                return None;
+            }
             let (offset, bytes) = super::layout(tag)?;
             let start = out.len();
             out.extend_from_slice(&input[at..at + bytes]);
             if tag == super::STENCIL_X {
                 // It ends the stream: a new record goes before it.
                 out.truncate(start);
-                add_missing(&mut out, &mut applied)?;
+                add_missing(&mut out, &mut applied, &mut stencil)?;
                 let start = out.len();
                 out.extend_from_slice(&input[at..at + bytes]);
                 if let Some(depth) = stencil {
@@ -774,7 +789,7 @@ impl OwnedStream {
             }
             at += bytes;
         }
-        add_missing(&mut out, &mut applied)?;
+        add_missing(&mut out, &mut applied, &mut stencil)?;
         if out.len() > 4096 || !out.len().is_multiple_of(size_of::<usize>()) {
             return None;
         }

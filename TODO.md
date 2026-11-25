@@ -21,7 +21,6 @@ Open work. Each item is tested in a run of its own.
 - Exact shadow write-back per command list (parked): commands.rs records each list's descriptor-table ranges, root UAVs and copy/clear targets; shadow.rs writes back only the shadows whose UAV handles fall in them. 5c45bf2 made 55ecc4b's window opt-in (TUXBOX_SHADOW_RECENT=N).
 - fxceless parity: items 7 and 2, then the c96b4f2 depth-bounds check.
 - SetSampleMaskX failures in test145.
-- Video gaps 4-6 and 9-10.
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
 - VIctory cd94d35 and 940d32f view_marks page marks: the d3d12 bitmap contract first, then the xshader half.
 
@@ -64,7 +63,6 @@ Open work. Each item is tested in a run of its own.
 - ab5af3f: snapshot every CBV no title buffer covers.
 - 2e53f61: reopen a closed list with a native Reset.
 - Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
-- Gap cefdfdb: set stencil when part 0 is added, and handle or refuse tags 26/27/28.
 - Sampler decode (views.rs:1346): the mag/min order, aniso rule, compare range and the w[12] bias differ from fxceless sampler.rs:11-48. Verify against live words.
 - Small fixes:
   - correct the device.rs:627 doc;
