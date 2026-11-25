@@ -8,6 +8,8 @@
 
 ![How Neonbridge runs the GTA 6 Xbox executable on Windows](assets/how-it-works.svg)
 
+![The Neonbridge loader preparing the GTA 6 shader cache](assets/loader.png)
+
 ## Quick start
 
 ```
