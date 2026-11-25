@@ -483,7 +483,13 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
     }
     // As for streams: a pipeline no earlier run bound is made on first bind,
     // one an earlier run bound is handed to the workers now.
+    // test173: compute PSOs no earlier run bound (8404ccf, 69dc9cd) were
+    // first compiled at their bind, 13.5 s of driver compile with the title
+    // waiting. Compute pipelines are few (5,454 of 111,873 journal records),
+    // so each is handed to the workers when the title creates it, behind the
+    // bound ones. TUXBOX_COMPUTE_EAGER=0 makes unnamed ones at first bind.
     let used_before = key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));
+    let queue_now = used_before || crate::env_toggle!("TUXBOX_COMPUTE_EAGER") != Some("0");
     if !worker
         && (!used_before || !background::eager_on_title())
         && extension_count == 0
@@ -501,7 +507,7 @@ pub(super) unsafe extern "system" fn create_pipeline_x(
         let work = background::Work::Compute(owned);
         let state = PipelineData { key: key.map(Into::into), lazy: true, compute: true, ..Default::default() };
         let owner = (*identity(this)).clone();
-        let _ = state.upgrade.set(if used_before { background::queue(owner, work) } else { background::lazy(owner, work) });
+        let _ = state.upgrade.set(if queue_now { background::queue(owner, work) } else { background::lazy(owner, work) });
         return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
     }
     let _ = super::shader_cache::take_missed();
