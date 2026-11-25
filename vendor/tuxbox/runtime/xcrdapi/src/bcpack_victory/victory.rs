@@ -89,7 +89,13 @@ impl Tables {
                 bc4: &tables::BC4,
                 bc5: &tables::BC5,
                 bc6: &tables::BC6,
-                bc7: &tables::BC7,
+                bc7: if std::env::var("TUXBOX_BCPACK_BC7_ENTRY0").is_ok_and(|v| v.trim() == "0") {
+                    let mut old = tables::BC7.to_vec();
+                    old[0].1.ix[0][..2].copy_from_slice(&[1, 0]);
+                    Vec::leak(old)
+                } else {
+                    &tables::BC7
+                },
             }
         })
     }
