@@ -162,3 +162,22 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
   - Read the XAsync queue handle before publishing the status.
   - XErrorReport passes "" for a null message.
   - Credits: c608da2 should cite ff39277; 04a7bee's rebox figure is 13 GiB.
+
+### runtime/launcher slice 1
+- BAD PORT 1a3c0e3 (xapu): returns TOO_SMALL instead of clamping kept frames to capacity/(ch*4), and has no frame_count 0 fallback (rebox xapu.c:222). This is an audio bug.
+- Mixed refs b793152 (xapu): state 3 and target pitch are rebox-only; fxceless uses state 0, pitch 1.0 and the full 80-byte record.
+- Upstream changed:
+  - X2W bb35f045/4f67e704 (05a7b18): chunked zlib steps by piece 0's size.
+  - leonida 273b3bdf9 (c63e099): also wrap ReadFileEx/ReadFileScatter, and pin before the read.
+  - X2W 5550ec2b/2260b7a4 (3bf99c4): save locks.
+- Ref method better:
+  - 1652dfe: the remaining quota is 256 MiB minus used.
+  - 9d94a1c: a real text-entry dialog.
+  - ad24fa0: subclass the window procedure.
+  - 28e3f08: keep the window's own protection.
+- 9d5faf9: mask console-only CreateSourceVoice flags (xcl xaudio2.rs:57).
+- Risk b7ee00c: limit the signed SMEM offset to non-buffer loads, and cache the env read.
+- b69a488: re-evaluate f1b5622 now that the AnyPS5 ban is lifted.
+- Small fixes:
+  - 17dffad: zero the XMM high quadword.
+  - 65fc79e: the rebox credit is wrong.
