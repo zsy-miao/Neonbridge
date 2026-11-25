@@ -638,6 +638,7 @@ pub(crate) mod gpu_clock {
 pub(crate) mod audio;
 pub(crate) mod capture;
 pub(crate) mod crash;
+pub(crate) mod subrender_trace;
 pub(crate) mod ctl;
 mod crash_detail;
 pub(crate) mod teb;

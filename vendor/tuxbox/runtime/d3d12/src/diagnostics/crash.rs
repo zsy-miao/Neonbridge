@@ -72,6 +72,7 @@ pub(crate) fn install() {
             previous(info);
         }));
         assert_filter();
+        super::subrender_trace::install();
         let _ = std::thread::Builder::new().name("TuxBox watchdog".into()).spawn(watchdog);
         if crate::env_toggle!("TUXBOX_WATCH_HANG") != Some("0") {
             let _ = std::thread::Builder::new().name("TuxBox watch-hang".into()).spawn(watch_hang);
