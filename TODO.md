@@ -67,7 +67,6 @@ Open work. Each item is tested in a run of its own.
 - Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
 - Sampler decode (views.rs:1346): the mag/min order, aniso rule, compare range and the w[12] bias differ from fxceless sampler.rs:11-48. Verify against live words.
 - Small fixes:
-  - map B8G8R8X8_TYPELESS for present;
   - confirm GTA VI never calls Scarlett slot 59;
   - 88dbc97/d97535c: parity-only unless their notices fire.
 

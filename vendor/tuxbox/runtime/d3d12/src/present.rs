@@ -120,6 +120,10 @@ fn swap_format(format: DXGI_FORMAT) -> Option<DXGI_FORMAT> {
         windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_TYPELESS if typeless() => DXGI_FORMAT_R8G8B8A8_UNORM,
         windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_TYPELESS if typeless() => DXGI_FORMAT_B8G8R8A8_UNORM,
         windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R10G10B10A2_TYPELESS if typeless() => DXGI_FORMAT_R10G10B10A2_UNORM,
+        // B8G8R8X8 casts to no flip-model format, so it is drawn, not copied
+        // (blit). TUXBOX_PRESENT_BGRX=0 refuses it again.
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8X8_TYPELESS
+        | windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8X8_UNORM if blit::on() => DXGI_FORMAT_B8G8R8A8_UNORM,
         DXGI_FORMAT_R16G16B16A16_FLOAT => DXGI_FORMAT_R16G16B16A16_FLOAT,
         _ => return None,
     })
@@ -355,7 +359,9 @@ impl SwapChain {
             let buffer = self.chain.GetBuffer(index)?;
             frame.allocator.Reset()?;
             frame.list.Reset(&frame.allocator, None)?;
-            record_copy(&frame.list, source, &buffer);
+            if !blit::needed(source) || !blit::record(&frame.list, source, &buffer) {
+                record_copy(&frame.list, source, &buffer);
+            }
             let sample = (sampler::due() || crate::diagnostics::ctl::screenshot_pending()).then(|| sampler::record(&frame.list, source, D3D12_RESOURCE_STATE_COMMON)).flatten();
             // What reaches the window: the swap chain's own back buffer after
             // the copy, at presents 1 and 60, at the presents after the first 5
@@ -696,4 +702,193 @@ fn uncloak_title_windows() {
             uncloak();
         }
     });
+}
+
+/// A plane whose format the back buffer cannot be copied from (B8G8R8X8) is
+/// drawn into it: one full-screen triangle loading texel for texel, alpha 1.
+mod blit {
+    use super::*;
+    use std::sync::OnceLock;
+
+    const SOURCE: &str = r#"
+#define RS "DescriptorTable(SRV(t0), visibility = SHADER_VISIBILITY_PIXEL)"
+Texture2D<float4> plane : register(t0);
+float4 corner(uint i : SV_VertexID) : SV_Position {
+    return float4(float(i & 1) * 4.0 - 1.0, 1.0 - float(i >> 1) * 4.0, 0.0, 1.0);
+}
+[RootSignature(RS)]
+float4 shade(float4 p : SV_Position) : SV_Target {
+    return float4(plane.Load(int3(int2(p.xy), 0)).rgb, 1.0);
+}
+"#;
+    /// Frames in flight are few; each draw takes the next ring slot.
+    const VIEWS: u32 = 8;
+
+    pub(super) fn on() -> bool {
+        crate::env_toggle!("TUXBOX_PRESENT_BGRX") != Some("0")
+    }
+
+    pub(super) fn needed(source: &ID3D12Resource) -> bool {
+        use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8X8_TYPELESS, DXGI_FORMAT_B8G8R8X8_UNORM};
+        on() && matches!(unsafe { source.GetDesc() }.Format, DXGI_FORMAT_B8G8R8X8_TYPELESS | DXGI_FORMAT_B8G8R8X8_UNORM)
+    }
+
+    struct Pass {
+        root: ID3D12RootSignature,
+        pipeline: ID3D12PipelineState,
+        views: ID3D12DescriptorHeap,
+        targets: ID3D12DescriptorHeap,
+        view_step: u32,
+        target_step: u32,
+        next: std::sync::atomic::AtomicU32,
+    }
+    // SAFETY: D3D12 objects are free-threaded.
+    unsafe impl Send for Pass {}
+    // SAFETY: as above.
+    unsafe impl Sync for Pass {}
+
+    fn compile(entry: windows::core::PCSTR, target: windows::core::PCSTR) -> Result<Vec<u8>> {
+        use core::ffi::c_void;
+        use windows::Win32::Foundation::FreeLibrary;
+        use windows::Win32::Graphics::Direct3D::ID3DBlob;
+        use windows::Win32::System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW};
+        use windows::core::{s, w};
+        type Compile = unsafe extern "system" fn(
+            *const c_void, usize, *const u8, *const c_void, *const c_void,
+            *const u8, *const u8, u32, u32, *mut *mut c_void, *mut *mut c_void,
+        ) -> HRESULT;
+        let library = unsafe { LoadLibraryExW(w!("d3dcompiler_47.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32)? };
+        let result = (|| unsafe {
+            let entry_point = GetProcAddress(library, s!("D3DCompile")).ok_or(E_NOTIMPL)?;
+            let compile: Compile = core::mem::transmute(entry_point);
+            let mut raw = core::ptr::null_mut();
+            compile(
+                SOURCE.as_ptr().cast(), SOURCE.len(), s!("blit").as_ptr(), core::ptr::null(), core::ptr::null(),
+                entry.as_ptr(), target.as_ptr(), 0, 0, &mut raw, core::ptr::null_mut(),
+            )
+            .ok()?;
+            let blob = ID3DBlob::from_raw(raw);
+            Ok(core::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()).to_vec())
+        })();
+        let _ = unsafe { FreeLibrary(library) };
+        result
+    }
+
+    fn make(device: &ID3D12Device) -> Result<Pass> {
+        use windows::core::s;
+        let vs = compile(s!("corner"), s!("vs_5_1"))?;
+        let ps = compile(s!("shade"), s!("ps_5_1"))?;
+        let code = |bytes: &[u8]| D3D12_SHADER_BYTECODE { pShaderBytecode: bytes.as_ptr().cast(), BytecodeLength: bytes.len() };
+        unsafe {
+            let root: ID3D12RootSignature = device.CreateRootSignature(0, &ps)?;
+            let mut desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
+                pRootSignature: ManuallyDrop::new(Some(root.clone())),
+                VS: code(&vs),
+                PS: code(&ps),
+                SampleMask: u32::MAX,
+                RasterizerState: D3D12_RASTERIZER_DESC {
+                    FillMode: D3D12_FILL_MODE_SOLID,
+                    CullMode: D3D12_CULL_MODE_NONE,
+                    DepthClipEnable: true.into(),
+                    ..Default::default()
+                },
+                PrimitiveTopologyType: D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+                NumRenderTargets: 1,
+                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                ..Default::default()
+            };
+            desc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8;
+            let pipeline = device.CreateGraphicsPipelineState(&desc);
+            ManuallyDrop::drop(&mut desc.pRootSignature);
+            let heap = |kind, flags| {
+                device.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&D3D12_DESCRIPTOR_HEAP_DESC {
+                    Type: kind, NumDescriptors: VIEWS, Flags: flags, NodeMask: 0,
+                })
+            };
+            Ok(Pass {
+                root,
+                pipeline: pipeline?,
+                views: heap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE)?,
+                targets: heap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, D3D12_DESCRIPTOR_HEAP_FLAG_NONE)?,
+                view_step: device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+                target_step: device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV),
+                next: std::sync::atomic::AtomicU32::new(0),
+            })
+        }
+    }
+
+    fn pass(device: &ID3D12Device) -> Option<&'static Pass> {
+        static PASS: OnceLock<Option<Pass>> = OnceLock::new();
+        PASS.get_or_init(|| match make(device) {
+            Ok(pass) => Some(pass),
+            Err(error) => {
+                crate::diagnostics::log_line(format_args!("present: no B8G8R8X8 blit ({error}); such planes are copied"));
+                None
+            }
+        })
+        .as_ref()
+    }
+
+    /// Records the draw with the same state round trip as record_copy
+    /// (source COMMON, buffer PRESENT before and after). False: not drawn.
+    pub(super) fn record(list: &ID3D12GraphicsCommandList, source: &ID3D12Resource, buffer: &ID3D12Resource) -> bool {
+        let Ok(child) = source.cast::<ID3D12DeviceChild>() else { return false };
+        let Ok(device) = device_of(&child) else { return false };
+        let Some(pass) = pass(&device) else { return false };
+        let desc = unsafe { source.GetDesc() };
+        let slot = pass.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % VIEWS;
+        unsafe {
+            let mut srv_cpu = pass.views.GetCPUDescriptorHandleForHeapStart();
+            srv_cpu.ptr += (slot * pass.view_step) as usize;
+            let mut srv_gpu = pass.views.GetGPUDescriptorHandleForHeapStart();
+            srv_gpu.ptr += u64::from(slot * pass.view_step);
+            let mut rtv = pass.targets.GetCPUDescriptorHandleForHeapStart();
+            rtv.ptr += (slot * pass.target_step) as usize;
+            device.CreateShaderResourceView(source, Some(&D3D12_SHADER_RESOURCE_VIEW_DESC {
+                Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8X8_UNORM,
+                ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+                Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 { Texture2D: D3D12_TEX2D_SRV { MipLevels: 1, ..Default::default() } },
+            }), srv_cpu);
+            device.CreateRenderTargetView(buffer, None, rtv);
+            let transition = |resource: &ID3D12Resource, before, after| D3D12_RESOURCE_BARRIER {
+                Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+                Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
+                Anonymous: D3D12_RESOURCE_BARRIER_0 {
+                    Transition: ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
+                        pResource: ManuallyDrop::new(Some(resource.clone())),
+                        Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                        StateBefore: before,
+                        StateAfter: after,
+                    }),
+                },
+            };
+            let mut barriers = [
+                transition(source, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+                transition(buffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET),
+            ];
+            list.ResourceBarrier(&barriers);
+            list.SetGraphicsRootSignature(&pass.root);
+            list.SetPipelineState(&pass.pipeline);
+            list.SetDescriptorHeaps(&[Some(pass.views.clone())]);
+            list.SetGraphicsRootDescriptorTable(0, srv_gpu);
+            list.OMSetRenderTargets(1, Some(&rtv), false, None);
+            list.RSSetViewports(&[D3D12_VIEWPORT { Width: desc.Width as f32, Height: desc.Height as f32, MaxDepth: 1.0, ..Default::default() }]);
+            list.RSSetScissorRects(&[windows::Win32::Foundation::RECT { right: desc.Width as i32, bottom: desc.Height as i32, ..Default::default() }]);
+            list.IASetPrimitiveTopology(windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list.DrawInstanced(3, 1, 0, 0);
+            for barrier in &mut barriers {
+                let transition = &mut *barrier.Anonymous.Transition;
+                swap(&mut transition.StateBefore, &mut transition.StateAfter);
+            }
+            list.ResourceBarrier(&barriers);
+            for barrier in &mut barriers {
+                ManuallyDrop::drop(&mut (*barrier.Anonymous.Transition).pResource);
+            }
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&ONCE, || format!("present: a B8G8R8X8 plane ({}x{}) is drawn into the back buffer with alpha 1 (TUXBOX_PRESENT_BGRX=0 off)", desc.Width, desc.Height));
+        true
+    }
 }
