@@ -658,6 +658,17 @@ pub(super) fn presented() {
     PRESENTS.fetch_add(1, Ordering::AcqRel);
 }
 
+/// Bumped by `release_all`: every wait held when it moves gives up at once,
+/// the way a TUXBOX_PRESENT_RELEASE_ALL=1 present does (five-star bd100ba).
+static RELEASE_ALL: AtomicU64 = AtomicU64::new(0);
+
+/// Releases every held GPU memory wait now and returns how many were held.
+pub(super) fn release_all() -> usize {
+    let held = HELD.load(Ordering::Relaxed);
+    RELEASE_ALL.fetch_add(1, Ordering::AcqRel);
+    held as usize
+}
+
 fn present_release(address: u64) -> bool {
     if crate::env_toggle!("TUXBOX_PRESENT_RELEASE_ALL") == Some("1") {
         return true;
@@ -695,6 +706,7 @@ impl Worker {
                         let was_dead = dead_ms() != 0 && dead(job.segment.address);
                         let mut released = false;
                         let presents = PRESENTS.load(Ordering::Acquire);
+                        let releases = RELEASE_ALL.load(Ordering::Acquire);
                         let _holding = (!job.segment.word.reached(job.segment.target, job.segment.comparison))
                             .then(|| { HELD.fetch_add(1, Ordering::Relaxed); Holding });
                         while !job.segment.word.reached(job.segment.target, job.segment.comparison) {
@@ -713,6 +725,16 @@ impl Worker {
                                         "GPU memory wait {:#x} >= {:#x} on queue {:#x} released after {} ms: the list writing {value:#x} there completed, yet the word reads {now:#x}{} ({n} so far; TUXBOX_WAIT_WRITER_RELEASE=0 waits)",
                                         job.segment.address, job.segment.target, job.queue, waited.as_millis(),
                                         super::page_mapping::remapped_under_import(job.segment.address)));
+                                }
+                                break;
+                            }
+                            if RELEASE_ALL.load(Ordering::Acquire) != releases {
+                                static FORCED: AtomicU64 = AtomicU64::new(0);
+                                let n = FORCED.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n <= 8 || n.is_power_of_two() {
+                                    crate::diagnostics::log_line(format_args!(
+                                        "GPU memory wait {:#x} >= {:#x} on queue {:#x} released by release_memory_waits after {} ms ({n} so far)",
+                                        job.segment.address, job.segment.target, job.queue, waited.as_millis()));
                                 }
                                 break;
                             }

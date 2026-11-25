@@ -30,6 +30,11 @@ mod memory_wait;
 pub(crate) fn memory_wait_held() -> bool {
     memory_wait::held()
 }
+/// Makes every held GPU memory wait give up at once, as a present release
+/// does, and returns how many were held (five-star bd100ba).
+pub(crate) fn release_memory_waits() -> usize {
+    memory_wait::release_all()
+}
 pub(crate) mod page_mapping;
 mod queries;
 mod ray_dispatch;
