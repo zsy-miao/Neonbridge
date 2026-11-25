@@ -20,12 +20,27 @@ static WAIT_BUDGET_MS: AtomicI64 = AtomicI64::new(60_000);
 /// keeps frames presenting and drops those draws until the workers finish.
 const FRAME_BUDGET_MS: i64 = 50;
 
+/// How long binds may still wait for a pipeline's worker in this frame, apart
+/// from the translator polls above (VIctory-fxceless make.rs:97-108, GPL-3.0,
+/// credit to its authors: 500 ms per title frame, shared by every thread).
+/// Both used to draw on one 50 ms budget, so a frame whose translator polls
+/// spent it dropped every draw of a pipeline finished a few ms later; fxceless
+/// spends ten times that and draws (lit gameplay at about 2.5 fps where we
+/// drew nothing). test65's fall from 14.6 to 1.6 fps was binds spending 300 ms
+/// of a shared 500 ms: frames now slow down while pipelines build instead of
+/// losing their draws. TUXBOX_PIPELINE_WAIT_MS sets it (50 is the old drop-
+/// first trade, 0 never waits after the first present).
+static PIPELINE_WAIT_MS: AtomicI64 = AtomicI64::new(60_000);
+const PIPELINE_FRAME_MS: i64 = 500;
+
 /// A title frame was presented: grant the next frame its wait budget.
 /// TUXBOX_FRAME_WAIT_MS overrides it: lower trades dropped draws (pipelines
 /// still building) for frame time; 0 never waits after the first present.
 pub(crate) fn frame_presented() {
     let budget = crate::env_toggle!("TUXBOX_FRAME_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(FRAME_BUDGET_MS);
     WAIT_BUDGET_MS.store(budget, Ordering::Relaxed);
+    let pipelines = crate::env_toggle!("TUXBOX_PIPELINE_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(PIPELINE_FRAME_MS);
+    PIPELINE_WAIT_MS.store(pipelines, Ordering::Relaxed);
     crate::device::compute::refill_bind_wait();
 }
 
@@ -123,11 +138,11 @@ pub(crate) fn take_missed() -> bool {
     MISSED.with(|m| m.replace(false))
 }
 
-/// Draws `step` from the frame's wait budget (a bind waiting for a lazy
-/// pipeline's worker); false once it is spent.
+/// Draws `step` from the frame's pipeline wait budget (a bind or draw waiting
+/// for a lazy pipeline's worker); false once it is spent.
 pub(crate) fn spend_wait(step: Duration) -> bool {
     let ms = step.as_millis().max(1) as i64;
-    let left = WAIT_BUDGET_MS.fetch_sub(ms, Ordering::Relaxed) > 0;
+    let left = PIPELINE_WAIT_MS.fetch_sub(ms, Ordering::Relaxed) > 0;
     if !left {
         MISSED.with(|m| m.set(true));
     }
