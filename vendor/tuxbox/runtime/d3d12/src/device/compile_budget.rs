@@ -280,6 +280,8 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
     let mut waited = None;
     let large = shader_bytes >= TINY_SHADER_BYTES;
     loop {
+        // A prefetch the title turned to wait on meanwhile starts at once.
+        let tiny = tiny || (gated && super::stream::background::waited_on());
         let forced = waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait());
         if try_enter(estimate, tiny || forced, forced, large, shader_bytes) {
             break;

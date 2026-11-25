@@ -47,6 +47,8 @@ pub(crate) struct Upgrade {
     /// Why its worker could not make it: the shader keys that got no
     /// translation and the reasons (see `failed_bind`).
     why: OnceLock<String>,
+    /// A title thread bound it or waits on it (see `waited_on`).
+    wanted: std::sync::atomic::AtomicBool,
 }
 
 // SAFETY: D3D12 objects are free-threaded. The built state is published once
@@ -216,6 +218,7 @@ fn wait_granted(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Option<&Buil
     // test111: a steal that ran out of time was followed by a full new wait,
     // so one bind could block 2x its limit. Both now share one deadline.
     let deadline = std::time::Instant::now() + limit;
+    slot.wanted.store(true, Ordering::Release);
     if steal_on() && let Some(job) = steal(slot) {
         build_here(job, limit);
         if let Some(built) = slot.built.get() {
@@ -795,6 +798,18 @@ thread_local! {
     static NULLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set while a dedicated worker builds a job nothing has bound yet.
     static PREFETCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The slot of the job this worker builds.
+    static CURRENT: std::cell::RefCell<Option<Arc<Upgrade>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Whether the title has since bound or waited on the job this worker
+/// started as a prefetch: `compile_budget` re-asks at each pause, so a
+/// prefetch the title turns to wait on stops waiting for memory (xcl
+/// 724b9e2 `big_compile_turn`, GPL-2.0-only, credit to its authors).
+/// TUXBOX_BUDGET_RECHECK=0 decides once, at entry.
+pub(in crate::device) fn waited_on() -> bool {
+    crate::env_toggle!("TUXBOX_BUDGET_RECHECK") != Some("0")
+        && CURRENT.with(|c| c.borrow().as_ref().is_some_and(|s| s.wanted.load(Ordering::Acquire)))
 }
 
 /// Whether this thread's driver compile is a prefetch no title thread waits
@@ -858,6 +873,7 @@ fn priority() -> bool {
 
 /// A bound pipeline still in the creation-order queue moves to the front.
 fn promote(slot: &Arc<Upgrade>) {
+    slot.wanted.store(true, Ordering::Release);
     if slot.built.get().is_some() || slot.failed.load(Ordering::Relaxed) || !priority() {
         return;
     }
@@ -1156,6 +1172,14 @@ fn build(mut job: Job) {
         NULLED.with(|n| n.set(false));
         let _ = crate::device::shader_cache::take_misses();
         job.slot.running.store(unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }, Ordering::Release);
+        CURRENT.with(|c| *c.borrow_mut() = Some(job.slot.clone()));
+        struct Clear;
+        impl Drop for Clear {
+            fn drop(&mut self) {
+                CURRENT.with(|c| *c.borrow_mut() = None);
+            }
+        }
+        let _clear = Clear;
         // The ordinary entry points: on this thread nothing is deferred and
         // translator waits have no budget.
         let status = match &mut job.work {
