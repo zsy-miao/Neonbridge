@@ -654,12 +654,20 @@ fn auto_setup(name: &str, root: &Path, spec: &Spec, game: &Path) {
     }
     crate::splash::status(0.46, &format!("Setting up {name}"));
     println!("[setup] {name}: first launch or changed setup: running its setup steps");
+    let _ = std::io::stdout().flush();
     let ask = |mark: &str| {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO, MessageBoxW};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_DEFBUTTON2, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MessageBoxW};
+        println!("[setup] {name}: asking whether to run a step that {mark}");
+        let _ = std::io::stdout().flush();
         let wide = |t: &str| t.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
         let (text, title) = (wide(&format!("{name}'s setup has a step that {mark}.\n\nRun it now?")), wide("Neonbridge"));
         // SAFETY: both strings are NUL-terminated and live across the call.
-        unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION) == IDYES }
+        // Topmost and focused: an ownerless box opened behind the topmost
+        // loader and the launch sat at "Setting up" with nothing to click.
+        // No is the default.
+        let yes = unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND) == IDYES };
+        println!("[setup] {name}: {}", if yes { "yes" } else { "no, skipped" });
+        yes
     };
     match run_steps(name, root, spec, Some(game), &ask) {
         Ok(()) => {
