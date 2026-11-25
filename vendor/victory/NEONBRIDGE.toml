@@ -11,6 +11,9 @@ upstream = "https://github.com/fxceless/victory-fork"
 build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md:346 (+--locked)
 watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
 exe = "target/release/victory.exe"
+# NEONBRIDGE_DIAG (on unless 0): the author's diagnostics build, used in place of build/exe; [] = none.
+diag_build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--features", "diagnostics", "--locked"]   # README.md:387 (+--locked)
+diag_exe = "target/diag/victory.exe"   # README.md:387
 run = ["run", "{game_exe}", "--execute"]   # README.md:347; console defaults to series-x (apps/victory/src/main.rs:108)
 # Every shader container in the game, CPU only (about 5 min).
 prewarm = ["translate", "{game}", "--warm", "all", "--jobs", "{jobs}"]

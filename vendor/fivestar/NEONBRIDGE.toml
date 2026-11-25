@@ -13,6 +13,9 @@ upstream = "https://github.com/ThatRecompDev/five-star-recomp"
 build = ["dotnet", "build", "FiveStar.slnx", "-c", "Release"]
 watch = ["src", "Directory.Build.props", "Directory.Packages.props", "FiveStar.slnx", "global.json"]
 exe = "artifacts/bin/FiveStar.Cli/release/fivestar.exe"   # Directory.Build.props UseArtifactsOutput; docs/running.md:20
+# NEONBRIDGE_DIAG (on unless 0): the author's diagnostics build, used in place of build/exe; [] = none.
+diag_build = ["dotnet", "build", "FiveStar.slnx"]   # docs/running.md:10: the docs' own (debug) build
+diag_exe = "artifacts/bin/FiveStar.Cli/debug/fivestar.exe"   # docs/running.md:20
 # docs/running.md:12,26: run finishes any setup step still to do, then starts the
 # loader; the work folder defaults to %LOCALAPPDATA%\FiveStar\<titleid>-<version>.
 run = ["run", "{game}"]

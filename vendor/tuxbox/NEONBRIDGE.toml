@@ -18,6 +18,8 @@ watch = ["runtime", "tools", "graphics", "build.py", "Cargo.toml", "Cargo.lock"]
 # (build.py:250-253); its age marks the build stale. The title is launched by
 # `launcher` below, not by this file.
 exe = "build/d3d12-smoke/d3d12_xs.dll"
+# NEONBRIDGE_DIAG (on unless 0): the author's diagnostics build, used in place of build/exe; [] = none.
+diag_build = []   # none: build.py:66 builds release only
 # NEW KEY for the launcher (Coder1): the command that starts a run, in the
 # tree's folder; run/prewarm arguments follow it.
 launcher = ["python", "tuxbox.py"]

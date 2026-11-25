@@ -5,6 +5,9 @@ upstream = "https://github.com/Zettrox/ztrx"
 build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md:31 (+--locked)
 watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
 exe = "target/release/victory.exe"   # scripts/play.ps1:6
+# NEONBRIDGE_DIAG (on unless 0): the author's diagnostics build, used in place of build/exe; [] = none.
+diag_build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--features", "diagnostics", "--locked"]   # README.md:59 (+--locked)
+diag_exe = "target/diag/victory.exe"   # Cargo.toml:77 [profile.diag]
 cwd = "target/release"
 run = ["run", "{game}", "--execute"]   # scripts/play.ps1:14 (passes the game dir, no --console)
 # no prewarm: play.ps1 has none and `translate` has no --warm (apps/victory/src/main.rs:72-87)

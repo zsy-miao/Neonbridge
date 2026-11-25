@@ -9,6 +9,8 @@ upstream = "https://github.com/ZigZagBoi1/ScarlettPort"
 build = ["cargo", "rustc", "--manifest-path", "runtime/victory/Cargo.toml", "--release", "-p", "victory", "--bin", "victory", "--features", "diagnostics", "--locked", "--", "-C", "link-arg=/EXPORT:D3D12SDKVersion,DATA", "-C", "link-arg=/EXPORT:D3D12SDKPath,DATA"]
 watch = ["runtime/victory/apps", "runtime/victory/crates", "runtime/victory/Cargo.toml", "runtime/victory/Cargo.lock"]
 exe = "runtime/victory/target/release/victory.exe"   # scripts/play-victory.ps1:42
+# NEONBRIDGE_DIAG (on unless 0): the author's diagnostics build, used in place of build/exe; [] = none.
+diag_build = []   # its default build already has --features diagnostics (play-victory.ps1 build, as above): nothing else to switch
 cwd = "runtime/victory/target/release"
 run = ["run", "{game_exe}", "--execute", "--console", "series-s"]   # play-victory.ps1:24,45,88
 prewarm = ["warm", "{game}", "--jobs", "{jobs}"]   # docs/RUNTIMES.md:81 (victory warm: translates every shader and makes the compute pipelines)
