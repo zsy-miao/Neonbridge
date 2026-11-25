@@ -57,6 +57,9 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::{HSTRING, Interface, Result};
 
 const LIBRARY_FILE: &str = "pipelines.d3d12lib";
+/// A saved library the system would not rename over LIBRARY_FILE, left
+/// beside it; the next start moves it into place first.
+const NEXT_FILE: &str = "pipelines.d3d12lib.next";
 const USED_FILE: &str = "used-pipelines.txt";
 /// Names of every pipeline stored in the library, for the miss split below.
 const NAMES_FILE: &str = "pipeline-names.txt";
@@ -277,6 +280,11 @@ fn open(host: &ID3D12Device, dir: &Path) -> Option<Library> {
     let device = host.cast::<ID3D12Device1>().ok()?;
     let cap = library_cap_mb();
     let path = dir.join(LIBRARY_FILE);
+    let next = dir.join(NEXT_FILE);
+    if next.exists() && std::fs::rename(&next, &path).is_err() {
+        crate::diagnostics::log_line(format_args!(
+            "pipeline library: the library saved last ({NEXT_FILE}) could not take the old one's place"));
+    }
     let size = std::fs::metadata(&path).map_or(0, |m| m.len());
     let blob = if cap != 0 && size > cap << 20 {
         crate::diagnostics::log_line(format_args!(
@@ -296,6 +304,11 @@ fn open(host: &ID3D12Device, dir: &Path) -> Option<Library> {
         // Another adapter or driver, or a damaged file: start empty.
         Err(_) => (unsafe { device.CreatePipelineLibrary(&[]) }.ok()?, Blob::Heap(Vec::new())),
     };
+    if let Blob::File(view) = &blob {
+        VIEW[0].store(view.at as usize, Ordering::Relaxed);
+        VIEW[1].store(view.len, Ordering::Relaxed);
+        LOADED_AT.store(now_ms(), Ordering::Relaxed);
+    }
     let (len, file) = (blob.bytes().len(), matches!(blob, Blob::File(_)));
     crate::diagnostics::log_once(&std::sync::Once::new(), || {
         format!("pipeline library: {} ({len} bytes{})", if len != 0 { "loaded" } else { "new" },
@@ -384,6 +397,11 @@ fn load_or_make(
     } else {
         with_library(host, |l| load(&l.library, &name))
     };
+    if loaded.is_some() {
+        // The load read the library's file (see `trim`).
+        LOADED_AT.store(now_ms(), Ordering::Relaxed);
+        TRIMMED.store(false, Ordering::Relaxed);
+    }
     if let Some(Ok(pipeline)) = loaded {
         LOADED.fetch_add(1, Ordering::Relaxed);
         return Ok(pipeline);
@@ -561,22 +579,46 @@ fn serialize_mapped(library: &ID3D12PipelineLibrary1, path: &Path, size: usize) 
     };
     let ok = unsafe { library.Serialize(view.bytes_mut()) }.is_ok();
     drop(view);
-    let published = ok && std::fs::rename(&pending, path).is_ok();
+    let published = ok && publish(&pending, path, true);
     if !published {
         let _ = std::fs::remove_file(&pending);
     }
     Some(published)
 }
 
+/// Renames `pending` over `path`. When the system refuses and `library`,
+/// the new library is left beside the old one as NEXT_FILE for the next
+/// start rather than lost (VIctory-fxceless library.rs:206-211, 668-670,
+/// GPL-3.0, credit to its authors). TUXBOX_PIPELINE_LIBRARY_NEXT=0 drops
+/// it as before.
+fn publish(pending: &Path, path: &Path, library: bool) -> bool {
+    if std::fs::rename(pending, path).is_ok() {
+        return true;
+    }
+    if !library || crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_NEXT") == Some("0") {
+        return false;
+    }
+    let next = path.with_file_name(NEXT_FILE);
+    let kept = std::fs::rename(pending, &next).is_ok();
+    crate::diagnostics::log_line(format_args!(
+        "pipeline library: the save could not replace {}; {}", path.display(),
+        if kept { "left beside it for the next start" } else { "dropped" }));
+    kept
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
+    write_publish(path, bytes, false)
+}
+
+fn write_publish(path: &Path, bytes: &[u8], library: bool) -> bool {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pending = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
-    let published = std::fs::write(&pending, bytes).and_then(|()| std::fs::rename(&pending, path));
-    if published.is_err() {
+    let published = std::fs::write(&pending, bytes).is_ok() && publish(&pending, path, library);
+    if !published {
         let _ = std::fs::remove_file(&pending);
     }
-    published.is_ok()
+    published
 }
 
 #[cfg(test)]
@@ -653,7 +695,7 @@ fn save(dir: &Path) {
     let ok = if mapped() { serialize_mapped(&library, &path, size) } else { None }
         .unwrap_or_else(|| {
             let mut blob = vec![0u8; size];
-            unsafe { library.Serialize(&mut blob) }.is_ok() && write_atomic(&path, &blob)
+            unsafe { library.Serialize(&mut blob) }.is_ok() && write_publish(&path, &blob, true)
         });
     if ok {
         // No store ran meanwhile (STORES), so nothing new is left unsaved.
@@ -716,6 +758,54 @@ pub(crate) fn save_now() {
     }
 }
 
+/// The mapped library file's view (address, length), or zeros.
+static VIEW: [std::sync::atomic::AtomicUsize; 2] =
+    [std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0)];
+static LOADED_AT: AtomicU64 = AtomicU64::new(0);
+static TRIMMED: AtomicBool = AtomicBool::new(false);
+
+fn now_ms() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// Lets the mapped library file's pages go from the process's working set
+/// once loads have been quiet a while: each load reads entries out of the
+/// view, and the pages it touched stayed resident (charged to the game's
+/// working set) until Windows trimmed them. They stay in the file cache while
+/// nothing else wants the memory and come back on the next read. The quiet
+/// spell is 10 s, 5 s under 4 GiB free and 2 s under 2 GiB. Ported from
+/// VIctory-fxceless library.rs:360-393 and host.rs:146-161 (GPL-3.0, credit
+/// to its authors). TUXBOX_PIPELINE_LIBRARY_TRIM=0 leaves the pages alone.
+fn trim() {
+    const GIB: u64 = 1 << 30;
+    let (at, len) = (VIEW[0].load(Ordering::Relaxed), VIEW[1].load(Ordering::Relaxed));
+    if at == 0 || TRIMMED.load(Ordering::Relaxed) || crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_TRIM") == Some("0") {
+        return;
+    }
+    let free = {
+        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut status = MEMORYSTATUSEX { dwLength: size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+        unsafe { GlobalMemoryStatusEx(&mut status) }.ok().map(|()| status.ullAvailPhys)
+    };
+    let quiet_ms = match free {
+        Some(free) if free < 2 * GIB => 2_000,
+        Some(free) if free < 4 * GIB => 5_000,
+        _ => 10_000,
+    };
+    if now_ms() < LOADED_AT.load(Ordering::Relaxed) + quiet_ms || TRIMMED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    // The view lives as long as the library, which LIBRARY keeps for the
+    // process's life. Unlocking pages that are not locked fails, as
+    // expected, and takes them out of the working set: the documented way
+    // to let pages of a mapped file go.
+    let _ = unsafe { windows::Win32::System::Memory::VirtualUnlock(at as *const _, len) };
+    crate::diagnostics::log_once(&std::sync::Once::new(), || {
+        format!("pipeline library: the mapped file's pages let go from memory ({len} bytes; TUXBOX_PIPELINE_LIBRARY_TRIM=0 keeps them)")
+    });
+}
+
 /// Starts the saver thread once.
 fn saver() {
     static STARTED: AtomicBool = AtomicBool::new(false);
@@ -725,9 +815,12 @@ fn saver() {
     let _ = std::thread::Builder::new()
         .name("tuxbox-pipeline-saver".into())
         .spawn(|| {
-            loop {
-                std::thread::sleep(Duration::from_secs(20));
-                if let Some(dir) = folder() {
+            for tick in 1u64.. {
+                std::thread::sleep(Duration::from_secs(1));
+                trim();
+                if tick % 20 == 0
+                    && let Some(dir) = folder()
+                {
                     save(dir);
                 }
             }
