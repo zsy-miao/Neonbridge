@@ -44,7 +44,42 @@ impl GuestMemory {
 /// CPU never touched stays reserved, so a kernel call (an import, a
 /// NtWriteVirtualMemory) fails on it and a commit-state check refuses it:
 /// every such use commits first. Pages outside a lazy view are left alone.
+#[track_caller]
 pub(crate) fn commit_lazy(base: usize, size: usize) -> usize {
+    let caller = core::panic::Location::caller();
+    let pages = commit_lazy_at(base, size);
+    if pages > 0 {
+        note_commit(caller, pages);
+    }
+    pages
+}
+
+/// test175: title-mapped commit grew ~3 GB and xmem's counter cannot say
+/// who committed. Pages committed per d3d12 caller, logged at most every
+/// 10 s while any commit happens. TUXBOX_COMMIT_BY_CALLER=0 off.
+fn note_commit(caller: &'static core::panic::Location<'static>, pages: usize) {
+    use std::sync::Mutex;
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_COMMIT_BY_CALLER") != Some("0")) {
+        return;
+    }
+    static BY: Mutex<(Vec<(&'static str, u32, u64)>, Option<std::time::Instant>)> = Mutex::new((Vec::new(), None));
+    let mut by = BY.lock().unwrap_or_else(|e| e.into_inner());
+    let (file, line) = (caller.file(), caller.line());
+    match by.0.iter_mut().find(|e| e.0 == file && e.1 == line) {
+        Some(e) => e.2 += pages as u64,
+        None => by.0.push((file, line, pages as u64)),
+    }
+    if by.1.is_some_and(|t| t.elapsed().as_secs() < 10) {
+        return;
+    }
+    by.1 = Some(std::time::Instant::now());
+    let list: Vec<String> = by.0.iter().map(|(f, l, n)| format!("{}:{l} {} MiB", f.rsplit(['/', '\\']).next().unwrap_or(f), n * 64 / 1024)).collect();
+    crate::diagnostics::log_line(format_args!(
+        "lazy commits by caller since start: {} (TUXBOX_COMMIT_BY_CALLER=0 off)", list.join(", ")));
+}
+
+fn commit_lazy_at(base: usize, size: usize) -> usize {
     type Commit = unsafe extern "system" fn(usize, usize) -> usize;
     static COMMIT: std::sync::OnceLock<Option<Commit>> = std::sync::OnceLock::new();
     let commit = COMMIT.get_or_init(|| unsafe {
