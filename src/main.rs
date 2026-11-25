@@ -582,8 +582,8 @@ fn provider_out() -> PathBuf {
 
 /// `vendor/tuxbox` of `rev`, exported once with `git archive` into
 /// `6ixpack/snapshots/<full commit>` (a finished one holds `.complete`).
-/// Its shader-compiler key is that commit's tree id for the folder, left in
-/// `.neonbridge-source-key` (the snapshot is not a git checkout).
+/// `.neonbridge-snapshot` marks it, so its shader-compiler key is hashed
+/// from its files (see xshader_source_key).
 fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let git = |args: &[&str]| -> Result<String, Box<dyn Error>> {
@@ -598,6 +598,8 @@ fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
     let tuxbox = root.join("vendor/tuxbox");
     REV_BUILD.store(true, std::sync::atomic::Ordering::Relaxed);
     if root.join(".complete").is_file() {
+        let _ = fs::remove_file(tuxbox.join(".neonbridge-source-key"));
+        fs::write(tuxbox.join(".neonbridge-snapshot"), &commit)?;
         println!("[launch] --rev {rev}: snapshot {commit} (cached) at {}", root.display());
         return rev_build_tree(&tuxbox, &commit);
     }
@@ -610,8 +612,7 @@ fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
     if !status.success() {
         return Err(format!("tar -xf of the {commit} snapshot failed ({status})").into());
     }
-    let key = git(&["rev-parse", &format!("{commit}:vendor/tuxbox/tools/shader-compiler")])?;
-    fs::write(tuxbox.join(".neonbridge-source-key"), format!("tree:{key}"))?;
+    fs::write(tuxbox.join(".neonbridge-snapshot"), &commit)?;
     fs::write(root.join(".complete"), &commit)?;
     println!("[launch] --rev {rev}: snapshot {commit} exported to {}", root.display());
     rev_build_tree(&tuxbox, &commit)
@@ -667,29 +668,58 @@ fn rev_build_tree(snapshot: &Path, commit: &str) -> Result<PathBuf, Box<dyn Erro
     Ok(build)
 }
 
-/// Content hash of the tracked shader-compiler sources (path + bytes of each
-/// file `git ls-files` lists, read from the working tree so edits count).
-/// None when git cannot list them.
+/// Content hash of the shader-compiler sources: path + bytes of each file
+/// `git ls-files` lists (read from the working tree, so edits count), or for
+/// a --rev snapshot, which is no checkout, every file under the folder (git
+/// archive exports exactly the tracked files). Both give the same key for the
+/// same source, so a snapshot and the live tree share one translation cache;
+/// a snapshot once keyed by its git tree id ("tree:...") had a cache of its
+/// own and every --rev prewarm began cold (79dff41: 1337 seen, 0 cached).
 fn xshader_source_key(tuxbox: &Path) -> Option<String> {
+    const DIR: &str = "tools/shader-compiler";
+    let files: Vec<String> = if tuxbox.join(".neonbridge-snapshot").is_file() {
+        fn walk(root: &Path, rel: &str, out: &mut Vec<String>) -> Option<()> {
+            for e in fs::read_dir(root.join(rel)).ok()? {
+                let e = e.ok()?;
+                let r = format!("{rel}/{}", e.file_name().to_str()?);
+                if e.file_type().ok()?.is_dir() { walk(root, &r, out)?; } else { out.push(r); }
+            }
+            Some(())
+        }
+        let mut v = Vec::new();
+        walk(tuxbox, DIR, &mut v)?;
+        v
+    } else {
+        let out = Command::new("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", DIR]).output().ok()
+            .filter(|o| o.status.success())?;
+        out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty()).map(|f| String::from_utf8_lossy(f).into_owned()).collect()
+    };
+    source_hash(tuxbox, files)
+}
+
+fn source_hash(tuxbox: &Path, mut files: Vec<String>) -> Option<String> {
     use sha2::{Digest, Sha256};
-    if let Ok(key) = fs::read_to_string(tuxbox.join(".neonbridge-source-key")) {
-        return Some(key.trim().to_owned());
-    }
-    let out = Command::new("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", "tools/shader-compiler"]).output().ok()
-        .filter(|o| o.status.success())?;
-    let mut files: Vec<&[u8]> = out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty()).collect();
     if files.is_empty() {
         return None;
     }
     files.sort();
     let mut h = Sha256::new();
-    for f in files {
-        let rel = std::str::from_utf8(f).ok()?;
+    for rel in files {
         h.update(rel.as_bytes());
         h.update([0]);
         // A tracked file deleted in the working tree hashes as absent.
-        match fs::read(tuxbox.join(rel)) {
-            Ok(bytes) => { h.update((bytes.len() as u64).to_le_bytes()); h.update(&bytes); }
+        match fs::read(tuxbox.join(&rel)) {
+            Ok(bytes) => {
+                // CRLF hashed as LF: with core.autocrlf, git archive writes CRLF
+                // where sessions' edits leave LF (38 of 143 files at 79dff41),
+                // and line endings change no translation.
+                let mut text = Vec::with_capacity(bytes.len());
+                for (i, &b) in bytes.iter().enumerate() {
+                    if !(b == b'\r' && bytes.get(i + 1) == Some(&b'\n')) { text.push(b); }
+                }
+                h.update((text.len() as u64).to_le_bytes());
+                h.update(&text);
+            }
             Err(_) => h.update(u64::MAX.to_le_bytes()),
         }
     }
