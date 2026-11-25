@@ -1,7 +1,7 @@
 //! Standard Xbox resource views and samplers, device slots 17 through 22.
 mod byte_offset;
 mod cbv_snapshot;
-mod shadow;
+pub(crate) mod shadow;
 pub(super) use byte_offset::AddressViews;
 pub(crate) use shadow::Shadows;
 pub(crate) use shadow::{uav_remark, uav_submitted, uav_view, uav_copy};

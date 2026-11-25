@@ -93,6 +93,19 @@ impl DescriptorMap<PlacedView> {
         }
     }
 }
+impl<V> DescriptorMap<V> {
+    /// Calls `f` with each value whose handle lies in one of `ranges`.
+    pub(crate) fn each_value_in(&self, ranges: &[Range<usize>], mut f: impl FnMut(&V)) {
+        let views = lock(&self.0);
+        if views.is_empty() { return; }
+        for range in ranges {
+            for (_, view) in views.range(range.clone()) {
+                f(view);
+            }
+        }
+    }
+}
+
 impl<V: Clone> DescriptorMap<V> {
     pub(crate) fn lookup(&self, handle: usize) -> Option<V> {
         lock(&self.0).get(&handle).cloned()

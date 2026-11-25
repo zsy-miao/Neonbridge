@@ -59,10 +59,164 @@ struct Entry {
     /// An aged check put off by the hash budget: due at every refresh until
     /// it is hashed, so none starves.
     owed: bool,
+    /// When a submission last named it (TUXBOX_SHADOW_EVICT_STALE).
+    stamp: Arc<ShadowUse>,
+}
+
+/// TUXBOX_SHADOW_EVICT_STALE (default off, =1 on): over budget, once a
+/// second, a live copy that no submission's descriptor ranges named for
+/// TUXBOX_SHADOW_EVICT_S (30) is evicted, and made resident again (logged,
+/// each one) by the first submission whose ranges name it, before its
+/// refresh. test175 held ~1 GB of live copies, ~790 MiB of them with no view
+/// made for 25 s or more (shadow census), past device-local budget from 218 s.
+/// A copy is named through the descriptors that hold it (imported_views),
+/// walked like the render heaps' (placement::touch_render_views): queued and
+/// stamped once a second while none is evicted, at every submit while one is.
+/// Only copies a walk has seen are evicted, and no writable copy a write
+/// targeted (it would need its write-back first). Off by default: a title
+/// that reads views by direct heap index (ResourceDescriptorHeap) names
+/// none of them through table ranges, so a copy it reads could be evicted.
+pub(crate) fn evict_stale_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_EVICT_STALE") == Some("1"))
+}
+
+fn evict_after_ms() -> u64 {
+    static S: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *S.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_EVICT_S").and_then(|v| v.trim().parse().ok()).unwrap_or(30)) * 1000
+}
+
+fn now_ms() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+pub(crate) struct ShadowUse {
+    copy: ID3D12Resource,
+    address: u64,
+    bytes: u64,
+    used: std::sync::atomic::AtomicU64,
+    seen: std::sync::atomic::AtomicBool,
+    evicted: std::sync::atomic::AtomicBool,
+    /// Made resident again: its next refresh copies it whole.
+    stale: std::sync::atomic::AtomicBool,
+}
+
+/// Copy resource -> its use, for the walk over the descriptors holding it.
+static STAMPS: Mutex<Option<HashMap<usize, Arc<ShadowUse>>>> = Mutex::new(None);
+static EVICTED_NOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RESTORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn new_stamp(copy: &ID3D12Resource, address: u64, bytes: u64) -> Arc<ShadowUse> {
+    let stamp = Arc::new(ShadowUse { copy: copy.clone(), address, bytes, used: now_ms().into(), seen: false.into(),
+        evicted: false.into(), stale: false.into() });
+    if evict_stale_on() {
+        lock(&STAMPS).get_or_insert_with(HashMap::new).insert(copy.as_raw() as usize, stamp.clone());
+    }
+    stamp
+}
+
+pub(crate) fn any_evicted() -> bool {
+    EVICTED_NOW.load(std::sync::atomic::Ordering::Acquire) != 0
+}
+
+/// Stamps the copies behind the descriptors in `ranges`, and makes an
+/// evicted one resident again before the submission runs.
+pub(crate) fn touch_views(device: &Device, ranges: &[std::ops::Range<usize>]) {
+    if !evict_stale_on() || ranges.is_empty() {
+        return;
+    }
+    let now = now_ms();
+    let mut restore: Vec<Arc<ShadowUse>> = Vec::new();
+    {
+        let stamps = lock(&STAMPS);
+        let Some(stamps) = stamps.as_ref() else { return };
+        device.state.imported_views.each_value_in(ranges, |backing| {
+            let address = match backing {
+                super::DescriptorBacking::Registered { _address } => _address,
+                super::DescriptorBacking::ConstantBuffer { _address: Some(a) } => a,
+                super::DescriptorBacking::BufferAlias { original, .. } => original,
+                _ => return,
+            };
+            let Some(stamp) = stamps.get(&(address.native.as_raw() as usize)) else { return };
+            stamp.used.store(now, std::sync::atomic::Ordering::Relaxed);
+            stamp.seen.store(true, std::sync::atomic::Ordering::Relaxed);
+            if stamp.evicted.load(std::sync::atomic::Ordering::Acquire) {
+                restore.push(stamp.clone());
+            }
+        });
+    }
+    for stamp in restore {
+        if !stamp.evicted.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            continue;
+        }
+        let list = [stamp.copy.cast::<ID3D12Pageable>().ok()];
+        let made = unsafe { device.native.MakeResident(&list) };
+        stamp.stale.store(true, std::sync::atomic::Ordering::Release);
+        EVICTED_NOW.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        let n = RESTORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        crate::diagnostics::log_line(format_args!(
+            "shadow evict: made resident again on demand: copy of {:#x}, {} bytes ({n} so far; {:?}; TUXBOX_SHADOW_EVICT_STALE)",
+            stamp.address, stamp.bytes, made.as_ref().map_err(|e| e.code())));
+    }
+}
+
+/// Evicts the live copies no submission named for TUXBOX_SHADOW_EVICT_S.
+pub(crate) fn evict_stale(device: &Device) {
+    if !evict_stale_on() {
+        return;
+    }
+    use std::sync::atomic::Ordering::Relaxed;
+    let now = now_ms();
+    let after = evict_after_ms();
+    let mut cold: Vec<Arc<ShadowUse>> = Vec::new();
+    {
+        let entries = lock(&device.state.shadows.entries);
+        let stamps = lock(&STAMPS);
+        let Some(stamps) = stamps.as_ref() else { return };
+        for entry in entries.values() {
+            let s = &entry.stamp;
+            if entry.view.strong_count() == 0 || !s.seen.load(Relaxed) || s.evicted.load(Relaxed)
+                || now.saturating_sub(s.used.load(Relaxed)) < after
+                || (entry.writable && (entry.written || entry.marked != 0 || entry.backs.iter().any(|b| b.pending.load(Relaxed))))
+                || !stamps.get(&(s.copy.as_raw() as usize)).is_some_and(|t| Arc::ptr_eq(t, s))
+            {
+                continue;
+            }
+            cold.push(s.clone());
+        }
+    }
+    if cold.is_empty() {
+        return;
+    }
+    let list: Vec<Option<ID3D12Pageable>> = cold.iter().map(|s| s.copy.cast().ok()).collect();
+    if let Err(e) = unsafe { device.native.Evict(&list) } {
+        crate::diagnostics::log_line(format_args!("shadow evict: Evict of {} copies failed {e}", cold.len()));
+        return;
+    }
+    let bytes: u64 = cold.iter().map(|s| s.bytes).sum();
+    for s in &cold {
+        s.evicted.store(true, std::sync::atomic::Ordering::Release);
+    }
+    let now_evicted = EVICTED_NOW.fetch_add(cold.len() as u64, std::sync::atomic::Ordering::AcqRel) + cold.len() as u64;
+    crate::diagnostics::log_line(format_args!(
+        "shadow evict: evicted {} copies ({} MiB) no submission named for {} s; {now_evicted} evicted now, {} made resident again so far (TUXBOX_SHADOW_EVICT_STALE)",
+        cold.len(), bytes >> 20, after / 1000, RESTORES.load(Relaxed)));
 }
 
 impl Drop for Entry {
     fn drop(&mut self) {
+        if evict_stale_on() {
+            let key = self.stamp.copy.as_raw() as usize;
+            if let Some(stamps) = lock(&STAMPS).as_mut()
+                && stamps.get(&key).is_some_and(|s| Arc::ptr_eq(s, &self.stamp))
+            {
+                stamps.remove(&key);
+            }
+            if self.stamp.evicted.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                EVICTED_NOW.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+            }
+        }
         if let Some(run) = self.run.take() {
             super::super::view_marks::release(run);
         }
@@ -910,7 +1064,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool, cover: boo
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
     let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, backs, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, owed: false, hash: None,
-        bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
+        bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed), stamp: new_stamp(&copy, address, bytes) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
         by_copy.retain(|_, key| entries.contains_key(key));
@@ -1301,6 +1455,15 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
             let (address, bytes, _) = key;
             // Dead entries wait for revival; their title pages may be unmapped.
             let Some(view) = entry.view.upgrade() else { continue };
+            // An evicted copy is neither refreshed nor written back; made
+            // resident again, its next refresh copies it whole.
+            if entry.stamp.evicted.load(std::sync::atomic::Ordering::Acquire) {
+                continue;
+            }
+            if !back && entry.stamp.stale.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                entry.hash = None;
+                entry.bound = now;
+            }
             live += 1;
             // A writable shadow no write targeted lately ages like a read-only one.
             let idle_writable = entry.writable && recent_window().is_some() && !recently_written(entry);

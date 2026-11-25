@@ -1163,6 +1163,46 @@ pub(super) fn evict_after() -> f64 {
     alias::evict_after()
 }
 
+/// Descriptor ranges submitted since the last walk of their shadow copies.
+static PENDING_SHADOWS: Mutex<Vec<Range<usize>>> = Mutex::new(Vec::new());
+
+/// TUXBOX_SHADOW_EVICT_STALE: as touch_render_views, for the shadow copies
+/// behind a submission's descriptors; once a second, over budget, the
+/// copies none named for TUXBOX_SHADOW_EVICT_S are evicted after the flush.
+/// The queue lock is held across the push, the check and the flush with its
+/// eviction, so a range is either stamped before an eviction or walked
+/// after it.
+fn touch_shadow_views(device: &Device, heaps: &[Range<usize>]) {
+    let mut pending = PENDING_SHADOWS.lock().unwrap_or_else(|e| e.into_inner());
+    for range in heaps {
+        if !pending.contains(range) {
+            if pending.len() >= 4096 {
+                let ranges = std::mem::take(&mut *pending);
+                super::views::shadow::touch_views(device, &ranges);
+            }
+            pending.push(range.clone());
+        }
+    }
+    if super::views::shadow::any_evicted() {
+        super::views::shadow::touch_views(device, heaps);
+    }
+    static PASS: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let due = {
+        let mut pass = PASS.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        let due = pass.is_none_or(|at| now.duration_since(at).as_secs_f64() >= 1.0);
+        if due { *pass = Some(now); }
+        due
+    };
+    if due {
+        let ranges = std::mem::take(&mut *pending);
+        super::views::shadow::touch_views(device, &ranges);
+        if alias::over_budget(&device.native) {
+            super::views::shadow::evict_stale(device);
+        }
+    }
+}
+
 /// Descriptor ranges submitted since the last walk of their render views.
 static PENDING_VIEWS: Mutex<Vec<Range<usize>>> = Mutex::new(Vec::new());
 
@@ -1592,6 +1632,9 @@ pub(crate) unsafe fn submit(
 ) -> Result<()> {
     let device = unsafe { &*device.cast::<Device>() };
     let placements = &device.state.placements;
+    if super::views::shadow::evict_stale_on() {
+        touch_shadow_views(device, heaps);
+    }
     if super::heap::residency::tracking() {
         touch_render_views(placements, heaps);
         static PASS: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
