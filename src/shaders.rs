@@ -661,7 +661,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let refusal = cache.join(format!("{key}.unsupported"));
         let publish = |bytes: &[u8]| -> Result<(), String> {
             let tmp = session.join(format!("{key}.{}.reply", std::process::id()));
-            fs::write(&tmp, bytes).and_then(|_| fs::rename(&tmp, session.join(format!("{key}.cso")))).map_err(|e| format!("publish to {}: {e}", session.display()))
+            fs::write(&tmp, bytes).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.cso")))).map_err(|e| format!("publish to {}: {e}", session.display()))
         };
         if let (Ok(bytes), Ok(sum)) = (fs::read(&dest), fs::read(&checksum))
             && !(upgrading() && crate::dxil_upgrade::marker(&dest).exists())
@@ -786,7 +786,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             // Into this build's cache as a compile would store it (renamed in whole).
             let (copy, stamp) = (work.join("reused.cso"), work.join("reused.sha256"));
             fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
-                .and_then(|_| fs::rename(&copy, &dest)).and_then(|_| fs::rename(&stamp, &checksum))
+                .and_then(|_| publish_file(&copy, &dest)).and_then(|_| publish_file(&stamp, &checksum))
                 .map_err(|e| format!("store {}: {e}", dest.display()))?;
             publish(&bytes)?;
             return Ok(Outcome::Reused(translate_ms));
@@ -921,8 +921,8 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 let _ = fs::remove_file(&up);
             }
         }
-        fs::rename(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
-        fs::rename(&stamp, &checksum).map_err(|e| e.to_string())?;
+        publish_file(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
+        publish_file(&stamp, &checksum).map_err(|e| e.to_string())?;
         upgrade(dxil_o0);
         publish(&bytes)?;
         Ok(Outcome::Compiled(translate_ms, dxc_ms))
@@ -1038,6 +1038,27 @@ fn with_root(shader: &[u8], count: usize, root: &[u8]) -> Vec<u8> {
 const SHARED_ROOT_STAGES: [u16; 7] = [0, 1, 2, 3, 4, 13, 14];
 const MAX_SHARED_ROOTS: usize = 4;
 
+/// Moves a staged cache file to its content-addressed name. When the rename
+/// fails because another worker published the same key meanwhile (on
+/// Windows, renaming over a file a reader holds open is a sharing
+/// violation), that file is the same bytes: the staging copy is dropped and
+/// the published one used (VIctory-zhai 37e90b3, after fxceless 43f465b,
+/// credit). NEONBRIDGE_CACHE_REUSE_PUBLISHED=0 fails as before.
+fn publish_file(tmp: &Path, dest: &Path) -> std::io::Result<()> {
+    match fs::rename(tmp, dest) {
+        Err(e) if dest.is_file() && std::env::var("NEONBRIDGE_CACHE_REUSE_PUBLISHED").as_deref() != Ok("0") => {
+            let _ = fs::remove_file(tmp);
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                println!("[launch] shader cache: {} was published by another worker while this one wrote it ({e}); using that copy ({n} so far)", dest.display());
+            }
+            Ok(())
+        }
+        other => other,
+    }
+}
+
 fn write_request(archive: &Path, data: &[u8]) -> bool {
     let name = format!("{}.dxbc", sha256(data));
     let dest = archive.join(&name);
@@ -1045,7 +1066,7 @@ fn write_request(archive: &Path, data: &[u8]) -> bool {
         return false;
     }
     let tmp = archive.join(format!("{name}.{}.tmp", std::process::id()));
-    if fs::write(&tmp, data).and_then(|_| fs::rename(&tmp, &dest)).is_err() {
+    if fs::write(&tmp, data).and_then(|_| publish_file(&tmp, &dest)).is_err() {
         let _ = fs::remove_file(&tmp);
         return false;
     }
