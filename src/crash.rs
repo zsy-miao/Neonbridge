@@ -92,7 +92,14 @@ pub fn after_run(name: &str, cache: &std::path::Path, lines: &[String]) -> Optio
     if std::env::var("NEONBRIDGE_CRASH_EXPLAIN").is_ok_and(|v| v.trim() == "0") {
         return None;
     }
-    match explain(lines) {
+    // The runtime stands in front of the game's own crash handler
+    // (kernel.rs SetUnhandledExceptionFilter) and writes its report to
+    // <save>\<title>\crashes.log: add this run's report (written in the last 10 min).
+    let mut why = explain(lines);
+    if let Some(t) = recent_crashes_log() {
+        why = Some(format!("{}\nThe runtime's crash report (crashes.log, from the game's crash handler):\n{t}", why.unwrap_or_default()).trim_start().to_string());
+    }
+    match why {
         Some(why) => {
             println!("[crash] {name}: why the run ended:");
             for l in why.lines() {
@@ -106,6 +113,21 @@ pub fn after_run(name: &str, cache: &std::path::Path, lines: &[String]) -> Optio
             None
         }
     }
+}
+
+/// The tail of the newest `crashes.log` in the family save folder, if written in the last 10 min.
+fn recent_crashes_log() -> Option<String> {
+    let save = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").ok()?).join("6ixpack").join("save");
+    let newest = std::fs::read_dir(save).ok()?.flatten()
+        .map(|d| d.path().join("crashes.log"))
+        .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
+        .max()?;
+    if newest.0.elapsed().ok()? > std::time::Duration::from_secs(600) {
+        return None;
+    }
+    let text = std::fs::read_to_string(&newest.1).ok()?;
+    let all: Vec<&str> = text.lines().collect();
+    Some(all[all.len().saturating_sub(20)..].join("\n"))
 }
 
 #[cfg(test)]
