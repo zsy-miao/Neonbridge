@@ -5995,11 +5995,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         let starts: Vec<usize> = leaders.into_iter().filter(|&s| s < n).collect();
         self.loop_depth = 0;
+        // The dispatch form runs 256 blocks per allowed loop iteration
+        // (five-star-recomp f938530 'victory' preset).
+        let steps = loop_cap(self.ex.stage).saturating_mul(256);
         if entry == 0 {
             self.line("uint tb_pc = 0u; uint tb_guard = 0u;");
-            self.line(&format!("[loop] while (tb_pc != {n}u && tb_guard++ < 1000000u) {{"));
+            self.line(&format!("[loop] while (tb_pc != {n}u && tb_guard++ < {steps}u) {{"));
         } else {
-            self.line(&format!("uint tb_pc = {entry}u; uint tb_guard = 0u; [loop] while (tb_pc != {n}u && tb_guard++ < 1000000u) {{"));
+            self.line(&format!("uint tb_pc = {entry}u; uint tb_guard = 0u; [loop] while (tb_pc != {n}u && tb_guard++ < {steps}u) {{"));
         }
         self.loop_depth += 1;
         // Flat `if (tb_sel == K)` tests on a snapshot of the block id (FXC mishandles a
