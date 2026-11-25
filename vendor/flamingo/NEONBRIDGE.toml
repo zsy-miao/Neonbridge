@@ -14,6 +14,7 @@ prewarm = ["translate", "{game}", "--warm", "all", "--jobs", "{jobs}"]
 game_env = "VICTORY_GAME_DIR"
 cache_env = "VICTORY_CACHE_DIR"
 agility = false
+own_overlay = true   # FLAMINGO_OSD: its own perf overlay, top-left; F9 hides it (README.md:44)
 
 options = [
   "FLAMINGO_OSD=0|1: frame-rate overlay, README.md:44",
