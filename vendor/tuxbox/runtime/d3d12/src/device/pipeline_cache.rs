@@ -454,20 +454,46 @@ fn load_or_make(
     land.2 = Some(made.clone());
     let made = made?;
     let _held = parallel_loads().then(|| Held::new(&text));
-    let _stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
-    with_library(host, |l| {
-        // A name already present (another description) keeps its entry.
-        if unsafe { l.library.StorePipeline(&name, &made) }.is_ok() {
-            l.dirty = true;
-            STORED.fetch_add(1, Ordering::Relaxed);
-            if let Some(names) = names() {
-                let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
-                if names.known.insert(text.clone()) {
-                    names.new.push(text.clone());
+    // Stores ran one at a time and inside LIBRARY, so every library hit
+    // waited out each StorePipeline. VIctory-fxceless (library.rs:556-612,
+    // GPL-3.0, credit to its authors) stores under the read side of a lock
+    // only the save writes, on the interface outside the library lock.
+    // TUXBOX_PIPELINE_STORE_LOCKED=1 stores inside LIBRARY, one at a time.
+    let stored = if crate::env_toggle!("TUXBOX_PIPELINE_STORE_LOCKED") == Some("1") {
+        let _stores = STORES.write().unwrap_or_else(|e| e.into_inner());
+        with_library(host, |l| {
+            // A name already present (another description) keeps its entry.
+            let ok = unsafe { l.library.StorePipeline(&name, &made) }.is_ok();
+            if ok {
+                l.dirty = true;
+            }
+            ok
+        })
+        .unwrap_or(false)
+    } else {
+        let _stores = STORES.read().unwrap_or_else(|e| e.into_inner());
+        match with_library(host, |l| l.library.clone()) {
+            Some(library) => {
+                let ok = unsafe { library.StorePipeline(&name, &made) }.is_ok();
+                if ok {
+                    // Under STORES' read side: the save cannot clear this
+                    // before it serialises the store.
+                    with_library(host, |l| l.dirty = true);
                 }
+                ok
+            }
+            None => false,
+        }
+    };
+    if stored {
+        STORED.fetch_add(1, Ordering::Relaxed);
+        if let Some(names) = names() {
+            let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
+            if names.known.insert(text.clone()) {
+                names.new.push(text.clone());
             }
         }
-    });
+    }
     Ok(made)
 }
 
@@ -665,10 +691,10 @@ pub(crate) fn build_journal(threads: u32) -> u32 {
     super::stream::background::journal::build(threads)
 }
 
-/// Held by a store and by a save across its Serialize: the library does not
-/// promise that the two may overlap. Loads take neither it nor LIBRARY past
+/// Read by stores, written by a save across its Serialize: the library does
+/// not promise that a store and Serialize may overlap. Loads take neither it nor LIBRARY past
 /// a clone of the interface.
-static STORES: Mutex<()> = Mutex::new(());
+static STORES: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 fn save(dir: &Path) {
     super::stream::background::journal::flush();
@@ -681,7 +707,7 @@ fn save(dir: &Path) {
     // dirty flag, so loads go on. TUXBOX_PIPELINE_SAVE_LOCKED=1 holds
     // LIBRARY throughout as before.
     let locked = crate::env_toggle!("TUXBOX_PIPELINE_SAVE_LOCKED") == Some("1");
-    let _stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
+    let _stores = STORES.write().unwrap_or_else(|e| e.into_inner());
     let mut held = Some(LIBRARY.lock().unwrap_or_else(|e| e.into_inner()));
     let library = match held.as_deref_mut() {
         Some(State::Ready(Some(library))) if library.dirty => library.library.clone(),
