@@ -6239,7 +6239,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // others waiting on the host. Keep only its memory fence (fxceless
             // lower.rs 1391-1419, via ztrx/VItoriaBr). TB_FENCE_GUARDED=0 restores
             // the group sync.
-            if self.is_cs && ins.mnemonic == "s_barrier" && !active.is_empty()
+            // fxceless also fences every barrier of a program with a backward
+            // loop, whose lanes the loop cap may stop early (`cut_short`); that
+            // drops every group sync of a looping kernel, so it is opt-in here:
+            // TB_FENCE_CAPPED=1.
+            let capped = std::env::var("TB_FENCE_CAPPED").is_ok_and(|v| v.trim() == "1")
+                && self.insns.iter().any(|x| x.enc == Enc::Sopp && Self::branch_cond(x.op).is_some() && x.aux.imm < 0);
+            if self.is_cs && ins.mnemonic == "s_barrier" && (!active.is_empty() || capped)
                 && std::env::var("TB_FENCE_GUARDED").map_or(true, |v| v.trim() != "0")
             {
                 self.fence_only.insert(i);
