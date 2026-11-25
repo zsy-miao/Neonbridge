@@ -14,6 +14,7 @@ const MESH_X: i32 = 24;
 pub(super) const STENCIL_X: i32 = 26;
 
 pub(super) mod background;
+mod failures;
 pub(crate) use background::Upgrade;
 
 fn subobject<T>() -> (usize, usize) {
@@ -917,10 +918,15 @@ unsafe fn create(
             Err(error) => crate::diagnostics::pipeline_stages(&hashes, error.code().0, true),
         }
         if retry.is_ok() { return retry; }
-        return unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, true) }.unwrap_or(retry);
+        let code = retry.as_ref().err().map_or(status.0, |e| e.code().0);
+        let result = unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, true) }.unwrap_or(retry);
+        failures::record("slot86 linked", code, result.is_ok(), &hashes);
+        return result;
     }
     crate::diagnostics::pipeline_stages(&hashes, status.0, false);
-    unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, true) }.unwrap_or(initial)
+    let result = unsafe { null_pipeline(host, &native_desc, &fields, stream_output, geometry_record, true) }.unwrap_or(initial);
+    failures::record("slot86", status.0, result.is_ok(), &hashes);
+    result
 }
 
 /// Retry a rejected stream with resource-free shaders (see `fallback`). Mesh
