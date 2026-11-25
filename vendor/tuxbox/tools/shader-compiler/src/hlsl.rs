@@ -874,6 +874,8 @@ struct Emitter<'a> {
     is_cs: bool,
     /// Nesting depth of emitted HLSL loops at the current instruction.
     loop_depth: u32,
+    /// EXEC was last set by `s_wqm_b* exec, exec`: whole quads are active (X2W a351c0fb).
+    wqm_exec: bool,
     is_gs: bool,
     /// Compute shader uses LDS (groupshared memory).
     uses_lds: bool,
@@ -3622,6 +3624,7 @@ impl<'a> Emitter<'a> {
             lds_tile: lds_tile::LdsTile::recognize(ex, &insns),
             packed: None,
             loop_depth: 0,
+            wqm_exec: false,
             ex,
             insns,
             res: HashMap::new(),
@@ -6630,7 +6633,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 return Ok(());
             }
             if is_quad_exchange(ins) {
-                if self.loop_depth != 0 {
+                // TuxBox 1397cb6 + X2W a351c0fb/b8889849/a90c0fb (MIT, credit): a pixel
+                // wave's quad exchange (not row_mirror) is lane-local to its quad, so a
+                // loop is fine once whole quads are proven active (EXEC from s_wqm).
+                // TB_DPP16_LOOP_QUAD=0 refuses every exchange in a loop as before.
+                let quad_ok = self.pixel_wave && ins.op != OP_ROW_MIRROR && self.wqm_exec
+                    && std::env::var("TB_DPP16_LOOP_QUAD").map_or(true, |v| v.trim() != "0");
+                if self.loop_depth != 0 && !quad_ok {
                     return Err("DPP16 exchange inside backward control flow".into());
                 }
                 if open {
@@ -7018,6 +7027,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let d = ins.dst.first().cloned();
         self.line(&format!("// {:#06x} {m}", ins.offset));
         self.cur_idx = idx;
+        if ins.dst.iter().any(|o| matches!(o, Opnd::ExecLo | Opnd::ExecHi)) || m.starts_with("v_cmpx_") || m.contains("saveexec") {
+            self.wqm_exec = m.starts_with("s_wqm_") && ins.dst.first() == Some(&Opnd::ExecLo) && ins.src.first() == Some(&Opnd::ExecLo);
+        }
         // GDS=1 addresses the global data share, not the group's LDS: refuse every
         // memory DS form rather than read or overwrite groupshared data (xcl
         // e642921, GPL-2, copied with credit). Swizzle and permute use no memory.
