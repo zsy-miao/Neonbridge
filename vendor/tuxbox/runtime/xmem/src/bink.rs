@@ -85,6 +85,97 @@ pub(crate) fn module_of(address: u64) -> String {
     format!("{base}+{:#x}", address - module as u64)
 }
 
+/// Bink buffer watch (test165: Bink2Scarlett+0x624a, the bitstream reader's
+/// `mov r8d,[r15]`, faulted reading 0x5d0000000 after r15 passed its own
+/// buffer bounds, so a page inside the buffer Bink was given was gone).
+/// At each open this logs every allocation the HBINK points into (base,
+/// size, state, type, protect) and the watched page with the newest xmem
+/// unmap over it; each decode logs the watched page again when its state
+/// changes. TUXBOX_BINK_BUF_WATCH=<hex> picks the page (default
+/// 0x5d0000000), =0 off.
+mod buf_watch {
+    use super::log;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use windows_sys::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
+
+    fn page() -> usize {
+        static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *PAGE.get_or_init(|| match std::env::var("TUXBOX_BINK_BUF_WATCH") {
+            Ok(v) => usize::from_str_radix(v.trim().trim_start_matches("0x"), 16).unwrap_or(0x5d0000000),
+            Err(_) => 0x5d0000000,
+        } & !0xfff)
+    }
+
+    fn query(at: usize) -> Option<MEMORY_BASIC_INFORMATION> {
+        let mut m: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+        (unsafe { VirtualQuery(at as *const _, &mut m, size_of::<MEMORY_BASIC_INFORMATION>()) } != 0).then_some(m)
+    }
+
+    fn describe(m: &MEMORY_BASIC_INFORMATION) -> String {
+        format!("region {:#x}+{:#x} base {:#x} state {:#x} type {:#x} protect {:#x}",
+            m.BaseAddress as usize, m.RegionSize, m.AllocationBase as usize, m.State, m.Type, m.Protect)
+    }
+
+    fn unmapped_over(at: usize) -> String {
+        let mut out = [0u64; 4];
+        if unsafe { crate::unmap_trace::newest(at, 0x1000, &mut out) } {
+            format!("; newest xmem unmap over it: site {} {:#x}+{:#x} {} ms ago", out[0], out[1], out[2], out[3])
+        } else {
+            "; no xmem unmap recorded over it".into()
+        }
+    }
+
+    fn watched(tag: &str) -> String {
+        let p = page();
+        match query(p) {
+            Some(m) => format!("bink: buffer watch {tag}: page {p:#x} {}{}", describe(&m), unmapped_over(p)),
+            None => format!("bink: buffer watch {tag}: page {p:#x} query failed"),
+        }
+    }
+
+    pub(super) fn at_open(movie: u64) {
+        if page() == 0 || movie < 0x10000 {
+            return;
+        }
+        // The HBINK's own pointers name the buffers Bink reads from.
+        let mut words = [0u64; 0x100];
+        let mut read = 0usize;
+        unsafe extern "system" {
+            fn ReadProcessMemory(process: isize, base: *const core::ffi::c_void, buffer: *mut core::ffi::c_void, size: usize, read: *mut usize) -> i32;
+        }
+        unsafe { ReadProcessMemory(-1, movie as *const _, words.as_mut_ptr().cast(), size_of_val(&words), &mut read) };
+        let mut seen: Vec<usize> = Vec::new();
+        let mut lines = Vec::new();
+        for (i, &w) in words[..read / 8].iter().enumerate() {
+            if w < 0x1_0000_0000 || w >= 0x8000_0000_0000 {
+                continue;
+            }
+            let Some(m) = query(w as usize) else { continue };
+            if m.State == 0x10000 || seen.contains(&(m.AllocationBase as usize)) {
+                continue;
+            }
+            seen.push(m.AllocationBase as usize);
+            lines.push(format!("+{:#x} -> {w:#x} {}", i * 8, describe(&m)));
+            if lines.len() == 12 {
+                break;
+            }
+        }
+        log(&format!("bink: buffer watch open {movie:#x}: HBINK points into {} allocation(s): {} (TUXBOX_BINK_BUF_WATCH=0 off)", lines.len(), lines.join("; ")));
+        log(&watched("open"));
+    }
+
+    pub(super) fn at_decode() {
+        if page() == 0 {
+            return;
+        }
+        static LAST: AtomicU64 = AtomicU64::new(u64::MAX);
+        let key = query(page()).map_or(0, |m| (m.State as u64) << 32 | (m.Protect as u64) << 8 | m.Type as u64 >> 16);
+        if LAST.swap(key, Ordering::Relaxed) != key {
+            log(&watched("decode (state changed)"));
+        }
+    }
+}
+
 /// HBINK starts Width, Height, Frames, FrameNum, LastFrameNum, FrameRate,
 /// FrameRateDiv (Bink 2 SDK layout, read as a hint).
 fn header(movie: u64) -> Option<[u32; 7]> {
@@ -419,6 +510,9 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
     if matches!(index, DO_FRAME | NEXT_FRAME | ASYNC_MULTI | ASYNC_WAIT) {
         trace_call(index, a, "start");
     }
+    if matches!(index, DO_FRAME | ASYNC_MULTI) {
+        buf_watch::at_decode();
+    }
     let start = Instant::now();
     let given = if index == SOUND_SYSTEM { sound::wrap_provider(a) } else { a };
     let mut result = unsafe { real(given, b, c, d) };
@@ -445,6 +539,9 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
             header(result).map_or(String::new(), |h| format!(", {}x{} {} frames at {}/{}", h[0], h[1], h[2], h[5], h[6])))),
         8 => log(&format!("bink: BinkSetSoundTrack({a}, {b:#x}) = {result:#x}")),
         _ => record(index, a, result, us),
+    }
+    if index == OPEN {
+        buf_watch::at_open(result);
     }
     match index {
         ASYNC_MULTI => note_multi(a, b, c, d),

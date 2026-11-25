@@ -42,6 +42,11 @@ pub(crate) fn record(address: usize, bytes: usize, site: u32) {
     ring.next = (ring.next + 1) % KEEP;
 }
 
+/// In-crate form of TuxBoxUnmapTrace.
+pub(crate) unsafe fn newest(address: usize, bytes: usize, out: &mut [u64; 4]) -> bool {
+    unsafe { unmap_trace_export(address, bytes, out) != 0 }
+}
+
 /// The newest recorded unmap overlapping `[address, address + bytes)`:
 /// returns 1 and writes its site, start, size and age in ms; 0 when none.
 #[unsafe(export_name = "TuxBoxUnmapTrace")]
