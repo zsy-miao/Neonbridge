@@ -898,6 +898,27 @@ fn note_live(key: ImportKey, heap: &Arc<ImportedHeap>) {
     sweep.push_back(key);
 }
 
+/// test179: root view binds spent 20152 ms of 10 s in imports at 288 s
+/// (2 ms before 270 s, with as many new imports), while free commit fell to
+/// 338 MiB. Each OpenExistingHeapFromAddress1 over 20 ms is logged (first 8,
+/// then powers of two) with its size, the time, and the process's private
+/// bytes, to tell a driver lock of paged-out title pages from contention.
+/// TUXBOX_SLOW_IMPORT_LINE=0 off.
+fn slow_open(base: u64, size: u64, took: std::time::Duration) {
+    if took < std::time::Duration::from_millis(20) || crate::env_toggle!("TUXBOX_SLOW_IMPORT_LINE") == Some("0") {
+        return;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let ms = MS.fetch_add(took.as_millis() as u64, std::sync::atomic::Ordering::Relaxed) + took.as_millis() as u64;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "heap import: OpenExistingHeapFromAddress1 of {size:#x} bytes at {base:#x} took {:.1} ms ({n} over 20 ms so far, {ms} ms in all; private {} MiB; TUXBOX_SLOW_IMPORT_LINE=0 off)",
+            took.as_secs_f64() * 1e3, crate::diagnostics::memory::private_bytes() >> 20));
+    }
+}
+
 /// True when [base, base + size) lies in one OS allocation, the only range
 /// OpenExistingHeapFromAddress1 accepts. test72 asked 192 times for 0x20000
 /// bytes at 0xbfc930000, whose allocation there is one 64 KiB page.
@@ -1063,7 +1084,9 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
         refuse();
         return Err(E_INVALIDARG.into());
     }
+    let opened = std::time::Instant::now();
     let mut native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
+    slow_open(base, size, opened.elapsed());
     if !precheck && let Err(e) = &native && e.code() == E_INVALIDARG && multi && join_page_range(base, size) {
         native = unsafe { device.OpenExistingHeapFromAddress1(base as _, size as usize) };
     }

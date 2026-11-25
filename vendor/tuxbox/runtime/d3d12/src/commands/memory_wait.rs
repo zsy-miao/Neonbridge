@@ -570,8 +570,18 @@ mod writers {
         if t.submits.len() >= 1 << 14 {
             t.submits.clear();
         }
+        // test179: "the list writing 0x1c0b there completed, yet the word
+        // reads 0x0" at the very moment its list was submitted again: the new
+        // submit time passed `writer_done`'s check while `done_at` still held
+        // the previous run's progress value, long reached, so the wait was let
+        // go before the list ran. A resubmitted list has no done value until
+        // `progress` signals for this run. TUXBOX_WRITER_DONE_FRESH=0 keeps it.
+        let fresh = crate::env_toggle!("TUXBOX_WRITER_DONE_FRESH") != Some("0");
         for &list in lists {
             t.submits.insert(list as usize, (queue, now));
+            if fresh {
+                t.done_at.remove(&(list as usize));
+            }
         }
         if order_on() && TRACE.load(std::sync::atomic::Ordering::Relaxed) != 0 {
             for &list in lists {
