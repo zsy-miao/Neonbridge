@@ -8,10 +8,10 @@ about = "VIctory-fxceless 0b0074e (GPL-3.0), the emulator victory"
 upstream = "https://github.com/fxceless/victory-fork"
 # fxceless's victory has no Agility opt-in (no D3D12SDKVersion/D3D12SDKPath
 # exports, unlike ScarlettPort's copy): it runs on the system's D3D12.
-build = ["cargo", "build", "--release", "-p", "victory", "--bin", "victory", "--features", "diagnostics", "--locked"]
+build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md:346 (+--locked)
 watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
 exe = "target/release/victory.exe"
-run = ["run", "{game_exe}", "--execute", "--console", "series-s"]
+run = ["run", "{game_exe}", "--execute"]   # README.md:347; console defaults to series-x (apps/victory/src/main.rs:108)
 # Every shader container in the game, CPU only (about 5 min).
 prewarm = ["translate", "{game}", "--warm", "all", "--jobs", "{jobs}"]
 game_env = "VICTORY_GAME_DIR"
@@ -22,16 +22,14 @@ options = [
   "VICTORY_FAST_CORES=0|1 (default 1): the submit and copy-back threads ask for the fast cores of a hybrid CPU (fxceless 0b0074e), read at crates/victory-gpu/src/framelog.rs:219",
   "VICTORY_DISK_CORES=slow (default off): the DirectStorage workers ask for the slow cores (fxceless 0b0074e), read at crates/victory-hle/src/modules/dstorage.rs:499",
 ]
+# ScarlettPort play-victory.ps1:51-59 settings, not this author's: optional (README.md:44 names RELAY=2 as a newer switch).
+preset_scarlettport_settings = ["VICTORY_OWN_UPSCALER=1", "VICTORY_NO_WATCHDOG=1", "VICTORY_RELAY=2", "VICTORY_SYNC_PRECISE=1", "VICTORY_READ_SETTLE_PRECISE=1", "VICTORY_PIPELINE_WAIT_MS=0"]
+preset_series_s = ["--console=series-s"]
+# Below: Neonbridge plumbing only, no change to how the author's build runs.
 [env]
 VICTORY_RAYTRACING = "0"   # Neonbridge rt patch: the leader has no 0x3a8 build (method not implemented), so the build hook stays off as in the leader; vb2 removed the device on our RT build path
 VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family (storage/settings identical across trees)
-VICTORY_OWN_UPSCALER = "1"
-VICTORY_NO_WATCHDOG = "1"
-VICTORY_RELAY = "2"
-VICTORY_SYNC_PRECISE = "1"
-VICTORY_READ_SETTLE_PRECISE = "1"
-VICTORY_PIPELINE_WAIT_MS = "0"
-VICTORY_PRESS_FILE = "{press}"
+VICTORY_PRESS_FILE = "{press}"   # Neonbridge: the launcher's key presses (controls overlay)
 
 # Keyboard as the gamepad, shown by the controls overlay (F1). From
 # crates/victory-hle/src/modules/gameinput.rs FALLBACK_BUTTONS and fallback();

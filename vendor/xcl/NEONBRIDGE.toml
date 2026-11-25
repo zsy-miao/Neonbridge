@@ -191,7 +191,6 @@ preset_play = ["XCL_DXC_THREADS=4"]   # ScarlettPort scripts/play.ps1:18; its XC
 preset_smoke = ["XCL_NETWORK=0", "XCL_RUN_SECONDS=60", "XCL_ACTIVITY=1"]   # scripts/smoke.ps1:56-58 (-Seconds default 60, :14)
 preset_dred = ["XCL_DRED=1"]
 [env]
-XCL_DXC_THREADS = "4"     # ScarlettPort scripts/play.ps1:18 (xcl's own scripts set none)
 
 # Keyboard and mouse as the gamepad (keyboard_mouse in xcl.toml, on by
 # default), shown by the controls overlay (F1). From crates/xcl/src/hle/kbm.rs
