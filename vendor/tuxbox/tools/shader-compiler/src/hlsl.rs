@@ -5528,11 +5528,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         if self.resolve_wave32 || self.wave_cull || self.packed.is_some() {
             return None;
         }
-        // VCC bits of lanes off in EXEC are 0 on hardware after a compare; mask
-        // them so a stale per-lane value does not vote.
+        // s_cbranch_vccz/vccnz test every VCC bit regardless of EXEC (xcl 1c971de,
+        // GPL-2, copied with credit). A compare already writes 0 for lanes off in
+        // EXEC; a scalar VCC write (s_mov vcc, -1) sets the bit in every lane, so
+        // ANDing with EXEC lost those. TB_VCC_VOTE_EXEC=1 keeps the old AND.
+        let and_exec = std::env::var("TB_VCC_VOTE_EXEC").is_ok_and(|v| v.trim() == "1");
         match op {
-            6 => Some("!WaveActiveAnyTrue((vcc_lo & 1u) != 0u && (exec_lo & 1u) != 0u)"),
-            7 => Some("WaveActiveAnyTrue((vcc_lo & 1u) != 0u && (exec_lo & 1u) != 0u)"),
+            6 if and_exec => Some("!WaveActiveAnyTrue((vcc_lo & 1u) != 0u && (exec_lo & 1u) != 0u)"),
+            7 if and_exec => Some("WaveActiveAnyTrue((vcc_lo & 1u) != 0u && (exec_lo & 1u) != 0u)"),
+            6 => Some("!WaveActiveAnyTrue((vcc_lo & 1u) != 0u)"),
+            7 => Some("WaveActiveAnyTrue((vcc_lo & 1u) != 0u)"),
             8 => Some("!WaveActiveAnyTrue((exec_lo & 1u) != 0u)"),
             9 => Some("WaveActiveAnyTrue((exec_lo & 1u) != 0u)"),
             _ => None,
