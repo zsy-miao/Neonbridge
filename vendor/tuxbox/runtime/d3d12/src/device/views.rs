@@ -1096,6 +1096,25 @@ pub(super) unsafe extern "system" fn uav(
         let Some(view) = (unsafe { desc.as_ref() }) else {
             fail_call(format_args!("depth UAV needs a typed plane view"));
         };
+        // TUXBOX_DEPTH_TWINS: any mip, slices, and the 16-bit twin's formats.
+        if super::depth::twins() && counter.is_none() {
+            use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R16_UNORM};
+            let plane = match view.ViewDimension {
+                D3D12_UAV_DIMENSION_TEXTURE2D => Some(unsafe { view.Anonymous.Texture2D.PlaneSlice }),
+                D3D12_UAV_DIMENSION_TEXTURE2DARRAY => Some(unsafe { view.Anonymous.Texture2DArray.PlaneSlice }),
+                _ => None,
+            };
+            let format = if pair.narrow {
+                matches!(view.Format, DXGI_FORMAT_R16_UNORM | DXGI_FORMAT_R16_UINT | DXGI_FORMAT_R16_FLOAT).then_some(view.Format)
+            } else {
+                matches!(view.Format, DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS | DXGI_FORMAT_R32_FLOAT).then_some(DXGI_FORMAT_R32_FLOAT)
+            };
+            if plane == Some(0) && let Some(format) = format {
+                let host = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: format, ..*view };
+                unsafe { checked_uav(device, Some(&pair.image), None, &host, handle) };
+                return;
+            }
+        }
         if counter.is_some()
             || view.ViewDimension != D3D12_UAV_DIMENSION_TEXTURE2D
             // Either the plane format or the float format of the depth plane.

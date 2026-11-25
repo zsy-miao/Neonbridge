@@ -1098,10 +1098,11 @@ unsafe extern "system" fn transition(
                 && (host.before == D3D12_RESOURCE_STATE_UNORDERED_ACCESS
                     || host.after == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
             {
-                if !matches!(
-                    host.subresource,
-                    0 | 1 | D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES
-                ) {
+                // TUXBOX_DEPTH_TWINS: any subresource of either plane.
+                let planes = if pair.stencil { 2 } else { 1 };
+                if !(matches!(host.subresource, 0 | 1 | D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+                    || (device::depth::twins() && host.subresource < pair.count() * planes))
+                {
                     return Err(E_INVALIDARG);
                 }
                 if host.flags != D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY && different {

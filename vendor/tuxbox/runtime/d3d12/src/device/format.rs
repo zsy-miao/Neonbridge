@@ -111,6 +111,11 @@ fn unbacked_uav(desc: &D3D12_RESOURCE_DESC) -> bool {
 pub(super) fn host_initial_state(desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES) -> D3D12_RESOURCE_STATES {
     if unbacked_uav(desc) && state == D3D12_RESOURCE_STATE_UNORDERED_ACCESS {
         D3D12_RESOURCE_STATE_COMMON
+    } else if state == D3D12_RESOURCE_STATE_UNORDERED_ACCESS && super::depth::twins() && super::depth::paired(desc) {
+        // TUXBOX_DEPTH_TWINS: a depth texture with a twin rests in
+        // COPY_SOURCE while the title has it in unordered access (the twin
+        // holds the writes; commands/depth.rs handoff).
+        D3D12_RESOURCE_STATE_COPY_SOURCE
     } else {
         state
     }

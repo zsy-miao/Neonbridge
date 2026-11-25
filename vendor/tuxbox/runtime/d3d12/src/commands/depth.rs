@@ -183,6 +183,7 @@ fn copy_plane(
     list: &ID3D12GraphicsCommandList,
     pair: &Pair,
     image: &ID3D12Resource,
+    subresource: u32,
     footprint: D3D12_PLACED_SUBRESOURCE_FOOTPRINT,
     to_buffer: bool,
 ) {
@@ -190,7 +191,7 @@ fn copy_plane(
         resource: image.as_raw(),
         kind: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
         data: D3D12_TEXTURE_COPY_LOCATION_0 {
-            SubresourceIndex: 0,
+            SubresourceIndex: subresource,
         },
     };
     let buffer = CopyLocation {
@@ -218,6 +219,62 @@ fn copy_plane(
     };
 }
 
+/// The depth-plane subresources a guest barrier's subresource names, and the
+/// stencil ones: ALL names every one of both planes.
+fn named(pair: &Pair, subresource: u32) -> (Vec<u32>, Vec<u32>) {
+    let n = pair.count();
+    let stencil_end = if pair.stencil { 2 * n } else { n };
+    if subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES {
+        ((0..n).collect(), (n..stencil_end).collect())
+    } else if subresource < n {
+        (vec![subresource], Vec::new())
+    } else if subresource < stencil_end {
+        (Vec::new(), vec![subresource])
+    } else {
+        (Vec::new(), Vec::new())
+    }
+}
+
+/// Copies the named depth-plane subresources between the depth texture and
+/// its twin through the transfer buffer, both sides moved to their copy
+/// states and back. `entering`: depth texture into the twin.
+fn copy_subresources(
+    list: &ID3D12GraphicsCommandList,
+    depth: &ID3D12Resource,
+    pair: &Pair,
+    subresources: &[u32],
+    entering: bool,
+    depth_from: D3D12_RESOURCE_STATES,
+    depth_to: D3D12_RESOURCE_STATES,
+) {
+    let uav = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    let src = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    let dst = D3D12_RESOURCE_STATE_COPY_DEST;
+    for &i in subresources {
+        let (depth_fp, image_fp) = pair.planes[i as usize];
+        if entering {
+            transition(list, depth, i, depth_from, src);
+            transition(list, &pair.image, i, uav, dst);
+            copy_plane(list, pair, depth, i, depth_fp, true);
+        } else {
+            transition(list, &pair.image, i, uav, src);
+            transition(list, depth, i, depth_from, dst);
+            copy_plane(list, pair, &pair.image, i, image_fp, true);
+        }
+        transition(list, &pair.transfer, 0, dst, src);
+        if entering {
+            copy_plane(list, pair, &pair.image, i, image_fp, false);
+            transition(list, &pair.image, i, dst, uav);
+            transition(list, depth, i, src, depth_to);
+        } else {
+            copy_plane(list, pair, depth, i, depth_fp, false);
+            transition(list, &pair.image, i, src, uav);
+            transition(list, depth, i, dst, depth_to);
+        }
+        transition(list, &pair.transfer, 0, src, dst);
+    }
+}
+
 pub(super) unsafe fn handoff(
     list: &ID3D12GraphicsCommandList,
     depth: &ID3D12Resource,
@@ -226,8 +283,22 @@ pub(super) unsafe fn handoff(
 ) {
     let uav = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     let src = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    let dst = D3D12_RESOURCE_STATE_COPY_DEST;
     let entering = barrier.after == uav;
+    if crate::device::depth::twins() {
+        let (planes, stencil) = named(pair, barrier.subresource);
+        // There is no unordered stencil view: park those subresources in
+        // COMMON while the logical resource is in unordered access.
+        let common = D3D12_RESOURCE_STATE_COMMON;
+        for s in stencil {
+            let (before, after) = if entering { (barrier.before, common) } else { (common, barrier.after) };
+            transition(list, depth, s, before, after);
+        }
+        // The depth plane rests in COPY_SOURCE while the twin holds it.
+        let (from, to) = if entering { (barrier.before, src) } else { (src, barrier.after) };
+        copy_subresources(list, depth, pair, &planes, entering, from, to);
+        return;
+    }
+    let dst = D3D12_RESOURCE_STATE_COPY_DEST;
     if barrier.subresource != 0 {
         // There is no unordered stencil view. Park that hardware plane in
         // COMMON until the logical resource leaves unordered access.
@@ -242,21 +313,22 @@ pub(super) unsafe fn handoff(
             return;
         }
     }
+    let (depth_plane, image_plane) = pair.planes[0];
     if entering {
         transition(list, depth, 0, barrier.before, src);
         transition(list, &pair.image, 0, uav, dst);
-        copy_plane(list, pair, depth, pair.depth_plane, true);
+        copy_plane(list, pair, depth, 0, depth_plane, true);
     } else {
         transition(list, &pair.image, 0, uav, src);
         transition(list, depth, 0, src, dst);
-        copy_plane(list, pair, &pair.image, pair.image_plane, true);
+        copy_plane(list, pair, &pair.image, 0, image_plane, true);
     }
     transition(list, &pair.transfer, 0, dst, src);
     if entering {
-        copy_plane(list, pair, &pair.image, pair.image_plane, false);
+        copy_plane(list, pair, &pair.image, 0, image_plane, false);
         transition(list, &pair.image, 0, dst, uav);
     } else {
-        copy_plane(list, pair, depth, pair.depth_plane, false);
+        copy_plane(list, pair, depth, 0, depth_plane, false);
         transition(list, &pair.image, 0, src, uav);
         transition(list, depth, 0, dst, barrier.after);
     }
@@ -318,6 +390,50 @@ fn unordered(layout: D3D12_BARRIER_LAYOUT) -> bool {
     )
 }
 
+/// TUXBOX_DEPTH_TWINS: the depth-plane and stencil-plane subresource
+/// indices an enhanced barrier's range names, for any mips and slices.
+fn selected_subresources(pair: &Pair, range: &D3D12_BARRIER_SUBRESOURCE_RANGE) -> windows::core::Result<(Vec<u32>, Vec<u32>)> {
+    let mips = u32::from(pair.guest.MipLevels.max(1));
+    let slices = u32::from(pair.guest.DepthOrArraySize.max(1));
+    let n = mips * slices;
+    let planes = if pair.stencil { 2 } else { 1 };
+    let mut out = (Vec::new(), Vec::new());
+    let mut push = |index: u32| {
+        if index < n {
+            out.0.push(index);
+        } else if index < n * planes {
+            out.1.push(index);
+        }
+    };
+    if range.NumMipLevels == 0 {
+        if range.IndexOrFirstMipLevel == u32::MAX {
+            (0..n * planes).for_each(&mut push);
+        } else if range.IndexOrFirstMipLevel < n * planes {
+            push(range.IndexOrFirstMipLevel);
+        } else {
+            return Err(E_INVALIDARG.into());
+        }
+    } else {
+        let (m0, mc) = (range.IndexOrFirstMipLevel, range.NumMipLevels);
+        let (s0, sc) = (range.FirstArraySlice, range.NumArraySlices.max(1));
+        let (p0, pc) = (range.FirstPlane, range.NumPlanes.max(1));
+        if m0.checked_add(mc).is_none_or(|e| e > mips)
+            || s0.checked_add(sc).is_none_or(|e| e > slices)
+            || p0.checked_add(pc).is_none_or(|e| e > planes)
+        {
+            return Err(E_INVALIDARG.into());
+        }
+        for p in p0..p0 + pc {
+            for sl in s0..s0 + sc {
+                for m in m0..m0 + mc {
+                    push(m + sl * mips + p * n);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn selected_planes(range: &D3D12_BARRIER_SUBRESOURCE_RANGE) -> windows::core::Result<(bool, bool)> {
     let (first, count) = match (range.NumMipLevels, range.IndexOrFirstMipLevel) {
         (0, u32::MAX) => (0, 2),
@@ -361,7 +477,13 @@ pub(super) fn enhanced_handoff(
     {
         return Err(E_NOTIMPL.into());
     }
-    let (float, stencil) = selected_planes(&b.Subresources)?;
+    let twins = crate::device::depth::twins();
+    let (float_list, stencil_list) = if twins { selected_subresources(pair, &b.Subresources)? } else { (vec![0], vec![1]) };
+    let (float, stencil) = if twins {
+        (!float_list.is_empty(), !stencil_list.is_empty())
+    } else {
+        selected_planes(&b.Subresources)?
+    };
     let none = D3D12_TEXTURE_BARRIER_FLAG_NONE;
     let common = Scope(
         D3D12_BARRIER_SYNC_ALL,
@@ -397,14 +519,16 @@ pub(super) fn enhanced_handoff(
         api.Barrier(&[global]);
     }
     if stencil && from_uav != to_uav {
-        texture_plane(
-            api,
-            depth,
-            1,
-            if from_uav { common } else { before },
-            if to_uav { common } else { after },
-            b.Flags,
-        );
+        for &s in &stencil_list {
+            texture_plane(
+                api,
+                depth,
+                s,
+                if from_uav { common } else { before },
+                if to_uav { common } else { after },
+                b.Flags,
+            );
+        }
     }
     if float && from_uav != to_uav {
         let list: &ID3D12GraphicsCommandList = api;
@@ -415,26 +539,48 @@ pub(super) fn enhanced_handoff(
             || before.2 == D3D12_BARRIER_LAYOUT_UNDEFINED
             || after.2 == D3D12_BARRIER_LAYOUT_UNDEFINED
         {
-            texture_plane(
-                api,
-                depth,
-                0,
-                if from_uav { source } else { before },
-                if to_uav { source } else { after },
-                b.Flags,
-            );
+            for &i in &float_list {
+                texture_plane(
+                    api,
+                    depth,
+                    i,
+                    if from_uav { source } else { before },
+                    if to_uav { source } else { after },
+                    b.Flags,
+                );
+            }
+        } else if twins {
+            for &i in &float_list {
+                let (depth_fp, image_fp) = pair.planes[i as usize];
+                let (read, read_sub, read_fp, write, write_fp, image_copy_state) = if to_uav {
+                    texture_plane(api, depth, i, before, source, none);
+                    (depth, i, depth_fp, &pair.image, image_fp, dst)
+                } else {
+                    texture_plane(api, depth, i, source, dest, none);
+                    (&pair.image, i, image_fp, depth, depth_fp, src)
+                };
+                transition(list, &pair.image, i, uav, image_copy_state);
+                copy_plane(list, pair, read, read_sub, read_fp, true);
+                transition(list, &pair.transfer, 0, dst, src);
+                copy_plane(list, pair, write, i, write_fp, false);
+                transition(list, &pair.transfer, 0, src, dst);
+                transition(list, &pair.image, i, image_copy_state, uav);
+                if from_uav {
+                    texture_plane(api, depth, i, dest, after, none);
+                }
+            }
         } else {
             let (read, read_plane, write, write_plane, image_copy_state) = if to_uav {
                 texture_plane(api, depth, 0, before, source, none);
-                (depth, pair.depth_plane, &pair.image, pair.image_plane, dst)
+                (depth, pair.planes[0].0, &pair.image, pair.planes[0].1, dst)
             } else {
                 texture_plane(api, depth, 0, source, dest, none);
-                (&pair.image, pair.image_plane, depth, pair.depth_plane, src)
+                (&pair.image, pair.planes[0].1, depth, pair.planes[0].0, src)
             };
             transition(list, &pair.image, 0, uav, image_copy_state);
-            copy_plane(list, pair, read, read_plane, true);
+            copy_plane(list, pair, read, 0, read_plane, true);
             transition(list, &pair.transfer, 0, dst, src);
-            copy_plane(list, pair, write, write_plane, false);
+            copy_plane(list, pair, write, 0, write_plane, false);
             transition(list, &pair.transfer, 0, src, dst);
             transition(list, &pair.image, 0, image_copy_state, uav);
             if from_uav {
