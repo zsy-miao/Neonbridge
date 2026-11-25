@@ -69,21 +69,28 @@ fn open() -> Option<Journal> {
     let len = file.metadata().map_or(0, |m| m.len());
     let mut seen = HashSet::new();
     let mut magic = [0u8; 8];
-    if file.read_exact(&mut magic).is_ok() && &magic == MAGIC {
+    // Read through an 8 MiB buffer, skipping payloads inside it: a seek per
+    // frame header took 5.0 s on the title's first pipeline (test168: 111827
+    // frames in 335 MB). TUXBOX_JOURNAL_BUFFERED=0 seeks per frame as before.
+    let buffered = crate::env_toggle!("TUXBOX_JOURNAL_BUFFERED") != Some("0");
+    let mut reader = std::io::BufReader::with_capacity(if buffered { 8 << 20 } else { 0 }, &file);
+    if reader.read_exact(&mut magic).is_ok() && &magic == MAGIC {
         // Headers only; a torn last frame (a run killed mid-write) is cut off.
         let mut at = MAGIC.len() as u64;
         let mut head = [0u8; HEAD];
-        while file.read_exact(&mut head).is_ok() {
-            let end = at + HEAD as u64 + u64::from(u32::from_le_bytes(head[4..8].try_into().ok()?));
+        while reader.read_exact(&mut head).is_ok() {
+            let payload = u64::from(u32::from_le_bytes(head[4..8].try_into().ok()?));
+            let end = at + HEAD as u64 + payload;
             if end > len {
                 break;
             }
             seen.insert((head[0], u64::from_le_bytes(head[8..16].try_into().ok()?)));
             at = end;
-            if file.seek(SeekFrom::Start(at)).is_err() {
+            if reader.seek_relative(payload as i64).is_err() {
                 break;
             }
         }
+        drop(reader);
         if at < len {
             let _ = file.set_len(at);
         }
@@ -98,6 +105,16 @@ fn open() -> Option<Journal> {
         "pipeline journal: {} ({pipelines} pipelines from earlier runs; `neonbridge --pipelines` builds them outside the title; TUXBOX_PIPELINE_JOURNAL=0 off)",
         path.display()));
     Some(Journal { file: BufWriter::with_capacity(1 << 20, file), seen })
+}
+
+/// Opens the journal on a thread of its own at startup, so the title's first
+/// pipeline does not wait for its read (test168: 5.0 s before the first
+/// pipeline). TUXBOX_JOURNAL_WARM=0 opens it at the first pipeline.
+pub(in crate::device) fn warm() {
+    if crate::env_toggle!("TUXBOX_JOURNAL_WARM") == Some("0") {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("tuxbox-journal-open".into()).spawn(|| with(|_| Ok(())));
 }
 
 /// Runs `f` on the journal; a write error turns it off for the run.

@@ -574,6 +574,7 @@ fn used() -> Option<&'static Mutex<Used>> {
             "pipeline precache: {known} pipelines earlier runs bound are built as the title creates them ({}; TUXBOX_PIPELINE_CACHE_SHARED=0 per build)",
             if shared { "list shared by every build" } else { "this build's list" }));
         saver();
+        super::stream::background::journal::warm();
         Mutex::new(Used { before, new: Vec::new() })
     }))
 }
