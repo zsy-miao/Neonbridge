@@ -161,7 +161,6 @@ options = [
 ]
 setup = [
   "dirs: cmd /C if not exist \"%LOCALAPPDATA%\\ztrx\\data\" mkdir \"%LOCALAPPDATA%\\ztrx\\cache\" \"%LOCALAPPDATA%\\ztrx\\data\"",
-  "translate: target\\release\\victory.exe translate \"{game}\" --pipelines --jobs {jobs} [asks first: user-owned file]",
 ]
 preset_play = ["VICTORY_CACHE_DIR=%LOCALAPPDATA%\\ztrx\\cache", "VICTORY_DATA_DIR=%LOCALAPPDATA%\\6ixpack\\save", "VICTORY_KEYS=", "VICTORY_CAPTURE=", "VICTORY_CAPTURE_FRAMES=", "VICTORY_DUMP_TARGETS="]   # scripts/play.ps1:8-13
 [env]

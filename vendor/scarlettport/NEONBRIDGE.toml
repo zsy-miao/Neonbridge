@@ -284,7 +284,6 @@ setup = [
   "agility: powershell -NoProfile -Command \"New-Item -ItemType Directory -Force runtime\\victory\\target\\release\\D3D12 | Out-Null; Copy-Item $env:LOCALAPPDATA\\6ixpack\\agility-1.614.1\\*.dll runtime\\victory\\target\\release\\D3D12\"",
   # agility is pre-staged by the step above (local copy); setup-victory.ps1:27-38 then finds it in place
   "build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\setup-victory.ps1 -SkipPrecompile [asks first: download]",
-  "precompile: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\setup-victory.ps1 -Game \"{game}\" [asks first: user-owned file]",
   "xcl-runtime: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\setup.ps1 [asks first: download]",
 ]
 # play-victory.ps1's settings, as its author runs it, when a run names no --preset or --set.

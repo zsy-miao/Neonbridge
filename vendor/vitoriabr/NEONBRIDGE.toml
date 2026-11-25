@@ -198,7 +198,7 @@ options = [
   "VICTORY_XMA_STREAMS=<value> (default unset): read at crates/victory-formats/src/xma.rs:1202",
 ]
 setup = [
-  "build-diag: cargo build --profile diag -p victory --features diagnostics",
+  "build-diag: cargo build --profile diag -p victory --features diagnostics [asks first: diagnostics build]",
 ]
 preset_play = ["VICTORY_RELAY=2", "VICTORY_TEXTURE_NO_WAIT=1", "VICTORY_CARD_BUFFERS_MB=6144", "VICTORY_WIDE_REFRESH=1", "VICTORY_WIDE_MERGE=1", "VICTORY_JOIN_COPIES=1", "VICTORY_DISPLAY_MODE=1920x1080"]
 preset_warp = ["VICTORY_D3D12_WARP=1"]

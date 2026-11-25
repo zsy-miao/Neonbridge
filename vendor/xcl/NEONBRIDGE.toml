@@ -185,7 +185,6 @@ options = [
   "XCL_X64_ALL_MASKS=<value> (default off): read at crates/xcl/src/gpu/dxil/kernel.rs:574",
 ]
 setup = [
-  "precompile: cmd /C set XCL_DXC_THREADS=8&& set XCL_PIPELINE_THREADS=3&& target\\release\\xcl.exe shaders \"{game}\\shaders.rpf\" --precompile --pipelines [asks first: user-owned file]",
   "agility: powershell -NoProfile -Command \"New-Item -ItemType Directory -Force target\\release\\D3D12 | Out-Null; Copy-Item $env:LOCALAPPDATA\\6ixpack\\agility-1.614.1\\*.dll target\\release\\D3D12\"",   # Agility 1.614.1 pre-staged locally; no download
 ]
 preset_play = ["XCL_DXC_THREADS=4"]   # ScarlettPort scripts/play.ps1:18; its XCL_NO_WATCHDOG=1 (play.ps1:21) is read nowhere in xcl 06c9f55, dropped
