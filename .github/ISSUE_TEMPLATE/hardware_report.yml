@@ -1,0 +1,29 @@
+name: Hardware report
+description: Made by `neonbridge --report`; your PC, the runtime and its last run
+title: "[Hardware] "
+labels: [hardware-report]
+body:
+  - type: input
+    id: gpu
+    attributes: { label: Graphics card and driver }
+  - type: input
+    id: cpu
+    attributes: { label: CPU }
+  - type: input
+    id: ram
+    attributes: { label: RAM }
+  - type: input
+    id: os
+    attributes: { label: Windows }
+  - type: input
+    id: runtime
+    attributes: { label: Runtime }
+  - type: textarea
+    id: fps
+    attributes: { label: Frame rate }
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "How far did it get, what did you see?" }
+  - type: textarea
+    id: log
+    attributes: { label: Last log lines, render: text }

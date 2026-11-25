@@ -12,6 +12,7 @@
 mod autopress;
 mod verify;
 mod preflight;
+mod report;
 mod awake;
 mod ctl;
 mod dxc;
@@ -144,6 +145,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
     let mut rev = std::env::var("NEONBRIDGE_REV").ok().map(|r| r.trim().to_owned()).filter(|r| !r.is_empty());
     let mut runtime_arg: Option<String> = None;
+    let mut want_report = false;
     // Started from the picker: no console, so the run's log is the only record.
     let mut gui = false;
     let (mut sets, mut preset, mut list_of): (Vec<String>, Option<String>, Option<Option<String>>) = (Vec::new(), None, None);
@@ -203,6 +205,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 mix.get_or_insert_with(mix::Mix::default).parts.insert(k.trim().to_owned(), t.trim().to_owned());
             }
             Some("--setup") => return runtimes::setup(&val("--setup")?.to_string_lossy()),
+            Some("--report") => want_report = true,
             Some("--check") => {
                 // Pre-launch check: graphics card (SM 6.6, mesh shaders, waves), RAM, free disk.
                 let worst = preflight::print(&runtimes::pack_dir(), true);
@@ -279,7 +282,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         None => {}
     }
     // No --game: the one-line picker (folder, exe or MicrosoftGame.Config).
-    if game.is_none() && mode != Mode::BuildOnly && mode != Mode::Prewarm && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
+    if game.is_none() && !want_report && mode != Mode::BuildOnly && mode != Mode::Prewarm && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
         let Some(p) = picker::pick() else { return Ok(()) };
         gui = true;
         game = Some(p.folder);
@@ -297,6 +300,11 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     // the game per its NEONBRIDGE.toml (runtimes.rs); tuxbox goes on to the
     // TuxBox providers below.
     let mut runtime = runtimes::name(runtime_arg.as_deref());
+    if want_report {
+        // Bug report: machine, runtime, its last run, as a prefilled GitHub issue.
+        report::open(&runtime, game.as_deref());
+        return Ok(());
+    }
     // A mix: every part not named comes from the runtime picked (or the
     // default); its app tree's toml runs it.
     if let Some(m) = mix.take() {

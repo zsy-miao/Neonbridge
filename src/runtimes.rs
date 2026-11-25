@@ -1387,6 +1387,10 @@ fn xcl_cache() -> PathBuf {
     new
 }
 
+pub fn cache_of(name: &str) -> PathBuf {
+    cache(name)
+}
+
 fn cache(name: &str) -> PathBuf {
     std::env::var_os("NEONBRIDGE_CACHE").map(|d| PathBuf::from(d).join(name)).unwrap_or_else(|| {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("6ixpack").join(name).join("cache")
