@@ -206,6 +206,22 @@ fn commit_reserve(shader_bytes: u64) -> u64 {
     if floor == 0 || crate::env_toggle!("TUXBOX_COMPILE_COMMIT_RESERVE") == Some("fixed") { COMMIT_RESERVE } else { floor }
 }
 
+/// five-star-recomp c1cfe6c (CompileBudget.cs, GPL-3.0, credit to its
+/// authors): the running compiles reserve their whole estimates. Their private
+/// growth since compiles began was subtracted, but that growth is mostly
+/// textures and their video-memory mapping, so running compiles counted as
+/// done and seven ran at once (+20 GB working set in 30 s there). Compiles
+/// under TINY_SHADER_BYTES no longer add to the reservation.
+/// TUXBOX_COMPILE_RESERVE_WHOLE=0 subtracts the growth as before.
+fn reserve_whole() -> bool {
+    crate::env_toggle!("TUXBOX_COMPILE_RESERVE_WHOLE") != Some("0")
+}
+
+/// What a compile adds to the running compiles' reservation.
+fn reserved(estimate: u64, large: bool) -> u64 {
+    if reserve_whole() && !large { 0 } else { estimate }
+}
+
 fn try_enter(estimate: u64, tiny: bool, forced: bool, wanted: bool, large: bool, shader_bytes: u64) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     // test148 #1600 stop: title threads sat in wait_granted / build_here's
@@ -231,7 +247,11 @@ fn try_enter(estimate: u64, tiny: bool, forced: bool, wanted: bool, large: bool,
     if state.running == 0 {
         state.baseline = private;
     }
-    let remaining = state.expected.saturating_sub(private.saturating_sub(state.baseline));
+    let remaining = if reserve_whole() {
+        state.expected
+    } else {
+        state.expected.saturating_sub(private.saturating_sub(state.baseline))
+    };
     if !tiny {
         let need = estimate.saturating_add(remaining);
         let (physical, commit) = available();
@@ -264,7 +284,7 @@ fn try_enter(estimate: u64, tiny: bool, forced: bool, wanted: bool, large: bool,
     }
     state.running += 1;
     state.large += u32::from(large);
-    state.expected += estimate;
+    state.expected += reserved(estimate, large);
     true
 }
 
@@ -328,7 +348,7 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
                 WAITING.load(Ordering::Relaxed)));
         }
     }
-    Some(Admitted(estimate, large))
+    Some(Admitted(reserved(estimate, large), large))
 }
 
 static MEASURED: AtomicU64 = AtomicU64::new(0);
