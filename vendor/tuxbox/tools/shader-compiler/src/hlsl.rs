@@ -4184,6 +4184,15 @@ impl<'a> Emitter<'a> {
         let optimistic = |v: &Sym| matches!(v, Sym::Desc { .. } | Sym::Multi { .. } | Sym::Table(_))
             || speculate && matches!(v, Sym::InlineWord(_) | Sym::HeapOffset | Sym::HeapDescriptor(..)
                 | Sym::SamplerHeapOffset | Sym::SamplerOffset(_) | Sym::DirectRaw(_));
+        // test153 85f845c6: an inline sampler (s_movk / s_mov / s_brev into s0..s3)
+        // is built inside a region `s_cbranch_execz` skips only when no lane is
+        // active, then used after the join. That is the same assumption the
+        // descriptor tags above make, applied to inline words at an execz target.
+        // TB_EXECZ_INLINE_WORDS=0 drops them at the join as before.
+        let execz_targets: BTreeSet<usize> = if std::env::var("TB_EXECZ_INLINE_WORDS").map_or(true, |v| v.trim() != "0") {
+            tgt.iter().filter(|(i, _)| program[**i].enc == Enc::Sopp && program[**i].op == 8).map(|(_, &t)| block_of(t)).collect()
+        } else { BTreeSet::new() };
+        let optimistic_at = |v: &Sym, s: usize| optimistic(v) || execz_targets.contains(&s) && matches!(v, Sym::InlineWord(_));
         while let Some(b) = work.pop() {
             if budget == 0 {
                 return Err("descriptor dataflow did not converge".into());
@@ -4233,7 +4242,7 @@ impl<'a> Emitter<'a> {
                                 },
                                 // Known on one path only. A descriptor stays (see below);
                                 // anything else is dropped.
-                                None if optimistic(&a) => {}
+                                None if optimistic_at(&a, s) => {}
                                 None => {
                                     osym.remove(&k);
                                 }
@@ -4247,7 +4256,7 @@ impl<'a> Emitter<'a> {
                         // path the result is unused. A later use as a descriptor would be
                         // invalid anyway if the register held something else.
                         for (k, v) in sym.iter() {
-                            if optimistic(v) && !osym.contains_key(k) && !conflicts[s].contains(k) {
+                            if optimistic_at(v, s) && !osym.contains_key(k) && !conflicts[s].contains(k) {
                                 osym.insert(*k, *v);
                             }
                         }
