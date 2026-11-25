@@ -32,6 +32,8 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
                       [--build-only | --stage-only | --build-shaders | --prewarm | --pipelines | --restore] [-- <game args>]
   --game       dumped package folder (holds MicrosoftGame.Config and the exe)
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
+  --rev        build providers and xshader from this commit's vendor/tuxbox (git archive
+               snapshot, env NEONBRIDGE_REV), not the working tree
   providers build into %LOCALAPPDATA%/6ixpack/tuxbox; a release build ships them
   prebuilt in a tuxbox folder beside neonbridge.exe and builds nothing
   replay-shaders <capture dir> [--xshader <exe>] [--against <dir>]  translate a
@@ -110,18 +112,20 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if args.first().is_some_and(|a| a == "replay-shaders") {
         return replay::run_cli(&args[1..], || {
             let tuxbox = env_path("TUXBOX_ROOT").unwrap_or_else(baked_tuxbox);
-            let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+            let out = provider_out();
             build_xshader(&tuxbox, &out).map(|(x, _)| x)
         });
     }
     let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
     let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
+    let mut rev = std::env::var("NEONBRIDGE_REV").ok().map(|r| r.trim().to_owned()).filter(|r| !r.is_empty());
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |n: &str| it.next().cloned().ok_or_else(|| format!("{n} needs a value\n{USAGE}"));
         match a.to_str() {
             Some("--game") => game = Some(PathBuf::from(val("--game")?)),
             Some("--tuxbox") => tuxbox = Some(PathBuf::from(val("--tuxbox")?)),
+            Some("--rev") => rev = Some(val("--rev")?.to_string_lossy().into_owned()),
             Some("--exe") => exe = Some(val("--exe")?.to_string_lossy().into_owned()),
             Some("--log") => log = Some(PathBuf::from(val("--log")?)),
             Some("--build-only") => mode = Mode::BuildOnly,
@@ -192,6 +196,14 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    // --rev: the providers and xshader come from that commit, not the working
+    // tree, so other sessions' uncommitted edits stay out of the run.
+    if let Some(rev) = &rev {
+        if tuxbox.is_some() {
+            return Err("--rev and --tuxbox/TUXBOX_ROOT name two sources; pass one".into());
+        }
+        tuxbox = Some(rev_snapshot(rev)?);
+    }
     // A release ships the providers prebuilt beside the exe: use them unless a
     // source was named (--tuxbox or TUXBOX_ROOT).
     let prebuilt = if tuxbox.is_none() { prebuilt_dir() } else { None };
@@ -216,7 +228,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if mode == Mode::Run {
         splash::show("Building the TuxBox runtime");
     }
-    let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+    let out = provider_out();
     let dlls = match &prebuilt {
         Some(dir) => {
             println!("[launch] prebuilt providers: {} (nothing to build)", dir.display());
@@ -530,7 +542,7 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
             std::env::set_var("NEONBRIDGE_STALE_SHADERS", "0");
         }
     }
-    let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+    let out = provider_out();
     fs::create_dir_all(&out)?;
     let (xshader, source_key) = match prebuilt.map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
         Some(prebuilt) => (prebuilt, None),
@@ -554,11 +566,65 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// The 6ixpack data dir (`%LOCALAPPDATA%ixpack`).
+fn data_dir() -> PathBuf {
+    env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack")
+}
+
+static REV_BUILD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where providers and xshader are built: `6ixpack/tuxbox`, or for --rev
+/// `6ixpack/tuxbox-rev`, one target dir shared by every snapshot so their
+/// registry dependencies and unchanged crates build once.
+fn provider_out() -> PathBuf {
+    data_dir().join(if REV_BUILD.load(std::sync::atomic::Ordering::Relaxed) { "tuxbox-rev" } else { "tuxbox" })
+}
+
+/// `vendor/tuxbox` of `rev`, exported once with `git archive` into
+/// `6ixpack/snapshots/<full commit>` (a finished one holds `.complete`).
+/// Its shader-compiler key is that commit's tree id for the folder, left in
+/// `.neonbridge-source-key` (the snapshot is not a git checkout).
+fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let git = |args: &[&str]| -> Result<String, Box<dyn Error>> {
+        let o = Command::new("git").arg("-C").arg(repo).args(args).output()?;
+        if !o.status.success() {
+            return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim()).into());
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    };
+    let commit = git(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")])?;
+    let root = data_dir().join("snapshots").join(&commit);
+    let tuxbox = root.join("vendor/tuxbox");
+    REV_BUILD.store(true, std::sync::atomic::Ordering::Relaxed);
+    if root.join(".complete").is_file() {
+        println!("[launch] --rev {rev}: snapshot {commit} (cached) at {}", root.display());
+        return Ok(tuxbox);
+    }
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root)?;
+    let tar = root.with_extension("tar");
+    git(&["archive", "--format=tar", "-o", &tar.to_string_lossy(), &commit, "vendor/tuxbox"])?;
+    let status = Command::new("tar").arg("-xf").arg(&tar).arg("-C").arg(&root).status()?;
+    let _ = fs::remove_file(&tar);
+    if !status.success() {
+        return Err(format!("tar -xf of the {commit} snapshot failed ({status})").into());
+    }
+    let key = git(&["rev-parse", &format!("{commit}:vendor/tuxbox/tools/shader-compiler")])?;
+    fs::write(tuxbox.join(".neonbridge-source-key"), format!("tree:{key}"))?;
+    fs::write(root.join(".complete"), &commit)?;
+    println!("[launch] --rev {rev}: snapshot {commit} exported to {}", root.display());
+    Ok(tuxbox)
+}
+
 /// Content hash of the tracked shader-compiler sources (path + bytes of each
 /// file `git ls-files` lists, read from the working tree so edits count).
 /// None when git cannot list them.
 fn xshader_source_key(tuxbox: &Path) -> Option<String> {
     use sha2::{Digest, Sha256};
+    if let Ok(key) = fs::read_to_string(tuxbox.join(".neonbridge-source-key")) {
+        return Some(key.trim().to_owned());
+    }
     let out = Command::new("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", "tools/shader-compiler"]).output().ok()
         .filter(|o| o.status.success())?;
     let mut files: Vec<&[u8]> = out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty()).collect();
@@ -1188,7 +1254,7 @@ fn hot_lines(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     let last = lines.iter().rposition(|l| l.contains("hot thread ")).unwrap_or(usize::MAX);
     let first = if last == usize::MAX { usize::MAX } else { lines[..last].iter().rposition(|l| !l.contains("hot thread ")).map_or(0, |i| i + 1) };
-    let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+    let out = provider_out();
     let mut maps: HashMap<String, Option<Vec<(u64, String)>>> = HashMap::new();
     // Crash records and hang stacks (every one) and the last heartbeat's hot threads.
     let picked: Vec<(&str, &str)> = lines.iter().enumerate()
