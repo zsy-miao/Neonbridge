@@ -28,6 +28,22 @@ pub(crate) struct LeaseState {
     /// A submission no fence could track: never retires (alloc_swap's untracked).
     untracked: AtomicBool,
     pending: Mutex<Vec<(ID3D12Fence, u64)>>,
+    /// Submitted at least once (lease on complete).
+    submitted: AtomicBool,
+    /// Retired on completion before its list was reset.
+    retired: AtomicBool,
+}
+
+/// TUXBOX_LEASE_ON_COMPLETE (default on, =0 holds slots until the list is
+/// reset): a list's lease retires once every submission of it is done on the
+/// GPU, not at the title's reset, as VIctory-fxceless 578d459 draw.rs
+/// State::tables_done gives slots back (GPL-3.0, credited): held until reset,
+/// 12,500 tables a frame used up their range and up to 4,900 draws a frame
+/// lost their tables. Its known gap is kept and logged: a list submitted
+/// again without a reset may read slots given out meanwhile.
+fn on_complete() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_LEASE_ON_COMPLETE") != Some("0"))
 }
 // SAFETY: D3D12 fences are free-threaded; the list is behind a mutex.
 unsafe impl Send for LeaseState {}
@@ -41,6 +57,20 @@ impl LeaseState {
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         pending.retain(|(fence, value)| unsafe { fence.GetCompletedValue() } < *value);
         !pending.is_empty()
+    }
+
+    fn live_or_complete(&self) -> bool {
+        if self.untracked.load(Ordering::Acquire) || self.ended.load(Ordering::Acquire)
+            || !on_complete() || !self.submitted.load(Ordering::Acquire) {
+            return self.live();
+        }
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.retain(|(fence, value)| unsafe { fence.GetCompletedValue() } < *value);
+        if pending.is_empty() {
+            self.retired.store(true, Ordering::Release);
+            return false;
+        }
+        true
     }
 }
 
@@ -84,7 +114,7 @@ impl Clock {
     /// Ranges stamped at or below this are read by no live lease.
     pub(super) fn horizon(&self) -> u64 {
         let mut leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
-        leases.retain(|lease| lease.live());
+        leases.retain(|lease| lease.live_or_complete());
         leases.iter().map(|lease| lease.start.load(Ordering::Acquire)).min().unwrap_or(u64::MAX)
     }
 }
@@ -172,5 +202,14 @@ pub(crate) fn submitted(queue: &ID3D12CommandQueue, leases: &[Arc<LeaseState>]) 
             continue;
         }
         lease.pending.lock().unwrap_or_else(|e| e.into_inner()).push((fence.clone(), value));
+        lease.submitted.store(true, Ordering::Release);
+        if lease.retired.load(Ordering::Acquire) {
+            static AGAIN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = AGAIN.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "table lease: a list submitted again without a reset after its slots were given back may read slots given out meanwhile ({n} so far; TUXBOX_LEASE_ON_COMPLETE=0 holds them until reset)"));
+            }
+        }
     }
 }
