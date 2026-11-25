@@ -267,6 +267,27 @@ impl Pool {
             _ => 0,
         };
         let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now, real);
+        // The auto press is silent until it fires: say once, 20 s into the
+        // title's pad polls, what it still waits for (test168 set
+        // TUXBOX_AUTO_PRESSES=12 and logged no press and no reason).
+        if mask & PAD != 0 {
+            static FIRST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static TOLD: std::sync::Once = std::sync::Once::new();
+            let first = match FIRST.compare_exchange(0, now.max(1), std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
+                Ok(_) => now.max(1),
+                Err(f) => f,
+            };
+            if now.saturating_sub(first) >= 20_000_000 && matches!(self.auto_start, AutoStart::Waiting { since: None, .. }) || primary.is_none() && now.saturating_sub(first) >= 20_000_000 {
+                TOLD.call_once(|| {
+                    let reason = if primary.is_none() {
+                        "the title has no primary pad (no keyboard pad, no XInput pad)"
+                    } else {
+                        "no sign-in yet (TUXBOX_SIGNED_IN unset: XUserAddAsync was never called)"
+                    };
+                    eprintln!("TuxBox gameinput: auto start: no A pressed 20 s into the pad polls: {reason}");
+                });
+            }
+        }
         let inject = injected(now);
         for slot in 0..DEVICES {
             let kind = kind(slot);

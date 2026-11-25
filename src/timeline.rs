@@ -77,6 +77,11 @@ pub fn line(line: &str) {
         // Repeatable milestones say so with a trailing count or name
         // ("auto A press 3"): every distinct text is written once.
         once(state, text);
+    } else if let Some(i) = line.find("auto start: pressing A once") {
+        let n = line[i..].split("(try ").nth(1).and_then(|s| s.split('/').next()).unwrap_or("?");
+        write(state, t, &format!("auto A press {n}"));
+    } else if line.contains("auto start: no A pressed") || line.contains("auto start: the title never read") {
+        once(state, line.split("auto start: ").nth(1).unwrap_or(line).split(" [t=").next().unwrap_or(""));
     } else if !state.runtime && line.contains("TuxBox d3d12_xs: ") {
         state.runtime = true;
         once(state, "runtime loaded");
