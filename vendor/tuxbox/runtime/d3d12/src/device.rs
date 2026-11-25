@@ -48,6 +48,11 @@ mod derived;
 pub(crate) mod indirect;
 pub(crate) mod media;
 pub(crate) mod placement;
+
+/// Device-local residency: render heaps and page pools (TUXBOX_RESIDENCY_LINE=0 off).
+pub(crate) fn residency_line() -> String {
+    format!("residency: {}; {}", heap::residency::summary(), placement::pages::pool_summary())
+}
 pub(crate) mod queries;
 pub(crate) mod ray_build;
 mod ray_compile;

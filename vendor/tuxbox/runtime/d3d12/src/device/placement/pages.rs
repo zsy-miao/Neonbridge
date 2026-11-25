@@ -749,6 +749,26 @@ pub fn page_bytes() -> (usize, usize) {
     })
 }
 
+/// Page pools by state, for the residency line: tiles mapped, free, cooling
+/// and idle pages (last user gone, not yet swept).
+pub fn pool_summary() -> String {
+    let g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
+    let mib = |tiles: usize| tiles * PAGE >> 20;
+    let (mut pools, mut evicted, mut empty, mut system, mut free, mut cooling, mut used, mut idle) = (0, 0, 0, 0, 0, 0, 0, 0);
+    for p in g.values().flatten() {
+        pools += p.pools.len();
+        evicted += p.pool_evicted.iter().filter(|&&e| e).count();
+        empty += p.pool_empty.iter().filter(|&&e| e).count();
+        system += p.pool_system.iter().filter(|&&e| e).count();
+        free += p.pool.free_total;
+        cooling += p.pool.cooling.len();
+        used += p.pages.len() + p.extra_pages.len();
+        idle += p.idle.len();
+    }
+    format!("page pools {pools} ({} MiB; evicted idle {evicted}, evicted empty {empty}, in system memory {system}): tiles in use {} MiB, free {} MiB, cooling {} MiB, idle pages {} MiB",
+        mib(pools * POOL_PAGES as usize), mib(used), mib(free), mib(cooling), mib(idle))
+}
+
 static UNMAPPED: AtomicU64 = AtomicU64::new(0);
 static UNMAPPED_BYTES: AtomicU64 = AtomicU64::new(0);
 static RETURNED_BYTES: AtomicU64 = AtomicU64::new(0);

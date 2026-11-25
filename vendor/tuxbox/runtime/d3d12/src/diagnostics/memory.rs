@@ -196,6 +196,9 @@ pub(crate) fn start(luid: LUID) {
                 }
                 crate::diagnostics::log_line(format_args!("{}",
                     line(local, non_local, counters.private as u64, status.ullAvailPageFile, status.ullTotalPageFile, &deltas)));
+                if crate::env_toggle!("TUXBOX_RESIDENCY_LINE") != Some("0") {
+                    crate::diagnostics::log_line(format_args!("{}", crate::device::residency_line()));
+                }
                 if crate::env_toggle!("TUXBOX_COMMIT_BREAKDOWN") != Some("0") {
                     crate::diagnostics::log_line(format_args!("{}", commit_breakdown()));
                 }

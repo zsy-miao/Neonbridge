@@ -1292,6 +1292,28 @@ pub(super) mod residency {
     static HOLD_UNTIL: AtomicU64 = AtomicU64::new(0);
     static EVICTED: AtomicU64 = AtomicU64::new(0);
     static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+    /// Render heaps by residency and idle time, for the residency line.
+    pub(crate) fn summary() -> String {
+        let now = now_ms();
+        let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut resident, mut evicted, mut idle5, mut idle30, mut renderable) = ((0u64, 0u64), (0u64, 0u64), (0u64, 0u64), (0u64, 0u64), (0u64, 0u64));
+        for heap in live.iter().filter_map(Weak::upgrade) {
+            let add = |t: &mut (u64, u64)| { t.0 += 1; t.1 += heap.bytes };
+            if heap.evicted.load(Relaxed) {
+                add(&mut evicted);
+                continue;
+            }
+            add(&mut resident);
+            let idle = now.saturating_sub(heap.used.load(Relaxed));
+            if idle >= 5000 { add(&mut idle5); }
+            if idle >= 30000 { add(&mut idle30); }
+            if heap.renderable.load(Relaxed) { add(&mut renderable); }
+        }
+        let m = |t: (u64, u64)| format!("{} ({} MiB)", t.0, t.1 >> 20);
+        format!("render heaps resident {}, of those idle 5 s+ {}, idle 30 s+ {}, renderable {}; evicted {} (tracking {})",
+            m(resident), m(idle5), m(idle30), m(renderable), m(evicted), tracking())
+    }
     static RESTORED: AtomicU64 = AtomicU64::new(0);
     static PASSES: AtomicU64 = AtomicU64::new(0);
 
