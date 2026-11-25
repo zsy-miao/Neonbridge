@@ -8780,6 +8780,43 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.wv(&d, &format!("t{t}.x"))?;
             return self.wv(&Opnd::Vgpr(n + 1), &format!("t{t}.y"));
         }
+        // Binary64 arithmetic on register pairs through host doubles, abs and
+        // neg on each source's sign (fxceless VIctory 3bff182 lowers v_add_f64;
+        // mul, fma, min and max follow the same form). TB_F64_ARITH=0 refuses.
+        if matches!(m.as_str(), "v_add_f64" | "v_mul_f64" | "v_fma_f64" | "v_min_f64" | "v_max_f64")
+            && std::env::var("TB_F64_ARITH").map_or(true, |v| v.trim() != "0")
+        {
+            if ins.aux.imm != 0 || ins.aux.imm2 != 0 {
+                return Err(format!("{m} with clamp or output modifier"));
+            }
+            let Opnd::Vgpr(n) = d else { return Err(format!("{m}: destination is not a VGPR pair")) };
+            if n == u8::MAX {
+                return Err("VGPR pair overflows".into());
+            }
+            let count = if m == "v_fma_f64" { 3 } else { 2 };
+            if ins.src.len() < count {
+                return Err(format!("{m}: missing source"));
+            }
+            let mut x = Vec::with_capacity(count);
+            for i in 0..count {
+                x.push(format!("tb_d64({})", self.f64_source(ins, i)?));
+            }
+            let value = match m.as_str() {
+                "v_add_f64" => format!("{} + {}", x[0], x[1]),
+                "v_mul_f64" => format!("{} * {}", x[0], x[1]),
+                "v_fma_f64" => format!("fma({}, {}, {})", x[0], x[1], x[2]),
+                "v_min_f64" => format!("min({}, {})", x[0], x[1]),
+                _ => format!("max({}, {})", x[0], x[1]),
+            };
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("precise double t{t}d = {value};"));
+            self.line(&format!("uint2 t{t} = tb_u64(t{t}d);"));
+            self.wv(&d, &format!("t{t}.x"))?;
+            let high = Opnd::Vgpr(n + 1);
+            self.touch(&high);
+            return self.wv(&high, &format!("t{t}.y"));
+        }
         if m == "v_cvt_f32_f64" && std::env::var("TB_CVT_F32_F64").map_or(true, |v| v.trim() != "0") {
             let bits = self.cvt_f32_f64(ins)?;
             let e = if ins.enc == Enc::Vop3 && (ins.aux.imm != 0 || ins.aux.imm2 != 0) {
