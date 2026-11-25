@@ -7,7 +7,7 @@
 //! a T# being 32 bytes, unless slot= is given) and range the index into the
 //! parameter's ranges; the HLSL declares RWTexture u<that range's register +
 //! the slot's index in it> in the same space (register= overrides). The runtime binds such a slot as a UAV of the same resource.
-//! TUXBOX_SRV_AS_UAV=1 on (off until every piece has landed).
+//! TUXBOX_SRV_AS_UAV=0 off.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +22,7 @@ pub(crate) struct Slot {
 }
 
 pub(crate) fn enabled() -> bool {
-    crate::env_toggle!("TUXBOX_SRV_AS_UAV") == Some("1")
+    crate::env_toggle!("TUXBOX_SRV_AS_UAV") != Some("0")
 }
 
 pub(super) fn parse(text: &str) -> Vec<Slot> {

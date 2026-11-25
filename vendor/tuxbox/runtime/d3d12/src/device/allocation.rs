@@ -27,6 +27,36 @@ fn host_description(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
     })
 }
 
+/// SRV-as-UAV piece 5 (TUXBOX_SRV_AS_UAV=1): a single-sample colour texture
+/// of a typed-UAV format family is made with ALLOW_UNORDERED_ACCESS, so a slot
+/// a program stores to while its guest root types it SRV gets a UAV of the
+/// resource itself (srv_views::fill_table logs any still without it). Applied
+/// in this shared sizing/creation step so placed sizes match.
+fn with_srv_as_uav(desc: &D3D12_RESOURCE_DESC, flags: i32) -> i32 {
+    use windows::Win32::Graphics::Dxgi::Common::*;
+    if !super::shader_cache::slots::enabled()
+        || desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+        || desc.SampleDesc.Count > 1
+        || flags & (D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 | D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY.0) != 0
+    {
+        return flags;
+    }
+    // Typed UAV loads/stores are required for these families (D3D12 feature level 11+).
+    let typed = matches!(desc.Format,
+        DXGI_FORMAT_R32G32B32A32_TYPELESS | DXGI_FORMAT_R32G32B32A32_FLOAT | DXGI_FORMAT_R32G32B32A32_UINT | DXGI_FORMAT_R32G32B32A32_SINT
+        | DXGI_FORMAT_R16G16B16A16_TYPELESS | DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_UNORM | DXGI_FORMAT_R16G16B16A16_UINT
+        | DXGI_FORMAT_R16G16B16A16_SNORM | DXGI_FORMAT_R16G16B16A16_SINT
+        | DXGI_FORMAT_R32G32_TYPELESS | DXGI_FORMAT_R32G32_FLOAT | DXGI_FORMAT_R32G32_UINT | DXGI_FORMAT_R32G32_SINT
+        | DXGI_FORMAT_R10G10B10A2_TYPELESS | DXGI_FORMAT_R10G10B10A2_UNORM | DXGI_FORMAT_R10G10B10A2_UINT | DXGI_FORMAT_R11G11B10_FLOAT
+        | DXGI_FORMAT_R8G8B8A8_TYPELESS | DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_R8G8B8A8_UINT | DXGI_FORMAT_R8G8B8A8_SNORM | DXGI_FORMAT_R8G8B8A8_SINT
+        | DXGI_FORMAT_R16G16_TYPELESS | DXGI_FORMAT_R16G16_FLOAT | DXGI_FORMAT_R16G16_UNORM | DXGI_FORMAT_R16G16_UINT | DXGI_FORMAT_R16G16_SNORM | DXGI_FORMAT_R16G16_SINT
+        | DXGI_FORMAT_R32_TYPELESS | DXGI_FORMAT_R32_FLOAT | DXGI_FORMAT_R32_UINT | DXGI_FORMAT_R32_SINT
+        | DXGI_FORMAT_R8G8_TYPELESS | DXGI_FORMAT_R8G8_UNORM | DXGI_FORMAT_R8G8_UINT | DXGI_FORMAT_R8G8_SNORM | DXGI_FORMAT_R8G8_SINT
+        | DXGI_FORMAT_R16_TYPELESS | DXGI_FORMAT_R16_FLOAT | DXGI_FORMAT_R16_UNORM | DXGI_FORMAT_R16_UINT | DXGI_FORMAT_R16_SNORM | DXGI_FORMAT_R16_SINT
+        | DXGI_FORMAT_R8_TYPELESS | DXGI_FORMAT_R8_UNORM | DXGI_FORMAT_R8_UINT | DXGI_FORMAT_R8_SNORM | DXGI_FORMAT_R8_SINT);
+    if typed { flags | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 } else { flags }
+}
+
 /// A console depth-stencil texture may also allow unordered access; the PC
 /// runtime refuses the pair and sizes it UINT64_MAX. format::substitute drops
 /// the bit only for 1D/2D textures in the unknown layout, so a console-tiled
@@ -35,6 +65,7 @@ fn host_description(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
 /// d3d12_xs_desc_clean.h without_depth_stencil_uav, GPL-3.0, credited).
 /// TUXBOX_DS_UAV_DROP=0 keeps the bit as before.
 pub(super) fn without_depth_stencil_uav(desc: &D3D12_RESOURCE_DESC, flags: i32) -> i32 {
+    let flags = with_srv_as_uav(desc, flags);
     if desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER
         && flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 != 0
         && flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 != 0

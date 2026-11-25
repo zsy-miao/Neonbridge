@@ -157,7 +157,7 @@ pub(crate) fn fill_table(
             let uav = uav_desc(&srv)?;
             let flags = unsafe { resource.GetDesc() }.Flags;
             if (flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS).0 == 0 {
-                // Piece 5 gives such a resource a UAV-capable twin.
+                // allocation::with_srv_as_uav adds the flag where the format allows it.
                 note_once(windows::core::Interface::as_raw(&resource) as usize, "has no ALLOW_UNORDERED_ACCESS");
                 return None;
             }
@@ -181,6 +181,6 @@ fn note_once(key: usize, what: &str) {
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
     let seen = seen.get_or_insert_with(Default::default);
     if seen.len() < 256 && seen.insert(key) {
-        crate::diagnostics::log_line(format_args!("srv as uav: resource {key:#x} {what}; its slot is a null UAV until it has a UAV twin"));
+        crate::diagnostics::log_line(format_args!("srv as uav: resource {key:#x} {what}; its slot is a null UAV (format or flags allowed no unordered access at creation)"));
     }
 }
