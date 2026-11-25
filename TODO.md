@@ -49,6 +49,43 @@ Open work. Each item is tested in a run of its own.
   - xshader: xcl 1f8d4be: POPS ROV (operand 239 / hwreg 25 -> RasterizerOrdered PS UAVs).
   - runtime (optional): xcl 79fde18: add compile time to the compute_failure log (device/compute.rs:660).
 
+## Housekeeping
+- Delete `_ref/emu-old` once the audit no longer needs it.
+
+## Port audit findings (each fix gets a run of its own)
+
+### d3d12
+- ref better: b16f2f9 (clip write-watch spans), 689199f (alpha blend factor 19/20; a placeholder pipeline drops draws).
+- f40b107: the table arena never frees (VIctory HostHeap release + c1c3281 scan fix are better).
+- c6c3416: the merge 61c1359 regressed TB_DFDEBUG=0 at 4 sites.
+- five-star b828157 (e1ce01d): release every pending memory wait at each present (79dff41 releases only waits no queued list writes).
+- five-star 226887c (f96284e): trigger on the slot-74 64-bit wait.
+- ab5af3f: snapshot every CBV no title buffer covers.
+- 2e53f61: reopen a closed list with a native Reset.
+- Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
+- Gap cefdfdb: set stencil when part 0 is added, and handle or refuse tags 26/27/28.
+- Sampler decode (views.rs:1346): the mag/min order, aniso rule, compare range and the w[12] bias differ from fxceless sampler.rs:11-48. Verify against live words.
+- Small fixes:
+  - correct the device.rs:627 doc;
+  - map B8G8R8X8_TYPELESS for present;
+  - confirm GTA VI never calls Scarlett slot 59;
+  - 733f135: flush the commit_guard log before exit;
+  - c4f8bd8: the credit should be VIctory 35b054e;
+  - 88dbc97/d97535c: parity-only unless their notices fire.
+
+### xshader
+- five-star b9b57e2 (with the 8c0372e idxen guard).
+- upstream: TuxBox e2860b5/4a518ef (literal samplers), VIctory ffe310e/75677cb.
+- dead/unneeded: src/dxil, 2d36d48 saturate, 692983f, dbd0bcd tb_rndne.
+- minor: 3258c66 denorm, 83f5a3b unaligned, da066d0 clamp/omod, e7f6be4, 078b76a cube, credit fixes.
+
+### runtime/launcher
+- Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
+- leonida 273b3bdf9 (c63e099): also wrap ReadFileEx/ReadFileScatter, and pin before the read.
+- 28e3f08: keep the window's own protection.
+- b69a488: re-evaluate f1b5622 now that the AnyPS5 ban is lifted.
+- Credits: c608da2 should cite ff39277; 04a7bee's rebox figure is 13 GiB; 65fc79e's rebox credit is wrong.
+
 ## Done / not needed
 - ported or not needed (reasons in refwatch-verify-verdicts.md): xcl c7f6933 fb9d059 6c9f947 18423c3 4070ae1 4b0af47 79fde18-partial; VIctory-zhai f07016a 0f11320 7f26331; five-star evict-windows 4fdfaed ff3914e c915760; TuxBox 97b8ad3; X2W 84c66897 (address views read the same memory) da888e46/efe54732/323ccf6f 28337fa6/9a6fd7ff 6d8ab3d3 9d013a48; leonida aa23d709c 22f2a04af/22171d092 545e8d51f f2268abea/255f17001; ScarlettCompat 446b178; ScarlettPort 7581c87; rebox 5d01c25; VItoriaBr c0b60a0.
 - not needed: 0460750, audit found it unneeded.
