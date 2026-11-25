@@ -96,3 +96,34 @@ pub(crate) fn view_state(address: usize, bytes: usize) -> ViewState {
     }
     out
 }
+
+/// Retires the imports over pages xmem saw remapped since the last call
+/// (xmem TuxBoxTakeImportRemaps, five-star-recomp 61c095b): called before an
+/// import or a view lookup by address, outside every provider lock.
+pub(crate) fn follow_remaps() {
+    type Take = unsafe extern "system" fn(*mut [usize; 2], usize) -> usize;
+    static TAKE: std::sync::OnceLock<Option<Take>> = std::sync::OnceLock::new();
+    let Some(take) = *TAKE.get_or_init(|| unsafe {
+        let module = GetModuleHandleW(w!("xmem.dll")).ok()?;
+        GetProcAddress(module, s!("TuxBoxTakeImportRemaps")).map(|f| core::mem::transmute::<_, Take>(f))
+    }) else { return };
+    let mut ranges = [[0usize; 2]; 256];
+    loop {
+        let n = unsafe { take(ranges.as_mut_ptr(), ranges.len()) };
+        // Adjacent pages are retired as one range.
+        let mut run: Option<(usize, usize)> = None;
+        for &[lo, hi] in &ranges[..n] {
+            run = match run {
+                Some((a, b)) if lo == b => Some((a, hi)),
+                Some((a, b)) => { super::retire_imports_over(a as u64, b as u64); Some((lo, hi)) }
+                None => Some((lo, hi)),
+            };
+        }
+        if let Some((a, b)) = run {
+            super::retire_imports_over(a as u64, b as u64);
+        }
+        if n < ranges.len() {
+            break;
+        }
+    }
+}

@@ -1446,7 +1446,8 @@ mod imports {
     /// Every page-table change (CopyPageMappingsBatchX included, which does
     /// not pass through `changed`): the page at `at` held `previous`, now `now`.
     pub(super) fn moved(at: usize, previous: Option<u64>, now: Option<u64>) {
-        if !enabled() || previous == now || !stale::enabled() {
+        let follow = follow_on();
+        if previous == now || !((enabled() && stale::enabled()) || follow) {
             return;
         }
         let range = {
@@ -1459,7 +1460,32 @@ mod imports {
                 ranges.range(..=(at, usize::MAX)).rev().take(64).find(|(k, _)| at < k.1).map(|(k, _)| *k)
             }
         };
-        stale::changed(at, range, previous, now);
+        if follow && range.is_some() {
+            let page = at & !0xffff;
+            let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+            if pending.last() != Some(&(page, page + 0x1_0000)) && pending.len() < 1 << 16 {
+                pending.push((page, page + 0x1_0000));
+            }
+        }
+        if enabled() && stale::enabled() {
+            stale::changed(at, range, previous, now);
+        }
+    }
+
+    /// five-star-recomp 61c095b (GPL-3.0, marquezini): GPU views follow XMem
+    /// remaps. Every map, remap or unmap of a page inside an imported range is
+    /// queued here and the D3D12 provider retires its imports over it before
+    /// its next import or view lookup (TuxBoxTakeImportRemaps), so new views
+    /// open the pages the title maps now; before, only a queue-ordered
+    /// CopyPageMappingsBatchX retired them. Resources made earlier keep their
+    /// frames, the reference's own GPU limit. Queued, not called, so no
+    /// provider lock is taken under the page table's.
+    /// TUXBOX_GPU_FOLLOW_REMAP=0 queues nothing.
+    pub(super) static PENDING: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+    pub(super) fn follow_on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("TUXBOX_GPU_FOLLOW_REMAP").map_or(true, |v| v.trim() != "0"))
     }
 
     /// five-star-recomp fad0b7f (GPL-3.0, StaleGpuPages.cs by marquezini),
@@ -1600,6 +1626,21 @@ mod imports {
 #[unsafe(export_name = "TuxBoxNoteGpuImport")]
 extern "system" fn note_gpu_import(start: usize, bytes: usize, add: i32) {
     imports::note(start, bytes, add != 0);
+}
+
+/// D3D12 provider ABI: moves up to `max` queued remapped page ranges
+/// (start, end pairs) into `out`; returns how many.
+#[unsafe(export_name = "TuxBoxTakeImportRemaps")]
+unsafe extern "system" fn take_import_remaps(out: *mut [usize; 2], max: usize) -> usize {
+    if out.is_null() || max == 0 {
+        return 0;
+    }
+    let mut pending = imports::PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    let n = pending.len().min(max);
+    for (i, (lo, hi)) in pending.drain(..n).enumerate() {
+        unsafe { out.add(i).write([lo, hi]) };
+    }
+    n
 }
 
 #[unsafe(export_name = "TuxBoxWritePhysicalPages")]

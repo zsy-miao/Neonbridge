@@ -308,6 +308,8 @@ pub(super) fn import_buffer_with_heap(
 ) -> windows::core::Result<(ID3D12Resource, Arc<ImportedHeap>)> {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
 
+    // Pages remapped since the last import retire the imports over them first (61c095b).
+    super::title_memory::follow_remaps();
     let granularity = u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT);
     let base = address & !(granularity - 1);
     let offset = address - base;

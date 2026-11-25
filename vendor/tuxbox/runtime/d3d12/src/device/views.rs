@@ -413,6 +413,7 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
     crate::commands::page_mapping::GPU_APERTURE.wait(address,bytes)?;
+    super::title_memory::follow_remaps();
     if let Some(entry) = device.state.texture_addresses.preceding(address as usize)
         // An import whose pages the title remapped since maps the old ones
         // (heap.rs retire_imports_over): a new import replaces it below.
