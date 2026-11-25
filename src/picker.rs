@@ -657,7 +657,7 @@ fn remembered() -> Vec<(String, String)> {
 /// its own, and re-checks the runtimes when it is done.
 fn install_gdk(hwnd: HWND) {
     let text = wide(&format!(
-        "Download the Microsoft PC GDK {} (about 1.4 GB) from github.com/microsoft/GDK into {}?\n\nIt is Microsoft's own release, used only to build Five Star Recomp.",
+        "Download the Microsoft PC GDK {} (about 1.4 GB) from github.com/microsoft/GDK into {} and run its installer?\n\nIt is Microsoft's own signed setup; Windows will ask you to allow it. Five Star Recomp needs it to build.",
         crate::runtimes::GDK_VERSION,
         crate::runtimes::gdk_dir().display()
     ));
@@ -671,7 +671,7 @@ fn install_gdk(hwnd: HWND) {
         let r = crate::runtimes::fetch_gdk();
         let hwnd = h as HWND;
         match r {
-            Ok(()) => message(hwnd, "The PC GDK is installed for Neonbridge.", MB_ICONINFORMATION),
+            Ok(()) => message(hwnd, "The PC GDK is installed.", MB_ICONINFORMATION),
             Err(e) => message(hwnd, &format!("The PC GDK was not installed: {e}"), MB_ICONWARNING),
         }
         // Back on the window's thread: rows are rebuilt by the next refresh.

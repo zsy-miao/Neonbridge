@@ -233,8 +233,8 @@ pub fn missing(name: &str) -> Option<(String, Vec<&'static str>)> {
 }
 
 /// The PC GDK release Neonbridge fetches (with the user's yes) from
-/// github.com/microsoft/GDK into %LOCALAPPDATA%\6ixpack\gdk\<version>, as
-/// it does the Agility SDK. Never committed.
+/// github.com/microsoft/GDK into %LOCALAPPDATA%\6ixpack\gdk\<version> and
+/// installs with its own setup. Never committed.
 pub const GDK_VERSION: &str = "2610.0.9661";
 pub const GDK_URL: &str = "https://github.com/microsoft/GDK/releases/download/October-2026-v2610.0.9661/GDK_2610.0.9661.zip";
 /// The picker's Install... page for it: a confirm-then-download, not a web page.
@@ -244,49 +244,41 @@ pub fn gdk_dir() -> PathBuf {
     crate::data_dir().join("gdk").join(GDK_VERSION)
 }
 
-/// The fetched GDK as (GameDK, GameDKLatest): the folder holding GRDK (the
-/// edition folder, up to three levels in) and its parent, each with the
-/// trailing backslash the GDK's MSBuild props expect.
-pub fn local_gdk() -> Option<(String, String)> {
-    fn find(d: &Path, depth: u32) -> Option<PathBuf> {
-        if d.join("GRDK").is_dir() {
-            return Some(d.to_path_buf());
-        }
-        if depth == 0 {
-            return None;
-        }
-        fs::read_dir(d).ok()?.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).find_map(|e| find(&e.path(), depth - 1))
-    }
-    let latest = find(&gdk_dir(), 3)?;
-    let root = latest.parent()?.to_path_buf();
-    Some((format!("{}\\", root.display()), format!("{}\\", latest.display())))
-}
-
-/// GameDK and GameDKLatest for a GDK-linked tree's build and run, from the
-/// fetched GDK when there is one and the machine sets none.
-fn gdk_env(root: &Path) -> Vec<(String, String)> {
-    if !needs_gdk(root) || std::env::var_os("GameDKLatest").is_some() {
-        return Vec::new();
-    }
-    local_gdk().map(|(dk, latest)| vec![("GameDK".into(), dk), ("GameDKLatest".into(), latest)]).unwrap_or_default()
-}
-
-/// Fetches the GDK release into gdk_dir() (curl, then tar to unpack), for
-/// the picker's Install... after the user said yes. Err is for a person.
+/// Fetches the GDK release into gdk_dir() and starts its installer, for
+/// the picker's Install... after the user said yes. The zip is Microsoft's
+/// signed setup (PGDK.exe, Installers\*.cab, SetupScripts\), not loose
+/// files, so the GDK is installed system-wide: Windows asks the user to
+/// allow PGDK.exe (UAC). Waits for the installer. Err is for a person.
 pub fn fetch_gdk() -> Result<(), String> {
     let dir = gdk_dir();
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let zip = dir.join(format!("GDK_{GDK_VERSION}.zip"));
-    let ok = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
-    if !ok(crate::runtimes::command("curl").args(["-L", "--fail", "-o"]).arg(&zip).arg(GDK_URL)) {
-        return Err(format!("downloading {GDK_URL} failed"));
+    let setup = dir.join("PGDK.exe");
+    if !setup.is_file() {
+        let zip = dir.join(format!("GDK_{GDK_VERSION}.zip"));
+        let ok = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        if !ok(crate::runtimes::command("curl").args(["-L", "--fail", "-o"]).arg(&zip).arg(GDK_URL)) {
+            return Err(format!("downloading {GDK_URL} failed"));
+        }
+        if !ok(crate::runtimes::command("powershell").args(["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:NB_ZIP -DestinationPath $env:NB_DIR -Force"]).env("NB_ZIP", &zip).env("NB_DIR", &dir)) {
+            return Err(format!("unzipping {} failed", zip.display()));
+        }
+        let _ = fs::remove_file(&zip);
+        if !setup.is_file() {
+            return Err(format!("the GDK zip held no PGDK.exe ({})", dir.display()));
+        }
     }
-    if !ok(crate::runtimes::command("tar").arg("-xf").arg(&zip).current_dir(&dir)) {
-        return Err(format!("unpacking {} failed", zip.display()));
+    // Start-Process goes through ShellExecute, so the installer's UAC prompt appears.
+    let started = crate::runtimes::command("powershell")
+        .args(["-NoProfile", "-Command", "Start-Process -FilePath $env:NB_SETUP -WorkingDirectory $env:NB_DIR -Wait"])
+        .env("NB_SETUP", &setup)
+        .env("NB_DIR", &dir)
+        .status()
+        .is_ok_and(|s| s.success());
+    if !started {
+        return Err("the GDK installer did not run (was it allowed?)".into());
     }
-    let _ = fs::remove_file(&zip);
-    if local_gdk().is_none() {
-        return Err(format!("the GDK was unpacked into {} but no GRDK folder was found in it", dir.display()));
+    if !gdk_installed() {
+        return Err("the GDK installer finished, but no Microsoft GDK folder was found under Program Files (x86)".into());
     }
     Ok(())
 }
@@ -299,7 +291,7 @@ fn needs_gdk(root: &Path) -> bool {
 /// The PC GDK is installed: its GameDK / GameDKLatest variables, or its
 /// folder under Program Files (x86).
 fn gdk_installed() -> bool {
-    local_gdk().is_some() || ["GameDKLatest", "GameDK"].iter().filter_map(std::env::var_os).any(|d| Path::new(&d).is_dir())
+    ["GameDKLatest", "GameDK"].iter().filter_map(std::env::var_os).any(|d| Path::new(&d).is_dir())
         || std::env::var_os("ProgramFiles(x86)").is_some_and(|p| Path::new(&p).join("Microsoft GDK").is_dir())
 }
 
@@ -718,7 +710,6 @@ fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>
     if python_build {
         build_env(name, &mut c)?;
     }
-    c.envs(gdk_env(root));
     c.args(&cmd[1..]).current_dir(root).env_remove("CARGO_TARGET_DIR").stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(t) = &target {
         c.env("CARGO_TARGET_DIR", t);
@@ -1576,7 +1567,6 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         // One save folder for the family (mix runs too); a toml or preset may still name another.
         env.push(("VICTORY_DATA_DIR".to_owned(), family_saves().display().to_string()));
     }
-    env.extend(gdk_env(&root));
     env.extend(spec.env.iter().map(|(k, v)| (k.clone(), fill(v, &places))));
     if logging() && !env.iter().any(|(k, _)| k == "RUST_LOG") {
         env.push(("RUST_LOG".to_owned(), "info".to_owned()));
