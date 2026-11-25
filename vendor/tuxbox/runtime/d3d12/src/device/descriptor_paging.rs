@@ -65,6 +65,9 @@ pub(crate) struct Arena {
     stride: usize,
     count: u32,
     limit: u32,
+    /// The shader-visible slot kept null for guest indices with no table
+    /// (see null_tail); None when off or for a sampler heap.
+    null_slot: Option<u32>,
     inline: bool,
     authored: Mutex<BTreeMap<usize, u64>>,
     // Guest ranges can overlap. Keep stable slots for every table that has
@@ -94,6 +97,17 @@ impl Drop for Arena {
         }
     }
 }
+/// Guest heap indices with no table read a null slot: the index map gets
+/// count + 1 entries, every unpublished one and the last (where xshader's
+/// tb_heap_index clamps a stray index, 932afdd) naming a shader-visible slot
+/// kept null, instead of whatever an unwritten map word held. On by default;
+/// TUXBOX_HEAP_NULL_TAIL=0 maps count entries as before.
+pub(super) fn null_tail() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("TUXBOX_HEAP_NULL_TAIL").map_or(true, |v| v.trim() != "0"));
+    *ON
+}
+
 impl Arena {
     pub(super) fn create(
         owner: &super::Device,
@@ -115,10 +129,27 @@ impl Arena {
         if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
             super::null_kinds::fill(device, &staging, desc.NumDescriptors, false);
         }
-        let visible = if desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE {
-            unsafe { device.CreateDescriptorHeap(&gpu)? }
+        let tail = null_tail() && desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+            && desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        let (visible, limit, null_slot) = if !tail {
+            let visible = if desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE {
+                unsafe { device.CreateDescriptorHeap(&gpu)? }
+            } else {
+                staging.clone()
+            };
+            (visible, limit, None)
         } else {
-            staging.clone()
+            // n+1: one slot past the tables, or the last one when the host
+            // refuses a bigger heap (VIctory host.rs:510-590 probes 1,000,001).
+            let wider = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: limit.saturating_add(1), ..gpu };
+            let (visible, usable) = match unsafe { device.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&wider) } {
+                Ok(heap) if limit < u32::MAX => (heap, limit),
+                _ => (unsafe { device.CreateDescriptorHeap(&gpu)? }, limit.saturating_sub(1)),
+            };
+            let start = unsafe { visible.GetCPUDescriptorHandleForHeapStart() };
+            let stride = unsafe { device.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
+            super::null_kinds::NullKind::DEFAULT.write(device, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + usable as usize * stride });
+            (visible, usable, Some(usable))
         };
         let stride = unsafe { device.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
         let bytes = stride
@@ -157,6 +188,7 @@ impl Arena {
             stride,
             count: desc.NumDescriptors,
             limit,
+            null_slot,
             inline: owner.state.device11_queue && stride >= INLINE_BYTES && stride.is_multiple_of(INLINE_BYTES),
             authored: Mutex::default(),
             tables: Mutex::new(Tables::default()),

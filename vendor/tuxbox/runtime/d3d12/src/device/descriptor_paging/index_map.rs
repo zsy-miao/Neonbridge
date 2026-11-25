@@ -14,7 +14,8 @@ struct Upload {
 }
 
 impl Upload {
-    fn new(device: &ID3D12Device, count: u32) -> Result<Self> {
+    /// `fill`: the slot every entry names until it is set (the null tail).
+    fn new(device: &ID3D12Device, count: u32, fill: Option<u32>) -> Result<Self> {
         let native = upload_buffer(device, (1 + u64::from(count)) * 4)?;
         let mut data = std::ptr::null_mut();
         unsafe { native.Map(0, Some(&D3D12_RANGE::default()), Some(&mut data))? };
@@ -25,6 +26,11 @@ impl Upload {
         // entries; the shader clamps indices to count - 1 (xshader 932afdd).
         let header = if count == 0 { 0 } else { 0x8000_0000 | (count & 0x7fff_ffff) };
         unsafe { data.cast::<u32>().write_volatile(header) };
+        if let Some(slot) = fill {
+            for i in 0..count as usize {
+                unsafe { data.cast::<u32>().add(1 + i).write_volatile(slot) };
+            }
+        }
         Ok(Self {
             native,
             address: data.addr(),
@@ -164,7 +170,7 @@ pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Resul
         if let Some(buffer) = identity.as_ref() {
             return Ok(buffer.clone());
         }
-        let buffer = Upload::new(&device.native, 0)?.native.clone();
+        let buffer = Upload::new(&device.native, 0, None)?.native.clone();
         *identity = Some(buffer.clone());
         return Ok(buffer);
     };
@@ -187,8 +193,11 @@ pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Resul
         .try_reserve_exact(arena.count as usize)
         .map_err(|_| E_OUTOFMEMORY)?;
     slots.resize(arena.count as usize, u32::MAX);
+    // With the null tail the map holds one entry past the guest heap, the
+    // null slot, where a stray index clamps.
+    let entries = if arena.null_slot.is_some() { arena.count.saturating_add(1) } else { arena.count };
     let mut resident = Resident {
-        upload: Upload::new(&device.native, arena.count)?,
+        upload: Upload::new(&device.native, entries, arena.null_slot)?,
         slots,
     };
     for (&(first, count), &physical) in ranges.iter() {
