@@ -73,7 +73,17 @@ unsafe extern "system" fn XErrorReport(error: i32, message: *const c_char) -> bo
     }
     let callback = *CALLBACK.lock().unwrap_or_else(|e| e.into_inner());
     match callback {
-        Some((callback, context)) => unsafe { callback(error, message, context as *mut c_void) },
+        // A null message reaches the callback as "" (KestrelX xgameruntime.cpp:291):
+        // a callback that formats it would read address 0.
+        // TUXBOX_XERROR_NULL_MESSAGE=1 passes the null through as before.
+        Some((callback, context)) => {
+            let message = if message.is_null() && !std::env::var("TUXBOX_XERROR_NULL_MESSAGE").is_ok_and(|v| v.trim() == "1") {
+                c"".as_ptr()
+            } else {
+                message
+            };
+            unsafe { callback(error, message, context as *mut c_void) }
+        }
         None => true,
     }
 }
