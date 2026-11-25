@@ -194,13 +194,18 @@ impl TilePool {
             }
             let mut best_fit: Option<(usize, usize)> = None;
             let mut largest: Option<(usize, usize)> = None;
+            // TUXBOX_PAGES_DENSE_FIRST (default on, =0 the heap with the most free
+            // tiles): a texture no heap fits whole fills the densest heap first,
+            // so tiles never spread over the sparsest pools. test173 ended with
+            // 1202 MiB of tiles across 71 pools of 64 MiB, only 5 ever empty.
+            let dense = dense_first();
             for (h, tiles) in candidates() {
                 let len = tiles.len();
                 if len >= rem {
                     if best_fit.is_none_or(|(_, blen)| len < blen) {
                         best_fit = Some((h, len));
                     }
-                } else if largest.is_none_or(|(lh, llen)| len > llen || (len == llen && preferred == Some(h as u32) && preferred != Some(lh as u32))) {
+                } else if largest.is_none_or(|(lh, llen)| if dense { len < llen } else { len > llen } || (len == llen && preferred == Some(h as u32) && preferred != Some(lh as u32))) {
                     largest = Some((h, len));
                 }
             }
@@ -257,6 +262,11 @@ impl TilePool {
         }
         Some(out)
     }
+}
+
+fn dense_first() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_DENSE_FIRST") != Some("0"))
 }
 
 /// The title's pages of video memory for tiled textures (see the module's comment).
