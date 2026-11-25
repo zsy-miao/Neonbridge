@@ -14,6 +14,9 @@ const IMPORTED_HEAP: GUID = GUID::from_u128(0xc2a3c751_1d00_470c_8efd_5da145efd1
 // last native resource releases both the heap reference and the VA pin.
 pub(super) struct ImportedHeap {
     native: ID3D12Heap,
+    /// Heap offset of the title address the import was asked for: 0 for an
+    /// address import, the section offset for a section import (section_heap).
+    origin: u64,
     _pin: ImportPin,
     /// Pages under it were remapped (retire_imports_over): it maps the old ones.
     stale: std::sync::atomic::AtomicBool,
@@ -21,7 +24,7 @@ pub(super) struct ImportedHeap {
 
 impl ImportedHeap {
     fn new(native: ID3D12Heap, pin: ImportPin) -> Self {
-        Self { native, _pin: pin, stale: Default::default() }
+        Self { native, origin: 0, _pin: pin, stale: Default::default() }
     }
 
     /// The title remapped pages under this heap since it was opened.
@@ -359,7 +362,7 @@ pub(super) fn import_buffer_with_heap(
         Arc::new(ImportedHeap::new(native, pin))
     };
     let mut resource = None;
-    unsafe { device.native.CreatePlacedResource(&heap.native, offset, &host_desc, state, None, &mut resource)? };
+    unsafe { device.native.CreatePlacedResource(&heap.native, heap.origin + offset, &host_desc, state, None, &mut resource)? };
     let resource: ID3D12Resource = resource.ok_or(E_POINTER)?;
     // Placed resources borrow their heap. Keep the imported CPU allocation's
     // heap alive through the final native resource reference (including views).
@@ -383,7 +386,7 @@ impl ImportedHeap {
         let stride = u64::from(stride);
         let first = (0..align.min(offset / stride + 1))
             .find(|n| (offset - n * stride).is_multiple_of(align)).ok_or(E_INVALIDARG)?;
-        let start = offset - first * stride;
+        let start = self.origin + offset - first * stride;
         desc.Width = width.checked_add(first * stride).ok_or(E_INVALIDARG)?;
         let info = unsafe { device.GetResourceAllocationInfo(0, &[desc]) };
         if info.Alignment == 0 || !start.is_multiple_of(info.Alignment)
@@ -996,6 +999,9 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     if refused_page(base, size, false) {
         return Err(E_INVALIDARG.into());
     }
+    if let Some(heap) = section_heap(device, base, size, &pin) {
+        return Ok(Arc::new(ImportedHeap { native: heap.0, origin: heap.1, _pin: pin, stale: Default::default() }));
+    }
     {
         let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
         refused.retain(|(.., at)| at.elapsed() < std::time::Duration::from_secs(5));
@@ -1035,6 +1041,57 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
     })?;
     crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, size);
     Ok(Arc::new(ImportedHeap::new(native, pin)))
+}
+
+/// TUXBOX_POOL_SECTION_IMPORT (xmem TuxBoxPageSection, both halves): title
+/// pages of one xmem section at consecutive offsets are opened as that
+/// section's heap (OpenExistingHeapFromFileMapping, once per section) and
+/// the import places at the section offset, as XPortPC era_gpu_alias
+/// open_mapping does (41da567, credited). No view join, so no join_range
+/// unmap and its error 87. A range not one run of one section, or a section
+/// the driver refuses, falls back to the address import. Each section heap
+/// stays open for the process; its size is resident commit (logged).
+fn section_heap(device: &ID3D12Device13, base: u64, size: u64, _pin: &ImportPin) -> Option<(ID3D12Heap, u64)> {
+    type Section = unsafe extern "system" fn(usize, usize, *mut [u64; 4]) -> u32;
+    static SECTION: std::sync::OnceLock<Option<Section>> = std::sync::OnceLock::new();
+    static HEAPS: std::sync::Mutex<Vec<(usize, u64, Option<ID3D12Heap>)>> = std::sync::Mutex::new(Vec::new());
+    static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if crate::env_toggle!("TUXBOX_POOL_SECTION_IMPORT") == Some("0") {
+        return None;
+    }
+    let section = SECTION.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxPageSection")).map(|f| core::mem::transmute::<_, Section>(f))
+    });
+    let section = (*section)?;
+    let mut out = [0u64; 4];
+    if unsafe { section(base as usize, size as usize, &mut out) } != 1 {
+        return None;
+    }
+    let [handle, bytes, offset, run] = out;
+    if handle == 0 || run < size || offset.checked_add(size).is_none_or(|end| end > bytes)
+        || !offset.is_multiple_of(u64::from(D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)) {
+        return None;
+    }
+    let owner = device.as_raw() as usize;
+    let mut heaps = HEAPS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((.., heap)) = heaps.iter().find(|(o, h, _)| *o == owner && *h == handle) {
+        return heap.clone().map(|heap| (heap, offset));
+    }
+    let opened: windows::core::Result<ID3D12Heap> = unsafe {
+        device.OpenExistingHeapFromFileMapping(windows::Win32::Foundation::HANDLE(handle as _))
+    };
+    let heap = opened.inspect_err(|e| import_failure("OpenExistingHeapFromFileMapping", base, bytes, e)).ok();
+    let total = if heap.is_some() { TOTAL.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes } else { TOTAL.load(std::sync::atomic::Ordering::Relaxed) };
+    crate::diagnostics::log_line(format_args!(
+        "section import: section {handle:#x} of {} MiB {} at {base:#x}; {} MiB of section resident in heaps (TUXBOX_POOL_SECTION_IMPORT=0 off)",
+        bytes >> 20, if heap.is_some() { "opened" } else { "refused, address imports" }, total >> 20));
+    if heap.is_some() {
+        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::HeapImport, bytes);
+    }
+    heaps.push((owner, handle, heap.clone()));
+    heap.map(|heap| (heap, offset))
 }
 
 /// Commits the lazy title pages of a range before the driver imports it.
@@ -1116,7 +1173,7 @@ fn tiled_alias(device: &Device, base: u64, host: &D3D12_RESOURCE_DESC) -> window
     for (i, heap) in heaps.iter().enumerate() {
         let start = D3D12_TILED_RESOURCE_COORDINATE { X: i as u32, Y: 0, Z: 0, Subresource: 0 };
         let size = D3D12_TILE_REGION_SIZE { NumTiles: 1, UseBox: false.into(), Width: 1, Height: 1, Depth: 1 };
-        let (offset, count) = (0u32, 1u32);
+        let (offset, count) = ((heap.origin / TILE) as u32, 1u32);
         unsafe { entry.1.UpdateTileMappings(&resource, 1, Some(&start), Some(&size), &heap.native, 1, None, Some(&offset), Some(&count), D3D12_TILE_MAPPING_FLAG_NONE) };
     }
     entry.3 += 1;
