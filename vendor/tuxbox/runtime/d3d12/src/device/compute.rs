@@ -343,6 +343,8 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     if call < 2 {
         unsafe { describe_state_blocks(N, call, desc) };
     }
+    // Decoded depth-stencil, input layout and program heads, once per record (TUXBOX_SLOT57_DSS=0 off).
+    super::slot57::log_record(N, desc);
     if hr.is_err() {
         return hr;
     }
@@ -363,7 +365,7 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
 }
 
 /// Whether [address, address + bytes) is committed readable memory.
-fn readable(address: usize, bytes: usize) -> bool {
+pub(super) fn readable(address: usize, bytes: usize) -> bool {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
     let Some(end) = address.checked_add(bytes) else { return false };
     let mut at = address;
