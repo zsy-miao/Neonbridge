@@ -187,6 +187,32 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
         let _p = branches::Phase::new(branches::IMPORT);
         return root_import(list, state, guest, span);
     }
+    // test154: all binds took the walk below (2 ms each) because the 64 KiB
+    // window ran past the end of the lazy view holding the address, so the
+    // whole-window ask above said "not lazy memory". The walk stops at that
+    // allocation's end anyway (AllocationBase changes): ask for the view
+    // holding the address and, if every page from the address to the
+    // window's end inside that view is known committed, take that span.
+    // TUXBOX_ROOT_VIEW_END=0 walks as before.
+    if crate::env_toggle!("TUXBOX_ROOT_VIEW_END") != Some("0") {
+        let holder = {
+            let _p = branches::Phase::new(branches::STATE);
+            device::view_state(guest as usize, 1)
+        };
+        if holder.one_view() {
+            let end = ((holder.base + holder.size) as u64).min(guest.saturating_add(0x10000));
+            let span = end.saturating_sub(guest).max(1);
+            let inside = {
+                let _p = branches::Phase::new(branches::STATE);
+                device::view_state(guest as usize, span as usize)
+            };
+            if inside.committed() && inside.one_view() {
+                branches::count(branches::KNOWN);
+                let _p = branches::Phase::new(branches::IMPORT);
+                return root_import(list, state, guest, span);
+            }
+        }
+    }
     branches::count(branches::QUERY);
     let query = branches::Phase::new(branches::WALK);
     let mut region = MEMORY_BASIC_INFORMATION::default();
