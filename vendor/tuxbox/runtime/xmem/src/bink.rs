@@ -708,10 +708,36 @@ mod sound {
                 let z = ZERO[i].swap(0, Ordering::Relaxed);
                 (n != 0).then(|| format!("+{:#x} {:.1}/s ({z} returned 0)", FIRST + 8 * i as u64, n as f64 / seconds))
             }).collect();
-            log(&format!("bink: sound last {seconds:.1} s: {}; {:.0} bytes/s committed, longest gap between commits {:.0} ms",
-                slots.join(", "), BYTES.swap(0, Ordering::Relaxed) as f64 / seconds, MAX_GAP_US.swap(0, Ordering::Relaxed) as f64 / 1e3));
+            log(&format!("bink: sound last {seconds:.1} s: {}; {:.0} bytes/s committed, longest gap between commits {:.0} ms; {}",
+                slots.join(", "), BYTES.swap(0, Ordering::Relaxed) as f64 / seconds, MAX_GAP_US.swap(0, Ordering::Relaxed) as f64 / 1e3,
+                unsafe { consumer(snd) }));
         }
         result
+    }
+
+    /// The title's side of the stream: Ready (+0x170, game+0x20eeb40) says
+    /// free = queue [+0xc] - the head entry's size, queue = [snd+0x6c]
+    /// (entries [+0x38], 16 bytes, count [+0x34]); the open registers the
+    /// stream [snd+0x74] in the 8-slot table at game+0x9dc6320 (0x18 apart),
+    /// which the mixer callback game+0x9efd90 looks up (0xa104b0) and drains
+    /// only while the byte at game+0x9dd6ee8 is set.
+    unsafe fn consumer(snd: u64) -> String {
+        if snd == 0 {
+            return String::new();
+        }
+        let game = unsafe { windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(core::ptr::null()) } as u64;
+        let r64 = |a: u64| unsafe { (a as *const u64).read_unaligned() };
+        let r32 = |a: u64| unsafe { (a as *const u32).read_unaligned() };
+        let queue = r64(snd + 0x6c);
+        let stream = r64(snd + 0x74);
+        let q = if queue == 0 { "queue 0".to_string() } else {
+            let count = r32(queue + 0x34);
+            let entries = r64(queue + 0x38);
+            let head = if count != 0 && entries != 0 { r32(entries + 8) } else { 0 };
+            format!("queue {queue:#x} capacity {} entries {count} head {head} bytes", r32(queue + 0xc))
+        };
+        let table: Vec<String> = (0..8).map(|i| format!("{:#x}", r64(game + 0x9dc_6320 + 0x18 * i))).collect();
+        format!("{q}; stream {stream:#x}, mixer table {}, mixer gate byte {}", table.join(" "), unsafe { *((game + 0x9dd_6ee8) as *const u8) })
     }
 
     macro_rules! slot {
