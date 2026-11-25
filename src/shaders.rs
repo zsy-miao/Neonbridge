@@ -38,8 +38,11 @@ pub static PREWARM_ONLY: AtomicBool = AtomicBool::new(false);
 /// again, so every prewarm repeated them. The -O0 DXIL is reused and the
 /// background upgrade queue (dxil_upgrade.rs, 900 s at idle priority) makes it -O1.
 /// xshader TB_DENORM_FTZ marker: the program wants `-denorm ftz`.
-pub(crate) fn denorm_ftz_marked(hlsl: &Path) -> bool {
-    fs::read(hlsl).is_ok_and(|b| b.windows(16).any(|w| w == b"// tb:denorm-ftz"))
+/// `-denorm` needs shader model 6.2 or later; an older profile keeps the software flushes'
+/// absence unflushed, so xshader only marks programs it compiles at 6.2+ (and this checks).
+pub(crate) fn denorm_ftz_marked(hlsl: &Path, target: &str) -> bool {
+    target.rsplit('_').next().and_then(|m| m.parse::<u32>().ok()).is_some_and(|m| m >= 2)
+        && fs::read(hlsl).is_ok_and(|b| b.windows(16).any(|w| w == b"// tb:denorm-ftz"))
 }
 
 fn upgrading() -> bool {
@@ -957,7 +960,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             }
             // xshader TB_DENORM_FTZ: a constant-flush-mode program asks for hardware
             // f32 denormal flushing (its tb_ftz is the identity).
-            if denorm_ftz_marked(&hlsl) {
+            if denorm_ftz_marked(&hlsl, &target) {
                 dxc.args(["-denorm", "ftz"]);
             }
             // In-process (src/dxc.rs): the same arguments without the file

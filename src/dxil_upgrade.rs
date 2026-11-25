@@ -111,7 +111,7 @@ fn upgrade(dxc: &Path, defines: &[String], job: &Path, secs: u64) -> Result<(), 
     if target != "lib_6_3" {
         args.extend(["-E".to_owned(), "main".to_owned()]);
     }
-    if crate::shaders::denorm_ftz_marked(&source) {
+    if crate::shaders::denorm_ftz_marked(&source, &target) {
         args.extend(["-denorm".to_owned(), "ftz".to_owned()]);
     }
     let bytes = if crate::dxc::enabled() {

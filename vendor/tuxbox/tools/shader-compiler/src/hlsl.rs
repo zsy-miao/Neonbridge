@@ -3685,6 +3685,13 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     } else {
         profile
     };
+    // TB_DENORM_FTZ: `-denorm ftz` needs shader model 6.2+; an older profile keeps the
+    // software flush.
+    let profile_minor = profile.rsplit('_').next().and_then(|m| m.parse::<u32>().ok()).unwrap_or(0);
+    if !profile.contains("_6_") || profile_minor < 2 {
+        hlsl = hlsl.replace("float tb_ftz(float x) { return x; } // tb:denorm-ftz",
+            "float tb_ftz(float x) { return ((asuint(x) & 0x7f800000u) == 0u) ? asfloat(asuint(x) & 0x80000000u) : x; }");
+    }
     Ok(Translated {
         hlsl,
         entry: "main",
@@ -6883,7 +6890,7 @@ impl<'a> Emitter<'a> {
         if denorm_ftz() && big && !self.regs.contains("tb_fp_mode") {
             h.push_str(&HALF_HELPERS.replace(
                 "float tb_ftz(float x) { return ((asuint(x) & 0x7f800000u) == 0u) ? asfloat(asuint(x) & 0x80000000u) : x; }",
-                "// tb:denorm-ftz\nfloat tb_ftz(float x) { return x; }"));
+                "float tb_ftz(float x) { return x; } // tb:denorm-ftz"));
         } else {
             h.push_str(HALF_HELPERS);
         }
