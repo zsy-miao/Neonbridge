@@ -772,7 +772,11 @@ impl Worker {
                             }
                             std::thread::sleep(Duration::from_millis(1));
                         }
-                        if !released && was_dead {
+                        // five-star ad07dd9 (GPL-3.0, marquezini): an address that
+                        // timed out is not waited on in full again, for good.
+                        // TUXBOX_WAIT_DEAD_STICKY=0 forgets it once a wait on it
+                        // completes on its own, as before.
+                        if !released && was_dead && crate::env_toggle!("TUXBOX_WAIT_DEAD_STICKY") == Some("0") {
                             mark_dead(job.segment.address, false);
                         }
                         slow::memory_wait(job.segment.address, job.segment.target, job.queue, started.elapsed());
