@@ -16,9 +16,10 @@
 //! authors): the title ends itself when its heartbeat is unchanged for 30 s
 //! (the branch at +0x2215c70, `74 04`) or an in-flight timestamp is too old
 //! (+0x2215bdc, `73 2e`). Slow first pipeline builds can trip it after a
-//! load. A DIAGNOSTIC, off by default: TUXBOX_NO_WATCHDOG=1 turns both
-//! branches into NOPs, so an A/B run shows whether a post-load exit or stall
-//! is this watchdog. The cause it masks is the slow builds themselves.
+//! load. On by default (user order: fixes ship default-on): both branches
+//! become NOPs; TUXBOX_NO_WATCHDOG=0 keeps the watchdog, so an A/B run shows
+//! whether a post-load exit or stall is it. The cause it masks is the slow
+//! builds themselves.
 //!
 //! Format 0x0a pitch (leonida-ce e8ca18c79, GPL-3.0, credit to its authors):
 //! the title's pitch function at +0x1555c10 handles format & 0xfff values 1-4,
@@ -80,9 +81,9 @@ pub(crate) unsafe fn install() {
     if std::env::var_os("TUXBOX_FMT10_PITCH").is_none_or(|v| v != "0") {
         unsafe { fmt10_pitch() };
     }
-    if std::env::var_os("TUXBOX_NO_WATCHDOG").is_some_and(|v| v == "1") {
+    if std::env::var_os("TUXBOX_NO_WATCHDOG").is_none_or(|v| v != "0") {
         for (rva, expect) in [(0x221_5c70usize, [0x74u8, 0x04]), (0x221_5bdc, [0x73, 0x2e])] {
-            unsafe { patch("stall watchdog off (ScarlettPort bb3a27a, TUXBOX_NO_WATCHDOG=1 diagnostic)", rva, &expect, &[0x90, 0x90]) };
+            unsafe { patch("stall watchdog off (ScarlettPort bb3a27a, TUXBOX_NO_WATCHDOG=0 off)", rva, &expect, &[0x90, 0x90]) };
         }
         // The fault itself (VIctory hooks.rs WATCHDOG, via ScarlettPort,
         // GPL-3.0, credit to its authors): test145 died on the handler's
@@ -91,9 +92,9 @@ pub(crate) unsafe fn install() {
         // the handler call and its fallback `mov [0], 0; int3` to the loop's
         // normal path, and the handler's store becomes an 11-byte NOP.
         unsafe {
-            patch("watchdog call skipped (VIctory hooks.rs, TUXBOX_NO_WATCHDOG=1 diagnostic)", 0x221_5c27,
+            patch("watchdog call skipped (VIctory hooks.rs, TUXBOX_NO_WATCHDOG=0 off)", 0x221_5c27,
                 &[0x48, 0x8b, 0x05, 0x1a, 0x07, 0xfa, 0x04], &[0xeb, 0x18, 0x90, 0x90, 0x90, 0x90, 0x90]);
-            patch("watchdog fault NOP (VIctory hooks.rs, TUXBOX_NO_WATCHDOG=1 diagnostic)", 0x23c_f683,
+            patch("watchdog fault NOP (VIctory hooks.rs, TUXBOX_NO_WATCHDOG=0 off)", 0x23c_f683,
                 &[0xc7, 0x04, 0x25, 0, 0, 0, 0, 0x21, 0xd4, 0x8b, 0x4d], &[0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0, 0, 0, 0, 0]);
         }
     }
