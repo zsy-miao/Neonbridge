@@ -1447,7 +1447,14 @@ pub(super) unsafe extern "system" fn sampler_x(
     if TRACED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
         crate::diagnostics::log_line(format_args!("device slot 61 sampler words {w:08x?}"));
     }
-    let comparison = w[16] != D3D12_COMPARISON_FUNC_NEVER.0 as u32 && w[16] != 0;
+    // TUXBOX_SAMPLER_DECODE=fxceless reads w[1] as mag and w[2] as min, with
+    // 0 point, 1 bilinear, 2/3 anisotropic; compares only for 2..=7; a min/max
+    // mode beats comparison; the bias is w[11] alone; a non-anisotropic
+    // sampler gets MaxAnisotropy 1 (VIctory-fxceless victory-gpu sampler.rs
+    // 11-92, matching VIctory victory-shader emit/sampler.rs:55-62). Default
+    // (unset or victory) keeps the decode below.
+    let fx = crate::env_toggle!("TUXBOX_SAMPLER_DECODE") == Some("fxceless");
+    let comparison = if fx { (2..=7).contains(&w[16]) && w[5] == 0 } else { w[16] != D3D12_COMPARISON_FUNC_NEVER.0 as u32 && w[16] != 0 };
     // Unknown reductions and filters fall back to standard / linear (logged
     // once each) instead of stopping the title; TUXBOX_UNMAPPED=failfast stops.
     let unknown = |what: &str, value: u32, fallback: i32| -> i32 {
@@ -1466,7 +1473,10 @@ pub(super) unsafe extern "system" fn sampler_x(
     let linear = |filter: u32| match filter { 0 | 1 => 0, 2 | 3 => 1, other => unknown("filter", other, 1) };
     // An anisotropic sampler keeps its mip filter: 0x54 with a point mip
     // (VIctory 170ab23); features::host_filter falls back to 0x55.
-    let bits = if w[1] == 3 && w[2] == 3 { 0x54 | linear(w[3]) } else {
+    let bits = if fx {
+        let (mag, min, mip) = (w[1], w[2], w[3]);
+        if mag >= 2 || min >= 2 { 0x54 | u32::from(mip == 2) as i32 } else { ((min & 1) << 4 | (mag & 1) << 2) as i32 | i32::from(mip == 2) }
+    } else if w[1] == 3 && w[2] == 3 { 0x54 | linear(w[3]) } else {
         linear(w[1]) << 4 | linear(w[2]) << 2 | linear(w[3])
     };
     let host = D3D12_SAMPLER_DESC {
@@ -1475,8 +1485,8 @@ pub(super) unsafe extern "system" fn sampler_x(
         AddressV: D3D12_TEXTURE_ADDRESS_MODE(w[7] as _),
         AddressW: D3D12_TEXTURE_ADDRESS_MODE(w[8] as _),
         MinLOD: f32::from_bits(w[9]), MaxLOD: f32::from_bits(w[10]),
-        MipLODBias: f32::from_bits(w[11]) + f32::from_bits(w[12]),
-        MaxAnisotropy: w[13].clamp(1, 16),
+        MipLODBias: if fx { f32::from_bits(w[11]) } else { f32::from_bits(w[11]) + f32::from_bits(w[12]) },
+        MaxAnisotropy: if fx && bits & 0x54 != 0x54 { 1 } else { w[13].clamp(1, 16) },
         ComparisonFunc: D3D12_COMPARISON_FUNC(w[16] as _),
         BorderColor: [w[17], w[18], w[19], w[20]].map(f32::from_bits),
     };
