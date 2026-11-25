@@ -374,6 +374,9 @@ fn load_or_make(
     // Drivers that compile inside the call can recurse deeply (Proton).
     // five-star afdd699: the driver compile waits for the memory it may take.
     let make = || {
+        if super::stream::background::skip_heavy_on_title(shader_bytes) {
+            return Err(windows::Win32::Foundation::E_ABORT.into());
+        }
         let _admitted = super::compile_budget::enter(shader_bytes);
         let _measured = super::compile_budget::measure(shader_bytes);
         if shader_bytes >= 256 << 10 && crate::big_stack::lane_enabled() {

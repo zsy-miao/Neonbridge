@@ -54,6 +54,9 @@ pub(crate) struct Upgrade {
     wanted: std::sync::atomic::AtomicBool,
     /// A compute pipeline (set when its job is made; see `compute_waits`).
     compute: std::sync::atomic::AtomicBool,
+    /// Its driver compile is large (see `skip_heavy_on_title`): no title
+    /// thread waits for it.
+    heavy: std::sync::atomic::AtomicBool,
 }
 
 // SAFETY: D3D12 objects are free-threaded. The built state is published once
@@ -206,7 +209,7 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::PipelineWait);
     let (lock, done) = &DONE;
     let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
-    while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) {
+    while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) && !heavy_skip(slot) {
         let step = std::time::Duration::from_millis(5);
         if !crate::device::shader_cache::spend_wait(step) {
             break;
@@ -232,6 +235,9 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
     // the first-use bucket or the bind's limit ran out, and a dispatch the
     // title needs (one that writes a counter or a label) left it waiting
     // for work that never ran. TUXBOX_COMPUTE_WAIT_BUILD=0 keeps the limit.
+    if heavy_skip(slot) {
+        return None;
+    }
     if compute_waits() && slot.compute.load(Ordering::Acquire) {
         static N: AtomicU64 = AtomicU64::new(0);
         let started = std::time::Instant::now();
@@ -282,7 +288,7 @@ fn wait_granted(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Option<&Buil
     }
     let (lock, done) = &DONE;
     let mut held = lock.lock().unwrap_or_else(|e| e.into_inner());
-    while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) {
+    while slot.built.get().is_none() && !slot.failed.load(Ordering::Relaxed) && !heavy_skip(slot) {
         let now = std::time::Instant::now();
         if now >= deadline {
             break;
@@ -388,11 +394,73 @@ mod first_use {
     }
 }
 
+thread_local! {
+    /// This thread makes a pipeline at a title thread's bind (`inline`).
+    static TITLE_BUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// skip_heavy_on_title turned this thread's build away.
+    static HEAVY_SKIPPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn heavy_on() -> bool {
+    crate::env_toggle!("TUXBOX_BIND_SKIP_HEAVY") != Some("0")
+}
+
+/// A title thread never waits for a large driver compile. test177 hung at
+/// 409.8 s: the Subrender worker running group 2 made a pipeline at its bind
+/// (big_stack::run on its own thread), and that build waited on the one
+/// large-compile lane (big_stack::run_on_lane) and the compile budget's commit
+/// floor behind driver compiles this log measured at 89, 157 and 192 s each;
+/// all five workers sat in d3d12_xs, group 2's event was never set and the
+/// render waited at game+0x43c3d5d until the run was killed. A build on a
+/// title thread at a bind (inline, or a steal) of TINY_SHADER_BYTES (256
+/// KiB) of DXIL or more is not started: the bind skips its draws or
+/// dispatches as for a pipeline not yet made, the job goes to the workers,
+/// and a later bind finds it made. Binds stop waiting on such a pipeline once
+/// a worker reaches its compile. TUXBOX_BIND_SKIP_HEAVY=0 waits as before.
+pub(in crate::device) fn skip_heavy_on_title(shader_bytes: u64) -> bool {
+    if shader_bytes < 256 << 10 || !heavy_on() {
+        return false;
+    }
+    if let Some(slot) = CURRENT.with(|c| c.borrow().clone()) {
+        slot.heavy.store(true, Ordering::Release);
+        DONE.1.notify_all();
+    }
+    let title = TITLE_BUILD.with(|t| t.get()) || STEALING.with(|s| s.get());
+    if !title {
+        return false;
+    }
+    HEAVY_SKIPPED.with(|h| h.set(true));
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "background pipelines: a bind-time build of {} KiB of DXIL on a title thread not started, sent to the workers; its binds skip until made ({n} so far; TUXBOX_BIND_SKIP_HEAVY=0 waits)",
+            shader_bytes >> 10));
+    }
+    true
+}
+
+/// A title wait on `slot` gives up: its compile is large.
+fn heavy_skip(slot: &Upgrade) -> bool {
+    if !slot.heavy.load(Ordering::Acquire) || !heavy_on() || on_worker() {
+        return false;
+    }
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "background pipelines: a bind did not wait for a pipeline with a large driver compile ({n} such skips so far; TUXBOX_BIND_SKIP_HEAVY=0 waits)"));
+    }
+    true
+}
+
 fn inline(mut job: Job) {
     static INLINE: AtomicU64 = AtomicU64::new(0);
     static REQUEUED: AtomicU64 = AtomicU64::new(0);
     let made = crate::big_stack::run(|| {
         WORKER.with(|w| w.set(true));
+        TITLE_BUILD.with(|t| t.set(true));
+        CURRENT.with(|c| *c.borrow_mut() = Some(job.slot.clone()));
         NULLED.with(|n| n.set(false));
         // SAFETY: a device proxy begins with its IUnknown identity, retained by the job.
         let device = unsafe { &*job.device.as_raw().cast::<Device>() };
@@ -402,6 +470,9 @@ fn inline(mut job: Job) {
         let desc = compute.desc();
         let status = unsafe { create_pipeline_x(device, &desc, 0, ptr::null(), &iid, &mut out) };
         WORKER.with(|w| w.set(false));
+        TITLE_BUILD.with(|t| t.set(false));
+        CURRENT.with(|c| *c.borrow_mut() = None);
+        HEAVY_SKIPPED.with(|h| h.set(false));
         let nulled = NULLED.with(|n| n.replace(false));
         let made = (status.is_ok() && !out.is_null()).then(|| unsafe { IUnknown::from_raw(out) });
         made.filter(|_| !nulled)
@@ -1382,6 +1453,16 @@ fn build(mut job: Job) {
                 // Its translation is still being made: the compile pool waits
                 // for it, and this worker goes on to pipelines that are ready.
                 hand_off(job, prefetch);
+                return;
+            }
+            _ if STEALING.with(|s| s.get()) && HEAVY_SKIPPED.with(|h| h.replace(false)) => {
+                // A large compile this title thread would have waited minutes
+                // for (skip_heavy_on_title): to the workers, first in line.
+                let (lock, ready) = &JOBS;
+                let mut g = lock.lock().unwrap_or_else(|e| e.into_inner());
+                g.get_or_insert_with(Default::default).bound.push_front(job);
+                drop(g);
+                ready.notify_one();
                 return;
             }
             _ if STEALING.with(|s| s.get()) && crate::device::shader_cache::take_missed() => {
