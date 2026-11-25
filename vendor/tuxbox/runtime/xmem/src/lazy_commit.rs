@@ -162,7 +162,21 @@ unsafe fn commit_page(page: usize) -> bool {
     if m.State != MEM_RESERVE || m.Type != MEM_MAPPED || !in_views(page) {
         return false;
     }
-    !unsafe { VirtualAlloc(page as *const c_void, PAGE, MEM_COMMIT, PAGE_READWRITE) }.is_null()
+    if !unsafe { VirtualAlloc(page as *const c_void, PAGE, MEM_COMMIT, PAGE_READWRITE) }.is_null() {
+        return true;
+    }
+    // The handler then passes the fault on and the title dies of an access
+    // violation with nothing said: commit exhausted is the usual cause
+    // (memory atlas gap 2; VIctory xmem.rs:841-883 logs it, GPL-3.0, credit
+    // to its authors).
+    static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::loader::log(&format!(
+            "lazy commit: the title page {page:#x} could not be committed on first use ({}); the access faults ({n} so far)",
+            std::io::Error::last_os_error()));
+    }
+    false
 }
 
 unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
