@@ -486,6 +486,10 @@ unsafe extern "system" fn spatial_activate(client: *mut c_void, params: *const c
         ORIGINAL_END.store(unsafe { *table.add(9) }, Ordering::Relaxed);
         let _ = unsafe { patch(table, 8, spatial_begin as *const () as usize) };
         let _ = unsafe { patch(table, 9, spatial_end as *const () as usize) };
+        if level::on() {
+            level::ORIGINAL_ACTIVATE_OBJECT.store(unsafe { *table.add(10) }, Ordering::Relaxed);
+            let _ = unsafe { patch(table, 10, level::activate_object as *const () as usize) };
+        }
     }
     super::log_line(format_args!("audio endpoint: ActivateSpatialAudioStream {detail} -> {:#x}; callers {}", hr.0, callers()));
     hr
@@ -509,6 +513,7 @@ unsafe extern "system" fn spatial_begin(stream: *mut c_void, available: *mut u32
     s.frames = per;
     s.failed += u32::from(hr.is_err());
     s.begin_at = Some(now);
+    level::begin();
     let thread = thread_id();
     if !s.threads.contains(&thread) && s.threads.len() < 4 {
         s.threads.push(thread);
@@ -519,6 +524,9 @@ unsafe extern "system" fn spatial_begin(stream: *mut c_void, available: *mut u32
             "spatial audio last {seconds:.1} s: {} Begin ({:.0}/s, expected {:.0}/s for {} frames per period), {} late (gap over 1.5 periods), longest gap {:.1} ms, Begin..End held {:.2} ms mean / {:.1} ms max, {} failed; threads {:?}",
             s.begins, f64::from(s.begins) / seconds, 1000.0 / period_ms, per, s.late, s.longest_gap_ms,
             s.hold_ms / f64::from(s.begins.max(1)), s.longest_hold_ms, s.failed, s.threads));
+        if let Some(line) = level::report() {
+            super::log_line(format_args!("{line}"));
+        }
         *s = Spatial { started: Some(now), last_begin: Some(now), begin_at: Some(now), ..Default::default() };
     }
     hr
@@ -536,5 +544,119 @@ unsafe extern "system" fn spatial_end(stream: *mut c_void) -> windows::core::HRE
             s.longest_hold_ms = s.longest_hold_ms.max(held);
         }
     }
+    level::end();
     unsafe { std::mem::transmute::<usize, F>(ORIGINAL_END.load(Ordering::Relaxed))(stream) }
+}
+
+/// What the title writes into its spatial audio objects: each object's
+/// GetBuffer (ISpatialAudioObjectBase slot 3) is noted between Begin and End
+/// and its float samples scanned at End; SetVolume (slot 8) is kept. The
+/// 10 s line gives the peak, the periods with any sample over -60 dB and the
+/// volumes, so "data flows but nothing is heard" shows whether the title
+/// wrote silence or muted the object. TUXBOX_SPATIAL_LEVEL=0 off.
+mod level {
+    use super::*;
+
+    pub(super) static ORIGINAL_ACTIVATE_OBJECT: AtomicUsize = AtomicUsize::new(0);
+    static ORIGINAL_GET_BUFFER: AtomicUsize = AtomicUsize::new(0);
+    static ORIGINAL_SET_VOLUME: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Default)]
+    struct Level {
+        buffers: Vec<(usize, u32)>,
+        periods: u32,
+        loud: u32,
+        peak: f32,
+        objects: u32,
+        volumes: Vec<(usize, f32)>,
+    }
+    static LEVEL: Mutex<Option<Level>> = Mutex::new(None);
+
+    pub(super) fn on() -> bool {
+        crate::env_toggle!("TUXBOX_SPATIAL_LEVEL") != Some("0")
+    }
+
+    pub(super) unsafe extern "system" fn activate_object(stream: *mut c_void, kind: u32, out: *mut *mut c_void) -> windows::core::HRESULT {
+        type F = unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> windows::core::HRESULT;
+        let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_ACTIVATE_OBJECT.load(Ordering::Relaxed))(stream, kind, out) };
+        if hr.is_ok() && !out.is_null() && unsafe { !(*out).is_null() } {
+            LEVEL.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Level::default).objects += 1;
+            if ORIGINAL_GET_BUFFER.load(Ordering::Relaxed) == 0 {
+                let table = unsafe { *(*out).cast::<*mut usize>() };
+                ORIGINAL_GET_BUFFER.store(unsafe { *table.add(3) }, Ordering::Relaxed);
+                ORIGINAL_SET_VOLUME.store(unsafe { *table.add(8) }, Ordering::Relaxed);
+                let _ = unsafe { patch(table, 3, get_buffer as *const () as usize) };
+                let _ = unsafe { patch(table, 8, set_volume as *const () as usize) };
+            }
+        }
+        super::super::log_line(format_args!("audio endpoint: spatial object type {kind:#x} activated -> {:#x} (TUXBOX_SPATIAL_LEVEL=0 off)", hr.0));
+        hr
+    }
+
+    unsafe extern "system" fn get_buffer(object: *mut c_void, buffer: *mut *mut u8, bytes: *mut u32) -> windows::core::HRESULT {
+        type F = unsafe extern "system" fn(*mut c_void, *mut *mut u8, *mut u32) -> windows::core::HRESULT;
+        let hr = unsafe { std::mem::transmute::<usize, F>(ORIGINAL_GET_BUFFER.load(Ordering::Relaxed))(object, buffer, bytes) };
+        if hr.is_ok() && !buffer.is_null() && !bytes.is_null() && unsafe { !(*buffer).is_null() } {
+            let mut guard = LEVEL.lock().unwrap_or_else(|e| e.into_inner());
+            let l = guard.get_or_insert_with(Level::default);
+            if l.buffers.len() < 16 {
+                l.buffers.push((unsafe { *buffer } as usize, unsafe { *bytes }));
+            }
+        }
+        hr
+    }
+
+    unsafe extern "system" fn set_volume(object: *mut c_void, volume: f32) -> windows::core::HRESULT {
+        type F = unsafe extern "system" fn(*mut c_void, f32) -> windows::core::HRESULT;
+        {
+            let mut guard = LEVEL.lock().unwrap_or_else(|e| e.into_inner());
+            let l = guard.get_or_insert_with(Level::default);
+            match l.volumes.iter().position(|(o, _)| *o == object as usize) {
+                Some(i) => l.volumes[i].1 = volume,
+                None if l.volumes.len() < 8 => l.volumes.push((object as usize, volume)),
+                None => {}
+            }
+        }
+        unsafe { std::mem::transmute::<usize, F>(ORIGINAL_SET_VOLUME.load(Ordering::Relaxed))(object, volume) }
+    }
+
+    pub(super) fn begin() {
+        if let Some(l) = LEVEL.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            l.buffers.clear();
+        }
+    }
+
+    /// Scans the buffers written this period (float32, as the stream's format).
+    pub(super) fn end() {
+        let mut guard = LEVEL.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(l) = guard.as_mut() else { return };
+        if l.buffers.is_empty() {
+            return;
+        }
+        let mut peak = 0f32;
+        for &(at, bytes) in &l.buffers {
+            let samples = unsafe { std::slice::from_raw_parts(at as *const f32, bytes as usize / 4) };
+            for &v in samples {
+                if v.is_finite() {
+                    peak = peak.max(v.abs());
+                }
+            }
+        }
+        l.buffers.clear();
+        l.periods += 1;
+        l.loud += u32::from(peak > 0.001);
+        l.peak = l.peak.max(peak);
+    }
+
+    pub(super) fn report() -> Option<String> {
+        let mut guard = LEVEL.lock().unwrap_or_else(|e| e.into_inner());
+        let l = guard.as_mut()?;
+        let volumes: Vec<String> = l.volumes.iter().map(|(_, v)| format!("{v:.2}")).collect();
+        let line = format!("spatial audio level: {} objects activated, {} periods written, {} with a sample over -60 dB, peak {:.4}; object volumes [{}] (none set: 1.0)",
+            l.objects, l.periods, l.loud, l.peak, volumes.join(", "));
+        l.periods = 0;
+        l.loud = 0;
+        l.peak = 0.0;
+        Some(line)
+    }
 }
