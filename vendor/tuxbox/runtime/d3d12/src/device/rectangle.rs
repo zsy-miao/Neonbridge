@@ -60,17 +60,42 @@ fn source(vertex: &[u8], primitive_id: bool) -> Result<String> {
         writeln!(hlsl, "{interpolation}{ty}{width} v{i}: {}{};", el.name, el.index).unwrap();
     }
     let position = position.ok_or(E_NOTIMPL)?;
+    // VIctory-zhai a64b6c6 (GPL-3.0, credit to its authors): channels the
+    // vertex shader never writes (OSG1 NeverWrites, `rw_mask` here) stay
+    // unread and unwritten in the geometry shader. Copying whole fields set
+    // GS.ISG1 read bits VS.OSG1 marks never-written, and
+    // CreateGraphicsPipelineState refused the rectangle pipeline
+    // (E_INVALIDARG). TUXBOX_RECT_UNWRITTEN=0 copies every declared channel.
+    let honour = crate::env_toggle!("TUXBOX_RECT_UNWRITTEN") != Some("0");
+    let written: Vec<u8> = elements.iter().map(|el| if honour { el.mask & !el.rw_mask & 15 } else { el.mask }).collect();
+    if written.iter().all(|&w| w == 0) || written[position] != 15 {
+        return Err(E_NOTIMPL.into());
+    }
+    // The written channels of element `i`, as field components.
+    let channels = |i: usize| {
+        let (mask, low) = (written[i], elements[i].mask.trailing_zeros());
+        (0..4u32).filter(move |bit| mask >> bit & 1 != 0).map(move |bit| ["x", "y", "z", "w"][(bit - low) as usize])
+    };
     hlsl.push_str("};\n");
+    hlsl.push_str("Vertex pass(Vertex v) { Vertex r;\n");
+    for i in 0..elements.len() {
+        for c in channels(i) {
+            writeln!(hlsl, "r.v{i}.{c}=v.v{i}.{c};").unwrap();
+        }
+    }
+    hlsl.push_str("return r; }\n");
     writeln!(hlsl, "#define POSITION_FIELD v{position}").unwrap();
     if primitive_id {
         hlsl.push_str("#define PIXEL_PRIMITIVE_ID\n");
     }
     hlsl.push_str(
-        "Vertex missing_corner(Vertex prev, Vertex corner, Vertex next) { Vertex result=corner;\n",
+        "Vertex missing_corner(Vertex prev, Vertex corner, Vertex next) { Vertex result=pass(corner);\n",
     );
     for (i, el) in elements.iter().enumerate() {
         if el.comp_type == 3 {
-            writeln!(hlsl, "result.v{i}=prev.v{i}+next.v{i}-corner.v{i};").unwrap();
+            for c in channels(i) {
+                writeln!(hlsl, "result.v{i}.{c}=prev.v{i}.{c}+next.v{i}.{c}-corner.v{i}.{c};").unwrap();
+            }
         }
     }
     hlsl.push_str("return result; }\n");

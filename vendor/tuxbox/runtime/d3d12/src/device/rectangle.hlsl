@@ -7,14 +7,14 @@ struct Output {
 };
 Output raster_vertex(Vertex vertex, uint primitive_id) {
     Output result;
-    result.vertex = vertex;
+    result.vertex = pass(vertex);
     result.primitive_id = primitive_id;
     return result;
 }
 #else
 #define Output Vertex
 Vertex raster_vertex(Vertex vertex, uint primitive_id) {
-    return vertex;
+    return pass(vertex);
 }
 #endif
 
