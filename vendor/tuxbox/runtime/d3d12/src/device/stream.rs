@@ -792,20 +792,37 @@ unsafe fn create(
     });
     // Pixel inputs come from the last active raster stage. Geometry outputs
     // take precedence over vertex outputs, even in a stream that has both.
-    let producer = if fields[4].is_some() { 4 } else { 0 };
-    let direct = fields[5..].iter().all(Option::is_none)
-        && (producer == 4 || fields[2..4].iter().all(Option::is_none));
+    // A mesh producer links too (five-star-recomp ddcaa54 and 1236bfa,
+    // GPL-3.0, with credit: refused G-buffer mesh pipelines). xshader then
+    // lays the mesh outputs out for this pixel shader and drops the ones it
+    // does not read (TB_MESH_DROP_UNREAD), which also frees mesh output
+    // budget. TUXBOX_MESH_LINK=0 leaves a refused mesh pipeline refused.
+    let mesh_link = crate::env_toggle!("TUXBOX_MESH_LINK") != Some("0");
+    let producer = if fields[7].is_some() { 7 } else if fields[4].is_some() { 4 } else { 0 };
+    let direct = if producer == 7 {
+        mesh_link && fields[0].is_none() && fields[2..6].iter().all(Option::is_none)
+    } else {
+        fields[5..].iter().all(Option::is_none)
+            && (producer == 4 || fields[2..4].iter().all(Option::is_none))
+    };
     if direct
         && let (Some(field), Some((source, _)), Some((pixel, _))) =
             (fields[producer], &hashes[producer], &hashes[1])
-        && let Some(linked) = (if producer == 4 {
-            shader_cache::linked_geometry(source, pixel)
-        } else {
-            shader_cache::linked_vertex(source, pixel)
+        && let Some(linked) = (match producer {
+            4 => shader_cache::linked_geometry(source, pixel),
+            7 => None,
+            _ => shader_cache::linked_vertex(source, pixel),
         })
         .or_else(|| {
             if status != E_INVALIDARG {
                 return None;
+            }
+            if producer == 7 {
+                let (mesh_code, Some(i)) = original[7]? else { return None };
+                let (pixel_code, Some(j)) = original[1]? else { return None };
+                return shader_cache::link_mesh(
+                    mesh_code, guest_root.map(|root| root.payload()), (pixel, pixel_code), &stages[i], &stages[j],
+                );
             }
             let (producer_code, Some(i)) = original[producer]? else {
                 return None;
@@ -839,10 +856,11 @@ unsafe fn create(
             Ok(_) => {
                 static VERTEX: std::sync::Once = std::sync::Once::new();
                 static GEOMETRY: std::sync::Once = std::sync::Once::new();
-                let (name, site) = if producer == 4 {
-                    ("GS", &GEOMETRY)
-                } else {
-                    ("VS", &VERTEX)
+                static MESH: std::sync::Once = std::sync::Once::new();
+                let (name, site) = match producer {
+                    4 => ("GS", &GEOMETRY),
+                    7 => ("MS", &MESH),
+                    _ => ("VS", &VERTEX),
                 };
                 crate::diagnostics::log_once(site, || {
                     format!("linked slot 86 {name}={source} PS={pixel}")

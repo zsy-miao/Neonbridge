@@ -226,6 +226,27 @@ pub(super) fn link_on_demand(
     compile::linked(producer, pixel, pixel_dxil, stage)
 }
 
+/// A refused mesh pipeline's mesh shader translated again for its pixel
+/// shader (`--link-pixel` with a mesh producer). The producer sent is the
+/// rooted form `mesh_stage` translated, so the linked one binds the same way.
+pub(super) fn link_mesh(
+    mesh: &[u8],
+    root: Option<&[u8]>,
+    pixel: (&str, &[u8]),
+    mesh_dxil: &[u8],
+    pixel_dxil: &[u8],
+) -> Option<Vec<u8>> {
+    if !matches!(shader_code(mesh_dxil)?, (Stage::Mesh, ShaderCode::Portable))
+        || !matches!(shader_code(mesh)?, (Stage::Mesh, ShaderCode::Xbox))
+    {
+        return None;
+    }
+    let rooted = root.and_then(|root| with_root(mesh, root));
+    let producer = rooted.as_deref().unwrap_or(mesh);
+    let source = source_digest(producer)?;
+    compile::linked((&source, producer), pixel, pixel_dxil, Stage::Mesh)
+}
+
 pub(super) fn stencil_target(shader: &[u8], slot: u32) -> Option<Vec<u8>> {
     let source = source_digest(shader)?;
     compile::stencil(shader, &source, slot)
