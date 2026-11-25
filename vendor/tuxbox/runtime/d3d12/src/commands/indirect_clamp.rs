@@ -282,3 +282,156 @@ pub(super) fn bound(
     crate::diagnostics::log_once(&FIRST, || format!("indirect arguments clamped (kind {})", kind.0));
     Ok((true, made))
 }
+
+/// A recording's clamp scratch: the clamped copies of its ExecuteIndirect
+/// arguments (VIctory-fxceless indirect.rs `bound`/`record_clamp`, GPL-3.0,
+/// credit to its authors). The clamp above writes the title's own buffer, so
+/// records it emptied (over the budget, or garbage) stay empty for every later
+/// frame that reuses them without rewriting: the world vanishing over time.
+/// Here the records (and the count) are copied into the scratch, clamped
+/// there and executed from it; the title's buffers are only read.
+/// TUXBOX_INDIRECT_SCRATCH=0 clamps in place as before.
+pub(super) struct Scratch {
+    buffer: ID3D12Resource,
+    used: u64,
+}
+
+pub(super) fn scratch_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TUXBOX_INDIRECT_SCRATCH").is_none_or(|v| v != "0"))
+}
+
+/// Where an ExecuteIndirect reads its clamped arguments and count.
+pub(super) struct Clamped {
+    pub(super) buffer: ID3D12Resource,
+    pub(super) arguments: u64,
+    pub(super) count: Option<u64>,
+}
+
+fn scratch_buffer(device: &ID3D12Device, bytes: u64) -> Result<ID3D12Resource> {
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() };
+    let desc = D3D12_RESOURCE_DESC {
+        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+        Width: bytes,
+        Height: 1,
+        DepthOrArraySize: 1,
+        MipLevels: 1,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        Flags: D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+        ..Default::default()
+    };
+    let mut buffer: Option<ID3D12Resource> = None;
+    unsafe {
+        device.CreateCommittedResource(
+            &heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, None, &mut buffer,
+        )?
+    };
+    buffer.ok_or(E_NOTIMPL.into())
+}
+
+/// Whether the copy may read this buffer: anything but upload and readback
+/// heaps, whose state cannot leave GENERIC_READ / COPY_DEST.
+fn readable(buffer: &ID3D12Resource) -> bool {
+    let mut heap = D3D12_HEAP_PROPERTIES::default();
+    unsafe { buffer.GetHeapProperties(Some(&mut heap), None) }.is_err()
+        || heap.Type == D3D12_HEAP_TYPE_DEFAULT
+}
+
+/// [`bound`] into the recording's scratch. Returns where to execute from
+/// (`None`: not clamped, execute the title's buffers) and the buffers made,
+/// which the recording must keep alive through execution.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn bound_scratch(
+    list: &ID3D12GraphicsCommandList,
+    budget: &mut Option<ID3D12Resource>,
+    scratch: &mut Option<Scratch>,
+    kind: D3D12_INDIRECT_ARGUMENT_TYPE,
+    stride: u32,
+    records: u32,
+    arguments: Region,
+    count: Option<Region>,
+) -> Result<(Option<Clamped>, Vec<ID3D12Resource>)> {
+    let Some(code) = shader_kind(kind) else { return Ok((None, Vec::new())) };
+    if records == 0
+        || !stride.is_multiple_of(4)
+        || !readable(arguments.buffer)
+        || count.as_ref().is_some_and(|c| !readable(c.buffer))
+    {
+        return Ok((None, Vec::new()));
+    }
+    let device: ID3D12Device = unsafe {
+        let mut device: Option<ID3D12Device> = None;
+        list.GetDevice(&mut device)?;
+        device.ok_or(E_NOTIMPL)?
+    };
+    let Some(clamp) = clamp(&device) else { return Ok((None, Vec::new())) };
+    let mut made = Vec::new();
+    let fresh = budget.is_none();
+    if fresh {
+        let b = budget_buffer(&device)?;
+        made.push(b.clone());
+        *budget = Some(b);
+    }
+    let budget = budget.as_ref().expect("budget set above");
+    let bytes = u64::from(stride) * u64::from(records);
+    // Arguments, then the count, each 16-byte aligned.
+    let need = bytes.next_multiple_of(16) + 16;
+    if scratch.as_ref().is_none_or(|s| s.used + need > unsafe { s.buffer.GetDesc() }.Width) {
+        let grown = scratch.as_ref().map_or(0, |s| unsafe { s.buffer.GetDesc() }.Width * 2);
+        let buffer = scratch_buffer(&device, need.max(grown).max(1 << 20))?;
+        made.push(buffer.clone());
+        *scratch = Some(Scratch { buffer, used: 0 });
+    }
+    let s = scratch.as_mut().expect("scratch set above");
+    let (dst, at) = (s.buffer.clone(), s.used);
+    let count_at = at + bytes.next_multiple_of(16);
+    s.used += need;
+    let same = count.as_ref().is_some_and(|c| c.buffer == arguments.buffer);
+    let mut into = vec![
+        transition(&dst, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COPY_DEST),
+        transition(arguments.buffer, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
+    ];
+    let mut copied = vec![
+        transition(&dst, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+        transition(arguments.buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT),
+    ];
+    if let Some(c) = count.as_ref().filter(|_| !same) {
+        into.push(transition(c.buffer, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COPY_SOURCE));
+        copied.push(transition(c.buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT));
+    }
+    let back = [uav_barrier(), transition(&dst, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)];
+    let base = unsafe { dst.GetGPUVirtualAddress() };
+    unsafe {
+        list.ResourceBarrier(&into);
+        list.CopyBufferRegion(&dst, at, arguments.buffer, arguments.offset, bytes);
+        if let Some(c) = &count {
+            list.CopyBufferRegion(&dst, count_at, c.buffer, c.offset, 4);
+        }
+        list.ResourceBarrier(&copied);
+        list.SetComputeRootSignature(&clamp.root);
+        list.SetPipelineState(&clamp.pipeline);
+        let budget_address = budget.GetGPUVirtualAddress();
+        if fresh {
+            let constants = [4u32, 0, 0, 0];
+            list.SetComputeRoot32BitConstants(0, 4, constants.as_ptr().cast(), 0);
+            list.SetComputeRootUnorderedAccessView(1, base + at);
+            list.SetComputeRootUnorderedAccessView(2, budget_address);
+            list.SetComputeRootUnorderedAccessView(3, base + count_at);
+            list.Dispatch(1, 1, 1);
+            list.ResourceBarrier(&[uav_barrier()]);
+        }
+        let constants = [code, stride, records, u32::from(count.is_some())];
+        list.SetComputeRoot32BitConstants(0, 4, constants.as_ptr().cast(), 0);
+        list.SetComputeRootUnorderedAccessView(1, base + at);
+        list.SetComputeRootUnorderedAccessView(2, budget_address);
+        list.SetComputeRootUnorderedAccessView(3, base + count_at);
+        list.Dispatch(records.div_ceil(64), 1, 1);
+        list.ResourceBarrier(&back);
+    }
+    // The barriers borrow their resources (no reference was taken).
+    core::mem::forget((into, copied, back));
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || format!("indirect arguments clamped into scratch (kind {})", kind.0));
+    Ok((Some(Clamped { buffer: dst, arguments: at, count: count.is_some().then_some(count_at) }), made))
+}

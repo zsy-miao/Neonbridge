@@ -109,6 +109,8 @@ struct Recording {
     unresolved_roots: [u64; 2],
     /// This recording's indirect execution budget (see indirect_clamp).
     clamp_budget: Option<ID3D12Resource>,
+    /// This recording's clamped indirect arguments (indirect_clamp::Scratch).
+    clamp_scratch: Option<indirect_clamp::Scratch>,
     media: Option<media::Recording>,
     placed_reads: Vec<Arc<Texture>>,
     placed_writes: Vec<Arc<Texture>>,
@@ -786,6 +788,7 @@ unsafe extern "system" fn reset(
             .filter(|_| crate::diagnostics::capture::active());
         state.unresolved_roots = [0; 2];
         state.clamp_budget = None;
+        state.clamp_scratch = None;
         if let Some(targets) = &mut state.stencil_targets {
             targets.unbind();
         }
@@ -1671,12 +1674,38 @@ unsafe extern "system" fn execute_indirect(
     // reads (VIctory 4e60ea3, GPL-3.0, credit to its authors).
     let compute = usize::from(signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH);
     let mut clamped_now = false;
+    let mut from_scratch: Option<indirect_clamp::Clamped> = None;
     // Pending is decided at this call, not at the bind: a pipeline made since
     // SetPipelineState is bound now and its call is clamped (still_pending,
     // VIctory-fxceless draw.rs:775; VIctory 4e60ea3 asks at the call, GPL-3.0,
     // credit to its authors). TUXBOX_INDIRECT_CALL_TIME=0 keeps the bind's answer.
     let pending = if crate::env_toggle!("TUXBOX_INDIRECT_CALL_TIME") == Some("0") { state.pipeline_pending } else { state.still_pending(list) };
     if max_count != 0 && !pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
+        && indirect_clamp::scratch_enabled()
+        && let Some(host) = list.state.raytracing.as_ref()
+    {
+        let (budget, scratch) = { let s = &mut *state; (&mut s.clamp_budget, &mut s.clamp_scratch) };
+        match indirect_clamp::bound_scratch(
+            &list.native, budget, scratch, signature.state.kind, signature.state.stride, max_count,
+            indirect_clamp::Region { buffer: &arguments.native, offset: argument_offset },
+            count.map(|buffer| indirect_clamp::Region { buffer, offset: count_offset }),
+        ) {
+            Ok((ran, made)) => {
+                let made: Vec<&ID3D12Resource> = made.iter().collect();
+                if !made.is_empty()
+                    && let Err(error) = raytracing::retain(&state, &made)
+                {
+                    { state.error = error.code(); state.error_at = (file!(), line!()); }
+                    return;
+                }
+                // The clamp replaced the compute root and the pipeline.
+                if ran.is_some() { unsafe { state.bindings.restore(host) }; }
+                clamped_now = ran.is_some();
+                from_scratch = ran;
+            }
+            Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
+        }
+    } else if max_count != 0 && !pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
         && let Some(host) = list.state.raytracing.as_ref()
     {
         let clamped = indirect_clamp::bound(
@@ -1707,14 +1736,24 @@ unsafe extern "system" fn execute_indirect(
         if let Some(b) = &order {
             list.native.ResourceBarrier(&[indirect_clamp::transition(b, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)]);
         }
-        list.native.ExecuteIndirect(
-            &signature.native,
-            max_count,
-            &arguments.native,
-            argument_offset,
-            count,
-            count_offset,
-        );
+        match &from_scratch {
+            Some(c) => list.native.ExecuteIndirect(
+                &signature.native,
+                max_count,
+                &c.buffer,
+                c.arguments,
+                c.count.map(|_| &c.buffer),
+                c.count.unwrap_or(0),
+            ),
+            None => list.native.ExecuteIndirect(
+                &signature.native,
+                max_count,
+                &arguments.native,
+                argument_offset,
+                count,
+                count_offset,
+            ),
+        }
         if let Some(b) = &order {
             list.native.ResourceBarrier(&[indirect_clamp::transition(b, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COMMON)]);
         }
@@ -3310,6 +3349,7 @@ pub(crate) unsafe fn wrap_command_list(
             capture_pipeline: None,
             unresolved_roots: [0; 2],
             clamp_budget: None,
+            clamp_scratch: None,
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),
             bound_placed_targets: Vec::new(),
