@@ -67,3 +67,37 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 
 ## Housekeeping
 - Delete `_ref/emu-old` once the audit no longer needs it.
+
+## Port audit findings (fix before new ports; each fix gets a run of its own)
+
+### d3d12 slice 2
+- BAD PORT 7214656/112d2fd: the alias places below the guest VA and retires only fully covered spans (xbox-emulator alias.rs:76/103).
+- upstream: rebox fe7f1d4/7745cef (don't retire mip/slice views or textures still in use), xcl 971c0e5 (3D packed mip tails off pages), X2W a6879558 (D24S8 + MSAA plane sizes), five-star bd100ba (release held waits at 250 ms).
+- ref better: b16f2f9 (clip write-watch spans), 689199f (alpha blend factor 19/20; a placeholder pipeline drops draws).
+- a0f014d TUXBOX_BACK_IMAGES is a symptom workaround and should default off. 0460750 isn't needed.
+
+### d3d12 slice 3
+- BAD PORT f2cc6d8: layout 0 is always mapped to 0x105, so RT and depth miss 64KB_R_X/Z_X (VIctory resource.rs:150-157).
+- 4852a1e/dbe0bbc: xcl b55c478 isn't ported, so released lists keep their allocators referenced.
+- rebox a1ebac2: the present-time release of unsignalled waits is missing.
+- dd0f8b2: TuxBox calls its asserts symptom hiding, so skip them.
+- f40b107: the table arena never frees (VIctory HostHeap release + c1c3281 scan fix are better).
+- c6c3416: the merge 61c1359 regressed TB_DFDEBUG=0 at 4 sites.
+
+### xs slice 0
+- BAD PORT b9bcd25: one shared never-reset loop guard; the cap doesn't kill the lane. Use a per-loop counter (fxceless lower.rs:10906), a default of 4096+, and find the real cause.
+- BAD PORT f112928: parked mask kept stale. Port fxceless ir.rs:309-380.
+- ref better 57ff63d: wave64 halves barrier-only. Use xcl 066ae5b's bounded spin.
+- ref better 1c3b05c: mask-vs-number registers. Port five-star b5fe3a7/48c08b8.
+- upstream: TuxBox 0b6e788 (pixel_heap_base rooted), 5891be3 (int32 immediates), 63343eb (IDXEN strict is opt-in here).
+- dead/unneeded: 8b14d05 clamp + --target-writes-out, 5377d53 arm, src/dxil, 2d36d48 saturate, 692983f.
+- minor: 3258c66 denorm, 83f5a3b unaligned, 4799d57 VM start, da066d0 clamp/omod, e7f6be4, 078b76a cube, credit fixes.
+
+### xs slice 1
+- BAD PORT 8c0372e: the idxen guard ignores OOB_SELECT, so select 1/3 drop valid accesses (five-star buf_limit). Also port five-star b9b57e2.
+- misread d51e710: compare samples silently read mip 0. Default to refuse (fxceless lower.rs:9430, X2W d21e3d6e).
+- misread f8d4963: s_memtime reads 0, but the cited ref refuses it. Default to refuse.
+- upstream: VIctory 645391b (exact unorm/snorm ends), TuxBox e2860b5/4a518ef (literal samplers), VIctory ffe310e/75677cb.
+- ref better: a1df9a6 (refuse SOPP 0x26).
+- risk: 2ad360a (SNORM _pck).
+- unneeded: dbd0bcd tb_rndne, 14b2de5 TB_FLAT_UINT.
