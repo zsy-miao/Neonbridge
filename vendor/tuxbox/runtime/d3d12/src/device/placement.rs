@@ -985,7 +985,11 @@ impl Texture {
                 continue;
             }
             let plane = video_plane(&self.desc, self.mips.len());
-            let decodes = if plane && plane_decode_skip() { bink_state().map(|(_, done)| done) } else { None };
+            // test162: xmem's count stayed 0 through the whole intro (its
+            // decodes were not counted), so the planes read before the first
+            // frame were kept and the intro was black. Only a count that has
+            // moved is trusted; at 0 every refresh reads, as before.
+            let decodes = if plane && plane_decode_skip() { bink_state().map(|(_, done)| done).filter(|&d| d != 0) } else { None };
             if decodes.is_some() && contents.previous[level].is_some() && contents.plane_done == decodes {
                 skipped += 1;
                 continue;
