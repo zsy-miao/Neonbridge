@@ -3,7 +3,6 @@
 Open work. Each item is tested in a run of its own.
 
 ## In flight
-- Intro runs at 14 fps: shadow copies of about 191 MB each way per submit, under lazy commit. test149 runs with `TUXBOX_LAZY_COMMIT=0 TUXBOX_IMPORT_REMAPPABLE=1`.
 - xmem page join fails with Err(87) (71ac658 logs the failing OS step).
 - CopyPageMappingsBatchX and unmap/split failures (838c433, 3df971b narrowed the imports; leonida slot-31 CPU-view mirror is the ref model).
 - Presents stop at #1959 / #1600, at game+0x23cf735. Needs a d3d12_xs pdb.
