@@ -213,6 +213,7 @@ fn game_running() -> bool {
 // game, has the machine. One drainer at a time (upgrade/drain.pid); its log
 // is upgrade/drain.log. NEONBRIDGE_DXC_UPGRADE_DRAIN=0 off.
 
+const DRAIN_SUFFIX: &str = "-drain.exe";
 const YIELDED: &str = "stepped aside for a launcher";
 static DRAINER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static CONFIG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -263,7 +264,9 @@ fn other_launcher() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
     let me = std::process::id();
+    // The drainer runs from its own copy (neonbridge-drain.exe): it yields to the launcher's name.
     let exe = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .map(|n| n.replace(DRAIN_SUFFIX, ""))
         .unwrap_or_else(|| "neonbridge.exe".into());
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -325,6 +328,21 @@ pub fn spawn_drainer() {
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     const IDLE_PRIORITY_CLASS: u32 = 0x40;
     let Ok(exe) = std::env::current_exe() else { return };
+    // Its own copy beside the queue: a build's `taskkill /IM neonbridge.exe`
+    // (needed while the exe is locked) ended the drainer mid-queue, and a
+    // drainer running the launcher's exe locked it against the next build.
+    // NEONBRIDGE_DRAIN_COPY=0 runs the launcher's exe as before.
+    let exe = if std::env::var("NEONBRIDGE_DRAIN_COPY").as_deref() == Ok("0") { exe } else {
+        let stem = exe.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "neonbridge".into());
+        let copy = dir.join(format!("{stem}{DRAIN_SUFFIX}"));
+        match fs::copy(&exe, &copy) {
+            Ok(_) => copy,
+            Err(e) => {
+                println!("[launch] dxil upgrade: could not copy the drainer to {} ({e}); it runs the launcher's exe", copy.display());
+                exe
+            }
+        }
+    };
     let spawn = |flags| std::process::Command::new(&exe).arg("--drain-upgrades").arg(dxil)
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
         .creation_flags(flags).spawn();
