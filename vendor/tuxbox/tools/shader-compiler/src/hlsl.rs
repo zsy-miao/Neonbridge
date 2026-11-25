@@ -4226,6 +4226,19 @@ impl<'a> Emitter<'a> {
             }
             return Ok((None, index, 0));
         };
+        // The runtime rebuilds a compute root of one or two tables (plus at most one
+        // small constants block) from the program's FSSM rows (compute_table.rs
+        // compute_root_bindings / bindings), not from the guest RTS0 ranges. Test17x's
+        // 1ed6594a family carries a shared RTS0 whose s5 table puts SRV t260 at slot 1
+        // where its own FSSM row and PSV name UAV u20, so its image_store was refused as
+        // a store to an SRV. Name what the FSSM row names. TB_COMPUTE_FSSM_TABLE=0 off.
+        if self.ex.stage == Stage::Compute && self.runtime_reflects_compute_root()
+            && std::env::var("TB_COMPUTE_FSSM_TABLE").map_or(true, |v| v.trim() != "0")
+        {
+            if let Some(found) = self.fssm_binding(sgpr, offset, stride) {
+                return Ok(found);
+            }
+        }
         // Existing FSSM single-range layouts may address beyond the declared range.
         if let [range] = ranges {
             if range.base_register == 0 && range.space == 0 && matches!(range.offset_in_table, 0 | u32::MAX) {
@@ -4281,6 +4294,19 @@ impl<'a> Emitter<'a> {
             .map(|r| [r.res_type, r.space, r.lower, r.upper])
             .collect();
         tuxbox_dxbc::compute_table::uncovered_descriptor(&self.ex.fssm, &resources, 5, sgpr, offset, self.ex.root_sig.as_ref()?)
+    }
+
+    /// Whether the runtime reflects this compute program's root from FSSM (the
+    /// layout test in runtime compute_table.rs: one or two tables, then optionally
+    /// one constants block of 1..=4 dwords).
+    fn runtime_reflects_compute_root(&self) -> bool {
+        use crate::meta::RootParamKind;
+        let Some(root) = self.ex.root_sig.as_ref() else { return false };
+        let tables = match root.params.as_slice() {
+            [tables @ .., last] if matches!(last.kind, RootParamKind::Constants { num32: 1..=4, .. }) => tables,
+            params => params,
+        };
+        (1..=2).contains(&tables.len()) && tables.iter().all(|p| matches!(p.kind, RootParamKind::Table(_)))
     }
 
     fn fssm_binding(&self, sgpr: u8, offset: u32, stride: u32) -> Option<(Option<u32>, u32, u32)> {
