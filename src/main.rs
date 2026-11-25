@@ -111,7 +111,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         return replay::run_cli(&args[1..], || {
             let tuxbox = env_path("TUXBOX_ROOT").unwrap_or_else(baked_tuxbox);
             let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
-            build_xshader(&tuxbox, &out)
+            build_xshader(&tuxbox, &out).map(|(x, _)| x)
         });
     }
     let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
@@ -251,11 +251,11 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     // Runtime shader worker (TuxBox runtime_shaders.py on Windows): xshader + SDK dxc.
     let worker = if std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() == Ok("0") { None } else {
         let xshader = match prebuilt.as_ref().map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
-            Some(prebuilt) => Ok(prebuilt),
+            Some(prebuilt) => Ok((prebuilt, None)),
             None => build_xshader(&tuxbox, &out),
         };
         match (xshader, shaders::find_dxc()) {
-            (Ok(xshader), Some(dxc)) => {
+            (Ok((xshader, source_key)), Some(dxc)) => {
                 let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
                 // Build every program in shaders.rpf into the prewarm archive (once per shaders.rpf).
                 let rpf = game.join("shaders.rpf");
@@ -275,7 +275,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 let log_path = out.join("shader-worker.log");
                 let _ = fs::remove_file(&log_path);
                 let sink = std::sync::Mutex::new(fs::OpenOptions::new().create(true).append(true).open(&log_path)?);
-                match shaders::Worker::start(shaders::Tools { xshader, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
+                match shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
                     move |line| { let _ = writeln!(sink.lock().unwrap(), "{line}"); }) {
                     Ok(w) => Some((w, name, session, log_path)),
                     Err(e) => return Err(no_worker(&format!("{e}"))),
@@ -532,8 +532,8 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     }
     let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
     fs::create_dir_all(&out)?;
-    let xshader = match prebuilt.map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
-        Some(prebuilt) => prebuilt,
+    let (xshader, source_key) = match prebuilt.map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
+        Some(prebuilt) => (prebuilt, None),
         None => build_xshader(tuxbox, &out)?,
     };
     let dxc = shaders::find_dxc().ok_or("no Windows SDK dxc.exe with dxil.dll (or set DXC)")?;
@@ -541,7 +541,7 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     let session = cache_root.join(format!("prewarm-{}", std::process::id()));
     println!("[prewarm] {} + {}", xshader.display(), dxc.display());
     let started = Instant::now();
-    let worker = shaders::Worker::start(shaders::Tools { xshader, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
+    let worker = shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
         |line| println!("[prewarm] {line}"))?;
     let st = worker.stop();
     let _ = fs::remove_dir_all(&session);
@@ -554,7 +554,37 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     Ok(())
 }
 
-fn build_xshader(tuxbox: &Path, out: &Path) -> Result<PathBuf, Box<dyn Error>> {
+/// Content hash of the tracked shader-compiler sources (path + bytes of each
+/// file `git ls-files` lists, read from the working tree so edits count).
+/// None when git cannot list them.
+fn xshader_source_key(tuxbox: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let out = Command::new("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", "tools/shader-compiler"]).output().ok()
+        .filter(|o| o.status.success())?;
+    let mut files: Vec<&[u8]> = out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty()).collect();
+    if files.is_empty() {
+        return None;
+    }
+    files.sort();
+    let mut h = Sha256::new();
+    for f in files {
+        let rel = std::str::from_utf8(f).ok()?;
+        h.update(rel.as_bytes());
+        h.update([0]);
+        // A tracked file deleted in the working tree hashes as absent.
+        match fs::read(tuxbox.join(rel)) {
+            Ok(bytes) => { h.update((bytes.len() as u64).to_le_bytes()); h.update(&bytes); }
+            Err(_) => h.update(u64::MAX.to_le_bytes()),
+        }
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The built xshader and the source key it was built from (None: key by the
+/// exe's bytes). The key is taken before and after the build; an edit landing
+/// mid-build leaves the two apart and the binary unkeyed by source.
+/// NEONBRIDGE_XSHADER_SOURCE_KEY=0 keys by the exe as before.
+fn build_xshader(tuxbox: &Path, out: &Path) -> Result<(PathBuf, Option<String>), Box<dyn Error>> {
     let manifest = tuxbox.join("tools/shader-compiler/Cargo.toml");
     if !manifest.is_file() {
         return Err(format!("{} missing", manifest.display()).into());
@@ -562,24 +592,30 @@ fn build_xshader(tuxbox: &Path, out: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let target_dir = out.join("xshader");
     let good = target_dir.join("xshader-good.exe");
     let good_note = target_dir.join("xshader-good.txt");
+    let good_key = target_dir.join("xshader-good.key");
     let commit = xshader_commit(tuxbox);
-    // /Brepro: a rebuild of unchanged sources gives the same bytes, so the shader
-    // cache (keyed by xshader's hash) survives touched files and relinks.
+    let keyed = std::env::var("NEONBRIDGE_XSHADER_SOURCE_KEY").as_deref() != Ok("0");
+    let before = if keyed { xshader_source_key(tuxbox) } else { None };
+    // /Brepro: a rebuild of unchanged sources gives the same bytes (kept for
+    // the prebuilt and unkeyed cases, which key the cache by xshader's hash).
     let status = Command::new("cargo").args(["build", "--release", "--quiet", "--manifest-path"]).arg(&manifest)
         .arg("--target-dir").arg(&target_dir).env("RUSTFLAGS", "-C link-arg=/Brepro").status()?;
     let built = target_dir.join("release/xshader.exe");
     if status.success() {
+        let key = before.filter(|b| xshader_source_key(tuxbox).as_ref() == Some(b));
         if fs::copy(&built, &good).is_ok() {
             let _ = fs::write(&good_note, &commit);
+            let _ = match &key { Some(k) => fs::write(&good_key, k), None => fs::remove_file(&good_key) };
         }
-        return Ok(built);
+        return Ok((built, key));
     }
     if good.is_file() {
         let from = fs::read_to_string(&good_note).unwrap_or_else(|_| "an unknown commit".into());
         for _ in 0..3 {
             println!("[launch] !!! xshader did not build from the working tree ({commit}, {status}); using the last good xshader, built from {} !!!", from.trim());
         }
-        return Ok(good);
+        let key = if keyed { fs::read_to_string(&good_key).ok().map(|k| k.trim().to_owned()).filter(|k| !k.is_empty()) } else { None };
+        return Ok((good, key));
     }
     Err(format!("cargo build of xshader failed ({status}) at {commit}, and no earlier good build is kept").into())
 }
@@ -659,7 +695,7 @@ fn package_release(tuxbox: PathBuf, dir: &Path) -> Result<(), Box<dyn Error>> {
     for dll in &dlls {
         fs::copy(dll, runtime.join(dll.file_name().unwrap()))?;
     }
-    fs::copy(&xshader, runtime.join("xshader.exe"))?;
+    fs::copy(&xshader.0, runtime.join("xshader.exe"))?;
     // dxcompiler.dll and dxil.dll are on the Windows SDK redist list (Redist\D3D\x64);
     // dxc.exe is not, so it is never shipped.
     let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());

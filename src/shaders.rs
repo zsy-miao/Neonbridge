@@ -110,6 +110,9 @@ const XSHADER_UNSUPPORTED_HLSL: i32 = 65;
 
 pub struct Tools {
     pub xshader: PathBuf,
+    /// Hash of the shader-compiler sources xshader was built from; keys the
+    /// translation cache in place of the exe's bytes (None: the exe's bytes).
+    pub source_key: Option<String>,
     pub dxc: PathBuf,
     /// dxc `-D` defines; bind_cache fills them from the host wave range.
     pub defines: Vec<String>,
@@ -589,9 +592,14 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
         fp.update(b"-D");
         fp.update(d.as_bytes());
     }
-    for t in [&xshader, &tools.dxc] {
-        fp.update(sha256(&fs::read(t).map_err(|e| e.to_string())?).as_bytes());
+    // The translator is keyed by its source, not its bytes: a no-op rebuild
+    // relinked xshader.exe and invalidated every cached shader (1,308).
+    // VIctory c47b529 keys its cache by the translator.
+    match &tools.source_key {
+        Some(k) => { fp.update(b"-S"); fp.update(k.as_bytes()); }
+        None => fp.update(sha256(&fs::read(&xshader).map_err(|e| e.to_string())?).as_bytes()),
     }
+    fp.update(sha256(&fs::read(&tools.dxc).map_err(|e| e.to_string())?).as_bytes());
     // xshader inherits this process's environment, and its TB_* switches change
     // the code it emits: a cache made under other switches answered for them
     // (a TB_ switch reached only shaders not yet cached). With none set the key
@@ -619,7 +627,7 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
     let dxil = (std::env::var("NEONBRIDGE_DXIL_REUSE").as_deref() != Ok("0"))
         .then(|| cache_root.join("dxil").join(hex(&dxc_fp.finalize())))
         .filter(|d| fs::create_dir_all(d).is_ok());
-    Ok((Tools { xshader, dxc: tools.dxc.clone(), defines, dxil }, cache))
+    Ok((Tools { xshader, source_key: tools.source_key.clone(), dxc: tools.dxc.clone(), defines, dxil }, cache))
 }
 
 /// Compiled carries the milliseconds spent in xshader and in dxc.
