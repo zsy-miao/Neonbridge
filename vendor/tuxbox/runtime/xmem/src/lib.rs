@@ -20,6 +20,7 @@ mod window;
 mod physical_pages;
 mod pools;
 mod read_commit;
+mod section_watch;
 mod shared_pages;
 mod sleep_hold;
 mod virtual_memory;

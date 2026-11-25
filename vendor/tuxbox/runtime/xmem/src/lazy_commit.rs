@@ -419,6 +419,8 @@ unsafe extern "system" fn view_state_export(address: usize, bytes: usize, base: 
 #[unsafe(export_name = "TuxBoxCommitRange")]
 unsafe extern "system" fn commit_range(address: usize, bytes: usize) -> usize {
     crate::device_pages::open(address, bytes);
+    // DirectStorage reads (xcrdapi) call this before ReadFile: open guards.
+    crate::section_watch::writing(address, bytes);
     ensure(address, bytes)
 }
 

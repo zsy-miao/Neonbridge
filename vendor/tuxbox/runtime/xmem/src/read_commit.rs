@@ -81,6 +81,11 @@ pub(crate) unsafe extern "system" fn read_file(
     // lazy title view (lazy_commit.rs) fails the read: commit them first. An
     // overlapped read cannot be retried below, since it returns IO_PENDING and
     // reports the 998 at completion, so this is its only chance.
+    // The kernel's write into a block guarded read-only (section_watch.rs)
+    // would fail: give it write access first, noted written.
+    if !buffer.is_null() {
+        crate::section_watch::writing(buffer as usize, bytes as usize);
+    }
     if !buffer.is_null() && enabled() {
         let pages = crate::lazy_commit::ensure(buffer as usize, bytes as usize);
         static FIRST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

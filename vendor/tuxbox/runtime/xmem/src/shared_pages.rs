@@ -172,6 +172,7 @@ impl Section {
         if view.Value.is_null() {
             return Err(os_error("map_range:138"));
         }
+        crate::section_watch::remapped(address, bytes);
         // xcl 38b05b7: an unguarded view commits on first use (lazy_commit.rs);
         // a guard needs committed pages to protect.
         if crate::lazy_commit::enabled() && !is_guarded(address) {
@@ -340,6 +341,7 @@ pub(super) fn without_retry<T>(f: impl FnOnce() -> T) -> T {
 }
 
 fn unmap_once(address: usize) -> Result<(), u32> {
+    crate::section_watch::unmapping(address);
     let view = MEMORY_MAPPED_VIEW_ADDRESS {
         Value: address as _,
     };

@@ -198,6 +198,19 @@ unsafe fn journal_query(me: usize, reset: bool, base: *const c_void, bytes: usiz
             // Refused queries (a span crossing allocations) cost the caller
             // too: count them, with no pages.
             let _stat = Stat { side: me + 2, bytes, os_pages: 0, times: [t0, t1, std::time::Instant::now()] };
+            // Section views carry no write watch: the runtime's queries of
+            // them are answered by guarded blocks (section_watch.rs).
+            drop(j);
+            if me == 1 && reset && let Some(pages) = crate::section_watch::query(base as usize, (base as usize).saturating_add(bytes), unsafe { count.read() }) {
+                for (i, p) in pages.iter().enumerate() {
+                    unsafe { out.add(i).write(*p as *mut c_void) };
+                }
+                unsafe {
+                    count.write(pages.len());
+                    granularity.write(0x1000);
+                }
+                return 0;
+            }
             return e;
         }
     };
