@@ -434,6 +434,8 @@ fn pool() -> &'static Mutex<Box<Pool>> {
 
 #[unsafe(export_name = "GameInputCreate")]
 unsafe extern "system" fn create(out: *mut *const Object) -> i32 {
+    static CREATED: std::sync::Once = std::sync::Once::new();
+    CREATED.call_once(|| eprintln!("TuxBox gameinput: TIMELINE: GameInputCreate"));
     if out.is_null() {
         return E_POINTER;
     }
@@ -464,6 +466,16 @@ unsafe extern "system" fn gi_read(
         return E_INVALIDARG;
     }
     let mask = if mask == 0 { KEYS | MOUSE | PAD } else { mask };
+    // The auto A press only advances inside the title's pad reads: these two
+    // lines tell a title that never reached its pad (stuck before the
+    // player-selection prompt) from a press that was blocked (test170: signed
+    // in, 83 s, no press line and no reason line).
+    static FIRST_READ: std::sync::Once = std::sync::Once::new();
+    FIRST_READ.call_once(|| eprintln!("TuxBox gameinput: TIMELINE: first GameInput read (mask {mask:#x})"));
+    if mask & PAD != 0 {
+        static FIRST_PAD: std::sync::Once = std::sync::Once::new();
+        FIRST_PAD.call_once(|| eprintln!("TuxBox gameinput: TIMELINE: first pad read"));
+    }
     state.refresh(mask);
     let matches = |r: &&Arc<Object>| {
         let r = r.reading();
