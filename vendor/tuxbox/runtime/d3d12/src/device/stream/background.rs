@@ -593,8 +593,15 @@ fn throttle_keep() -> usize {
 }
 
 /// A throttled worker waits here before taking its next job.
+/// VIctory-fxceless's shape (449d9f7): no prefetch workers and no fps
+/// hold. Default on since no run ever showed harm (none ran it: no log has
+/// the "fxceless shape" line); TUXBOX_PIPELINE_SHAPE=0 keeps the prefetchers
+/// and the hold. The worker count stays TUXBOX_PIPELINE_THREAD_CAP's quarter
+/// of the cores: each driver compile thread keeps its arena (test179:
+/// +2.1-2.9 GiB after a heavy compile), so the refs' half is not taken.
 fn fxceless_shape() -> bool {
-    crate::env_toggle!("TUXBOX_PIPELINE_SHAPE") == Some("fxceless")
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PIPELINE_SHAPE") != Some("0"))
 }
 
 /// test153: in a world load (152 queued, the title at 12 fps) the held
@@ -1275,8 +1282,8 @@ fn send(job: Job, bound: bool) {
         // VIctory-fxceless's shape (make.rs:295-300, GPL-3.0, credit to its
         // authors): half the cores, 2 to 8, and no prefetch workers, with no
         // fps hold. The hold (bb35fd2) treats a backlog's symptom; this tests
-        // the shape that plays the intro smoothly. TUXBOX_PIPELINE_SHAPE=fxceless
-        // turns it on (TUXBOX_PIPELINE_WORKERS still sets the count).
+        // the shape that plays the intro smoothly. On by default;
+        // TUXBOX_PIPELINE_SHAPE=0 off (TUXBOX_PIPELINE_WORKERS still sets the count).
         let fxceless = fxceless_shape();
         let prefetchers = if fxceless { Some("0".into()) } else { crate::env_toggle!("TUXBOX_PREFETCH_WORKERS") }
             .and_then(|v| v.trim().parse::<usize>().ok())

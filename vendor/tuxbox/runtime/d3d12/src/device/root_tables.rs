@@ -14,8 +14,8 @@
 //! must write a raw view sized to the buffer's import into a shader-visible
 //! slot and bind that slot as the table.
 //!
-//! Opt in with TUXBOX_ROOT_VIEW_TABLES=1 until the bind half lands; with it
-//! unset, signatures are passed through as before.
+//! On by default (b022269); TUXBOX_ROOT_VIEW_TABLES=0 passes signatures
+//! through as before.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use windows::Win32::Graphics::Direct3D12::*;
