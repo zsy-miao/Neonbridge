@@ -3,7 +3,6 @@
 Open work. Each item is tested in a run of its own.
 
 ## In flight
-- Presents stop at #1959 / #1600, at game+0x23cf735: not a root of its own. It is the main thread waiting on the frame thread's DONE semaphore (a210cf8), which a frame thread stuck in its tick never signals; that stall is Coder1's ring-credit wait (0x2a42d0 at 0x2a442d, released by game+0x24825a7). Not seen since test149.
 - Pending A/B runs: `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
@@ -55,6 +54,7 @@ Open work. Each item is tested in a run of its own.
 ### runtime/launcher
 
 ## Done / not needed
+- Presents stop at game+0x23cf735 (main thread on the frame thread's DONE semaphore, a210cf8) from the ring-credit wait (0x2a42d0 at 0x2a442d): gone. No hang or wait stack in test152-180 holds 0x2a442d, and the release at game+0x24825a7 shows as write-watch hits every run from test159 on. No single fixing commit found. The 0x23cf735 stops left (test173/175/177/179) have the frame thread at game+0x23cf4f2 in the Subrender group wait (game+0x43c3d5d); those are fixed by b01c21d (BIND_SKIP_HEAVY), 5793004 (TITLE_NO_JOIN, STORE_DEFER) and d2a259a (SAVE_SNAPSHOT).
 - not needed (ref watch, d3d12): leonida 028a414fa (DEVICE11_QUEUE_SLOTS already puts queue_fence at 16/17, commands.rs:3365); leonida adc4f314b (RTV/DSV heaps are native here, only CBV_SRV_UAV gets arenas; UAV clears already translate the CPU handle, depth.rs:64; ClearDepthStencilView is a typed fn, depth kept); ScarlettCompat dd0e557 (layout 0x102 = 256 + swizzle 2, the 256 B display microtile, xg-layout compute_microtile; the 4 KiB chain is 261 and already stores smallest first with one shared tail tile; its 8-level tail cap never binds at 4 KiB); VItoriaBr faca57e (placement/upload.rs refresh already checks its time limit before each texture, caps bytes mid-texture and resumes from a rotating cursor).
 - not needed (ref watch): five-star 22f2085/79a5a3e d16 format buffer halves (hlsl.rs:11595 already packs two per VGPR); five-star 95c3cd9 format element range rule (our buffers are D3D views, bounds checked by the view, no V# range emulation); five-star 1a8083a superstep carry (off by default there, no superstep dispatch here); ScarlettCompat 8b8511f/a88e509 BCPack (6ixpack's bcpack tool owns decoding, not the runtime); palmetto 755e947..772fa54 (Vulkan frame-capture replay and slot-70 docs; no D3D12 path change). Xbox2Windows 19e04be9 (threads faulting on a site another thread rewrote: console_cpu.rs emulates every hit in a vectored handler and rewrites no code, so the race cannot occur). palmetto 6416a27 (pairs slot-70 texture publications with recent creations because palmetto refuses slot 70: ours decodes it as views::address_srv with its resource description and texture placement lookup) and 18365e8 (Vulkan-backend readback instrumentation; our test runs already screenshot the window every 5 s).
 - xshader: xcl 74fe4c2 v_div_fixup_f16 ported (9250d13, TB_DIV_FIXUP_F16=0 off).
