@@ -18,6 +18,11 @@ crate-type = ["rlib", "cdylib"]
 name = "xshader"
 path = "src/main.rs"
 
+# Pre-push churn check (src/bin/churn_check.rs): run before every xshader push.
+[[bin]]
+name = "churn-check"
+path = "src/bin/churn_check.rs"
+
 [dependencies]
 tuxbox-dxbc = { path = "../../runtime/dxbc", features = ["native-bindings"] }
 
