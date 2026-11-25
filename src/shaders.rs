@@ -634,7 +634,7 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
 /// Reused carries the xshader milliseconds of a translation whose HLSL dxc had compiled before.
 enum Outcome { Compiled(u64, u64), Reused(u64), Cached, Unsupported(String), Failed(String) }
 
-fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path) -> Outcome {
+fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path, o0_first: bool) -> Outcome {
     let work = cache.join(format!("tmp-{}-{}", std::process::id(), sha256(key.as_bytes()).get(..12).unwrap_or("x")));
     let _ = fs::remove_dir_all(&work);
     if let Err(e) = fs::create_dir_all(&work) {
@@ -784,7 +784,13 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let urgent_o0 = std::env::var("NEONBRIDGE_DXC_URGENT_O0").as_deref() != Ok("0");
         let marker = session.join("urgent").join(key);
         let urgent = || urgent_o0 && marker.exists();
-        let first = if urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &urgent) };
+        // The prewarm compiles at -O0 straight away: the f95f59a cold prewarm
+        // ran 14 workers at 1.9 programs/s (7.4 s a program), 83% of them
+        // through dxc, most of that the -O1 pass (8.8 s vs 0.5 s at -O0 on
+        // 727f287e; up to its 10 s cut-off, then -O0 again). The driver
+        // optimises the DXIL again, as for the urgent path above.
+        // NEONBRIDGE_PREWARM_DXC_O1=1 keeps -O1 first in the prewarm.
+        let first = if o0_first || urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &urgent) };
         let compiled = match first {
             Err(ToolError::Other(msg)) if msg == "timed out" => {
                 let _ = fs::remove_file(&output);
@@ -1108,7 +1114,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                         thread::sleep(Duration::from_millis(250));
                     }
                     running.fetch_add(1, Ordering::AcqRel);
-                    let outcome = compile(path, key, ext, tools, cache, scratch);
+                    let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0());
                     running.fetch_sub(1, Ordering::AcqRel);
                     let counter = match outcome {
                         Outcome::Compiled(..) => &stats.prewarmed,
@@ -1141,6 +1147,11 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         say(format!("{label}: all {total} done in {:.0} s", started.elapsed().as_secs_f64()));
     }
     let _ = fs::remove_dir_all(scratch);
+}
+
+/// Whether the prewarm skips dxc's -O1 pass (see compile; NEONBRIDGE_PREWARM_DXC_O1=1 keeps it).
+fn prewarm_o0() -> bool {
+    std::env::var("NEONBRIDGE_PREWARM_DXC_O1").as_deref() != Ok("1")
 }
 
 /// Parallel translations (xshader, then dxc) for the prewarm and for the
@@ -1343,7 +1354,7 @@ impl Worker {
                                     log(format!("Xbox shader {key}: served an older xshader's translation while the new one is made ({n} so far; NEONBRIDGE_STALE_SHADERS=0 waits)"));
                                 }
                             }
-                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session);
+                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session, false);
                             match &outcome {
                                 Outcome::Compiled(xs, dxc) => {
                                     // Measures whether dxc dominates (a direct DXIL writer would only save the dxc part).
