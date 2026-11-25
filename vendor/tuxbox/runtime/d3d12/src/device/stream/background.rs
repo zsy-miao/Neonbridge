@@ -450,7 +450,14 @@ fn throttled() -> bool {
 }
 
 /// A throttled worker waits here before taking its next job.
+fn fxceless_shape() -> bool {
+    crate::env_toggle!("TUXBOX_PIPELINE_SHAPE") == Some("fxceless")
+}
+
 fn hold_while_throttled() {
+    if fxceless_shape() {
+        return;
+    }
     static HELD: AtomicU64 = AtomicU64::new(0);
     let mut noted = false;
     while throttled() {
@@ -1080,12 +1087,18 @@ fn send(job: Job, bound: bool) {
         // prefetches) and one the title then waits on is raised by `hurry`.
         // TUXBOX_PREFETCH_WORKERS=N sets the count (default a quarter of the
         // cores, up to 4; 0 off).
-        let prefetchers = crate::env_toggle!("TUXBOX_PREFETCH_WORKERS")
+        // VIctory-fxceless's shape (make.rs:295-300, GPL-3.0, credit to its
+        // authors): half the cores, 2 to 8, and no prefetch workers, with no
+        // fps hold. The hold (bb35fd2) treats a backlog's symptom; this tests
+        // the shape that plays the intro smoothly. TUXBOX_PIPELINE_SHAPE=fxceless
+        // turns it on (TUXBOX_PIPELINE_WORKERS still sets the count).
+        let fxceless = fxceless_shape();
+        let prefetchers = if fxceless { Some("0".into()) } else { crate::env_toggle!("TUXBOX_PREFETCH_WORKERS") }
             .and_then(|v| v.trim().parse::<usize>().ok())
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(0, |n| (n.get() / 4).min(4)))
             .min(16);
         crate::diagnostics::log_line(format_args!(
-            "pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto), prefetch workers {prefetchers} (TUXBOX_PREFETCH_WORKERS=N)"));
+            "pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto), prefetch workers {prefetchers} (TUXBOX_PREFETCH_WORKERS=N){}", if fxceless { ", fxceless shape: no fps hold (TUXBOX_PIPELINE_SHAPE)" } else { "" }));
         let mut any = false;
         for i in 0..workers + prefetchers {
             let prefetch_only = i >= workers;
