@@ -177,6 +177,9 @@ enum Sym {
     /// See `lane_reads`.
     NoLaneRead,
     InlineWord(u32),
+    /// An inline word that is one of two literals, set on two paths that join
+    /// (VItoriaBr 67bb579: two immediate samplers picked on a branch).
+    InlineChoice(u32, u32),
     Table(u8),
     Desc { table: u8, off: u32, k: u32 },
     /// Dword `k` of one of several descriptors (control-flow join of different `s_load`s,
@@ -197,6 +200,15 @@ struct MSel {
     samp_reg: u16,
     tex: Vec<(u32, Res)>,
     samp: Vec<(u32, Res)>,
+    /// When set, sampler candidate n is chosen by its literal word (SGPR, word)
+    /// instead of `tb_dsel` (an inline sampler joined from two paths).
+    samp_words: Vec<(u16, u32)>,
+}
+
+/// TB_INLINE_SAMPLER_CHOICE=0: inline sampler words that differ between two
+/// joining paths are dropped and the image op refused, as before.
+fn inline_choice_on() -> bool {
+    std::env::var("TB_INLINE_SAMPLER_CHOICE").map_or(true, |v| v.trim() != "0")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3156,7 +3168,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // mask read as a number (our mixed masks, a ballot word per 32 lanes) needs the
     // console's wave width, or a wave32 host splits each guest wave's mask in two.
     // Only when nothing above set a width. TB_MASK_DATA_WAVE=0 leaves it unset.
-    let required_wave_size = required_wave_size.or((!resolve_wave32 && !em.pixel_wave && !em.mixed_masks.is_empty()
+    let required_wave_size = required_wave_size.or((ex.stage == Stage::Compute && !resolve_wave32 && !em.mixed_masks.is_empty()
         && !std::env::var("TB_MASK_DATA_WAVE").is_ok_and(|v| v.trim() == "0")).then_some(64));
     em.required_wave_size = required_wave_size;
     // Whether a wave64 VS / PS keeps its result when each 32-lane half runs
@@ -5003,7 +5015,34 @@ impl<'a> Emitter<'a> {
 
     /// Join of two different descriptor symbols at a control-flow merge: the union of
     /// their candidates when both are the same dword of some descriptor, else nothing.
+    fn static_sampler_slot(&mut self, slot: u32, space: u32) -> Result<u32, String> {
+        // A sampler register already used in another space gets a name
+        // of its own, as table resources do (table_binding, SPACE_ALIAS;
+        // register_of declares the real register). test152 source
+        // 9e856925 was refused here. TB_SAMPLER_SPACE_ALIAS=0 refuses.
+        let alias = !std::env::var("TB_SAMPLER_SPACE_ALIAS").is_ok_and(|v| v.trim() == "0");
+        let slot = if alias && slot < SPACE_ALIAS {
+            (0..16).map(|n| slot + n * SPACE_ALIAS)
+                .find(|name| self.binding_spaces.get(&(3, *name)).is_none_or(|&used| used == space))
+                .unwrap_or(slot)
+        } else { slot };
+        if self.binding_spaces.insert((3, slot), space).is_some_and(|old| old != space) {
+            return Err(format!("static sampler s{slot} overlaps another space"));
+        }
+        self.table_samplers.insert(slot);
+        Ok(slot)
+    }
+
     fn join_desc(&mut self, a: Sym, b: Sym) -> Option<Sym> {
+        if inline_choice_on() {
+            match (a, b) {
+                (Sym::InlineWord(x), Sym::InlineWord(y)) => return Some(Sym::InlineChoice(x, y)),
+                (c @ Sym::InlineChoice(x, y), Sym::InlineWord(z)) | (Sym::InlineWord(z), c @ Sym::InlineChoice(x, y))
+                    if z == x || z == y => return Some(c),
+                (Sym::InlineChoice(..), _) | (_, Sym::InlineChoice(..)) => return None,
+                _ => {}
+            }
+        }
         let parts = |s: Sym, sets: &Vec<Vec<(u8, u32)>>| -> Option<(Vec<(u8, u32)>, u32)> {
             match s {
                 Sym::Desc { table, off, k } => Some((vec![(table, off)], k)),
@@ -5914,7 +5953,36 @@ impl<'a> Emitter<'a> {
                         }
                     }
                     let mut samp_res: Vec<(u32, Res)> = Vec::new();
-                    if ins.mnemonic.starts_with("image_sample") || ins.mnemonic.starts_with("image_gather") || ins.mnemonic == "image_get_lod" {
+                    let mut samp_words: Vec<(u16, u32)> = Vec::new();
+                    // Two literal samplers joined from two paths (VItoriaBr 67bb579,
+                    // credit to its authors): both become static samplers and the op is
+                    // emitted once per candidate, chosen by a word that tells them apart.
+                    let choice = (inline_samplers && inline_choice_on()
+                        && (ins.mnemonic.starts_with("image_sample") || ins.mnemonic.starts_with("image_gather") || ins.mnemonic == "image_get_lod"))
+                        .then(|| {
+                            let mut pair = [[0u32; 4]; 2];
+                            let mut any = false;
+                            for n in 0..4u16 {
+                                match sym.get(&(ss + n)) {
+                                    Some(Sym::InlineWord(w)) => { pair[0][n as usize] = *w; pair[1][n as usize] = *w; }
+                                    Some(Sym::InlineChoice(a, b)) => { pair[0][n as usize] = *a; pair[1][n as usize] = *b; any = true; }
+                                    _ => return None,
+                                }
+                            }
+                            any.then_some(pair)
+                        }).flatten();
+                    if let Some(pair) = choice {
+                        let compare = ins.op & 8 != 0;
+                        let k = (0..4).find(|&k| pair[0][k] != pair[1][k]).unwrap_or(0);
+                        for words in pair {
+                            let Some((slot, space)) = sampler_heap::inline_sampler(self.ex, words, compare) else {
+                                return Err(format!("mimg at {:#x}: s{ss} one of two inline samplers no static sampler matches", ins.offset));
+                            };
+                            let slot = self.static_sampler_slot(slot, space)?;
+                            samp_res.push((0, Res::Samp(slot)));
+                            samp_words.push((ss + k as u16, words[k]));
+                        }
+                    } else if ins.mnemonic.starts_with("image_sample") || ins.mnemonic.starts_with("image_gather") || ins.mnemonic == "image_get_lod" {
                         if let Some(candidates) = self.desc_candidates(sym.get(&ss), 4) {
                             for (table, offset) in candidates {
                                 if Some(table) == self.sampler_heap_base {
@@ -5960,20 +6028,7 @@ impl<'a> Emitter<'a> {
                                     root.static_samplers.iter().any(|e| e[10] == reg && e[11] == space && (e[0] >> 7 == 1) == compare)
                                 })))
                         } else { self.static_sampler() } {
-                            // A sampler register already used in another space gets a name
-                            // of its own, as table resources do (table_binding, SPACE_ALIAS;
-                            // register_of declares the real register). test152 source
-                            // 9e856925 was refused here. TB_SAMPLER_SPACE_ALIAS=0 refuses.
-                            let alias = !std::env::var("TB_SAMPLER_SPACE_ALIAS").is_ok_and(|v| v.trim() == "0");
-                            let slot = if alias && slot < SPACE_ALIAS {
-                                (0..16).map(|n| slot + n * SPACE_ALIAS)
-                                    .find(|name| self.binding_spaces.get(&(3, *name)).is_none_or(|&used| used == space))
-                                    .unwrap_or(slot)
-                            } else { slot };
-                            if self.binding_spaces.insert((3, slot), space).is_some_and(|old| old != space) {
-                                return Err(format!("static sampler s{slot} overlaps another space"));
-                            }
-                            self.table_samplers.insert(slot);
+                            let slot = self.static_sampler_slot(slot, space)?;
                             samp_res.push((0, Res::Samp(slot)));
                         } else if let (true, Some(w)) = (inline_samplers, (|| {
                             let word = |n| match sym.get(&(ss + n)) { Some(Sym::InlineWord(w)) => Some(*w), _ => None };
@@ -6003,7 +6058,7 @@ impl<'a> Emitter<'a> {
                         v.push(s.1);
                     }
                     if tex_res.len() > 1 || samp_res.len() > 1 {
-                        self.msel.insert(idx, MSel { tex_reg: rs, samp_reg: ss, tex: tex_res, samp: samp_res });
+                        self.msel.insert(idx, MSel { tex_reg: rs, samp_reg: ss, tex: tex_res, samp: samp_res, samp_words });
                     }
                     self.res.insert(idx, v);
                 }
@@ -7358,14 +7413,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     if sel.samp.is_empty() { vec![None] } else { sel.samp.iter().copied().map(Some).collect() };
                 let mut first = true;
                 for (tid, tres) in &sel.tex {
-                    for s in &samps {
+                    for (sn, s) in samps.iter().enumerate() {
+                        let word_cond = sel.samp_words.get(sn).copied();
                         let mut cond = vec![];
                         if sel.tex.len() > 1 {
                             cond.push(format!("tb_dsel{} == {tid:#x}u", sel.tex_reg));
                         }
                         let mut v = vec![*tres];
                         if let Some((sid, sres)) = s {
-                            if sel.samp.len() > 1 {
+                            if let Some((reg, word)) = word_cond {
+                                cond.push(format!("{} == {word:#x}u", r(&Opnd::Sgpr(reg as u8))?));
+                            } else if sel.samp.len() > 1 {
                                 cond.push(format!("tb_dsel{} == {sid:#x}u", sel.samp_reg));
                             }
                             v.push(*sres);
