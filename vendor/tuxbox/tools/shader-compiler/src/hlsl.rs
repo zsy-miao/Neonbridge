@@ -7237,11 +7237,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             Enc::Smem if self.packed.is_some() => self.emit_packed_load(idx, ins),
             Enc::Smem => {
                 if matches!(ins.op, 36 | 37) {
-                    // s_memtime / s_memrealtime: HLSL has no clock, so the counter reads
-                    // 0 (the same value however the read is reached), logged;
-                    // TB_MEMTIME_STRICT=1 refuses the shader instead (VIctory 3dd467c).
+                    // s_memtime / s_memrealtime: HLSL has no shader clock, so the
+                    // shader is refused, as fxceless lower.rs 5573 refuses a scalar
+                    // memory read it cannot give data for. TB_MEMTIME_ZERO=1
+                    // restores the logged 0 read (f8d4963).
                     let what = format!("{} at {:#x}", ins.mnemonic, ins.offset);
-                    if std::env::var("TB_MEMTIME_STRICT").is_ok_and(|v| v.trim() == "1") {
+                    if !std::env::var("TB_MEMTIME_ZERO").is_ok_and(|v| v.trim() == "1") {
                         return Err(format!("{what}: no shader clock"));
                     }
                     let Some(Opnd::Sgpr(base)) = d else { return Err(format!("{what}: bad destination")) };
