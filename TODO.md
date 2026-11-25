@@ -23,7 +23,6 @@ Open work. Each item is tested in a run of its own.
 ## d3d12
 - Exact shadow write-back per command list (parked): commands.rs records each list's descriptor-table ranges, root UAVs and copy/clear targets; shadow.rs writes back only the shadows whose UAV handles fall in them. 5c45bf2 made 55ecc4b's window opt-in (TUXBOX_SHADOW_RECENT=N).
 - fxceless alias remainder (gaps file item 2): an R9G9B9E5 view over a UAV-only R32_UINT texture that compute writes. 5e3a1ee covers only render-target owners, and UAV-only images cannot be castable (allocation.rs:37). Port VIctory-fxceless resource.rs:1187-1237: per-subresource GPU copies through a buffer when the alias is read after the owner was written.
-- SetSampleMaskX failures in test145.
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
 - VIctory cd94d35 and 940d32f view_marks page marks: the d3d12 bitmap contract first, then the xshader half.
 
