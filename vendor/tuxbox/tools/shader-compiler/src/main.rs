@@ -3,7 +3,9 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
 };
-use tuxbox_xshader::{extract, ShaderExtract, Stage};
+use tuxbox_xshader::{extract, ShaderExtract};
+#[cfg(not(feature = "legacy-hlsl"))]
+use tuxbox_xshader::Stage;
 
 // Used only for deterministic refusals by the HLSL emitter.
 const UNSUPPORTED_HLSL: u8 = 65;
@@ -25,102 +27,29 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The command line's translation: [`tuxbox_xshader::translate_request`],
+/// the one copy the launcher also calls in-process. Returns the HLSL and the
+/// DXC profile.
 #[cfg(feature = "legacy-hlsl")]
 fn translate(
-    shader: &ShaderExtract,
+    source: &[u8],
+    _shader: &ShaderExtract,
     consumer: Option<&Path>,
     pixel_order: Option<&Path>,
     stencil_target: Option<u32>,
-) -> Result<(String, &'static str), Error> {
-    use tuxbox_xshader::{hlsl, meta};
-
-    let translated = if let Some(path) = consumer {
-        let bytes = read(path)?;
-        if !matches!(shader.stage, Stage::Vertex | Stage::Geometry | Stage::Mesh) {
-            return Err("expected a vertex, geometry or mesh producer and a pixel consumer".into());
-        }
-        let actual = pixel_order.map(read).transpose()?;
-        // A portable original consumer has no native ISA to translate. Read
-        // its interpolation directly; retain native consumer handling otherwise.
-        let portable = tuxbox_xshader::psv::portable_pixel_interface(&bytes);
-        let is_portable = portable.is_some();
-        let mut producer = shader.clone();
-        let interp = if let Some(interface) = portable {
-            if actual.as_deref().is_some_and(|code| code != bytes.as_slice()) {
-                return Err(Error::Unsupported("portable pixel consumer differs from its bound bytecode".into()));
-            }
-            // Portable consumers need the same component-type repair as
-            // native consumers. Only established 32-bit types are supported.
-            // TuxBox 6a2ca92 (Valdi320, PR #117).
-            for output in producer.output_sig.iter_mut().filter(|o| o.sysval == 0) {
-                let mut matches = interface.inputs.iter().filter(|i| i.sysval == 0
-                    && i.index == output.index && i.name.eq_ignore_ascii_case(&output.name));
-                if let Some(input) = matches.next() {
-                    if matches.next().is_some() || !matches!(input.comp_type, 1..=3) {
-                        return Err(Error::Unsupported("ambiguous or unsupported portable pixel component type".into()));
-                    }
-                    output.comp_type = input.comp_type;
-                }
-            }
-            let read = (shader.stage == Stage::Mesh)
-                .then(|| interface.inputs.iter().map(|i| format!("{}{}", i.name, i.index)).collect());
-            hlsl::InputInterp(interface.interpolation, read)
-        } else {
-            let pixel = extract(&bytes)?;
-            if pixel.stage != Stage::Pixel {
-                return Err("expected a pixel consumer".into());
-            }
-            // Console interpolants are raw dwords, so a title may write an element
-            // as float and read it as uint (or the reverse). Desktop drivers reject
-            // the pair (vkd3d: "signature element ... not compatible"). Give each
-            // producer output the consumer's component type; exports keep the bits.
-            for output in producer.output_sig.iter_mut().filter(|o| o.sysval == 0) {
-                let input = pixel.input_sig.iter().find(|i| {
-                    i.sysval == 0 && i.index == output.index && i.name.eq_ignore_ascii_case(&output.name)
-                });
-                // 1 = uint, 2 = sint; 0, 3 (float) and 6 (float16) all emit as float.
-                let integer = |t: u32| matches!(t, 1 | 2);
-                match input.map(|i| i.comp_type) {
-                    Some(t) if integer(t) => output.comp_type = t,
-                    Some(_) if integer(output.comp_type) => output.comp_type = 3,
-                    _ => {}
-                }
-            }
-            let mut interp = hlsl::translate(&pixel).map_err(Error::Unsupported)?.ps_input_interp;
-            // A linked mesh producer drops the vertex outputs this pixel shader does
-            // not declare (five-star-recomp 1236bfa, GPL-3.0, ThatRecompDev).
-            if shader.stage == Stage::Mesh {
-                interp.1 = Some(pixel.input_sig.iter().map(|i| format!("{}{}", i.name, i.index)).collect());
-            }
-            interp
-        };
-        let order = actual.as_deref().map(meta::pixel_input_order)
-            .unwrap_or_else(|| if is_portable { meta::pixel_input_order(&bytes) } else { Vec::new() });
-        hlsl::translate_ordered(&producer, Some(&interp), &order)
-    } else if let Some(target) = stencil_target {
-        hlsl::translate_stencil_target(shader, target)
-    } else {
-        hlsl::translate(shader)
-    }.map_err(Error::Unsupported)?;
-    let model = if translated.required_wave_size.is_some()
-        || translated.typed_int64_atomics
-        || matches!(translated.profile, "ps_6_6" | "cs_6_6" | "ms_6_6")
-    {
-        "6_6"
-    } else if shader.stage == Stage::Mesh || translated.profile == "cs_6_5" {
-        "6_5"
-    } else if translated.packed_dot_product {
-        "6_4"
-    } else if translated.needs_barycentrics {
-        "6_1"
-    } else {
-        "6_0"
-    };
-    Ok((translated.hlsl, model))
+) -> Result<(String, String), Error> {
+    let consumer = consumer.map(read).transpose()?;
+    let order = pixel_order.map(read).transpose()?;
+    match tuxbox_xshader::translate_request(source, consumer.as_deref(), order.as_deref(), stencil_target) {
+        Ok((hlsl, profile)) => Ok((String::from_utf8(hlsl).map_err(|e| e.to_string())?, profile)),
+        Err((UNSUPPORTED_HLSL, m)) => Err(Error::Unsupported(m)),
+        Err((_, m)) => Err(Error::Other(m)),
+    }
 }
 
 #[cfg(not(feature = "legacy-hlsl"))]
 fn translate(
+    _source: &[u8],
     shader: &ShaderExtract,
     consumer: Option<&Path>,
     _pixel_order: Option<&Path>,
@@ -138,7 +67,20 @@ fn translate(
             shader.stage
         )
     }).map_err(Error::Unsupported)?;
-    Ok((hlsl, if tuxbox_xshader::requires_inline_ray_query(shader) { "6_5" } else { "6_0" }))
+    let model = if tuxbox_xshader::requires_inline_ray_query(shader) { "6_5" } else { "6_0" };
+    Ok((hlsl, format!("{}_{model}", stage_prefix(shader.stage)?)))
+}
+
+#[cfg(not(feature = "legacy-hlsl"))]
+fn stage_prefix(stage: Stage) -> Result<&'static str, Error> {
+    Ok(match stage {
+        Stage::Pixel => "ps",
+        Stage::Vertex => "vs",
+        Stage::Geometry => "gs",
+        Stage::Compute => "cs",
+        Stage::Mesh => "ms",
+        _ => return Err("unsupported DXC stage".into()),
+    })
 }
 
 fn run() -> Result<(), Error> {
@@ -233,23 +175,15 @@ fn run() -> Result<(), Error> {
         return Ok(());
     }
     let shader = extract(&source_bytes)?;
-    let (hlsl, model) = translate(
+    let (hlsl, profile) = translate(
+        &source_bytes,
         &shader,
         consumer.as_deref(),
         pixel_order.as_deref(),
         stencil_target,
     )?;
     if let Some(path) = profile_output {
-        let stage = match shader.stage {
-            Stage::Pixel => "ps",
-            Stage::Vertex => "vs",
-            Stage::Geometry => "gs",
-            Stage::Compute => "cs",
-            Stage::Mesh => "ms",
-            _ => return Err("unsupported DXC stage".into()),
-        };
-        fs::write(&path, format!("{stage}_{model}"))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        fs::write(&path, profile).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let mut instructions = 0;
     let mut consumed = 0;
@@ -354,7 +288,7 @@ fn refusal_census(dir: &Path, json: bool) -> Result<(), String> {
         let stage = format!("{:?}", shader.stage).to_lowercase();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| translate(&shader, None, None, None)));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| translate(&bytes, &shader, None, None, None)));
             let _ = tx.send(match result {
                 Ok(Ok(t)) => t.0.contains(tuxbox_xshader::hlsl::MIXED_MASK_MARK).then_some(("mixed", String::new())),
                 Ok(Err(Error::Unsupported(e))) => Some(("unsupported", e)),
