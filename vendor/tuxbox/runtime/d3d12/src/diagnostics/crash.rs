@@ -73,6 +73,9 @@ pub(crate) fn install() {
         }));
         assert_filter();
         let _ = std::thread::Builder::new().name("TuxBox watchdog".into()).spawn(watchdog);
+        if crate::env_toggle!("TUXBOX_WATCH_HANG") != Some("0") {
+            let _ = std::thread::Builder::new().name("TuxBox watch-hang".into()).spawn(watch_hang);
+        }
     });
 }
 
@@ -323,6 +326,65 @@ fn hang_report(presents: u64, seconds: u64) {
     }
 }
 
+/// five-star-recomp --watch-hang (docs/debugging.md, GPL-3, ported): every
+/// 100 ms read the title's main state (0x71273A0 +0x10/+0x12), the loading
+/// screen flag (0x7453ED4), the session byte ([0xAAE3B70]+0x1B3), the
+/// watchdog pause flag (0x71B6330) and handler (0x71B6348), logging each
+/// change, and the heartbeat (0x71B6338) when it moves again after 2 s or
+/// more. 0x23cf6a0 sets the handler to 0x23cf620 ("GPU Loc Sig") before its
+/// unbounded wait for the loading-screen render thread. Read only.
+/// TUXBOX_WATCH_HANG=0 off.
+fn watch_hang() {
+    let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return };
+    let base = base.0 as usize;
+    let read = |at: usize, len: usize| -> Option<u64> {
+        let mut info = MEMORY_BASIC_INFORMATION::default();
+        let ok = unsafe { VirtualQuery(Some(at as _), &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } != 0
+            && info.State == MEM_COMMIT
+            && (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)).0 == 0
+            && at + len <= info.BaseAddress as usize + info.RegionSize;
+        ok.then(|| {
+            let mut v = [0u8; 8];
+            unsafe { std::ptr::copy_nonoverlapping(at as *const u8, v.as_mut_ptr(), len) };
+            u64::from_le_bytes(v)
+        })
+    };
+    let mut last: [Option<u64>; 6] = [None; 6];
+    let (mut beat, mut beat_at) = (None, std::time::Instant::now());
+    let mut lines = 0u32;
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let session = read(base + 0xAAE_3B70, 8).filter(|&p| p != 0).and_then(|p| read(p as usize + 0x1B3, 1));
+        let now = [
+            read(base + 0x712_73A0 + 0x10, 2),
+            read(base + 0x712_73A0 + 0x12, 2),
+            read(base + 0x745_3ED4, 1),
+            session,
+            read(base + 0x71B_6330, 1),
+            read(base + 0x71B_6348, 8).map(|h| if h >= base as u64 { h - base as u64 } else { h }),
+        ];
+        if now != last && lines < 4096 {
+            lines += 1;
+            let f = |v: Option<u64>| v.map_or("?".to_string(), |v| format!("{v:#x}"));
+            super::log_line(format_args!(
+                "watch-hang: state {} next {}, loading screen {}, session byte {}, watchdog pause {}, handler game+{} (presents {}; TUXBOX_WATCH_HANG=0 off)",
+                f(now[0]), f(now[1]), f(now[2]), f(now[3]), f(now[4]), f(now[5]), PRESENTS.load(Ordering::Relaxed)));
+            last = now;
+        }
+        let heartbeat = read(base + 0x71B_6338, 8);
+        if heartbeat != beat {
+            let still = beat_at.elapsed();
+            if beat.is_some() && still.as_secs_f32() >= 2.0 && lines < 4096 {
+                lines += 1;
+                super::log_line(format_args!(
+                    "watch-hang: heartbeat moved again after {:.1} s (the title ends itself at 30 s; presents {})",
+                    still.as_secs_f32(), PRESENTS.load(Ordering::Relaxed)));
+            }
+            (beat, beat_at) = (heartbeat, std::time::Instant::now());
+        }
+    }
+}
+
 /// TUXBOX_HANG_FIND="0x23cf104,0x23cf0ff": the hang report also samples every
 /// thread three times 500 ms apart and, for each thread whose stack holds a
 /// return into one of these main-image offsets, prints its full chain (48
@@ -370,13 +432,20 @@ fn find_lines() -> Vec<String> {
             let words = unsafe { capture(handle, &mut context.0, &mut stack) };
             let _ = unsafe { CloseHandle(handle) };
             let Some(words) = words else { continue };
-            let Some(hit) = stack[..words].iter().position(|w| targets.contains(w)) else { continue };
-            found += 1;
             let name = super::threads::name_of(tid);
+            // The loading-screen render thread waits for five `Subrender:%02u`
+            // workers (five-star-recomp debugging.md): they are caught by name.
+            let worker = name.contains("Subrender");
+            let hit = stack[..words].iter().position(|w| targets.contains(w));
+            if hit.is_none() && !worker {
+                continue;
+            }
+            let hit = hit.unwrap_or(0);
+            found += 1;
             let wait = waits::describe(&context.0);
             out.push(format!(
                 "find #{sample} thread {name}({tid}){wait} rip {:#x}, game+{:#x} at word {hit}: {}",
-                context.0.Rip, stack[hit] - base, stack_chain(&list, context.0.Rip as usize, &stack[..words], 48)));
+                context.0.Rip, stack[hit].wrapping_sub(base), stack_chain(&list, context.0.Rip as usize, &stack[..words], 48)));
         }
         if found == 0 {
             out.push(format!("find #{sample}: no thread's stack holds {spec}"));
