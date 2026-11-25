@@ -707,7 +707,9 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let translate_ms = translate_started.elapsed().as_millis() as u64;
         let target = fs::read_to_string(&profile).map_err(|e| format!("xshader wrote no profile: {e}"))?.trim().to_owned();
         let allowed: &[&str] = if ext == "link" {
-            &["vs_6_0", "vs_6_1", "vs_6_6", "gs_6_0", "gs_6_1", "gs_6_6"]
+            // A mesh producer links too (d3d12 stream.rs mesh_link, five-star-recomp
+            // ddcaa54): 94ba67a's prewarm failed c20f5160 on ms_6_6.
+            &["vs_6_0", "vs_6_1", "vs_6_6", "gs_6_0", "gs_6_1", "gs_6_6", "ms_6_5", "ms_6_6"]
         } else {
             &["cs_6_0", "cs_6_1", "cs_6_6", "ps_6_0", "ps_6_1", "ps_6_6", "vs_6_0", "vs_6_1", "vs_6_6",
               "gs_6_0", "gs_6_1", "gs_6_6", "cs_6_4", "cs_6_5", "ms_6_5", "ms_6_6", "as_6_5", "as_6_6", "lib_6_3"]
