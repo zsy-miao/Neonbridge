@@ -7,6 +7,8 @@
 //!   `r const <index>`               index known at compile time
 //!   `w dynamic`                     computed or loaded per lane / not traced
 //!   `heap_access none`              no direct heap descriptor fetch
+//!   `uav_from_srv param=<p> space=<s> offset=<bytes> range=<i>`  a root SRV
+//!                                   table range the program stores through: retype it UAV
 //! A missing file means unknown. TB_HEAP_REFLECT=0 writes no file.
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -67,7 +69,7 @@ impl HeapReflect {
     }
 
     /// Publish this program's lines for `take`.
-    pub(super) fn publish(&self) {
+    pub(super) fn publish(&self, extra: &[String]) {
         let mut lines = BTreeSet::new();
         for (idx, text) in &self.sites {
             if self.unknown_write || self.writes.contains(idx) {
@@ -79,8 +81,8 @@ impl HeapReflect {
         if lines.is_empty() {
             out.push_str("heap_access none\n");
         }
-        for l in lines {
-            out.push_str(&l);
+        for l in lines.iter().chain(extra) {
+            out.push_str(l);
             out.push('\n');
         }
         LAST.with(|l| *l.borrow_mut() = Some(out));

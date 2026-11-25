@@ -938,6 +938,9 @@ struct Emitter<'a> {
     resource_heap_base: Option<u8>,
     /// Heap index sources and accesses for the `.heap` sidecar (heap_reflect).
     heap_reflect: heap_reflect::HeapReflect,
+    /// Root SRV table slots stored through, declared as UAVs:
+    /// (root param, space, byte offset, range index, register).
+    srv_as_uav: BTreeSet<(usize, u32, u32, usize, u32)>,
     /// The heap base comes from compute user data (FSSM class 5) of a program the
     /// root-based `heap_register` does not cover; see `compute_heap_base`.
     compute_heap: bool,
@@ -3977,6 +3980,7 @@ impl<'a> Emitter<'a> {
             uses_heap_sampler: false,
             desc_lookup: false,
             heap_reflect: Default::default(),
+            srv_as_uav: BTreeSet::new(),
             resource_heap_base: sampler_heap::resource_base(ex).or_else(|| heap_register(ex)).or_else(|| compute_heap_base(ex))
                 .or_else(|| pixel_heap_base(ex, 5)),
             compute_heap: sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none()
@@ -4141,6 +4145,27 @@ impl<'a> Emitter<'a> {
                 return matches!(p.kind, RootParamKind::Constants { .. }).then_some((i, off - at));
             }
             at += words;
+        }
+        None
+    }
+
+    /// The root table SRV range covering byte `offset` of the table in `sgpr`:
+    /// (root param, range index, space, register), as `table_binding_space` walks it.
+    fn root_srv_range(&self, sgpr: u8, offset: u32) -> Option<(usize, usize, u32, u32)> {
+        let param = self.root_param_of(sgpr)?;
+        let ranges = self.root_table(sgpr)?;
+        let index = u64::from(offset / 32);
+        if offset % 32 != 0 {
+            return None;
+        }
+        let mut next = 0u64;
+        for (i, range) in ranges.iter().enumerate() {
+            let base = if range.offset_in_table == u32::MAX { next } else { u64::from(range.offset_in_table) };
+            next = base + u64::from(range.num);
+            if (base..next).contains(&index) {
+                let register = range.base_register.checked_add(u32::try_from(index - base).ok()?)?;
+                return (range.range_type == 0).then_some((param, i, range.space, register));
+            }
         }
         None
     }
@@ -4710,8 +4735,16 @@ impl<'a> Emitter<'a> {
                 self.res_block(&program, &mut sym, &mut written, r.clone(), track_heap_origin).map_err(|e| first_err.clone().unwrap_or(e))?;
             }
         }
-        if heap_reflect::on() {
-            self.heap_reflect.publish();
+        // A retyped slot is a UAV for every access; one also read as an SRV is not one view.
+        for &(_, space, off, _, register) in &self.srv_as_uav {
+            if self.tex.contains_key(&register) && self.binding_spaces.get(&(0, register)) == Some(&space) {
+                return Err(format!("SRV slot at table offset {off:#x} is both read as t{register} and stored"));
+            }
+        }
+        let extra: Vec<String> = self.srv_as_uav.iter().map(|(param, space, off, range, _)|
+            format!("uav_from_srv param={param} space={space} offset={off} range={range}")).collect();
+        if heap_reflect::on() || !extra.is_empty() {
+            self.heap_reflect.publish(&extra);
         }
         Ok(())
     }
@@ -6338,7 +6371,25 @@ impl<'a> Emitter<'a> {
                             format!("mimg at {:#x}: s{rs} not an image descriptor ({:?})", ins.offset, sym.get(&rs))
                         })?;
                         for (ttable, off) in &tex_c {
-                            let (kind, tslot) = self.table_binding(*ttable, *off, 32)?;
+                            let (mut kind, mut tslot) = self.table_binding(*ttable, *off, 32)?;
+                            // A texel store or atomic through a slot the guest root types SRV: the
+                            // slot holds a writable descriptor whatever RTS0 says (test17x 1233c986,
+                            // 753c5178, 2211091a: s5 + 0x20, t240). Declare it a UAV and tell the
+                            // runtime to retype that range (`uav_from_srv` in the .heap sidecar).
+                            // TB_SRV_AS_UAV=0 keeps the refusal.
+                            if kind == Some(0) && (ins.mnemonic.starts_with("image_store") || ins.mnemonic.starts_with("image_atomic_"))
+                                && std::env::var("TB_SRV_AS_UAV").map_or(true, |v| v.trim() != "0")
+                            {
+                                if let Some((param, range, space, register)) = self.root_srv_range(*ttable, *off) {
+                                    if self.binding_spaces.get(&(1, register)).is_some_and(|&used| used != space) {
+                                        return Err(format!("mimg at {:#x}: SRV slot retyped as UAV u{register} clashes with another space", ins.offset));
+                                    }
+                                    self.binding_spaces.insert((1, register), space);
+                                    self.srv_as_uav.insert((param, space, *off, range, register));
+                                    kind = Some(1);
+                                    tslot = register;
+                                }
+                            }
                             let is_uav = kind == Some(1);
                             if is_uav && ins.mnemonic.starts_with("image_atomic_") {
                                 self.uav_uint.insert(tslot);
