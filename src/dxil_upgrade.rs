@@ -19,7 +19,7 @@ pub fn marker(path: &Path) -> PathBuf {
 }
 
 pub fn enabled() -> bool {
-    crate::dxc::enabled() && std::env::var("NEONBRIDGE_DXC_UPGRADE").as_deref() != Ok("0")
+    std::env::var("NEONBRIDGE_DXC_UPGRADE").as_deref() != Ok("0")
 }
 
 fn queue(dxil: &Path) -> PathBuf {
@@ -54,7 +54,7 @@ pub fn start(dxc: PathBuf, defines: Vec<String>, dxil: PathBuf, log: impl Fn(Str
     if !enabled() {
         return;
     }
-    let secs = std::env::var("NEONBRIDGE_DXC_UPGRADE_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0).unwrap_or(300);
+    let secs = std::env::var("NEONBRIDGE_DXC_UPGRADE_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0).unwrap_or(900);
     let _ = std::thread::Builder::new().name("dxil-upgrade".into()).spawn(move || {
         let dir = queue(&dxil);
         let (mut done, mut failed) = (0usize, 0usize);
@@ -89,7 +89,7 @@ fn upgrade(dxc: &Path, defines: &[String], job: &Path, secs: u64) -> Result<(), 
     let mut lines = text.lines();
     let target = lines.next().ok_or("empty job")?.to_owned();
     let paths: Vec<PathBuf> = lines.filter(|l| !l.is_empty()).map(PathBuf::from).collect();
-    let hlsl = fs::read(job.with_extension("hlsl")).map_err(|e| e.to_string())?;
+    let source = job.with_extension("hlsl");
     let mut args = vec!["-T".to_owned(), target.clone(), "-O1".to_owned()];
     for d in defines {
         args.extend(["-D".to_owned(), d.clone()]);
@@ -97,9 +97,42 @@ fn upgrade(dxc: &Path, defines: &[String], job: &Path, secs: u64) -> Result<(), 
     if target != "lib_6_3" {
         args.extend(["-E".to_owned(), "main".to_owned()]);
     }
-    let bytes = match crate::dxc::compile(dxc, hlsl, args, Duration::from_secs(secs), &|| false, true) {
-        Ok(b) => b,
-        Err(crate::dxc::Error::Compiler(m) | crate::dxc::Error::Other(m)) => return Err(m.chars().take(300).collect()),
+    let bytes = if crate::dxc::enabled() {
+        let hlsl = fs::read(&source).map_err(|e| e.to_string())?;
+        match crate::dxc::compile(dxc, hlsl, args, Duration::from_secs(secs), &|| false, true) {
+            Ok(b) => b,
+            Err(crate::dxc::Error::Compiler(m) | crate::dxc::Error::Other(m)) => return Err(m.chars().take(300).collect()),
+        }
+    } else {
+        // dxc.exe in the idle priority class: the game and the prewarm's own
+        // compiles go first. Only NEONBRIDGE_DXC_UPGRADE_SECS ends it, not the
+        // 10 s -O1 cut-off of a compile someone waits on.
+        use std::os::windows::process::CommandExt;
+        const IDLE_PRIORITY_CLASS: u32 = 0x40;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let out = job.with_extension("cso");
+        let mut child = std::process::Command::new(dxc).args(&args).arg("-Fo").arg(&out).arg(&source)
+            .creation_flags(IDLE_PRIORITY_CLASS | CREATE_NO_WINDOW)
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .spawn().map_err(|e| format!("dxc: {e}"))?;
+        let start = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait().map_err(|e| e.to_string())? {
+                Some(status) => break status,
+                None if start.elapsed() > Duration::from_secs(secs) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("dxc -O1 past {secs} s (NEONBRIDGE_DXC_UPGRADE_SECS)"));
+                }
+                None => std::thread::sleep(Duration::from_millis(250)),
+            }
+        };
+        let bytes = fs::read(&out);
+        let _ = fs::remove_file(&out);
+        if !status.success() {
+            return Err(format!("dxc -O1 failed ({status})"));
+        }
+        bytes.map_err(|e| format!("dxc wrote no output: {e}"))?
     };
     if !crate::shaders::has_dxil_container(&bytes) {
         return Err("invalid DXIL container".into());
