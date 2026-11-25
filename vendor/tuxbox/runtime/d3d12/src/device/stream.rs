@@ -678,6 +678,9 @@ unsafe fn create(
         unsafe { field.write(root.native.as_raw()) };
         pipeline.scene_root = Some(root);
     }
+    if let (Some(blend), Some(formats)) = (unsafe { blend.as_mut() }, unsafe { formats.as_ref() }) {
+        super::cb_blend::integer_targets_unblended(blend, &formats.RTFormats, formats.NumRenderTargets);
+    }
     let stencil_code;
     if let (Some(depth), Some(formats), Some(blend), Some((ps, Some(_))), Some(field)) = (
         unsafe { depth.as_mut() },

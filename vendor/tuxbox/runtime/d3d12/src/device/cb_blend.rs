@@ -5,6 +5,7 @@
 //! written. TUXBOX_SLOT57_CB_BLEND=0 leaves slot 57 pipelines unblended.
 use windows::Win32::Foundation::{FALSE, TRUE};
 use windows::Win32::Graphics::Direct3D12::*;
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 
 /// Where the eight words sit in state block A.
 pub(super) const OFFSET: usize = 0xd0;
@@ -64,6 +65,50 @@ fn combine(code: u32) -> Option<D3D12_BLEND_OP> {
         4 => D3D12_BLEND_OP_REV_SUBTRACT,
         _ => return None,
     })
+}
+
+/// Integer render target formats, which D3D12 cannot blend into.
+fn integer_target(format: DXGI_FORMAT) -> bool {
+    use windows::Win32::Graphics::Dxgi::Common::*;
+    matches!(format,
+        DXGI_FORMAT_R32G32B32A32_UINT | DXGI_FORMAT_R32G32B32A32_SINT | DXGI_FORMAT_R32G32B32_UINT
+        | DXGI_FORMAT_R32G32B32_SINT | DXGI_FORMAT_R16G16B16A16_UINT | DXGI_FORMAT_R16G16B16A16_SINT
+        | DXGI_FORMAT_R32G32_UINT | DXGI_FORMAT_R32G32_SINT | DXGI_FORMAT_R10G10B10A2_UINT
+        | DXGI_FORMAT_R8G8B8A8_UINT | DXGI_FORMAT_R8G8B8A8_SINT | DXGI_FORMAT_R16G16_UINT
+        | DXGI_FORMAT_R16G16_SINT | DXGI_FORMAT_R32_UINT | DXGI_FORMAT_R32_SINT | DXGI_FORMAT_R8G8_UINT
+        | DXGI_FORMAT_R8G8_SINT | DXGI_FORMAT_R16_UINT | DXGI_FORMAT_R16_SINT | DXGI_FORMAT_R8_UINT
+        | DXGI_FORMAT_R8_SINT)
+}
+
+/// Blending off on integer render targets (VIctory-zhai 3716dd5, from
+/// fxceless/victory-fork#51 and Marvisak/VIctory#806, GPL-3.0, credit to
+/// pablogonz12, FrancescoGelosoEterea and their authors). The console ignores
+/// blending there and titles leave it on, but D3D12 refuses the pipeline
+/// (E_INVALIDARG) and its draws are lost. One description for every target
+/// becomes one per target, so the others keep theirs.
+/// TUXBOX_INTEGER_TARGET_BLEND=1 keeps the title's blend state.
+pub(super) fn integer_targets_unblended(blend: &mut D3D12_BLEND_DESC, formats: &[DXGI_FORMAT], count: u32) {
+    let count = (count as usize).min(8).min(formats.len());
+    let independent = blend.IndependentBlendEnable.as_bool();
+    let blends = |b: &D3D12_BLEND_DESC, i: usize| b.RenderTarget[if independent { i } else { 0 }].BlendEnable.as_bool();
+    if crate::env_toggle!("TUXBOX_INTEGER_TARGET_BLEND") == Some("1")
+        || !(0..count).any(|i| integer_target(formats[i]) && blends(blend, i))
+    {
+        return;
+    }
+    if !independent {
+        blend.IndependentBlendEnable = TRUE;
+        blend.RenderTarget = [blend.RenderTarget[0]; 8];
+    }
+    for i in (0..count).filter(|&i| integer_target(formats[i])) {
+        blend.RenderTarget[i].BlendEnable = FALSE;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "pipeline: blending turned off on integer render targets ({n} so far; TUXBOX_INTEGER_TARGET_BLEND=1 keeps it)"));
+    }
 }
 
 fn unblended() -> D3D12_RENDER_TARGET_BLEND_DESC {

@@ -42,6 +42,7 @@ pub(super) unsafe extern "system" fn create_pipeline(
     let mut native_desc = unsafe { core::ptr::read(desc) };
     native_desc.pRootSignature = ManuallyDrop::new(root.cloned());
     super::format::host_targets(&mut native_desc.RTVFormats, &mut native_desc.DSVFormat);
+    super::cb_blend::integer_targets_unblended(&mut native_desc.BlendState, &native_desc.RTVFormats, native_desc.NumRenderTargets);
     let native = if native_desc.PrimitiveTopologyType.0 == rectangle::PIPELINE_TYPE {
         crate::big_stack::run(|| unsafe { rectangle::create_pipeline(&this.native, &mut native_desc) })
     } else {
