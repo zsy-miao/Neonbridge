@@ -535,6 +535,31 @@ fn verified(path: &Path, expected: &str) -> Result<Vec<u8>, String> {
 
 enum ToolError { Exit(i32, String), Other(String) }
 
+/// Peak private bytes of the xshader and dxc processes this launcher ran: the
+/// per-job memory the worker ceiling has to fit (reported after each prewarm).
+static JOB_PEAK_MAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static JOB_PEAK_SUM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static JOB_PEAK_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn note_peak(child: &std::process::Child) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    let mut c: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    c.cb = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    if unsafe { GetProcessMemoryInfo(child.as_raw_handle() as _, &mut c, c.cb) } != 0 {
+        let peak = c.PeakPagefileUsage as u64;
+        JOB_PEAK_MAX.fetch_max(peak, Ordering::Relaxed);
+        JOB_PEAK_SUM.fetch_add(peak, Ordering::Relaxed);
+        JOB_PEAK_N.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn job_peaks() -> String {
+    let n = JOB_PEAK_N.load(Ordering::Relaxed).max(1);
+    format!("xshader/dxc process peaks: mean {} MiB, max {} MiB over {} processes; in-process compiles still running past their time: {}",
+        JOB_PEAK_SUM.load(Ordering::Relaxed) / n >> 20, JOB_PEAK_MAX.load(Ordering::Relaxed) >> 20, JOB_PEAK_N.load(Ordering::Relaxed), crate::dxc::abandoned())
+}
+
 fn run(cmd: &mut Command, timeout: Duration) -> Result<(), ToolError> {
     run_until(cmd, timeout, || false)
 }
@@ -555,6 +580,7 @@ fn run_until(cmd: &mut Command, timeout: Duration, give_up: impl Fn() -> bool) -
         }
         match child.try_wait() {
             Ok(Some(status)) => {
+                note_peak(&child);
                 if status.success() {
                     return Ok(());
                 }
@@ -1166,7 +1192,11 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                     && !stop.is_some_and(|s| s.load(Ordering::Acquire))
                     && let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed))
                 {
-                    while !room_for_programs(running.load(Ordering::Acquire)) && !stop.is_some_and(|s| s.load(Ordering::Acquire)) {
+                    // In-process compiles abandoned past their time still run and hold
+                    // memory (a4ba782): each one counts as a job until it ends.
+                    while (!room_for_programs(running.load(Ordering::Acquire) + crate::dxc::abandoned())
+                        || running.load(Ordering::Acquire) + crate::dxc::abandoned() >= workers)
+                        && !stop.is_some_and(|s| s.load(Ordering::Acquire)) {
                         thread::sleep(Duration::from_millis(250));
                     }
                     running.fetch_add(1, Ordering::AcqRel);
@@ -1208,6 +1238,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     } else {
         say(format!("{label}: all {total} done in {:.0} s", started.elapsed().as_secs_f64()));
     }
+    say(format!("{label}: {}", job_peaks()));
     let _ = fs::remove_dir_all(scratch);
 }
 

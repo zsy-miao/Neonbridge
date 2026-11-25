@@ -21,6 +21,14 @@ type CreateInstance = unsafe extern "system" fn(*const GUID, *const GUID, *mut *
 
 const DXC_STACK: usize = 64 << 20;
 
+/// Compile threads whose caller gave up on them (past its time): they run on
+/// to the end and hold their memory, so the prewarm counts them as jobs.
+static ABANDONED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn abandoned() -> usize {
+    ABANDONED.load(std::sync::atomic::Ordering::Acquire)
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
 }
@@ -91,7 +99,10 @@ pub fn enabled() -> bool {
 /// `low` runs the compile thread at the lowest priority (the -O1 upgrades of dxil_upgrade.rs).
 pub fn compile(dxc_exe: &Path, src: Vec<u8>, args: Vec<String>, timeout: Duration, give_up: &dyn Fn() -> bool, low: bool) -> Result<Vec<u8>, Error> {
     let create = create_fn(dxc_exe).map_err(Error::Other)?;
+    use std::sync::atomic::{AtomicBool, Ordering};
     let (tx, rx) = std::sync::mpsc::channel();
+    let gone = std::sync::Arc::new(AtomicBool::new(false));
+    let gone_thread = gone.clone();
     std::thread::Builder::new().name("neonbridge-dxc".into()).stack_size(DXC_STACK).spawn(move || {
         if low {
             use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_LOWEST};
@@ -99,14 +110,24 @@ pub fn compile(dxc_exe: &Path, src: Vec<u8>, args: Vec<String>, timeout: Duratio
         }
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile_here(create, &src, &args)))
             .unwrap_or_else(|_| Err(Error::Other("panic in the compile thread".into())));
+        // An abandoned compile is counted until here (swap: once).
         let _ = tx.send(r);
+        if gone_thread.swap(false, Ordering::AcqRel) {
+            ABANDONED.fetch_sub(1, Ordering::AcqRel);
+        }
     }).map_err(|e| Error::Other(format!("compile thread: {e}")))?;
     let start = std::time::Instant::now();
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(r) => return r,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(Error::Other("the compile thread exited".into())),
-            Err(_) if start.elapsed() > timeout || give_up() => return Err(Error::Other("timed out".into())),
+            Err(_) if start.elapsed() > timeout || give_up() => {
+                // Counted before it is marked, so the thread's decrement never comes first.
+                ABANDONED.fetch_add(1, Ordering::AcqRel);
+                gone.store(true, Ordering::Release);
+                drop(rx);
+                return Err(Error::Other("timed out".into()));
+            }
             Err(_) => {}
         }
     }
