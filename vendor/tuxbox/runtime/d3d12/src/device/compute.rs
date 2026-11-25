@@ -364,6 +364,9 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     if hr.is_err() {
         return hr;
     }
+    if N == 67 && crate::env_toggle!("TUXBOX_SLOT67_REAL") == Some("1") {
+        return unsafe { slot67_real(this, desc, call, iid, out) };
+    }
     if stub {
         return E_NOTIMPL;
     }
@@ -750,4 +753,66 @@ unsafe fn null_compute(
     substituted("compute");
     super::stream::background::mark_nulled();
     Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData::default(), out) })
+}
+
+/// TUXBOX_SLOT67_REAL=1: slot 67's description is a deserialized console
+/// compute PSO (leonida d3d12_xs_device.cpp DeserializeComputePipelineStateX
+/// and docs/fspx.md, GPL-3.0, credit): +0x00 root signature, +0x08/+0x10
+/// kind 0 dispatch state (7 words: word 3 NumThreadsX | Y << 16, word 4
+/// NumThreadsZ, bit 20 wave32, word 6 COMPUTE_PGM_RSRC2), +0x28/+0x30 kind 6
+/// RDNA2 code. The code is wrapped as layout-6 FSSM DXBC (slot57
+/// wrap_compute) and built through slot 62's path, so FidelityFX needs no
+/// slot 62 retry. A description that does not decode answers E_INVALIDARG
+/// as leonida does. Wave32 (word 4 bit 20) is not passed on: xshader picks
+/// its own wave size.
+unsafe fn slot67_real(this: &Device, desc: *const c_void, call: u32, iid: *const GUID, out: Out) -> HRESULT {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    let address = desc as usize;
+    if !readable(address, 0x38) {
+        return E_INVALIDARG;
+    }
+    // SAFETY: 0x38 bytes are readable.
+    let word = |n: usize| unsafe { (address as *const u64).add(n).read_unaligned() } as usize;
+    let (root, state, state_len, code, code_len) = (word(0), word(1), word(2), word(5), word(6));
+    if state_len < 28 || state_len > 0x1000 || !readable(state, state_len)
+        || code_len < 36 || code_len > 1 << 20 || code_len % 4 != 0 || !readable(code, code_len)
+    {
+        if call < 8 {
+            crate::diagnostics::log_line(format_args!(
+                "device slot 67: kind 0 {state:#x}+{state_len:#x} or kind 6 {code:#x}+{code_len:#x} unreadable: E_INVALIDARG (TUXBOX_SLOT67_REAL)"));
+        }
+        return E_INVALIDARG;
+    }
+    // SAFETY: both ranges are readable.
+    let state = unsafe { slice::from_raw_parts(state as *const u8, state_len) };
+    let program = unsafe { slice::from_raw_parts(code as *const u8, code_len) };
+    let w = |n: usize| u32::from_le_bytes(state[n * 4..n * 4 + 4].try_into().unwrap());
+    let threads = [w(3) & 0xffff, w(3) >> 16, w(4) & 0xffff];
+    // RSRC2 LDS_SIZE (bits 23..15) in 128-dword granules.
+    let lds = ((w(6) >> 15) & 0x1ff) * 512;
+    if threads.contains(&0) {
+        return E_INVALIDARG;
+    }
+    // The wrapped DXBC stays alive for lazy builds that read it later.
+    static WRAPPED: Mutex<Option<HashMap<(Vec<u8>, [u32; 3], u32), &'static [u8]>>> = Mutex::new(None);
+    let bytes: &'static [u8] = {
+        let mut map = WRAPPED.lock().unwrap_or_else(|e| e.into_inner());
+        let map = map.get_or_insert_with(HashMap::new);
+        *map.entry((program.to_vec(), threads, lds))
+            .or_insert_with(|| Box::leak(super::slot57::wrap_compute(program, threads, lds).into_boxed_slice()))
+    };
+    if call < 8 {
+        crate::diagnostics::log_line(format_args!(
+            "device slot 67: compute PSO root {root:#x}, group {}x{}x{}, LDS {lds} B, wave{}, {code_len} B code -> slot 62 path (TUXBOX_SLOT67_REAL)",
+            threads[0], threads[1], threads[2], if w(4) & 1 << 20 != 0 { 32 } else { 64 }));
+    }
+    let guest = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        // SAFETY: the title's root pointer, borrowed as slot 62 receives it;
+        // ManuallyDrop keeps it unreleased.
+        pRootSignature: ManuallyDrop::new(unsafe { std::mem::transmute::<usize, Option<ID3D12RootSignature>>(root) }),
+        CS: D3D12_SHADER_BYTECODE { pShaderBytecode: bytes.as_ptr().cast(), BytecodeLength: bytes.len() },
+        ..Default::default()
+    };
+    unsafe { create_pipeline_x(this, &guest, 0, std::ptr::null(), iid, out) }
 }

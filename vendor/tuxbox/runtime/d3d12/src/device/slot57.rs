@@ -335,11 +335,45 @@ pub(super) fn wrap(program: &[u8], stage: u32) -> Vec<u8> {
     for at in (CODE + isa.len()..image.len()).step_by(4) {
         put(&mut image, at, &CODE_END.to_le_bytes());
     }
+    container(&image, stage)
+}
+
+/// TUXBOX_SLOT67_REAL=1: a slot 67 compute program (kind 6, bare RDNA2 code)
+/// as the synthetic DXBC xshader parses: FSSM image layout 6 with directory
+/// slot 11 occupied (dxbc fssm.rs compute_lds_bytes), the LDS bytes at
+/// descriptor +0x4c, no entry (+0x60 count 0), and the preamble's group
+/// size [0, X, Y, Z] that xshader's compute_group falls back to.
+pub(super) fn wrap_compute(program: &[u8], threads: [u32; 3], lds: u32) -> Vec<u8> {
+    let isa = &program[..program.len() & !3];
+    const DESCRIPTOR: usize = 0x68;
+    const CODE: usize = DESCRIPTOR + 0x70 + 16;
+    let capacity = (isa.len() + 4).next_multiple_of(256);
+    let mut image = vec![0u8; CODE + capacity];
+    put(&mut image, 0, &6u64.to_le_bytes());
+    for slot in 0..12 {
+        let value = if slot == 11 { DESCRIPTOR as u64 } else { ABSENT };
+        put(&mut image, 8 + slot * 8, &value.to_le_bytes());
+    }
+    put(&mut image, DESCRIPTOR, &(CODE as u64).to_le_bytes());
+    put(&mut image, DESCRIPTOR + 8, &(capacity as u64).to_le_bytes());
+    put(&mut image, DESCRIPTOR + 0x4c, &lds.to_le_bytes());
+    for (n, word) in [0, threads[0], threads[1], threads[2]].iter().enumerate() {
+        put(&mut image, CODE - 16 + n * 4, &word.to_le_bytes());
+    }
+    put(&mut image, CODE, isa);
+    for at in (CODE + isa.len()..image.len()).step_by(4) {
+        put(&mut image, at, &CODE_END.to_le_bytes());
+    }
+    container(&image, 5)
+}
+
+/// FSSM image -> XBCH v3 -> XDAT kind 13 -> DXIL part -> DXBC (wrap).
+fn container(image: &[u8], stage: u32) -> Vec<u8> {
     let mut fssm = Vec::with_capacity(16 + image.len());
     fssm.extend_from_slice(b"FSSM");
     fssm.extend_from_slice(&0x101u32.to_le_bytes());
     fssm.extend_from_slice(&(image.len() as u64).to_le_bytes());
-    fssm.extend_from_slice(&image);
+    fssm.extend_from_slice(image);
     let packed = miniz_oxide::deflate::compress_to_vec_zlib(&fssm, 6);
     let mut xbch = Vec::with_capacity(24 + packed.len());
     xbch.extend_from_slice(b"XBCH");
