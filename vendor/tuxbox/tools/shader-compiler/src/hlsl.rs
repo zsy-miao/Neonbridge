@@ -11900,7 +11900,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let ity = self.img_ty.get(&(is_uav, slot)).copied();
             // A packed zero stored to a scalar uint UAV survives either widening convention.
             let uint_zero = store && as_uint && ins.aux.mask == 1 && self.immediate_zero_before(idx, Opnd::Vgpr(vd));
-            if d16 && !uint_zero && (as_uint || ity.is_some() || ins.mnemonic.starts_with("image_atomic_")) {
+            // leonida design.md typed buffer formats (measured on gfx1036, credit): D16 on
+            // UINT/SINT texels packs 16-bit integers; loads saturate (unsigned / signed),
+            // stores zero- / sign-extend each half. Applied to typed integer images.
+            // TB_D16_INT_IMAGE=0 refuses as before.
+            let d16_int = d16 && ity.is_some() && !as_uint && (ins.mnemonic.starts_with("image_load") || ins.mnemonic.starts_with("image_store")) && !ins.mnemonic.contains("pck")
+                && std::env::var("TB_D16_INT_IMAGE").map_or(true, |v| v.trim() != "0");
+            if d16 && !uint_zero && !d16_int && (as_uint || ity.is_some() || ins.mnemonic.starts_with("image_atomic_")) {
                 // The conversion of integer formats to 16 bits is not specified.
                 return Err("D16 image access to an integer-typed image unsupported".into());
             }
@@ -12041,9 +12047,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     let mut n = 0u8;
                     for ch in 0..4 {
                         if (ins.aux.mask >> ch) & 1 != 0 {
-                            let o = Opnd::Vgpr(vd + n);
+                            let o = Opnd::Vgpr(vd + if d16_int { n / 2 } else { n });
                             self.touch(&o);
-                            comp.push(r(&o)?);
+                            comp.push(match (d16_int, t) {
+                                (false, _) => r(&o)?,
+                                (true, 2) => format!("(asint({} << {}u) >> 16)", r(&o)?, 16 - 16 * u32::from(n % 2)),
+                                (true, _) => format!("(({} >> {}u) & 0xffffu)", r(&o)?, 16 * u32::from(n % 2)),
+                            });
                             n += 1;
                         } else {
                             comp.push("0u".into());
@@ -12098,6 +12108,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 };
                 self.line(&format!("{ety} t{t} = {e};"));
                 let chans: Vec<String> = (0..4).filter(|ch| (ins.aux.mask >> ch) & 1 != 0).map(|ch| format!("t{t}.{}", XYZW[ch])).collect();
+                if d16_int {
+                    let half: Vec<String> = chans.iter().map(|x| if ety == "int4" {
+                        format!("(asuint(clamp({x}, -32768, 32767)) & 0xffffu)")
+                    } else {
+                        format!("min({x}, 0xffffu)")
+                    }).collect();
+                    for (k, pair) in half.chunks(2).enumerate() {
+                        let e = match pair.get(1) { Some(hi) => format!("({} | ({hi} << 16))", pair[0]), None => pair[0].clone() };
+                        self.wv(&Opnd::Vgpr(vd + k as u8), &e)?;
+                    }
+                    return Ok(());
+                }
                 if d16 {
                     return self.write_d16(vd, &chans);
                 }
