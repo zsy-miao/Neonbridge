@@ -291,6 +291,15 @@ fn loop_cap(stage: Stage) -> u32 {
 /// Each structured loop gets its own counter, reset before its `do {`, and a
 /// lane that reaches the cap leaves the program (discard in a pixel shader,
 /// return elsewhere), as fxceless lower.rs 10906-10918 / abort_block does.
+/// SetSampleMaskX's quad mask (d3d12 ccafab1, device/quad_mask.rs): a pixel
+/// shader declares `tb_quad_mask` (b0, space32766, the mask's low and high
+/// words) and discards a pixel whose 16-bit lane, p = ((y & 1) << 1) | (x & 1),
+/// is 0. Opt-in with TB_QUAD_MASK=1: the discard costs every pixel shader
+/// its early depth test.
+fn quad_mask_on() -> bool {
+    std::env::var("TB_QUAD_MASK").is_ok_and(|v| v.trim() == "1")
+}
+
 /// TB_LOOP_PER_COUNTER=0 restores the one shared, never-reset tb_guard that
 /// only ends the loop.
 fn loop_per_counter() -> bool {
@@ -12965,6 +12974,10 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
         if self.needs_bary() || out_uses_macro {
             h.push_str("#if __SHADER_TARGET_MAJOR >= 6\n#define TB_VERTEX_INPUT nointerpolation\n#else\n#define TB_VERTEX_INPUT\n#endif\n");
         }
+        if is_ps && quad_mask_on() {
+            h.push_str("cbuffer tb_quad_mask : register(b0, space32766) { uint tb_quad_lo; uint tb_quad_hi; };
+");
+        }
         let _ = writeln!(h, "struct SIn {{");
         // HLSL requires system-generated inputs (SV_IsFrontFace, SV_SampleIndex,
         // SV_PrimitiveID, ...) to follow all ordinary parameters, so emit them last.
@@ -13021,7 +13034,7 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
             Some(ei) => format!("i.i{ei}"),
             None => "i.tb_pos".to_string(),
         };
-        if is_ps && self.uses_quad && pos_field == "i.tb_pos" {
+        if is_ps && (self.uses_quad || quad_mask_on()) && pos_field == "i.tb_pos" {
             let _ = writeln!(h, "    float4 tb_pos : SV_Position;");
         }
         let _ = writeln!(h, "}};\nstruct SOut {{");
@@ -13168,6 +13181,9 @@ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
         }
         if !self.regs.is_empty() {
             let _ = writeln!(h, "{}", self.reg_decls());
+        }
+        if is_ps && quad_mask_on() {
+            let _ = writeln!(init, "    {{ uint tb_qp = ((uint){pos_field}.x & 1u) | (((uint){pos_field}.y & 1u) << 1); if ((((tb_qp < 2u ? tb_quad_lo : tb_quad_hi) >> ((tb_qp & 1u) * 16u)) & 0xffffu) == 0u) discard; }}");
         }
         if is_ps && self.uses_quad {
             let _ = writeln!(init, "    uint tb_quad = ((uint){pos_field}.x & 1u) | (((uint){pos_field}.y & 1u) << 1);");
