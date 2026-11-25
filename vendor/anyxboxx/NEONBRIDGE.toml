@@ -9,6 +9,7 @@ build = ["cargo", "build", "--release", "-p", "victory", "--manifest-path", "thi
 watch = ["third_party/victory/apps", "third_party/victory/crates", "third_party/victory/Cargo.toml", "third_party/victory/Cargo.lock"]
 exe = "third_party/victory/target/release/victory.exe"   # lancer_victory.ps1:103
 diag_build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--features", "diagnostics", "--manifest-path", "third_party/victory/Cargo.toml", "--locked"]   # lancer_victory.ps1:99 (-Diag)
+diag_exe = "third_party/victory/target/diag/victory.exe"   # lancer_victory.ps1:100
 run = ["run", "{game_exe}", "--execute"]   # lancer_victory.ps1:233 (Series X)
 # lancer_victory.ps1 -Precompile (:211-229): shaders.rpf, the game and its two DLLs
 prewarm = ["warm", "{game}/shaders.rpf", "{game_exe}", "{game}/XboxBvhBuilder.dll", "{game}/amd_fidelityfx_upscaler_xbox.dll"]
