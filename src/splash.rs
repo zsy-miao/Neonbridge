@@ -32,15 +32,25 @@ const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     r as u32 | (g as u32) << 8 | (b as u32) << 16
 }
 
+/// Where the launcher's stages start on the bar ([`status`] callers); a stage
+/// without counts creeps towards the next one and never past it.
+const STAGES: [f32; 5] = [0.3, 0.4, 0.6, 0.8, 1.0];
+
 struct State {
-    /// Stage target, 0..1; the bar eases towards it and creeps while waiting.
+    /// Where the bar should be, 0..1; it only grows.
     target: f32,
+    /// Where an uncounted stage may creep to: just short of the next stage.
+    ceiling: f32,
+    /// The target comes from real counts ([`counted`]): no creep.
+    counted: bool,
+    /// Drawn position; eases towards the target and never moves back.
     shown: f32,
     text: String,
     tick: u32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { target: 0.0, shown: 0.0, text: String::new(), tick: 0 });
+static STATE: Mutex<State> =
+    Mutex::new(State { target: 0.0, ceiling: 0.0, counted: false, shown: 0.0, text: String::new(), tick: 0 });
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 fn state() -> std::sync::MutexGuard<'static, State> {
@@ -57,11 +67,29 @@ pub fn show(text: &str) {
     let _ = std::thread::Builder::new().name("neonbridge splash".into()).spawn(run);
 }
 
-/// Moves the bar to `progress` (0..1) with a new status line.
+/// Moves the bar to stage start `progress` (0..1) with a new status line.
 pub fn status(progress: f32, text: &str) {
     let mut s = state();
     s.target = s.target.max(progress.clamp(0.0, 1.0));
+    let next = STAGES.iter().copied().find(|&at| at > s.target + 0.001).unwrap_or(1.0);
+    s.ceiling = s.ceiling.max(next - 0.02);
+    s.counted = false;
     s.text = text.to_owned();
+}
+
+/// Moves the bar to `progress` (0..1) from real completed/total counts, with
+/// `text` (the meter line, its time left). Cheap: the window redraws on its
+/// own timer, whatever the call rate.
+pub fn counted(progress: f32, text: &str) {
+    if WINDOW.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let mut s = state();
+    s.target = s.target.max(progress.clamp(0.0, 1.0));
+    s.counted = true;
+    if s.text != text {
+        s.text = text.to_owned();
+    }
 }
 
 /// Closes the loading screen.
@@ -254,10 +282,17 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
                 {
                     let mut s = state();
                     s.tick = s.tick.wrapping_add(1);
-                    // Ease towards the stage target; creep slowly past it so a long
-                    // stage (shader prewarm, first frame) still shows movement.
-                    let ceiling = (s.target + 0.12).min(0.97);
-                    s.shown += if s.shown < s.target { (s.target - s.shown) * 0.15 } else { (ceiling - s.shown).max(0.0) * 0.002 };
+                    // Ease towards the target (with a floor on the step, so it
+                    // arrives instead of approaching forever). A stage with no
+                    // counts creeps towards its ceiling, the next stage's start,
+                    // so a wait still moves without overstating; counted stages
+                    // show their counts only. Never backwards.
+                    if s.shown < s.target {
+                        let step = ((s.target - s.shown) * 0.15).max(0.0015);
+                        s.shown = (s.shown + step).min(s.target);
+                    } else if !s.counted && s.shown < s.ceiling {
+                        s.shown += (s.ceiling - s.shown) * 0.003;
+                    }
                 }
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 0
@@ -339,7 +374,8 @@ unsafe fn paint(hwnd: HWND) {
         GetTextExtentPoint32W(dc, neon.as_ptr(), 4, &mut size);
         SelectObject(dc, old);
         text(dc, "BRIDGE", RECT { left: 32 + size.cx, top: 28, right: WIDTH - 32, bottom: 84 }, CYAN, title, DT_LEFT | DT_VCENTER);
-        let dots = ".".repeat((tick / 12 % 4) as usize);
+        // Counted lines carry their own numbers; dots only for waits.
+        let dots = if line.contains('%') { String::new() } else { ".".repeat((tick / 12 % 4) as usize) };
         text(dc, &format!("{line}{dots}"), RECT { left: 32, top: 104, right: WIDTH - 32, bottom: 130 }, TEXT, small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
 
         // Progress bar with a moving highlight.
@@ -350,7 +386,7 @@ unsafe fn paint(hwnd: HWND) {
         let span = (filled - bar.left).max(1);
         let glint = bar.left + (tick as i32 * 6) % (span + 60) - 60;
         fill(dc, RECT { left: glint.max(bar.left), right: (glint + 60).min(filled), ..bar }, CYAN);
-        text(dc, &format!("{:.0}%", shown * 100.0), RECT { left: 32, top: 162, right: WIDTH - 32, bottom: 186 }, TEXT, small, DT_RIGHT | DT_VCENTER);
+        text(dc, &format!("{}%", (shown * 100.0).floor() as u32), RECT { left: 32, top: 162, right: WIDTH - 32, bottom: 186 }, TEXT, small, DT_RIGHT | DT_VCENTER);
 
         BitBlt(screen, ox, oy, WIDTH, HEIGHT, dc, 0, 0, SRCCOPY);
         SelectObject(dc, old_bitmap);

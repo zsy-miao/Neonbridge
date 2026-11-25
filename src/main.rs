@@ -14,6 +14,7 @@ mod ctl;
 mod dxc;
 mod game_settings;
 mod picker;
+mod progress;
 mod replay;
 mod shaders;
 mod splash;
@@ -553,6 +554,9 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
     let session = cache_root.join(format!("prewarm-{}", std::process::id()));
     println!("[prewarm] {} + {}", xshader.display(), dxc.display());
+    // No loading screen here: the prewarm's progress is one console line
+    // rewritten in place, its plain summary lines after it.
+    progress::set_inline(true);
     let started = Instant::now();
     let worker = shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
         |line| println!("[prewarm] {line}"))?;

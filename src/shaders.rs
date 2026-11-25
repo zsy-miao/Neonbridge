@@ -1099,18 +1099,25 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     let started = std::time::Instant::now();
     thread::scope(|scope| {
         scope.spawn(|| {
+            // The bar (loading screen, or one in-place console line under
+            // --prewarm) follows real counts every 200 ms, its time left from
+            // a moving average of the rate (crate::progress); the log keeps
+            // one plain line every 10 s, which triage parses.
+            let mut meter = crate::progress::Meter::new(total);
             let mut last = std::time::Instant::now();
             while !finished.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(200));
-                if last.elapsed() < Duration::from_secs(10) {
+                meter.sample(done.load(Ordering::Relaxed));
+                if stop.is_none() {
+                    crate::progress::report(label, &meter, 0.4, 0.6);
+                }
+                if last.elapsed() < Duration::from_secs(10) || crate::progress::inline() {
                     continue;
                 }
                 last = std::time::Instant::now();
-                let n = done.load(Ordering::Relaxed);
-                let secs = started.elapsed().as_secs_f64();
-                let rate = n as f64 / secs.max(0.001);
-                let left = total.saturating_sub(n);
-                let eta = if rate > 0.0 { format!("{:.0} s", left as f64 / rate) } else { "unknown".into() };
+                let n = meter.done();
+                let rate = meter.rate().unwrap_or(0.0);
+                let eta = meter.eta().map_or_else(|| "unknown".into(), |e| format!("{:.0} s", e.as_secs_f64()));
                 say(format!("{label}: {n}/{total} done ({:.1}%), {rate:.1}/s, {eta} left at this rate; {} translated, {} dxc reused, {} cached, {} unsupported, {} failed; {} running",
                     100.0 * n as f64 / total as f64, stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed),
                     stats.cached.load(Ordering::Relaxed), stats.unsupported.load(Ordering::Relaxed), stats.failed.load(Ordering::Relaxed),
@@ -1152,6 +1159,12 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
             });
         }
     });
+    if stop.is_none() {
+        let mut meter = crate::progress::Meter::new(total);
+        meter.sample(done.load(Ordering::Relaxed));
+        crate::progress::report(label, &meter, 0.4, 0.6);
+    }
+    crate::progress::finish();
     let n = done.load(Ordering::Relaxed);
     if n < total {
         say(format!("{label}: stopped at NEONBRIDGE_PREWARM_MAX_S with {n}/{total} done in {:.0} s; the other {} are translated when the title asks for them",
