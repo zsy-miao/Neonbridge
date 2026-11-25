@@ -189,6 +189,10 @@ fn prerequisite(root: &Path, spec: &Spec) -> Result<(), String> {
             _ => {}
         }
     }
+    // After the SDK: Five Star's build also links the PC GDK.
+    if first("build") == Some("dotnet") && needs_gdk(root) && !gdk_installed() {
+        return Err("needs the Microsoft PC GDK, which is not installed".into());
+    }
     Ok(())
 }
 
@@ -204,7 +208,9 @@ pub fn missing(name: &str) -> Option<(String, Vec<&'static str>)> {
     let first = |k: &str| spec.list(k).and_then(|l| l.first()).cloned().unwrap_or_default();
     let tools = [first("build"), first("launcher")];
     let mut pages = Vec::new();
-    if tools.iter().any(|t| t == "dotnet") {
+    if reason.contains("PC GDK") {
+        pages.push("https://learn.microsoft.com/gaming/gdk/");
+    } else if tools.iter().any(|t| t == "dotnet") {
         let major = fs::read_to_string(root.join("global.json")).ok()
             .and_then(|j| j.split("\"version\"").nth(1).and_then(|v| v.split('"').nth(1)).and_then(|v| v.split('.').next().map(str::to_owned)));
         pages.push(match major.as_deref() {
@@ -224,6 +230,18 @@ pub fn missing(name: &str) -> Option<(String, Vec<&'static str>)> {
         pages.push("https://rustup.rs/");
     }
     Some((reason, pages))
+}
+
+/// The tree's toml says its build links the PC GDK (Five Star: xgameruntime.lib).
+fn needs_gdk(root: &Path) -> bool {
+    fs::read_to_string(root.join("NEONBRIDGE.toml")).is_ok_and(|t| t.contains("GDK"))
+}
+
+/// The PC GDK is installed: its GameDK / GameDKLatest variables, or its
+/// folder under Program Files (x86).
+fn gdk_installed() -> bool {
+    ["GameDKLatest", "GameDK"].iter().filter_map(std::env::var_os).any(|d| Path::new(&d).is_dir())
+        || std::env::var_os("ProgramFiles(x86)").is_some_and(|p| Path::new(&p).join("Microsoft GDK").is_dir())
 }
 
 pub enum Task {
