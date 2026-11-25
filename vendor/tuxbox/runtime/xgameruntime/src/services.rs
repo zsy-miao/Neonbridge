@@ -713,7 +713,7 @@ fn delete_container(name: &str) -> i32 {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => OK,
         Err(error) => {
             super::report(format_args!("game save: deleting container {name:?} failed: {error}"));
-            INVALID
+            io_status(&error)
         }
     }
 }
@@ -1036,7 +1036,27 @@ fn is_staging(file: &str) -> bool {
 }
 
 /// HRESULT_FROM_WIN32(ERROR_BUSY): the save lock is held elsewhere.
-const SAVE_BUSY: i32 = 0x8007_00AAu32 as i32;
+const SAVE_BUSY_WIN32: i32 = 0x8007_00AAu32 as i32;
+const NO_ACCESS: i32 = 0x8083_0002u32 as i32;
+/// Save I/O failures answer with the E_GS codes the title handles: a full disk
+/// is OUT_OF_LOCAL_STORAGE, anything else (and the save lock held past its
+/// retry) NO_ACCESS, as VIctory-fxceless xgamesave.rs io_error (GPL-3.0,
+/// credit). TUXBOX_SAVE_GS_ERRORS=0 returns E_INVALIDARG and ERROR_BUSY again.
+fn gs_errors() -> bool {
+    std::env::var_os("TUXBOX_SAVE_GS_ERRORS").is_none_or(|v| v != "0")
+}
+fn io_status(error: &std::io::Error) -> i32 {
+    if !gs_errors() {
+        INVALID
+    } else if error.kind() == std::io::ErrorKind::StorageFull {
+        OUT_OF_LOCAL_STORAGE
+    } else {
+        NO_ACCESS
+    }
+}
+fn save_busy() -> i32 {
+    if gs_errors() { NO_ACCESS } else { SAVE_BUSY_WIN32 }
+}
 
 fn redirected(path: &std::path::Path) -> bool {
     use std::os::windows::fs::MetadataExt;
@@ -1066,7 +1086,7 @@ fn lock_save_root(exclusive: bool) -> Result<std::fs::File, i32> {
     use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
     let path = std::path::Path::new(&save_root()).join(".lock");
     let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)
-        .map_err(|_| SAVE_BUSY)?;
+        .map_err(|_| save_busy())?;
     for _ in 0..100 {
         let mut overlapped: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { core::mem::zeroed() };
         let granted = unsafe {
@@ -1077,7 +1097,7 @@ fn lock_save_root(exclusive: bool) -> Result<std::fs::File, i32> {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    Err(SAVE_BUSY)
+    Err(save_busy())
 }
 
 /// Rename over the target, retried while Windows reports a sharing, lock or
@@ -1174,7 +1194,7 @@ fn submit_atomic(update: usize) -> i32 {
         }
         Err(error) => {
             super::report(format_args!("game save: publishing container {:?} failed: {error}", pending.container));
-            INVALID
+            io_status(&error)
         }
     }
 }
@@ -1217,7 +1237,7 @@ fn submit_direct(update: usize) -> i32 {
         }
         Err(error) => {
             super::report(format_args!("game save: saving container {:?} failed: {error}", pending.container));
-            INVALID
+            io_status(&error)
         }
     }
 }
