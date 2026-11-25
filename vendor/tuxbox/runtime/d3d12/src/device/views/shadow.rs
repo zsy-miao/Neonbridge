@@ -52,6 +52,9 @@ struct Entry {
     /// copy (0 never): root UAVs set no marks, so the copy is written back
     /// whole, unpredicated, while one is recent (see mark_root_uav).
     root_uav: u64,
+    /// An aged check put off by the hash budget: due at every refresh until
+    /// it is hashed, so none starves.
+    owed: bool,
 }
 
 impl Drop for Entry {
@@ -218,6 +221,18 @@ fn aging() -> bool {
 }
 
 /// Whether an aged entry is checked on refresh `now` (staggered by address).
+/// test164: 24591 live shadows, and the aged checks (each due every
+/// CHECK_EVERY refreshes) hashed their whole title ranges on the submit
+/// thread: refreshes run once per ExecuteCommandLists, about 15 a frame, so
+/// every aged shadow was hashed about once a frame and the refresh took
+/// 34-58 ms a frame (commands.rs shadow refresh). An aged check past
+/// TUXBOX_SHADOW_HASH_MB (default 4) of hashing in one refresh waits for its
+/// next turn; 0 hashes all of them as before.
+fn hash_budget() -> u64 {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MB.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_HASH_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(4)) << 20
+}
+
 fn aged_check_due(now: u64, address: u64) -> bool {
     (now.wrapping_add(address >> 4)).is_multiple_of(CHECK_EVERY)
 }
@@ -661,7 +676,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
-    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, hash: None,
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, owed: false, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -891,6 +906,8 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         }
         // (key, is an aged check, view) to hash outside the lock.
         let mut checks: Vec<((u64, u64, bool), bool, Arc<TextureAddress>)> = Vec::new();
+        let budget = hash_budget();
+        let mut hashing = 0u64;
         if back {
             WRITE_BACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -902,10 +919,19 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
             // A writable shadow no write targeted lately ages like a read-only one.
             let idle_writable = entry.writable && recent_window().is_some() && !recently_written(entry);
             let aged_check = aging && ((!entry.writable && !fresh(now, entry.bound)) || idle_writable);
-            if aged_check && !aged_check_due(now, address) {
+            if aged_check && !entry.owed && !aged_check_due(now, address) {
                 aged += 1;
                 continue;
             }
+            if aged_check && budget != 0 {
+                if hashing >= budget {
+                    entry.owed = true;
+                    aged += 1;
+                    continue;
+                }
+                hashing += bytes;
+            }
+            entry.owed = false;
             if aged_check || (skip && !entry.writable) {
                 if unlocked {
                     checks.push((key, aged_check, view));
