@@ -1084,6 +1084,11 @@ fn cap_refresh(copies: &mut Vec<Copy>) {
     *owed = rest;
 }
 
+fn fill_threads() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_FILL_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4).clamp(1, 16))
+}
+
 fn hash_dirty_only() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_HASH_DIRTY_ONLY") != Some("0"))
@@ -1269,8 +1274,36 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     // copies; test172 could not tell what its host-copy fills cost).
     let fill_start = std::time::Instant::now();
     let fill_bytes: u64 = fills.iter().map(|f| f.2).sum();
-    for (mapped, address, bytes, _staging) in &fills {
-        unsafe { fill(*mapped, *address, *bytes) };
+    // test173: the fills ran one by one on the submitting thread. Above 4 MiB
+    // they are split over up to 4 threads, all joined before this
+    // submission's copies are recorded, so each piece is filled (and its
+    // Back::filled runs) before its GPU copy as before.
+    // TUXBOX_SHADOW_FILL_THREADS=1 fills on this thread only.
+    let threads = fill_threads();
+    if threads > 1 && fill_bytes >= 4 << 20 && fills.len() > 1 {
+        let share = fill_bytes.div_ceil(threads as u64);
+        let mut groups: Vec<Vec<(usize, u64, u64)>> = vec![Vec::new()];
+        let mut sum = 0u64;
+        for (mapped, address, bytes, _) in &fills {
+            if sum >= share && groups.len() < threads {
+                groups.push(Vec::new());
+                sum = 0;
+            }
+            sum += *bytes;
+            groups.last_mut().unwrap().push((*mapped, *address, *bytes));
+        }
+        std::thread::scope(|scope| {
+            for group in &groups[1..] {
+                scope.spawn(move || for (m, a, b) in group { unsafe { fill(*m, *a, *b) } });
+            }
+            for (m, a, b) in &groups[0] {
+                unsafe { fill(*m, *a, *b) };
+            }
+        });
+    } else {
+        for (mapped, address, bytes, _staging) in &fills {
+            unsafe { fill(*mapped, *address, *bytes) };
+        }
     }
     if !fills.is_empty() {
         static FILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
