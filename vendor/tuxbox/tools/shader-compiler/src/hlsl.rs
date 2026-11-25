@@ -5209,7 +5209,8 @@ impl<'a> Emitter<'a> {
                     if ins.mnemonic == "v_mov_b32" && vgpr_descriptors()
                         && matches!(ins.dst.first(), Some(Opnd::Vgpr(_)))
                         && ins.src.first().and_then(sg).and_then(|s| sym.get(&s))
-                            .is_some_and(|v| matches!(v, Sym::Desc { .. } | Sym::Multi { .. })) =>
+                            .is_some_and(|v| matches!(v, Sym::Desc { .. } | Sym::Multi { .. })
+                                || (vgpr_heap_desc() && matches!(v, Sym::HeapDescriptor(..) | Sym::HeapWord(..)))) =>
                 {
                     if let (Some(Opnd::Vgpr(v)), Some(s)) = (ins.dst.first(), ins.src.first().and_then(sg)) {
                         let value = sym[&s];
@@ -5426,6 +5427,11 @@ impl<'a> Emitter<'a> {
                             if let (Some(Sym::Desc { k: 0, .. } | Sym::Multi { k: 0, .. }), Some(Opnd::Vgpr(v))) = (source, ins.src.first()) {
                                 self.vdsel_reads.insert(idx, (d, *v));
                             }
+                            sym.insert(d, source.unwrap());
+                        } else if vgpr_heap_desc() && matches!(source, Some(Sym::HeapDescriptor(..) | Sym::HeapWord(..))) {
+                            // The heap index (dword 0, already tb_heap_index(..)) and its
+                            // words come back through v_readfirstlane in a waterfall loop
+                            // (e2597c67 0x2368: v_mov v57..v64 <- s8..s15, then s12..s19).
                             sym.insert(d, source.unwrap());
                         } else if code {
                             sym.insert(d, Sym::Code);
@@ -13801,6 +13807,13 @@ fn mesh_heap_base(ex: &ShaderExtract) -> Option<u8> {
         return None;
     }
     u8::try_from(loc & 0xff).ok()?.checked_add(8)
+}
+
+/// Ours (re-derived from VIctory ffa6635's VGPR descriptor carry): a run-time heap
+/// descriptor copied to VGPRs and read back by v_readfirstlane keeps its heap index.
+/// TB_VGPR_HEAP_DESC=0 leaves such VGPRs unknown.
+fn vgpr_heap_desc() -> bool {
+    !std::env::var("TB_VGPR_HEAP_DESC").is_ok_and(|v| v.trim() == "0")
 }
 
 /// Whether dwords `1..n` of the heap descriptor at `base` are still the loaded ones.
