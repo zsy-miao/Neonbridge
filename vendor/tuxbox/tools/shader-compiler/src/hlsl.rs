@@ -1505,6 +1505,8 @@ fn mask_high_shadow() -> bool {
 struct MaskState {
     masks: BTreeSet<u8>,
     half: BTreeMap<u8, bool>,
+    /// (VGPR, lane) slots a lane mask's half is parked in by `v_writelane_b32`.
+    parked: BTreeSet<(u8, i64)>,
 }
 
 fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
@@ -1516,10 +1518,48 @@ fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
 }
 
 fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>, mixed: &mut BTreeMap<usize, usize>) {
-    let MaskState { masks, half } = state;
+    let MaskState { masks, half, parked } = state;
     if let Some(k) = mixed_mask::mask_position(masks, ins) { mixed.insert(i, k); }
     let is_mask = is_lane_mask;
     let m = ins.mnemonic.as_str();
+    // A wave64 mask parked in two lanes of a spare VGPR comes back as a mask,
+    // even with other instructions between the two v_readlane_b32 (cxchhh,
+    // VIctory 90228a7). The restore is read as the s_mov_b32 the spill
+    // lowering turns it into. TB_MASK_PARKED=0 turns it off.
+    let parking = std::env::var("TB_MASK_PARKED").map_or(true, |v| v.trim() != "0");
+    if parking && m == "v_writelane_b32" {
+        if let (Some(&Opnd::Vgpr(v)), Some(&Opnd::ConstInt(l))) = (ins.dst.first(), ins.src.get(1)) {
+            let mask_half = match ins.src.first() {
+                Some(Opnd::ExecLo | Opnd::ExecHi | Opnd::VccLo | Opnd::VccHi) => true,
+                Some(Opnd::Sgpr(n)) => masks.contains(n) || (*n > 0 && masks.contains(&(n - 1))),
+                _ => false,
+            };
+            if mask_half { parked.insert((v, l)); } else { parked.remove(&(v, l)); }
+        }
+        return;
+    }
+    let restore = if parking && m == "v_readlane_b32" {
+        match (ins.dst.first(), ins.src.first(), ins.src.get(1)) {
+            (Some(&(Opnd::Vgpr(d) | Opnd::Sgpr(d))), Some(&Opnd::Vgpr(v)), Some(&Opnd::ConstInt(l))) => {
+                Some((d, parked.contains(&(v, l))))
+            }
+            _ => None,
+        }
+    } else { None };
+    if let Some((d, from_mask)) = restore {
+        masks.retain(|&n| !(n == d || n + 1 == d));
+        if half_pairs {
+            half.remove(&d);
+            if from_mask {
+                half.insert(d, true);
+                let p = d & !1;
+                if let (Some(&a), Some(&b)) = (half.get(&p), half.get(&(p + 1))) {
+                    if a || b { masks.insert(p); }
+                }
+            }
+        }
+        return;
+    }
     match (m, ins.src.first()) {
         ("s_bcnt1_i32_b64", Some(o)) if is_mask(masks, o) => { reads.insert(i); }
         ("v_mbcnt_lo_u32_b32", Some(o)) if is_mask(masks, o) => { reads.insert(i); }
@@ -1611,6 +1651,7 @@ fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>) 
                 Some(old) => {
                     let mut j = old.clone();
                     j.masks.extend(state.masks.iter().copied());
+                    j.parked.extend(state.parked.iter().copied());
                     for (&k, &v) in &state.half {
                         *j.half.entry(k).or_insert(v) |= v;
                     }
