@@ -302,6 +302,14 @@ fn watchdog() {
             continue;
         }
         still += 1;
+        // Before the first present the stall is a boot hang (test166: 127 s
+        // in the title's state 1, no stack to say which thread held it): its
+        // stacks print once at 30 s (TUXBOX_HANG_SECONDS_BOOT; 0 off).
+        let boot = std::env::var("TUXBOX_HANG_SECONDS_BOOT").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(30);
+        if now == 0 && boot > 0 && still >= boot && !reported {
+            reported = true;
+            hang_report(0, still);
+        }
         if now > 0 && still >= limit && !reported && limit > 0 {
             reported = true;
             hang_report(now, still);
