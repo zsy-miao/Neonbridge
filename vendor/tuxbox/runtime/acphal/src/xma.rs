@@ -318,7 +318,12 @@ fn decode(context: Context, voice: &mut Voice) -> bool {
         voice.empty = 0;
     }
 
-    let mut next = (packet + 1) * PACKET_BITS;
+    // The next packet of this stream follows this one's skip count (header
+    // byte 3: packets of other streams interleaved after it), as VItoriaBr
+    // xma.rs next_frame does (d0d0d23, GPL-3.0, credit to its authors).
+    // TUXBOX_XMA_PACKET_SKIP=0 steps to the adjacent packet as before.
+    let skip_packets = if std::env::var("TUXBOX_XMA_PACKET_SKIP").is_ok_and(|v| v.trim() == "0") { 0 } else { u32::from(bytes[3]) };
+    let mut next = (packet + 1 + skip_packets) * PACKET_BITS;
     let loops = context.field(0, 12, 8);
     let loop_end = context.field(4, 0, 26);
     // VIctory 985d8d4 (GPL-3.0, credit to its authors): a loop's skip is of
