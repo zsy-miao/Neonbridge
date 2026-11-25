@@ -54,27 +54,42 @@ impl Mix {
         self.parts.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
     }
 
-    /// Every part from `base` unless named.
+    /// Every part from `base` unless named; a crate `base` lacks comes from
+    /// the app tree, and one neither has stays out (only another fork uses it).
     pub fn filled(&self, base: &str) -> Mix {
         let mut parts = self.parts.clone();
-        parts.entry(APP.into()).or_insert_with(|| base.to_owned());
+        let app = parts.entry(APP.into()).or_insert_with(|| base.to_owned()).clone();
         for c in crates() {
-            parts.entry(c).or_insert_with(|| base.to_owned());
+            if parts.contains_key(&c) {
+                continue;
+            }
+            if let Some(t) = [base, app.as_str()].into_iter().find(|t| has(t, &c)) {
+                parts.insert(c, t.to_owned());
+            }
         }
         Mix { parts }
     }
 }
 
+/// A runtime's victory workspace: the patched trees (victory, vitoriabr,
+/// scarlettport's runtime/victory) or any vendored fork with the same layout
+/// (flamingo, klbf, belobug: apps/victory and crates/ at its root).
+pub fn root(name: &str) -> Option<PathBuf> {
+    crate::runtimes::victory_tree(name)
+        .or_else(|| Some(crate::runtimes::vendor().join(name)))
+        .filter(|t| t.join("apps/victory/Cargo.toml").is_file() && t.join("crates").is_dir())
+}
+
 /// The runtimes a mix can take parts from: those with a victory tree.
 pub fn trees() -> Vec<String> {
-    crate::runtimes::names().into_iter().filter(|n| crate::runtimes::victory_tree(n).is_some_and(|t| t.join("apps/victory").is_dir())).collect()
+    crate::runtimes::names().into_iter().filter(|n| root(n).is_some()).collect()
 }
 
 /// The crate names any victory tree has (crates/<name>).
 pub fn crates() -> Vec<String> {
     let mut all: Vec<String> = trees()
         .iter()
-        .filter_map(|t| crate::runtimes::victory_tree(t))
+        .filter_map(|t| root(t))
         .flat_map(|t| fs::read_dir(t.join("crates")).into_iter().flatten().flatten())
         .filter(|e| e.path().join("Cargo.toml").is_file())
         .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -86,7 +101,7 @@ pub fn crates() -> Vec<String> {
 
 /// Whether runtime `tree` has `part` (the app, or crates/<part>).
 pub fn has(tree: &str, part: &str) -> bool {
-    crate::runtimes::victory_tree(tree).is_some_and(|t| t.join(src_of(part)).join("Cargo.toml").is_file())
+    root(tree).is_some_and(|t| t.join(src_of(part)).join("Cargo.toml").is_file())
 }
 
 fn src_of(part: &str) -> PathBuf {
@@ -143,6 +158,9 @@ fn hash(mix: &Mix) -> String {
     used.dedup();
     for t in used {
         eat(&fs::read(crate::runtimes::patch_file(t)).unwrap_or_default());
+        // The tree's vendored commit: an updated fork is a new mix, so neither its
+        // old exe nor an old "incompatible" verdict is reused.
+        eat(&fs::read(crate::runtimes::vendor().join(t).join("UPSTREAM")).unwrap_or_default());
     }
     format!("{h:016x}")
 }
@@ -287,10 +305,10 @@ pub fn build(mix: &Mix) -> Result<PathBuf, Box<dyn Error>> {
     if ws.exists() {
         fs::remove_dir_all(&ws)?;
     }
-    let app_root = crate::runtimes::victory_tree(&app).ok_or("mix: no app tree")?;
+    let app_root = root(&app).ok_or("mix: no app tree")?;
     let mut trees: Vec<PathBuf> = Vec::new();
     for (part, tree) in &mix.parts {
-        let root = crate::runtimes::victory_tree(tree).ok_or("mix: no tree")?;
+        let root = root(tree).ok_or("mix: no tree")?;
         copy_tree(&root.join(src_of(part)), &ws.join(src_of(part)))?;
         if !trees.contains(&root) {
             trees.push(root);
@@ -334,20 +352,41 @@ pub fn build(mix: &Mix) -> Result<PathBuf, Box<dyn Error>> {
     }
     cmd.retain(|a| a != "--locked");
     let target = home().join("target");
+    let built = target.join(profile_dir(&cmd)).join("victory.exe");
+    let _ = fs::remove_file(&built); // never pick up another mix's exe
     match crate::runtimes::cargo(&cmd, &ws, &target, "Building the mix") {
         Ok(()) => {}
-        Err(errors) => {
+        // Only compiler errors make a mix incompatible; a stopped or broken
+        // build (no error lines) is tried again next time.
+        Err(errors) if errors.lines().any(|l| l.trim_start().starts_with("error")) => {
             let _ = fs::write(dir.join("incompatible.txt"), &errors);
             return Err(format!("this mix does not compile; remembered as incompatible ({}):\n{errors}", dir.display()).into());
         }
+        Err(errors) => return Err(format!("the mix build stopped: {errors}").into()),
     }
-    fs::copy(target.join("release").join("victory.exe"), &exe)?;
+    fs::copy(&built, &exe).map_err(|e| format!("mix: {}: {e}", built.display()))?;
     Ok(exe)
+}
+
+/// target/<dir> a cargo line writes to: --profile <p> (dev is debug), --release, else debug.
+fn profile_dir(cmd: &[String]) -> String {
+    if let Some(i) = cmd.iter().position(|a| a == "--profile") && let Some(p) = cmd.get(i + 1) {
+        return if p == "dev" { "debug".into() } else { p.clone() };
+    }
+    if cmd.iter().any(|a| a == "--release" || a == "-r") { "release".into() } else { "debug".into() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_dirs() {
+        let v = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        assert_eq!(profile_dir(&v("cargo build --profile diag -p victory")), "diag");
+        assert_eq!(profile_dir(&v("cargo build --release")), "release");
+        assert_eq!(profile_dir(&v("cargo build")), "debug");
+    }
 
     #[test]
     fn mix_text_round_trips() {

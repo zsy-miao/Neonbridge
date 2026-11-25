@@ -288,7 +288,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     // default); its app tree's toml runs it.
     if let Some(m) = mix.take() {
         let base = m.app().map(str::to_owned).unwrap_or_else(|| runtime.clone());
-        let m = m.filled(if runtimes::victory_tree(&base).is_some() { &base } else { "scarlettport" });
+        let m = m.filled(if crate::mix::root(&base).is_some() { &base } else { "scarlettport" });
         runtime = m.app().unwrap_or("scarlettport").to_owned();
         // Every part from one tree is that runtime itself, not a mix: run its
         // own build, toml and cache (an all-scarlettport mix built a second
