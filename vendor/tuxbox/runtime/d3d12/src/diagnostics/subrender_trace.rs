@@ -48,6 +48,20 @@ pub(crate) fn install() {
     ONCE.call_once(|| {
         let Ok(module) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return };
         let base = module.0 as usize;
+        // The trace reads title addresses (the ring credit game+0x75e5ed8)
+        // raw. prewarm178b's pipeline builder loads this DLL into
+        // neonbridge.exe, whose image ends long before that, and the credit
+        // poll crashed it reading free memory: a host exe too small to hold
+        // the title's data is not the title, so nothing is traced.
+        let image = unsafe {
+            let pe = base + ((base + 0x3c) as *const u32).read_unaligned() as usize;
+            ((pe + 24 + 56) as *const u32).read_unaligned() as usize
+        };
+        if image <= CREDIT + 8 {
+            crate::diagnostics::log_line(format_args!(
+                "subrender trace: the exe's image is {image:#x} bytes, too small for the title's data (game+{CREDIT:#x}); not the title, not traced"));
+            return;
+        }
         BASE.store(base, Ordering::Relaxed);
         let _ = std::thread::Builder::new().name("TuxBox thread exits".into()).spawn(move || exits(base));
         unsafe { hook(base) };
