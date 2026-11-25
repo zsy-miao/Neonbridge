@@ -31,7 +31,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, NTSTATUS};
 use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, EXCEPTION_POINTERS};
 use windows_sys::Win32::System::Memory::{
-    MEM_COMMIT, MEM_MAPPED, MEM_RESERVE, MEMORY_BASIC_INFORMATION, PAGE_GUARD, PAGE_NOACCESS, PAGE_READWRITE, VirtualAlloc, VirtualQuery,
+    MEM_COMMIT, MEM_MAPPED, MEM_RESERVE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY,
+    PAGE_GUARD, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY, VirtualAlloc, VirtualQuery,
 };
 
 const PAGE: usize = 0x1_0000;
@@ -179,6 +180,27 @@ unsafe fn commit_page(page: usize) -> bool {
     false
 }
 
+fn allows_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_LAZY_ALLOWS").map_or(true, |v| v.trim() != "0"))
+}
+
+/// Whether the committed page at `at` permits `access` (ExceptionInformation[0]:
+/// 0 read, 1 write, 8 execute); copied from xcl lazy.rs `allows`.
+unsafe fn allows(access: usize, at: usize) -> bool {
+    let Some(m) = query(at) else { return false };
+    if m.State != MEM_COMMIT || m.Protect & PAGE_GUARD != 0 {
+        return false;
+    }
+    let writes = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    let reads = writes | PAGE_READONLY | PAGE_EXECUTE_READ;
+    match access {
+        0 => m.Protect & reads != 0,
+        1 => m.Protect & writes != 0,
+        _ => false,
+    }
+}
+
 unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     let r = unsafe { &*(*info).ExceptionRecord };
     if r.ExceptionCode != EXCEPTION_ACCESS_VIOLATION as NTSTATUS || r.NumberParameters < 2 {
@@ -186,6 +208,14 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     }
     let page = r.ExceptionInformation[1] & !(PAGE - 1);
     if !unsafe { commit_page(page) } {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    // Resume only when the page's protection now permits this access: a write
+    // to a read-only page or an execute (DEP) fault on a committed page would
+    // re-fault forever, so it is passed on (xcl lazy.rs `allows`, 77905f6,
+    // GPL-2.0-only, credit to ivall/Logan). TUXBOX_LAZY_ALLOWS=0 resumes on any
+    // committed page as before.
+    if allows_on() && !unsafe { allows(r.ExceptionInformation[0], r.ExceptionInformation[1]) } {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let n = FAULTED.fetch_add(1, Ordering::Relaxed) + 1;
