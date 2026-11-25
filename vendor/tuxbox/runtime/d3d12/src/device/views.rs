@@ -411,7 +411,11 @@ pub(crate) unsafe fn view_formats_address(
 /// A command or view may write `resource` (a raw native resource).
 pub(crate) unsafe fn note_shadow_write(owner: *mut core::ffi::c_void, resource: *mut core::ffi::c_void) {
     let device = unsafe { &*owner.cast::<Device>() };
-    shadow::mark_written(device, resource);
+    shadow::mark_copied(device, resource);
+    // Copies and clears mark no pages (view_marks.rs), so a shadow one targets
+    // gives its run up and copies back whole (VIctory cd94d35 marks only shader
+    // writes); TUXBOX_VIEW_MARKS=0 off.
+    let _ = shadow::marks_entry(device, resource, None);
 }
 
 pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
