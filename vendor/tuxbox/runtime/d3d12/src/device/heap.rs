@@ -348,6 +348,9 @@ pub(super) fn import_buffer_with_heap(
             || region.AllocationBase as u64 != base || region.RegionSize as u64 != size {
             return Err(E_NOTIMPL.into());
         }
+        if remappable(base, size) {
+            return Err(E_NOTIMPL.into());
+        }
         let host: ID3D12Device3 = device.native.cast()?;
         let native = unsafe { host.OpenExistingHeapFromAddress(region.AllocationBase) }
             .inspect_err(|e| import_failure("OpenExistingHeapFromAddress", base, size, e))?;
@@ -916,6 +919,45 @@ pub(super) fn refused_page(address: u64, size: u64, record: bool) -> bool {
     hit
 }
 
+/// test145-147: CopyPageMappingsBatchX over pool 0xdac000000 unmapped pages a
+/// heap opened from their address still held. Windows refuses to unmap a view
+/// such a heap pins (error 87), so the page stayed on its old mapping, the
+/// next map there failed 0x800701E7, and 156+ unmaps stayed deferred. No ref
+/// imports remappable memory: leonida (xmem.cpp:986-1040, shadow pages in
+/// d3d12_vulkan_device.cpp:256-330), VIctory-fxceless (victory-gpu
+/// shadow.rs) and five-star-recomp read title pages through copies, and xcl
+/// (gpu/uma.rs) opens only its own committed VirtualAlloc windows. Physical
+/// page views (MEM_MAPPED) are now never opened as heaps; callers fall back
+/// to their shadow or backed copies. TUXBOX_IMPORT_REMAPPABLE=1 opens them
+/// as before.
+fn remappable(base: u64, size: u64) -> bool {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_MAPPED, VirtualQuery};
+    if crate::env_toggle!("TUXBOX_IMPORT_REMAPPABLE") == Some("1") {
+        return false;
+    }
+    let end = base.saturating_add(size.max(1));
+    let mut at = base;
+    while at < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+            return false;
+        }
+        if region.Type == MEM_MAPPED {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "heap import: {size:#x} bytes at {base:#x} are physical page views a remap may replace, read through a copy instead ({n} so far; TUXBOX_IMPORT_REMAPPABLE=1 opens them)"));
+            }
+            return true;
+        }
+        let next = region.BaseAddress as u64 + region.RegionSize as u64;
+        if next <= at { return false; }
+        at = next;
+    }
+    false
+}
+
 /// Opens title memory as a heap (the kernel call), joining split views first.
 fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> windows::core::Result<Arc<ImportedHeap>> {
     use windows::Win32::Foundation::E_INVALIDARG;
@@ -953,6 +995,10 @@ fn open_heap(device: &ID3D12Device13, base: u64, size: u64, pin: ImportPin) -> w
             crate::diagnostics::log_line(format_args!(
                 "heap import: {size:#x} bytes at {base:#x} span several allocations, read through a shadow copy without asking the driver ({n} so far; TUXBOX_IMPORT_PRECHECK=0 asks)"));
         }
+        refuse();
+        return Err(E_INVALIDARG.into());
+    }
+    if remappable(base, size) {
         refuse();
         return Err(E_INVALIDARG.into());
     }
