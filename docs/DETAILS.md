@@ -220,13 +220,19 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_PACKED_READ_NOTE` (1): R9G9B9E5 read notes (unpublished write, zero memory).
 - `TUXBOX_LOW_VSHARP_EMPTY` (1): an address SRV over a low V# none of ours binds a null view; 0 imports.
 - `TUXBOX_PACKED_ALIAS_ANY` (1): packed alias copies serve any GPU-written UAV/RT non-depth owner of the same shape; 0 only R9G9B9E5 over UAV R32_UINT.
-- `TUXBOX_RAW_STRUCTURED` (0): 1 creates structured SRVs and counterless UAVs raw (R32_TYPELESS) when 16-byte aligned whole dwords; waits on the xshader idxen half.
+- `TUXBOX_RAW_STRUCTURED` (1; 0 off): structured SRVs and counterless UAVs are created raw (R32_TYPELESS), paired with xshader `TB_IDXEN_RAW`.
+- `TUXBOX_RAW_BIAS` (1; 0 off): a structured window not starting on 16 bytes is made raw from the rounded-down start, its byte bias (0..15) in bits 24-31 of the slot_views stride word; only slots rewritten raw carry it.
+- `TUXBOX_MESH_HOISTED_SRV` (1; 0 off): a guest table the mesh root replaces with a Descriptor (FSSM 0x100) becomes a root SRV bound per draw to the buffer in the table's slot 0.
+- `TUXBOX_SRV_AS_UAV` (1; 0 off): SRV slots a program stores to (`<key>.slots`/`.heap` uav_from_srv lines) get a one-descriptor UAV range and a private table copy with a UAV of the resource; typed-UAV-family colour textures are made ALLOW_UNORDERED_ACCESS, anything else gets a null UAV and a line.
 - `TUXBOX_SHADOW_REFRESH_MB` (64; 0 off): each shadow refresh copies at most this, owing the rest oldest-first (test172 copied 268 MB at once, device removed 7.5 s later).
 - `TUXBOX_SHADOW_HASH_DIRTY_ONLY` (1): a read-only shadow whose pages the write watch says are unwritten keeps its hash without hashing; aged checks still hash.
 - `TUXBOX_SHADOW_FILL_THREADS` (4; 1 off): CPU fills of 4 MiB or more split over threads.
 - `TUXBOX_SHADOW_CENSUS` (1): at most every 30 s, live shadow copies bucketed by refreshes since last bound.
 - `TUXBOX_SHADOW_UAV_REMARK` (1): each draw/dispatch re-marks the shadows behind its root signature's UAV table ranges so they keep being written back; re-mark lines log at lists #1,2,4,...
 - `TUXBOX_WATCH_REFUSED_CACHE` (1): a placed-texture write-watch range the OS refused is not asked again for 10 s (test173: 6167 refusals in 10 s, most of upload.rs's 9-11 ms per submit).
+- `TUXBOX_SHADOW_READ_COMMIT` (1; 0 commits the whole range first): a CPU piece reads lazy reserved pages without committing; write-back commits only changed pages.
+- `TUXBOX_SHADOW_SLAB` (1; 0 one buffer each): CPU pieces up to 64 KiB share 4 MiB upload slabs (test177: 60,157 pieces took ~3.7 GiB commit for 541 MiB).
+- `TUXBOX_SHADOW_EVICT_STALE` now also sees heap slots read by literal/root-constant index and dynamic heaps indexed per lane or via root CBV.
 
 ### d3d12: page pools, placed textures and write-back
 
@@ -248,6 +254,8 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_UPLOAD_WORKERS` (1 = inline), `TUXBOX_UPLOAD_LIST_POOL` (1): detile worker threads; 0 creates copy lists per refresh.
 - `TUXBOX_PAGES_COMPACT` (1): over budget, once a second, the sparsest idle pool's pages move to other pools so trim_empty can evict it; moves wait on every title queue's fence first.
 - `TUXBOX_PAGES_DENSE_FIRST` (1): a texture no pool fits whole takes tiles from the densest pool first; 0 the pool with most free tiles.
+- `TUXBOX_PAGES_RELEASE_EMPTY` (1; 0 evicts as before): empty page pools over budget are released, one kept.
+- `TUXBOX_READBACK_POOL_MB` (256; 0 off): placed-texture write-back readback buffers pooled by power-of-two size and reused (test177 made 5931, 15019 MiB).
 
 ### xmem
 
@@ -264,6 +272,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_BINK_BUF_WATCH` (0x5d0000000): each Bink open logs the allocations its HBINK points into and this page with its newest unmap; =0 off.
 - `TUXBOX_XMEM_UNMAP_TRACE` (1): ring of the last 4096 unmapped ranges (TuxBoxUnmapTrace); 0 records nothing.
 - `TUXBOX_SECTION_WATCH` (1): write-watch queries the OS refuses on title section views are answered by guarding 64 KiB blocks read-only; the first write faults, is noted and unguarded. The guard lock is held per block only and the write handler waits for it (794137f/90d96e0, test174's crash). Kernel write ranges stay unguarded 2 s.
+- `TUXBOX_SECTION_WATCH_RUNS` (1; 0 off): every committed read-write run of a block is guarded, and blocks with nothing committed are not reported (test177: 302748 of 370256 were). A census logs at queries #1,2,4,... and every 4096.
 
 ### d3d12: pipelines
 
@@ -306,6 +315,8 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_QUAD_MASK_VARIANT` (1): a draw under a partial SetSampleMaskX mask binds its pipeline's quad-mask variant (PS as <digest>_qm.quadmask); 0 full coverage.
 - `TUXBOX_PLACEHOLDER_REASONS` (1): every placeholder pipeline logs its refusal reason once at first bind; 0 keeps the 32 cap.
 - `TUXBOX_REFUSED_WAIT_LOG` (1): a refused shader a title thread waits on logs 'title waits on refused shader <sha>: <reason>' once per key.
+- `TUXBOX_PSO_RELEASE_IDLE` (0; 1 on): a lazy pipeline unbound `TUXBOX_PSO_IDLE_S` (120) gives back its native pipeline and is remade at next bind; freed `TUXBOX_PSO_RETIRE_S` (10) later.
+- `--prewarm` builds PSOs with a runtime from the tree (or `--prebuilt`), not the staged d3d12_xs.dll; `NEONBRIDGE_PREWARM_STAGED_DLL=1` loads the staged copy. Linked VS/PS `.heap` and `.slots` sidecars are published by key and producer digest.
 
 ### d3d12: samplers, ray tracing
 
@@ -332,6 +343,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - Saves (VIctory-fxceless xgamesave.rs, GPL-3.0, credit): `TUXBOX_SAVE_KEEP_RESULT` (1) keeps a too-small read's result for the retry; `TUXBOX_SAVE_MISSING_NOT_FOUND` (1) BLOB_NOT_FOUND for never-written containers; `TUXBOX_SAVE_UPDATE_LIMIT` (1) E_GS_UPDATE_TOO_BIG over 16 MiB; `TUXBOX_SAVE_GS_ERRORS` (1) E_GS_OUT_OF_LOCAL_STORAGE / E_GS_NO_ACCESS on I/O failures.
 
 ### Diagnostics
+- `TUXBOX_COMMIT_BY_CALLER` (1; 0 off): lazy commits per caller logged at most every 10 s. The subrender trace logs group-event SetEvents and waits on all 128 group events; the mesh hoisted SRV logs its first 8 binds.
 
 - `TUXBOX_FPS` (1), `TUXBOX_FRAME_WORK` (1), `TUXBOX_WINDOW_REPORTS` (1), `TUXBOX_TITLE_CLOSE_LOG` (1), `TUXBOX_CRASH_RECORD` (1).
 - `TUXBOX_TRACE_PRESENT` (launcher sets 120): sample every Nth present.
@@ -392,12 +404,15 @@ Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is
 - `TB_PIXEL_SAMPLER_HEAP_ROOTED` (1): a rooted PS under SAMPLER_HEAP_DIRECTLY_INDEXED takes its sampler heap base from the FSSM class-6 SGPR, also when the root names a heap register.
 - `TB_HEAP_REG_FSSM` (1): a compute program's heap register is its FSSM class-5 SGPR, not the root-word count (537591f, the test173 hang).
 - `TB_COMPUTE_FSSM_TABLE` (1): a compute root rebuilt from FSSM names each table descriptor by its FSSM row, not the guest RTS0 range (1ed6594a).
+- `TB_IDXEN_RAW` (1; 0 off): IDXEN heap buffer accesses read a ByteAddressBuffer at index * slot stride + byte (ztrx 578d459, credit). `TB_SLOT_BIAS` (1; 0 reads the word as stride): raw slot reads add the stride word's bias in bits 24-31.
+- `TB_SRV_AS_UAV` (1; 0 off): a store/atomic to an RTS0 SRV slot declares it a UAV and emits a uav_from_srv line. `TUXBOX_MESH_TABLE_AS_RAW` (1; 0 off): a mesh FSSM raw-buffer record on a table parameter rebinds it as that root SRV.
 
 ## Recent runs
 
 - test173: about 18 fps; hung at 367 s on a refused compute shader whose heap register was wrong (fixed by 537591f).
 - test174: crashed at 46.8 s on the TUXBOX_SECTION_WATCH guard lock race (fixed by 794137f/90d96e0).
 - test175 (TUXBOX_SECTION_WATCH=0): 23-26 fps, then a Subrender group-2 deadlock at a scene change at 254 s (open); device-local over budget from 218 s.
+- test177: about 11 fps, reached the Lucia loading screen, hung at 410 s: Subrender group 2 never got a job (worker 1 set group 3). Free commit min 343 MiB. 81k pipelines still created lazily (prewarm loaded a stale DLL; fixed by 81b8e5e). Shadow UAV re-mark hit 0 views; SRV_AS_UAV logged nothing.
 
 ## Credits
 
