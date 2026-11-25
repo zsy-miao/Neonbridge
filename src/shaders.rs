@@ -151,7 +151,7 @@ pub struct Worker {
     stop: Arc<AtomicBool>,
     /// The full prewarm while the game runs; not joined at stop, it stops
     /// taking programs.
-    _background: Option<thread::JoinHandle<()>>,
+    background: Option<thread::JoinHandle<()>>,
     handle: Option<thread::JoinHandle<()>>,
     pub stats: Arc<Stats>,
     private: PathBuf,
@@ -1541,6 +1541,17 @@ impl Worker {
                             busy.lock().unwrap().remove(&name);
                             break;
                         }
+                        // The listing is a snapshot: a request another worker
+                        // finished meanwhile (its file removed, its name out of
+                        // `busy`) was taken again and failed reading a file that
+                        // was gone, and its `.failed` marker told the title to give
+                        // up on a shader that had compiled (test167: 13 "cannot find
+                        // the file" failures, 47 prepared pixel shaders missing).
+                        // NEONBRIDGE_REQUEST_RECHECK=0 takes it as before.
+                        if !path.exists() && std::env::var("NEONBRIDGE_REQUEST_RECHECK").as_deref() != Ok("0") {
+                            busy.lock().unwrap().remove(&name);
+                            continue;
+                        }
                         if first.contains(&key) {
                             // test111 had no line showing whether urgent requests were served.
                             static SERVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1596,7 +1607,7 @@ impl Worker {
                 thread::sleep(Duration::from_millis(10));
             }
         }).map_err(|e| e.to_string())?;
-        Ok(Self { stop, _background: background, handle: Some(handle), stats, private })
+        Ok(Self { stop, background, handle: Some(handle), stats, private })
     }
 
     pub fn stop(mut self) -> Arc<Stats> {
@@ -1604,7 +1615,21 @@ impl Worker {
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
-        let _ = fs::remove_dir_all(&self.private);
+        // The background prewarm publishes into its scratch under `private`:
+        // removing it under a running job failed that job's publish (test167,
+        // "publish to xshader-<pid>/prewarm-seen: cannot find the path"). Give
+        // it 10 s to stop taking work, and leave the folder if it is still busy.
+        let started = std::time::Instant::now();
+        let finished = loop {
+            match &self.background {
+                Some(b) if !b.is_finished() && started.elapsed() < Duration::from_secs(10) => thread::sleep(Duration::from_millis(50)),
+                Some(b) => break b.is_finished(),
+                None => break true,
+            }
+        };
+        if finished {
+            let _ = fs::remove_dir_all(&self.private);
+        }
         self.stats.clone()
     }
 }
