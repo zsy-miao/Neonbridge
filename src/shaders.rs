@@ -844,7 +844,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // through dxc, most of that the -O1 pass (8.8 s vs 0.5 s at -O0 on
         // 727f287e; up to its 10 s cut-off, then -O0 again). The driver
         // optimises the DXIL again, as for the urgent path above.
-        // Opt-in only (NEONBRIDGE_PREWARM_DXC_O0=1, prewarm_o0).
+        // Default while the -O1 upgrade is on (prewarm_o0).
         // A dxc failure or timeout is kept beside the HLSL's reuse path
         // (`.dxcfail`), so the same HLSL is not sent to dxc again on every
         // launch (test152 sat at 1336/1338 on two programs a full prewarm of
@@ -1370,11 +1370,21 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     let _ = fs::remove_dir_all(scratch);
 }
 
-/// Whether the prewarm skips dxc's -O1 pass (see compile). Opt-in,
-/// NEONBRIDGE_PREWARM_DXC_O0=1: -O0 DXIL runs slower on the GPU and the
-/// intro is GPU-bound, so it waits for an -O1 upgrade path.
+/// Whether the prewarm skips dxc's -O1 pass (see compile). It was opt-in
+/// (0bc73ad) until an -O1 upgrade path existed: -O0 DXIL runs slower on the
+/// GPU. The upgrade drainer (dxil_upgrade, `--drain-upgrades`) now recompiles
+/// every -O0 program at -O1 in the background and swaps it in, so the
+/// prewarm compiles -O0 by default: the test169 prewarm spent 99% of its
+/// time in -O1 passes of up to 120 s (41 s a compile, one timed out) for
+/// DXIL the driver optimises again. With the upgrade off
+/// (NEONBRIDGE_DXC_UPGRADE=0) it keeps -O1. NEONBRIDGE_PREWARM_DXC_O0=0
+/// keeps -O1 first.
 fn prewarm_o0() -> bool {
-    std::env::var("NEONBRIDGE_PREWARM_DXC_O0").as_deref() == Ok("1")
+    match std::env::var("NEONBRIDGE_PREWARM_DXC_O0").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => crate::dxil_upgrade::enabled(),
+    }
 }
 
 /// Parallel translations (xshader, then dxc) for the prewarm and for the
