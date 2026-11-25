@@ -1397,6 +1397,10 @@ impl Pool {
         JOIN_GEN.fetch_add(1, Ordering::AcqRel);
         JOINING[1].store(hi, Ordering::Release);
         JOINING[0].store(lo, Ordering::Release);
+        // xbox-emulator phys_runs.rs break_run (GPL, credited): every other
+        // thread is suspended while the views are unmapped and remapped, so
+        // none touches or holds the range in between. TUXBOX_JOIN_FREEZE=0 off.
+        let frozen = join_freeze().then(Frozen::new);
         let joined = (|| -> Result<(), u32> {
             let mut unmapped = 0;
             let undo = |unmapped: usize| -> Result<(), u32> {
@@ -1421,6 +1425,7 @@ impl Pool {
             }
             Ok(())
         })();
+        drop(frozen);
         JOINING[0].store(0, Ordering::Release);
         JOIN_GEN.fetch_add(1, Ordering::AcqRel);
         {
@@ -1836,3 +1841,99 @@ pub(crate) fn aliases(at: usize) -> Vec<usize> {
 
 static MAPPINGS_CHANGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static ALIAS_INDEX: LazyLock<std::sync::Mutex<(u64, HashMap<u64, Vec<usize>>)>> = LazyLock::new(|| std::sync::Mutex::new((u64::MAX, HashMap::new())));
+
+fn join_freeze() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_JOIN_FREEZE").map_or(true, |v| v.trim() != "0"))
+}
+
+/// Every other thread of the process suspended until drop (xbox-emulator
+/// crates/compat/xmem/src/phys.rs Frozen, GPL, credited): each is suspended
+/// and its context fetched, which waits for the suspension to land.
+/// The process heap is locked first and held until every thread resumes,
+/// so no suspended thread holds it while the joining thread allocates.
+struct Frozen {
+    handles: Vec<(isize, bool)>,
+    heap: isize,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct ThreadEntry {
+    size: u32,
+    usage: u32,
+    tid: u32,
+    pid: u32,
+    base_priority: i32,
+    delta_priority: i32,
+    flags: u32,
+}
+
+#[repr(C, align(16))]
+struct ContextBuf([u8; 0x4d0]);
+
+unsafe extern "system" {
+    fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> isize;
+    fn Thread32First(snap: isize, entry: *mut ThreadEntry) -> i32;
+    fn Thread32Next(snap: isize, entry: *mut ThreadEntry) -> i32;
+    fn OpenThread(access: u32, inherit: i32, tid: u32) -> isize;
+    fn SuspendThread(thread: isize) -> u32;
+    fn ResumeThread(thread: isize) -> u32;
+    fn GetThreadContext(thread: isize, context: *mut u8) -> i32;
+    fn CloseHandle(handle: isize) -> i32;
+    fn GetCurrentThreadId() -> u32;
+    fn GetCurrentProcessId() -> u32;
+    fn GetProcessHeap() -> isize;
+    fn HeapLock(heap: isize) -> i32;
+    fn HeapUnlock(heap: isize) -> i32;
+}
+
+impl Frozen {
+    fn new() -> Self {
+        let mut handles = Vec::with_capacity(256);
+        let mut ctx = Box::new(ContextBuf([0; 0x4d0]));
+        let mut ids = Vec::with_capacity(256);
+        let heap = unsafe { GetProcessHeap() };
+        unsafe { HeapLock(heap) };
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(4, 0);
+            if snap != -1 {
+                let (me, pid) = (GetCurrentThreadId(), GetCurrentProcessId());
+                let mut e = ThreadEntry { size: size_of::<ThreadEntry>() as u32, ..Default::default() };
+                let mut ok = Thread32First(snap, &mut e);
+                while ok != 0 {
+                    if e.pid == pid && e.tid != me && ids.len() < ids.capacity() { ids.push(e.tid); }
+                    ok = Thread32Next(snap, &mut e);
+                }
+                CloseHandle(snap);
+                for &tid in &ids {
+                    let h = OpenThread(0x2 | 0x8, 0, tid);
+                    if h == 0 { continue; }
+                    let suspended = SuspendThread(h) != u32::MAX;
+                    if suspended {
+                        // CONTEXT_CONTROL | CONTEXT_AMD64 at ContextFlags (+0x30).
+                        ctx.0[0x30..0x34].copy_from_slice(&0x10_0001u32.to_le_bytes());
+                        GetThreadContext(h, ctx.0.as_mut_ptr());
+                    }
+                    if handles.len() < handles.capacity() { handles.push((h, suspended)); } else {
+                        if suspended { ResumeThread(h); }
+                        CloseHandle(h);
+                    }
+                }
+            }
+        }
+        Frozen { handles, heap }
+    }
+}
+
+impl Drop for Frozen {
+    fn drop(&mut self) {
+        for &(h, suspended) in &self.handles {
+            unsafe {
+                if suspended { ResumeThread(h); }
+                CloseHandle(h);
+            }
+        }
+        unsafe { HeapUnlock(self.heap) };
+    }
+}
