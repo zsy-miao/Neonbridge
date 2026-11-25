@@ -583,6 +583,23 @@ unsafe fn create(
 
     let guest_pixel = original[1].map(|(pixel, _)| pixel);
     pipeline.draw_trace = crate::diagnostics::RasterDraw::trace(original[0].map(|(vertex, _)| vertex), guest_pixel, shader_cache::source_digest);
+    // Heap access reflection of every stage (TUXBOX_SHADOW_UAV_REMARK): a VS
+    // or PS writing UAVs by heap index re-marks them as compute does. A
+    // linked stage is keyed by its link and finds no file here.
+    if super::views::uav_remark() {
+        let mut merged = shader_cache::HeapAccess::default();
+        let mut any = false;
+        for (code, _) in original.iter().flatten() {
+            if let Some(access) = shader_cache::source_digest(code).and_then(|d| shader_cache::heap_access(&d)) {
+                any = true;
+                merged.writes.extend(access.writes.iter().copied());
+                merged.reads.extend(access.reads.iter().copied());
+            }
+        }
+        if any {
+            pipeline.heap_access = Some(std::sync::Arc::new(merged));
+        }
+    }
     if let Some(pixel) = guest_pixel
         && let Some(vertex) = original[0].map(|(code, _)| code)
         && let Some(root) = guest_root

@@ -393,6 +393,9 @@ fn adopt_bundle(parent_state: &mut Recording, bundle: &Recording) -> Result<(), 
     for range in &bundle.written_views {
         super::descriptors::include_range(&mut parent_state.written_views, range.clone());
     }
+    for range in &bundle.fallback_views {
+        super::descriptors::include_range(&mut parent_state.fallback_views, range.clone());
+    }
     // The bundle's tables are read when this list runs (descriptor_paging/retire.rs).
     for lease in &bundle.arena_leases {
         match parent_state.arena_leases.iter().find(|held| std::sync::Arc::ptr_eq(held.arena(), lease.arena())) {

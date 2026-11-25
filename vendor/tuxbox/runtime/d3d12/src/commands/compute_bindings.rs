@@ -861,6 +861,7 @@ impl Bindings {
         &self,
         heap: &super::descriptors::ResourceHeap,
         written: &mut Vec<std::ops::Range<usize>>,
+        fallback: &mut Vec<std::ops::Range<usize>>,
     ) {
         use crate::device::shader_cache::HeapSource;
         let Some(access) = self.heap_access.as_ref() else { return };
@@ -892,8 +893,9 @@ impl Bindings {
                 }
                 HeapSource::Cbv(..) | HeapSource::Dynamic => {
                     static SAID: std::sync::Once = std::sync::Once::new();
-                    crate::diagnostics::log_once(&SAID, || "shadow uav re-mark: a program writes the heap through a per-lane or root CBV index; its draws and dispatches re-mark every shadow UAV in the heap".to_string());
-                    Some(heap.cpu.clone())
+                    crate::diagnostics::log_once(&SAID, || "shadow uav re-mark: a program writes the heap through a per-lane or root CBV index; its draws and dispatches re-mark the heap's shadow UAVs a capped share per write-back (TUXBOX_SHADOW_REMARK_FALLBACK_MB)".to_string());
+                    super::descriptors::include_range(fallback, heap.cpu.clone());
+                    None
                 }
             };
             if let Some(range) = range {

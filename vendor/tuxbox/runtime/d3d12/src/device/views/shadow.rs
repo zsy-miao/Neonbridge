@@ -1183,6 +1183,32 @@ pub(crate) fn uav_remark() -> bool {
 static UAV_VIEWS: Mutex<std::collections::BTreeMap<usize, usize>> = Mutex::new(std::collections::BTreeMap::new());
 /// Copies submitted lists' UAVs reach, marked at the next write-back.
 static UAV_PENDING: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+/// Copies reached only by a whole-heap fallback (a per-lane heap index):
+/// marked under TUXBOX_SHADOW_REMARK_FALLBACK_MB a write-back, in turn.
+static UAV_FALLBACK: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+fn fallback_cap() -> u64 {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MB.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_REMARK_FALLBACK_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(64)) << 20
+}
+
+/// A list's whole-heap fallback ranges (see heap_writes): their shadow UAVs
+/// are marked a capped share per write-back, so the fallback cannot copy
+/// every writable shadow back each pass (test15/test173: 640-855 MB).
+pub(crate) fn uav_fallback(ranges: &[std::ops::Range<usize>]) {
+    if !uav_remark() || ranges.is_empty() {
+        return;
+    }
+    let views = lock(&UAV_VIEWS);
+    let mut fallback = lock(&UAV_FALLBACK);
+    for range in ranges {
+        for (_, &r) in views.range(range.clone()) {
+            if fallback.len() < 1 << 16 && !fallback.contains(&r) {
+                fallback.push(r);
+            }
+        }
+    }
+}
 
 /// A view was made at `handle`: a UAV of `resource`, or anything else (None).
 pub(crate) fn uav_view(handle: usize, resource: Option<*mut core::ffi::c_void>) {
@@ -1394,8 +1420,48 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     let shadows = &device.state.shadows;
     if back && uav_remark() {
         let pending = std::mem::take(&mut *lock(&UAV_PENDING));
-        for r in pending {
+        let exact = pending.len();
+        for &r in &pending {
             mark_written(device, r as *mut core::ffi::c_void);
+        }
+        // Fallback copies: those not exactly marked, recently written ones
+        // skipped (already written back), the rest up to the cap; the cursor
+        // rotates so every copy gets its turn.
+        let fallback = std::mem::take(&mut *lock(&UAV_FALLBACK));
+        static CURSOR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let (mut marked, mut bytes, mut deferred) = (0u64, 0u64, 0u64);
+        if !fallback.is_empty() {
+            let cap = fallback_cap();
+            let start = CURSOR.load(std::sync::atomic::Ordering::Relaxed) % fallback.len();
+            let mut taken = 0;
+            for i in 0..fallback.len() {
+                let r = fallback[(start + i) % fallback.len()];
+                if pending.contains(&r) {
+                    continue;
+                }
+                let Some(key) = lock(&shadows.by_copy).get(&r).copied() else { continue };
+                if lock(&shadows.entries).get(&key).is_some_and(recently_written) {
+                    continue;
+                }
+                if bytes + key.1 > cap && marked > 0 {
+                    deferred += 1;
+                    continue;
+                }
+                mark_written(device, r as *mut core::ffi::c_void);
+                marked += 1;
+                bytes += key.1;
+                taken = i + 1;
+            }
+            CURSOR.store(start + taken, std::sync::atomic::Ordering::Relaxed);
+        }
+        if exact > 0 || !fallback.is_empty() {
+            static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = PASSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "shadow uav re-mark pass #{n}: {exact} copies marked exactly, fallback {marked} marked ({bytes} bytes, cap TUXBOX_SHADOW_REMARK_FALLBACK_MB={}), {deferred} deferred",
+                    fallback_cap() >> 20));
+            }
         }
     }
     let kind = unsafe { queue.GetDesc() }.Type;
