@@ -79,7 +79,7 @@ fn dead_from(insns: &[Insn], start: usize, r: Reg) -> bool {
             if !seen.insert((at, whole)) { break; }
             let Some(ins) = insns.get(at) else { break };
             if reads(ins, r) {
-                if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) { eprintln!("wave_alloc: live at {:#x} {}", ins.offset, ins.mnemonic); }
+                if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty() && v != "0") { eprintln!("wave_alloc: live at {:#x} {}", ins.offset, ins.mnemonic); }
                 return false;
             }
             if kills(ins, r, whole) { break; }

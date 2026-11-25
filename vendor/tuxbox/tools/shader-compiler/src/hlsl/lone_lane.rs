@@ -181,7 +181,7 @@ pub(super) fn check(hlsl: &str) -> Result<(), String> {
     let at = hlsl.find("void main(").or_else(|| hlsl.find(" main(")).unwrap_or(0);
     for word in ["Wave", "QuadRead"] {
         if let Some(p) = hlsl[at..].find(word) {
-            if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) {
+            if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
                 let line = hlsl[..at + p].rfind('\n').map_or(0, |n| n + 1);
                 eprintln!("wave use: {}", hlsl[line..].lines().next().unwrap_or(""));
             }

@@ -1480,7 +1480,7 @@ fn mark_wave_allocations(insns: &mut [Insn], wave32_mask: bool) -> Result<(bool,
                     trial[i].mnemonic = "tb_first_active_lane".into();
                     insns.clone_from_slice(&trial);
                 }
-                Err(e) if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) => eprintln!("{e}"),
+                Err(e) if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty() && v != "0") => eprintln!("{e}"),
                 Err(_) => {}
             }
             continue;
@@ -2518,7 +2518,7 @@ fn translate_outputs_lone(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     match alone {
         Ok(translated) => Ok(translated),
         Err(e) => {
-            if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) { eprintln!("{e}"); }
+            if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty() && v != "0") { eprintln!("{e}"); }
             first
         }
     }
@@ -3850,7 +3850,7 @@ impl<'a> Emitter<'a> {
             budget -= 1;
             let (mut sym, mut written) = states[b].clone().unwrap();
             if let Err(e) = self.res_block(&program, &mut sym, &mut written, ranges[b].clone(), track_heap_origin) {
-                if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) {
+                if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
                     eprintln!("block {b} analysis error: {e}");
                 }
                 // Unknown effect: forget everything and treat every SGPR as written. Keep
