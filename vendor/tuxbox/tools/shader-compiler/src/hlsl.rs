@@ -11133,7 +11133,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if let Some(src) = slot_src {
                 self.slot_views = true;
                 self.regs.insert(format!("s{src}"));
-                stride = Some(self.slot_stride(src));
+                stride = Some(self.raw_slot_stride(src));
                 slot_bias = Some(self.slot_bias(src));
             }
             // A compute raw view bound as a root SRV/UAV parameter reads its element
@@ -11358,10 +11358,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     /// The element stride of the heap view at SGPR `slot` (tb_slot_views).
     fn slot_stride(&mut self, slot: u16) -> String {
         self.slot_views = true;
-        if slot_bias_on() {
-            return format!("max(tb_slot_views.Load(s{slot} * 16u + 12u) & 0xffffu, 1u)");
-        }
         format!("max(tb_slot_views.Load(s{slot} * 16u + 12u), 1u)")
+    }
+
+    /// `slot_stride` for a raw read of the slot: word 3's low 16 bits, the rest
+    /// being the raw-view bias (`slot_bias`). Only raw readers mask, so programs
+    /// reading the plain stride keep their HLSL.
+    fn raw_slot_stride(&mut self, slot: u16) -> String {
+        if !slot_bias_on() {
+            return self.slot_stride(slot);
+        }
+        self.slot_views = true;
+        format!("max(tb_slot_views.Load(s{slot} * 16u + 12u) & 0xffffu, 1u)")
     }
 
     /// Bytes from the heap slot's raw view start (rounded down to 16, the D3D12
@@ -11748,7 +11756,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // OFFEN with IDXEN keeps the structured form. TB_IDXEN_RAW=0 off.
         let idxen_raw = idxen && !offen && std::env::var("TB_IDXEN_RAW").map_or(true, |v| v.trim() != "0");
         if idxen_raw {
-            let stride = self.slot_stride(src);
+            let stride = self.raw_slot_stride(src);
             let bias = self.slot_bias(src);
             byte = format!("{} * {stride} + {bias} + {byte}", r(&ins.src[0])?);
         }
