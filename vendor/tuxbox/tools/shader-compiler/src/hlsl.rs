@@ -1804,6 +1804,36 @@ fn desc_data_exact() -> bool {
     std::env::var("TB_DESC_DATA_EXACT").map_or(true, |v| v.trim() != "0")
 }
 
+/// Sources an instruction really reads. The decoder gives every VOP3 three
+/// (src2 = s0 when unused), so a two-source VOP3 next to a descriptor in s0..s3
+/// looked like a descriptor read as data: 682 of 1357 programs, mostly float
+/// VALU math (test159 census). GFX10 VOP3 banks: 0x000-0x0ff VOPC and
+/// 0x100-0x13f VOP2 take two (v_cndmask and the carry-in forms three),
+/// 0x180-0x1ff VOP1 one; the VOP3-only two-source ops are listed by name.
+/// TB_DESC_DATA_ARITY=0 reads all three.
+fn used_sources(ins: &Insn) -> usize {
+    if ins.enc != Enc::Vop3 || std::env::var("TB_DESC_DATA_ARITY").is_ok_and(|v| v.trim() == "0") {
+        return usize::MAX;
+    }
+    let m = ins.mnemonic.as_str();
+    match ins.op {
+        0x000..=0x0ff => 2,
+        0x100..=0x13f if m.starts_with("v_cndmask") || m.contains("_co_ci_") => 3,
+        0x100..=0x13f => 2,
+        0x180..=0x1ff => 1,
+        _ if m.starts_with("v_mul_lo_") || m.starts_with("v_mul_hi_") || m.starts_with("v_mbcnt_")
+            || m.starts_with("v_ldexp_") || m.starts_with("v_bfm_") || m.starts_with("v_bcnt_")
+            || m.starts_with("v_readlane") || m.starts_with("v_lshlrev_b64") || m.starts_with("v_lshrrev_b64")
+            || m.starts_with("v_ashrrev_i64") || m.starts_with("v_trig_preop") || m.starts_with("v_cvt_pk")
+            || m.starts_with("v_pack_b32") || matches!(m, "v_add_f64" | "v_mul_f64" | "v_min_f64" | "v_max_f64")
+            || m.starts_with("v_add_nc_") || m.starts_with("v_sub_nc_")
+            || (m.starts_with("v_pk_") && !m.starts_with("v_pk_fma") && !m.starts_with("v_pk_mad"))
+            || ((m.ends_with("_co_u32") || m.ends_with("_co_i32")) && !m.contains("_co_ci_"))
+            || ((m.ends_with("_b16") || m.ends_with("_u16") || m.ends_with("_i16")) && !m.starts_with("v_mad")) => 2,
+        _ => 3,
+    }
+}
+
 fn desc_as_data_refused() -> bool {
     std::env::var("TB_DESC_AS_DATA").is_ok_and(|v| v.trim() == "0")
 }
@@ -6244,7 +6274,7 @@ impl<'a> Emitter<'a> {
 
                 _ => {
                     if matches!(ins.enc, Enc::Sop1 | Enc::Sop2 | Enc::Sopc | Enc::Sopk | Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vopc)
-                        && ins.src.iter().filter_map(sg).any(|n| matches!(sym.get(&n), Some(Sym::Desc { .. } | Sym::Multi { .. }))
+                        && ins.src.iter().take(used_sources(ins)).filter_map(sg).any(|n| matches!(sym.get(&n), Some(Sym::Desc { .. } | Sym::Multi { .. }))
                             && !(desc_data_exact() && self.df_maybe.get(&n) == sym.get(&n)))
                     {
                         self.desc_data.insert(idx);
@@ -7410,7 +7440,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
 
     fn emit_insn(&mut self, idx: usize, ins: &Insn, is_ps: bool, br: Option<usize>) -> Result<(), String> {
         if self.desc_data.contains(&idx) && desc_as_data_refused() {
-            return Err("a statically resolved descriptor's words read as data (TB_DESC_AS_DATA=0 refuses)".into());
+            return Err(format!("a statically resolved descriptor's words read as data [{} @ {:#x}] (TB_DESC_AS_DATA=0 refuses)", ins.mnemonic, ins.offset));
         }
         self.emit_insn_body(idx, ins, is_ps, br)?;
         if self.vote_defs.contains(&idx) {
