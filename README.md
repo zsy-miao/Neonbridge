@@ -61,7 +61,7 @@ The first start of a runtime takes a while: it builds the runtime and prepares t
 | VIctory-fxceless | program loader (`victory-pe`) | VItoriaBr |
 | VIctory-fxceless | `victory-core`, `victory-game` or `victory-formats` | ScarlettPort |
 
-Flamingo, KLBF Lab and Belobug parts haven't been checked at all. A mix that fails to compile is remembered and refused next time.
+Mixes with parts from Flamingo, KLBF Lab or Belobug haven't been checked yet (Flamingo on its own is tested: see Status). A mix that fails to compile is remembered and refused next time.
 
 ## Watch on your phone (Tailscale)
 
