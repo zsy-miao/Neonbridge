@@ -52,7 +52,7 @@ Tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB 
 5. **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)**: No
 6. **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**: Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far
 7. **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**: Yes: intro at 30 fps, 3D scenes at 2–3 fps
-8. **[victory-unified](https://github.com/Itsbatt/victory-unified)**: Not run here yet (its author: about 58 min without a crash on an RTX 3070 8 GB)
+8. **[victory-unified](https://github.com/Itsbatt/victory-unified)**: **Testing now** (just added; its author: about 58 min without a crash on an RTX 3070 8 GB)
 
 xcl is archived (28th on the race): `git checkout 5a8260eeef4a0308a5048d5d382b10564e58a3cf -- vendor/xcl` brings it back. ztrx-victory (Zettrox/ztrx, upstream now gone) is archived too: `git checkout 2210a25024c0ffedc232661f7b312c06e88c86f2 -- vendor/ztrx-victory` brings it back.
 
