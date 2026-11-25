@@ -356,6 +356,18 @@ pub(super) fn log_record(slot: u32, desc: *const c_void) {
         }
         seen.push(hash);
     }
+    // TUXBOX_SLOT57_DUMP=1 (off by default): each record's seven code slots,
+    // raw, to %TEMP%	uxbox-slot57-<hash>-s<n>.bin, for the NGG slot-2 mesh
+    // path (Coder4: no slot-2 program was ever wrapped to read it from).
+    if crate::env_toggle!("TUXBOX_SLOT57_DUMP") == Some("1") && super::compute::readable(desc as usize, 0x28 + 7 * 32) {
+        let word = |n: usize| unsafe { (desc as *const u64).add(n).read_unaligned() } as usize;
+        for n in 0..7 {
+            let code = blob(word(5 + 4 * n), word(6 + 4 * n), PROGRAM_MAX);
+            if !code.is_empty() {
+                let _ = std::fs::write(std::env::temp_dir().join(format!("tuxbox-slot57-{hash:016x}-s{n}.bin")), &code);
+            }
+        }
+    }
     if LINES.fetch_add(1, Ordering::Relaxed) >= 32 {
         return;
     }
