@@ -1,5 +1,7 @@
-//! Device slot 57 pipeline records, stage 1: decode and log only. No
-//! pipeline is built from them yet. Ported from Xbox2Windows 009153b7
+//! Device slot 57 pipeline records. Stage 1 decodes and logs them; stage 2
+//! (TUXBOX_SLOT57_REAL=1) wraps their programs as synthetic DXBC and builds
+//! a real graphics pipeline lazily (Xbox2Windows d3d12_draw.inl
+//! translation_for / pipeline_for, MIT). Ported from Xbox2Windows 009153b7
 //! pipeline_state_decode.h / depth_state_apply.h (MIT); palmetto
 //! docs/graphics_record.md, convert_slot57_record.
 //!
@@ -158,12 +160,26 @@ fn format_size(format: u32) -> Option<u32> {
     })
 }
 
+/// One block B element: semantic name, index, format word, offset, slot.
+pub(super) struct Element {
+    pub name: std::ffi::CString,
+    pub index: u32,
+    pub format: u32,
+    pub offset: u32,
+    pub slot: u32,
+}
+
 /// Block B: 0x50-byte header, count at +0x4C, then per element a u32 name
 /// length (with NUL), the name, and six u32 in D3D12_INPUT_ELEMENT_DESC
 /// order; zero padding to 4 bytes, filling the blob exactly. Returns
 /// (semantic index, format word, offset, slot) per element; refuses words
 /// no measurement pins.
 pub(super) fn input_layout(b: &[u8]) -> Result<Vec<(u32, u32, u32, u32)>, String> {
+    Ok(elements(b)?.into_iter().map(|e| (e.index, e.format, e.offset, e.slot)).collect())
+}
+
+/// input_layout with the semantic names.
+pub(super) fn elements(b: &[u8]) -> Result<Vec<Element>, String> {
     let count = u32_at(b, 0x4c).ok_or("input layout shorter than its 0x50-byte header")? as usize;
     let mut at = 0x50usize;
     let mut out = Vec::new();
@@ -176,6 +192,7 @@ pub(super) fn input_layout(b: &[u8]) -> Result<Vec<(u32, u32, u32, u32)>, String
         if name[len - 1] != 0 || !name[..len - 1].iter().all(|c| c.is_ascii_graphic()) {
             return Err(format!("elements[{i}].name not printable"));
         }
+        let cname = std::ffi::CString::new(&name[..len - 1]).map_err(|_| format!("elements[{i}].name not printable"))?;
         at += len;
         let w: Vec<u32> = (0..6).map(|n| u32_at(b, at + n * 4)).collect::<Option<_>>()
             .ok_or_else(|| format!("elements[{i}].attributes past the blob"))?;
@@ -196,7 +213,7 @@ pub(super) fn input_layout(b: &[u8]) -> Result<Vec<(u32, u32, u32, u32)>, String
             return Err(format!("elements[{i}].offset[{offset}] overlaps"));
         }
         spans.push((offset, end));
-        out.push((index, format, offset, slot));
+        out.push(Element { name: cname, index, format, offset, slot });
     }
     let padded = at.next_multiple_of(4);
     if padded != b.len() || b[at..].iter().any(|&c| c != 0) {
@@ -210,9 +227,9 @@ fn dss_logging() -> bool {
     crate::env_toggle!("TUXBOX_SLOT57_DSS") != Some("0")
 }
 
-/// TUXBOX_SLOT57_REAL: stage 2 switch, off and unused. Stage 2 (real
-/// pipelines) needs xshader to accept raw console programs first.
-#[allow(dead_code)]
+/// TUXBOX_SLOT57_REAL=1: stage 2, real pipelines (off by default). It
+/// implies the placeholder path (TUXBOX_SLOT57=placeholder): the title gets
+/// the placeholder with a lazy upgrade built at first bind.
 pub(super) fn real() -> bool {
     crate::env_toggle!("TUXBOX_SLOT57_REAL") == Some("1")
 }
@@ -267,4 +284,256 @@ pub(super) fn log_record(slot: u32, desc: *const c_void) {
     crate::diagnostics::log_line(format_args!(
         "slot {slot} record {hash:016x} root {:#x}: dss {dss}; layout (index, format, offset, slot) {layout}; ps {}; vs {}",
         record.root, head(&record.ps), head(&record.vs)));
+}
+
+/// s_inst_prefetch 3, the program's first instruction after its header.
+const PREFETCH: [u8; 4] = [0x03, 0x00, 0xa0, 0xbf];
+const ABSENT: u64 = 0xdead_beef_dead_beef;
+const CODE_END: u32 = 0xbf9f_0000;
+
+/// Xbox2Windows gfx2hlsl.py strip_header (MIT): the program starts at the
+/// first prefetch within 0x80 bytes, or at an s_swappc_b64 just before it;
+/// a misaligned or absent prefetch keeps the whole blob.
+fn strip_header(code: &[u8]) -> &[u8] {
+    let scan = &code[..code.len().min(0x80)];
+    let Some(mut at) = scan.windows(4).position(|w| w == PREFETCH) else { return code };
+    if at >= 4 && at % 4 == 0 && u32_at(code, at - 4).is_some_and(|w| w & 0xff80_ff00 == 0xbe80_2100) {
+        at -= 4;
+    }
+    if at % 4 == 0 { &code[at..] } else { code }
+}
+
+fn put(v: &mut [u8], at: usize, bytes: &[u8]) {
+    v[at..at + bytes.len()].copy_from_slice(bytes);
+}
+
+/// A raw console program as the synthetic DXBC xshader parses
+/// (tuxbox_dxbc::Dxbc::parse, shader-compiler native_dxil, fssm::decode):
+/// one DXIL part whose XDAT holds a kind 13 XBCH v3 (zlib) FSSM, layout 5,
+/// one stage slot, and a "NOBC" bitcode range. stage: 0 PS, 1 VS. No
+/// signature, PSV0 or RTS0 parts (side-session note slot57-synthetic-dxbc).
+pub(super) fn wrap(program: &[u8], stage: u32) -> Vec<u8> {
+    let code = strip_header(program);
+    let isa = &code[..code.len() & !3];
+    // Image: layout u64, 12 slots, descriptor (entry count at +0x58),
+    // 16-byte preamble, then the code padded with s_code_end.
+    const DESCRIPTOR: usize = 0x68;
+    const CODE: usize = DESCRIPTOR + 0x68 + 16;
+    let capacity = (isa.len() + 4).next_multiple_of(256);
+    let mut image = vec![0u8; CODE + capacity];
+    put(&mut image, 0, &5u64.to_le_bytes());
+    for slot in 0..12 {
+        let value = if slot == stage as usize { DESCRIPTOR as u64 } else { ABSENT };
+        put(&mut image, 8 + slot * 8, &value.to_le_bytes());
+    }
+    put(&mut image, DESCRIPTOR, &(CODE as u64).to_le_bytes());
+    put(&mut image, DESCRIPTOR + 8, &(capacity as u64).to_le_bytes());
+    for (n, word) in [0u32, 64, 1, 1].iter().enumerate() {
+        put(&mut image, CODE - 16 + n * 4, &word.to_le_bytes());
+    }
+    put(&mut image, CODE, isa);
+    for at in (CODE + isa.len()..image.len()).step_by(4) {
+        put(&mut image, at, &CODE_END.to_le_bytes());
+    }
+    let mut fssm = Vec::with_capacity(16 + image.len());
+    fssm.extend_from_slice(b"FSSM");
+    fssm.extend_from_slice(&0x101u32.to_le_bytes());
+    fssm.extend_from_slice(&(image.len() as u64).to_le_bytes());
+    fssm.extend_from_slice(&image);
+    let packed = miniz_oxide::deflate::compress_to_vec_zlib(&fssm, 6);
+    let mut xbch = Vec::with_capacity(24 + packed.len());
+    xbch.extend_from_slice(b"XBCH");
+    xbch.extend_from_slice(&3u32.to_le_bytes());
+    xbch.extend_from_slice(&(packed.len() as u64).to_le_bytes());
+    xbch.extend_from_slice(&(fssm.len() as u64).to_le_bytes());
+    xbch.extend_from_slice(&packed);
+    // DXIL body: 24-byte program header, XDAT (offsets include the header),
+    // its section, then "NOBC".
+    let mut body = vec![0u8; 24];
+    body.extend_from_slice(b"XDAT");
+    body.extend_from_slice(&1u32.to_le_bytes());
+    body.extend_from_slice(&(24u32 + 12).to_le_bytes());
+    body.extend_from_slice(&13u32.to_le_bytes());
+    body.extend_from_slice(&(24u32 + 24).to_le_bytes());
+    body.extend_from_slice(&(xbch.len() as u32).to_le_bytes());
+    body.extend_from_slice(&xbch);
+    body.resize(body.len().next_multiple_of(4), 0);
+    let nobc = body.len();
+    body.extend_from_slice(b"NOBC");
+    let dwords = (body.len() / 4) as u32;
+    put(&mut body, 0, &(stage << 16 | 0x60).to_le_bytes());
+    put(&mut body, 4, &dwords.to_le_bytes());
+    put(&mut body, 8, b"DXIL");
+    put(&mut body, 12, &0x106u32.to_le_bytes());
+    put(&mut body, 16, &(nobc as u32 - 8).to_le_bytes());
+    put(&mut body, 20, &4u32.to_le_bytes());
+    let total = 44 + body.len();
+    let mut dxbc = Vec::with_capacity(total);
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0; 16]);
+    dxbc.extend_from_slice(&1u32.to_le_bytes());
+    dxbc.extend_from_slice(&(total as u32).to_le_bytes());
+    dxbc.extend_from_slice(&1u32.to_le_bytes());
+    dxbc.extend_from_slice(&36u32.to_le_bytes());
+    dxbc.extend_from_slice(b"DXIL");
+    dxbc.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    dxbc.extend_from_slice(&body);
+    dxbc
+}
+
+/// Appends one stream subobject of `tag` (stream.rs layout).
+fn push<T>(stream: &mut Vec<u8>, tag: i32, value: &T) {
+    let (offset, bytes) = super::stream::layout(tag).expect("known subobject");
+    let start = stream.len();
+    stream.resize(start + bytes, 0);
+    put(stream, start, &tag.to_le_bytes());
+    // SAFETY: T is a plain D3D12 struct of size_of::<T>() bytes.
+    let raw = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) };
+    put(stream, start + offset, raw);
+}
+
+fn opaque() -> D3D12_BLEND_DESC {
+    let mut blend = D3D12_BLEND_DESC::default();
+    for target in &mut blend.RenderTarget {
+        *target = D3D12_RENDER_TARGET_BLEND_DESC {
+            SrcBlend: D3D12_BLEND_ONE,
+            DestBlend: D3D12_BLEND_ZERO,
+            BlendOp: D3D12_BLEND_OP_ADD,
+            SrcBlendAlpha: D3D12_BLEND_ONE,
+            DestBlendAlpha: D3D12_BLEND_ZERO,
+            BlendOpAlpha: D3D12_BLEND_OP_ADD,
+            LogicOp: D3D12_LOGIC_OP_NOOP,
+            RenderTargetWriteMask: D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8,
+            ..Default::default()
+        };
+    }
+    blend
+}
+
+/// Render target format until list formats reach the build (palmetto's default).
+const RT_FORMAT: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT =
+    windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
+
+/// The upgrade for one record: a lazy stream pipeline (Xbox2Windows
+/// d3d12_draw.inl translation_for / pipeline_for, MIT; palmetto
+/// docs/graphics_record.md) that the stream workers build at first bind
+/// through create_pipeline, so the wrapped VS/PS go through raster_with_root
+/// with the record's root (+0x00) via the root proxy. Records with the same
+/// VS, PS, block A, B, root and formats share one upgrade.
+unsafe fn build(device: &super::Device, record: &Record) -> Result<std::sync::Arc<super::stream::Upgrade>, String> {
+    use std::sync::{Arc, Mutex};
+    use super::stream::{Upgrade, background};
+    use windows::core::Interface;
+    static CACHE: Mutex<Vec<(u64, Arc<Upgrade>)>> = Mutex::new(Vec::new());
+    if record.vs.is_empty() || record.ps.is_empty() {
+        return Err("VS or PS program unreadable".into());
+    }
+    let identity = super::identity(device);
+    let root = unsafe { super::compute::root_proxy(record.root as *mut c_void, identity.as_raw()) }
+        .map_err(|_| format!("+0x00 {:#x} is not a root signature of this device", record.root))?;
+    if root.is_none() {
+        return Err("no root signature at +0x00".into());
+    }
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&record.vs, &record.ps, &record.a, &record.b, record.root, RT_FORMAT.0, 0u32).hash(&mut h);
+        h.finish()
+    };
+    if let Some((_, slot)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) {
+        return Ok(slot.clone());
+    }
+    let layout = if record.b.is_empty() { Vec::new() } else { elements(&record.b)? };
+    let descs: Vec<D3D12_INPUT_ELEMENT_DESC> = layout.iter().map(|e| D3D12_INPUT_ELEMENT_DESC {
+        SemanticName: windows::core::PCSTR(e.name.as_ptr().cast()),
+        SemanticIndex: e.index,
+        Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT(e.format as i32),
+        InputSlot: e.slot,
+        AlignedByteOffset: e.offset,
+        InputSlotClass: D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+        InstanceDataStepRate: 0,
+    }).collect();
+    let vs = wrap(&record.vs, 1);
+    let ps = wrap(&record.ps, 0);
+    let blend = if super::cb_blend::enabled() {
+        super::cb_blend::state_block_blend(&record.a).unwrap_or_else(|_| opaque())
+    } else {
+        opaque()
+    };
+    // No DSV until list formats reach the build: depth and stencil off, so
+    // slot57::depth_stencil and its stencil reference are not applied yet.
+    // TODO: per-list RTV/DSV variants and OMSetStencilRef around draws (X2W).
+    let keep = D3D12_DEPTH_STENCILOP_DESC {
+        StencilFailOp: D3D12_STENCIL_OP_KEEP,
+        StencilDepthFailOp: D3D12_STENCIL_OP_KEEP,
+        StencilPassOp: D3D12_STENCIL_OP_KEEP,
+        StencilFunc: D3D12_COMPARISON_FUNC_ALWAYS,
+    };
+    let depth = D3D12_DEPTH_STENCIL_DESC {
+        DepthEnable: FALSE,
+        DepthWriteMask: D3D12_DEPTH_WRITE_MASK_ZERO,
+        DepthFunc: D3D12_COMPARISON_FUNC_ALWAYS,
+        StencilEnable: FALSE,
+        StencilReadMask: 0xff,
+        StencilWriteMask: 0xff,
+        FrontFace: keep,
+        BackFace: keep,
+    };
+    let raster = D3D12_RASTERIZER_DESC {
+        FillMode: D3D12_FILL_MODE_SOLID,
+        CullMode: D3D12_CULL_MODE_NONE,
+        DepthClipEnable: TRUE,
+        ..Default::default()
+    };
+    let mut formats = D3D12_RT_FORMAT_ARRAY { NumRenderTargets: 1, ..Default::default() };
+    formats.RTFormats[0] = RT_FORMAT;
+    let mut stream = Vec::new();
+    push(&mut stream, 0, &(record.root as *mut c_void));
+    push(&mut stream, 1, &D3D12_SHADER_BYTECODE { pShaderBytecode: vs.as_ptr().cast(), BytecodeLength: vs.len() });
+    push(&mut stream, 2, &D3D12_SHADER_BYTECODE { pShaderBytecode: ps.as_ptr().cast(), BytecodeLength: ps.len() });
+    push(&mut stream, 8, &blend);
+    push(&mut stream, 9, &u32::MAX);
+    push(&mut stream, 10, &raster);
+    push(&mut stream, 11, &depth);
+    push(&mut stream, 12, &D3D12_INPUT_LAYOUT_DESC { pInputElementDescs: descs.as_ptr(), NumElements: descs.len() as u32 });
+    push(&mut stream, 14, &D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE.0);
+    push(&mut stream, 15, &formats);
+    push(&mut stream, 17, &windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 });
+    let mut words = vec![0usize; stream.len().div_ceil(size_of::<usize>())];
+    // SAFETY: words holds at least stream.len() bytes.
+    unsafe { std::ptr::copy_nonoverlapping(stream.as_ptr(), words.as_mut_ptr().cast::<u8>(), stream.len()) };
+    let desc = D3D12_PIPELINE_STATE_STREAM_DESC {
+        SizeInBytes: words.len() * size_of::<usize>(),
+        pPipelineStateSubobjectStream: words.as_mut_ptr().cast(),
+    };
+    // SAFETY: every pointer in the stream (programs, elements, names, the
+    // checked root) is live for this call; the copy owns its own.
+    let owned = unsafe { background::OwnedStream::copy(&desc) }.ok_or("stream copy refused")?;
+    let slot = background::lazy((*identity).clone(), background::Work::Stream(owned));
+    CACHE.lock().unwrap_or_else(|e| e.into_inner()).push((key, slot.clone()));
+    Ok(slot)
+}
+
+/// Stage 2: the upgrade the placeholder carries. On any failure the
+/// placeholder keeps a never-built upgrade (draws dropped, as before) and
+/// the reason is logged once per record, 32 lines at most.
+pub(super) unsafe fn upgrade(device: &super::Device, desc: *const c_void) -> std::sync::Arc<super::stream::Upgrade> {
+    use std::sync::Mutex;
+    let result = match decode(desc) {
+        Some(record) => unsafe { build(device, &record) }.map_err(|why| (record.hash(), why)),
+        None => Err((0, "record unreadable".to_string())),
+    };
+    match result {
+        Ok(slot) => slot,
+        Err((hash, why)) => {
+            static SEEN: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            if seen.len() < 32 && !seen.contains(&hash) {
+                seen.push(hash);
+                crate::diagnostics::log_line(format_args!(
+                    "slot 57 record {hash:016x}: real pipeline refused: {why}; placeholder (TUXBOX_SLOT57_REAL=1)"));
+            }
+            super::stream::background::never()
+        }
+    }
 }

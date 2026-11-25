@@ -334,7 +334,9 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     // with. The placeholder (S_OK, draws dropped) left the picture black
     // (test38-45: clears only; test46 with the stub drew).
     // TUXBOX_SLOT57=placeholder answers the placeholder.
-    let stub = crate::env_toggle!("TUXBOX_SLOT57") != Some("placeholder");
+    // TUXBOX_SLOT57_REAL=1 implies it and attaches a lazy real pipeline.
+    let real = super::slot57::real();
+    let stub = !real && crate::env_toggle!("TUXBOX_SLOT57") != Some("placeholder");
     if call == 0 {
         let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS13::default();
         let ok = unsafe { this.native.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS13, (&raw mut options).cast(), size_of_val(&options) as u32) }.is_ok();
@@ -355,8 +357,9 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
         return E_NOTIMPL;
     };
     let state = PipelineData { lazy: true, ..Default::default() };
-    let _ = state.upgrade.set(super::stream::background::never());
-    if call < 4 {
+    let upgrade = if real { unsafe { super::slot57::upgrade(this, desc) } } else { super::stream::background::never() };
+    let _ = state.upgrade.set(upgrade);
+    if call < 4 && !real {
         crate::diagnostics::log_line(format_args!(
             "device slot {N} pipeline from state blocks at title RVA {:#x}: placeholder (its draws are dropped; TUXBOX_SLOT57=placeholder chose it)",
             crate::survey::title_rva().unwrap_or(0)));

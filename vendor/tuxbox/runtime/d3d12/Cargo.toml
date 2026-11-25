@@ -10,6 +10,8 @@ crate-type = ["staticlib"]
 
 [dependencies]
 tuxbox-dxbc = { path = "../dxbc", features = ["native-bindings"] }
+# zlib for slot 57 synthetic XBCH (already in the tree through tuxbox-dxbc).
+miniz_oxide = "0.8"
 tuxbox-xg-layout = { path = "../xg-layout" }
 windows = { workspace = true, features = [
     "Win32_Foundation",
