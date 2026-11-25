@@ -2497,6 +2497,118 @@ fn translate_outputs(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_
         }
         out => out,
     }
+    .map(|mut t| {
+        t.hlsl = prune_helpers(&t.hlsl);
+        t
+    })
+}
+
+fn is_ident(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Every `tb_*` identifier in `text`.
+fn tb_names(text: &str) -> impl Iterator<Item = &str> {
+    let b = text.as_bytes();
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i + 3 <= b.len() {
+            if b[i..].starts_with(b"tb_") && (i == 0 || !is_ident(b[i - 1])) {
+                let s = i;
+                while i < b.len() && is_ident(b[i]) {
+                    i += 1;
+                }
+                return Some(&text[s..i]);
+            }
+            i += 1;
+        }
+        None
+    })
+}
+
+/// Drop the helper functions nothing calls. The helper library used to go
+/// whole into every program, so adding or editing one helper changed the
+/// HLSL of every program and sent all of them back through dxc. A top-level
+/// function named `tb_*` (with the comment lines just above it) is kept
+/// only when the rest of the program reaches it, transitively; everything
+/// else stays as it is, in its order.
+fn prune_helpers(hlsl: &str) -> String {
+    // Split into top-level chunks: leading comments, then a definition up to
+    // the line where its braces close.
+    let lines: Vec<&str> = hlsl.split_inclusive('\n').collect();
+    let mut chunks: Vec<(Option<&str>, String)> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let start = i;
+        while i < lines.len() && lines[i].starts_with("//") {
+            i += 1;
+        }
+        let head = lines.get(i).copied().unwrap_or("");
+        // A function head: unindented, `name(` before any `;` unless the
+        // body opens on the same line.
+        let name = (!head.starts_with([' ', '\t', '#', '}']) && head.contains('('))
+            .then(|| head.split('(').next().unwrap_or("").split_whitespace().last().unwrap_or(""))
+            .filter(|n| n.starts_with("tb_") && n.bytes().all(is_ident) && (head.contains('{') || !head.contains(';')));
+        let mut text = String::new();
+        for l in &lines[start..i] {
+            text.push_str(l);
+        }
+        if let Some(n) = name {
+            let mut depth = 0i64;
+            let mut opened = false;
+            while i < lines.len() {
+                let l = lines[i];
+                text.push_str(l);
+                i += 1;
+                for c in l.bytes() {
+                    match c {
+                        b'{' => { depth += 1; opened = true }
+                        b'}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                if opened && depth <= 0 {
+                    break;
+                }
+            }
+            if !opened || depth != 0 {
+                return hlsl.to_string();
+            }
+            chunks.push((Some(n), text));
+        } else {
+            if i < lines.len() && i == start {
+                text.push_str(lines[i]);
+                i += 1;
+            }
+            chunks.push((None, text));
+        }
+    }
+    let mut live: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut todo: Vec<usize> = (0..chunks.len()).filter(|&c| chunks[c].0.is_none()).collect();
+    let mut done = vec![false; chunks.len()];
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (c, (n, _)) in chunks.iter().enumerate() {
+        if let Some(n) = n {
+            by_name.entry(n).or_default().push(c);
+        }
+    }
+    while let Some(c) = todo.pop() {
+        if std::mem::replace(&mut done[c], true) {
+            continue;
+        }
+        for n in tb_names(&chunks[c].1) {
+            if live.insert(n) {
+                todo.extend(by_name.get(n).into_iter().flatten().copied());
+            }
+        }
+    }
+    let mut out = String::with_capacity(hlsl.len());
+    for (c, (n, text)) in chunks.iter().enumerate() {
+        if n.is_none() || done[c] {
+            out.push_str(text);
+        }
+    }
+    out
 }
 
 /// TuxBox 63343eb: a compute program that fails retries with each lane allocating
