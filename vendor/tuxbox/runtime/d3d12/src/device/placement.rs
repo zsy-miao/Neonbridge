@@ -1594,6 +1594,7 @@ pub(crate) unsafe fn submit(
             }
             pending = true;
         }
+        packed_read_note(texture, pending);
         if !pending {
             refresh.push(texture.clone());
         }
@@ -1720,4 +1721,33 @@ pub(crate) unsafe fn submit(
         state.readers.push((reader.clone(), tick));
     }
     Ok(())
+}
+
+/// Gap 6 remainder (fxceless gaps item 2): test152 placed 12 R9G9B9E5
+/// textures over live UAV-only R32_UINT ones, which 5e3a1ee packed_target
+/// does not serve. Their bytes come only from title memory, filled by the
+/// owner's write-back. Each batch reading one logs (rate-limited) whether
+/// a GPU write is still unpublished and whether its first 4 KiB of title
+/// memory are all zero, to tell a missing write-back from a stale re-read
+/// before porting fxceless's GPU copy. TUXBOX_PACKED_READ_NOTE=0 off.
+fn packed_read_note(texture: &Texture, pending: bool) {
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
+    if texture.desc.Format != DXGI_FORMAT_R9G9B9E5_SHAREDEXP || crate::env_toggle!("TUXBOX_PACKED_READ_NOTE") == Some("0") {
+        return;
+    }
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if !(n <= 8 || n.is_power_of_two()) {
+        return;
+    }
+    let mut sample = [0u8; 4096];
+    let mut read = 0usize;
+    let ok = unsafe {
+        ReadProcessMemory(GetCurrentProcess(), texture.address as *const core::ffi::c_void, sample.as_mut_ptr().cast(),
+            sample.len().min(texture.size as usize), Some(&mut read))
+    }.is_ok();
+    let zero = sample[..read].iter().all(|&b| b == 0);
+    crate::diagnostics::log_line(format_args!(
+        "placed textures: a batch reads R9G9B9E5 {}x{} at {:#x}: GPU write unpublished {pending}, title memory read {} ({read} bytes), all zero {zero} ({n} so far; TUXBOX_PACKED_READ_NOTE=0 off)",
+        texture.desc.Width, texture.desc.Height, texture.address, if ok { "ok" } else { "failed" }));
 }
