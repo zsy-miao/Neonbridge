@@ -1587,6 +1587,103 @@ struct MaskState {
     parked: BTreeSet<(u8, i64)>,
 }
 
+/// Where a dispatch block goes: the end, a jump to a target, or a branch
+/// on a condition (taken, fall-through).
+enum Next {
+    End,
+    Jump(usize),
+    Cond(String, usize, usize),
+}
+
+/// The compact dispatch form (xcl e591a8c `gpu/dxil/compact.rs`, MIT): a
+/// large program made mostly of repeated blocks (an unrolled loop, 35af8e6d's
+/// 14,411 blocks of 762 kinds) emits each distinct block once, in a loop that
+/// reads every block's class and successor offsets from packed tables, so
+/// the HLSL shrinks by the repetition instead of growing to megabytes. Two
+/// blocks share a class when their emitted text (temporaries renumbered) and
+/// terminator are the same, so sharing never changes what a block does. The
+/// form is taken, as xcl takes it, at 20,000 instructions or more when under
+/// 30% of them are in distinct blocks and the tables fit 8,192 words.
+/// TB_COMPACT=0 keeps the flat dispatch.
+struct CompactPlan {
+    class: Vec<u32>,
+    step: Vec<u32>,
+    rep: Vec<usize>,
+    steps: Vec<(u32, u32)>,
+    class_bits: u32,
+    step_bits: u32,
+}
+
+fn compact_wanted(insns: usize) -> bool {
+    insns >= 20_000 && std::env::var("TB_COMPACT").map_or(true, |v| v.trim() != "0")
+}
+
+fn table_bits(n: usize) -> u32 {
+    (usize::BITS - n.saturating_sub(1).leading_zeros()).max(1)
+}
+
+/// A block's text with its own temporaries (t<k>, k >= `tmp0`) numbered from
+/// zero, so two copies of one block compare equal.
+fn canonical_text(text: &str, tmp0: usize) -> String {
+    let b = text.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = String::with_capacity(text.len());
+    let mut map: HashMap<usize, usize> = HashMap::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b't' && (i == 0 || !ident(b[i - 1])) && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() { j += 1; }
+            if j == b.len() || !ident(b[j]) {
+                if let Ok(k) = text[i + 1..j].parse::<usize>() {
+                    if k >= tmp0 {
+                        let fresh = map.len();
+                        let c = *map.entry(k).or_insert(fresh);
+                        out.push_str(&format!("t#{c}"));
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+        }
+        let ch = text[i..].chars().next().expect("char");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+fn compact_plan(blocks: &[(String, Next, usize)], starts: &[usize], n: usize, block_of: &dyn Fn(usize) -> usize) -> Option<CompactPlan> {
+    let nb = blocks.len();
+    let mut ids: HashMap<String, u32> = HashMap::new();
+    let (mut class, mut rep, mut to) = (Vec::with_capacity(nb), Vec::new(), Vec::with_capacity(nb));
+    let (mut all, mut once) = (0usize, 0usize);
+    for (b, (text, next, tmp0)) in blocks.iter().enumerate() {
+        let len = starts.get(b + 1).copied().unwrap_or(n) - starts[b];
+        all += len;
+        let (shape, t, f) = match next {
+            Next::End => ("E".to_string(), b, b),
+            Next::Jump(t) => ("J".to_string(), block_of(*t), block_of(*t)),
+            Next::Cond(c, t, f) => (format!("C{c}"), block_of(*t), block_of(*f)),
+        };
+        let key = format!("{shape}\n{}", canonical_text(text, *tmp0));
+        let fresh = ids.len() as u32;
+        let c = *ids.entry(key).or_insert(fresh);
+        if c == fresh {
+            rep.push(b);
+            once += len;
+        }
+        class.push(c);
+        to.push(((t as u32).wrapping_sub(b as u32), (f as u32).wrapping_sub(b as u32)));
+    }
+    let steps: Vec<(u32, u32)> = to.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
+    let step: Vec<u32> = to.iter().map(|x| steps.binary_search(x).expect("step") as u32).collect();
+    let (class_bits, step_bits) = (table_bits(rep.len()), table_bits(steps.len()));
+    let words = (nb * (class_bits + step_bits) as usize).div_ceil(32) + 1 + steps.len() * 2;
+    (class_bits + step_bits <= 32 && once * 10 < all * 3 && words <= 8192)
+        .then_some(CompactPlan { class, step, rep, steps, class_bits, step_bits })
+}
+
 /// Lane-parked scalars, from fxceless ir.rs `unspill` (309-380, GPL-3.0):
 /// a VGPR is a park area only when every use of it is a `v_writelane_b32 vN,
 /// sX, K` / `v_readlane_b32 sX, vN, K` with a constant lane (any other use
@@ -6251,6 +6348,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // The dispatch form runs 256 blocks per allowed loop iteration
         // (five-star-recomp f938530 'victory' preset).
         let steps = loop_cap(self.ex.stage).saturating_mul(256);
+        let head = self.body.len();
         if entry == 0 {
             self.line("uint tb_pc = 0u; uint tb_guard = 0u;");
             self.line(&format!("[loop] while (tb_pc != {n}u && tb_guard++ < {steps}u) {{"));
@@ -6262,9 +6360,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // `switch` whose selector is assigned inside its cases).
         self.line("uint tb_sel = tb_pc; tb_pc = 0xffffffffu;");
         let insns = self.insns.clone();
+        let compact = compact_wanted(n);
+        let nb = starts.len();
+        let block_of = |i: usize| starts.binary_search(&i).unwrap_or(nb);
+        // Each block's text and where it goes, assembled below.
+        let mut blocks: Vec<(String, Next, usize)> = Vec::with_capacity(nb);
         for (b, &start) in starts.iter().enumerate() {
             let end = starts.get(b + 1).copied().unwrap_or(n);
-            self.line(&format!("if (tb_sel == {start}u) {{"));
+            let (text0, tmp0) = (self.body.len(), self.tmp);
             self.drop_heap_handles();
             for i in start..end {
                 let ins = &insns[i];
@@ -6279,25 +6382,84 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             let last = &insns[end - 1];
             let next = if last.enc == Enc::Sopp && last.op == 1 {
-                format!("{n}u")
+                Next::End
             } else if let (Some(c), Some(&t)) = (
                 if last.enc == Enc::Sopp { Self::branch_cond(last.op) } else { None },
                 tgt.get(&(end - 1)),
             ) {
                 if self.wave_cull { wave_cull::prepare_insn(self, end - 1, last)?; }
                 let c = wave_cull::branch_condition(self, last, c);
-                if last.op == 2 { format!("{t}u") } else { format!("({c}) ? {t}u : {end}u") }
+                if last.op == 2 { Next::Jump(t) } else { Next::Cond(c, t, end) }
             } else {
-                format!("{end}u")
+                Next::Jump(end)
             };
-            self.line(&format!("tb_pc = {next}; }}"));
+            let text = self.body.split_off(text0);
+            blocks.push((text, next, tmp0));
         }
-        // No block matched (cannot happen for a well-formed program): stop.
-        self.line(&format!("if (tb_pc == 0xffffffffu) tb_pc = {n}u;"));
-        self.line("}");
+        let plan = if compact { compact_plan(&blocks, &starts, n, &block_of) } else { None };
+        if let Some(plan) = plan {
+            self.body.truncate(head);
+            let e = block_of(entry);
+            self.emit_compact(&blocks, &plan, e, steps);
+        } else {
+            for ((text, next, _), &start) in blocks.iter().zip(&starts) {
+                self.line(&format!("if (tb_sel == {start}u) {{"));
+                self.body.push_str(text);
+                let to = match next {
+                    Next::End => format!("{n}u"),
+                    Next::Jump(t) => format!("{t}u"),
+                    Next::Cond(c, t, f) => format!("({c}) ? {t}u : {f}u"),
+                };
+                self.line(&format!("tb_pc = {to}; }}"));
+            }
+            // No block matched (cannot happen for a well-formed program): stop.
+            self.line(&format!("if (tb_pc == 0xffffffffu) tb_pc = {n}u;"));
+            self.line("}");
+        }
         self.drop_heap_handles();
         self.loop_depth = self.loop_depth.saturating_sub(1);
         Ok(())
+    }
+
+    /// The compact dispatch form (see `compact_plan`): one loop over block
+    /// numbers; each block's class and successor offsets are read from packed
+    /// constant tables, and each class is emitted once.
+    fn emit_compact(&mut self, blocks: &[(String, Next, usize)], plan: &CompactPlan, entry: usize, steps: u32) {
+        let nb = blocks.len();
+        let (cb, pb) = (plan.class_bits, plan.step_bits);
+        let w = cb + pb;
+        let mut ct = vec![0u32; (nb * w as usize).div_ceil(32) + 1];
+        for (b, (&c, &st)) in plan.class.iter().zip(&plan.step).enumerate() {
+            let e = u64::from(c) | (u64::from(st) << cb);
+            let bit = b * w as usize;
+            let v = e << (bit % 32);
+            ct[bit / 32] |= v as u32;
+            if bit % 32 + w as usize > 32 { ct[bit / 32 + 1] |= (v >> 32) as u32; }
+        }
+        let list = |v: &[u32]| v.iter().map(|x| format!("{x}u")).collect::<Vec<_>>().join(",");
+        let st: Vec<u32> = plan.steps.iter().flat_map(|&(t, f)| [t, f]).collect();
+        self.line(&format!("static const uint tb_ct[{}] = {{{}}};", ct.len(), list(&ct)));
+        self.line(&format!("static const uint tb_st[{}] = {{{}}};", st.len(), list(&st)));
+        let ones = |b: u32| if b >= 32 { u32::MAX } else { (1u32 << b) - 1 };
+        self.line(&format!("uint tb_pc = {entry}u; uint tb_guard = 0u; [loop] while (tb_pc != {nb}u && tb_guard++ < {steps}u) {{"));
+        self.line("uint tb_sel = tb_pc; tb_pc = 0xffffffffu;");
+        self.line(&format!("uint tb_bit = tb_sel * {w}u; uint tb_sh = tb_bit & 31u;"));
+        self.line(&format!("uint tb_e = ((tb_ct[tb_bit >> 5] >> tb_sh) | (tb_sh + {w}u > 32u ? tb_ct[(tb_bit >> 5) + 1u] << (32u - tb_sh) : 0u)) & {}u;", ones(w)));
+        self.line(&format!("uint tb_cls = tb_e & {}u; uint tb_s = (tb_e >> {cb}u) * 2u;", ones(cb)));
+        self.line("uint tb_t = tb_sel + tb_st[tb_s]; uint tb_f = tb_sel + tb_st[tb_s + 1u];");
+        for (k, &b) in plan.rep.iter().enumerate() {
+            let (text, next, _) = &blocks[b];
+            self.line(&format!("if (tb_cls == {k}u) {{"));
+            self.body.push_str(text);
+            let to = match next {
+                Next::End => format!("{nb}u"),
+                Next::Jump(..) => "tb_t".to_string(),
+                Next::Cond(c, ..) => format!("({c}) ? tb_t : tb_f"),
+            };
+            self.line(&format!("tb_pc = {to}; }}"));
+        }
+        self.line(&format!("if (tb_pc == 0xffffffffu) tb_pc = {nb}u;"));
+        self.line("}");
     }
 
     /// Float source with VOP3 abs/neg modifiers applied.
