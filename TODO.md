@@ -17,7 +17,7 @@ Open work. Each item is tested in a run of its own.
 - Gaps:
   - descriptors read as data (at least refuse them)
   - mask-as-data ballot
-  - runtime V# stride: loads done (heap raw views read tb_slot_views +12, VItoriaBr b62bbc0; sibling stride TuxBox 7b815f2). Left: IDXEN stores (refused, as TuxBox 63343eb) and root-table raw views with no slot (no ref reads a stride there). Fallback design: give root raw views a runtime stride word beside the t5+ space32766 AS views (Coder5), then lift the store refusal behind a TB_ switch.
+  - runtime V# stride: done for heap raw views (tb_slot_views +12, VItoriaBr b62bbc0; sibling stride TuxBox 7b815f2) and compute root raw views (tb_root_raw_stride t4 space32766, 288a936 + d3d12 9841a78), loads and stores (b1155aa, TB_RAW_IDXEN_STORE=0 refuses). Left: graphics-stage root raw views (the runtime binds tb_root_raw_stride for compute only); port only once a cache mark shows the refusal.
   - safe barriers beyond guarded S_BARRIER
   - wave64 split for any group size: done (396b1f0, xcl several-console-waves form, TB_SPLIT_WAVE64_MULTI=0 off).
   - a retry ladder
