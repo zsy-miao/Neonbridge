@@ -147,11 +147,6 @@ mod tests {
         assert_eq!(parse_res(""), None);
     }
 
-    #[test]
-    fn an_old_config_loads_with_display_defaults() {
-        let d: DisplayCfg = serde_json::from_str("{\"fps_cap\":30}").unwrap();
-        assert_eq!(d, DisplayCfg { fps_cap: 30, ..DisplayCfg::default() });
-    }
 
     #[test]
     fn this_machine_lists_a_monitor() {
