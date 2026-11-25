@@ -918,6 +918,7 @@ unsafe extern "system" fn create_resource<const EXTENDED: bool>(
         }
     }
     host_desc.Flags.0 &= format::HOST_FLAGS;
+    host_desc.Flags.0 = allocation::without_depth_stencil_uav(&host_desc, host_desc.Flags.0);
     let primary = depth::primary(desc);
     let initial = format::host_initial_state(desc, initial);
     if primary.is_some()

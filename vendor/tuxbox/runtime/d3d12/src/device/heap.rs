@@ -208,6 +208,7 @@ pub(super) unsafe extern "system" fn place(
     }
     let mut host = primary.unwrap_or(*desc);
     host.Flags.0 &= super::format::HOST_FLAGS;
+    host.Flags.0 = super::allocation::without_depth_stencil_uav(&host, host.Flags.0);
     let allocation = |host: &D3D12_RESOURCE_DESC| unsafe {
         device
             .native

@@ -104,7 +104,10 @@ pub(super) fn substitute(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DE
 /// True when the guest asked for a depth image with unordered access that the
 /// host creates without it (everything except the paired float depth plane).
 fn unbacked_uav(desc: &D3D12_RESOURCE_DESC) -> bool {
-    is_depth(desc) && substitute(desc).is_some() && !super::depth::paired(desc)
+    let dropped = desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER
+        && desc.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
+        && crate::env_toggle!("TUXBOX_DS_UAV_DROP") != Some("0");
+    is_depth(desc) && (substitute(desc).is_some() || dropped) && !super::depth::paired(desc)
 }
 
 /// Initial state of a resource whose unordered access the host does not back.

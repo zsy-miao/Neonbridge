@@ -98,6 +98,7 @@ pub(super) unsafe extern "system" fn create(
         desc.Dimension.0, desc.Layout.0, desc.Width, desc.Height, desc.DepthOrArraySize, desc.Format.0));
     let mut host_desc = *desc;
     host_desc.Flags.0 &= format::HOST_FLAGS;
+    host_desc.Flags.0 = super::allocation::without_depth_stencil_uav(&host_desc, host_desc.Flags.0);
     let initial = format::host_initial_state(desc, initial);
     let texture = desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER;
     let host_clear = format::host_clear(clear);

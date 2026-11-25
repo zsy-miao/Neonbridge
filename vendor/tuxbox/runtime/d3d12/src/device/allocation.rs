@@ -21,9 +21,32 @@ fn host_description(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
     // Console-only flag bits (including DCC) are dropped; the host driver
     // chooses its own compression for the image it creates.
     super::depth::primary(desc).or_else(|| {
-        (desc.Flags.0 & !HOST_FLAGS != 0)
-            .then(|| D3D12_RESOURCE_DESC { Flags: D3D12_RESOURCE_FLAGS(desc.Flags.0 & HOST_FLAGS), ..*desc })
+        let flags = without_depth_stencil_uav(desc, desc.Flags.0 & HOST_FLAGS);
+        (flags != desc.Flags.0)
+            .then(|| D3D12_RESOURCE_DESC { Flags: D3D12_RESOURCE_FLAGS(flags), ..*desc })
     })
+}
+
+/// A console depth-stencil texture may also allow unordered access; the PC
+/// runtime refuses the pair and sizes it UINT64_MAX. format::substitute drops
+/// the bit only for 1D/2D textures in the unknown layout, so a console-tiled
+/// (layout 0x101), 3D or other one reached the driver with both and failed.
+/// Every non-buffer depth texture is sized without it (leonida 89fdb83e0,
+/// d3d12_xs_desc_clean.h without_depth_stencil_uav, GPL-3.0, credited).
+/// TUXBOX_DS_UAV_DROP=0 keeps the bit as before.
+pub(super) fn without_depth_stencil_uav(desc: &D3D12_RESOURCE_DESC, flags: i32) -> i32 {
+    if desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER
+        && flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 != 0
+        && flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 != 0
+        && crate::env_toggle!("TUXBOX_DS_UAV_DROP") != Some("0")
+    {
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&LOGGED, || format!(
+            "depth-stencil texture (format {}) sized without unordered access, which the host refuses with it (TUXBOX_DS_UAV_DROP=0 keeps it)",
+            desc.Format.0));
+        return flags & !D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0;
+    }
+    flags
 }
 
 // Preserve the packed render/sampling format. A raw 16-bit storage view can
