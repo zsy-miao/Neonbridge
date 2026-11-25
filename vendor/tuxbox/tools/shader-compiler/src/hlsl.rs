@@ -268,6 +268,19 @@ fn cube_uavs() -> bool {
 }
 
 /// Image inc/dec/fmin/fmax/cmpswap/fcmpswap; TB_IMAGE_ATOMIC_EXT=0 leaves them unsupported.
+/// A 64-bit image atomic: DMASK 0x3 (0xf for compare-swap: new value, then
+/// comparand), a uint64_t texel of an R32G32_UINT view, data v[n+1]:v[n]
+/// (five-star-recomp 97dafaa AtomicEmitter Wide/WideImage, credit to its
+/// authors). TB_WIDE_IMAGE_ATOMICS=0 keeps only the visibility-pass form.
+fn wide_image_atomic(op: &Insn) -> bool {
+    if std::env::var("TB_WIDE_IMAGE_ATOMICS").is_ok_and(|v| v.trim() == "0") || !op.mnemonic.starts_with("image_atomic_") {
+        return false;
+    }
+    let native = matches!(op.mnemonic.as_str(), "image_atomic_add" | "image_atomic_umin" | "image_atomic_umax" | "image_atomic_or"
+        | "image_atomic_and" | "image_atomic_xor" | "image_atomic_swap");
+    (op.mnemonic == "image_atomic_cmpswap" && op.aux.mask == 0xf) || (native && op.aux.mask == 3)
+}
+
 fn image_atomic_ext() -> bool {
     std::env::var("TB_IMAGE_ATOMIC_EXT").map_or(true, |v| v.trim() != "0")
 }
@@ -6126,7 +6139,7 @@ impl<'a> Emitter<'a> {
             let [Res::Uav(slot, 1)] = resources.as_slice() else {
                 continue;
             };
-            if matches!(op.raw.as_slice(), [0xf05c1308, flags] if flags & 0xc000_0000 == 0)
+            if (matches!(op.raw.as_slice(), [0xf05c1308, flags] if flags & 0xc000_0000 == 0) || wide_image_atomic(op))
                 && self.ex.resources.iter().filter(|r| {
                     matches!(r.res_type, 6..=9)
                         && r.space == self.binding_spaces.get(&(1, *slot)).copied().unwrap_or(0)
@@ -12188,6 +12201,34 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 return Err("D16 image access to an integer-typed image unsupported".into());
             }
             if let Some(func) = atomic {
+                if wide_image_atomic(ins) && dim == 1 && as_uint && self.wide_visibility_uavs.contains(&slot)
+                    && !matches!(ins.raw.as_slice(), [0xf05c1308, flags] if flags & 0xc000_0000 == 0)
+                {
+                    let reg = |k: u8| vd.checked_add(k).map(Opnd::Vgpr).ok_or_else(|| "image atomic register pair overflow".to_string());
+                    let pair = |em: &mut Self, k: u8| -> Result<String, String> {
+                        let (lo, hi) = (reg(k)?, reg(k + 1)?);
+                        em.touch(&lo);
+                        em.touch(&hi);
+                        Ok(format!("(uint64_t({}) | (uint64_t({}) << 32))", r(&lo)?, r(&hi)?))
+                    };
+                    let val = pair(self, 0)?;
+                    let texel = format!("uav{slot}[uint{ncoord}({})]", c.join(", "));
+                    let t = self.tmp;
+                    self.tmp += 1;
+                    self.line(&format!("uint64_t t{t} = 0; if (exec_lo & 1u) {{"));
+                    if func == "cmpswap" {
+                        let compare = pair(self, 2)?;
+                        self.line(&format!("InterlockedCompareExchange({texel}, {compare}, {val}, t{t});"));
+                    } else {
+                        self.line(&format!("{func}({texel}, {val}, t{t});"));
+                    }
+                    self.line("}");
+                    if ins.raw[0] & (1 << 13) != 0 {
+                        self.wv(&reg(0)?, &format!("uint(t{t})"))?;
+                        self.wv(&reg(1)?, &format!("uint(t{t} >> 32)"))?;
+                    }
+                    return Ok(());
+                }
                 // Image atomics → Interlocked* on a RWTexture<uint> texel; vdata carries the
                 // operand in and the previous value out.
                 if func == "cmpswap" || func == "fcmpswap" {
