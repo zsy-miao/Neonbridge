@@ -171,6 +171,7 @@ pub(crate) fn start(luid: LUID) {
                 .and_then(|f| unsafe { f.EnumAdapterByLuid::<windows::Win32::Graphics::Dxgi::IDXGIAdapter>(luid) }.ok())
                 .and_then(|a| a.cast().ok());
             let mut last = [(0u64, 0u64); N];
+            let (mut tick, mut walked_at) = (0u64, 0u64);
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(every));
                 let query = |group| {
@@ -199,7 +200,16 @@ pub(crate) fn start(luid: LUID) {
                 if crate::env_toggle!("TUXBOX_RESIDENCY_LINE") != Some("0") {
                     crate::diagnostics::log_line(format_args!("{}", crate::device::residency_line()));
                 }
-                if crate::env_toggle!("TUXBOX_COMMIT_BREAKDOWN") != Some("0") {
+                // The walk holds the address-space lock ~90 ms (test166: 2.7k
+                // regions, 91-98 ms) and every VirtualAlloc/VirtualQuery on the
+                // title's threads waits on it: walk every 6th line (60 s), or
+                // early when private commit moved 256 MiB. TUXBOX_COMMIT_WALK_EVERY=1 walks every line.
+                tick += 1;
+                let walk_every = std::env::var("TUXBOX_COMMIT_WALK_EVERY").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(6).max(1);
+                let private = counters.private as u64;
+                let due = tick % walk_every == 1 % walk_every || private.abs_diff(walked_at) >= 256 << 20;
+                if due && crate::env_toggle!("TUXBOX_COMMIT_BREAKDOWN") != Some("0") {
+                    walked_at = private;
                     crate::diagnostics::log_line(format_args!("{}", commit_breakdown()));
                 }
             }
