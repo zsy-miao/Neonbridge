@@ -81,13 +81,17 @@ impl DescriptorMap<PlacedView> {
         self.store(handle, texture.map(|t| PlacedView { texture: Arc::downgrade(t), writable }));
     }
 
-    pub(crate) fn gather(&self, heaps: &[Range<usize>], reads: &mut Vec<Arc<super::Texture>>, writes: &mut Vec<Arc<super::Texture>>) {
+    /// `written`: the view ranges the lists' programs write (their UAV
+    /// tables, heap writes and whole-heap fallbacks); None counts every
+    /// writable view as written.
+    pub(crate) fn gather(&self, heaps: &[Range<usize>], written: Option<&[Range<usize>]>, reads: &mut Vec<Arc<super::Texture>>, writes: &mut Vec<Arc<super::Texture>>) {
         if heaps.is_empty() { return; }
         let views = lock(&self.0);
         for heap in heaps {
-            for (_, view) in views.range(heap.clone()) {
+            for (&handle, view) in views.range(heap.clone()) {
                 if let Some(texture) = view.texture.upgrade() {
-                    if view.writable { writes.push(texture); } else { reads.push(texture); }
+                    let write = view.writable && written.is_none_or(|w| w.iter().any(|r| r.contains(&handle)));
+                    if write { writes.push(texture); } else { reads.push(texture); }
                 }
             }
         }

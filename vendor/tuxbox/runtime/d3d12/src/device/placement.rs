@@ -1496,6 +1496,32 @@ impl Placements {
     }
 }
 
+thread_local! {
+    /// The view ranges the lists of the batch being submitted on this thread
+    /// write (note_written_views), taken by `submit`.
+    static WRITTEN_VIEWS: std::cell::RefCell<Vec<Range<usize>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// TUXBOX_PLACED_WRITES_BY_USE (default on, =0 off): a placed texture's UAV
+/// view in a bound heap counts as written only inside the view ranges the
+/// batch's programs write (their UAV tables, heap writes, and the whole-heap
+/// fallback where that is unknown). Every writable view of every bound heap
+/// counted: test178 at 816 s gathered 25675 textures with 504 written, so each
+/// submit copied 939 MiB back to title memory (the readback cap refused it
+/// whole), and submits took 3-4 s in placement refresh until the title died.
+fn writes_by_use() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PLACED_WRITES_BY_USE") != Some("0"))
+}
+
+/// A list of the batch about to be submitted writes these view ranges.
+pub(crate) fn note_written_views(written: &[Range<usize>], fallback: &[Range<usize>]) {
+    if !writes_by_use() {
+        return;
+    }
+    WRITTEN_VIEWS.with(|w| w.borrow_mut().extend(written.iter().chain(fallback).cloned()));
+}
+
 /// Whether a queue waits on placed-texture fences of other queues (on unless
 /// TUXBOX_PLACED_CROSS_WAITS=0 off; default on, batch rule).
 fn cross_waits() -> bool {
@@ -1654,7 +1680,19 @@ pub(crate) unsafe fn submit(
     }
     {
         let _site = crate::diagnostics::cost::site();
-        placements.views.gather(heaps, textures, writes);
+        let written = WRITTEN_VIEWS.with(|w| std::mem::take(&mut *w.borrow_mut()));
+        let by_use = writes_by_use();
+        let before = writes.len();
+        placements.views.gather(heaps, by_use.then_some(&written[..]), textures, writes);
+        if by_use {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_power_of_two() && n >= 1024 {
+                crate::diagnostics::log_line(format_args!(
+                    "placed textures: a batch's heap views gave {} written textures over {} written view ranges ({n} batches so far; TUXBOX_PLACED_WRITES_BY_USE=0 counts every UAV view)",
+                    writes.len() - before, written.len()));
+            }
+        }
     }
     unique(writes);
     textures

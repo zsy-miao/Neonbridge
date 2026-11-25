@@ -3048,6 +3048,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             shader_views.extend(state.sampled_heaps.iter().cloned());
             crate::device::uav_submitted(&state.written_views);
             crate::device::uav_fallback(&state.fallback_views);
+            placement::note_written_views(&state.written_views, &state.fallback_views);
             crate::device::dynamic_heaps_submitted(&state.dynamic_heaps);
             trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
             cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
