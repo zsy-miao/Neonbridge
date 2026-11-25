@@ -1140,7 +1140,15 @@ fn send(job: Job, bound: bool) {
         // within the pipeline budget instead of dropping their draws, so half
         // the cores is the default again. TUXBOX_PIPELINE_WORKERS=N sets the
         // count (2 is test117a's); =auto is the default.
-        let auto = || std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).clamp(2, 8));
+        // test156: 8 workers and 4 prefetchers each spent about 3.6 s of CPU
+        // per frame in nvgpucomp64 (256 pipelines made all run, each a long
+        // driver compile), taking 12 of the title's cores. The cap keeps every
+        // compile thread together to a quarter of the cores (2 to 4 workers,
+        // up to 2 prefetchers). TUXBOX_PIPELINE_THREAD_CAP=0 keeps half the
+        // cores (2 to 8) and a quarter for prefetch, as before.
+        let capped = crate::env_toggle!("TUXBOX_PIPELINE_THREAD_CAP") != Some("0");
+        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let auto = || if capped { (cores / 4).clamp(2, 4) } else { (cores / 2).clamp(2, 8) };
         let workers = match crate::env_toggle!("TUXBOX_PIPELINE_WORKERS") {
             Some(v) => v.trim().parse::<usize>().ok().filter(|&n| n > 0).map_or_else(auto, |n| n.min(16)),
             None => auto(),
@@ -1163,10 +1171,10 @@ fn send(job: Job, bound: bool) {
         let fxceless = fxceless_shape();
         let prefetchers = if fxceless { Some("0".into()) } else { crate::env_toggle!("TUXBOX_PREFETCH_WORKERS") }
             .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(0, |n| (n.get() / 4).min(4)))
+            .unwrap_or_else(|| if capped { (cores / 8).min(2) } else { (cores / 4).min(4) })
             .min(16);
         crate::diagnostics::log_line(format_args!(
-            "pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto), prefetch workers {prefetchers} (TUXBOX_PREFETCH_WORKERS=N){}", if fxceless { ", fxceless shape: no fps hold (TUXBOX_PIPELINE_SHAPE)" } else { "" }));
+            "pipeline workers: {workers} (TUXBOX_PIPELINE_WORKERS=N or auto), prefetch workers {prefetchers} (TUXBOX_PREFETCH_WORKERS=N), of {cores} cores (TUXBOX_PIPELINE_THREAD_CAP=0 uncapped){}", if fxceless { ", fxceless shape: no fps hold (TUXBOX_PIPELINE_SHAPE)" } else { "" }));
         let mut any = false;
         for i in 0..workers + prefetchers {
             let prefetch_only = i >= workers;
