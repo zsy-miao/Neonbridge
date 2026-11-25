@@ -146,11 +146,20 @@ impl Spans {
         self.by_lo.values().flatten().filter(|s| s.retired).fold((0, 0), |(n, b), s| (n + 1, b + s.heap_bytes))
     }
 
+    /// Retires the spans [lo, hi) overlaps. With the phase rule (default) only
+    /// those whose lo sits a whole PLACEMENT_ALIGN step from lo: exact mode
+    /// places at va - lo, so a span of another phase serves placements the new
+    /// one never can. Retiring those too made the next placement in their
+    /// phase build yet another heap that retired this one: test149 created
+    /// 13.1 GiB of span heaps against 1.07 GiB live. TUXBOX_ALIAS_RETIRE_PHASE=0
+    /// retires every overlap (xbox-emulator alias.rs:103).
     pub(super) fn retire_overlapping(&mut self, device: usize, lo: u64, hi: u64) -> usize {
+        static PHASE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let phase = *PHASE.get_or_init(|| std::env::var("TUXBOX_ALIAS_RETIRE_PHASE").map_or(true, |v| v != "0"));
         let mut n = 0;
         for (_, v) in self.by_lo.range_mut(..hi) {
             for s in v.iter_mut() {
-                if s.device == device && !s.retired && s.hi > lo {
+                if s.device == device && !s.retired && s.hi > lo && (!phase || s.lo.abs_diff(lo) % PLACEMENT_ALIGN == 0) {
                     s.retired = true;
                     n += 1;
                 }
