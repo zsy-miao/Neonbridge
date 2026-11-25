@@ -885,6 +885,26 @@ pub(crate) fn build_journal(threads: u32) -> u32 {
 /// a clone of the interface.
 static STORES: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
+/// One save's size and times (first 16, then powers of two; TUXBOX_SAVE_LOG=0 off).
+fn log_save(bytes: usize, serialise_ms: u128, write_ms: u128, ok: bool) {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if (n <= 16 || n.is_power_of_two()) && crate::env_toggle!("TUXBOX_SAVE_LOG") != Some("0") {
+        crate::diagnostics::log_line(format_args!(
+            "pipeline library save #{n}: {} MiB, {serialise_ms} ms holding stores (Serialize), {write_ms} ms writing after{} (TUXBOX_SAVE_SNAPSHOT=0 writes under stores)",
+            bytes >> 20, if ok { "" } else { ", failed" }));
+    }
+}
+
+fn saved_line(len: usize) {
+        let (loaded, stored) = (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed));
+        let (new, known) = (MISSED_NEW.load(Ordering::Relaxed), MISSED_KNOWN.load(Ordering::Relaxed));
+        let joined = JOINED.load(Ordering::Relaxed);
+        crate::diagnostics::log_once(&std::sync::Once::new(), || {
+            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library); {joined} waited for the same pipeline compiling on another thread (TUXBOX_PIPELINE_JOIN=0 compiles it again)", len)
+        });
+}
+
 fn save(dir: &Path) {
     super::stream::background::journal::flush();
     // The save held LIBRARY across Serialize, and every load takes LIBRARY
@@ -896,7 +916,7 @@ fn save(dir: &Path) {
     // dirty flag, so loads go on. TUXBOX_PIPELINE_SAVE_LOCKED=1 holds
     // LIBRARY throughout as before.
     let locked = crate::env_toggle!("TUXBOX_PIPELINE_SAVE_LOCKED") == Some("1");
-    let _stores = STORES.write().unwrap_or_else(|e| e.into_inner());
+    let mut stores = Some(STORES.write().unwrap_or_else(|e| e.into_inner()));
     let mut held = Some(LIBRARY.lock().unwrap_or_else(|e| e.into_inner()));
     if let Some(State::Ready(Some(library))) = held.as_deref_mut() {
         store_deferred(library);
@@ -910,6 +930,38 @@ fn save(dir: &Path) {
     }
     let size = unsafe { library.GetSerializedSize() };
     let path = dir.join(LIBRARY_FILE);
+    // test179: every pipeline worker and a title steal waited ~22 s on
+    // STORES while a save held it across Serialize straight into a mapped
+    // file (each page a disk-backed fault) and the rename. Now the save
+    // serialises into memory under STORES, lets go, and writes the copy
+    // with stores running again. Each save logs its bytes and times.
+    // TUXBOX_SAVE_SNAPSHOT=0 serialises and writes under STORES as before.
+    if !locked && crate::env_toggle!("TUXBOX_SAVE_SNAPSHOT") != Some("0") {
+        let started = std::time::Instant::now();
+        let mut blob = vec![0u8; size];
+        let serialised = unsafe { library.Serialize(&mut blob) }.is_ok();
+        let serialise_ms = started.elapsed().as_millis();
+        if serialised {
+            // Nothing stored since the snapshot (STORES): clear before letting go.
+            if let State::Ready(Some(l)) = &mut *LIBRARY.lock().unwrap_or_else(|e| e.into_inner()) {
+                l.dirty = false;
+            }
+        }
+        drop(stores.take());
+        let wrote = std::time::Instant::now();
+        let ok = serialised && write_publish(&path, &blob, true);
+        if serialised && !ok {
+            if let State::Ready(Some(l)) = &mut *LIBRARY.lock().unwrap_or_else(|e| e.into_inner()) {
+                l.dirty = true;
+            }
+        }
+        log_save(size, serialise_ms, wrote.elapsed().as_millis(), ok);
+        if ok {
+            saved_line(size);
+        }
+        return save_lists(dir);
+    }
+    let started = std::time::Instant::now();
     let ok = if mapped() { serialize_mapped(&library, &path, size) } else { None }
         .unwrap_or_else(|| {
             let mut blob = vec![0u8; size];
@@ -924,14 +976,10 @@ fn save(dir: &Path) {
     } else {
         drop(held);
     }
-    let written = ok.then_some(size);
-    if let Some(len) = written {
-        let (loaded, stored) = (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed));
-        let (new, known) = (MISSED_NEW.load(Ordering::Relaxed), MISSED_KNOWN.load(Ordering::Relaxed));
-        let joined = JOINED.load(Ordering::Relaxed);
-        crate::diagnostics::log_once(&std::sync::Once::new(), || {
-            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library); {joined} waited for the same pipeline compiling on another thread (TUXBOX_PIPELINE_JOIN=0 compiles it again)", len)
-        });
+    log_save(size, started.elapsed().as_millis(), 0, ok);
+    drop(stores);
+    if ok {
+        saved_line(size);
     }
     save_lists(dir);
 }
