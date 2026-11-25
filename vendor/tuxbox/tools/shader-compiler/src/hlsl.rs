@@ -354,7 +354,14 @@ uint tb_repack_half(float value) {
     return (bits & 0x7fffffffu) > 0x7f800000u ? (((bits >> 16u) & 0x8000u) | 0x7e00u | ((bits >> 13u) & 0x3ffu)) : f32tof16(value);
 }
 "#;
-const HALF_HELPERS: &str = r#"uint tb_trig_f16(uint bits, bool cosine) {
+const HALF_HELPERS: &str = r#"uint tb_const_lane_bit(uint lo, uint hi) {
+#if __SHADER_TARGET_MAJOR >= 6
+    uint lane = WaveGetLaneIndex(); return ((lane < 32u) ? lo : hi) >> (lane & 31u);
+#else
+    return lo;
+#endif
+}
+uint tb_trig_f16(uint bits, bool cosine) {
     uint magnitude = bits & 0x7fffu;
     if (magnitude > 0x7c00u) return (bits & 0xffffu) | 0x200u;
     if (magnitude == 0x7c00u) return 0xfe00u;
@@ -6552,6 +6559,35 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         let cur = r(&d)?;
                         self.ws(&d, &format!("({cur} | (1u << (({a}) & 31u)))"))
                     }
+                    "s_quadmask_b32" | "s_quadmask_b64" => {
+                        // One bit per quad of four lanes with any bit set, packed
+                        // into the low byte per 32-bit word (VIctory 95f6c6e). A
+                        // per-lane EXEC or VCC is the wave's ballot first.
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        let wide = m.ends_with("_b64");
+                        let (lo, hi_w) = if matches!(s[0], Opnd::ExecLo | Opnd::VccLo) && !self.resolve_wave32 {
+                            self.line("#if __SHADER_TARGET_MAJOR >= 6");
+                            self.line(&format!("uint4 t{t}b = WaveActiveBallot(({a} & 1u) != 0u);"));
+                            self.line("#else");
+                            self.line(&format!("uint4 t{t}b = uint4({a} & 1u, 0u, 0u, 0u);"));
+                            self.line("#endif");
+                            (format!("t{t}b.x"), format!("t{t}b.y"))
+                        } else {
+                            let h = if wide { self.touch(&hi(&s[0])); r(&hi(&s[0]))? } else { "0u".into() };
+                            (a.clone(), h)
+                        };
+                        let fold = |w: &str, k: &str| format!("uint t{t}{k} = {w} | ({w} >> 1); t{t}{k} = (t{t}{k} | (t{t}{k} >> 2)) & 0x11111111u; t{t}{k} = (t{t}{k} | (t{t}{k} >> 3)) & 0x03030303u; t{t}{k} = (t{t}{k} | (t{t}{k} >> 6)) & 0x000f000fu; t{t}{k} = (t{t}{k} | (t{t}{k} >> 12)) & 0xffu;");
+                        self.line(&fold(&lo, "l"));
+                        if wide {
+                            self.line(&fold(&hi_w, "h"));
+                            self.line(&format!("t{t}l |= t{t}h << 8;"));
+                        }
+                        self.line(&format!("scc = (t{t}l != 0u) ? 1u : 0u;"));
+                        self.ws(&d, &format!("t{t}l"))?;
+                        if wide { self.ws(&hi(&d), "0u")?; }
+                        Ok(())
+                    }
                     "s_wqm_b32" | "s_wqm_b64" => {
                         // For an ordinary scalar mask, replicate each nonempty nibble.
                         // EXEC instead holds one guest bit per invocation.
@@ -8970,6 +9006,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 r(&hi(&s[2]))?
             } else { "0u".into() };
             format!("(((WaveGetLaneIndex() < 32u) ? {c} : {upper}) >> (WaveGetLaneIndex() & 31u))")
+        } else if vop3 && !self.resolve_wave32 && matches!(s.get(2), Some(Opnd::ConstInt(_) | Opnd::Literal(_))) {
+            // A constant lane mask holds every lane's bit: this lane takes bit
+            // `lane`, not bit 0 (VIctory 6160c9e). A negative inline constant's
+            // high word is all ones, a literal's is zero.
+            let upper = if matches!(s.get(2), Some(Opnd::ConstInt(k)) if *k < 0) { "0xffffffffu" } else { "0u" };
+            format!("tb_const_lane_bit({c}, {upper})")
         } else if vop3 { c.clone() } else { "vcc_lo".to_string() };
         let e = match m.as_str() {
             "v_mov_b32" => a,
