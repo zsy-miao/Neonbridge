@@ -25,13 +25,13 @@ In picker order: each toml's `rank = N` (best first, by the leader's own publish
 | 1 | `flamingo` | Flamingo, a VIctory fork | realblastex/flamingo |
 | 2 | `victory` | VIctory-fxceless, the victory emulator fork | fxceless/victory-fork |
 | 3 | `vitoriabr` | VItoriaBr's VIctory fork | uiliannn/VItoriaBr |
-| 4 | `belobug` | VIctory-Belobug-AMD, a VIctory fork tuned for AMD | Belobug/VIctory-Belobug-AMD |
-| 5 | `scarlettport` (default for `--runtime`) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
-| 6 | `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
-| 7 | `xcl` | xcl | ivall/xcl |
-| 8 | `fivestar` | Five Star Recomp (.NET 10, PC GDK) | ThatRecompDev |
-| 9 | `tuxbox` | brcly's TuxBox, upstream as vendored, run through its Python CLI | brcly/TuxBox |
-| 10 | `neonbridge-own` | Neonbridge (own build): TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator | brcly/TuxBox |
+| 4 | `xcl` | xcl | ivall/xcl |
+| 5 | `belobug` | VIctory-Belobug-AMD, a VIctory fork tuned for AMD | Belobug/VIctory-Belobug-AMD |
+| 6 | `scarlettport` (default for `--runtime`) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
+| 7 | `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
+| - | `neonbridge-own` | Neonbridge (own build), hidden from the picker: TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator | brcly/TuxBox |
+
+Each runtime's default launch is exactly its author's (flags, environment, preset, cited in its toml); anything of Neonbridge's is an optional `preset_*`.
 
 The picker selects the last pick, else `NEONBRIDGE_RUNTIME`, else rank 1.
 
@@ -64,7 +64,9 @@ The `neonbridge-own` runtime keeps its own options (`--debug`, `--rev`, `--tuxbo
 | Variable | Does |
 |---|---|
 | `NEONBRIDGE_LOG=0` | No run log (logging is on by default for every runtime; children get `RUST_LOG=info`, the victory family also `VICTORY_LOG=info`). |
-| `NEONBRIDGE_DIAG=1` | Diagnostics build (`--features diagnostics` in `target-diag`) and `VICTORY_D3D12_DRED=1`. The picker's Diagnostics box sets it. |
+| `NEONBRIDGE_DIAG=0` | No diagnostics build. On by default: each toml's `diag_build`/`diag_exe` (the author's own diagnostics build) is used, with its own build stamp. The picker's Diagnostics box sets it. |
+| `NEONBRIDGE_FEED=1` | Stream the run over Tailscale (`tools/tsproxy.exe`, else `tools/cloudflared.exe`) behind a site password; needs ffmpeg. Shows the loader and the game window. |
+| `NEONBRIDGE_FEED_WINDOWS=0` | Stream only neonbridge-own's frame tap, not window captures. |
 | `NEONBRIDGE_BUILD=0` | Never build; use the exe as it is. |
 | `NEONBRIDGE_BUILD_STAMP=0` | Use the mtime check instead of build stamps. |
 | `NEONBRIDGE_PATCHES=0` | Build the trees without `vendor/patches`. |

@@ -22,7 +22,7 @@ Best first, by how far each project's own authors say it gets. The launcher list
 
 ## Get started
 
-1. Download the **v0.2.0-alpha** zip from [Releases](../../releases).
+1. Download the **v0.3.0-alpha** zip from [Releases](../../releases).
 2. Unzip it anywhere, for example `C:\Games\Neonbridge`.
 3. Run `neonbridge.exe`.
 4. If it doesn't find your game folder by itself, click **Change** and choose it. Then pick a runtime and press **Play**.
@@ -37,10 +37,6 @@ The first start of a runtime takes a while: it builds the runtime and prepares t
 - **Memory:** 32 GB of RAM is recommended.
 - **Disk space:** the game, plus up to about 20 GB per runtime for its files and shaders.
 
-Some runtimes need one more thing. Neonbridge greys them out until it's there, and its **Install...** button helps you get it:
-
-| Runtime | Also needs |
-|---|---|
 
 ## Screenshots
 
