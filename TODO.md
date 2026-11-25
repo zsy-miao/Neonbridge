@@ -41,7 +41,7 @@ Open work. Each item is tested in a run of its own.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
   - ref watch (storage) to port:
     - xshader (Coder4): VItoriaBr 67bb579 (select between two immediate samplers by a static-sampler range); rebox 18c049c (a buffer V# below 4 GiB not in GPU memory reads as empty: a float base word faulted the GPU); five-star 97dafaa (64-bit image atomics as uint64 typed atomics).
-    - d3d12 (Coder5): leonida d16eb1ff0 (a depth placement inside another one's extent gets its own image), 028a414fa (queue slots 16/17 with a fence are Signal/Wait), adc4f314b (list slots 50-54 translate title CPU descriptor handles), 89fdb83e0 (a console DS texture with UAV is created without it); ScarlettCompat 93c0f96 (map the console layout word before CreatePlacedResourceX), dd0e557 (layout 0x102 as the Gfx10 4 KiB chain); VItoriaBr faca57e (recheck time/byte budget before staging heap textures).
+    - d3d12 (Coder5): leonida d16eb1ff0 (a depth placement inside another one's extent gets its own image), 89fdb83e0 (a console DS texture with UAV is created without it); ScarlettCompat 93c0f96 (map the console layout word before CreatePlacedResourceX).
   - xshader: TuxBox 1397cb6 with X2W a351c0fb/b8889849/a90c0fb: allow pixel_wave DPP16 quad exchange in loops (hlsl.rs:6286), gated on proven whole-quad EXEC (s_wqm_b64 exec,exec).
   - xshader: xcl 1f8d4be: POPS ROV (operand 239 / hwreg 25 -> RasterizerOrdered PS UAVs).
   - runtime (optional): xcl 79fde18: add compile time to the compute_failure log (device/compute.rs:660).
@@ -73,6 +73,7 @@ Open work. Each item is tested in a run of its own.
 ### runtime/launcher
 
 ## Done / not needed
+- not needed (ref watch, d3d12): leonida 028a414fa (DEVICE11_QUEUE_SLOTS already puts queue_fence at 16/17, commands.rs:3365); leonida adc4f314b (RTV/DSV heaps are native here, only CBV_SRV_UAV gets arenas; UAV clears already translate the CPU handle, depth.rs:64; ClearDepthStencilView is a typed fn, depth kept); ScarlettCompat dd0e557 (layout 0x102 = 256 + swizzle 2, the 256 B display microtile, xg-layout compute_microtile; the 4 KiB chain is 261 and already stores smallest first with one shared tail tile; its 8-level tail cap never binds at 4 KiB); VItoriaBr faca57e (placement/upload.rs refresh already checks its time limit before each texture, caps bytes mid-texture and resumes from a rotating cursor).
 - not needed (ref watch): five-star 22f2085/79a5a3e d16 format buffer halves (hlsl.rs:11595 already packs two per VGPR); five-star 95c3cd9 format element range rule (our buffers are D3D views, bounds checked by the view, no V# range emulation); five-star 1a8083a superstep carry (off by default there, no superstep dispatch here); ScarlettCompat 8b8511f/a88e509 BCPack (6ixpack's bcpack tool owns decoding, not the runtime); palmetto 755e947..772fa54 (Vulkan frame-capture replay and slot-70 docs; no D3D12 path change).
 - xshader: xcl 74fe4c2 v_div_fixup_f16 ported (9250d13, TB_DIV_FIXUP_F16=0 off).
 - xshader: X2W 6f784a50 v_dot2_u32_u16 / v_dot4_u32_u8 ported (70d0b20, TB_DOT_UNSIGNED=0 off).
