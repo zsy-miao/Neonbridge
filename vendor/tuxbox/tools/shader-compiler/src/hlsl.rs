@@ -14418,7 +14418,14 @@ fn pixel_heap_base(ex: &ShaderExtract, class: u32) -> Option<u8> {
     // TB_PIXEL_HEAP_ROOTED=0 keeps rooted pixel shaders out.
     if let Some(root) = ex.root_sig.as_ref() {
         let rooted = std::env::var("TB_PIXEL_HEAP_ROOTED").map_or(true, |v| v.trim() != "0");
-        if !rooted || class != 5 || root.flags & 0x400 == 0 || sampler_heap::resource_base(ex).is_some() {
+        // Likewise the class-6 sampler heap base under SAMPLER_HEAP_DIRECTLY_INDEXED
+        // (0x800): test154 1062c1e9 copies it (s8 = s11) and loads samplers at a
+        // cbuffer index << 4, refused as a dynamic soffset with no sampler heap.
+        // TB_PIXEL_SAMPLER_HEAP_ROOTED=0 keeps class 6 out.
+        let samplers = class == 6 && root.flags & 0x800 != 0
+            && std::env::var("TB_PIXEL_SAMPLER_HEAP_ROOTED").map_or(true, |v| v.trim() != "0");
+        let resources = class == 5 && root.flags & 0x400 != 0;
+        if !rooted || !(resources || samplers) || sampler_heap::resource_base(ex).is_some() {
             return None;
         }
     }
