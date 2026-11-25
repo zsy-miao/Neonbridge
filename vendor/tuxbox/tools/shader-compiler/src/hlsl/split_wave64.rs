@@ -109,6 +109,15 @@ uint tb_x_read(uint v, uint l) {{
     uint r = tb_x_v[s + (l & 63u)];
     return met || ((l >> 5) & 1u) == tb_x_half ? r : 0u;
 }}
+// Lanes l and l ^ 32 of one value in one exchange (xcl 9e2c7a5).
+uint2 tb_x_read2(uint v, uint l) {{
+    uint s = (tb_x_k & 1u) * 64u;
+    tb_x_v[s + tb_x_lane()] = v;
+    bool met = tb_x_meet();
+    uint a = tb_x_v[s + (l & 63u)], b = tb_x_v[s + ((l ^ 32u) & 63u)];
+    bool mine = ((l >> 5) & 1u) == tb_x_half;
+    return uint2(met || mine ? a : 0u, met || !mine ? b : 0u);
+}}
 int tb_x_read(int v, uint l) {{ return asint(tb_x_read(asuint(v), l)); }}
 float tb_x_read(float v, uint l) {{ return asfloat(tb_x_read(asuint(v), l)); }}
 bool tb_x_read(bool v, uint l) {{ return tb_x_read(v ? 1u : 0u, l) != 0u; }}
@@ -165,4 +174,47 @@ mod tests {
         assert!(p[..defines].contains("WaveActiveBallot(b).x"), "helpers use the hardware intrinsic");
         assert!(p.contains("uint3(t % 8u, (t / 8u) % 8u, t / (8u * 8u))"));
     }
+}
+
+/// One `sD = WaveReadLaneAt(v, ((K) & 63u & (WaveGetLaneCount() - 1u)));`
+/// line: (indent, destination, value, constant lane).
+fn lane_read(line: &str) -> Option<(&str, &str, &str, u32)> {
+    let body = line.trim_start();
+    let indent = &line[..line.len() - body.len()];
+    let (dst, rest) = body.split_once(" = WaveReadLaneAt(")?;
+    let (value, rest) = rest.split_once(", ((")?;
+    let (k, tail) = rest.split_once(") & 63u & (WaveGetLaneCount() - 1u)));")?;
+    if !tail.is_empty() || !dst.starts_with('s') || !dst[1..].bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let k = k.strip_suffix('u')?;
+    let k = match k.strip_prefix("0x") { Some(h) => u32::from_str_radix(h, 16).ok()?, None => k.parse().ok()? };
+    Some((indent, dst, value, k))
+}
+
+/// Fold two adjacent constant-lane reads of one value at lanes L and L ^ 32
+/// (a split-wave64 reduction tail) into one exchange (xcl 9e2c7a5
+/// `fold_x64_readlane_tail`, GPL-2.0, copied with credit: both halves get
+/// both lanes from the first exchange). The first read must not overwrite
+/// the value the second reads. TB_WAVE64_FOLD=0 keeps two exchanges.
+pub(super) fn fold_pairs(body: &str) -> String {
+    if std::env::var("TB_WAVE64_FOLD").is_ok_and(|v| v.trim() == "0") {
+        return body.to_string();
+    }
+    let lines: Vec<&str> = body.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let pair = (lane_read(lines[i].trim_end_matches('\n')), lines.get(i + 1).and_then(|l| lane_read(l.trim_end_matches('\n'))));
+        if let (Some((ind, d1, v1, k1)), Some((_, d2, v2, k2))) = pair {
+            if v1 == v2 && k1 < 64 && k2 == (k1 ^ 32) && d1 != v1 && !v1.contains(d1) {
+                out.push_str(&format!("{ind}{{ uint2 tb_xp = tb_x_read2(asuint({v1}), {k1}u); {d1} = tb_xp.x; {d2} = tb_xp.y; }}\n"));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_str(lines[i]);
+        i += 1;
+    }
+    out
 }
