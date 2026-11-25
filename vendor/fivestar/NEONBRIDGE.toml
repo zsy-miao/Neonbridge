@@ -5,6 +5,7 @@
 # the opening cutscene's UI, dialogue and sound at 30 fps; the 3D world draws into
 # the G-buffer but lighting and composition do not reach the screen yet.
 name = "fivestar"
+rank = 8   # launcher list order (Master)
 about = "Five Star Recomp 3634930 (GPL-3.0+); first setup takes 1 to several hours and needs over 100 GB free (run --setup knowingly)"
 upstream = "https://github.com/ThatRecompDev/five-star-recomp"
 # docs/running.md:7-10: needs the .NET 10 SDK (global.json 10.0.203), the Windows

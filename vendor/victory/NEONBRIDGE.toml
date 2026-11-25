@@ -3,6 +3,7 @@
 # its user choices (VICTORY_FAST_BOOT, VICTORY_SAVE_SLOT, VICTORY_AUTO_INPUT)
 # stay off unless set in the environment, which passes them on.
 name = "victory"
+rank = 2   # launcher list order (Master)
 about = "VIctory-fxceless 0b0074e (GPL-3.0), the emulator victory"
 upstream = "https://github.com/fxceless/victory-fork"
 # fxceless's victory has no Agility opt-in (no D3D12SDKVersion/D3D12SDKPath
