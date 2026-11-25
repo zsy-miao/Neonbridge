@@ -168,6 +168,44 @@ unsafe impl Send for Flight {}
 unsafe impl Sync for Flight {}
 
 static FLIGHTS: Mutex<Option<std::collections::HashMap<String, std::sync::Arc<Flight>>>> = Mutex::new(None);
+
+/// Library names one thread at a time loads or stores (VIctory b00c14a,
+/// GPL-3.0, credit to its authors). The library is free-threaded but for one
+/// name used on several threads at once (ID3D12Device1::CreatePipelineLibrary,
+/// "Thread Safety"), and a load is not always a lookup: what the driver's
+/// own cache lacks is compiled inside the load, for up to seconds. Loads held
+/// the library's lock, so every other pipeline thread waited for the one
+/// loading. Loads of different names now overlap; stores and serialising
+/// keep the lock. TUXBOX_PIPELINE_PARALLEL_LOAD=0 loads under the lock again.
+struct Held(String);
+
+static HELD: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+static RELEASED: std::sync::Condvar = std::sync::Condvar::new();
+
+impl Held {
+    /// Holds `name`, once no other thread does.
+    fn new(name: &str) -> Held {
+        let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+        while held.as_ref().is_some_and(|h| h.contains(name)) {
+            held = RELEASED.wait(held).unwrap_or_else(|e| e.into_inner());
+        }
+        held.get_or_insert_default().insert(name.to_owned());
+        Held(name.to_owned())
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Some(held) = HELD.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            held.remove(&self.0);
+        }
+        RELEASED.notify_all();
+    }
+}
+
+fn parallel_loads() -> bool {
+    crate::env_toggle!("TUXBOX_PIPELINE_PARALLEL_LOAD") != Some("0")
+}
 static MISSED_KNOWN: AtomicU64 = AtomicU64::new(0);
 
 struct Names {
@@ -270,22 +308,34 @@ fn load_or_make(
     let Some(name) = name.map(|n| HSTRING::from(n.as_str())) else {
         return make();
     };
-    if let Some(Ok(pipeline)) = with_library(host, |l| load(&l.library, &name)) {
+    let text = name.to_string();
+    let loaded = if parallel_loads() {
+        // Only the interface under the lock. The library (and the blob its
+        // entries live in) stays in LIBRARY for the process's life.
+        let library = with_library(host, |l| l.library.clone());
+        library.map(|library| {
+            let _held = Held::new(&text);
+            load(&library, &name)
+        })
+    } else {
+        with_library(host, |l| load(&l.library, &name))
+    };
+    if let Some(Ok(pipeline)) = loaded {
         LOADED.fetch_add(1, Ordering::Relaxed);
         return Ok(pipeline);
     }
-    let text = name.to_string();
     if let Some(names) = names() {
         let names = names.lock().unwrap_or_else(|e| e.into_inner());
         if names.known.contains(&text) { &MISSED_KNOWN } else { &MISSED_NEW }.fetch_add(1, Ordering::Relaxed);
     }
     let join = crate::env_toggle!("TUXBOX_PIPELINE_JOIN") != Some("0");
     let flight = if join {
-        let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
-        let flights = flights.get_or_insert_with(Default::default);
+        let mut guard = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+        let flights = guard.get_or_insert_with(Default::default);
         if let Some(running) = flights.get(&text) {
             let running = running.clone();
-            drop(flights);
+            // Let go of the map before waiting: other names' misses need it.
+            drop(guard);
             JOINED.fetch_add(1, Ordering::Relaxed);
             let mut done = running.done.lock().unwrap_or_else(|e| e.into_inner());
             while done.is_none() {
@@ -317,6 +367,7 @@ fn load_or_make(
     let made = make();
     land.2 = Some(made.clone());
     let made = made?;
+    let _held = parallel_loads().then(|| Held::new(&text));
     with_library(host, |l| {
         // A name already present (another description) keeps its entry.
         if unsafe { l.library.StorePipeline(&name, &made) }.is_ok() {
