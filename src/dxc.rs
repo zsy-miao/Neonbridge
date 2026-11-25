@@ -88,9 +88,13 @@ fn compile_here(create: CreateInstance, src: &[u8], args: &[String]) -> Result<V
     }
 }
 
-/// Whether compiles go in-process (NEONBRIDGE_DXC_INPROC=0 spawns dxc.exe as before).
+/// Whether compiles go in-process: opt-in, NEONBRIDGE_DXC_INPROC=1. The
+/// 0577d56 prewarm on 79e07ee stalled at 216/1338 (0.0/s): no dxc.exe left,
+/// ~10 in-process -O0 compiles each over a minute of CPU (dxc.exe -O0 took
+/// 0.5-8 s), and the -O1 dxc.exe beside them timed out under that load and
+/// fed more -O0 in. Until the in-process slowdown is understood, dxc.exe.
 pub fn enabled() -> bool {
-    std::env::var("NEONBRIDGE_DXC_INPROC").as_deref() != Ok("0")
+    std::env::var("NEONBRIDGE_DXC_INPROC").as_deref() == Ok("1")
 }
 
 /// Compiles `src` with dxc command-line `args` (no file names) on a compile
