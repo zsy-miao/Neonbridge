@@ -45,4 +45,13 @@ public sealed record TranslationOptions(bool StructuredControlFlow, bool PinWave
     /// native wave operations, shared LDS). It then needs no superstep form; its header says so (<see cref="FastWavesComment"/>).
     /// </summary>
     public bool FastWaves { get; init; }
+
+    /// <summary>
+    /// Typed image views (off by default): an image load, gather or store reads the view's component class from its
+    /// T# record's dword 3 (bits 0-1: 0 float, 1 uint, 2 sint, which the loader writes with <c>--typed-image-views</c>) and
+    /// declares the texture as <c>uint4</c> or <c>int4</c> for an integer view, whose bits a <c>float4</c> declaration
+    /// leaves undefined (the main depth's stencil plane, X32_TYPELESS_G8X24_UINT, which the lighting classifies pixels by).
+    /// A d16 load of an integer view keeps the low 16 bits of each value instead of converting a float.
+    /// </summary>
+    public bool TypedImageViews { get; init; }
 }

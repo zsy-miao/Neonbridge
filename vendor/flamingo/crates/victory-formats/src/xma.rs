@@ -102,6 +102,25 @@ impl Cursor<'_> {
     fn bits(&mut self, n: u32) -> Option<u32> {
         (0..n).try_fold(0, |v, _| Some(v << 1 | self.bit()?))
     }
+
+    /// A payload byte, MSB first. At a packet edge the individual bits
+    /// may be separated by a header and other streams' packets.
+    fn byte(&mut self) -> Option<u8> {
+        let in_packet = self.pos % PACKET_BITS;
+        if in_packet == 0 || in_packet > PACKET_BITS - 8 {
+            return self.bits(8).map(|v| v as u8);
+        }
+        let at = self.pos / 8;
+        let shift = self.pos % 8;
+        let first = *self.data.get(at)?;
+        let byte = if shift == 0 {
+            first
+        } else {
+            (first << shift) | (self.data.get(at + 1)? >> (8 - shift))
+        };
+        self.pos += 8;
+        Some(byte)
+    }
 }
 
 /// Reads the frame starting at bit `start` (a frame start inside a packet's
@@ -112,10 +131,14 @@ pub fn read_frame(data: &[u8], start: usize) -> Option<Frame> {
     if bits <= LENGTH_BITS as usize || bits == 0x7fff {
         return None;
     }
-    let mut out = vec![0u8; bits.div_ceil(8)];
+    let mut out = Vec::with_capacity(bits.div_ceil(8));
     let mut cursor = Cursor { data, pos: start };
-    for i in 0..bits {
-        out[i / 8] |= (cursor.bit()? as u8) << (7 - i % 8);
+    for _ in 0..bits / 8 {
+        out.push(cursor.byte()?);
+    }
+    let tail = (bits % 8) as u32;
+    if tail != 0 {
+        out.push((cursor.bits(tail)? << (8 - tail)) as u8);
     }
     let end = cursor.pos;
     let next = next_frame(data, start, end);
@@ -149,10 +172,20 @@ fn next_frame(data: &[u8], start: usize, end: usize) -> Option<usize> {
     }
     let last = number + 1 >= header.frames;
     let mut end = end;
-    if end.is_multiple_of(PACKET_BITS) || (last && end / PACKET_BITS == index) {
-        // The next frame begins in the next packet of this stream.
-        let next = (end - 1) / PACKET_BITS + 1 + packet(data, (end - 1) / PACKET_BITS)?.skip as usize;
-        let header = packet(data, next)?;
+    // A frame that ends in a packet where no frame begins (the tail of a frame
+    // that crossed packets, then padding) is the last one before the next
+    // packet that has frames.
+    let ends_in_packet_without_frames =
+        end / PACKET_BITS != index && !end.is_multiple_of(PACKET_BITS) && packet(data, end / PACKET_BITS)?.frames == 0;
+    if end.is_multiple_of(PACKET_BITS) || (last && end / PACKET_BITS == index) || ends_in_packet_without_frames {
+        // The next frame begins in the next packet of this stream that has one;
+        // a packet with none (a frame spans all of it) holds no start.
+        let mut next = (end - 1) / PACKET_BITS + 1 + packet(data, (end - 1) / PACKET_BITS)?.skip as usize;
+        let mut header = packet(data, next)?;
+        while header.frames == 0 {
+            next += 1 + header.skip as usize;
+            header = packet(data, next)?;
+        }
         end = next * PACKET_BITS + HEADER_BITS + header.first_frame_bit as usize;
     }
     (end / 8 < data.len()).then_some(end)
@@ -283,57 +316,178 @@ fn log2(v: usize) -> u32 {
 /// `n` coefficients to the middle `n` samples of the 2n-sample window,
 /// negated and scaled by `scale`. Computed as a DCT-IV through an
 /// n/2-point complex FFT.
+///
+/// The rotations come from [`Rotations`], built once per subframe size, so
+/// a subframe costs no sines or cosines and no allocation.
 fn imdct_half(input: &[f32], out: &mut [f32], scale: f32) {
     let n = input.len();
     let m = n / 2;
-    let mut re = vec![0f64; m];
-    let mut im = vec![0f64; m];
-    for k in 0..m {
+    let built;
+    let rotations = match rotations().get(log2(n).wrapping_sub(7) as usize) {
+        Some(r) if r.pre_re.len() == m => r,
+        _ => {
+            built = Rotations::new(n);
+            &built
+        }
+    };
+    let mut stack = [0f64; FRAME_SAMPLES];
+    let mut heap = Vec::new();
+    let (re, im) = if m <= stack.len() / 2 {
+        stack.split_at_mut(m)
+    } else {
+        heap.resize(2 * m, 0f64);
+        heap.split_at_mut(m)
+    };
+    let im = &mut im[..m];
+    // Pre-rotation, each point stored at its bit-reversed place, which is
+    // where the FFT's input permutation would move it.
+    let pre = rotations
+        .pre_re
+        .iter()
+        .zip(&rotations.pre_im)
+        .zip(&rotations.reversed);
+    for (k, ((&c, &s), &to)) in pre.enumerate() {
         let (a, b) = (input[2 * k] as f64, input[n - 1 - 2 * k] as f64);
-        let (s, c) = (-std::f64::consts::PI * k as f64 / n as f64).sin_cos();
-        (re[k], im[k]) = (a * c - b * s, a * s + b * c);
+        re[to as usize] = a * c - b * s;
+        im[to as usize] = a * s + b * c;
     }
-    fft(&mut re, &mut im);
-    for k in 0..m {
-        let (s, c) = (-std::f64::consts::PI * (4 * k + 1) as f64 / (4 * n) as f64).sin_cos();
-        let (wr, wi) = (re[k] * c - im[k] * s, re[k] * s + im[k] * c);
+    rotations.butterflies(re, im);
+    let post = rotations.post_re.iter().zip(&rotations.post_im);
+    for (k, ((&re, &im), (&c, &s))) in re.iter().zip(im.iter()).zip(post).enumerate() {
+        let (wr, wi) = (re * c - im * s, re * s + im * c);
         // DCT-IV: c[2k] = Re, c[n-1-2k] = -Im; output j is c[n-1-j].
         out[n - 1 - 2 * k] = (wr as f32) * scale;
         out[2 * k] = -(wi as f32) * scale;
     }
 }
 
-/// In-place radix-2 forward DFT (`exp(-2πi nk/N)`).
-fn fft(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    let mut j = 0;
-    for i in 1..n {
-        let mut bit = n >> 1;
-        while j & bit != 0 {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j |= bit;
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-    let mut len = 2;
-    while len <= n {
-        let (ws, wc) = (-2.0 * std::f64::consts::PI / len as f64).sin_cos();
-        for start in (0..n).step_by(len) {
-            let (mut cr, mut ci) = (1.0, 0.0);
-            for k in 0..len / 2 {
-                let (a, b) = (start + k, start + k + len / 2);
-                let (tr, ti) = (re[b] * cr - im[b] * ci, re[b] * ci + im[b] * cr);
-                (re[b], im[b]) = (re[a] - tr, im[a] - ti);
-                (re[a], im[a]) = (re[a] + tr, im[a] + ti);
-                (cr, ci) = (cr * wc - ci * ws, cr * ws + ci * wc);
+/// Everything [`imdct_half`] needs for one size `n` that does not depend on
+/// the coefficients: the pre-rotation `exp(-iπk/n)` and post-rotation
+/// `exp(-iπ(4k+1)/4n)` of each of the n/2 FFT points, the FFT's bit-reversed
+/// order and its butterfly rotations. Each value is computed with the same
+/// expression (for the butterflies the same running product) the transform
+/// used to work out on every call, so it gives the same bits.
+struct Rotations {
+    pre_re: Vec<f64>,
+    pre_im: Vec<f64>,
+    post_re: Vec<f64>,
+    post_im: Vec<f64>,
+    /// Where the bit-reversal permutation puts each point.
+    reversed: Vec<u16>,
+    /// The butterfly rotations of every stage, the stage of length `len`
+    /// starting at `len / 2 - 1`.
+    twiddle_re: Vec<f64>,
+    twiddle_im: Vec<f64>,
+}
+
+impl Rotations {
+    fn new(n: usize) -> Rotations {
+        let m = n / 2;
+        let (pre_re, pre_im) = (0..m)
+            .map(|k| {
+                let (s, c) = (-std::f64::consts::PI * k as f64 / n as f64).sin_cos();
+                (c, s)
+            })
+            .unzip();
+        let (post_re, post_im) = (0..m)
+            .map(|k| {
+                let (s, c) =
+                    (-std::f64::consts::PI * (4 * k + 1) as f64 / (4 * n) as f64).sin_cos();
+                (c, s)
+            })
+            .unzip();
+        // The swaps of the in-place bit-reversal, applied to the identity.
+        let mut reversed: Vec<u16> = (0..m as u16).collect();
+        let mut j = 0;
+        for i in 1..m {
+            let mut bit = m >> 1;
+            while j & bit != 0 {
+                j ^= bit;
+                bit >>= 1;
+            }
+            j |= bit;
+            if i < j {
+                reversed.swap(i, j);
             }
         }
-        len <<= 1;
+        let mut twiddle_re = Vec::with_capacity(m.saturating_sub(1));
+        let mut twiddle_im = Vec::with_capacity(m.saturating_sub(1));
+        let mut len = 2;
+        while len <= m {
+            let (ws, wc) = (-2.0 * std::f64::consts::PI / len as f64).sin_cos();
+            let (mut cr, mut ci) = (1.0, 0.0);
+            for _ in 0..len / 2 {
+                twiddle_re.push(cr);
+                twiddle_im.push(ci);
+                (cr, ci) = (cr * wc - ci * ws, cr * ws + ci * wc);
+            }
+            len <<= 1;
+        }
+        Rotations {
+            pre_re,
+            pre_im,
+            post_re,
+            post_im,
+            reversed,
+            twiddle_re,
+            twiddle_im,
+        }
     }
+
+    /// The butterfly stages of an in-place radix-2 forward DFT
+    /// (`exp(-2πi nk/N)`) on points already in bit-reversed order.
+    fn butterflies(&self, re: &mut [f64], im: &mut [f64]) {
+        let m = re.len().min(im.len());
+        let mut len = 2;
+        while len <= m {
+            let half = len / 2;
+            let wr = &self.twiddle_re[half - 1..][..half];
+            let wi = &self.twiddle_im[half - 1..][..half];
+            let blocks = re[..m]
+                .chunks_exact_mut(len)
+                .zip(im[..m].chunks_exact_mut(len));
+            for (re, im) in blocks {
+                let (are, bre) = re.split_at_mut(half);
+                let (aim, bim) = im.split_at_mut(half);
+                butterfly_block(are, aim, bre, bim, wr, wi);
+            }
+            len <<= 1;
+        }
+    }
+}
+
+/// One block of butterflies: `a + w·b` into `a`, `a − w·b` into `b`.
+#[inline(always)]
+fn butterfly_block(
+    are: &mut [f64],
+    aim: &mut [f64],
+    bre: &mut [f64],
+    bim: &mut [f64],
+    wr: &[f64],
+    wi: &[f64],
+) {
+    let lanes = are
+        .iter_mut()
+        .zip(aim)
+        .zip(bre.iter_mut().zip(bim))
+        .zip(wr.iter().zip(wi));
+    for (((ar, ai), (br, bi)), (&cr, &ci)) in lanes {
+        let (tr, ti) = (*br * cr - *bi * ci, *br * ci + *bi * cr);
+        (*br, *bi) = (*ar - tr, *ai - ti);
+        (*ar, *ai) = (*ar + tr, *ai + ti);
+    }
+}
+
+/// [`Rotations`] for subframes of 128, 256 and 512 samples.
+fn rotations() -> &'static [Rotations; 3] {
+    static ROTATIONS: OnceLock<[Rotations; 3]> = OnceLock::new();
+    ROTATIONS.get_or_init(|| {
+        [
+            Rotations::new(128),
+            Rotations::new(256),
+            Rotations::new(512),
+        ]
+    })
 }
 
 /// `ff_sine_windows`: the rising half of a sine window of length `n`.
@@ -493,7 +647,10 @@ impl Decoder {
         let mut b = Bits {
             data,
             pos: 0,
-            end: bits,
+            // Past the data there are only zeros to read. A count beyond it
+            // would never let a stereo tile header overread, and its loop
+            // takes no subframe on zero bits, so it would spin for good.
+            end: bits.min(data.len().saturating_mul(8)),
         };
         let len = b.read(LENGTH_BITS) as usize;
         let result = self.frame(&mut b, len);
@@ -1047,6 +1204,35 @@ mod tests {
         assert_eq!(frame.next, None);
     }
 
+    /// A frame that crosses a packet where no frame begins (a full
+    /// continuation) and ends in another such packet, followed by padding: the
+    /// next frame is the first one of the next packet that has frames, not the
+    /// padding the frame ended in.
+    #[test]
+    fn the_frame_after_continuation_packets_starts_in_the_next_packet_with_frames() {
+        let mut data = vec![0u8; 4 * PACKET_BYTES];
+        let header = |frames: u32, first: u32| (frames << 26) | (first << 11);
+        put_bits(&mut data, 0, 32, header(2, 0));
+        // Packet 1 is all of one frame; packet 2 holds only its last 64 bits.
+        put_bits(&mut data, PACKET_BITS, 32, header(0, 0x7fff));
+        put_bits(&mut data, 2 * PACKET_BITS, 32, header(0, 64));
+        put_bits(&mut data, 3 * PACKET_BITS, 32, header(1, 0));
+        // A first frame of 16000 bits, then one from the end of its payload
+        // through packets 1 and 2.
+        let second = HEADER_BITS + 16000;
+        put_bits(&mut data, HEADER_BITS, LENGTH_BITS, 16000);
+        let tail = PACKET_BITS - second;
+        let bits = tail + (PACKET_BITS - HEADER_BITS) + 64;
+        put_bits(&mut data, second, LENGTH_BITS, bits as u32);
+        put_bits(&mut data, 3 * PACKET_BITS + HEADER_BITS, LENGTH_BITS, 100);
+        let first = read_frame(&data, HEADER_BITS).unwrap();
+        assert_eq!(first.next, Some(second));
+        let frame = read_frame(&data, second).unwrap();
+        assert_eq!(frame.bits, bits);
+        assert_eq!(frame.next, Some(3 * PACKET_BITS + HEADER_BITS));
+        assert_eq!(read_frame(&data, 3 * PACKET_BITS + HEADER_BITS).unwrap().next, None);
+    }
+
     /// The direct sum `imdct_half` stands for (FFmpeg's naive inverse MDCT:
     /// the standard formula, negated).
     fn imdct_reference(input: &[f32]) -> Vec<f32> {
@@ -1073,6 +1259,147 @@ mod tests {
             for (a, b) in fast.iter().zip(&reference) {
                 assert!((a - b).abs() < 1e-2 * (1.0 + b.abs()), "n {n}: {a} vs {b}");
             }
+        }
+    }
+
+    /// The transform as it was before [`Rotations`]: every rotation worked
+    /// out again on each call, the FFT on two fresh buffers.
+    fn imdct_half_untabled(input: &[f32], out: &mut [f32], scale: f32) {
+        let n = input.len();
+        let m = n / 2;
+        let mut re = vec![0f64; m];
+        let mut im = vec![0f64; m];
+        for k in 0..m {
+            let (a, b) = (input[2 * k] as f64, input[n - 1 - 2 * k] as f64);
+            let (s, c) = (-std::f64::consts::PI * k as f64 / n as f64).sin_cos();
+            (re[k], im[k]) = (a * c - b * s, a * s + b * c);
+        }
+        let mut j = 0;
+        for i in 1..m {
+            let mut bit = m >> 1;
+            while j & bit != 0 {
+                j ^= bit;
+                bit >>= 1;
+            }
+            j |= bit;
+            if i < j {
+                re.swap(i, j);
+                im.swap(i, j);
+            }
+        }
+        let mut len = 2;
+        while len <= m {
+            let (ws, wc) = (-2.0 * std::f64::consts::PI / len as f64).sin_cos();
+            for start in (0..m).step_by(len) {
+                let (mut cr, mut ci) = (1.0, 0.0);
+                for k in 0..len / 2 {
+                    let (a, b) = (start + k, start + k + len / 2);
+                    let (tr, ti) = (re[b] * cr - im[b] * ci, re[b] * ci + im[b] * cr);
+                    (re[b], im[b]) = (re[a] - tr, im[a] - ti);
+                    (re[a], im[a]) = (re[a] + tr, im[a] + ti);
+                    (cr, ci) = (cr * wc - ci * ws, cr * ws + ci * wc);
+                }
+            }
+            len <<= 1;
+        }
+        for k in 0..m {
+            let (s, c) = (-std::f64::consts::PI * (4 * k + 1) as f64 / (4 * n) as f64).sin_cos();
+            let (wr, wi) = (re[k] * c - im[k] * s, re[k] * s + im[k] * c);
+            out[n - 1 - 2 * k] = (wr as f32) * scale;
+            out[2 * k] = -(wi as f32) * scale;
+        }
+    }
+
+    /// Pseudo-random coefficients spread over many magnitudes, as dequantised
+    /// subframes are.
+    fn noise(n: usize, seed: u64) -> Vec<f32> {
+        let mut state = seed | 1;
+        (0..n)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let mantissa = (state >> 40) as f32 / (1u64 << 24) as f32 - 0.5;
+                mantissa * 2f32.powi((state % 24) as i32 - 4)
+            })
+            .collect()
+    }
+
+    /// The tables change nothing: every subframe size (and sizes the decoder
+    /// never uses, which build their tables on the spot) gives the bits the
+    /// untabled transform gives.
+    #[test]
+    fn tabled_imdct_gives_the_same_bits() {
+        for n in [2usize, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
+            for seed in 0..16 {
+                let input = noise(n, seed * 7919 + n as u64);
+                let scale = 2.0 / n as f32 / 32768.0;
+                let mut tabled = vec![0f32; n];
+                let mut untabled = vec![0f32; n];
+                imdct_half(&input, &mut tabled, scale);
+                imdct_half_untabled(&input, &mut untabled, scale);
+                let tabled: Vec<u32> = tabled.iter().map(|v| v.to_bits()).collect();
+                let untabled: Vec<u32> = untabled.iter().map(|v| v.to_bits()).collect();
+                assert_eq!(tabled, untabled, "n {n}, seed {seed}");
+            }
+        }
+        let mut out = [0f32; 0];
+        imdct_half(&[], &mut out, 1.0);
+    }
+
+    /// The cached tables are the ones the sizes ask for.
+    #[test]
+    fn cached_rotations_match_their_sizes() {
+        for (r, n) in rotations().iter().zip([128usize, 256, 512]) {
+            let fresh = Rotations::new(n);
+            assert_eq!((&r.pre_re, &r.pre_im), (&fresh.pre_re, &fresh.pre_im));
+            assert_eq!((&r.post_re, &r.post_im), (&fresh.post_re, &fresh.post_im));
+            assert_eq!(r.reversed, fresh.reversed);
+            assert_eq!(
+                (&r.twiddle_re, &r.twiddle_im),
+                (&fresh.twiddle_re, &fresh.twiddle_im)
+            );
+            assert_eq!(r.pre_re.len(), n / 2);
+            assert_eq!(r.twiddle_re.len(), n / 2 - 1);
+            // The order is a permutation that undoes itself.
+            for (i, &to) in r.reversed.iter().enumerate() {
+                assert_eq!(r.reversed[to as usize] as usize, i);
+            }
+        }
+    }
+
+    /// Release benchmark of one inverse transform per subframe size, tabled
+    /// against untabled:
+    /// `cargo test --release -p victory-formats imdct_throughput -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "benchmark"]
+    fn imdct_throughput() {
+        for n in [128usize, 256, 512] {
+            let inputs: Vec<Vec<f32>> = (0..64).map(|seed| noise(n, seed)).collect();
+            let mut out = vec![0f32; n];
+            let rounds = 20_000;
+            let mut time = |f: fn(&[f32], &mut [f32], f32)| {
+                let mut best = f64::MAX;
+                for _ in 0..3 {
+                    let started = std::time::Instant::now();
+                    for i in 0..rounds {
+                        f(
+                            std::hint::black_box(&inputs[i % inputs.len()]),
+                            &mut out,
+                            1.0,
+                        );
+                        std::hint::black_box(&out);
+                    }
+                    best = best.min(started.elapsed().as_secs_f64() * 1e9 / rounds as f64);
+                }
+                best
+            };
+            let before = time(imdct_half_untabled);
+            let after = time(imdct_half);
+            println!(
+                "n {n}: untabled {before:.0} ns, tabled {after:.0} ns, {:.1}x",
+                before / after
+            );
         }
     }
 
@@ -1120,6 +1447,24 @@ mod tests {
     }
 
     #[test]
+    fn payload_bytes_match_bit_reads_at_packet_edges() {
+        let mut data: Vec<u8> = (0..3 * PACKET_BYTES).map(|i| (i * 37 + 11) as u8).collect();
+        data[..4].copy_from_slice(&1u32.to_be_bytes()); // packet 1 belongs to another stream
+        data[PACKET_BYTES..2 * PACKET_BYTES].fill(0xee);
+        for edge in [HEADER_BITS + 8, PACKET_BITS, 3 * PACKET_BITS] {
+            for pos in edge - 8..=edge {
+                let mut bytes = Cursor { data: &data, pos };
+                let mut bits = Cursor { data: &data, pos };
+                let expected = bits.bits(8).map(|v| v as u8);
+                assert_eq!(bytes.byte(), expected, "bit {pos}");
+                if expected.is_some() {
+                    assert_eq!(bytes.pos, bits.pos);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn packet_headers_and_frame_walk() {
         // Two packets: frame A (100 bits) and B (16300 bits, crossing into
         // packet 1 by 48 bits), then C (60 bits) in packet 1; the rest is
@@ -1147,10 +1492,245 @@ mod tests {
         assert_eq!((b.bits, b.next), (16300, Some(c_start)));
         // Its last bits come from after packet 1's header.
         assert_eq!(b.data.len(), 16300usize.div_ceil(8));
+        assert_eq!(b.data.last(), Some(&0xf0)); // unused bits stay zero
         let c = read_frame(&data, c_start).unwrap();
         assert_eq!(c.bits, 60);
         // C was packet 1's only frame: the next would be in packet 2.
         assert_eq!(c.next, None);
+    }
+
+    /// Deterministic noise: xorshift64, as in BCPack's noise test.
+    struct Noise(u64);
+
+    impl Noise {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// A number below `n`.
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        /// `len` bytes of even noise, or of mostly zeros (`density` 1) or
+        /// mostly ones (2), which take other paths through a frame.
+        fn bytes(&mut self, len: usize, density: usize) -> Vec<u8> {
+            (0..len)
+                .map(|_| {
+                    let r = self.next();
+                    let (a, b, c) = (r as u8, (r >> 8) as u8, (r >> 16) as u8);
+                    match density {
+                        0 => a,
+                        1 => a & b & c,
+                        _ => a | b | c,
+                    }
+                })
+                .collect()
+        }
+    }
+
+    /// Writes `value` as `n` bits, MSB first, at bit `pos`, over what is there.
+    fn set_bits(data: &mut [u8], pos: usize, n: u32, value: u32) {
+        for i in 0..n as usize {
+            let (p, bit) = (pos + i, (value >> (n as usize - 1 - i)) & 1);
+            data[p / 8] = (data[p / 8] & !(0x80 >> (p % 8))) | ((bit as u8) << (7 - p % 8));
+        }
+    }
+
+    /// `packets` packets of one stream: back-to-back frames of noise after
+    /// their length fields, 300 to 4299 bits long (so every packet but the
+    /// last has a frame start, and at most 55 do), then padding of ones.
+    /// The headers count the frames that begin in each packet. Also gives
+    /// the number of frames.
+    fn noise_stream(noise: &mut Noise, packets: usize, density: usize) -> (Vec<u8>, usize) {
+        const PAYLOAD: usize = PACKET_BITS - HEADER_BITS;
+        let mut data = noise.bytes(packets * PACKET_BYTES, density);
+        // Where payload bit `q` of the stream is in the buffer.
+        let at = |q: usize| q / PAYLOAD * PACKET_BITS + HEADER_BITS + q % PAYLOAD;
+        let mut headers = vec![(0u32, 0u32); packets];
+        let (mut q, mut frames) = (0, 0);
+        loop {
+            let len = 300 + noise.below(4000);
+            if q + len > packets * PAYLOAD {
+                break;
+            }
+            let header = &mut headers[q / PAYLOAD];
+            if header.0 == 0 {
+                header.1 = (q % PAYLOAD) as u32;
+            }
+            header.0 += 1;
+            for i in 0..LENGTH_BITS {
+                let bit = (len >> (LENGTH_BITS - 1 - i)) as u32 & 1;
+                set_bits(&mut data, at(q + i as usize), 1, bit);
+            }
+            q += len;
+            frames += 1;
+        }
+        for padding in q..packets * PAYLOAD {
+            set_bits(&mut data, at(padding), 1, 1);
+        }
+        for (p, &(count, first)) in headers.iter().enumerate() {
+            set_bits(&mut data, p * PACKET_BITS, 32, count << 26 | first << 11);
+        }
+        (data, frames)
+    }
+
+    /// Packets of noise, streams of frames of noise, and such streams with
+    /// headers and bits damaged: walking the frames from the first packet
+    /// and decoding each, mono and stereo, gives a frame of samples per
+    /// frame and ends within the frames the buffer can hold (each is over
+    /// 15 bits and the walk only moves on).
+    #[test]
+    fn noise_packets_walk_and_decode() {
+        let mut noise = Noise(0x2545_f491_4f6c_dd1d);
+        for round in 0..60 {
+            let packets = 1 + round % 4;
+            let density = [0, 0, 1, 2][round / 3 % 4];
+            let (mut data, written) = match round % 3 {
+                0 => (noise.bytes(packets * PACKET_BYTES, density), 0),
+                _ => noise_stream(&mut noise, packets, density),
+            };
+            if round % 3 == 2 {
+                for _ in 0..1 + noise.below(3) {
+                    let p = noise.below(packets);
+                    set_bits(&mut data, p * PACKET_BITS, 32, noise.next() as u32);
+                }
+                for _ in 0..noise.below(16) {
+                    let bit = noise.below(data.len() * 8);
+                    data[bit / 8] ^= 0x80 >> (bit % 8);
+                }
+            }
+            let budget = data.len() * 8 / 16;
+            for channels in [1, 2] {
+                let mut decoder = Decoder::new(channels, 48_000);
+                let per_frame = FRAME_SAMPLES * channels;
+                let (mut pcm, mut frames) = (Vec::new(), 0);
+                let mut at = packet(&data, 0).map(|p| HEADER_BITS + p.first_frame_bit as usize);
+                while let Some(frame) = at.and_then(|bit| read_frame(&data, bit)) {
+                    frames += 1;
+                    let moves_on = frame.next.is_none_or(|next| next > frame.start);
+                    assert!(frames <= budget && moves_on, "round {round}");
+                    let _ = decoder.decode(&frame.data, frame.bits, &mut pcm);
+                    assert_eq!(pcm.len(), frames * per_frame, "round {round}");
+                    at = frame.next;
+                }
+                if round % 3 == 1 {
+                    // A clean stream: every frame is walked.
+                    assert_eq!(frames, written, "round {round}");
+                }
+                decoder.flush(&mut pcm);
+                assert_eq!(pcm.len(), frames * per_frame + per_frame / 2);
+            }
+        }
+    }
+
+    /// Frames of noise, mono and stereo at each sample rate, with bit
+    /// counts up to the end of the data: every decode gives one frame of
+    /// samples, whether the frame decodes or not.
+    #[test]
+    fn noise_frames_decode_to_a_frame_of_samples() {
+        let mut noise = Noise(0x9e37_79b9_7f4a_7c15);
+        for channels in [1, 2] {
+            for rate in [24_000, 32_000, 44_100, 48_000] {
+                let mut decoder = Decoder::new(channels, rate);
+                let mut pcm = Vec::new();
+                for round in 0..48 {
+                    let data = noise.bytes(round * 89 % 4096, [0, 0, 1, 2][round % 4]);
+                    let bits = match round % 2 {
+                        0 => data.len() * 8,
+                        _ => noise.below(data.len() * 8 + 1),
+                    };
+                    pcm.clear();
+                    let _ = decoder.decode(&data, bits, &mut pcm);
+                    assert_eq!(
+                        pcm.len(),
+                        FRAME_SAMPLES * channels,
+                        "{channels} channels, {rate} Hz, round {round}"
+                    );
+                    if round % 16 == 15 {
+                        decoder.reset();
+                    }
+                }
+                pcm.clear();
+                decoder.flush(&mut pcm);
+                assert_eq!(pcm.len(), FRAME_SAMPLES / 2 * channels);
+            }
+        }
+    }
+
+    /// Bit counts past the end of a frame's data, up to `usize::MAX`: the
+    /// decoding ends, with a frame of samples. A stereo tile header that ran
+    /// out of data used to loop on the zeros past it for good (found by
+    /// this test).
+    #[test]
+    fn noise_frames_with_bit_counts_past_the_data() {
+        let mut noise = Noise(0xd1b5_4a32_d192_ed03);
+        for channels in [1, 2] {
+            let mut decoder = Decoder::new(channels, 48_000);
+            let mut pcm = Vec::new();
+            for round in 0..48 {
+                let len = [0, 1, 2, 3, 5, 8, 40, 300][round % 8];
+                let data = noise.bytes(len, [0, 0, 1, 2][round / 8 % 4]);
+                let bits = match round % 3 {
+                    0 => data.len() * 8 + 1 + noise.below(1 << 16),
+                    1 => usize::MAX / 2 + noise.below(1 << 20),
+                    _ => usize::MAX,
+                };
+                pcm.clear();
+                let _ = decoder.decode(&data, bits, &mut pcm);
+                assert_eq!(
+                    pcm.len(),
+                    FRAME_SAMPLES * channels,
+                    "{channels} channels, round {round}"
+                );
+            }
+        }
+    }
+
+    /// `read_frame` from any bit of a buffer of noise and past it, and
+    /// `packet` at any index: a frame read stays inside its limits.
+    #[test]
+    fn noise_offsets_read_a_frame_or_nothing() {
+        let mut noise = Noise(0x6a09_e667_f3bc_c908);
+        for round in 0..24 {
+            let packets = 1 + round % 3;
+            let data = noise.bytes(packets * PACKET_BYTES, [0, 0, 1, 2][round % 4]);
+            let all = data.len() * 8;
+            let edges = [
+                0,
+                1,
+                HEADER_BITS - 1,
+                HEADER_BITS,
+                PACKET_BITS - LENGTH_BITS as usize,
+                PACKET_BITS - 1,
+                PACKET_BITS,
+                all - 1,
+                all,
+                all + 1,
+                usize::MAX / 2,
+                usize::MAX - PACKET_BITS + 1,
+                usize::MAX,
+            ];
+            let mut starts = edges.to_vec();
+            starts.extend((0..32).map(|_| noise.below(all)));
+            for start in starts {
+                if let Some(frame) = read_frame(&data, start) {
+                    let lengths = LENGTH_BITS as usize + 1..0x7fff;
+                    assert!(lengths.contains(&frame.bits), "start {start}");
+                    assert_eq!(frame.data.len(), frame.bits.div_ceil(8));
+                    if let Some(next) = frame.next {
+                        assert!(next > start && next / 8 < data.len(), "start {start}");
+                    }
+                }
+            }
+            let far = usize::MAX / PACKET_BYTES;
+            for index in [0, packets - 1, packets, far, usize::MAX] {
+                assert_eq!(packet(&data, index).is_some(), index < packets, "{index}");
+            }
+        }
     }
 
     /// Walks and decodes saved input buffers (`VICTORY_XMA_STREAMS=<dir>` of

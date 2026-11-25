@@ -43,6 +43,21 @@ internal static partial class RayTracingPrograms
     /// </summary>
     public static Func<string, bool?>? Scanner { get; set; }
 
+    /// <summary>
+    /// The markers' folder for a program folder (<c>&lt;program cache&gt;/&lt;identity&gt;/&lt;adapter&gt;</c>):
+    /// <c>&lt;program cache&gt;/ray-tracing</c>, which every identity shares. Whether a console program traces rays does not
+    /// change with the translator, and markers kept per identity were lost at each new one, so every boot after an update
+    /// read programs again (boots w66d to w69).
+    /// </summary>
+    public static string MarkerFolder(string programFolder)
+    {
+        string root = Path.GetDirectoryName(Path.GetDirectoryName(programFolder)) ?? programFolder;
+        string folder = Path.Combine(root, "ray-tracing");
+        Directory.CreateDirectory(folder);
+
+        return folder;
+    }
+
     /// <summary>Records whether the program <paramref name="name"/> translated to <paramref name="hlsl"/> traces rays, with its marker.</summary>
     public static void Note(string name, string hlsl, string folder)
     {

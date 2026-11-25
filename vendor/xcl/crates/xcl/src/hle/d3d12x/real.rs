@@ -1705,6 +1705,12 @@ unsafe extern "system" fn res_release(this: *mut c_void) -> u32 {
     n
 }
 
+/// A stand-in that is no driver object (`standin`) was released for good.
+pub(super) fn standin_released(pso: usize) {
+    forget_pso(pso);
+    super::pso_async::release(super::pso_async::released(pso));
+}
+
 /// A stand-in pipeline released for good takes its background-built real pipeline with it.
 unsafe extern "system" fn pso_release(this: *mut c_void) -> u32 {
     let f: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(orig_fn(this, 2));
@@ -5426,6 +5432,55 @@ unsafe fn standin_stream(this: *mut c_void, f: PsoFn, desc: *const c_void, riid:
     finish_pso(this, f, new_desc.as_ptr() as *const c_void, riid, ppv)
 }
 
+/// What the stand-in of `desc` shares its driver pipeline by (`standin::Key`): None for a desc
+/// that cannot be read. The blend, rasterizer and depth state are not in it – a stand-in draws
+/// nothing.
+unsafe fn graphics_key(this: *mut c_void, desc: *const c_void) -> Option<super::standin::Key> {
+    let d = &*(desc as *const D3D12_GRAPHICS_PIPELINE_STATE_DESC);
+    let mut state = Vec::with_capacity(64);
+    for w in [
+        d.PrimitiveTopologyType.0 as u32,
+        d.IBStripCutValue.0 as u32,
+        d.NumRenderTargets,
+        d.DSVFormat.0 as u32,
+        d.SampleDesc.Count,
+        d.SampleDesc.Quality,
+        d.NodeMask,
+        d.Flags.0 as u32,
+    ]
+    .into_iter()
+    .chain(d.RTVFormats.iter().map(|f| f.0 as u32))
+    {
+        state.extend_from_slice(&w.to_le_bytes());
+    }
+    Some(super::standin::Key { device: this as usize, root_signature: std::mem::transmute_copy::<_, usize>(&d.pRootSignature), kind: 0, state })
+}
+
+unsafe fn compute_key(this: *mut c_void, desc: *const c_void) -> Option<super::standin::Key> {
+    let d = &*(desc as *const D3D12_COMPUTE_PIPELINE_STATE_DESC);
+    let state = [d.NodeMask, d.Flags.0 as u32].iter().flat_map(|w| w.to_le_bytes()).collect();
+    Some(super::standin::Key { device: this as usize, root_signature: std::mem::transmute_copy::<_, usize>(&d.pRootSignature), kind: 1, state })
+}
+
+/// `graphics_key` of a pipeline stream: its subobjects with the stand-in's shaders in place of
+/// the title's, but the state a stand-in does not need.
+unsafe fn stream_key(this: *mut c_void, desc: *const c_void) -> Option<super::standin::Key> {
+    let (buf, _) = fallback_stream(desc as *const u8)?;
+    let (mut state, mut root_signature) = (Vec::new(), 0usize);
+    for (ty, p) in stream_subobjects(&buf)? {
+        match ty {
+            0 => root_signature = u64::from_le_bytes(p.get(..8)?.try_into().ok()?) as usize,
+            // blend, sample mask, rasterizer, depth-stencil (and its later forms), cached blob
+            8..=11 | 19 | 21 | 26..=28 => {}
+            _ => {
+                state.extend_from_slice(&ty.to_le_bytes());
+                state.extend_from_slice(p);
+            }
+        }
+    }
+    Some(super::standin::Key { device: this as usize, root_signature, kind: 2, state })
+}
+
 /// Hand the title `standin`'s result now and build the real pipeline with `build` on a worker.
 unsafe fn go_background(
     this: *mut c_void,
@@ -5436,9 +5491,29 @@ unsafe fn go_background(
     compute: bool,
     owned: OwnedDesc,
     standin: unsafe fn(*mut c_void, PsoFn, *const c_void, *const GUID, *mut *mut c_void) -> HRESULT,
+    shared_by: unsafe fn(*mut c_void, *const c_void) -> Option<super::standin::Key>,
     build: unsafe fn(Dev, &OwnedDesc, *mut *mut c_void) -> bool,
 ) -> Option<HRESULT> {
-    let hr = standin(this, f, desc, riid, ppv);
+    let key = if super::standin::enabled() && !ppv.is_null() { shared_by(this, desc) } else { None };
+    let mut driver = 0;
+    let hr = match key {
+        Some(key) => {
+            let made = super::standin::shell(key, || {
+                let mut out = std::ptr::null_mut();
+                let hr = standin(this, f, desc, &pc_iid(Kind::PipelineState), &mut out);
+                if hr < 0 || out.is_null() { Err(hr) } else { Ok(out as usize) }
+            });
+            match made {
+                Ok((shell, d)) => {
+                    *ppv = shell;
+                    driver = d;
+                    S_OK
+                }
+                Err(hr) => hr,
+            }
+        }
+        None => standin(this, f, desc, riid, ppv),
+    };
     if hr < 0 || ppv.is_null() || (*ppv).is_null() {
         static ONCE: AtomicU64 = AtomicU64::new(0);
         if ONCE.fetch_add(1, Ordering::Relaxed) < 3 {
@@ -5462,6 +5537,9 @@ unsafe fn go_background(
         super::pso_async::submit_lazy(*ppv as usize, compute, job, key);
     } else {
         super::pso_async::submit(*ppv as usize, compute, job);
+    }
+    if driver != 0 {
+        super::pso_async::shared(*ppv as usize, driver);
     }
     if image_only {
         super::pso_async::image_only(*ppv as usize);
@@ -5494,7 +5572,7 @@ unsafe fn graphics_pso(this: *mut c_void, desc: *const c_void, riid: *const GUID
     let f: PsoFn = std::mem::transmute(orig_fn(this, slot_of(this, "CreateGraphicsPipelineState")));
     let (translated, missed) = if super::pso_async::enabled() { attempt(|| translated_graphics_pso(this, f, desc, riid, ppv)) } else { (translated_graphics_pso(this, f, desc, riid, ppv), false) };
     if missed {
-        if let Some(hr) = own_graphics(desc).and_then(|o| go_background(this, f, desc, riid, ppv, false, o, standin_graphics, build_graphics)) {
+        if let Some(hr) = own_graphics(desc).and_then(|o| go_background(this, f, desc, riid, ppv, false, o, standin_graphics, graphics_key, build_graphics)) {
             return hr;
         }
         if let Some(hr) = translated_graphics_pso(this, f, desc, riid, ppv) {
@@ -5539,7 +5617,7 @@ unsafe extern "system" fn dev_create_compute_pso(this: *mut c_void, desc: *const
     let f: PsoFn = std::mem::transmute(orig_fn(this, slot_of(this, "CreateComputePipelineState")));
     let (mut console, missed) = if super::pso_async::enabled() { attempt(|| translated_compute_pso(this, f, desc, riid, ppv)) } else { (translated_compute_pso(this, f, desc, riid, ppv), false) };
     if missed {
-        if let Some(hr) = own_compute(desc).and_then(|o| go_background(this, f, desc, riid, ppv, true, o, standin_compute, build_compute)) {
+        if let Some(hr) = own_compute(desc).and_then(|o| go_background(this, f, desc, riid, ppv, true, o, standin_compute, compute_key, build_compute)) {
             // a console program the worker is translating (its root signature comes with it);
             // the real PSO registers itself in TRANSLATED_COMPUTE once build_compute succeeds
             // (if build_compute fails, the stand-in stays unregistered so Dispatch /
@@ -6616,7 +6694,7 @@ pub(super) unsafe extern "system" fn dev_create_pipeline_state(this: *mut c_void
     let f: PsoFn = std::mem::transmute(orig_fn(this, slot_of(this, "CreatePipelineState")));
     let (translated, missed) = if super::pso_async::enabled() { attempt(|| translated_mesh_stream(this, desc, riid, ppv)) } else { (translated_mesh_stream(this, desc, riid, ppv), false) };
     if missed {
-        if let Some(hr) = own_stream(desc).and_then(|o| go_background(this, f, desc, riid, ppv, false, o, standin_stream, build_stream)) {
+        if let Some(hr) = own_stream(desc).and_then(|o| go_background(this, f, desc, riid, ppv, false, o, standin_stream, stream_key, build_stream)) {
             return hr;
         }
         if let Some(hr) = translated_mesh_stream(this, desc, riid, ppv) {

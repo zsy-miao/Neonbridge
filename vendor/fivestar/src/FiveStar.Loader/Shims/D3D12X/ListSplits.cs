@@ -180,7 +180,7 @@ internal static unsafe class ListSplits
         }
     }
 
-    private static void RestoreGraphics(ListReplayState* state, nint list)
+    internal static void RestoreGraphics(ListReplayState* state, nint list)
     {
         RestoreInput(state, list);
         RestoreOutput(state, list);

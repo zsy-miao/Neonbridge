@@ -113,14 +113,20 @@ internal sealed unsafe class StandInPipelines
             done = build.Wait(budget);
         }
 
+        // A build that failed within the budget (held: --skip-pipelines, ray tracing; or refused by the driver) gives a
+        // stand-in that never builds: the console never fails a creation, and a failure handed to the game stalled its
+        // loading at the press-a-button screen (boots w66d to w69).
+        if (done && (HResult.Failed(build.Result.Hr) || build.Result.Pipeline == 0))
+        {
+            *result = Unbuilt(what);
+
+            return HResult.Ok;
+        }
+
         if (done)
         {
             *result = build.Result.Pipeline;
-
-            if (build.Result.Pipeline != 0)
-            {
-                built?.Invoke(build.Result.Pipeline);
-            }
+            built?.Invoke(build.Result.Pipeline);
 
             return build.Result.Hr;
         }
@@ -500,9 +506,15 @@ internal sealed unsafe class StandInPipelines
     /// </summary>
     public nint Unbuilt()
     {
+        return Unbuilt(string.Empty);
+    }
+
+    /// <summary>A stand-in named <paramref name="what"/> that never gets a pipeline: a held one (--skip-pipelines, ray tracing).</summary>
+    public nint Unbuilt(string what)
+    {
         Interlocked.Increment(ref _created);
 
-        return NewStandIn();
+        return NewStandIn(what);
     }
 
     /// <summary>Counts skipped work by pipeline name; the first <see cref="SkipsLogged"/> names are logged.</summary>

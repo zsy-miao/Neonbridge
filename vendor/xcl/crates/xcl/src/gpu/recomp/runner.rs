@@ -1624,6 +1624,14 @@ pub fn dispatch(dxil: &[u8], groups: [u32; 3], sgprs: &[u32], mem: &[u32]) -> Re
 pub(crate) fn dispatch_split(
     chain: &crate::gpu::dxil::kernel::DispatchChain, groups: [u32; 3], mem: &[u32],
 ) -> Result<Vec<u32>, String> {
+    dispatch_split_by(chain, groups, mem, u64::MAX)
+}
+
+/// `dispatch_split`, at most `most` groups at once (`pso::dispatch_slabs`).
+#[cfg(test)]
+pub(crate) fn dispatch_split_by(
+    chain: &crate::gpu::dxil::kernel::DispatchChain, groups: [u32; 3], mem: &[u32], most: u64,
+) -> Result<Vec<u32>, String> {
     let mut g = GPU.lock().unwrap();
     let gpu = g.get_or_insert_with(init).as_mut().map_err(|e| e.clone())?;
     let rs = super::pso::dispatch_chain_root_signature(&gpu.dev, &[])?;
@@ -1635,7 +1643,7 @@ pub(crate) fn dispatch_split(
         }).map_err(e)
     }).collect::<Result<_,_>>()?;
     dispatch_with(&gpu.dev, &gpu.queue, &gpu.fence, &mut gpu.value, &pieces[0], &rs, groups, &[], mem, 1, false,
-                  Some((&pieces, chain.dwords_per_group))).map(|(m,_)| m)
+                  Some((&pieces, chain.dwords_per_group, most))).map(|(m,_)| m)
 }
 
 /// `dispatch` run `reps` times in one command list (a UAV barrier between them, memory not
@@ -1679,7 +1687,7 @@ fn dispatch_with(
     mem: &[u32],
     reps: usize,
     timed: bool,
-    chain: Option<(&[ID3D12PipelineState], u32)>,
+    chain: Option<(&[ID3D12PipelineState], u32, u64)>,
 ) -> Result<(Vec<u32>, Vec<f64>), String> {
     let mut io = sgprs.to_vec();
     io.resize(KERNEL_SGPRS, 0);
@@ -1731,8 +1739,9 @@ fn dispatch_with(
         list.SetComputeRootUnorderedAccessView(0, io_buf.GetGPUVirtualAddress());
         list.SetComputeRootUnorderedAccessView(1, res_buf.GetGPUVirtualAddress());
         list.SetComputeRootUnorderedAccessView(2, mem_buf.GetGPUVirtualAddress());
-        let scratch = chain.map(|(_, words)| {
-            let bytes = groups.iter().fold(4 * u64::from(words), |n, &g| n * u64::from(g));
+        let scratch = chain.map(|(_, words, most)| {
+            let first = super::pso::dispatch_slabs(groups, most)[0].1;
+            let bytes = first.iter().fold(4 * u64::from(words), |n, &g| n * u64::from(g));
             buffer(dev, bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true)
         }).transpose()?;
         // `reps` dispatches, each between two timestamps when `timed`
@@ -1753,8 +1762,8 @@ fn dispatch_with(
             if let Some((heap, _)) = &queries {
                 list.EndQuery(heap, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k);
             }
-            if let (Some((pieces, _)), Some(scratch)) = (chain, &scratch) {
-                super::pso::record_dispatch_chain(&list, groups, scratch, pieces);
+            if let (Some((pieces, _, most)), Some(scratch)) = (chain, &scratch) {
+                super::pso::record_dispatch_chain(&list, groups, most, scratch, k > 0, pieces);
             } else {
                 list.Dispatch(groups[0], groups[1], groups[2]);
             }

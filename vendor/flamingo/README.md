@@ -138,6 +138,11 @@ For Discord Rich Presence, put your own Discord application id in
   pass and quad helper reads are ported from it (GPL-3.0).
 - The mesh primitive edge-flag fix came as pull request #1 to this repository, a port of upstream
   VIctory #1718.
+- **[vx-layer](https://github.com/Geckomacabre/vx-layer)** by Geckomacabre (GPL-3.0): the copy-back
+  of textures that shaders write and the title reads on the CPU (`VICTORY_TEXTURE_BACK`), which
+  keeps boats afloat.
+- Pull request #2 by rafaconvaitis: plain copies recover from guard-page faults.
+- The audio fixes of victory-fork #959 (upstream VIctory's XMA and audio ring fixes).
 - **[XCL](https://github.com/ivall/xcl)** by ivall and its contributors (GPL-2.0-only) was used as
   a reference only. No XCL code is copied here.
 - Flamingo's changes were developed with [Claude Code](https://claude.com/claude-code).

@@ -86,6 +86,9 @@ internal sealed class TranslationState
     /// <summary>A mesh program the window analysis rejects may keep the native form, approximately (TranslationOptions.FastWaves).</summary>
     public bool FastWaves { get; init; }
 
+    /// <summary>Image loads, gathers and stores follow the view's component class (TranslationOptions.TypedImageViews).</summary>
+    public bool TypedImageViews { get; init; }
+
     /// <summary>The loop caps (TranslationOptions.Loops, else the translator's own).</summary>
     public LoopCaps Loops { get; init; } = LoopCaps.Default;
 

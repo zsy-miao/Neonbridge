@@ -31,13 +31,41 @@ struct Scratch {
     bytes_per_slot: u32,
 }
 
-impl Scratch {
-    fn new(s: &mut Shader, stride: u32, threads: u32, lane: Value) -> Self {
-        let uav = s.raw_uav(0, 2);
-        let cb = s.cbv(0, 2, 16);
-        let zero = s.m.i32c(0);
+/// The part of a dispatch a chain runs at once (`pso::record_dispatch_chain`): its groups in X
+/// and Y, and the dispatch's group its first one is.
+struct Slab {
+    width: Value,
+    height: Value,
+    origin: [Value; 3],
+}
+
+impl Slab {
+    fn new(s: &mut Shader) -> Self {
+        let cb = s.cbv(0, 2, 32);
         let ty = s.m.i32();
-        let [width, height, _, _] = s.cbuffer_load_legacy(cb, zero, ty);
+        let [size, origin] = [0, 1].map(|row| {
+            let row = s.m.i32c(row);
+            s.cbuffer_load_legacy(cb, row, ty)
+        });
+        Self { width: size[0], height: size[1], origin: [origin[0], origin[1], origin[2]] }
+    }
+
+    /// The program's value for its copied instruction `v`: a group id is the dispatch's, not the slab's.
+    fn group_id(&self, src: &Module, op: &Op, m: &mut Module, v: Value) -> Value {
+        match op {
+            Op::Call(f, args) if src.funcs[*f as usize].name.starts_with("dx.op.groupId") => match args.get(1).and_then(|&a| src.const_u64(a)) {
+                Some(axis @ 0..=2) => m.bin(BinOp::Add, v, self.origin[axis as usize]),
+                _ => v,
+            },
+            _ => v,
+        }
+    }
+}
+
+impl Scratch {
+    fn new(s: &mut Shader, slab: &Slab, stride: u32, threads: u32, lane: Value) -> Self {
+        let uav = s.raw_uav(0, 2);
+        let (width, height) = (slab.width, slab.height);
         let [x, y, z] = [0, 1, 2].map(|axis| s.group_id(axis));
         let row = s.m.bin(BinOp::Mul, z, height);
         let row = s.m.bin(BinOp::Add, row, y);
@@ -126,14 +154,16 @@ impl Shader {
         let src = &self.m;
         let mut dst = self.dispatch_piece();
         let mut values = HashMap::new();
+        let slab = Slab::new(&mut dst);
         for &id in prefix {
             let def = &src.insts[id as usize];
             let mut op = def.op.clone();
             op.map_operands(|v| *values.get(&v).unwrap_or(&v));
-            values.insert(Value::Inst(id), dst.m.push(op, def.ty));
+            let v = dst.m.push(op, def.ty);
+            values.insert(Value::Inst(id), slab.group_id(src, &def.op, &mut dst.m, v));
         }
         let lane = prefix.last().map(|&i| values[&Value::Inst(i)]).unwrap_or_else(|| dst.wave_lane_index());
-        let scratch = Scratch::new(&mut dst, stride, threads[0], lane);
+        let scratch = Scratch::new(&mut dst, &slab, stride, threads[0], lane);
         let local: HashMap<_, _> = plan.blocks[stage].iter().map(|&b| (b, dst.m.new_block())).collect();
         let mut hops = HashMap::new();
         let mut exits = HashMap::new();
@@ -188,7 +218,7 @@ impl Shader {
                     dst.raw_store(scratch.uav, scratch.base, &[zero]);
                 }
                 let v = dst.m.push(old.op.clone(), old.ty);
-                values.insert(Value::Inst(i), v);
+                values.insert(Value::Inst(i), slab.group_id(src, &old.op, &mut dst.m, v));
                 copied.push((block, inst(v)?));
             }
         }
@@ -1042,6 +1072,11 @@ mod tests {
             assert_eq!(reference, expected, "unsplit {threads}");
             let result = runner::dispatch_split(&chain, [2, 3, 2], &initial).unwrap();
             assert_eq!(result, expected, "split {threads}");
+            // in slabs: single groups, a row (and a part of one), a plane, all
+            for most in [1, 2, 3, 6, 7, 12] {
+                let result = runner::dispatch_split_by(&chain, [2, 3, 2], &initial, most).unwrap();
+                assert_eq!(result, expected, "split {threads}, {most} groups at once");
+            }
             println!("CHAIN_BRANCH threads={threads} pieces={} scratch_words_per_group={} checked_words={words} guards=16", chain.pieces.len(), chain.dwords_per_group);
         }
     }

@@ -1,3 +1,3 @@
 # Vendored: xcl
 
-Copied unchanged from _ref/emu/xcl at 06c9f5505f63f10c5ec49ef932d75b2c28177324 (UPSTREAM), minus test-data .bin fixtures. Its LICENSE applies; all credit to its authors.
+Copied unchanged from _ref/emu/xcl at 082944135cd2b96288470a595861fa608eee08dc (UPSTREAM), minus test-data .bin fixtures. Its LICENSE applies; all credit to its authors.

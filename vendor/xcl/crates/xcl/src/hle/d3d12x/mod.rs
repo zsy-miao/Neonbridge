@@ -29,6 +29,7 @@ pub mod pso_async;
 pub mod real;
 mod shader_cache_session;
 pub mod sparse;
+mod standin;
 pub mod title_list;
 pub mod title_textures;
 pub mod vram;

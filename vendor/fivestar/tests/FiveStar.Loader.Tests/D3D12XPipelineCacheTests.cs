@@ -48,6 +48,43 @@ public sealed unsafe class D3D12XPipelineCacheTests
     }
 
     [DxcFact]
+    public void A_held_ray_tracing_pipeline_is_a_stand_in_at_once_never_a_failed_creation()
+    {
+        // With a minute's budget a buildable pipeline comes back built; a held one failed its build within the budget and
+        // the game got 0x80004005, which stalled its loading (w66d to w68a). It gets a stand-in that never builds.
+        const string Name = "sgd1_0c075372_t41_deferred_tiled~CS_LaserLightShadowRaytracing_c3ab3042_Wrapped";
+        var folder = Directory.CreateTempSubdirectory("fivestar-psohold-");
+
+        try
+        {
+            using var device = GpuDevice.CreateWarp(debugLayer: false);
+            var (device2, root) = DesktopObjects(device.Device.NativePointer);
+            RayTracingPrograms.Note(Name, "#include \"rdna_bvh.hlsli\"", folder.FullName);
+            var program = new TranslatedProgram(Name, HardwareStage.Compute, Compile(folder.FullName));
+            var description = new ComputePipelineDescription(0, new ShaderSource(ShaderSourceKind.CacheCode, new byte[24]));
+            var log = new LoaderLog(new StringWriter(), null, false);
+
+            var builds = new PipelineBuildQueue(1, PipelineBuildQueue.AnyTime);
+            builds.Start();
+            var standIns = new StandInPipelines(TimeSpan.FromMinutes(1), builds, builds, new OnceLog(log));
+            var factory = new PipelineFactory(device2, root, new FixedProgramLibrary(program), new ProgramSignatures(folder.FullName), new OnceLog(log), null, standIns, null);
+            var iid = DesktopDevice.PipelineStateIid;
+            nint pipeline;
+
+            Assert.Equal(0, factory.Compute(description, &iid, &pipeline));
+            Assert.NotEqual(0, pipeline);
+            Assert.Equal(0, standIns.Desktop(pipeline, out bool pending));
+            Assert.True(pending);
+            DesktopDevice.Release(root);
+            DesktopDevice.Release(device2);
+        }
+        finally
+        {
+            folder.Delete(recursive: true);
+        }
+    }
+
+    [DxcFact]
     public void A_journal_pipeline_prebuilt_at_device_creation_is_loaded_by_the_game_without_a_stand_in()
     {
         var folder = Directory.CreateTempSubdirectory("fivestar-prebuild-");

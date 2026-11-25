@@ -38,6 +38,24 @@ public sealed unsafe class D3D12XStandInPipelineTests
     }
 
     [Fact]
+    public void A_creation_that_fails_within_the_budget_hands_out_a_stand_in_that_never_builds()
+    {
+        // A held graphics pair (--skip-pipelines TransformSkinD) on a warm cache: its build fails at once; the game got
+        // 0x80004005 and its loading stalled (w69). It gets a stand-in and S_OK.
+        const string Held = "sgd1_0736b791_t32_PS_DeferredTextured_1778b45a_Wrapped.trim2 + sgd1_01cb042f_t41_MSR_VS_TransformSkinD_1778b45a_Wrapped.link-314dd11550b9";
+        var standIns = StandIns(TimeSpan.FromMinutes(1));
+        nint result = 0;
+
+        int hr = standIns.Create(() => new PipelineResult(HResult.Fail, 0), &result, Held, null);
+
+        Assert.Equal(HResult.Ok, hr);
+        Assert.NotEqual(0, result);
+        Assert.Equal(0, standIns.Desktop(result, out bool pending));
+        Assert.True(pending);
+        Assert.Equal(Held, standIns.Name(result));
+    }
+
+    [Fact]
     public void A_slow_creation_hands_out_a_stand_in_that_becomes_the_pipeline_and_releases_it()
     {
         using var memory = new NativeBlocks();

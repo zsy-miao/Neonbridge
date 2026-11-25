@@ -1494,7 +1494,7 @@ pub fn title_memory_committed(at: usize, len: usize) {
 /// Registers the handler that takes writes to guarded blocks, once, ahead
 /// of the crash reporter's.
 fn install() {
-    use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, NTSTATUS};
+    use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, EXCEPTION_GUARD_PAGE, NTSTATUS};
     use windows_sys::Win32::System::Diagnostics::Debug::{
         AddVectoredExceptionHandler, EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH,
         EXCEPTION_POINTERS,
@@ -1505,7 +1505,15 @@ fn install() {
         const WRITE: usize = 1;
         const IN_PAGE_ERROR: NTSTATUS = 0xC000_0006_u32 as NTSTATUS;
         let fault = r.ExceptionCode == EXCEPTION_ACCESS_VIOLATION as NTSTATUS || r.ExceptionCode == IN_PAGE_ERROR;
-        if fault && (r.NumberParameters < 2 || r.ExceptionInformation[0] != WRITE) {
+        // A PAGE_GUARD exception is recoverable only at our copy instruction.
+        // Leave guard faults outside it to the remaining Windows handlers.
+        // shortcut: Windows clears a guard at its first touch, so a page our
+        // copy touched has lost its guard (and the kernel's copy that follows
+        // would clear it too); re-arm it if a title is found that relies on
+        // its guard pages there.
+        if r.ExceptionCode == EXCEPTION_GUARD_PAGE
+            || (fault && (r.NumberParameters < 2 || r.ExceptionInformation[0] != WRITE))
+        {
             // SAFETY: the faulting thread's context, for this exception.
             return if unsafe { copy_failed(&mut *(*info).ContextRecord) } {
                 EXCEPTION_CONTINUE_EXECUTION
@@ -2176,7 +2184,55 @@ mod tests {
 
 #[cfg(test)]
 mod try_copy_tests {
-    use super::try_copy;
+    use super::{copy_failed, try_copy};
+
+    #[test]
+    fn guard_pages_in_the_copy_report_failure() {
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_GUARD, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+            VirtualProtect,
+        };
+
+        let src = [42u8];
+        let mut dst = [0u8];
+        // SAFETY: the new committed page is writable until explicitly guarded, then
+        // protected and released only by this test. Copies are exactly one byte.
+        unsafe {
+            let page = VirtualAlloc(
+                std::ptr::null(),
+                4096,
+                MEM_RESERVE | MEM_COMMIT,
+                PAGE_READWRITE,
+            ) as *mut u8;
+            assert!(!page.is_null());
+            page.write(17);
+            let mut previous = 0;
+            assert_ne!(VirtualProtect(page.cast(), 4096, PAGE_READWRITE | PAGE_GUARD, &mut previous), 0);
+            assert!(!try_copy(dst.as_mut_ptr(), page, 1));
+            assert_eq!(dst, [0]);
+            assert!(try_copy(dst.as_mut_ptr(), page, 1));
+            assert_eq!(dst, [17]);
+
+            assert_ne!(VirtualProtect(page.cast(), 4096, PAGE_READWRITE | PAGE_GUARD, &mut previous), 0);
+            assert!(!try_copy(page, src.as_ptr(), 1));
+            assert_eq!(page.read(), 17);
+            assert!(try_copy(page, src.as_ptr(), 1));
+            assert_eq!(page.read(), 42);
+            assert_ne!(VirtualFree(page.cast(), 0, MEM_RELEASE), 0);
+        }
+    }
+
+    #[test]
+    fn guard_page_recovery_leaves_unrelated_instruction_pointers_alone() {
+        use windows_sys::Win32::System::Diagnostics::Debug::CONTEXT;
+
+        // SAFETY: CONTEXT is a plain C record. The address check uses only Rip
+        // and never executes the artificial address.
+        let mut context: CONTEXT = unsafe { std::mem::zeroed() };
+        context.Rip = (&raw const super::flamingo_try_copy_end) as u64;
+        assert!(!copy_failed(&mut context));
+        assert_eq!(context.Rip, (&raw const super::flamingo_try_copy_end) as u64);
+    }
 
     /// A plain copy copies mapped memory, and says false for a page that
     /// is only reserved (the copy faults there) without the process dying.

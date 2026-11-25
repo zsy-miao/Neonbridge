@@ -18,6 +18,8 @@ struct Pending {
     sent: std::sync::atomic::AtomicBool,
     /// the real pipeline state (raw pointer), 0 while building or when building failed
     real: AtomicUsize,
+    /// the driver pipeline binds get till then (`shared`); 0: the stand-in is one itself
+    driver: AtomicUsize,
     done: Mutex<bool>,
     cv: Condvar,
     compute: bool,
@@ -349,6 +351,7 @@ fn submit_as(standin: usize, compute: bool, job: Job, send: bool, key: u64) {
         job: Mutex::new(Some(job)),
         sent: std::sync::atomic::AtomicBool::new(send),
         real: AtomicUsize::new(0),
+        driver: AtomicUsize::new(0),
         done: Mutex::new(false),
         cv: Condvar::new(),
         compute,
@@ -579,6 +582,26 @@ mod used_tests {
         let _ = released(standin);
     }
 
+    /// A stand-in that is no driver object (`shared`) never reaches the driver: binds get the
+    /// driver pipeline shared with other stand-ins until the real one is built, and after a build
+    /// that failed.
+    #[test]
+    fn a_bind_of_a_shared_stand_in_gets_its_driver_pipeline() {
+        let (fails, builds, driver) = (0x7E57_B011usize, 0x7E57_B012usize, 0x7E57_B013usize);
+        submit_lazy(fails, false, Box::new(|| 0), 0);
+        submit_lazy(builds, false, Box::new(|| 0x1234), 0);
+        for s in [fails, builds] {
+            shared(s, driver);
+            assert_eq!(entry(s).unwrap().stand(s), driver);
+        }
+        assert_eq!(resolve_wait_for(fails, None), driver, "its build failed");
+        assert_eq!(resolve(fails), driver);
+        assert_eq!(resolve_wait_for(builds, None), 0x1234);
+        assert_eq!(resolve_for_bind(builds), 0x1234);
+        // (0x1234 is no pipeline: taken, not released)
+        assert_eq!((released(fails), released(builds)), (0, 0x1234));
+    }
+
     /// A bind does not wait for a compute pipeline that writes only images: it gets the stand-in
     /// at once, with no budget, the build goes to the workers
     /// unwanted, and once built the bind gets the real one. Without `image_only` the same bind
@@ -791,17 +814,37 @@ fn entry(pso: usize) -> Option<Arc<Pending>> {
     PENDING.lock().unwrap().as_ref()?.get(&pso).cloned()
 }
 
-/// The pipeline to use for `pso` now: the real one once built, else `pso` itself.
+impl Pending {
+    /// What a bind of the stand-in `pso` gives the driver while the pipeline is not built.
+    fn stand(&self, pso: usize) -> usize {
+        match self.driver.load(Ordering::Acquire) {
+            0 => pso,
+            d => d,
+        }
+    }
+}
+
+/// Stand-in `standin` is no driver object (`standin::shell`): binds get `driver` in its place.
+/// Told before the title has the stand-in.
+pub fn shared(standin: usize, driver: usize) {
+    if let Some(p) = entry(standin) {
+        p.driver.store(driver, Ordering::Release);
+    }
+}
+
+/// The pipeline to use for `pso` now: the real one once built, else the stand-in's driver
+/// pipeline (`pso` itself when it is one).
 pub fn resolve(pso: usize) -> usize {
     let Some(p) = entry(pso) else { return pso };
     p.note_use();
     match p.real.load(Ordering::Acquire) {
         0 => {
             // a lazy one is wanted now: to the workers
+            let stand = p.stand(pso);
             if !p.sent.swap(true, Ordering::AcqRel) {
                 enqueue(p);
             }
-            pso
+            stand
         }
         r => r,
     }
@@ -835,7 +878,7 @@ fn resolve_wait_for(pso: usize, budget: Option<std::time::Duration>) -> usize {
         done = p.cv.wait(done).unwrap();
     }
     match p.real.load(Ordering::Acquire) {
-        0 => pso,
+        0 => p.stand(pso),
         r => r,
     }
 }
@@ -854,7 +897,7 @@ fn wait_budget() -> Option<std::time::Duration> {
 /// dispatches are skipped) until a worker has built it.
 fn resolve_within(p: &Arc<Pending>, pso: usize, budget: std::time::Duration) -> usize {
     let built = |p: &Pending| match p.real.load(Ordering::Acquire) {
-        0 => pso,
+        0 => p.stand(pso),
         r => r,
     };
     if *p.done.lock().unwrap() {
@@ -864,7 +907,7 @@ fn resolve_within(p: &Arc<Pending>, pso: usize, budget: std::time::Duration) -> 
         enqueue(p.clone());
     }
     if p.late.load(Ordering::Acquire) {
-        return pso;
+        return p.stand(pso);
     }
     p.want();
     let (done, _) = p.cv.wait_timeout_while(p.done.lock().unwrap(), budget, |d| !*d).unwrap();
@@ -878,7 +921,7 @@ fn resolve_within(p: &Arc<Pending>, pso: usize, budget: std::time::Duration) -> 
     if n < 16 || n.is_power_of_two() {
         crate::xlog_warn!("D3D12.X: a pipeline still being built after {} ms: its binds go on without it until it is built ({} so far)", budget.as_millis(), n + 1);
     }
-    pso
+    p.stand(pso)
 }
 
 /// `XCL_PSO_IMAGE_SKIP=1`: a bind does not wait for a big compute program that writes nothing
@@ -918,7 +961,7 @@ fn resolve_spared(p: &Arc<Pending>, pso: usize) -> usize {
                     crate::xlog_info!("D3D12.X: a compute program that writes only images is still being built: its dispatches are left out until it is ({} so far)", n + 1);
                 }
             }
-            pso
+            p.stand(pso)
         }
         r => r,
     }

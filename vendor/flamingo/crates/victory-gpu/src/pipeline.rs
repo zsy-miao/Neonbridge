@@ -74,7 +74,50 @@ pub(crate) struct Shader {
 
 impl std::fmt::Debug for Shader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.stage, self.hash)
+        write!(f, "{} {}", self.stage, self.hash)?;
+        match program_name(&self.container) {
+            Some(name) => write!(f, " {name}"),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Flamingo: the program's name as its container spells it (the first
+/// `XX_Name`: `CS_...`, `PS_...`), for the log lines that say a shader or
+/// pipeline failed: a hash alone says nothing about what goes missing.
+fn program_name(container: &[u8]) -> Option<&str> {
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut i = 0;
+    while i + 3 < container.len() {
+        let w = &container[i..];
+        let starts = w[0].is_ascii_uppercase()
+            && w[1].is_ascii_uppercase()
+            && w[2] == b'_'
+            && (i == 0 || !ident(container[i - 1]));
+        if starts {
+            let len = w.iter().take_while(|&&b| ident(b)).count();
+            if len >= 6 {
+                return std::str::from_utf8(&w[..len]).ok();
+            }
+            i += len.max(1);
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::program_name;
+
+    #[test]
+    fn a_container_names_its_program() {
+        let mut bytes = b"\x00\x01DXBC..xCS_ignored".to_vec();
+        bytes.extend_from_slice(b"\x00CS_ShadowRenderTiled_9a1b\x00PS_Other\x00");
+        assert_eq!(program_name(&bytes), Some("CS_ShadowRenderTiled_9a1b"));
+        assert_eq!(program_name(b"\x00AB_x\x00"), None);
+        assert_eq!(program_name(b""), None);
     }
 }
 
@@ -192,6 +235,7 @@ impl Shader {
                     Err(e) => tracing::warn!(
                         stage = self.stage,
                         hash = %self.hash,
+                        name = program_name(&self.container).unwrap_or("?"),
                         error = %e,
                         "shader does not translate; its pipelines' draws are dropped"
                     ),

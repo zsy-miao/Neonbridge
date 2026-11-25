@@ -6,6 +6,7 @@ using FiveStar.Graphics.Pipelines;
 using FiveStar.Loader.Diagnostics;
 using FiveStar.Loader.Native;
 using FiveStar.Loader.Shims.D3D12X.DebugLayer;
+using FiveStar.Loader.Shims.D3D12X.Resources;
 
 namespace FiveStar.Loader.Shims.D3D12X.Binding;
 
@@ -308,6 +309,11 @@ internal static unsafe class CommandListBindingMethods
                 return;
             }
 
+            if (DepthTwins.Any)
+            {
+                CopyTwin(self);
+            }
+
             Flush(self, false);
             ListActivity.Of(self)->Draws++;
             GpuBreadcrumbs.Before(self, MarkedKind.Draw, vertices, instances, 0);
@@ -333,6 +339,11 @@ internal static unsafe class CommandListBindingMethods
             if (PipelinePending(self, draw: true))
             {
                 return;
+            }
+
+            if (DepthTwins.Any)
+            {
+                CopyTwin(self);
             }
 
             Flush(self, false);
@@ -401,8 +412,7 @@ internal static unsafe class CommandListBindingMethods
                 return;
             }
 
-            Flush(self, false);
-            Flush(self, true);
+            FlushForIndirect(self, signature);
             ListActivity.Of(self)->Indirect++;
             GpuBreadcrumbs.BeforeIndirect(self, signature, maxCount, ArgumentAddress(arguments, argumentOffset));
             var trace = ShimContext.Runtime.D3D12X.DrawTrace;
@@ -451,6 +461,68 @@ internal static unsafe class CommandListBindingMethods
         string? problem = NullAddressCheck.Indirect(arguments, argumentOffset, bytes, count, countOffset);
 
         return problem is not null && NullAddressCheck.Drop(NullAddressKind.IndirectBuffer, self, $"ExecuteIndirect of {maxCount}: {problem}");
+    }
+
+    /// <summary>Before an ExecuteIndirect: a depth twin's copy for draws (<see cref="CopyTwin"/>), then both bind points' user data.</summary>
+    [HotPath]
+    private static void FlushForIndirect(XboxObject* self, nint signature)
+    {
+        if (DepthTwins.Any && CommandSignatures.Clampable(signature).Kind != IndirectClamp.DispatchKind)
+        {
+            CopyTwin(self);
+        }
+
+        Flush(self, false);
+        Flush(self, true);
+    }
+
+    /// <summary>
+    /// <c>--depth-twins</c>, before a draw: when the bound depth-stencil view's texture has a twin that a pass wrote since,
+    /// the twin's values go into the depth (<see cref="DepthTwinCopy"/>), then the list's graphics state is set again
+    /// (heaps, input, targets, viewports, root signature, user data, pipeline).
+    /// </summary>
+    private static void CopyTwin(XboxObject* self)
+    {
+        var replay = ListReplayState.Of(self);
+
+        if ((replay->Set & ListReplayState.DepthStencilBit) == 0)
+        {
+            return;
+        }
+
+        nint view = (nint)replay->DepthStencil;
+        var twin = DepthTwins.OfView(view, out int format);
+
+        if (twin is null || twin.ViewHandle == 0 || !twin.TakeWritten())
+        {
+            return;
+        }
+
+        var d3d12x = ShimContext.Runtime.D3D12X;
+        nint heap = d3d12x.Bindings.Window.ViewHeap;
+        ulong table = DesktopCalls.HeapGpuStart(heap) + (ulong)(twin.ViewHandle - DesktopCalls.HeapCpuStart(heap));
+        int state = d3d12x.ListStates.For(self).Current(twin.Depth, twin.Home);
+        nint list = self->Inner;
+
+        if (!DepthTwinCopy.Record(d3d12x.Objects.DesktopDevice, list, twin, view, format, state, table))
+        {
+            return;
+        }
+
+        ListSplits.RestoreGraphics(replay, list);
+
+        if (CommandListBindings.Of(self)->GraphicsRoot != 0)
+        {
+            SetBindlessRoot(self, false);
+        }
+
+        var rectangles = RectangleListState.Of(self);
+        rectangles->VariantBound = 0;
+
+        if (CommandListBindings.Of(self)->PipelinePending == 0 && rectangles->Pipeline != 0)
+        {
+            ((delegate* unmanaged<nint, nint, void>)ComObject.Slot(list, DesktopSetPipelineState))(list, rectangles->Pipeline);
+        }
     }
 
     /// <summary>After the argument clamp's dispatch: the list's compute root signature, user data and pipeline again.</summary>
@@ -854,6 +926,11 @@ internal static unsafe class CommandListBindingMethods
         if (DepthUavs.Any)
         {
             DepthUavs.CheckFirstUse(pipeline, data, ShimContext.Runtime.D3D12X.Bindings.Window.Data);
+        }
+
+        if (DepthTwins.Any)
+        {
+            DepthTwins.MarkWriters(pipeline, data, ShimContext.Runtime.D3D12X.Bindings.Window.Data, entries);
         }
 
         var heaps = ShimContext.Runtime.D3D12X.DescriptorHeaps;

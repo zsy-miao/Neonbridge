@@ -30,6 +30,12 @@ internal readonly record struct BufferRecord(uint Stride, uint Records, uint For
     /// <summary>The view's console GPU address (its first element); 0 when it has none.</summary>
     public ulong Base { get; init; }
 
+    /// <summary>A texture view's component class in dword 3 (<see cref="ImageViewClasses"/>); 0 for float and every buffer view.</summary>
+    public uint ImageClass { get; init; }
+
+    /// <summary>Dword 3 of the record: a buffer view's format, or a texture view's component class.</summary>
+    public uint Word3 => Format | ImageClass;
+
     /// <summary>Dword 1 of the record: the stride and base_hi.</summary>
     public uint Word1 => ((Stride & StrideMask) << StrideShift) | (uint)((Base >> HighShift) & HighMask);
 

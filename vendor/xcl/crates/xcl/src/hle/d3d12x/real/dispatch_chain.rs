@@ -7,10 +7,26 @@ use std::sync::{Arc, LazyLock, OnceLock};
 static PROGRAMS: AtomicU64 = AtomicU64::new(0);
 static PIECES: AtomicU64 = AtomicU64::new(0);
 static DISPATCHES: AtomicU64 = AtomicU64::new(0);
+/// slabs dispatched (`pso::dispatch_slabs`)
+static SLABS: AtomicU64 = AtomicU64::new(0);
+/// scratch alive now, the most there was, and the most a dispatch would have needed at once (bytes)
+static LIVE: AtomicU64 = AtomicU64::new(0);
+static PEAK: AtomicU64 = AtomicU64::new(0);
+static WANTED: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn log_counts() {
-    crate::xlog_info!("compute split: {} programs split, {} pieces built, {} chained dispatches issued",
-        PROGRAMS.load(Ordering::Relaxed), PIECES.load(Ordering::Relaxed), DISPATCHES.load(Ordering::Relaxed));
+    let mib = |a: &AtomicU64| a.load(Ordering::Relaxed) >> 20;
+    crate::xlog_info!("compute split: {} programs split, {} pieces built, {} chained dispatches issued in {} slabs; scratch {} MiB (most {}, largest dispatch {} in one slab)",
+        PROGRAMS.load(Ordering::Relaxed), PIECES.load(Ordering::Relaxed), DISPATCHES.load(Ordering::Relaxed), SLABS.load(Ordering::Relaxed),
+        mib(&LIVE), mib(&PEAK), mib(&WANTED));
+}
+
+/// The scratch a dispatch uses at once, `XCL_SPLIT_SCRATCH_MB` (256): more groups than fit run in
+/// slabs. A retail title's split programs need 190 KB for each group (median), 3 GB for 960x540
+/// pixels in groups of 8x4.
+fn scratch_budget() -> u64 {
+    static B: OnceLock<u64> = OnceLock::new();
+    *B.get_or_init(|| std::env::var("XCL_SPLIT_SCRATCH_MB").ok().and_then(|v| v.trim().parse().ok()).filter(|&m| m > 0).unwrap_or(256u64).min(4096) << 20)
 }
 
 struct PipelineBuilder {
@@ -93,13 +109,70 @@ pub(in crate::hle::d3d12x) unsafe fn whole(pso: usize) -> Result<Option<ID3D12Pi
     chain.map(|c| c.whole()).transpose()
 }
 
+struct Scratch {
+    buffer: ID3D12Resource,
+    bytes: u64,
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        LIVE.fetch_sub(self.bytes, Ordering::Relaxed);
+    }
+}
+
 struct Recording {
-    scratch: ID3D12Resource,
+    scratch: Arc<Scratch>,
     first: ID3D12PipelineState,
     chain: Arc<Chain>,
 }
 
 static RECORDINGS: LazyLock<Mutex<HashMap<usize, Vec<Arc<Recording>>>>> = LazyLock::new(Default::default);
+/// list → the allocator it records on and the scratch its chains share: they are dispatched one
+/// after another, with a barrier between them (the recordings keep it alive)
+static SHARED: LazyLock<Mutex<HashMap<usize, (usize, std::sync::Weak<Scratch>)>>> = LazyLock::new(Default::default);
+
+/// `list` begins another recording, which the GPU may run beside the last one.
+pub(in crate::hle::d3d12x) fn list_reset(list: usize) {
+    SHARED.lock().unwrap().remove(&list);
+}
+
+/// The scratch of all recordings alive together, `XCL_SPLIT_SCRATCH_TOTAL_MB` (384). A recording
+/// keeps its scratch until its allocator is reset, and a title that records ahead of the GPU has
+/// many: with a bound on one dispatch alone a retail title's world took 1.2 GB and went on growing.
+fn scratch_total() -> u64 {
+    static B: OnceLock<u64> = OnceLock::new();
+    *B.get_or_init(|| std::env::var("XCL_SPLIT_SCRATCH_TOTAL_MB").ok().and_then(|v| v.trim().parse().ok()).filter(|&m| m > 0).unwrap_or(384u64) << 20)
+}
+
+/// A recording gets at least this much (or one group's worth) however much the others hold.
+const LEAST: u64 = 2 << 20;
+
+/// How much scratch a dispatch of `needed` bytes (`group` for one group) runs with at once: the
+/// list's own buffer (`had` bytes) when that is enough or no more may be made, else a new one of
+/// the bytes given (second: make one).
+fn scratch_bytes(needed: u64, group: u64, budget: u64, had: Option<u64>, live: u64, total: u64) -> (u64, bool) {
+    let want = needed.min(budget).max(group);
+    let room = total.saturating_sub(live);
+    match had {
+        Some(h) if h >= want || (room < want && h >= group) => (h, false),
+        _ => (want.min(room.max(LEAST)).max(group), true),
+    }
+}
+
+/// A scratch for a chain of `needed` bytes recorded on `list` with `allocator`, and whether a
+/// chain before it on the list used it.
+unsafe fn scratch_for(dev: &ID3D12Device, list: usize, allocator: usize, needed: u64, group: u64) -> Option<(Arc<Scratch>, bool)> {
+    let had = SHARED.lock().unwrap().get(&list).filter(|s| s.0 == allocator).and_then(|s| s.1.upgrade());
+    let (bytes, make) = scratch_bytes(needed, group, scratch_budget(), had.as_ref().map(|s| s.bytes), LIVE.load(Ordering::Relaxed), scratch_total());
+    if !make {
+        return had.map(|s| (s, true));
+    }
+    let s = Arc::new(Scratch { buffer: scratch_buffer(dev, bytes)?, bytes });
+    let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+    PEAK.fetch_max(live, Ordering::Relaxed);
+    SHARED.lock().unwrap().insert(list, (allocator, Arc::downgrade(&s)));
+    Some((s, false))
+}
 
 pub(in crate::hle::d3d12x) fn allocator_reset(allocator: usize) {
     let recordings = RECORDINGS.lock().unwrap().remove(&allocator);
@@ -131,10 +204,14 @@ pub(in crate::hle::d3d12x) unsafe fn dispatch(list: &ID3D12GraphicsCommandList, 
     let allocator = if super::super::alloc_pool::enabled() {
         super::super::alloc_pool::recording_backing(list.as_raw() as usize).unwrap_or(0)
     } else { allocator };
-    let size = grid.into_iter().try_fold(u64::from(chain.words) * 4, |s, n| s.checked_mul(n as u64));
-    let scratch = size.filter(|&n| n <= u32::MAX as u64 + 1 && allocator != 0 && list.GetType() != D3D12_COMMAND_LIST_TYPE_BUNDLE)
-        .and_then(|n| scratch_buffer(&chain.builder.device, n));
-    let Some(scratch) = scratch else {
+    let group = u64::from(chain.words) * 4;
+    let needed = grid.into_iter().fold(group, |s, n| s.saturating_mul(n as u64));
+    WANTED.fetch_max(needed, Ordering::Relaxed);
+    let scratch = (allocator != 0 && list.GetType() != D3D12_COMMAND_LIST_TYPE_BUNDLE)
+        .then(|| scratch_for(&chain.builder.device, list.as_raw() as usize, allocator, needed, group)).flatten();
+    let most = scratch.as_ref().map_or(1, |(s, _)| (s.bytes / group).max(1));
+    let slabs = pso::dispatch_slabs(grid, most);
+    let Some((scratch, used)) = scratch else {
         list.SetPipelineState(&chain.whole()?);
         list.Dispatch(x, y, z);
         return Ok(());
@@ -143,6 +220,33 @@ pub(in crate::hle::d3d12x) unsafe fn dispatch(list: &ID3D12GraphicsCommandList, 
     let held = Arc::new(Recording { scratch, first, chain });
     RECORDINGS.lock().unwrap().entry(allocator).or_default().push(held.clone());
     DISPATCHES.fetch_add(1, Ordering::Relaxed);
-    pso::record_dispatch_chain(list, grid, &held.scratch, std::iter::once(&held.first).chain(&held.chain.tail));
+    SLABS.fetch_add(slabs.len() as u64, Ordering::Relaxed);
+    pso::record_dispatch_chain(list, grid, most, &held.scratch.buffer, used, std::iter::once(&held.first).chain(&held.chain.tail));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scratch_bytes, LEAST};
+
+    const MB: u64 = 1 << 20;
+
+    #[test]
+    fn a_chains_scratch_is_bounded_by_what_all_recordings_hold() {
+        let group = 187 << 10;
+        // the first of a recording: as much as it needs, up to the budget of one dispatch
+        assert_eq!(scratch_bytes(15 * MB, group, 64 * MB, None, 0, 384 * MB), (15 * MB, true));
+        assert_eq!(scratch_bytes(900 * MB, group, 64 * MB, None, 0, 384 * MB), (64 * MB, true));
+        // the others hold nearly all: what is left, and at least LEAST
+        assert_eq!(scratch_bytes(900 * MB, group, 64 * MB, None, 364 * MB, 384 * MB), (20 * MB, true));
+        assert_eq!(scratch_bytes(900 * MB, group, 64 * MB, None, 1200 * MB, 384 * MB), (LEAST, true));
+        // the list's own buffer: kept when big enough, or when no more may be made
+        assert_eq!(scratch_bytes(8 * MB, group, 64 * MB, Some(16 * MB), 100 * MB, 384 * MB), (16 * MB, false));
+        assert_eq!(scratch_bytes(60 * MB, group, 64 * MB, Some(16 * MB), 380 * MB, 384 * MB), (16 * MB, false));
+        // … but made again, larger, while there is room
+        assert_eq!(scratch_bytes(60 * MB, group, 64 * MB, Some(16 * MB), 100 * MB, 384 * MB), (60 * MB, true));
+        // one group always fits, whatever the bounds say
+        assert_eq!(scratch_bytes(9 * MB, 9 * MB, 4 * MB, None, 400 * MB, 384 * MB), (9 * MB, true));
+        assert_eq!(scratch_bytes(9 * MB, 9 * MB, 4 * MB, Some(MB), 400 * MB, 384 * MB), (9 * MB, true));
+    }
 }

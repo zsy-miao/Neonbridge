@@ -53,7 +53,7 @@ internal sealed class ProgramProducer
         _folder = folder;
 
         // Programs that trace rays are known by their markers here, or read from their console code.
-        RayTracingPrograms.Folder = folder;
+        RayTracingPrograms.Folder = RayTracingPrograms.MarkerFolder(folder);
         RayTracingPrograms.Scanner = TracesRays;
         _picker = picker;
         _compiler = compiler;
@@ -188,7 +188,7 @@ internal sealed class ProgramProducer
             hlsl = DebugLayer.PoolStoreTrace.Header(name) + hlsl;
         }
 
-        RayTracingPrograms.Note(name, hlsl, _folder);
+        RayTracingPrograms.Note(name, hlsl, RayTracingPrograms.Folder ?? _folder);
         hlsl = Probed(name, hlsl);
         NoteCost(name, hlsl);
         StaticSampler.Keep(_folder, hlsl);

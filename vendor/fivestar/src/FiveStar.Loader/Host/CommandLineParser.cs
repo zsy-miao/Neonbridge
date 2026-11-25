@@ -608,8 +608,26 @@ internal sealed class CommandLineParser
                 return true;
             case "--max-driver-compiles" or "--compile-ceiling":
                 return SetCompileLimit(option);
+            default:
+                return ApplyResources(option);
+        }
+    }
+
+    /// <summary>Texture, view and pipeline-build options.</summary>
+    private bool ApplyResources(string option)
+    {
+        switch (option)
+        {
             case "--placed-textures":
                 _options.PlacedTextures = true;
+
+                return true;
+            case "--typed-image-views":
+                _options.TypedImageViews = true;
+
+                return true;
+            case "--depth-twins":
+                _options.DepthTwins = true;
 
                 return true;
             case "--typeless-targets":

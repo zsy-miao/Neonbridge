@@ -2252,6 +2252,7 @@ unsafe fn copy_scratch(list: *mut c_void, n: u64) -> Option<(usize, u64)> {
 }
 
 fn reset_copy_scratch(list: *mut c_void) {
+    real::dispatch_chain::list_reset(list as usize);
     if let Some(scratch) = COPY_SCRATCH.lock().unwrap().active.get_mut(&(list as usize)) {
         scratch.recorded = false;
     }

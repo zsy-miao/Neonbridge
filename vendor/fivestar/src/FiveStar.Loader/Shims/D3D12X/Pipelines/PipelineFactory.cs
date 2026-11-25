@@ -330,8 +330,19 @@ internal sealed unsafe class PipelineFactory
             built?.Invoke(pipeline);
         };
 
-        // A pipeline the cache holds from a boot with --raytracing, or from before ray-tracing pipelines were held, is not loaded.
-        if (!SkippedPipelines.Skips(names) && !RayTracingPrograms.Skips(names, RayTracingPrograms.Folder, scan: true) && Cache is not null && !HResult.Failed(Cache.Load(stream, iid, result)))
+        // A held pipeline (--skip-pipelines; ray tracing without --raytracing, by what is known and the markers: this is
+        // the game's thread, which must not read programs) is a stand-in that never builds, at once, and is not loaded
+        // from the cache. One that only its build finds held fails there, and the creation hands out a stand-in
+        // (StandInPipelines.Create): the game never gets a failure.
+        if (SkippedPipelines.Skips(names) || RayTracingPrograms.Skips(names))
+        {
+            stream.Dispose();
+            *result = StandIns.Unbuilt(names);
+
+            return HResult.Ok;
+        }
+
+        if (Cache is not null && !HResult.Failed(Cache.Load(stream, iid, result)))
         {
             stream.Dispose();
             named(*result);
@@ -560,7 +571,9 @@ internal sealed unsafe class PipelineFactory
     /// </summary>
     public PipelineResult Build(DesktopStream stream, Guid iid, string what)
     {
-        // Before the compile budget and the driver: a held ray-tracing pipeline takes no compile slot.
+        // Before the compile budget and the driver, on a build thread (reading the console code of an unmarked program
+        // there, never on a game thread: boots w66d to w69 read them on the game's creating threads and its loading
+        // stopped): a held ray-tracing pipeline takes no compile slot.
         if (SkippedPipelines.Skips(what) || RayTracingPrograms.Skips(what, RayTracingPrograms.Folder, scan: true))
         {
             stream.Dispose();

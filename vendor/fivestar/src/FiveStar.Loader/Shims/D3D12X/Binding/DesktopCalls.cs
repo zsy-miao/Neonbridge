@@ -11,7 +11,7 @@ internal static unsafe class DesktopCalls
     private const int CreateShaderResourceViewSlot = 18;
     private const int CreateUnorderedAccessViewSlot = 19;
     private const int CreateSamplerSlot = 22;
-    private const int CreateCommittedResourceSlot = 27;
+    public const int CreateCommittedResourceSlot = 27;
     private const int CreatePlacedResourceSlot = 29;
     private const int MapSlot = 8;
     private const int GpuAddressSlot = 11;

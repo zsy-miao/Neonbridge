@@ -290,6 +290,14 @@ The other memory paths, the same way (opcodes counted in the corpus):
   R32G32_UINT texel (974 instructions) is a max of the 64-bit value v1:v0. They were translated as 32-bit atomics on
   the low dword; they are `uint64_t` typed atomics now (SM 6.6, the device's AtomicInt64OnTypedResource), on the
   R32G32_UINT view. The DXIL backend lowers them as an i64 `atomicBinOp` on a uint64_t texture, with the shader flags for 64-bit atomics on typed and descriptor-heap resources, as dxc does (`cs_image_atomic_64`; 679 alpha-prepass programs of the corpus); other 64-bit texel access it refuses.
+- Image loads, plain gathers and stores declare their texture `float4`, which leaves an integer view's bits undefined
+  (D3D12 matches the declaration to the view format). With `--typed-image-views` (`TranslationOptions.TypedImageViews`,
+  part of the program cache identity) the loader writes each texture view's component class in dword 3 of its record
+  (0 float, 1 uint, 2 sint: `ImageViewClasses`; the main depth's stencil plane, X32_TYPELESS_G8X24_UINT, by which the
+  lighting classifies pixels, is uint), and the read or write branches on it to a `uint4` or `int4` declaration of the
+  same descriptor, the registers' bits passed through `asfloat`/`asuint`. A d16 load of an integer view keeps each
+  value's low 16 bits instead of an f16. Samples filter and stay `float4`; a compare gather and a gather at a level
+  too. A record without a class (no desc, a view copied in from a desktop heap) reads as float, as before.
 - LDS byte and short accesses and their d16 forms (`ds_read_u16`, `ds_read_u16_d16_hi`, `ds_write_b16`,
   `ds_write_b16_d16_hi`: 110 instructions) read and write the right half (`cs_lds_d16_hi`); `global_load_ushort` (6) too.
 - Image loads and samples read every texture as `float4`, and their d16 forms pack `f32tof16` of it. An integer

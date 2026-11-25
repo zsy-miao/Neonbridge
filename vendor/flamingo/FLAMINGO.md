@@ -154,6 +154,10 @@ TdrDelay raised to 60 s. Here TdrDelay is the default 2 s. Keep test runs short.
 | 97, 98 | the slots' descriptors made outside the slots' lock (`FLAMINGO_MIRROR_UNLOCKED`, on), against the same build with it off | 12.40 / 12.44 fps against 12.06 / 11.93, lows 12.0 against 10.4-11.7; the picture the same |
 | 99, 100 | the title buffers' registry under a reader-writer lock (a lookup that finds a copy reads) | 12.30 / 12.13 fps in run 100 (run 99 had one long dip): no gain over run 97. Taken back |
 | 101 | the heap buffer pass's slots looked at on 4 threads, the ranges noted after | much worse: 5.0 fps at the window (lows 0.6), the pass 82 ms (textures 51 ms), blocks and specks on the picture: making views and copies for draws is not safe side by side. Taken back |
+| 102 | a play session by the user (24 minutes, DualSense, the old save moved aside so a new game starts) | the whole opening played (the save from an early test run had sent every start to the prologue). The world: 8.6 fps on average, median 7.8, a tenth of the time under 3.5; up to 11,522 draws in the city. Driving through the city looks right in daylight; black rectangles, missing shadows and dark rooms elsewhere; the first boat mission failed every time |
+| 103 | + the user's pull request #2 (guard-page faults in the plain copy), victory-fork #959's eight audio fixes, vx-layer eee5667d (textures shaders write that the title reads on the CPU are copied back), failed programs named | the four programs that fail are `CS_ShadowRenderTiledCascadesAlphaCBPPPC` (does not translate: a lane mask exchanged where not every lane runs), `CS_AlphTransmissionPrefilterMip`, `CS_DefragHeap_ComputeRelocations` and `CS_CollectTriangles_Meshlets` (refused) |
+| 104 | + the last two in the wave-wide form | both made; the boat floats and can be driven (the start now loads the boat mission) |
+| 105 | + `VICTORY_WAVE_DEEP_SKIPS=0`, the shadow program in the wave-wide form | worse: both refused again, `CS_TransmissionVolumetricsSubmerged` no longer translates; the shadow program still fails |
 
 ## Stats overlay
 

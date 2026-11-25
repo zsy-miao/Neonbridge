@@ -63,6 +63,21 @@ public sealed class ComputeCaseRunner
         return Run(testCase, program => defines + ShaderWorkbench.Translate(program));
     }
 
+    /// <summary>Runs a case translated with typed image views (TranslationOptions.TypedImageViews), by dxc or (<paramref name="direct"/>) the DXIL backend.</summary>
+    public IReadOnlyList<string> RunTypedViews(ComputeCase testCase, bool direct)
+    {
+        var options = new TranslationOptions(StructuredControlFlow: true, PinWaveSize: false, EmulateWaveSize: true) { TypedImageViews = true };
+
+        var suffix = "_dxc";
+
+        if (direct)
+        {
+            suffix = "_direct";
+        }
+
+        return Run(testCase with { Name = testCase.Name + suffix }, program => HlslTranslator.Translate(program, options).Hlsl, direct);
+    }
+
     /// <summary>Runs a case compiled by the DXIL backend instead of dxc (the same translation, the same expectations).</summary>
     public IReadOnlyList<string> RunDirect(ComputeCase testCase)
     {

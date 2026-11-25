@@ -214,7 +214,7 @@ internal sealed unsafe class ShaderVisibleHeap
 
         record[StrideDword] = buffer.Word1;
         record[RecordsDword] = buffer.Records;
-        record[FormatDword] = buffer.Format;
+        record[FormatDword] = buffer.Word3;
         MirrorOne(index);
     }
 
