@@ -20,21 +20,23 @@
     <text x="74" y="212" font-size="28" fill="#dedeec">Test them all in one convenient launcher.</text>
 
     <g font-size="20" font-weight="600" fill="#dedeec">
-      <rect x="74" y="244" width="146" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
-      <text x="147" y="271" text-anchor="middle">ScarlettPort</text>
-      <rect x="232" y="244" width="112" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
-      <text x="288" y="271" text-anchor="middle">victory</text>
-      <rect x="356" y="244" width="136" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
-      <text x="424" y="271" text-anchor="middle">VItoriaBr</text>
-      <rect x="504" y="244" width="84" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
-      <text x="546" y="271" text-anchor="middle">ztrx</text>
-      <rect x="600" y="244" width="72" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
-      <text x="636" y="271" text-anchor="middle">xcl</text>
-      <rect x="684" y="244" width="108" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
-      <text x="738" y="271" text-anchor="middle">TuxBox</text>
+      <rect x="74" y="244" width="80" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="114" y="271" text-anchor="middle">KLBF</text>
+      <rect x="166" y="244" width="124" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="228" y="271" text-anchor="middle">Flamingo</text>
+      <rect x="302" y="244" width="168" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="386" y="271" text-anchor="middle">victory-fork</text>
+      <rect x="482" y="244" width="146" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="555" y="271" text-anchor="middle">VI-BR-PORT</text>
+      <rect x="640" y="244" width="113" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="696" y="271" text-anchor="middle">Belobug</text>
+      <rect x="765" y="244" width="135" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="832" y="271" text-anchor="middle">VItoriaBr</text>
+      <rect x="912" y="244" width="168" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="996" y="271" text-anchor="middle">ScarlettPort</text>
     </g>
 
     <rect x="1036" y="58" width="176" height="48" rx="24" fill="#ff2e97"/>
-    <text x="1124" y="90" text-anchor="middle" font-size="22" font-weight="800" fill="#ffffff">WIP · v0.1.0</text>
+    <text x="1124" y="90" text-anchor="middle" font-size="22" font-weight="800" fill="#ffffff">WIP · v0.3.0</text>
   </g>
 </svg>

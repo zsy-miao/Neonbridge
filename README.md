@@ -12,19 +12,27 @@ Read from the [GTA VI PC race tracker](https://github.com/vuyp/gta6-pc-race) ([l
 
 Lanes, as the tracker reads them: **Picture** (1 mostly dark, 3 lit with faults, 5 the console's picture), **Speed** (fps reported in play), **Stability** (longest session without a crash).
 
-| Race # | Project | Card | Picture | Speed | Stability |
-|---|---|---|---|---|---|
-| 1 | 🟢 **[klbf-lab](https://github.com/PastiiJay/klbf-lab)** | AMD | 3/5: lit, tints and faint lines | 5–9 fps | 77 min |
-| 2 | 🟢 **[Flamingo](https://github.com/realblastex/flamingo)** | NVIDIA | 2/5: shadows missing, rooms dark | 7.8–14 fps (unconfirmed) | 24 min |
-| 3 | 🟢 **[victory-fork](https://github.com/fxceless/victory-fork)** (VIctory-fxceless) | NVIDIA | 2/5: shadows black | 4.5–7.6 fps | 30 min |
-| 4 | 🟢 **[VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT)** | NVIDIA 8 GB | 2/5: shadows black | 4–7 fps at 1080p | about an hour |
-| 5 | 🟢 **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)** | AMD | lit and whole, stand-in light | 5–7 fps | 15 min |
-| 6 | [ruff-lab](https://github.com/LoverCatys/ruff-lab) | AMD | lit, no magenta | 3.6 fps | 39 min |
-| 7 | [victory-unified](https://github.com/Itsbatt/victory-unified) | NVIDIA | stand-in light | about 2 fps | 49 min |
-| 8–18 | CBL VIctory, AnyXboxX, ztrx (archived here), [Kelvaroq](https://github.com/fablinoo/kelvaroq), vilocity, BRVIctory-ka1qux, VIniVIdiVIci, victory-perf, Vice-Tay, omonkey, victory-amd | | | 1–14 fps | |
-| 19 | 🟢 **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)** | NVIDIA | lit, stand-in light | 3.5–6 fps | not reported |
-| 23 | 🟢 **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)** | NVIDIA | shadows dark | about 4 fps | not reported |
-| 28 | [XCL](https://github.com/ivall/xcl) (archived here) | NVIDIA | stage 5: recognisable picture | | |
+- **1.** 🟢 **[klbf-lab](https://github.com/PastiiJay/klbf-lab)**  
+  AMD · 3/5: lit, tints and faint lines · 5–9 fps · 77 min without a crash
+- **2.** 🟢 **[Flamingo](https://github.com/realblastex/flamingo)**  
+  NVIDIA · 2/5: shadows missing, rooms dark · 7.8–14 fps (unconfirmed) · 24 min without a crash
+- **3.** 🟢 **[victory-fork](https://github.com/fxceless/victory-fork)** (VIctory-fxceless)  
+  NVIDIA · 2/5: shadows black · 4.5–7.6 fps · 30 min without a crash
+- **4.** 🟢 **[VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT)**  
+  NVIDIA 8 GB · 2/5: shadows black · 4–7 fps at 1080p · about an hour without a crash
+- **5.** 🟢 **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)**  
+  AMD · lit and whole, stand-in light · 5–7 fps · 15 min without a crash
+- **6.** [ruff-lab](https://github.com/LoverCatys/ruff-lab)  
+  AMD · lit, no magenta · 3.6 fps · 39 min without a crash
+- **7.** [victory-unified](https://github.com/Itsbatt/victory-unified)  
+  NVIDIA · stand-in light · about 2 fps · 49 min without a crash
+- **8–18.** CBL VIctory, AnyXboxX, ztrx (archived here), [Kelvaroq](https://github.com/fablinoo/kelvaroq), vilocity, BRVIctory-ka1qux, VIniVIdiVIci, victory-perf, Vice-Tay, omonkey, victory-amd
+- **19.** 🟢 **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**  
+  NVIDIA · lit, stand-in light · 3.5–6 fps
+- **23.** 🟢 **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**  
+  NVIDIA · shadows dark · about 4 fps
+- **28.** [XCL](https://github.com/ivall/xcl) (archived here)  
+  NVIDIA · stage 5: recognisable picture
 
 25 projects are in-game (stage 6 of 7) and 12 more show a recognisable picture (stage 5); the full list is on the tracker.
 
@@ -32,15 +40,13 @@ Lanes, as the tracker reads them: **Picture** (1 mostly dark, 3 lit with faults,
 
 Tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB (driver 616.92), 16 GB RAM, Windows 11. Most authors test on faster cards (RTX 4070 to 5090, RX 9070 XT), so expect lower frame rates here than theirs. The launcher lists the runtimes in this order.
 
-| # | Runtime | Verified here |
-|---|---|---|
-| 1 | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | No (not yet tested on NVIDIA by its author) |
-| 2 | [Flamingo](https://github.com/realblastex/flamingo) | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
-| 3 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
-| 4 | [VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT) | No (its author tests on an RTX 4060 Ti 8 GB, the closest card to ours) |
-| 5 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | No |
-| 6 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
-| 7 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
+1. **[KLBF Lab](https://github.com/PastiiJay/klbf-lab)**: No (not yet tested on NVIDIA by its author)
+2. **[Flamingo](https://github.com/realblastex/flamingo)**: Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs
+3. **[VIctory-fxceless](https://github.com/fxceless/victory-fork)**: Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker
+4. **[VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT)**: No (its author tests on an RTX 4060 Ti 8 GB, the closest card to ours)
+5. **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)**: No
+6. **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)**: Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far
+7. **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)**: Yes: intro at 30 fps, 3D scenes at 2–3 fps
 
 xcl is archived (28th on the race): `git checkout 5a8260eeef4a0308a5048d5d382b10564e58a3cf -- vendor/xcl` brings it back. ztrx-victory (Zettrox/ztrx, upstream now gone) is archived too: `git checkout 2210a25024c0ffedc232661f7b312c06e88c86f2 -- vendor/ztrx-victory` brings it back.
 
@@ -64,12 +70,21 @@ The first start of a runtime takes a while: it builds the runtime and prepares t
 
 ## Screenshots
 
-| | |
-|---|---|
-| ![The launcher: runtimes, details, preset and the game](assets/picker.png) | ![Advanced: mix mode and the run options](assets/mix.png) |
-| **The launcher.** Pick a runtime and a preset, then press Play. | **Advanced.** Mix parts of different runtimes, or set options for a run. |
-| ![The loader preparing the shaders](assets/loader.png) | ![The controls overlay](assets/controls.png) |
-| **The loader.** Shows what's happening before the game starts. | **On-screen keys and frame rate.** |
+**The launcher.** Pick a runtime and a preset, then press Play.
+
+![The launcher: runtimes, details, preset and the game](assets/picker.png)
+
+**Advanced.** Mix parts of different runtimes, or set options for a run.
+
+![Advanced: mix mode and the run options](assets/mix.png)
+
+**The loader.** Shows what's happening before the game starts.
+
+![The loader preparing the shaders](assets/loader.png)
+
+**On-screen keys and frame rate.**
+
+![The controls overlay](assets/controls.png)
 
 ## Mix and match (help wanted)
 
