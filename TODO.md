@@ -40,6 +40,9 @@ Open work. Each item is tested in a run of its own.
 - xcl b4019c4 + 7bea019: split-wave64 mask liveness (masks read only lane by lane stay in their half; 7bea019 is that solver's per-block speed-up). Ours exchanges every mask (split_wave64.rs:12). A port of x64_masks.rs (1.2k lines, x64-recompiler IR) to hlsl is worth it only if exchange cost shows in a wave64 profile.
 - The master runs the ref watch.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
+  - ref watch (storage) to port:
+    - xshader (Coder4): VItoriaBr 67bb579 (select between two immediate samplers by a static-sampler range); rebox 18c049c (a buffer V# below 4 GiB not in GPU memory reads as empty: a float base word faulted the GPU); five-star 97dafaa (64-bit image atomics as uint64 typed atomics).
+    - d3d12 (Coder5): leonida d16eb1ff0 (a depth placement inside another one's extent gets its own image), 028a414fa (queue slots 16/17 with a fence are Signal/Wait), adc4f314b (list slots 50-54 translate title CPU descriptor handles), 89fdb83e0 (a console DS texture with UAV is created without it); ScarlettCompat 93c0f96 (map the console layout word before CreatePlacedResourceX), dd0e557 (layout 0x102 as the Gfx10 4 KiB chain); VItoriaBr faca57e (recheck time/byte budget before staging heap textures).
   - xshader: TuxBox 1397cb6 with X2W a351c0fb/b8889849/a90c0fb: allow pixel_wave DPP16 quad exchange in loops (hlsl.rs:6286), gated on proven whole-quad EXEC (s_wqm_b64 exec,exec).
   - xshader: xcl 1f8d4be: POPS ROV (operand 239 / hwreg 25 -> RasterizerOrdered PS UAVs).
   - runtime (optional): xcl 79fde18: add compile time to the compute_failure log (device/compute.rs:660).
@@ -72,6 +75,7 @@ Open work. Each item is tested in a run of its own.
 - Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
 
 ## Done / not needed
+- not needed (ref watch): five-star 22f2085/79a5a3e d16 format buffer halves (hlsl.rs:11595 already packs two per VGPR); five-star 95c3cd9 format element range rule (our buffers are D3D views, bounds checked by the view, no V# range emulation); five-star 1a8083a superstep carry (off by default there, no superstep dispatch here); ScarlettCompat 8b8511f/a88e509 BCPack (6ixpack's bcpack tool owns decoding, not the runtime); palmetto 755e947..772fa54 (Vulkan frame-capture replay and slot-70 docs; no D3D12 path change).
 - xshader: xcl 74fe4c2 v_div_fixup_f16 ported (9250d13, TB_DIV_FIXUP_F16=0 off).
 - xshader: X2W 6f784a50 v_dot2_u32_u16 / v_dot4_u32_u8 ported (70d0b20, TB_DOT_UNSIGNED=0 off).
 - not needed: leonida 273b3bdf9 (c63e099): neither the exe nor any 6m DLL imports ReadFileEx/ReadFileScatter; ReadFile already commits before the read (read_commit.rs:77).
