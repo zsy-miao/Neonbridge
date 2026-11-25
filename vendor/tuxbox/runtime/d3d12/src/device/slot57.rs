@@ -24,6 +24,8 @@ pub(super) struct Record {
     pub b: Vec<u8>,
     pub ps: Vec<u8>,
     pub vs: Vec<u8>,
+    /// The seven code slots as read (address:size, ! when unreadable).
+    pub slots: String,
 }
 
 impl Record {
@@ -57,6 +59,13 @@ pub(super) fn decode(desc: *const c_void) -> Option<Record> {
         b: blob(word(3), word(4), BLOCK_MAX),
         ps: blob(word(5), word(6), PROGRAM_MAX),
         vs: blob(word(9), word(10), PROGRAM_MAX),
+        slots: if super::compute::readable(address, 0x28 + 7 * 32) {
+            (0..7).map(|n| {
+                let (code, size) = (word(5 + 4 * n), word(6 + 4 * n));
+                let ok = code != 0 && size != 0 && size <= PROGRAM_MAX && super::compute::readable(code, size);
+                format!("{n}={code:#x}:{size:#x}{}", if ok || code == 0 { "" } else { "!" })
+            }).collect::<Vec<_>>().join(" ")
+        } else { "unreadable".into() },
     })
 }
 
@@ -581,7 +590,10 @@ unsafe fn build(device: &super::Device, record: &Record, targets: Targets) -> Re
     use windows::core::Interface;
     static CACHE: Mutex<Vec<(u64, Arc<Upgrade>, Option<u8>)>> = Mutex::new(Vec::new());
     if record.vs.is_empty() || record.ps.is_empty() {
-        return Err("VS or PS program unreadable".into());
+        // test157: 32 records were refused here. Name each of the seven code
+        // slots (five-star PipelineLayout: {code, size, metadata, size} at
+        // +0x28 + 32n) so the empty or unreadable one shows.
+        return Err(format!("VS or PS program unreadable (slots {})", record.slots));
     }
     let identity = super::identity(device);
     let root = unsafe { super::compute::root_proxy(record.root as *mut c_void, identity.as_raw()) }
