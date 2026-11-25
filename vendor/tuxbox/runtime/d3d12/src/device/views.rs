@@ -117,6 +117,23 @@ pub(super) unsafe extern "system" fn cbv(
             }
         }
     }
+    // The 256-byte round-up must not run past the buffer under the view (a
+    // debug-layer error that can remove the device): it stops at the last
+    // whole 256 bytes inside it, a null CBV when none fit.
+    // TUXBOX_CBV_CLAMP_END=0 keeps the rounded size.
+    if let (Some(value), Some(buffer)) = (&mut aligned, &owner)
+        && value.BufferLocation != 0 && crate::env_toggle!("TUXBOX_CBV_CLAMP_END") != Some("0")
+    {
+        let (start, width) = unsafe { (buffer.native.GetGPUVirtualAddress(), buffer.native.GetDesc().Width) };
+        if let Some(room) = (start + width).checked_sub(value.BufferLocation)
+            && u64::from(value.SizeInBytes) > room
+        {
+            value.SizeInBytes = (room / 256 * 256) as u32;
+            if value.SizeInBytes == 0 {
+                value.BufferLocation = 0;
+            }
+        }
+    }
     // A desktop runtime removes the device for an invalid CBV description.
     if let (Some(value), Some(guest)) = (&aligned, unsafe { desc.as_ref() })
         && (!value.BufferLocation.is_multiple_of(256) || !value.SizeInBytes.is_multiple_of(256)
