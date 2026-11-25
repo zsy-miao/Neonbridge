@@ -33,6 +33,9 @@ static SHOWN: AtomicBool = AtomicBool::new(false);
 static STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the box is on screen now (the controls panel moves below it).
+/// The runtime draws its own fps overlay (toml own_overlay): ours starts hidden.
+pub static OWN_OVERLAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn shown() -> bool {
     SHOWN.load(Ordering::Relaxed)
 }
@@ -104,7 +107,10 @@ fn run(name: String, window: fn(&str) -> Option<HWND>) {
             return;
         }
         SetLayeredWindowAttributes(hwnd, 0, 215, LWA_ALPHA);
-        let mut wanted = std::env::var("NEONBRIDGE_FPS").is_ok_and(|v| v.trim() == "1");
+        // A runtime with its own fps overlay (toml own_overlay) starts with
+        // ours hidden, whatever NEONBRIDGE_FPS says; F3 still shows it.
+        let own = OWN_OVERLAY.load(Ordering::Relaxed);
+        let mut wanted = !own && std::env::var("NEONBRIDGE_FPS").is_ok_and(|v| v.trim() == "1");
         let mut f3 = false;
         let mut count = 0usize;
         let mut msg: MSG = std::mem::zeroed();
@@ -124,7 +130,10 @@ fn run(name: String, window: fn(&str) -> Option<HWND>) {
             if let (true, Some(g)) = (show, game) {
                 let mut r: RECT = std::mem::zeroed();
                 GetWindowRect(g, &mut r);
-                SetWindowPos(hwnd, HWND_TOPMOST, r.left + 24, r.top + 48, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                // Top-right: runtimes draw their own overlays top-left (Flamingo's perf panel).
+                let mut me: RECT = std::mem::zeroed();
+                GetWindowRect(hwnd, &mut me);
+                SetWindowPos(hwnd, HWND_TOPMOST, r.right - 24 - (me.right - me.left), r.top + 48, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                 let n = SAMPLES.lock().map(|v| v.len()).unwrap_or(0);
                 if n != count || !SHOWN.load(Ordering::Relaxed) {
                     InvalidateRect(hwnd, std::ptr::null(), 0);

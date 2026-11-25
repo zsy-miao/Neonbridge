@@ -1769,6 +1769,9 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         env.push(("VICTORY_DATA_DIR".to_owned(), family_saves().display().to_string()));
     }
     env.extend(spec.env.iter().map(|(k, v)| (k.clone(), fill(v, &places))));
+    if spec.flag("own_overlay") {
+        crate::fps::OWN_OVERLAY.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if name == "xcl" && std::env::var_os("XCL_DXIL_CACHE").is_none() {
         env.push(("XCL_DXIL_CACHE".to_owned(), xcl_cache().display().to_string()));
     }

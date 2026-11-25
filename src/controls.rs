@@ -218,7 +218,10 @@ fn run(name: String) {
                 GetWindowRect(g, &mut r);
                 // Below the fps box when that is up.
                 let below = if crate::fps::shown() { crate::fps::HEIGHT + 8 } else { 0 };
-                SetWindowPos(hwnd, HWND_TOPMOST, r.left + 24, r.top + 48 + below, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                // Top-right, under our fps graph: runtimes draw their own overlays top-left.
+                let mut me: RECT = std::mem::zeroed();
+                GetWindowRect(hwnd, &mut me);
+                SetWindowPos(hwnd, HWND_TOPMOST, r.right - 24 - (me.right - me.left), r.top + 48 + below, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
             } else if shown {
                 ShowWindow(hwnd, SW_HIDE);
             }
