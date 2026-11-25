@@ -12,6 +12,9 @@ pub(super) struct ResourceHeap {
     pub(super) cpu: Range<usize>,
     gpu: u64,
     stride: usize,
+    /// Slots the identity map clamps to: the native heap's, whose last is
+    /// the null guard (device::identity_guard); 0 derives the title's count.
+    clamp: u32,
     // The guest heap owns its descriptor arena and placed-view metadata.
     guest: ID3D12Pageable,
 }
@@ -45,7 +48,7 @@ impl ResourceHeap {
     ) -> windows::core::Result<u64> {
         let parent = list.parent.as_ref().ok_or(E_INVALIDARG)?;
         // All command list proxies own a reference to their creating Device.
-        let slots = if self.stride == 0 { 0 } else { u32::try_from(self.cpu.len() / self.stride).unwrap_or(0) };
+        let slots = if self.clamp != 0 { self.clamp } else if self.stride == 0 { 0 } else { u32::try_from(self.cpu.len() / self.stride).unwrap_or(0) };
         let map = unsafe { device::descriptor_paging::index_map(parent, arena, slots)? };
         let address = unsafe { map.GetGPUVirtualAddress() };
         if address == 0 { return Err(E_INVALIDARG.into()); }
@@ -132,7 +135,9 @@ pub(super) unsafe extern "system" fn bind_heaps(
                 guest: unsafe { ID3D12Pageable::from_raw_borrowed(&object) }.unwrap().clone(),
                 cpu: views.range.clone(),
                 gpu: unsafe { heap.native.GetGPUDescriptorHandleForHeapStart() }.ptr,
-                stride: views.range.len() / (unsafe { heap.native.GetDesc() }.NumDescriptors - device::root_tables::tail_len(&heap.native)).max(1) as usize,
+                stride: views.range.len() / (unsafe { heap.native.GetDesc() }.NumDescriptors - device::root_tables::tail_len(&heap.native)
+                    - u32::from(heap.state.arena.is_none() && device::identity_guard(desc))).max(1) as usize,
+                clamp: if heap.state.arena.is_none() && device::identity_guard(desc) { unsafe { heap.native.GetDesc() }.NumDescriptors } else { 0 },
             });
         }
         previous = Some(desc.Type);

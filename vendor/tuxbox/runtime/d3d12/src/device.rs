@@ -718,13 +718,23 @@ unsafe fn create_heap_logged(
             && desc.NumDescriptors <= desc_table::SAMPLER_HEAP_SLOTS { &visible_samplers } else { desc };
         // Root view tables: private slots past the title's (root_tables).
         let tail = root_tables::tail_for(desc);
-        let tailed = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: desc.NumDescriptors + tail, ..*desc };
+        // One null slot past the title's and the root tail: xshader e5ae009
+        // clamps a stray identity-mapped index to the heap's last slot, which
+        // was a real title (or root table) descriptor (836d91f). The index
+        // map's clamp count is the native heap size (commands/descriptors.rs).
+        let guard = u32::from(identity_guard(desc));
+        let tailed = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: desc.NumDescriptors + tail + guard, ..*desc };
         match unsafe { this.native.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&tailed) } {
             Ok(native) => {
                 root_tables::heap_created(&native, desc.NumDescriptors, tail);
                 // Host contents of unwritten slots are undefined.
                 if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
                     null_kinds::fill(&this.native, &native, desc.NumDescriptors, desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE);
+                }
+                if guard != 0 {
+                    let stride = unsafe { this.native.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
+                    let start = unsafe { native.GetCPUDescriptorHandleForHeapStart() }.ptr;
+                    null_kinds::NullKind::DEFAULT.write(&this.native, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start + (desc.NumDescriptors + tail) as usize * stride });
                 }
                 (native, None)
             }
@@ -1624,4 +1634,15 @@ mod adapters {
         let factory: IDXGIFactory4 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.ok()?;
         unsafe { factory.EnumWarpAdapter::<IDXGIAdapter>() }.ok().map(|a| a.cast().unwrap_or(a))
     }
+}
+
+/// Unpaged shader-visible CBV/SRV/UAV heaps get a null guard slot last, for
+/// xshader e5ae009's identity clamp. TUXBOX_IDENTITY_GUARD=0 adds none (the
+/// clamp then lands on the heap's last real slot, as before).
+pub(crate) fn identity_guard(desc: &D3D12_DESCRIPTOR_HEAP_DESC) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_IDENTITY_GUARD") != Some("0"))
+        && desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+        && desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
+        && desc.NumDescriptors < 1_000_000
 }
