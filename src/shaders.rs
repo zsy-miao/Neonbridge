@@ -1484,6 +1484,12 @@ impl Worker {
             log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
                 seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
                 stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+            // The churn line: how much of this xshader's output was new HLSL.
+            // 1273355's 515 s prewarm compiled 1141 and reused 25, from an
+            // xshader change three revs back (59ad7f5's helper pruning).
+            let (new, same) = (stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed));
+            log(format!("seen prewarm: HLSL churn: {new} of {} translations emitted HLSL the DXIL cache had not seen (dxc compiled them), {same} unchanged (DXIL reused), {:.0}% changed",
+                new + same, if new + same == 0 { 0.0 } else { 100.0 * new as f64 / (new + same) as f64 }));
         }
         // TUXBOX_PREWARM=0 serves the title's requests at once, without
         // building the archive first. With stale translations served it runs
