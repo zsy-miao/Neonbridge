@@ -318,6 +318,22 @@ fn head(p: &[u8]) -> String {
     format!("{:#x} bytes [{hex}]", p.len())
 }
 
+/// RT0's decoded blend and write mask, or why it falls back to opaque
+/// (test156-161: SLOT57_REAL frames black; whether 2D records blend).
+fn blend_note(a: &[u8]) -> String {
+    if !super::cb_blend::enabled() {
+        return "opaque (TUXBOX_SLOT57_CB_BLEND=0)".into();
+    }
+    match super::cb_blend::state_block_blend(a) {
+        Ok(b) => {
+            let t = &b.RenderTarget[0];
+            format!("rt0 on {} src {} dst {} op {} srcA {} dstA {} opA {} mask {:#x}", t.BlendEnable.0, t.SrcBlend.0, t.DestBlend.0, t.BlendOp.0,
+                t.SrcBlendAlpha.0, t.DestBlendAlpha.0, t.BlendOpAlpha.0, t.RenderTargetWriteMask)
+        }
+        Err((n, why)) => format!("opaque fallback (target {n}: {why})"),
+    }
+}
+
 /// Logs a record's depth-stencil, input layout and program heads once per
 /// distinct record hash, 32 lines at most.
 pub(super) fn log_record(slot: u32, desc: *const c_void) {
@@ -358,8 +374,8 @@ pub(super) fn log_record(slot: u32, desc: *const c_void) {
         }
     };
     crate::diagnostics::log_line(format_args!(
-        "slot {slot} record {hash:016x} root {:#x}: dss {dss}; layout (index, format, offset, slot) {layout}; ps {}; vs {}",
-        record.root, head(&record.ps), head(&record.vs)));
+        "slot {slot} record {hash:016x} root {:#x}: blend {}; dss {dss}; layout (index, format, offset, slot) {layout}; ps {}; vs {}",
+        record.root, blend_note(&record.a), head(&record.ps), head(&record.vs)));
 }
 
 /// s_inst_prefetch 3, the program's first instruction after its header.
