@@ -343,7 +343,25 @@ fn unmap_once(address: usize) -> Result<(), u32> {
     }
     let bytes = info.RegionSize;
     if unsafe { UnmapViewOfFile2(GetCurrentProcess(), view, 0) } == 0 {
-        return Err(os_error("unmap:256"));
+        let e = os_error("unmap:256");
+        // test153: 88 joins failed here with no GPU import ever over the
+        // range. Name the region and its neighbours so the pinning owner
+        // shows (TUXBOX_UNMAP87_REGION=0 off).
+        if std::env::var("TUXBOX_UNMAP87_REGION").map_or(true, |v| v.trim() != "0") {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 24 || n.is_power_of_two() {
+                let show = |at: usize| match region(at) {
+                    Ok(r) => format!("{:#x}+{:#x} base {:#x} state {:#x} type {:#x} protect {:#x} initial {:#x}",
+                        r.BaseAddress.addr(), r.RegionSize, r.AllocationBase.addr(), r.State, r.Type, r.Protect, r.AllocationProtect),
+                    Err(e) => format!("{at:#x} query error {e}"),
+                };
+                crate::loader::log(&format!(
+                    "xmem: unmap:256 error {e} for view {address:#x}: region {}; before {}; after {} ({n} so far; TUXBOX_UNMAP87_REGION=0 off)",
+                    show(address), show(address.wrapping_sub(1)), show(address + bytes)));
+            }
+        }
+        return Err(e);
     }
     crate::lazy_commit::note_unmap(address);
     let placeholder = unsafe {
