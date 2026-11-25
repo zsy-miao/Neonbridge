@@ -733,6 +733,8 @@ struct Emitter<'a> {
     /// Scalar bitwise ops mixing a lane mask with a number: index -> the mask's
     /// source position (see `mixed_mask`).
     mixed_masks: BTreeMap<usize, usize>,
+    /// Mask ops whose SCC is voted across the wave after they run (TB_SCC_VOTE).
+    scc_votes: BTreeSet<usize>,
     binding_spaces: BTreeMap<(u32, u32), u32>,
     mesh_bindings: Option<mesh_bindings::MeshBindings>,
     compute_derivatives: bool,
@@ -1517,11 +1519,19 @@ fn is_lane_mask(masks: &BTreeSet<u8>, o: &Opnd) -> bool {
     }
 }
 
-fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>, mixed: &mut BTreeMap<usize, usize>) {
+fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, reads: &mut BTreeSet<usize>, mixed: &mut BTreeMap<usize, usize>, scc: &mut BTreeSet<usize>) {
     let MaskState { masks, half, parked } = state;
     if let Some(k) = mixed_mask::mask_position(masks, ins) { mixed.insert(i, k); }
     let is_mask = is_lane_mask;
     let m = ins.mnemonic.as_str();
+    // A bitwise or saveexec op on lane masks sets SCC from this lane's bit in
+    // the per-lane form; the console's SCC is "any bit of the whole result".
+    // Mixed ops already compute it from the whole words.
+    if (mixed_mask::bitwise(ins).is_some() || m.contains("_saveexec_"))
+        && !mixed.contains_key(&i) && ins.src.iter().any(|o| is_mask(masks, o))
+    {
+        scc.insert(i);
+    }
     // A wave64 mask parked in two lanes of a spare VGPR comes back as a mask,
     // even with other instructions between the two v_readlane_b32 (cxchhh,
     // VIctory 90228a7). The restore is read as the s_mov_b32 the spill
@@ -1607,17 +1617,18 @@ fn mask_step(state: &mut MaskState, ins: &Insn, i: usize, half_pairs: bool, read
 /// edge (five-star-recomp b5fe3a7/48c08b8, GPL-3.0, ThatRecompDev: a register that
 /// is a mask on one path and an integer on another). A register that may be a mask
 /// on any path into a read is read as one. TB_MASK_CFG=0 follows program order.
-fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>) {
+fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>, BTreeSet<usize>) {
     let mut mixed = BTreeMap::new();
+    let mut scc = BTreeSet::new();
     let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
     let mut reads = BTreeSet::new();
     let linear = std::env::var("TB_MASK_CFG").is_ok_and(|v| v.trim() == "0");
     if linear {
         let mut state = MaskState::default();
         for (i, ins) in insns.iter().enumerate() {
-            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed);
+            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
         }
-        return (reads, mixed);
+        return (reads, mixed, scc);
     }
     let index: HashMap<i64, usize> = insns.iter().enumerate().map(|(i, ins)| (ins.offset as i64, i)).collect();
     let successors = |i: usize| -> Vec<usize> {
@@ -1637,14 +1648,14 @@ fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>) 
     };
     let mut before: Vec<Option<MaskState>> = vec![None; insns.len()];
     if insns.is_empty() {
-        return (reads, mixed);
+        return (reads, mixed, scc);
     }
     before[0] = Some(MaskState::default());
     let mut work = std::collections::VecDeque::from([0usize]);
     let mut scratch = BTreeSet::new();
     while let Some(i) = work.pop_front() {
         let mut state = before[i].clone().unwrap_or_default();
-        mask_step(&mut state, &insns[i], i, half_pairs, &mut scratch, &mut BTreeMap::new());
+        mask_step(&mut state, &insns[i], i, half_pairs, &mut scratch, &mut BTreeMap::new(), &mut BTreeSet::new());
         for s in successors(i) {
             let joined = match &before[s] {
                 None => state.clone(),
@@ -1667,10 +1678,10 @@ fn lane_mask_reads(insns: &[Insn]) -> (BTreeSet<usize>, BTreeMap<usize, usize>) 
     for (i, ins) in insns.iter().enumerate() {
         if let Some(state) = &before[i] {
             let mut state = state.clone();
-            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed);
+            mask_step(&mut state, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
         }
     }
-    (reads, mixed)
+    (reads, mixed, scc)
 }
 
 /// The user SGPR that carries the resource descriptor heap of a shader that
@@ -2192,11 +2203,22 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     } else { (false, false) };
     // Pixel shaders: whole-wave integer sums and exclusive prefixes (TuxBox 444066e).
     if ex.stage == Stage::Pixel && !wave_cull && !page_waves { wave_alloc::prepare(&mut insns); }
-    let (lane_masks, mixed_masks) = if general_elections || (!resolve_wave32 && mixed_mask::on()) {
-        let (reads, mixed) = lane_mask_reads(&insns);
+    let scc_votes_on = !resolve_wave32 && std::env::var("TB_SCC_VOTE").map_or(true, |v| v.trim() != "0");
+    let (lane_masks, mixed_masks, scc_votes) = if general_elections || (!resolve_wave32 && mixed_mask::on()) || scc_votes_on {
+        let (reads, mixed, scc) = lane_mask_reads(&insns);
         (if general_elections { reads } else { BTreeSet::new() },
-         if !resolve_wave32 && mixed_mask::on() { mixed } else { BTreeMap::new() })
-    } else { (BTreeSet::new(), BTreeMap::new()) };
+         if !resolve_wave32 && mixed_mask::on() { mixed } else { BTreeMap::new() },
+         if scc_votes_on { scc } else { BTreeSet::new() })
+    } else { (BTreeSet::new(), BTreeMap::new(), BTreeSet::new()) };
+    // The passes below splice instructions in (exit_stubs::inline moves loop
+    // exits before the code they rejoin), so an index into `insns` here names
+    // another instruction at emission (test142: four panics in the mixed-mask
+    // path at a non-bitwise op). Keep the analysis by offset and mnemonic and
+    // map it to the final indices once the passes are done.
+    let key = |i: usize| (insns[i].offset, insns[i].mnemonic.clone());
+    let lane_masks: BTreeSet<(usize, String)> = lane_masks.into_iter().map(key).collect();
+    let mixed_masks: BTreeMap<(usize, String), usize> = mixed_masks.into_iter().map(|(i, k)| (key(i), k)).collect();
+    let scc_votes: BTreeSet<(usize, String)> = scc_votes.into_iter().map(key).collect();
     let reflection = reflection_compact::prepare(ex, &mut insns);
     let group_extrema = group_extrema::prepare(ex, &mut insns);
     let straight_exchange = ex.stage == Stage::Compute && !lone_lane::on()
@@ -2239,8 +2261,10 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // dxc -O1). Move each one before the code it rejoins. TB_INLINE_EXIT_STUBS=0 off.
     exit_stubs::inline(&mut insns);
     let mut em = Emitter::new(ex, insns);
-    em.lane_masks = lane_masks;
-    em.mixed_masks = mixed_masks;
+    let keyed = |i: &Insn| (i.offset, i.mnemonic.clone());
+    em.lane_masks = em.insns.iter().enumerate().filter(|(_, i)| lane_masks.contains(&keyed(i))).map(|(j, _)| j).collect();
+    em.mixed_masks = em.insns.iter().enumerate().filter_map(|(j, i)| mixed_masks.get(&keyed(i)).map(|&k| (j, k))).collect();
+    em.scc_votes = em.insns.iter().enumerate().filter(|(_, i)| scc_votes.contains(&keyed(i))).map(|(j, _)| j).collect();
     em.page_waves = page_waves;
     em.wave_cull = wave_cull;
     em.fspx_wave = fspx_wave;
@@ -2882,6 +2906,7 @@ impl<'a> Emitter<'a> {
             declared_samplers: declared_samplers(ex),
             lane_masks: BTreeSet::new(),
             mixed_masks: BTreeMap::new(),
+            scc_votes: BTreeSet::new(),
             binding_spaces: BTreeMap::new(),
             mesh_bindings: None,
             compute_derivatives: false,
@@ -5442,6 +5467,18 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
     }
 
+    /// After a mask op whose SCC is this lane's bit: the wave's SCC, so an SCC
+    /// branch or select after it is uniform like the EXEC and VCC branches, and
+    /// a group barrier under it is reached by every lane (VIctory e9765a7: group
+    /// barriers in divergent flow hang the GPU). Gated like `exec_vote`.
+    fn vote_scc(&mut self, i: usize) {
+        if self.scc_votes.contains(&i) && self.exec_vote(9).is_some() {
+            self.line("#if __SHADER_TARGET_MAJOR >= 6");
+            self.line("scc = WaveActiveAnyTrue(scc != 0u) ? 1u : 0u;");
+            self.line("#endif");
+        }
+    }
+
     /// Emit `line(vote)` on SM 6 and `line(fallback)` below it.
     fn vote_line(&mut self, vote: Option<&str>, fallback: &str, line: impl Fn(&str) -> String) {
         match vote {
@@ -5765,6 +5802,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             self.emit_insn(i, ins, is_ps, target.get(&i).copied())
                 .map_err(|e| format!("{e} [{} @ {:#x}]", ins.mnemonic, ins.offset))?;
+            self.vote_scc(i);
             if open && target.get(&i).is_some_and(|t| cur.contains(t)) {
                 // Another branch to an enclosing target just updated its flag.
                 // The following instruction must reevaluate the guard.
