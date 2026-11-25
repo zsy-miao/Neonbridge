@@ -182,3 +182,14 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - Small fixes:
   - 17dffad: zero the XMM high quadword.
   - 65fc79e: the rebox credit is wrong.
+
+## Ref watch
+- rebox 5d01c25: evict view textures no live descriptor can read, recreate on demand; vendor/tuxbox/runtime/d3d12/src/device/heap.rs.
+- VIctory-zhai a64b6c6: rectangle GS honours unwritten OSG1 channels and output modes; vendor/tuxbox/runtime/d3d12/src/device/rectangle.rs.
+- VIctory-zhai 7f26331: keep sample masks in prebuilt graphics pipelines; vendor/tuxbox/runtime/d3d12/src/device/graphics.rs.
+- VItoriaBr c0b60a0: reconcile signature-row interpolation, keep console element order; vendor/tuxbox/tools/shader-compiler/src/hlsl (signature).
+- Xbox2Windows 6d8ab3d3: prove v_cvt_f32_u32 results uniform for v_readfirstlane_b32; vendor/tuxbox/tools/shader-compiler/src/hlsl/scalar_bits.rs.
+- Xbox2Windows 9d013a48: keep s_bfe_u32 wide (>=32) field widths; vendor/tuxbox/tools/shader-compiler/src/hlsl/scalar_bits.rs.
+- Xbox2Windows 155397e6: refuse a malformed root signature blob per request; vendor/tuxbox/runtime/d3d12/src/device (root signature).
+- xcl e591a8c: direct DXIL lowers a repeating compute program's blocks once; vendor/tuxbox/tools/shader-compiler.
+- xcl 79fde18: log the driver's verdict when a huge compute PSO is refused; vendor/tuxbox/runtime/d3d12/src/device/compile_budget.rs.
