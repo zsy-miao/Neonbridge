@@ -2078,7 +2078,7 @@ mod retire_waits {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         if n <= 4 || n.is_power_of_two() {
             crate::diagnostics::log_line(format_args!(
-                "retire waits: a batch with a 64-bit value write waits for {} other queues first ({n} so far; TUXBOX_RETIRE_WAITS_ALL=1 on)", others.len()));
+                "retire waits: a batch with a 64-bit memory wait waits for {} other queues first ({n} so far; TUXBOX_RETIRE_WAITS_ALL=1 on)", others.len()));
         }
     }
 
@@ -2737,7 +2737,14 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             if crate::diagnostics::transient_pool::enabled() {
                 pool_lists.borrow_mut().push(list.native.as_raw() as usize);
             }
-            if retire_waits::enabled() && state.value_writes.iter().any(|w| w.2 == 8) {
+            // The trigger is the list's slot-74 64-bit memory wait, the retire
+            // wait itself (five-star 226887c: slot 74 is Wait64BitValueX, not a
+            // write); TUXBOX_RETIRE_WAITS_ON=write keeps the old 64-bit write trigger.
+            if retire_waits::enabled() && if crate::env_toggle!("TUXBOX_RETIRE_WAITS_ON") == Some("write") {
+                state.value_writes.iter().any(|w| w.2 == 8)
+            } else {
+                state.prefix.segments.iter().any(|s| s.wide())
+            } {
                 retire_write.set(true);
             }
             if !state.stalled_writes.is_empty() {

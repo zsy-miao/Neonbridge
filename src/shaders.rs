@@ -554,6 +554,34 @@ fn note_peak(child: &std::process::Child) {
     }
 }
 
+/// Where the prewarm's time goes: xshader (translation) and dxc milliseconds, summed over jobs.
+static TRANSLATE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TRANSLATE_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DXC_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DXC_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn note_times(outcome: &Outcome) {
+    let (xs, dxc) = match outcome {
+        Outcome::Compiled(xs, dxc) => (Some(*xs), Some(*dxc)),
+        Outcome::Reused(xs) => (Some(*xs), None),
+        _ => (None, None),
+    };
+    if let Some(ms) = xs {
+        TRANSLATE_MS.fetch_add(ms, Ordering::Relaxed);
+        TRANSLATE_N.fetch_add(1, Ordering::Relaxed);
+    }
+    if let Some(ms) = dxc {
+        DXC_MS.fetch_add(ms, Ordering::Relaxed);
+        DXC_N.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn job_times(workers: usize) -> String {
+    let (xs, xn, dx, dn) = (TRANSLATE_MS.load(Ordering::Relaxed), TRANSLATE_N.load(Ordering::Relaxed), DXC_MS.load(Ordering::Relaxed), DXC_N.load(Ordering::Relaxed));
+    format!("time: xshader {:.1} s over {xn} translations ({} ms each), dxc {:.1} s over {dn} compiles ({} ms each); over {workers} workers that is about {:.0} s of xshader and {:.0} s of dxc",
+        xs as f64 / 1000.0, xs / xn.max(1), dx as f64 / 1000.0, dx / dn.max(1), xs as f64 / 1000.0 / workers as f64, dx as f64 / 1000.0 / workers as f64)
+}
+
 fn job_peaks() -> String {
     let n = JOB_PEAK_N.load(Ordering::Relaxed).max(1);
     format!("xshader/dxc process peaks: mean {} MiB, max {} MiB over {} processes; in-process compiles still running past their time: {}",
@@ -1201,6 +1229,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                     }
                     running.fetch_add(1, Ordering::AcqRel);
                     let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0());
+                    note_times(&outcome);
                     running.fetch_sub(1, Ordering::AcqRel);
                     let counter = match outcome {
                         Outcome::Compiled(..) => &stats.prewarmed,
@@ -1239,6 +1268,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         say(format!("{label}: all {total} done in {:.0} s", started.elapsed().as_secs_f64()));
     }
     say(format!("{label}: {}", job_peaks()));
+    say(format!("{label}: {}", job_times(workers)));
     let _ = fs::remove_dir_all(scratch);
 }
 

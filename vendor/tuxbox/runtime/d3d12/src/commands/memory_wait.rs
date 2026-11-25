@@ -183,6 +183,13 @@ fn compare(now: u64, target: u64, comparison: u32) -> bool {
     }
 }
 
+impl Segment {
+    /// A 64-bit (slot 74) wait.
+    pub(super) fn wide(&self) -> bool {
+        self.word.wide
+    }
+}
+
 pub(super) struct Segment {
     prefix: Option<(ID3D12CommandList, ID3D12CommandAllocator)>,
     word: Word,
