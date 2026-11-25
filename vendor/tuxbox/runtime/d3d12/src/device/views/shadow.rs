@@ -1065,20 +1065,35 @@ pub(crate) fn uav_copy(dst: usize, src: usize, count: usize, stride: usize) {
 /// A list bound UAV descriptors `ranges` (CPU handles): their copies are
 /// marked written before the next write-back.
 pub(crate) fn uav_submitted(ranges: &[std::ops::Range<usize>]) {
-    if !uav_remark() || ranges.is_empty() {
+    if !uav_remark() {
         return;
     }
-    let views = lock(&UAV_VIEWS);
-    if views.is_empty() {
-        return;
-    }
-    let mut pending = lock(&UAV_PENDING);
-    for range in ranges {
-        for (_, &r) in views.range(range.clone()) {
-            if pending.len() < 1 << 16 && !pending.contains(&r) {
-                pending.push(r);
+    // Sampled at lists #1,2,4,...: lists with UAV table ranges, views they
+    // hit, and the shadow UAV views known, to tell an empty re-mark (no
+    // tables: direct heap indexing) from one that finds no shadow.
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static LISTS: AtomicU64 = AtomicU64::new(0);
+    static WITH: AtomicU64 = AtomicU64::new(0);
+    static HITS: AtomicU64 = AtomicU64::new(0);
+    let n = LISTS.fetch_add(1, Relaxed) + 1;
+    if !ranges.is_empty() {
+        WITH.fetch_add(1, Relaxed);
+        let views = lock(&UAV_VIEWS);
+        let mut pending = lock(&UAV_PENDING);
+        for range in ranges {
+            for (_, &r) in views.range(range.clone()) {
+                HITS.fetch_add(1, Relaxed);
+                if pending.len() < 1 << 16 && !pending.contains(&r) {
+                    pending.push(r);
+                }
             }
         }
+    }
+    if n.is_power_of_two() {
+        let known = lock(&UAV_VIEWS).len();
+        crate::diagnostics::log_line(format_args!(
+            "shadow uav re-mark: {n} lists, {} with UAV table ranges, {} shadow views hit, {known} shadow UAV views known (TUXBOX_SHADOW_UAV_REMARK=0 off)",
+            WITH.load(Relaxed), HITS.load(Relaxed)));
     }
 }
 
