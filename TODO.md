@@ -14,7 +14,10 @@ Open work. Each item is tested in a run of its own.
 - Pending A/B runs: `TUXBOX_DEPTH_TWINS=1`; `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_WAIT_HOIST` vs ad8e641; `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_PRESENT_RELEASE_ALL=1` (five-star b828157); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
-- Turn the untested commits back on, one per run: 04a7bee, 81a0a3a, 65e77ca (stale shader serving).
+- A/B for the untested commits, one per run:
+  - 04a7bee: the title memory cap is already on by default (13824 MiB unless TUXBOX_TITLE_MEMORY_MB is set). B: `TUXBOX_TITLE_MEMORY_MB=0`, uncapped. Compare commit growth and the working set budget line. Safe.
+  - 81a0a3a: the CRT ReadFile commit is already on by default. B: `TUXBOX_READ_COMMIT_CRT=0`. Watch for short CRT reads (998) in the video atlas. Safe.
+  - 65e77ca: stale shader serving is off in test runs, because the launcher sets `NEONBRIDGE_STALE_SHADERS=0` (main.rs:198,546). A/B: `NEONBRIDGE_STALE_SHADERS=1` on a run right after an xshader landing. Risk: it mixes xshader builds (see risk 65e77ca), so it voids that run's shader results.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
 ## d3d12
