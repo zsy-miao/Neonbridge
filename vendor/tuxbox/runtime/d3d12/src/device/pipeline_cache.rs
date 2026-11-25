@@ -562,6 +562,11 @@ pub(in crate::device) fn library_cap_mb() -> u64 {
 }
 
 /// The library's serialized size now (the pipeline builder's cap).
+/// (pipelines loaded from the library, pipelines stored into it) so far.
+pub(in crate::device) fn library_counts() -> (u64, u64) {
+    (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed))
+}
+
 pub(in crate::device) fn library_bytes() -> u64 {
     let state = LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
     match &*state {

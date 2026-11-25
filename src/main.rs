@@ -169,6 +169,20 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     if mode == Mode::Restore {
         return restore(&game.ok_or(USAGE)?);
     }
+    // --pipelines: nothing waits on it, so every program is translated before
+    // the build (no NEONBRIDGE_PREWARM_MAX_S cap unless one is set), and the
+    // d3d12 builder's outcome lines go to this console.
+    if mode == Mode::Pipelines {
+        // SAFETY: no other thread of ours runs yet.
+        unsafe {
+            if std::env::var_os("NEONBRIDGE_PREWARM_MAX_S").is_none() {
+                std::env::set_var("NEONBRIDGE_PREWARM_MAX_S", "0");
+            }
+            if std::env::var_os("TUXBOX_LOG").is_none() {
+                std::env::set_var("TUXBOX_LOG", "stderr");
+            }
+        }
+    }
     // A release ships the providers prebuilt beside the exe: use them unless a
     // source was named (--tuxbox or TUXBOX_ROOT).
     let prebuilt = if tuxbox.is_none() { prebuilt_dir() } else { None };
@@ -370,7 +384,7 @@ fn build_pipelines(game: &Path, session: &str) -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| (std::thread::available_parallelism().map_or(2, |n| n.get()) as u32 / 2).max(1));
     println!("[launch] pipelines: building the journal's pipelines on {threads} threads at below-normal priority (Ctrl+C stops; what is made is kept)");
     let made = unsafe { build(threads) };
-    println!("[launch] pipelines: {made} made into the pipeline library");
+    println!("[launch] pipelines: {made} in the pipeline library (stored now or already there; the d3d12 \"pipeline build: done\" line above counts the rest)");
     Ok(())
 }
 

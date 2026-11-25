@@ -532,6 +532,11 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     let shader = |hash: u64| shaders.get(&hash).map(|&(start, end)| bytes[start..end].to_vec());
     let next = AtomicUsize::new(0);
     let (made, failed) = (AtomicU64::new(0), AtomicU64::new(0));
+    // test143's --pipelines said "83497 made" while the library grew 0.2 MB:
+    // every pipeline the driver accepted counted, stored or not. Each outcome
+    // is counted apart now, and the export returns only what is in the library.
+    let (nulled, unanswered, unreadable, refused) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
+    let (loaded_before, stored_before) = crate::device::pipeline_cache::library_counts();
     let full = std::sync::atomic::AtomicBool::new(false);
     let started = Instant::now();
     std::thread::scope(|scope| {
@@ -554,7 +559,18 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
                         std::thread::sleep(Duration::from_secs(2));
                     }
                     let payload = &bytes[frame.start..frame.end];
-                    let ok = crate::big_stack::run(|| unsafe { build_one(device.get(), frame.tag, payload, root.get(), &shader) });
+                    let _ = crate::device::shader_cache::take_misses();
+                    let outcome = crate::big_stack::run(|| unsafe { build_one(device.get(), frame.tag, payload, root.get(), &shader) });
+                    if !crate::device::shader_cache::take_misses().is_empty() {
+                        unanswered.fetch_add(1, Ordering::Relaxed);
+                    }
+                    match outcome {
+                        Built::Made => {}
+                        Built::Nulled => { nulled.fetch_add(1, Ordering::Relaxed); }
+                        Built::Unreadable => { unreadable.fetch_add(1, Ordering::Relaxed); }
+                        Built::Refused => { refused.fetch_add(1, Ordering::Relaxed); }
+                    }
+                    let ok = matches!(outcome, Built::Made);
                     let n = if ok { made.fetch_add(1, Ordering::Relaxed) + 1 } else { failed.fetch_add(1, Ordering::Relaxed); made.load(Ordering::Relaxed) };
                     if ok && n.is_multiple_of(64) {
                         let size = crate::device::pipeline_cache::library_bytes();
@@ -576,11 +592,27 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     });
     crate::device::pipeline_cache::save_now();
     let made = made.load(Ordering::Relaxed);
+    let (loaded_after, stored_after) = crate::device::pipeline_cache::library_counts();
+    let (loaded, stored) = (loaded_after - loaded_before, stored_after - stored_before);
+    let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
     crate::diagnostics::log_line(format_args!(
-        "pipeline build: done, {made} made, {} failed, {:.0} s", failed.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+        "pipeline build: done in {:.0} s, {} of {} journal pipelines tried: {stored} stored into the library, {loaded} already in it,          {} made but not in the library; {} with null shaders (untranslated), {} with a translation request unanswered,          {} unreadable (shader or root signature missing from the journal), {} refused by the driver",
+        started.elapsed().as_secs_f64(), next.load(Ordering::Relaxed).min(order.len()), order.len(),
+        made.saturating_sub(stored + loaded), g(&nulled), g(&unanswered), g(&unreadable), g(&refused)));
     drop(roots);
     drop(owner);
-    made as u32
+    (stored + loaded).min(u64::from(u32::MAX)) as u32
+}
+
+/// What became of one journal pipeline.
+enum Built {
+    Made,
+    /// Made with null shaders: a stage had no translation.
+    Nulled,
+    /// Its record, root signature or shader is missing from the journal.
+    Unreadable,
+    /// The driver (or our create path) refused it.
+    Refused,
 }
 
 /// Makes one journal pipeline on the worker path (its library store included).
@@ -590,29 +622,29 @@ unsafe fn build_one(
     payload: &[u8],
     root: &dyn Fn(u64) -> Option<IUnknown>,
     shader: &dyn Fn(u64) -> Option<Vec<u8>>,
-) -> bool {
+) -> Built {
     let iid = ID3D12PipelineState::IID;
     let mut out = ptr::null_mut();
     NULLED.with(|n| n.set(false));
     let status = match tag {
         b'G' => {
-            let Some(mut stream) = (unsafe { deserialize(payload, root, shader) }) else { return false };
+            let Some(mut stream) = (unsafe { deserialize(payload, root, shader) }) else { return Built::Unreadable };
             let desc = stream.desc();
             unsafe { super::super::create_pipeline(device, &desc, &iid, &mut out) }
         }
         _ => {
             let mut r = Reader(payload, 0);
-            let (Some(root_hash), Some(cs), Some(node_mask), Some(flags)) = (r.u64(), r.u64(), r.u32(), r.u32()) else { return false };
+            let (Some(root_hash), Some(cs), Some(node_mask), Some(flags)) = (r.u64(), r.u64(), r.u32(), r.u32()) else { return Built::Unreadable };
             let guest_root = if root_hash == 0 { None } else {
                 // The guest root proxy, typed as the title passes it (no QueryInterface).
                 let proxy = root(root_hash);
                 let raw = proxy.as_ref().map(Interface::as_raw);
                 match raw.as_ref().and_then(|raw| unsafe { ID3D12RootSignature::from_raw_borrowed(raw) }).cloned() {
                     Some(r) => Some(r),
-                    None => return false,
+                    None => return Built::Unreadable,
                 }
             };
-            let Some(code) = shader(cs) else { return false };
+            let Some(code) = shader(cs) else { return Built::Unreadable };
             let compute = OwnedCompute { code, root: guest_root, node_mask, flags: D3D12_PIPELINE_STATE_FLAGS(flags as i32) };
             let desc = compute.desc();
             unsafe { create_pipeline_x(device, &desc, 0, ptr::null(), &iid, &mut out) }
@@ -623,6 +655,10 @@ unsafe fn build_one(
     if made {
         drop(unsafe { IUnknown::from_raw(out) });
     }
-    made && !nulled
+    match (made, nulled) {
+        (true, false) => Built::Made,
+        (true, true) => Built::Nulled,
+        _ => Built::Refused,
+    }
 }
 
