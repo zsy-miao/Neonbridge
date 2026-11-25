@@ -779,11 +779,21 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // published to the session before the .cso, so d3d12 finds it when
         // the .cso shows.
         const SIDECARS: [&str; 2] = ["heap", "slots"];
+        let link_producer: Option<&str> = (ext == "link").then(|| key.split('_').next()).flatten();
         let publish = |bytes: &[u8]| -> Result<(), String> {
             for ext in SIDECARS {
                 if let Ok(text) = fs::read(cache.join(format!("{key}.{ext}"))) {
                     let tmp = session.join(format!("{key}.{}.{ext}reply", std::process::id()));
-                    let _ = fs::write(&tmp, text).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.{ext}"))));
+                    let _ = fs::write(&tmp, &text).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.{ext}"))));
+                    // A linked producer's heap access is its own (the pixel
+                    // stage has its own key): d3d12 looks a pipeline's stages
+                    // up by their source digests, so the link's .heap is
+                    // published under the producer's digest too.
+                    if ext == "heap" && link_producer.is_some_and(|p| !session.join(format!("{p}.heap")).is_file()) {
+                        let producer = link_producer.unwrap_or_default();
+                        let tmp = session.join(format!("{producer}.{}.heapreply", std::process::id()));
+                        let _ = fs::write(&tmp, &text).and_then(|_| publish_file(&tmp, &session.join(format!("{producer}.heap"))));
+                    }
                 }
             }
             let tmp = session.join(format!("{key}.{}.reply", std::process::id()));
