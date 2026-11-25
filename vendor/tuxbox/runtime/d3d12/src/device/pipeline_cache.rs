@@ -524,6 +524,9 @@ fn load_or_make(
         let mut guard = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
         let flights = guard.get_or_insert_with(Default::default);
         if let Some(running) = flights.get(&text) {
+            if super::stream::background::skip_join_on_title() {
+                return Err(windows::Win32::Foundation::E_ABORT.into());
+            }
             let running = running.clone();
             // Let go of the map before waiting: other names' misses need it.
             drop(guard);
@@ -576,7 +579,26 @@ fn load_or_make(
         })
         .unwrap_or(false)
     } else {
-        let _stores = STORES.read().unwrap_or_else(|e| e.into_inner());
+        // test179: every pipeline worker and a title steal sat on this read
+        // side for ~22 s behind a save's Serialize of the library. A store
+        // that would wait leaves the pipeline to the next save, which stores
+        // it under its write side before serialising. TUXBOX_STORE_DEFER=0 waits.
+        let _stores = match STORES.try_read() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) if crate::env_toggle!("TUXBOX_STORE_DEFER") != Some("0") => {
+                let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+                deferred.push(Deferred(name, made.clone(), text.clone()));
+                let n = DEFERRED_N.fetch_add(1, Ordering::Relaxed) + 1;
+                drop(deferred);
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "pipeline library: a store met a save serialising and was left to the next save ({n} so far; TUXBOX_STORE_DEFER=0 waits)"));
+                }
+                return Ok(made);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => STORES.read().unwrap_or_else(|e| e.into_inner()),
+        };
         match with_library(host, |l| l.library.clone()) {
             Some(library) => {
                 let ok = store_logged(unsafe { library.StorePipeline(&name, &made) }, &text);
@@ -591,15 +613,37 @@ fn load_or_make(
         }
     };
     if stored {
-        STORED.fetch_add(1, Ordering::Relaxed);
-        if let Some(names) = names() {
-            let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
-            if names.known.insert(text.clone()) {
-                names.new.push(text.clone());
-            }
-        }
+        note_stored(&text);
     }
     Ok(made)
+}
+
+fn note_stored(text: &str) {
+    STORED.fetch_add(1, Ordering::Relaxed);
+    if let Some(names) = names() {
+        let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
+        if names.known.insert(text.to_string()) {
+            names.new.push(text.to_string());
+        }
+    }
+}
+
+/// A store left to the next save (TUXBOX_STORE_DEFER).
+struct Deferred(HSTRING, ID3D12PipelineState, String);
+// SAFETY: D3D12 pipeline states are free-threaded.
+unsafe impl Send for Deferred {}
+static DEFERRED: Mutex<Vec<Deferred>> = Mutex::new(Vec::new());
+static DEFERRED_N: AtomicU64 = AtomicU64::new(0);
+
+/// Stores the deferred pipelines; the caller holds STORES' write side.
+fn store_deferred(library: &mut Library) {
+    let deferred = std::mem::take(&mut *DEFERRED.lock().unwrap_or_else(|e| e.into_inner()));
+    for Deferred(name, made, text) in deferred {
+        if store_logged(unsafe { library.library.StorePipeline(&name, &made) }, &text) {
+            library.dirty = true;
+            note_stored(&text);
+        }
+    }
 }
 
 /// A StorePipeline result; a failure is logged with its HRESULT and name
@@ -839,6 +883,9 @@ fn save(dir: &Path) {
     let locked = crate::env_toggle!("TUXBOX_PIPELINE_SAVE_LOCKED") == Some("1");
     let _stores = STORES.write().unwrap_or_else(|e| e.into_inner());
     let mut held = Some(LIBRARY.lock().unwrap_or_else(|e| e.into_inner()));
+    if let Some(State::Ready(Some(library))) = held.as_deref_mut() {
+        store_deferred(library);
+    }
     let library = match held.as_deref_mut() {
         Some(State::Ready(Some(library))) if library.dirty => library.library.clone(),
         _ => return save_lists(dir),

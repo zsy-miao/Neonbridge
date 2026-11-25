@@ -440,6 +440,34 @@ pub(in crate::device) fn skip_heavy_on_title(shader_bytes: u64) -> bool {
     true
 }
 
+/// A title thread never waits for a pipeline another thread is compiling.
+/// test179 hung at t≈273 s: the render waited 22 s on group 21 while three
+/// Subrender workers sat in build_here steals, joining (load_or_make's
+/// flight) or queueing behind pipelines made elsewhere. The build is not
+/// started here; like skip_heavy_on_title, the job goes to the workers first
+/// in line and its binds skip until made. TUXBOX_TITLE_NO_JOIN=0 joins.
+pub(in crate::device) fn skip_join_on_title() -> bool {
+    if crate::env_toggle!("TUXBOX_TITLE_NO_JOIN") == Some("0") {
+        return false;
+    }
+    let title = TITLE_BUILD.with(|t| t.get()) || STEALING.with(|s| s.get());
+    if !title {
+        return false;
+    }
+    if let Some(slot) = CURRENT.with(|c| c.borrow().clone()) {
+        slot.heavy.store(true, Ordering::Release);
+        DONE.1.notify_all();
+    }
+    HEAVY_SKIPPED.with(|h| h.set(true));
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "background pipelines: a title thread did not join a pipeline compiling on another thread, sent to the workers ({n} so far; TUXBOX_TITLE_NO_JOIN=0 joins)"));
+    }
+    true
+}
+
 /// A title wait on `slot` gives up: its compile is large.
 fn heavy_skip(slot: &Upgrade) -> bool {
     if !slot.heavy.load(Ordering::Acquire) || !heavy_on() || on_worker() {

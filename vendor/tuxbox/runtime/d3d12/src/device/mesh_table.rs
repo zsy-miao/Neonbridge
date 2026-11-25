@@ -150,6 +150,7 @@ pub(super) fn reflected(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            mem_dir: None,
             hoisted,
         })))
     }

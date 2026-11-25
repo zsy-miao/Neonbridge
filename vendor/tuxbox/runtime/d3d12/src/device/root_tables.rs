@@ -124,6 +124,8 @@ pub(crate) const TAIL: u32 = 4096;
 
 struct Tail {
     first: u32,
+    /// The slots added past the title's (the ring, then the mem_dir run).
+    len: u32,
     next: u32,
     stride: u64,
     cpu: usize,
@@ -137,7 +139,23 @@ static TAILS: Mutex<Option<HashMap<usize, Tail>>> = Mutex::new(None);
 pub(crate) fn tail_for(desc: &D3D12_DESCRIPTOR_HEAP_DESC) -> u32 {
     (enabled() && desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
         && desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
-        && desc.NumDescriptors.checked_add(TAIL).is_some_and(|n| n <= 1_000_000)) as u32 * TAIL
+        && desc.NumDescriptors.checked_add(TAIL + mem_slots()).is_some_and(|n| n <= 1_000_000)) as u32 * (TAIL + mem_slots())
+}
+
+/// TUXBOX_MEM_DIR: the copy run's slots past the ring (mem_dir).
+fn mem_slots() -> u32 {
+    if super::mem_dir::enabled() { super::mem_dir::SLOTS } else { 0 }
+}
+
+/// The copy run of `heap` (mem_dir): (heap index of its first slot, CPU
+/// start, stride). None: the heap has no tail or no run.
+pub(crate) fn mem_run(heap: &ID3D12DescriptorHeap) -> Option<(u32, usize, usize)> {
+    let tails = TAILS.lock().unwrap_or_else(|e| e.into_inner());
+    let tail = tails.as_ref()?.get(&(heap.as_raw() as usize))?;
+    (tail.len >= TAIL + super::mem_dir::SLOTS).then(|| {
+        let first = tail.first + TAIL;
+        (first, tail.cpu + (u64::from(first) * tail.stride) as usize, tail.stride as usize)
+    })
 }
 
 /// Records (or forgets, `tail` 0) the private slots of a new native heap.
@@ -150,6 +168,7 @@ pub(crate) fn heap_created(heap: &ID3D12DescriptorHeap, first: u32, tail: u32) {
     let key = heap.as_raw() as usize;
     if tail == 0 {
         tails.remove(&key);
+        super::mem_dir::heap_gone(key);
         return;
     }
     let mut device: Option<ID3D12Device> = None;
@@ -157,7 +176,7 @@ pub(crate) fn heap_created(heap: &ID3D12DescriptorHeap, first: u32, tail: u32) {
     let Some(device) = device else { return };
     let stride = u64::from(unsafe { device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) });
     tails.insert(key, Tail {
-        first, next: 0, stride,
+        first, len: tail, next: 0, stride,
         cpu: unsafe { heap.GetCPUDescriptorHandleForHeapStart() }.ptr,
         gpu: unsafe { heap.GetGPUDescriptorHandleForHeapStart() }.ptr,
         cached: HashMap::new(),

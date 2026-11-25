@@ -42,6 +42,10 @@ pub(crate) struct ComputeTable {
     /// (t4, space32766), the bitmap's root UAV (u0) the next one (see
     /// view_marks).
     pub(crate) view_marks: Option<u32>,
+    /// TUXBOX_MEM_DIR: root slot of the page directory SRV (t0,
+    /// space32764); the fault UAV (u0) and the copy run's heap index (b0,
+    /// one constant) are the next two (see mem_dir).
+    pub(crate) mem_dir: Option<u32>,
     /// TUXBOX_MESH_HOISTED_SRV: guest descriptor-table parameters this root
     /// made root SRVs (a mesh shader's FSSM 0x100 record: the console driver
     /// hoists the raw buffer in the table's first slot into user SGPRs);
@@ -360,6 +364,7 @@ fn reflected_tables(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            mem_dir: None,
             hoisted: Vec::new(),
         })))
     }
@@ -469,6 +474,7 @@ fn extend_root_from(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            mem_dir: None,
             hoisted: Vec::new(),
         })))
     }
@@ -480,7 +486,7 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool, strides: bool, words: bool, tw: &[u32],
+    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool, strides: bool, words: bool, tw: &[u32], mem: bool,
 ) -> Result<Arc<ComputeTable>> {
     let add_tw = !tw.is_empty() && !table.is_some_and(|t| t.table_words.is_some());
     let add_words = words && !table.is_some_and(|t| t.slot_words.is_some());
@@ -491,7 +497,8 @@ pub(super) fn with_runtime_tables(
     let add_quad = quad && !table.is_some_and(|t| t.quad_mask.is_some());
     let add_bvh = bvh && !table.is_some_and(|t| t.bvh_raw.is_some());
     let add_strides = strides && !table.is_some_and(|t| t.root_strides.is_some());
-    if let Some(table) = table.filter(|_| !add_tw && !add_words && !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh && !add_strides) {
+    let add_mem = mem && !table.is_some_and(|t| t.mem_dir.is_some());
+    if let Some(table) = table.filter(|_| !add_tw && !add_words && !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh && !add_strides && !add_mem) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -582,6 +589,22 @@ pub(super) fn with_runtime_tables(
             parameters.push(root_srv(super::root_strides::REGISTER, super::root_strides::SPACE));
             Some((parameters.len() as u32 - 1, guests))
         } else { table.and_then(|t| t.root_strides.clone()) };
+        // Page directory (mem_dir, MESIA-Unified draw.rs:948-961): the
+        // directory SRV, the fault UAV, the run's heap index; copies are
+        // read through ResourceDescriptorHeap.
+        let mem_slot = if add_mem {
+            parameters.push(root_srv(0, super::mem_dir::SPACE));
+            parameters.push(D3D12_ROOT_PARAMETER1 { ParameterType: D3D12_ROOT_PARAMETER_TYPE_UAV, ..root_srv(0, super::mem_dir::SPACE) });
+            parameters.push(D3D12_ROOT_PARAMETER1 {
+                ParameterType: D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS,
+                ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+                Anonymous: D3D12_ROOT_PARAMETER1_0 {
+                    Constants: D3D12_ROOT_CONSTANTS { ShaderRegister: 0, RegisterSpace: super::mem_dir::SPACE, Num32BitValues: 1 },
+                },
+            });
+            desc.Anonymous.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+            Some(parameters.len() as u32 - 3)
+        } else { table.and_then(|t| t.mem_dir) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let _padded = pad_root_constants(&mut desc);
@@ -604,6 +627,7 @@ pub(super) fn with_runtime_tables(
             table_words: tw_slot,
             view_marks: marks_slot,
             quad_mask: quad_slot,
+            mem_dir: mem_slot,
             hoisted: table.map(|t| t.hoisted.clone()).unwrap_or_default(),
             bvh_raw: bvh_slot,
             root_strides: strides_slot,
@@ -717,6 +741,7 @@ fn append_corroborated_ranges(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            mem_dir: None,
             hoisted: Vec::new(),
         })))
     }
@@ -848,6 +873,7 @@ pub(super) fn srv_as_uav(
             root_strides: None,
             view_marks: None,
             quad_mask: None,
+            mem_dir: None,
             hoisted: Vec::new(),
         })))
     }

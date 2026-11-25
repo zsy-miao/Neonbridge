@@ -37,6 +37,7 @@ pub(crate) mod slot_views;
 pub(crate) mod slot_words;
 pub(crate) mod table_words;
 pub(crate) mod bvh_raw;
+pub(crate) mod mem_dir;
 pub(crate) mod raw_views;
 pub(crate) mod root_strides;
 pub(crate) mod placed_device;

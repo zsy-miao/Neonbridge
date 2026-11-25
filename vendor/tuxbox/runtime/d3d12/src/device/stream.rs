@@ -714,7 +714,7 @@ unsafe fn create(
             device.state.desc_table.literals(&device.native, &words);
         }
         let table = super::compute_table::with_runtime_tables(
-            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats, reads_slots, marks, quad, false, false, reads_words, &table_words)?;
+            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats, reads_slots, marks, quad, false, false, reads_words, &table_words, false)?;
         unsafe { field.write(table.native.as_raw()) };
         binding_root = Some(table.layout.payload().to_vec());
         pipeline.raster_table = Some(table);

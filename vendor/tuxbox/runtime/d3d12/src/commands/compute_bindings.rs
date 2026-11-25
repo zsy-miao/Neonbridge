@@ -551,6 +551,28 @@ impl Bindings {
             }
             None => None,
         };
+        // Page directory (mem_dir, MESIA-Unified memory.rs ready() and
+        // draw.rs:948-961): make the pages this dispatch names ready (root
+        // views, address-like root constants, last faults), then bind.
+        let mem_dir = match table.mem_dir {
+            Some(slot) if COMPUTE => {
+                let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+                let mut device = None::<ID3D12Device>;
+                unsafe { guest.native.GetDevice(&mut device)? };
+                let device = device.ok_or(E_INVALIDARG)?;
+                let constants: Vec<u32> = self.compute_args.values()
+                    .filter_map(|a| match a { Argument::Constants(c) => Some(c.values().copied()), _ => None })
+                    .flatten().collect();
+                let named = crate::device::mem_dir::named(self.root_guests.values().copied(), &constants);
+                crate::device::mem_dir::take_faults(owner, &device);
+                crate::device::mem_dir::ready(owner, &device, &named);
+                let visible = if arena.is_some() { None } else {
+                    self.heaps.iter().flatten().find(|h| unsafe { h.GetDesc() }.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+                };
+                crate::device::mem_dir::binding(&device, visible).map(|(dir, faults, base)| (slot, dir, faults, base))
+            }
+            _ => None,
+        };
         // Write marks (view_marks): the same heap's view-mark table and the
         // bitmap shaders mark their writes in.
         let view_marks = match table.view_marks {
@@ -743,6 +765,11 @@ impl Bindings {
                 }
                 for &(slot, address) in &bvh_views {
                     list.SetComputeRootShaderResourceView(slot, address);
+                }
+                if let Some((slot, dir, faults, base)) = mem_dir {
+                    list.SetComputeRootShaderResourceView(slot, dir);
+                    list.SetComputeRootUnorderedAccessView(slot + 1, faults);
+                    list.SetComputeRoot32BitConstant(slot + 2, base, 0);
                 }
                 if let Some((slot, address)) = stride_table {
                     list.SetComputeRootShaderResourceView(slot, address);
