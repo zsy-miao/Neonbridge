@@ -321,6 +321,16 @@ static COMPACTED_POOLS: AtomicU64 = AtomicU64::new(0);
 /// the new tiles (tile bytes shared by resources at one address, as every
 /// page here already is), on the pages queue before the targets are mapped
 /// again, and title work waits for that fence as for any mapping.
+/// TUXBOX_PAGES_COMPACT_FILL_PCT (50; 25 the first cut): the fullest pool a
+/// compaction moves. test177 compacted 8 pools of at most a quarter full by
+/// 337 s and none after, while 61 pools (3904 MiB) held 2113 MiB of tiles in
+/// use with 1790 MiB free: the half-full pools were never candidates. The
+/// move still needs that many free tiles in other pools.
+fn compact_fill_pct() -> usize {
+    static PCT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PCT.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_COMPACT_FILL_PCT").and_then(|v| v.trim().parse().ok()).unwrap_or(50).min(100))
+}
+
 fn compact_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_COMPACT") != Some("0"))
@@ -407,10 +417,27 @@ impl Pages {
             }
         }
         let Some(h) = (0..n)
-            .filter(|&h| used[h] != 0 && used[h] <= POOL_PAGES as usize / 4 && !busy.get(h).copied().unwrap_or(false)
+            .filter(|&h| used[h] != 0 && used[h] * 100 <= POOL_PAGES as usize * compact_fill_pct() && !busy.get(h).copied().unwrap_or(false)
                 && !written[h] && !self.pool_empty[h] && now.duration_since(self.pool_used[h]).as_secs_f64() >= idle_s)
             .min_by_key(|&h| used[h])
-        else { return };
+        else {
+            // Why no pool moved: each live pool's first blocker, every 30 s.
+            static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_none_or(|t| now.duration_since(t).as_secs() >= 30) {
+                *last = Some(now);
+                let (mut full, mut busy_n, mut writ, mut fresh) = (0, 0, 0, 0);
+                for h in (0..n).filter(|&h| used[h] != 0 && !self.pool_empty[h]) {
+                    if used[h] * 100 > POOL_PAGES as usize * compact_fill_pct() { full += 1 }
+                    else if busy.get(h).copied().unwrap_or(false) { busy_n += 1 }
+                    else if written[h] { writ += 1 }
+                    else { fresh += 1 }
+                }
+                crate::diagnostics::log_line(format_args!(
+                    "placed textures: no page pool to compact: {full} over TUXBOX_PAGES_COMPACT_FILL_PCT, {busy_n} used by a recent submission, {writ} holding a render target/depth/UAV, {fresh} used within TUXBOX_SPAN_EVICT_S"));
+            }
+            return;
+        };
         let count = used[h];
         let free_elsewhere = self.pool.free_total - self.pool.free_by_heap[h].len();
         if free_elsewhere < count {
