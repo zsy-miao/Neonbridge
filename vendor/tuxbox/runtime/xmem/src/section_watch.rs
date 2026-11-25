@@ -42,8 +42,32 @@ struct Guards {
 
 static GUARDS: Mutex<Option<Guards>> = Mutex::new(None);
 
-fn lock() -> std::sync::MutexGuard<'static, Option<Guards>> {
-    GUARDS.lock().unwrap_or_else(|e| e.into_inner())
+thread_local! {
+    /// This thread holds GUARDS: a fault it takes cannot wait on the lock.
+    static HOLDING: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+struct Held(std::sync::MutexGuard<'static, Option<Guards>>);
+
+impl core::ops::Deref for Held {
+    type Target = Option<Guards>;
+    fn deref(&self) -> &Option<Guards> { &self.0 }
+}
+impl core::ops::DerefMut for Held {
+    fn deref_mut(&mut self) -> &mut Option<Guards> { &mut self.0 }
+}
+impl Drop for Held {
+    fn drop(&mut self) { HOLDING.with(|h| h.set(false)); }
+}
+
+/// GUARDS is held only for short bookkeeping and one block's protection
+/// changes at a time, never a whole query walk: the write handler waits on
+/// it, and test174's query held it while guarding Bink's 8 MiB frame
+/// buffer, so the handler's spin gave up and two writes died as AVs.
+fn lock() -> Held {
+    let g = GUARDS.lock().unwrap_or_else(|e| e.into_inner());
+    HOLDING.with(|h| h.set(true));
+    Held(g)
 }
 
 /// Gives write access back to `block`'s guard (looked up through any alias);
@@ -75,36 +99,54 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
     }
     install();
     let mut out = Vec::new();
-    let mut slot = lock();
-    let g = slot.get_or_insert_with(Guards::default);
-    let mut block = start & !(BLOCK - 1);
-    while block < end {
-        if !g.clean.contains_key(&block) {
-            let from = block.max(start & !0xfff);
-            let to = (block + BLOCK).min(end);
-            let pages = (to - from).div_ceil(0x1000);
-            if out.len() + pages > cap {
-                // Left unguarded: reported by the next query.
-                break;
+    // Blocks to report and guard, picked under a short hold.
+    let mut taken = Vec::new();
+    {
+        let mut slot = lock();
+        let g = slot.get_or_insert_with(Guards::default);
+        let mut block = start & !(BLOCK - 1);
+        while block < end {
+            if !g.clean.contains_key(&block) {
+                let from = block.max(start & !0xfff);
+                let to = (block + BLOCK).min(end);
+                let pages = (to - from).div_ceil(0x1000);
+                if out.len() + pages > cap {
+                    // Left unguarded: reported by the next query.
+                    break;
+                }
+                out.extend((0..pages).map(|i| from + i * 0x1000));
+                taken.push(block);
             }
-            out.extend((0..pages).map(|i| from + i * 0x1000));
-            if !crate::device_pages::covers(block) && !pinned(block) {
-                protect(g, block);
-            }
+            block += BLOCK;
         }
-        block += BLOCK;
+    }
+    // Each block is guarded under its own hold; aliases are found and
+    // filtered without it. A write between the report and the guard was
+    // made before the caller reads the block, so it is not lost.
+    for block in taken {
+        if crate::device_pages::covers(block) || pinned(block) {
+            continue;
+        }
+        let aliases: Vec<usize> = crate::physical_pages::aliases(block).into_iter()
+            .map(|a| a & !(BLOCK - 1))
+            .filter(|&a| a == block || !(crate::device_pages::covers(a) || pinned(a)))
+            .collect();
+        let mut slot = lock();
+        let g = slot.get_or_insert_with(Guards::default);
+        if !g.clean.contains_key(&block) {
+            protect(g, block, &aliases);
+        }
     }
     Some(out)
 }
 
 /// Makes `block` and its aliases read-only and notes it clean; a block
 /// whose protection change fails stays unguarded (reported written again).
-fn protect(g: &mut Guards, block: usize) {
+fn protect(g: &mut Guards, block: usize, aliases: &[usize]) {
     let mut done = Vec::new();
-    for a in crate::physical_pages::aliases(block) {
-        let a = a & !(BLOCK - 1);
-        // device_pages owns its pages' protection (NOACCESS / READWRITE).
-        if (g.alias_of.contains_key(&a) && a != block) || (a != block && (crate::device_pages::covers(a) || pinned(a))) {
+    // device_pages' and pinned aliases were left out by the caller.
+    for &a in aliases {
+        if g.alias_of.contains_key(&a) && a != block {
             continue;
         }
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
@@ -222,6 +264,10 @@ fn install() {
         // remap only protects), so the holder always finishes. The 10k-yield
         // try_lock spin it replaces gave up while a long query held the lock
         // and passed a guarded write on as an AV (test174).
+        if HOLDING.with(|h| h.get()) {
+            // Faulted while holding GUARDS (it writes nothing guarded): not ours.
+            return CONTINUE_SEARCH;
+        }
         let mut slot = lock();
         let ours = slot.as_mut().is_some_and(|g| open(g, at));
         drop(slot);
