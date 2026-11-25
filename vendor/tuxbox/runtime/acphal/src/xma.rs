@@ -321,9 +321,16 @@ fn decode(context: Context, voice: &mut Voice) -> bool {
     let mut next = (packet + 1) * PACKET_BITS;
     let loops = context.field(0, 12, 8);
     let loop_end = context.field(4, 0, 26);
+    // VIctory 985d8d4 (GPL-3.0, credit to its authors): a loop's skip is of
+    // its first packet, decoded next, not of this one, its last: set after
+    // this packet's own pending skip is applied. TUXBOX_XMA_LOOP_SKIP_NEXT=0
+    // skips the head of the loop's last packet as before.
+    let skip_next = std::env::var("TUXBOX_XMA_LOOP_SKIP_NEXT").map_or(true, |v| v.trim() != "0");
+    let mut loop_skip = None;
     if loops > 0 && loop_end != 0 && loop_end / PACKET_BITS == packet {
         next = context.field(3, 0, 26) / PACKET_BITS * PACKET_BITS;
-        voice.skip = context.field(1, 17, 3) as usize * SUBFRAME_SAMPLES;
+        let n = context.field(1, 17, 3) as usize * SUBFRAME_SAMPLES;
+        if skip_next { loop_skip = Some(n) } else { voice.skip = n }
         voice.stream = None;
         bump(&STATS.loops);
         if loops != 255 {
@@ -333,6 +340,9 @@ fn decode(context: Context, voice: &mut Voice) -> bool {
     let skip = (voice.skip * channels).min(pcm.len());
     voice.skip -= skip / channels;
     voice.pcm.extend(&pcm[skip..]);
+    if let Some(n) = loop_skip {
+        voice.skip = n;
+    }
     if next / PACKET_BITS >= packets {
         context.set_field(0, 20 + current, 1, 0);
         next = 0;
