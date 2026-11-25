@@ -235,15 +235,19 @@ impl Pool {
                 VIRTUAL => desktop_slot == Some(VIRTUAL),
                 _ => self.pads[slot - 2].is_some(),
             };
+            // Pads stay connected and readable unfocused; only keyboard and
+            // mouse follow the foreground, as VIctory-fxceless gameinput.rs
+            // (GPL-3.0, credit) does. TUXBOX_PAD_ANY_FOCUS=0 gates all.
+            let live = active || slot >= 2 && pad_any_focus();
             status.store(
                 if connected {
-                    1 | (u32::from(active) << 1)
+                    1 | (u32::from(live) << 1)
                 } else {
                     0
                 },
                 Ordering::Relaxed,
             );
-            if !connected || !active {
+            if !connected || !live {
                 self.latest[slot] = None;
             }
         }
@@ -265,9 +269,13 @@ impl Pool {
         let synthetic = !active && mask & PAD != 0
             && (!matches!(self.auto_start, AutoStart::Off | AutoStart::Done) || injected(now) != 0)
             && std::env::var("NEONBRIDGE_AUTO_PRESS_ANY_FOCUS").as_deref() != Ok("0");
-        if !active && !synthetic {
+        let pads_only = !active && !synthetic && pad_any_focus();
+        if !active && !synthetic && !pads_only {
             self.mouse.previous = None;
             return;
+        }
+        if pads_only {
+            self.mouse.previous = None;
         }
         if synthetic {
             self.mouse.previous = None;
@@ -308,7 +316,7 @@ impl Pool {
         let inject = injected(now);
         for slot in 0..DEVICES {
             let kind = kind(slot);
-            if kind & mask == 0 || synthetic && primary != Some(slot) {
+            if kind & mask == 0 || synthetic && primary != Some(slot) || pads_only && slot < 2 {
                 continue;
             }
             let data = match slot {
@@ -321,7 +329,7 @@ impl Pool {
                         .copied()
                         .flatten()
                         .unwrap_or_default();
-                    if synthetic { Sample::Pad(Default::default()) } else { Sample::Pad(self.desktop.as_mut().unwrap().merge(pad)) }
+                    if synthetic { Sample::Pad(Default::default()) } else if pads_only { Sample::Pad(pad) } else { Sample::Pad(self.desktop.as_mut().unwrap().merge(pad)) }
                 }
                 VIRTUAL => continue,
                 _ => match self.pads[slot - 2] {
@@ -622,4 +630,10 @@ fn note_pad(buttons: u32) {
             eprintln!("TuxBox gameinput: title read gamepad buttons {buttons:#x}");
         }
     }
+}
+
+fn pad_any_focus() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("TUXBOX_PAD_ANY_FOCUS").is_none_or(|v| v != "0"));
+    *ON
 }
