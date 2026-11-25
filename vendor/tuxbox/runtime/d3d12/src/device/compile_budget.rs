@@ -208,7 +208,13 @@ fn commit_reserve(shader_bytes: u64) -> u64 {
 
 fn try_enter(estimate: u64, tiny: bool, forced: bool, wanted: bool, large: bool, shader_bytes: u64) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    if large && state.large != 0 && enabled() {
+    // test148 #1600 stop: title threads sat in wait_granted / build_here's
+    // join while their compile stood here, since this hold ignored that the
+    // title waits on it and the 30 s give-up, so it had no time limit at low
+    // commit. A wanted or forced compile passes it (xcl 724b9e2: never gate a
+    // pipeline a game thread waits for). TUXBOX_FLOOR_HOLDS_WANTED=1 holds them.
+    let exempt = (wanted || forced) && crate::env_toggle!("TUXBOX_FLOOR_HOLDS_WANTED") != Some("1");
+    if large && state.large != 0 && enabled() && !exempt {
         let floor = sized_floor(shader_bytes);
         let (_, commit) = available();
         if floor != 0 && commit < floor {
