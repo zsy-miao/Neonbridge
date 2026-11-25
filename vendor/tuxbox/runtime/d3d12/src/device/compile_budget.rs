@@ -119,6 +119,48 @@ fn helper_private() -> u64 {
     bytes
 }
 
+static WRITE_COMBINED: AtomicU64 = AtomicU64::new(0);
+
+/// The private bytes the ceiling counts: the process's less its committed
+/// write-combined memory (the driver's system-memory pools and upload
+/// heaps), plus the shader worker's. five-star-recomp 4e95ab2 (GPL-3.0,
+/// credit to its authors): those pools grew by 20 GB after the story load
+/// and held driver compiles to one at a time. The walk runs every 15 s on
+/// its own thread. TUXBOX_COMPILE_CEILING_WC=1 counts them, as before.
+fn counted(private: u64) -> u64 {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    if crate::env_toggle!("TUXBOX_COMPILE_CEILING_WC") == Some("1") {
+        return private.saturating_add(helper_private());
+    }
+    STARTED.call_once(|| {
+        let _ = std::thread::Builder::new().name("TuxBox write-combined walk".into()).spawn(|| loop {
+            WRITE_COMBINED.store(write_combined_bytes(), Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_secs(15));
+        });
+    });
+    private.saturating_sub(WRITE_COMBINED.load(Ordering::Relaxed)).saturating_add(helper_private())
+}
+
+/// Committed private memory with protection 0x404 (read-write,
+/// write-combined), by one walk of the address space.
+fn write_combined_bytes() -> u64 {
+    use windows::Win32::System::Memory::{MEM_COMMIT, MEM_PRIVATE, MEMORY_BASIC_INFORMATION, PAGE_READWRITE, PAGE_WRITECOMBINE, VirtualQuery};
+    const END: usize = 0x7FFF_FFFF_0000;
+    let (mut at, mut bytes) = (0usize, 0u64);
+    while at < END {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        // SAFETY: a query of this process's address space.
+        if unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 || region.RegionSize == 0 {
+            break;
+        }
+        if region.State == MEM_COMMIT && region.Type == MEM_PRIVATE && region.Protect == (PAGE_READWRITE | PAGE_WRITECOMBINE) {
+            bytes += region.RegionSize as u64;
+        }
+        at = region.BaseAddress as usize + region.RegionSize;
+    }
+    bytes
+}
+
 fn commit_floor() -> u64 {
     static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *MB.get_or_init(|| crate::env_toggle!("TUXBOX_COMPILE_COMMIT_FLOOR_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(3072)) << 20
@@ -191,7 +233,7 @@ fn try_enter(estimate: u64, tiny: bool, forced: bool, large: bool, shader_bytes:
         let need = estimate.saturating_add(remaining);
         let (most, ceiling) = (max_large(), ceiling());
         if (most != 0 && state.large >= most)
-            || (ceiling != 0 && private.saturating_add(helper_private()).saturating_add(need) > ceiling)
+            || (ceiling != 0 && counted(private).saturating_add(need) > ceiling)
         {
             return false;
         }
