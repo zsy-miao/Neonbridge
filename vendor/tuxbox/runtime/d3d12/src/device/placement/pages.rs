@@ -300,6 +300,9 @@ struct Pages {
     pool_empty: Vec<bool>,
     /// compaction copies the GPU may still run: (fence value, what they hold)
     compacted: Vec<(u64, Vec<ID3D12Resource>, ID3D12CommandAllocator, ID3D12GraphicsCommandList)>,
+    /// title queues seen by `before_execute`, each with a fence it signals
+    /// before a compaction so the move waits for the work already queued
+    title_queues: HashMap<usize, (ID3D12CommandQueue, ID3D12Fence, u64)>,
 }
 
 static COMPACTED_POOLS: AtomicU64 = AtomicU64::new(0);
@@ -360,6 +363,7 @@ impl Pages {
             pool_system: Vec::new(),
             pool_empty: Vec::new(),
             compacted: Vec::new(),
+            title_queues: HashMap::new(),
         })
     }
 
@@ -441,6 +445,16 @@ impl Pages {
         let (Some(from), Some(to)) = (reserved(count), reserved(count)) else { return fail(self, "reserved buffer") };
         let Ok(alloc) = dev.CreateCommandAllocator::<ID3D12CommandAllocator>(D3D12_COMMAND_LIST_TYPE_DIRECT) else { return fail(self, "allocator") };
         let Ok(list) = dev.CreateCommandList::<_, _, ID3D12GraphicsCommandList>(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &alloc, None) else { return fail(self, "command list") };
+        // No tile is copied or mapped again while a list already queued on a
+        // title queue may still read it: each signals its fence after that
+        // work, and the pages queue waits for all of them first. Work queued
+        // later waits for this queue's fence in `before_execute`.
+        for (queue, fence, value) in self.title_queues.values_mut() {
+            *value += 1;
+            if queue.Signal(&*fence, *value).is_ok() {
+                let _ = self.queue.Wait(&*fence, *value);
+            }
+        }
         self.map(&from, &old, 0);
         self.map(&to, &fresh, 0);
         list.CopyBufferRegion(&to, 0, &from, 0, (count * PAGE) as u64);
@@ -872,6 +886,11 @@ pub(super) unsafe fn before_execute(queue: &ID3D12CommandQueue) {
     let mut g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
     let Some(Some(pages)) = g.get_mut(&(dev.as_raw() as usize)) else { return };
     let key = queue.as_raw() as usize;
+    if compact_on() && !pages.title_queues.contains_key(&key)
+        && let Ok(fence) = dev.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE)
+    {
+        pages.title_queues.insert(key, (queue.clone(), fence, 0));
+    }
     if pages.signaled < pages.value {
         let _ = pages.queue.Signal(&pages.fence, pages.value);
         pages.signaled = pages.value;
