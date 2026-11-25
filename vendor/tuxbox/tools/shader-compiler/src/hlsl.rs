@@ -1868,6 +1868,73 @@ fn wave_loop_quad_swizzle() -> bool {
     std::env::var("TB_WAVE_LOOP_QUAD_SWIZZLE").map_or(true, |v| v.trim() != "0")
 }
 
+/// Consecutive one-line statements under the same per-lane EXEC guard
+/// (`if (exec_lo & tb_lane_bit) x;`, or `& 1u`) at the same indentation share
+/// one `if` block, with the guest-offset comments between them kept inside:
+/// about a third of a large program's lines are such guards, each its own
+/// branch for dxc to structurize. A statement that names `exec_lo` or opens or
+/// closes a block ends the run, so the guard reads the same EXEC throughout.
+/// Bodies over GUARD_MERGE_BYTES only. TB_GUARD_MERGE=0 emits one guard per
+/// statement as before.
+const GUARD_MERGE_BYTES: usize = 256 * 1024;
+
+fn guard_merge_on() -> bool {
+    std::env::var("TB_GUARD_MERGE").map_or(true, |v| v.trim() != "0")
+}
+
+fn merge_exec_guards(body: &str) -> String {
+    const GUARDS: [&str; 2] = ["if (exec_lo & tb_lane_bit) ", "if (exec_lo & 1u) "];
+    let lines: Vec<&str> = body.split_inclusive('\n').collect();
+    // (indent, guard, statement) of a mergeable line.
+    let guarded = |line: &str| -> Option<(usize, &'static str, String)> {
+        let text = line.trim_end_matches(['\r', '\n']);
+        let indent = text.len() - text.trim_start().len();
+        let rest = &text[indent..];
+        let guard = GUARDS.iter().find(|g| rest.starts_with(**g))?;
+        let stmt = &rest[guard.len()..];
+        (stmt.ends_with(';') && !stmt.contains(['{', '}']) && !stmt.contains("exec_lo") && !stmt.contains("//"))
+            .then(|| (indent, *guard, stmt.to_string()))
+    };
+    let comment = |line: &str| line.trim_start().starts_with("//");
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let Some((indent, guard, first)) = guarded(lines[i]) else {
+            out.push_str(lines[i]);
+            i += 1;
+            continue;
+        };
+        // Extend over guarded lines of the same guard and indent, and comments.
+        let mut run = vec![first];
+        let mut held: Vec<&str> = Vec::new();
+        let mut j = i + 1;
+        let mut end = j;
+        while j < lines.len() {
+            if comment(lines[j]) {
+                held.push(lines[j]);
+            } else if let Some((ind, g, stmt)) = guarded(lines[j]).filter(|(ind, g, _)| *ind == indent && *g == guard) {
+                let _ = (ind, g);
+                for c in held.drain(..) { run.push(c.trim().to_string()); }
+                run.push(stmt);
+                end = j + 1;
+            } else {
+                break;
+            }
+            j += 1;
+        }
+        let pad = " ".repeat(indent);
+        if run.len() == 1 {
+            out.push_str(lines[i]);
+        } else {
+            out.push_str(&format!("{pad}{guard}{{\n"));
+            for stmt in &run { out.push_str(&format!("{pad}    {stmt}\n")); }
+            out.push_str(&format!("{pad}}}\n"));
+        }
+        i = end;
+    }
+    out
+}
+
 fn resinfo_cube() -> bool {
     std::env::var("TB_RESINFO_CUBE").map_or(true, |v| v.trim() != "0")
 }
@@ -6854,6 +6921,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.body.truncate(start);
                 self.body.push_str(&packed);
             }
+        }
+        // Only large programs, where dxc spends the prewarm; the rest stay byte-identical.
+        if guard_merge_on() && self.body.len() - start > GUARD_MERGE_BYTES {
+            let merged = merge_exec_guards(&self.body[start..]);
+            self.body.truncate(start);
+            self.body.push_str(&merged);
         }
         Ok(())
     }
