@@ -1572,6 +1572,12 @@ fn typed_half4() -> bool {
     std::env::var("TB_TYPED_HALF4").map_or(true, |v| v.trim() != "0")
 }
 
+/// Heap cube size queries (see the image_get_resinfo arm). TB_RESINFO_CUBE=0
+/// refuses them as before.
+fn resinfo_cube() -> bool {
+    std::env::var("TB_RESINFO_CUBE").map_or(true, |v| v.trim() != "0")
+}
+
 fn mad_unfused() -> bool {
     std::env::var("TB_MAD_UNFUSED").map_or(true, |v| v.trim() != "0")
 }
@@ -5341,7 +5347,7 @@ impl<'a> Emitter<'a> {
                         // The heap does not name a view's component type. Sampling needs a
                         // float view; a texel load does not (see `heap_load_ty`).
                         let cube = dim == 3;
-                        let size = ins.mnemonic == "image_get_resinfo" && (dim == 1 || (matches!(dim, 0 | 2 | 4 | 5) && std::env::var("TB_RESINFO_DIMS").map_or(true, |v| v.trim() != "0")));
+                        let size = ins.mnemonic == "image_get_resinfo" && (dim == 1 || (matches!(dim, 0 | 2 | 4 | 5) && std::env::var("TB_RESINFO_DIMS").map_or(true, |v| v.trim() != "0")) || (dim == 3 && resinfo_cube()));
                         let lod = self.pixel_heap && dim == 1 && ins.mnemonic == "image_get_lod";
                         // A texel store passes its registers on unconverted, whatever the view.
                         let store = ins.mnemonic == "image_store" && dim == 1 && self.compute_heap
@@ -11578,11 +11584,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // returns (width, height, depth or layers, mips); a 1D array gives its
         // layers in y (xcl cafda82, GPL-2, copied with credit: Mesa moves z into y
         // on GFX9 only), and z keeps them too, as xcl does.
-        if ins.mnemonic == "image_get_resinfo" && !a16 && !d16 && matches!(dim, 0 | 2 | 4 | 5)
-            && std::env::var("TB_RESINFO_DIMS").map_or(true, |v| v.trim() != "0")
+        // A cube gives its layers in z, 6 per cube, as a 2D array does (xcl
+        // recomp/emit.rs get_resinfo dim 3, GPL-2, copied with credit), read
+        // through the cube view the heap samples it with.
+        if ins.mnemonic == "image_get_resinfo" && !a16 && !d16
+            && (matches!(dim, 0 | 2 | 4 | 5) && std::env::var("TB_RESINFO_DIMS").map_or(true, |v| v.trim() != "0")
+                || dim == 3 && resinfo_cube())
         {
             if let Some(Res::HeapTexture(src, _)) = rs.first() {
-                let view = match dim { 0 => HeapView::Tex1D, 2 => HeapView::Tex3D, 4 => HeapView::Tex1DArray, _ => HeapView::Tex2DArray };
+                let view = match dim { 0 => HeapView::Tex1D, 2 => HeapView::Tex3D, 3 => HeapView::TexCube, 4 => HeapView::Tex1DArray, _ => HeapView::Tex2DArray };
                 let tex = self.bind_heap(view, *src);
                 let t = self.tmp;
                 self.tmp += 1;
@@ -11591,6 +11601,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.line(&format!("uint w{t}, h{t} = 1u, d{t} = 1u, levels{t};"));
                 match dim {
                     0 => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, levels{t});")),
+                    3 => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, h{t}, levels{t}); d{t} = 6u;")),
                     4 => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, h{t}, levels{t}); d{t} = h{t};")),
                     _ => self.line(&format!("{tex}.GetDimensions({mip}, w{t}, h{t}, d{t}, levels{t});")),
                 }
