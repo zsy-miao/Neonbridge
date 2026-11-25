@@ -4845,7 +4845,12 @@ impl<'a> Emitter<'a> {
                     }
                     // A table descriptor: the host typed view's format performs the same
                     // conversion as the instruction's, so it loads like buffer_load_format.
-                    if ins.op >= 4 {
+                    // tbuffer_load_format_d16_* (ops 8..11) pack like the buffer
+                    // form through the same typed load (VIctory 46bde7f).
+                    if (12..16).contains(&ins.op) {
+                        return Err("typed d16 buffer store unsupported".into());
+                    }
+                    if ins.op >= 4 && !(8..12).contains(&ins.op) {
                         return Err("typed buffer store requires a verified linear root SRV".into());
                     }
                     let cands = self.desc_candidates(sym.get(&rs), 8).ok_or_else(|| {
@@ -5196,6 +5201,8 @@ impl<'a> Emitter<'a> {
                 Enc::Smem => (1u32 << (ins.op & 7)) - 1,
                 Enc::Mimg => u32::from(image_data_registers(ins)).saturating_sub(1),
                 Enc::Mtbuf if ins.op < 4 => ins.op,
+                // Two 16-bit channels per register for the d16 loads.
+                Enc::Mtbuf if (8..12).contains(&ins.op) => (ins.op - 8 + 1).div_ceil(2) - 1,
                 Enc::Mubuf if ins.mnemonic.starts_with("buffer_load_dword") =>
                     Self::mubuf_dwords(&ins.mnemonic).unwrap_or(1) - 1,
                 _ if wide_bit_result(&ins.mnemonic) => 1,
@@ -8570,8 +8577,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // The selected half operands now occupy the low word. Apply the
             // floating modifiers through the ordinary VOP3 half-float path.
             let half_alu = half_binary || matches!(m.as_str(), "v_rcp_f16" | "v_exp_f16");
-            if half_alu {
+            // A float-result conversion applies clamp and omod to its result as
+            // well (Xbox2Windows ad3d5126, MIT).
+            let float_cvt = m.starts_with("v_cvt_f32_") || m == "v_cvt_off_f32_i4";
+            if half_alu || (float_cvt && !is_cmp && (sd >> 13) & 7 != 0 && sd & 0x3030_0000 == 0) {
                 c.enc = Enc::Vop3;
+                c.aux.mask = 0;
                 c.aux.imm = i64::from((sd >> 13) & 1);
                 c.aux.imm2 = i64::from((sd >> 14) & 3);
             }
