@@ -150,7 +150,9 @@ fn null_sink(list: &List) -> Option<u64> {
 fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option<u64> {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
     crate::diagnostics::transient_pool::touch(windows::core::Interface::as_raw(&list.native) as usize, guest);
+    let _stat = branches::Phase::new(branches::TOTAL);
     if guest == 0 || crate::env_toggle!("TUXBOX_ROOT_SPAN") == Some("1") {
+        branches::count(branches::NULL);
         return address(list, state, guest, 1);
     }
     // A page only the GPU writes is still reserved in a lazy title view.
@@ -165,18 +167,28 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     } else {
         0x10000
     };
-    device::commit_lazy(guest as usize, window);
+    {
+        let _p = branches::Phase::new(branches::COMMIT);
+        device::commit_lazy(guest as usize, window);
+    }
     // xcl c1a9b52 (GPL-3.0, idea): a VirtualQuery scans its whole region
     // under the address-space lock (test137: 16 ms per GiB of view, and the
     // GPU page pool is one 5.4 GiB view), and every root view bind made one
     // or more. A window xmem knows committed in one lazy view needs none: it
     // is read-write to the view's end. TUXBOX_COMMIT_BITS=0 (in xmem) walks.
-    let known = device::view_state(guest as usize, 0x10000);
+    let known = {
+        let _p = branches::Phase::new(branches::STATE);
+        device::view_state(guest as usize, 0x10000)
+    };
     if known.committed() && known.one_view() {
+        branches::count(branches::KNOWN);
         let end = (known.base + known.size) as u64;
         let span = end.saturating_sub(guest).min(0x10000).max(1);
+        let _p = branches::Phase::new(branches::IMPORT);
         return root_import(list, state, guest, span);
     }
+    branches::count(branches::QUERY);
+    let query = branches::Phase::new(branches::WALK);
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if unsafe { VirtualQuery(Some(guest as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
         static UNMAPPED: std::sync::Once = std::sync::Once::new();
@@ -200,8 +212,69 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
         }
         end = next.BaseAddress as u64 + next.RegionSize as u64;
     }
+    drop(query);
     let span = end.saturating_sub(guest).min(0x10000).max(1);
+    let _p = branches::Phase::new(branches::IMPORT);
     root_import(list, state, guest, span)
+}
+
+/// root_address branch counts and time per phase, logged every 10 s
+/// (TUXBOX_ROOT_BRANCHES=0 off): test153 spent ~4 ms/frame at
+/// compute.rs:71 (root_buffer), this splits it.
+mod branches {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    pub(super) const NULL: usize = 0;
+    pub(super) const KNOWN: usize = 1;
+    pub(super) const QUERY: usize = 2;
+    pub(super) const TOTAL: usize = 0;
+    pub(super) const COMMIT: usize = 1;
+    pub(super) const STATE: usize = 2;
+    pub(super) const WALK: usize = 3;
+    pub(super) const IMPORT: usize = 4;
+    static COUNTS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+    static NS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+    static NEXT_MS: AtomicU64 = AtomicU64::new(0);
+
+    fn on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_BRANCHES") != Some("0"))
+    }
+
+    pub(super) fn count(branch: usize) {
+        if on() {
+            COUNTS[branch].fetch_add(1, Relaxed);
+        }
+    }
+
+    pub(super) struct Phase(usize, Option<std::time::Instant>);
+    impl Phase {
+        pub(super) fn new(phase: usize) -> Self {
+            Phase(phase, on().then(std::time::Instant::now))
+        }
+    }
+    impl Drop for Phase {
+        fn drop(&mut self) {
+            let Some(start) = self.1 else { return };
+            NS[self.0].fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+            if self.0 == TOTAL {
+                report();
+            }
+        }
+    }
+
+    fn report() {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
+        let next = NEXT_MS.load(Relaxed);
+        if now < next || NEXT_MS.compare_exchange(next, now + 10_000, Relaxed, Relaxed).is_err() || next == 0 {
+            return;
+        }
+        let c: Vec<u64> = COUNTS.iter().map(|a| a.swap(0, Relaxed)).collect();
+        let ms: Vec<f64> = NS.iter().map(|a| a.swap(0, Relaxed) as f64 / 1e6).collect();
+        crate::diagnostics::log_line(format_args!(
+            "root views last 10 s: {} binds ({:.1} ms): null/span {}, known view {}, VirtualQuery walk {}; ms in commit_lazy {:.1}, view_state {:.1}, VirtualQuery walk {:.1}, import {:.1} (TUXBOX_ROOT_BRANCHES=0 off)",
+            c.iter().sum::<u64>(), ms[TOTAL], c[NULL], c[KNOWN], c[QUERY], ms[COMMIT], ms[STATE], ms[WALK], ms[IMPORT]));
+    }
 }
 
 /// Imports a root view's `span` bytes at `guest` (one byte when that fails).
