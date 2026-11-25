@@ -1211,6 +1211,10 @@ fn agility(name: &str, exe: &Path) {
     }
 }
 
+pub fn pack_dir() -> PathBuf {
+    pack()
+}
+
 fn pack() -> PathBuf {
     std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("6ixpack")
 }
@@ -1788,6 +1792,9 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     // Verify the dump before a run (read-only, ScarlettPort's verify): problems are
     // printed and a bad dump is named on the loader; the run still goes ahead.
     // NEONBRIDGE_VERIFY=0 skips it.
+    if matches!(task, Task::Run) && std::env::var("NEONBRIDGE_PREFLIGHT").map_or(true, |v| v.trim() != "0") && crate::preflight::print(&cache, false) == crate::preflight::Level::Bad {
+        crate::splash::status(0.01, "This PC is missing something the runtimes need (see the log); starting anyway");
+    }
     if matches!(task, Task::Run) && std::env::var("NEONBRIDGE_VERIFY").map_or(true, |v| v.trim() != "0") {
         let dir = if game.is_dir() { game.to_path_buf() } else { game.parent().map(Path::to_path_buf).unwrap_or_default() };
         if crate::verify::print(&dir, false) == crate::verify::Level::Bad {

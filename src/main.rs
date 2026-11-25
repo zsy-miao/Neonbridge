@@ -11,6 +11,7 @@
 
 mod autopress;
 mod verify;
+mod preflight;
 mod awake;
 mod ctl;
 mod dxc;
@@ -202,6 +203,11 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
                 mix.get_or_insert_with(mix::Mix::default).parts.insert(k.trim().to_owned(), t.trim().to_owned());
             }
             Some("--setup") => return runtimes::setup(&val("--setup")?.to_string_lossy()),
+            Some("--check") => {
+                // Pre-launch check: graphics card (SM 6.6, mesh shaders, waves), RAM, free disk.
+                let worst = preflight::print(&runtimes::pack_dir(), true);
+                std::process::exit(if worst == preflight::Level::Bad { 1 } else { 0 });
+            }
             Some("--verify") => {
                 // Read-only check of a game dump (ScarlettPort's verify): every archive, a whole pack\, no empty files or dead links.
                 let dir = PathBuf::from(val("--verify")?);
