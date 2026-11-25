@@ -4,7 +4,7 @@
 
 Test them all in one convenient launcher.
 
-**Status: WIP.** Neonbridge is one launcher that runs each leading project's working build, vendored whole and unchanged, against the Xbox Series X|S (Scarlett) build of Grand Theft Auto VI that you dumped from a console you own. Pick a runtime, and Neonbridge builds it when its sources are newer than its exe, sets it up, starts it with that runtime's settings and logs the run. It **isn't playable yet**. No game files are included or linked, and the one release so far is the v0.1.0 WIP pre-release.
+**Status: WIP.** Neonbridge is one launcher that runs each leading project's working build, vendored whole and unchanged, against the Xbox Series X|S (Scarlett) build of Grand Theft Auto VI that you dumped from a console you own. Pick a runtime, and Neonbridge builds it when its sources are newer than its exe, sets it up, starts it with that runtime's settings and logs the run. It **isn't playable yet**. No game files are included or linked, and the current release is the v0.2.0-alpha pre-release.
 
 ## Status
 
@@ -16,6 +16,8 @@ Test them all in one convenient launcher.
 | ztrx-victory | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
 | xcl | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
 | Neonbridge (own build) | ✅ | ❌ | ❌ | ❌ | ❌ | Untested |
+| TuxBox (upstream) | ⚠️ | ❌ | ❌ | ❌ | ❌ | brcly/TuxBox as vendored; upstream says Windows compatibility is in development. Needs Python 3.10+ and the VS x64 C++ tools |
+| Five Star Recomp | ❌ | ❌ | ❌ | ❌ | ❌ | Not bundled: needs the .NET 10 SDK |
 
 | Feature | Status | Notes |
 |---|---|---|
