@@ -184,6 +184,22 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
   - 65fc79e: the rebox credit is wrong.
 
 ## Ref watch
+- TuxBox 97b8ad3: list slot 62 copies source to destination (check our arg order), traces memory waits; vendor/tuxbox/runtime/d3d12/src/device (command list slot 62).
+- VIctory-zhai 0f11320: a vertex program writing through views declares UAVs at every stage; vendor/tuxbox/tools/shader-compiler/src/hlsl.rs + root signature.
+- VIctory-zhai 1d05911: order shader writes (UAV barrier) on command-list pipeline syncs; vendor/tuxbox/runtime/d3d12/src/device (barriers).
+- VItoriaBr b62bbc0: read descriptor addresses chosen by a computed heap index (SLOT_VIEWS); vendor/tuxbox/tools/shader-compiler/src/hlsl.rs.
+- Xbox2Windows 84c66897: reject a whole texel overlapping live GPU-written memory; vendor/tuxbox/runtime/d3d12/src/device (address views).
+- Xbox2Windows da888e46/efe54732/323ccf6f: slot 70 publishes single-element 2D/3D textures by address, GPU-written ones stay on resource lookup; vendor/tuxbox/runtime/d3d12/src/device (slot 70).
+- Xbox2Windows 28337fa6/9a6fd7ff: reload constant-lane scalar spills via v_writelane/v_readlane in the bounded mesh path; vendor/tuxbox/tools/shader-compiler/src/hlsl.rs.
+- Xbox2Windows a351c0fb/b8889849: DPP16 quad swaps need whole-quad EXEC, lower to QuadReadAcross; vendor/tuxbox/tools/shader-compiler/src/hlsl.rs.
+- five-star 4fdfaed: place read-only console textures in shared heaps instead of one committed resource each; vendor/tuxbox/runtime/d3d12/src/device/heap.rs.
+- five-star 51c338d/ff3914e: driver compile estimate 2,816 B per DXIL byte (0.5-8 GB), log big compiles vs peak; vendor/tuxbox/runtime/d3d12/src/device/compile_budget.rs.
+- five-star c915760: read watched texture bytes through the kernel before hash/upload; vendor/tuxbox/runtime/d3d12/src/device (texture upload).
+- leonida aa23d709c: a sampled view of a placed texture still waiting for memory is remembered, not bound; vendor/tuxbox/runtime/d3d12/src/device (descriptors).
+- leonida 22f2a04af/22171d092: D16S8 keeps D16/S8 path without D24S8; B4G4R4A4 stored as RGBA8 with quantised clears; vendor/tuxbox/runtime/d3d12/src/device (formats).
+- leonida 545e8d51f: Map of a slot 133 linear texture returns the placement address first; vendor/tuxbox/runtime/d3d12/src/device (slot 133).
+- ScarlettCompat 446b178: real SetDescriptorHeaps, S_OK root-param slots, 6-arg WaitFrameEventX; vendor/tuxbox/runtime/d3d12/src/device (list slots).
+- ScarlettPort 7581c87: GPU copy-back continues past an unmapped page; vendor/tuxbox/runtime/d3d12 (readback) / xmem.
 - rebox 5d01c25: evict view textures no live descriptor can read, recreate on demand; vendor/tuxbox/runtime/d3d12/src/device/heap.rs.
 - VIctory-zhai a64b6c6: rectangle GS honours unwritten OSG1 channels and output modes; vendor/tuxbox/runtime/d3d12/src/device/rectangle.rs.
 - VIctory-zhai 7f26331: keep sample masks in prebuilt graphics pipelines; vendor/tuxbox/runtime/d3d12/src/device/graphics.rs.
