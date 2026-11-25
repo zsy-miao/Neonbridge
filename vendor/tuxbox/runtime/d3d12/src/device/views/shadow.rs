@@ -166,6 +166,29 @@ fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resourc
 /// the title no longer has bytes there. No VirtualQuery on this path (each
 /// call walked 13,829 title regions in test132). TUXBOX_SHADOW_FILL_CHECKED=0
 /// copies directly as before.
+/// Why xmem thinks an unreadable title page is so (xmem TuxBoxPageWhy): an
+/// untouched lazy page (its content is zeros, not a decommit), a named xmem
+/// unmap or decommit, or the OS region state when xmem knows nothing.
+fn page_why(p: u64) -> String {
+    type Why = unsafe extern "system" fn(usize, *mut [u64; 4]) -> u32;
+    static WHY: std::sync::OnceLock<Option<Why>> = std::sync::OnceLock::new();
+    let why = WHY.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxPageWhy")).map(|f| core::mem::transmute::<_, Why>(f))
+    });
+    let Some(why) = *why else { return "xmem TuxBoxPageWhy unavailable".into() };
+    let mut o = [0u64; 4];
+    match unsafe { why(p as usize, &mut o) } {
+        1 => "untouched lazy title page, never committed: zeros are its content".into(),
+        2 => {
+            let site = match o[0] { 1 => "XMemFreePhysicalPages unmap", 2 => "view unmap", 3 => "pool block decommit", 4 => "XMemFree release", _ => "?" };
+            format!("unmapped by xmem {site} of {:#x}+{:#x} {} ms ago", o[1], o[2], o[3])
+        }
+        _ => format!("not an xmem lazy view, no xmem unmap over it; region state {:#x} type {:#x} base {:#x}", o[0], o[1], o[2]),
+    }
+}
+
 unsafe fn fill(mapped: usize, address: u64, bytes: u64) {
     if crate::env_toggle!("TUXBOX_SHADOW_FILL_CHECKED") == Some("0") {
         unsafe { core::ptr::copy_nonoverlapping(address as *const u8, mapped as *mut u8, bytes as usize) };
@@ -197,8 +220,8 @@ unsafe fn fill(mapped: usize, address: u64, bytes: u64) {
                     let z = ZEROED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if z < 4 || (z + 1).is_power_of_two() {
                         crate::diagnostics::log_line(format_args!(
-                            "shadow fill: title page {p:#x} of {address:#x}+{bytes:#x} is not readable now (decommitted under a live view); it reads as zeros ({} so far; TUXBOX_SHADOW_FILL_CHECKED=0 copies directly)",
-                            z + 1));
+                            "shadow fill: title page {p:#x} of {address:#x}+{bytes:#x} is not readable now ({}); it reads as zeros ({} so far; TUXBOX_SHADOW_FILL_CHECKED=0 copies directly)",
+                            page_why(p), z + 1));
                     }
                 }
                 p = q;

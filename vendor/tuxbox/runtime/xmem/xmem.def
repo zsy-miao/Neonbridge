@@ -45,6 +45,7 @@ EXPORTS
     TuxBoxTakeImportRemaps PRIVATE
     TuxBoxUnmapTrace PRIVATE
     TuxBoxViewState PRIVATE
+    TuxBoxPageWhy PRIVATE
     TuxBoxCommitRange PRIVATE
     TuxBoxDeviceRange PRIVATE
     TuxBoxDeviceFaultCallback PRIVATE

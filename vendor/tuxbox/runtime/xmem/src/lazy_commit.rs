@@ -373,6 +373,34 @@ pub(crate) fn view_state(address: usize, bytes: usize, base: &mut usize, size: &
     flags
 }
 
+/// Why a title page is unreadable, for a consumer that found it so (d3d12's
+/// shadow fill): 1 = inside a current lazy title view and not yet committed
+/// (the CPU never touched it; its content is zeros); 2 = xmem unmapped or
+/// decommitted it (out = site, start, size, age ms, as TuxBoxUnmapTrace);
+/// 0 = neither (out[0] = region state, out[1] = type, out[2] = allocation
+/// base from VirtualQuery).
+#[unsafe(export_name = "TuxBoxPageWhy")]
+unsafe extern "system" fn page_why(address: usize, out: *mut [u64; 4]) -> u32 {
+    let mut o = [0u64; 4];
+    let page = address & !(PAGE - 1);
+    let (mut b, mut s) = (0, 0);
+    let flags = view_state(page, PAGE, &mut b, &mut s);
+    let why = if flags & COVERED != 0 && flags & COMMITTED == 0 {
+        1
+    } else if unsafe { crate::unmap_trace::newest(page, PAGE, &mut o) } {
+        2
+    } else {
+        if let Some(m) = query(page) {
+            o = [m.State as u64, m.Type as u64, m.AllocationBase as u64, 0];
+        }
+        0
+    };
+    if !out.is_null() {
+        unsafe { out.write(o) };
+    }
+    why
+}
+
 #[unsafe(export_name = "TuxBoxViewState")]
 unsafe extern "system" fn view_state_export(address: usize, bytes: usize, base: *mut usize, size: *mut usize) -> u32 {
     let (mut b, mut s) = (0, 0);
