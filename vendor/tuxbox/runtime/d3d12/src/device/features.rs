@@ -233,3 +233,21 @@ pub(crate) fn host_filter(native: &ID3D12Device, filter: D3D12_FILTER) -> D3D12_
     });
     if supported { filter } else { D3D12_FILTER((bits | 1) as i32) }
 }
+
+/// VIctory-fxceless c96b4f2 (host.rs depth_bounds, GPL-3.0, credit to its
+/// authors and #82 by Kaivyyy): whether the host GPU supports the depth
+/// bounds test (OPTIONS2), asked once. A pipeline enabling it on a GPU
+/// without it fails creation; fxceless makes it without the test instead.
+/// TUXBOX_DEPTH_BOUNDS_CHECK=0 passes the enable through unchecked.
+pub(crate) fn depth_bounds_supported(device: &Device) -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if crate::env_toggle!("TUXBOX_DEPTH_BOUNDS_CHECK") == Some("0") {
+        return true;
+    }
+    *SUPPORTED.get_or_init(|| {
+        let supported = host_query(device, D3D12_FEATURE_D3D12_OPTIONS2, D3D12_FEATURE_DATA_D3D12_OPTIONS2::default())
+            .is_ok_and(|o| o.DepthBoundsTestSupported.as_bool());
+        crate::diagnostics::log_line(format_args!("host depth bounds test supported: {supported} (TUXBOX_DEPTH_BOUNDS_CHECK=0 skips the check)"));
+        supported
+    })
+}

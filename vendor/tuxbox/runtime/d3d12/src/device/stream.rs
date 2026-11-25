@@ -531,7 +531,19 @@ unsafe fn create(
                     .cast::<D3D12_CACHED_PIPELINE_STATE>()
                     .write(Default::default())
             },
-            21 => depth = payload.cast(),
+            21 => {
+                depth = payload.cast();
+                // c96b4f2: a GPU without the depth bounds test makes the
+                // pipeline without it (its draws pass at every depth).
+                if let Some(d) = unsafe { depth.as_mut() }
+                    && d.DepthBoundsTestEnable.as_bool()
+                    && !super::features::depth_bounds_supported(device)
+                {
+                    d.DepthBoundsTestEnable = false.into();
+                    static ONCE: std::sync::Once = std::sync::Once::new();
+                    crate::diagnostics::log_once(&ONCE, || "a pipeline enables the depth bounds test, which the host GPU does not support: made without it (VIctory-fxceless c96b4f2)".to_string());
+                }
+            }
             STENCIL_X => {
                 let depth = unsafe { depth.as_ref() }.ok_or(E_NOTIMPL)?;
                 if at + bytes != size || !unsafe { equivalent_stencil(payload, depth) } {
