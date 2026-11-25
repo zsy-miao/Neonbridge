@@ -7,7 +7,7 @@
 //!   `r const <index>`               index known at compile time
 //!   `w dynamic`                     computed or loaded per lane / not traced
 //!   `heap_access none`              no direct heap descriptor fetch
-//!   `uav_from_srv param=<p> space=<s> offset=<bytes> range=<i>`  a root SRV
+//!   `uav_from_srv param=<p> slot=<n> space=<s> register=<u> offset=<bytes> range=<i>`  a root SRV
 //!                                   table range the program stores through: retype it UAV
 //! A missing file means unknown. TB_HEAP_REFLECT=0 writes no file.
 use std::cell::RefCell;

@@ -4741,8 +4741,8 @@ impl<'a> Emitter<'a> {
                 return Err(format!("SRV slot at table offset {off:#x} is both read as t{register} and stored"));
             }
         }
-        let extra: Vec<String> = self.srv_as_uav.iter().map(|(param, space, off, range, _)|
-            format!("uav_from_srv param={param} space={space} offset={off} range={range}")).collect();
+        let extra: Vec<String> = self.srv_as_uav.iter().map(|(param, space, off, range, register)|
+            format!("uav_from_srv param={param} slot={} space={space} register={register} offset={off} range={range}", off / 32)).collect();
         if heap_reflect::on() || !extra.is_empty() {
             self.heap_reflect.publish(&extra);
         }
