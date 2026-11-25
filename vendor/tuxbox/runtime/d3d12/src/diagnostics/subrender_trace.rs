@@ -17,8 +17,6 @@
 //!   handle (first 64, then every power of two).
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-const WAIT_THUNK: usize = 0x1784d5; // mov edx, -1 at 0x1784d0, then jmp [IAT]
-const SET_THUNK: usize = 0x5930;
 const GO_RETURN: usize = 0x43c421e;
 const SET_RETURN: usize = 0x43c431d;
 const SLOTS: usize = 0x9c3d670;
@@ -48,14 +46,40 @@ pub(crate) fn install() {
     });
 }
 
-/// The import slot a `jmp [rip+disp]` thunk goes through, if the bytes are one.
-unsafe fn slot_of(thunk: usize) -> Option<*mut usize> {
-    let p = thunk as *const u8;
-    if unsafe { (*p, *p.add(1)) } != (0xff, 0x25) {
+/// The title's import address slot for `name`, found through its import
+/// directory by name. test175: matching the thunks' bytes failed (they are
+/// `48 ff 25`, REX.W jmp), so nothing was hooked.
+unsafe fn import_slot(base: usize, name: &[u8]) -> Option<*mut usize> {
+    let rd32 = |at: usize| unsafe { (at as *const u32).read_unaligned() } as usize;
+    let pe = base + rd32(base + 0x3c);
+    let (dir, size) = (rd32(pe + 0x90), rd32(pe + 0x94)); // optional header data directory 1
+    if dir == 0 || size == 0 {
         return None;
     }
-    let disp = unsafe { (p.add(2) as *const i32).read_unaligned() };
-    Some((thunk as isize + 6 + disp as isize) as *mut usize)
+    let mut desc = base + dir;
+    loop {
+        let (names, thunks) = (rd32(desc), rd32(desc + 16));
+        if thunks == 0 {
+            return None;
+        }
+        let lookup = if names != 0 { names } else { thunks };
+        let mut i = 0;
+        loop {
+            let entry = unsafe { ((base + lookup + i * 8) as *const u64).read_unaligned() };
+            if entry == 0 {
+                break;
+            }
+            if entry >> 63 == 0 {
+                let text = base + (entry as usize & 0x7fff_ffff) + 2;
+                let found = unsafe { std::ffi::CStr::from_ptr(text as *const core::ffi::c_char) }.to_bytes();
+                if found == name {
+                    return Some((base + thunks + i * 8) as *mut usize);
+                }
+            }
+            i += 1;
+        }
+        desc += 20;
+    }
 }
 
 /// Whether the call before `ret` is a rel32 call (this build of the title).
@@ -65,8 +89,8 @@ unsafe fn call_before(ret: usize) -> bool {
 
 unsafe fn hook(base: usize) {
     use windows::Win32::System::Memory::{PAGE_PROTECTION_FLAGS, PAGE_READWRITE, VirtualProtect};
-    let (Some(wait), Some(set)) = (unsafe { slot_of(base + WAIT_THUNK) }, unsafe { slot_of(base + SET_THUNK) }) else {
-        crate::diagnostics::log_line(format_args!("subrender trace: the import thunks are not where this build has them; not hooked"));
+    let (Some(wait), Some(set)) = (unsafe { import_slot(base, b"WaitForSingleObject") }, unsafe { import_slot(base, b"SetEvent") }) else {
+        crate::diagnostics::log_line(format_args!("subrender trace: the title imports no WaitForSingleObject or SetEvent by name; not hooked"));
         return;
     };
     if !unsafe { call_before(base + GO_RETURN) && call_before(base + SET_RETURN) } {
@@ -85,7 +109,8 @@ unsafe fn hook(base: usize) {
         let _ = unsafe { VirtualProtect(slot.cast(), 8, old, &mut old) };
     }
     crate::diagnostics::log_line(format_args!(
-        "subrender trace: worker go waits and job SetEvents logged, title thread exits watched (TUXBOX_SUBRENDER_TRACE=0 off)"));
+        "subrender trace: worker go waits and job SetEvents logged (import slots game+{:#x} was {:#x}, game+{:#x} was {:#x}), title thread exits watched (TUXBOX_SUBRENDER_TRACE=0 off)",
+        wait as usize - base, WAIT_REAL.load(Ordering::Relaxed), set as usize - base, SET_REAL.load(Ordering::Relaxed)));
 }
 
 #[unsafe(naked)]
