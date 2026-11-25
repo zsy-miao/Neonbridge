@@ -318,6 +318,39 @@ fn with_library<R>(host: &ID3D12Device, f: impl FnOnce(&mut Library) -> R) -> Op
     }
 }
 
+thread_local! {
+    /// This thread builds the journal offline (`--pipelines`).
+    static OFFLINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+static CAPPED: AtomicU64 = AtomicU64::new(0);
+
+/// Marks this thread as the offline journal builder's.
+pub(in crate::device) fn offline_thread() {
+    OFFLINE.with(|o| o.set(true));
+}
+
+/// Offline builds skipped for their DXIL size so far.
+pub(in crate::device) fn capped() -> u64 {
+    CAPPED.load(Ordering::Relaxed)
+}
+
+/// xcl cbff0b8 + 6b9b14f (GPL-2.0-only, credit to their authors and
+/// WebIdentity1): offline, a program over TUXBOX_PIPELINE_MAX_KB of DXIL
+/// (8192; 0 no cap) that the library lacks is left to the runtime. Their
+/// driver compiles take tens of minutes and gigabytes (29-30 MB programs hung
+/// a precompile pass for 33+ minutes); 8 MiB sits above the largest that ever
+/// finished (~2.2 MB) and below the smallest that hung (14.1 MB). Checked
+/// after the library lookup, so a stale entry the driver refuses cannot
+/// carry an over-cap program into the uncached compile.
+fn over_offline_cap(shader_bytes: u64) -> bool {
+    if !OFFLINE.with(|o| o.get()) {
+        return false;
+    }
+    static KB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let kb = *KB.get_or_init(|| crate::env_toggle!("TUXBOX_PIPELINE_MAX_KB").and_then(|v| v.trim().parse().ok()).unwrap_or(8192));
+    kb != 0 && shader_bytes > kb << 10
+}
+
 fn load_or_make(
     host: &ID3D12Device,
     shader_bytes: u64,
@@ -333,6 +366,10 @@ fn load_or_make(
         crate::big_stack::run(make)
     };
     let Some(name) = name.map(|n| HSTRING::from(n.as_str())) else {
+        if over_offline_cap(shader_bytes) {
+            CAPPED.fetch_add(1, Ordering::Relaxed);
+            return Err(windows::Win32::Foundation::E_ABORT.into());
+        }
         return make();
     };
     let text = name.to_string();
@@ -350,6 +387,10 @@ fn load_or_make(
     if let Some(Ok(pipeline)) = loaded {
         LOADED.fetch_add(1, Ordering::Relaxed);
         return Ok(pipeline);
+    }
+    if over_offline_cap(shader_bytes) {
+        CAPPED.fetch_add(1, Ordering::Relaxed);
+        return Err(windows::Win32::Foundation::E_ABORT.into());
     }
     if let Some(names) = names() {
         let names = names.lock().unwrap_or_else(|e| e.into_inner());

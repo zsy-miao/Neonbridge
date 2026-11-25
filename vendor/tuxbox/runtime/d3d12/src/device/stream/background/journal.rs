@@ -537,6 +537,7 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     // is counted apart now, and the export returns only what is in the library.
     let (nulled, unanswered, unreadable, refused) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
     let (loaded_before, stored_before) = crate::device::pipeline_cache::library_counts();
+    let capped_before = crate::device::pipeline_cache::capped();
     let full = std::sync::atomic::AtomicBool::new(false);
     let started = Instant::now();
     std::thread::scope(|scope| {
@@ -544,6 +545,7 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
             scope.spawn(|| {
                 WORKER.with(|w| w.set(true));
                 crate::device::shader_cache::wait_unbounded();
+                crate::device::pipeline_cache::offline_thread();
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(frame) = order.get(i) else { break };
@@ -596,9 +598,10 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     let (loaded, stored) = (loaded_after - loaded_before, stored_after - stored_before);
     let g = |c: &AtomicU64| c.load(Ordering::Relaxed);
     crate::diagnostics::log_line(format_args!(
-        "pipeline build: done in {:.0} s, {} of {} journal pipelines tried: {stored} stored into the library, {loaded} already in it,          {} made but not in the library; {} with null shaders (untranslated), {} with a translation request unanswered,          {} unreadable (shader or root signature missing from the journal), {} refused by the driver",
+        "pipeline build: done in {:.0} s, {} of {} journal pipelines tried: {stored} stored into the library, {loaded} already in it,          {} made but not in the library; {} with null shaders (untranslated), {} with a translation request unanswered,          {} unreadable (shader or root signature missing from the journal), {} refused by the driver,          of them {} left to the runtime for their DXIL size (TUXBOX_PIPELINE_MAX_KB)",
         started.elapsed().as_secs_f64(), next.load(Ordering::Relaxed).min(order.len()), order.len(),
-        made.saturating_sub(stored + loaded), g(&nulled), g(&unanswered), g(&unreadable), g(&refused)));
+        made.saturating_sub(stored + loaded), g(&nulled), g(&unanswered), g(&unreadable), g(&refused),
+        crate::device::pipeline_cache::capped() - capped_before));
     drop(roots);
     drop(owner);
     (stored + loaded).min(u64::from(u32::MAX)) as u32
