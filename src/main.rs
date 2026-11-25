@@ -235,6 +235,15 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         splash::show("Building the TuxBox runtime");
     }
     let out = provider_out();
+    // xshader builds beside the runtime, not after it (test159: the two cargo
+    // runs were back to back before the game started). NEONBRIDGE_XSHADER_PARALLEL=0 builds it after.
+    let mut early_xshader = (mode == Mode::Run && prebuilt.is_none()
+        && std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() != Ok("0")
+        && std::env::var("NEONBRIDGE_XSHADER_PARALLEL").as_deref() != Ok("0"))
+        .then(|| {
+            let (t, o) = (tuxbox.to_path_buf(), out.clone());
+            std::thread::spawn(move || build_xshader(&t, &o).map_err(|e| e.to_string()))
+        });
     let dlls = match &prebuilt {
         Some(dir) => {
             println!("[launch] prebuilt providers: {} (nothing to build)", dir.display());
@@ -270,7 +279,10 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let worker = if std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() == Ok("0") { None } else {
         let xshader = match prebuilt.as_ref().map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
             Some(prebuilt) => Ok((prebuilt, None)),
-            None => build_xshader(&tuxbox, &out),
+            None => match early_xshader.take() {
+                Some(h) => h.join().map_err(|_| "xshader build thread panicked".to_string()).and_then(|r| r).map_err(Into::into),
+                None => build_xshader(&tuxbox, &out),
+            },
         };
         match (xshader, shaders::find_dxc()) {
             (Ok((xshader, source_key)), Some(dxc)) => {
@@ -681,7 +693,19 @@ fn rev_build_tree(snapshot: &Path, commit: &str) -> Result<PathBuf, Box<dyn Erro
 /// a snapshot once keyed by its git tree id ("tree:...") had a cache of its
 /// own and every --rev prewarm began cold (79dff41: 1337 seen, 0 cached).
 fn xshader_source_key(tuxbox: &Path) -> Option<String> {
-    const DIR: &str = "tools/shader-compiler";
+    source_hash(tuxbox, tracked_files(tuxbox, "tools/shader-compiler")?)
+}
+
+/// What decides xshader's bytes, for skipping its cargo run: the source key
+/// plus runtime/dxbc (a path dependency the key leaves out, since it is the
+/// translation cache's key too) and the workspace manifest and lock.
+fn xshader_build_fingerprint(tuxbox: &Path, key: &str) -> Option<String> {
+    let mut files = tracked_files(tuxbox, "runtime/dxbc")?;
+    files.extend(["Cargo.toml", "Cargo.lock"].into_iter().filter(|f| tuxbox.join(f).is_file()).map(str::to_owned));
+    Some(format!("{key}+{}", source_hash(tuxbox, files)?))
+}
+
+fn tracked_files(tuxbox: &Path, dir: &str) -> Option<Vec<String>> {
     let files: Vec<String> = if tuxbox.join(".neonbridge-snapshot").is_file() {
         fn walk(root: &Path, rel: &str, out: &mut Vec<String>) -> Option<()> {
             for e in fs::read_dir(root.join(rel)).ok()? {
@@ -692,14 +716,14 @@ fn xshader_source_key(tuxbox: &Path) -> Option<String> {
             Some(())
         }
         let mut v = Vec::new();
-        walk(tuxbox, DIR, &mut v)?;
+        walk(tuxbox, dir, &mut v)?;
         v
     } else {
-        let out = Command::new("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", DIR]).output().ok()
+        let out = Command::new("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", dir]).output().ok()
             .filter(|o| o.status.success())?;
         out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty()).map(|f| String::from_utf8_lossy(f).into_owned()).collect()
     };
-    source_hash(tuxbox, files)
+    Some(files)
 }
 
 fn source_hash(tuxbox: &Path, mut files: Vec<String>) -> Option<String> {
@@ -747,6 +771,18 @@ fn build_xshader(tuxbox: &Path, out: &Path) -> Result<(PathBuf, Option<String>),
     let commit = xshader_commit(tuxbox);
     let keyed = std::env::var("NEONBRIDGE_XSHADER_SOURCE_KEY").as_deref() != Ok("0");
     let before = if keyed { xshader_source_key(tuxbox) } else { None };
+    let good_fp = target_dir.join("xshader-good.fp");
+    let fingerprint = before.as_deref().and_then(|k| xshader_build_fingerprint(tuxbox, k));
+    // The crate's sources hash as they did at the last good build: no cargo at
+    // all (a no-op cargo run still costs seconds). NEONBRIDGE_XSHADER_SKIP=0 always runs cargo.
+    if let Some(fp) = &fingerprint
+        && std::env::var("NEONBRIDGE_XSHADER_SKIP").as_deref() != Ok("0")
+        && good.is_file()
+        && fs::read_to_string(&good_fp).is_ok_and(|k| k.trim() == fp)
+    {
+        println!("[launch] xshader: sources unchanged since the last build ({commit}); no cargo run");
+        return Ok((good, before));
+    }
     // /Brepro: a rebuild of unchanged sources gives the same bytes (kept for
     // the prebuilt and unkeyed cases, which key the cache by xshader's hash).
     let status = cargo_status(Command::new("cargo").args(["build", "--release", "--manifest-path"]).arg(&manifest)
@@ -757,6 +793,8 @@ fn build_xshader(tuxbox: &Path, out: &Path) -> Result<(PathBuf, Option<String>),
         if fs::copy(&built, &good).is_ok() {
             let _ = fs::write(&good_note, &commit);
             let _ = match &key { Some(k) => fs::write(&good_key, k), None => fs::remove_file(&good_key) };
+            // Only when nothing changed mid-build, like the key.
+            let _ = match fingerprint.as_ref().filter(|_| key.is_some()) { Some(f) => fs::write(&good_fp, f), None => fs::remove_file(&good_fp) };
         }
         return Ok((built, key));
     }
