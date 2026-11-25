@@ -4,14 +4,14 @@ Open work. Each item is tested in a run of its own.
 
 ## In flight
 - Presents stop at #1959 / #1600, at game+0x23cf735: not a root of its own. It is the main thread waiting on the frame thread's DONE semaphore (a210cf8), which a frame thread stuck in its tick never signals; that stall is Coder1's ring-credit wait (0x2a42d0 at 0x2a442d, released by game+0x24825a7). Not seen since test149.
-- Pending A/B runs: `TUXBOX_DEPTH_TWINS=1` (close-time pass landed, 86f630f late_pass); `TUXBOX_ROOT_VIEW_TABLES=1` (bind half landed, 92da1f3; default-on after its run); `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
+- Pending A/B runs: `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
 - A/B `TB_VIEW_MARKS=1` (498fc37, 9549a0d; needs a prewarm): shadow write-backs should copy only marked pages.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
 ## d3d12
-- Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
+- Memory: system commit is the danger, not device memory. test179: private 7.5 -> 23 GiB, free commit down to 267 MiB, the jumps at heavy driver compiles that kept their arena on the compiling thread (+2.1-2.9 GiB each). Device local over budget (8788 of 7188 MiB: page pools 4720, images 3330, shadows 1070, render heaps 848) is paged by WDDM: idle pools are demoted, render heaps evicted, placed textures trimmed and unmapped. Re-measure free commit in test181 with 5793004 (fresh thread per heavy compile); then try `TUXBOX_PAGES_SYSTEM_PCT` (new sampled-texture pools to system memory over budget; off since test59 died at 1 GiB of commit).
 
 ## xshader
 - xcl 7bea019 (split-wave64 mask liveness per block).
