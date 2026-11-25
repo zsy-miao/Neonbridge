@@ -376,7 +376,11 @@ fn load_or_make(
     let make = || {
         let _admitted = super::compile_budget::enter(shader_bytes);
         let _measured = super::compile_budget::measure(shader_bytes);
-        crate::big_stack::run(make)
+        if shader_bytes >= 256 << 10 && crate::big_stack::lane_enabled() {
+            crate::big_stack::run_on_lane(make)
+        } else {
+            crate::big_stack::run(make)
+        }
     };
     let Some(name) = name.map(|n| HSTRING::from(n.as_str())) else {
         if over_offline_cap(shader_bytes) {
