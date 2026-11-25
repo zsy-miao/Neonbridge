@@ -1,4 +1,4 @@
-//! TUXBOX_RAW_STRUCTURED (default off until the xshader idxen half lands; =1 on):
+//! TUXBOX_RAW_STRUCTURED (default on with xshader c1b81c0 TB_IDXEN_RAW; =0 off):
 //! a structured buffer view (format UNKNOWN, stride > 0) is created as a raw
 //! view (R32_TYPELESS, FLAG_RAW) over the same bytes. Translated shaders read
 //! heap buffers as ByteAddressBuffer (xshader hlsl.rs heap loads, the idxen
@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R32_TYPELESS, DXGI_FORM
 
 pub(crate) fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RAW_STRUCTURED") == Some("1"))
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RAW_STRUCTURED") != Some("0"))
 }
 
 /// (first dword, dwords) of a structured window, when it can be raw.
@@ -31,7 +31,7 @@ fn note(kind: &str, stride: u32) {
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if n <= 4 || n.is_power_of_two() {
         crate::diagnostics::log_line(format_args!(
-            "raw structured: {kind} of stride {stride} created raw ({n} so far; TUXBOX_RAW_STRUCTURED=1 is on)"));
+            "raw structured: {kind} of stride {stride} created raw ({n} so far; TUXBOX_RAW_STRUCTURED=0 off)"));
     }
 }
 
