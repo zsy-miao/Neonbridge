@@ -79,7 +79,8 @@ fn available_memory() -> Result<u64, u32> {
     // when a page is first mapped, so a batch is bounded by the commit limit
     // (RAM + pagefile), not by what is free right now. GTA VI asks for 6.5 GB
     // at once on a 16 GB PC; a later commit failure is reported by the map.
-    Ok(info.ullTotalPageFile)
+    // The title's own budget caps it (title_memory_cap).
+    Ok(crate::title_memory_cap().map_or(info.ullTotalPageFile, |cap| info.ullTotalPageFile.min(cap)))
 }
 
 pub(super) fn relinquished() -> u64 {

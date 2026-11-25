@@ -309,10 +309,10 @@ pub unsafe extern "system" fn working_set_statistics(selector: u32, out: *mut [u
     let headroom = memory.ullAvailPhys.min(memory.ullAvailPageFile);
     let budget = used.saturating_add(headroom.saturating_sub(physical_pages::relinquished())).min(memory.ullTotalPhys);
     // leonida 6c1d9395 (idea): the title sizes its pools and streaming from
-    // this budget. TUXBOX_TITLE_MEMORY_MB caps it (unset: host headroom only).
-    let budget = match std::env::var("TUXBOX_TITLE_MEMORY_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
-        Some(mb) if mb > 0 => budget.min(mb << 20).max(used),
-        _ => budget,
+    // this budget. TUXBOX_TITLE_MEMORY_MB caps it (title_memory_cap).
+    let budget = match title_memory_cap() {
+        Some(cap) => budget.min(cap).max(used),
+        None => budget,
     };
     {
         // What the title is told, the first time and whenever it falls by a GiB.
@@ -387,4 +387,23 @@ fn publish_graphics_budget(out: *mut [u64; 15]) {
         base.add(84).cast::<u32>().write_unaligned(frame);
         base.add(96).cast::<u32>().write_unaligned(page_table);
     }
+}
+
+/// The title's memory: a Series X title gets 13.5 GiB (13824 MiB). Unset,
+/// the budget and the free page statistics told the title the host's whole
+/// headroom and commit limit (RAM plus page file), and it sized its pools and
+/// streaming past what the PC could commit (test142: 165 MiB of commit free;
+/// memory atlas gap 1). The refs cap it there: xcl config.rs:117-123 (GPL-3.0),
+/// OpenScarlett-OCE xmem.cpp:481-495, rebox xmem.c:626-668 (GPL-2.0),
+/// VIctory console.rs:22-27, credit to their authors.
+/// TUXBOX_TITLE_MEMORY_MB=<MiB> sets it, 0 leaves it uncapped as before.
+pub(crate) fn title_memory_cap() -> Option<u64> {
+    static CAP: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        match std::env::var("TUXBOX_TITLE_MEMORY_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+            Some(0) => None,
+            Some(mb) => Some(mb << 20),
+            None => Some(13_824 << 20),
+        }
+    })
 }
