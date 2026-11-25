@@ -172,16 +172,13 @@ impl Transfer {
         Ok(self.next)
     }
 
-    /// `own`: the submitting queue's reader fence, when a submission refreshes.
-    pub(super) fn refresh(
-        &mut self,
-        device: &ID3D12Device,
-        textures: &[Arc<Texture>],
-        own: Option<&ID3D12Fence>,
-    ) -> Result<()> {
-        if let Some(error) = self.failed {
-            return Err(error.into());
-        }
+    /// Pools or frees the uploads whose copies the GPU finished. The owning
+    /// queue's refresh used to be the only drain, so a queue that stopped
+    /// refreshing (or a failed Transfer) kept its upload buffers forever:
+    /// test152 held 6.4 GiB of write-combined host-private commit. Every
+    /// refresh now drains every queue's Transfer (placement.rs), and a failed
+    /// one still drains. TUXBOX_UPLOAD_DRAIN_ANY=0 drains only the own queue.
+    pub(super) fn drain(&mut self) {
         let completed = unsafe { self.fence.GetCompletedValue() };
         while self
             .pending
@@ -194,6 +191,20 @@ impl Transfer {
                 pool_give(&mut self.pool, &mut self.pool_bytes, upload.bucket, upload.buffer, POOL_CAP_BYTES);
             }
         }
+    }
+
+    /// `own`: the submitting queue's reader fence, when a submission refreshes.
+    pub(super) fn refresh(
+        &mut self,
+        device: &ID3D12Device,
+        textures: &[Arc<Texture>],
+        own: Option<&ID3D12Fence>,
+    ) -> Result<()> {
+        if let Some(error) = self.failed {
+            if drain_any() { self.drain(); }
+            return Err(error.into());
+        }
+        self.drain();
         let mut changes = Vec::new();
         let watch_site = crate::diagnostics::cost::site();
         let watch = super::watch::enabled().then(|| {
@@ -518,4 +529,9 @@ impl Texture {
         }
         Ok(())
     }
+}
+
+pub(super) fn drain_any() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_DRAIN_ANY") != Some("0"))
 }

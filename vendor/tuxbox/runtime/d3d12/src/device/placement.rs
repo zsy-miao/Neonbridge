@@ -1600,6 +1600,10 @@ pub(crate) unsafe fn submit(
     }
     drop(scan_site);
 
+    if upload::drain_any() {
+        submission.transfer.drain();
+        for other in submission.per_queue.values_mut() { other.drain(); }
+    }
     let transfer = if upload_per_queue() {
         match submission.per_queue.entry(windows::core::Interface::as_raw(queue) as usize) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
