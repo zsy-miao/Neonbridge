@@ -2584,6 +2584,15 @@ fn heap_register(ex: &ShaderExtract) -> Option<u8> {
         RootParamKind::Descriptor { .. } => 2,
         RootParamKind::Constants { num32, .. } => *num32,
     }).sum();
+    // A compute program's own FSSM class-5 record names the SGPR its heap pointer
+    // arrives in; the root-word count can disagree (test173 6d291b / dc5be1 read the
+    // heap from s7 while the root words put it at s9 / s10, so every heap fetch was
+    // refused as a dynamic soffset). TB_HEAP_REG_FSSM=0 uses the root-word count only.
+    if ex.stage == Stage::Compute && std::env::var("TB_HEAP_REG_FSSM").map_or(true, |v| v.trim() != "0") {
+        if let Some(r) = compute_user_sgpr(ex, 5).filter(|&r| r < 100) {
+            return Some(r);
+        }
+    }
     u8::try_from(base + words).ok().filter(|&r| r < 100)
 }
 
