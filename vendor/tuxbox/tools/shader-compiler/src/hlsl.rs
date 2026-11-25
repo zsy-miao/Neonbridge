@@ -2495,7 +2495,12 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // TB_EXEC_GROUP_COMPUTE=0 groups only the two programs named below.
     let group_compute = ex.stage == Stage::Compute
         && std::env::var("TB_EXEC_GROUP_COMPUTE").map_or(true, |v| v.trim() != "0");
-    if ex.stage == Stage::Pixel || fspx_wave.is_some() || group_compute
+    // Every other stage too (TuxBox ab06fe1, absceptual, copied with credit):
+    // the region closes before anything but pure register arithmetic, so the
+    // grouped program is the same in any stage. TB_EXEC_GROUP=0 limits it to
+    // pixel and compute as before.
+    let group_all = std::env::var("TB_EXEC_GROUP").map_or(true, |v| v.trim() != "0");
+    if group_all || ex.stage == Stage::Pixel || fspx_wave.is_some() || group_compute
         || (ex.stage == Stage::Compute
             && (packed_root::matches_program(&ex.isa, 60424, 0xc449ec66f2170fb3)
                 || packed_root::matches_program(&ex.isa, 56932, 0x5504968d23557c53)))
