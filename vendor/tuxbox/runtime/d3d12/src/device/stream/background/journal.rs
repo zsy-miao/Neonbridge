@@ -127,6 +127,25 @@ fn with(f: impl FnOnce(&mut Journal) -> std::io::Result<()>) {
     }
 }
 
+/// A pipeline frame (G or C) reaches the file within a second: the buffer
+/// was flushed only at library saves, so a run killed or hung after its last
+/// save lost the pipelines it created since (up to 1 MiB of frames), and
+/// --pipelines / --prewarm never built them. TUXBOX_JOURNAL_FLUSH_S=0 flushes
+/// only at saves, as before; N sets the seconds.
+fn flush_soon(j: &mut Journal) -> std::io::Result<()> {
+    static LAST: std::sync::OnceLock<Mutex<Instant>> = std::sync::OnceLock::new();
+    let secs = crate::env_toggle!("TUXBOX_JOURNAL_FLUSH_S").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(1);
+    if secs == 0 {
+        return Ok(());
+    }
+    let mut last = LAST.get_or_init(|| Mutex::new(Instant::now())).lock().unwrap_or_else(|e| e.into_inner());
+    if last.elapsed() >= Duration::from_secs(secs) {
+        *last = Instant::now();
+        j.file.flush()?;
+    }
+    Ok(())
+}
+
 fn put(j: &mut Journal, tag: u8, hash: u64, payload: &[u8]) -> std::io::Result<()> {
     if !j.seen.insert((tag, hash)) {
         return Ok(());
@@ -188,7 +207,8 @@ pub(in crate::device) fn stream(device: &Device, key: Option<&str>, stream: &Own
             return Ok(());
         }
         let Some(payload) = (unsafe { serialize(j, stream, root.as_deref()) })? else { return Ok(()) };
-        put(j, b'G', hash, &payload)
+        put(j, b'G', hash, &payload)?;
+        flush_soon(j)
     });
 }
 
@@ -207,7 +227,8 @@ pub(in crate::device) fn compute(device: &Device, key: Option<&str>, compute: &O
         put(j, b'S', cs, &compute.code)?;
         payload.extend_from_slice(&cs.to_le_bytes());
         u32s(&mut payload, &[compute.node_mask, compute.flags.0 as u32]);
-        put(j, b'C', hash, &payload)
+        put(j, b'C', hash, &payload)?;
+        flush_soon(j)
     });
 }
 
