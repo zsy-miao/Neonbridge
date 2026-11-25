@@ -520,7 +520,16 @@ fn request(
             }
         }
     };
-    if DEADLINE.with(|d| d.get()).is_some() {
+    // A ready pipeline worker (PATIENCE) builds a pipeline the title bound,
+    // but its request was not marked: test178 launched on a new xshader (new
+    // compiler id, empty key dir), the launcher's background prewarm of 2173
+    // programs went first, and 52 bound programs gave up 24829 times "past the
+    // ready worker's wait" while their .cso was still minutes away. It is
+    // marked urgent too now, so the launcher serves it ahead of the prewarm.
+    // TUXBOX_PATIENT_URGENT=0 leaves a worker's request unmarked.
+    if DEADLINE.with(|d| d.get()).is_some()
+        || (PATIENCE.with(|p| p.get()).is_some() && crate::env_toggle!("TUXBOX_PATIENT_URGENT") != Some("0"))
+    {
         mark();
     }
     loop {
