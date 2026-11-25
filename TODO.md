@@ -26,10 +26,11 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - Port the wave64 partition classifier.
 - Descriptor-as-data gap.
 - Find the 5 programs the prewarm fails with "^": DXC rejects their translated HLSL. The launcher logs only the 2 DXC timeouts by hash (35af8e6d, 40a6b3dc).
+- Shrink the emitted HLSL for 35af8e6d and 40a6b3dc. They translate in 7 s, but their ~89k-instruction HLSL overruns the DXC timeout.
 - Refs the atlas has queued.
 
 ## Launcher
-- Log every failed shader by hash. Today only the summary line keeps the reason.
+- Log every failed shader by hash: remove the `if m.contains("timed out")` gate at src/shaders.rs:1112, so every Failed prints `Xbox shader {key}: {m}`. The next prewarm then names all 7.
 
 ## Research
 - The ref watch is paused (cron acf2e111 removed). Restart it after the audit.
