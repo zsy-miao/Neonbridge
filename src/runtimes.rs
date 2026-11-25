@@ -2002,6 +2002,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
         let perf = crate::report::fps_summary(&lines);
         println!("[launch] {name} run: {}", perf.replace('\n', "; "));
         let _ = fs::write(cache.join("last-perf.txt"), &perf);
+        let _ = crate::crash::after_run(name, &cache, &lines);
         backup_cache(&cache); // what this run compiled
     }
     if matches!(task, Task::Run) && let Err(e) = &result {
