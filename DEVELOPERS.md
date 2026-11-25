@@ -68,7 +68,7 @@ The `neonbridge-own` runtime keeps its own options (`--debug`, `--rev`, `--tuxbo
 | `NEONBRIDGE_DIAG=0` | No diagnostics build. On by default: each toml's `diag_build`/`diag_exe` (the author's own diagnostics build) is used, with its own build stamp. The picker's Diagnostics box sets it. |
 | `NEONBRIDGE_FEED=1` | Stream the run over Tailscale (`tools/tsproxy.exe`, else `tools/cloudflared.exe`) behind a site password; needs ffmpeg. Shows the loader and the game window. |
 | `NEONBRIDGE_FEED_WINDOWS=0` | Stream only neonbridge-own's frame tap, not window captures. |
-| `NEONBRIDGE_AUTO_A=0` | Turns off auto-press A: by default the launcher focuses the game window and holds Enter (A) every 8 s for the first 15 minutes, so unattended runs get past the start screens (`NEONBRIDGE_AUTO_A_EVERY`, `_FOR` in seconds, `_HOLD_MS`) |
+| `NEONBRIDGE_AUTO_A=0` | Turns off auto-press A: by default the launcher focuses the game window and presses Enter (A) every 8 s for the whole run, alternating a tap (start screens) and a 6 s hold (cutscene skip), so unattended runs don't stall (`NEONBRIDGE_AUTO_A_EVERY`, `_FOR` in seconds, `_HOLD_MS`, `_LONG_MS`) |
 | `NEONBRIDGE_BUILD=0` | Never build; use the exe as it is. |
 | `NEONBRIDGE_BUILD_STAMP=0` | Use the mtime check instead of build stamps. |
 | `NEONBRIDGE_PATCHES=0` | Build the trees without `vendor/patches`. |

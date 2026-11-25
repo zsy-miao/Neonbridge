@@ -2,11 +2,13 @@
 //! read the keyboard only while their window has focus (GetAsyncKeyState; Enter
 //! is A in every runtime's keyboard map). So unattended runs don't stall there,
 //! the launcher focuses the game's window and holds Enter every few seconds
-//! for the first minutes of a run.
+//! for the whole run. Presses alternate between a tap (start screens, prompts)
+//! and a long hold (cutscenes skip on a held A).
 //!
 //! NEONBRIDGE_AUTO_A=0 turns it off; NEONBRIDGE_AUTO_A_EVERY=<s> (default 8),
-//! NEONBRIDGE_AUTO_A_FOR=<s> (default 900), NEONBRIDGE_AUTO_A_HOLD_MS=<ms>
-//! (default 1500: long enough to be seen by a title running at 1 fps).
+//! NEONBRIDGE_AUTO_A_FOR=<s> (default 0 = the whole run), NEONBRIDGE_AUTO_A_HOLD_MS=<ms>
+//! (default 1500: long enough to be seen by a title running at 1 fps),
+//! NEONBRIDGE_AUTO_A_LONG_MS=<ms> (default 6000: the cutscene-skip hold).
 
 use std::time::{Duration, Instant};
 
@@ -19,14 +21,18 @@ pub fn start(pid: u32) {
         return;
     }
     let every = Duration::from_secs(num("NEONBRIDGE_AUTO_A_EVERY", 8).max(2));
-    let until = Instant::now() + Duration::from_secs(num("NEONBRIDGE_AUTO_A_FOR", 900));
+    let secs = num("NEONBRIDGE_AUTO_A_FOR", 0);
+    let until = (secs > 0).then(|| Instant::now() + Duration::from_secs(secs));
     let hold = Duration::from_millis(num("NEONBRIDGE_AUTO_A_HOLD_MS", 1500));
-    println!("[launch] auto-press A: Enter every {}s for {}s (NEONBRIDGE_AUTO_A=0 turns it off)", every.as_secs(), num("NEONBRIDGE_AUTO_A_FOR", 900));
+    let long = Duration::from_millis(num("NEONBRIDGE_AUTO_A_LONG_MS", 6000));
+    println!("[launch] auto-press A: Enter every {}s, tap then {} ms hold for cutscenes (NEONBRIDGE_AUTO_A=0 turns it off)", every.as_secs(), long.as_millis());
     std::thread::spawn(move || {
-        while Instant::now() < until {
+        let mut n = 0u64;
+        while until.is_none_or(|u| Instant::now() < u) {
             std::thread::sleep(every);
             let Some(h) = window(pid) else { continue };
-            press(h, hold);
+            n += 1;
+            press(h, if n % 2 == 0 { long } else { hold });
         }
     });
 }
