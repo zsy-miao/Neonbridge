@@ -315,7 +315,12 @@ fn readable(address: u64, bytes: u64) -> bool {
 
 /// An upload buffer standing in for title pages that will not import, mapped
 /// for good, and filled now.
-fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resource, usize)> {
+fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resource, u64, usize)> {
+    if let Some((staging, offset, mapped)) = slab_piece(device, bytes)? {
+        unsafe { fill(mapped, address, bytes) };
+        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowImport, bytes);
+        return Ok((staging, offset, mapped));
+    }
     let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_UPLOAD, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
     let mut staging: Option<ID3D12Resource> = None;
     unsafe {
@@ -334,7 +339,50 @@ fn cpu_piece(device: &Device, address: u64, bytes: u64) -> Result<(ID3D12Resourc
         crate::diagnostics::log_line(format_args!(
             "shadow at {address:#x} ({bytes} bytes): title pages not importable, read through a CPU-filled upload buffer ({n} so far; TUXBOX_SHADOW_CPU=0 binds null)"));
     }
-    Ok((staging, mapped as usize))
+    Ok((staging, 0, mapped as usize))
+}
+
+/// test177: 60,157 CPU pieces held 541 MiB, but each was its own committed
+/// upload buffer, which the driver places on a 64 KiB allocation: ~3.7 GiB of
+/// write-combined host commit (host private WC 11 GB, system free commit
+/// 491 MiB). Pieces up to 64 KiB now share 4 MiB upload slabs, 256-byte
+/// aligned; a slab is freed once no piece holds it (each piece holds a
+/// reference). TUXBOX_SHADOW_SLAB=0 gives each piece its own buffer again.
+fn slab_piece(device: &Device, bytes: u64) -> Result<Option<(ID3D12Resource, u64, usize)>> {
+    const SLAB: u64 = 4 << 20;
+    if bytes > 64 << 10 || crate::env_toggle!("TUXBOX_SHADOW_SLAB") == Some("0") {
+        return Ok(None);
+    }
+    struct Slab { device: usize, resource: ID3D12Resource, mapped: usize, used: u64 }
+    // SAFETY: D3D12 resources are free-threaded; the mapping lives as long as the resource.
+    unsafe impl Send for Slab {}
+    static CURRENT: std::sync::Mutex<Option<Slab>> = std::sync::Mutex::new(None);
+    let mut current = CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+    let size = bytes.next_multiple_of(256);
+    let me = device.native.as_raw() as usize;
+    if current.as_ref().is_none_or(|s| s.device != me || s.used + size > SLAB) {
+        let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_UPLOAD, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
+        let mut made: Option<ID3D12Resource> = None;
+        unsafe {
+            device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(SLAB),
+                D3D12_RESOURCE_STATE_GENERIC_READ, None, &mut made)?;
+        }
+        let resource = made.ok_or(E_POINTER)?;
+        let mut mapped = core::ptr::null_mut();
+        let nothing_read = D3D12_RANGE { Begin: 0, End: 0 };
+        unsafe { resource.Map(0, Some(&nothing_read), Some(&mut mapped))? };
+        static SLABS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SLABS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 2 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "shadow CPU pieces: upload slab #{n} of 4 MiB (pieces up to 64 KiB share slabs; TUXBOX_SHADOW_SLAB=0 one buffer each)"));
+        }
+        *current = Some(Slab { device: me, resource, mapped: mapped as usize, used: 0 });
+    }
+    let slab = current.as_mut().ok_or(E_POINTER)?;
+    let offset = slab.used;
+    slab.used += size;
+    Ok(Some((slab.resource.clone(), offset, slab.mapped + offset as usize)))
 }
 
 /// Copies title bytes into a CPU piece's upload buffer with ReadProcessMemory,
@@ -1173,9 +1221,9 @@ fn split_import(
             if !readable(start, end - start) {
                 return Err(e);
             }
-            let (staging, mapped) = cpu_piece(device, start, end - start)?;
+            let (staging, offset, mapped) = cpu_piece(device, start, end - start)?;
             cpu.push((mapped, start, end - start, staging.clone()));
-            pieces.push((staging, 0, start - address, end - start));
+            pieces.push((staging, offset, start - address, end - start));
             Ok(())
         }
         Err(e) => Err(e),
