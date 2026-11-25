@@ -152,7 +152,7 @@ fn commit_reserve(shader_bytes: u64) -> u64 {
     if floor == 0 || crate::env_toggle!("TUXBOX_COMPILE_COMMIT_RESERVE") == Some("fixed") { COMMIT_RESERVE } else { floor }
 }
 
-fn try_enter(estimate: u64, tiny: bool, large: bool, shader_bytes: u64) -> bool {
+fn try_enter(estimate: u64, tiny: bool, forced: bool, large: bool, shader_bytes: u64) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if large && state.large != 0 && enabled() {
         let floor = sized_floor(shader_bytes);
@@ -178,13 +178,22 @@ fn try_enter(estimate: u64, tiny: bool, large: bool, shader_bytes: u64) -> bool 
         if physical < PHYSICAL_RESERVE.saturating_add(need) || commit < commit_reserve(shader_bytes).saturating_add(need) {
             return false;
         }
-        if state.large != 0 {
-            let (most, ceiling) = (max_large(), ceiling());
-            if (most != 0 && state.large >= most)
-                || (ceiling != 0 && private.saturating_add(helper_private()).saturating_add(need) > ceiling)
-            {
-                return false;
-            }
+    }
+    // The cap of large compiles and the ceiling sat under `!tiny`, which a
+    // compile the title waits on always is (ungated): those ran past both,
+    // and test runs reached far more than 4 large compiles at once. Every
+    // large compile counts now, as in five-star-recomp CompileBudget (GPL-3.0,
+    // credit to its authors), where only the commit wait is for prefetches;
+    // one past TUXBOX_COMPILE_BUDGET_WAIT_MS still starts.
+    // TUXBOX_COMPILE_CAP_ALL=0 caps gated compiles only, as before.
+    let capped = if crate::env_toggle!("TUXBOX_COMPILE_CAP_ALL") == Some("0") { !tiny } else { large && !forced };
+    if capped && state.large != 0 {
+        let need = estimate.saturating_add(remaining);
+        let (most, ceiling) = (max_large(), ceiling());
+        if (most != 0 && state.large >= most)
+            || (ceiling != 0 && private.saturating_add(helper_private()).saturating_add(need) > ceiling)
+        {
+            return false;
         }
     }
     state.running += 1;
@@ -228,7 +237,11 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
     let tiny = shader_bytes < TINY_SHADER_BYTES || !gated;
     let mut waited = None;
     let large = shader_bytes >= TINY_SHADER_BYTES;
-    while !try_enter(estimate, tiny || waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait()), large, shader_bytes) {
+    loop {
+        let forced = waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait());
+        if try_enter(estimate, tiny || forced, forced, large, shader_bytes) {
+            break;
+        }
         if waited.is_none() {
             WAITING.fetch_add(1, Ordering::Relaxed);
             waited = Some(std::time::Instant::now());
