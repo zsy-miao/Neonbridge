@@ -1109,6 +1109,20 @@ pub(super) unsafe extern "system" fn uav(
             } else {
                 matches!(view.Format, DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS | DXGI_FORMAT_R32_FLOAT).then_some(DXGI_FORMAT_R32_FLOAT)
             };
+            // The stencil plane's twin: plane slice 1, or the stencil formats.
+            use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8_UINT, DXGI_FORMAT_X32_TYPELESS_G8X24_UINT};
+            if let Some(stencil) = &pair.stencil_image
+                && (plane == Some(1) || matches!(view.Format, DXGI_FORMAT_R8_UINT | DXGI_FORMAT_X32_TYPELESS_G8X24_UINT))
+            {
+                let mut host = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: DXGI_FORMAT_R8_UINT, ..*view };
+                match host.ViewDimension {
+                    D3D12_UAV_DIMENSION_TEXTURE2D => host.Anonymous.Texture2D.PlaneSlice = 0,
+                    D3D12_UAV_DIMENSION_TEXTURE2DARRAY => host.Anonymous.Texture2DArray.PlaneSlice = 0,
+                    _ => {}
+                }
+                unsafe { checked_uav(device, Some(stencil), None, &host, handle) };
+                return;
+            }
             if plane == Some(0) && let Some(format) = format {
                 let host = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: format, ..*view };
                 unsafe { checked_uav(device, Some(&pair.image), None, &host, handle) };

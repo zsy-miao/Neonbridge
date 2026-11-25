@@ -1041,6 +1041,9 @@ unsafe extern "system" fn transition(
                             // A guest AS pool may contain individually relocated structures.
                             // Order their host writes even when the barrier was recorded first.
                             ptr::null_mut()
+                        } else if r.state.depth().is_some_and(|pair| pair.stencil_image.is_some()) {
+                            // Two twins (TUXBOX_DEPTH_TWINS): order every UAV access.
+                            ptr::null_mut()
                         } else {
                             r.state
                                 .depth()
@@ -1327,6 +1330,15 @@ unsafe extern "system" fn extended_cache_barrier(
         return;
     }
     global_cache_barrier(list, &mut state);
+}
+
+/// Older-layout pipeline sync (slots 129/130). TUXBOX_PIPELINE_SYNC_BARRIER=0
+/// records nothing, as before.
+unsafe extern "system" fn pipeline_sync(list: &List, flags: u32, control: u32, address: u64, bytes: u64) {
+    if crate::env_toggle!("TUXBOX_PIPELINE_SYNC_BARRIER") == Some("0") {
+        return;
+    }
+    unsafe { extended_cache_barrier(list, flags, control, address, bytes) };
 }
 
 fn global_cache_barrier(list: &List, state: &mut Recording) {
@@ -2365,6 +2377,11 @@ static LIST_SLOTS: Slots<149> = {
     slots[121] = crate::slot!(ray_dispatch::dispatch);
     slots[126] = crate::slot!(graphics::shading_rate);
     slots[127] = crate::slot!(graphics::dispatch_mesh);
+    // VIctory-zhai 1d05911 (GPL-3.0): 129/130 on this layout are the pipeline
+    // syncs (flags, control, address, size); they order earlier shader writes
+    // with a global barrier like 131/132 on the newer one.
+    slots[129] = crate::slot!(pipeline_sync);
+    slots[130] = crate::slot!(pipeline_sync);
     slots[131] = crate::slot!(build_raytracing::batch);
     slots[139] = crate::slot!(reset_extended);
     slots[146] = crate::slot!(enhanced::barrier);

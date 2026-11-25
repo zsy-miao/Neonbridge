@@ -21,10 +21,10 @@ pub(super) fn primary(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC>
 /// depth with or without stencil and 16-bit depth, every mip and slice, the
 /// twin 16 bits a texel for 16-bit depth and a 32-bit float otherwise. Ours
 /// stays barrier-driven (a handoff copy at each transition into or out of
-/// unordered access) where fxceless tracks which side is behind. Not ported:
-/// fxceless's R8 twin of a stencil plane (stencil views stay null) and its
-/// pass that draws a 24-bit depth plane from a twin (24-bit depth is not
-/// paired). Off: only one-mip, one-slice R32G8X24 textures with the two
+/// unordered access) where fxceless tracks which side is behind. A stencil
+/// plane gets its own R8_UINT twin, copied through the transfer buffer as
+/// fxceless does (`Twin::through`). Not ported: fxceless's pass that draws a
+/// 24-bit depth plane from its twin (24-bit depth is not paired). Off: only one-mip, one-slice R32G8X24 textures with the two
 /// console flag words seen first, as before.
 pub(crate) fn twins() -> bool {
     crate::env_toggle!("TUXBOX_DEPTH_TWINS") == Some("1")
@@ -67,6 +67,10 @@ pub(crate) struct Pair {
     pub(crate) stencil: bool,
     /// The twin's texels are 16 bits (16-bit depth).
     pub(crate) narrow: bool,
+    /// TUXBOX_DEPTH_TWINS with a stencil plane: its R8_UINT twin and, per
+    /// stencil subresource, the layouts as in `planes`.
+    pub(crate) stencil_image: Option<ID3D12Resource>,
+    pub(crate) stencil_planes: Vec<(D3D12_PLACED_SUBRESOURCE_FOOTPRINT, D3D12_PLACED_SUBRESOURCE_FOOTPRINT)>,
 }
 
 impl Pair {
@@ -79,6 +83,7 @@ impl Pair {
 fn footprints(
     device: &ID3D12Device,
     desc: &D3D12_RESOURCE_DESC,
+    first: u32,
     count: u32,
     texel: u64,
 ) -> Result<Vec<(D3D12_PLACED_SUBRESOURCE_FOOTPRINT, u32)>> {
@@ -90,7 +95,7 @@ fn footprints(
     unsafe {
         device.GetCopyableFootprints(
             desc,
-            0,
+            first,
             count,
             0,
             Some(layouts.as_mut_ptr()),
@@ -138,21 +143,33 @@ impl Pair {
         };
         let texel = if narrow { 2 } else { 4 };
         let count = u32::from(primary.MipLevels.max(1)) * u32::from(primary.DepthOrArraySize.max(1));
-        let depth = footprints(device, primary, count, texel)?;
-        let image = footprints(device, &companion, count, texel)?;
+        let depth = footprints(device, primary, 0, count, texel)?;
+        let image = footprints(device, &companion, 0, count, texel)?;
         // One pitch per subresource for both sides, packed at 512 bytes.
-        let mut planes = Vec::with_capacity(depth.len());
         let mut offset = 0u64;
-        for ((mut d, rows), (mut c, _)) in depth.into_iter().zip(image) {
-            let pitch = d.Footprint.RowPitch.max(c.Footprint.RowPitch);
-            offset = offset.next_multiple_of(u64::from(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT));
-            d.Footprint.RowPitch = pitch;
-            c.Footprint.RowPitch = pitch;
-            d.Offset = offset;
-            c.Offset = offset;
-            offset += u64::from(pitch) * u64::from(rows);
-            planes.push((d, c));
-        }
+        let mut pack = |depth: Vec<(D3D12_PLACED_SUBRESOURCE_FOOTPRINT, u32)>, image: Vec<(D3D12_PLACED_SUBRESOURCE_FOOTPRINT, u32)>| {
+            let mut planes = Vec::with_capacity(depth.len());
+            for ((mut d, rows), (mut c, _)) in depth.into_iter().zip(image) {
+                let pitch = d.Footprint.RowPitch.max(c.Footprint.RowPitch);
+                offset = offset.next_multiple_of(u64::from(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT));
+                d.Footprint.RowPitch = pitch;
+                c.Footprint.RowPitch = pitch;
+                d.Offset = offset;
+                c.Offset = offset;
+                offset += u64::from(pitch) * u64::from(rows);
+                planes.push((d, c));
+            }
+            planes
+        };
+        let planes = pack(depth, image);
+        let stencil_companion = D3D12_RESOURCE_DESC { Format: DXGI_FORMAT_R8_UINT, ..companion };
+        let stencil_planes = if stencil && twins() {
+            let depth = footprints(device, primary, count, count, 1)?;
+            let image = footprints(device, &stencil_companion, 0, count, 1)?;
+            pack(depth, image)
+        } else {
+            Vec::new()
+        };
         let staging = D3D12_RESOURCE_DESC {
             Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
             Width: offset,
@@ -187,6 +204,12 @@ impl Pair {
             planes,
             stencil,
             narrow,
+            stencil_image: if stencil_planes.is_empty() {
+                None
+            } else {
+                Some(allocate(&stencil_companion, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)?)
+            },
+            stencil_planes,
         })
     }
 }
