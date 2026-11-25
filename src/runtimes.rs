@@ -611,7 +611,23 @@ fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>
         None => (line, None, exe),
     };
     let never = std::env::var("NEONBRIDGE_BUILD").is_ok_and(|v| v.trim() == "0");
-    if never || !stale(root, spec, &exe) {
+    // The build stamp beside the exe: when it matches, neither the patch nor
+    // cargo runs. The mtime check alone rebuilt on every launch: applying and
+    // reverting the rt patch rewrites the patched sources' mtimes each time,
+    // so both stale() and cargo's own fingerprints fired.
+    let stamp_file = PathBuf::from(format!("{}.nbstamp", exe.display()));
+    let stamp = build_stamp(name, root, &line, target.as_deref());
+    if !never && exe.is_file() && let Some(s) = &stamp && fs::read_to_string(&stamp_file).is_ok_and(|t| t == *s) {
+        println!("[launch] {name}: up to date (build stamp matches); not building");
+        return Ok(exe);
+    }
+    // A tree built before stamps existed: an up-to-date exe gets its stamp, no build.
+    if !never && exe.is_file() && let Some(s) = &stamp && !stamp_file.exists() && !stale(root, spec, &exe) {
+        let _ = fs::write(&stamp_file, s);
+        println!("[launch] {name}: up to date; build stamp written");
+        return Ok(exe);
+    }
+    if never || (stamp.is_none() && !stale(root, spec, &exe)) {
         return if exe.is_file() { Ok(exe) } else { Err(format!("runtime {name}: {} is missing (NEONBRIDGE_BUILD=0)", exe.display()).into()) };
     }
     let cmd = Some(line.as_slice()).filter(|c| !c.is_empty()).ok_or_else(|| format!("runtime {name}: {} is stale and NEONBRIDGE.toml names no build", exe.display()))?;
@@ -659,7 +675,39 @@ fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>
     if !exe.is_file() {
         return Err(format!("runtime {name}: the build made no {}", exe.display()).into());
     }
+    if let Some(s) = &stamp {
+        let _ = fs::write(&stamp_file, s);
+    }
     Ok(exe)
+}
+
+/// What a tree's build depends on, as one sha256: its committed git tree
+/// (`HEAD:./`), its uncommitted changes and untracked files, its rt patch,
+/// the build line and the target folder. Taken with the patch reverted, so
+/// it never sees our own edits. None (outside git, a release) falls back to
+/// the mtime check. NEONBRIDGE_BUILD_STAMP=0 turns it off.
+fn build_stamp(name: &str, root: &Path, line: &[String], target: Option<&Path>) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if std::env::var("NEONBRIDGE_BUILD_STAMP").as_deref() == Ok("0") {
+        return None;
+    }
+    let git = |args: &[&str]| -> Option<Vec<u8>> {
+        let o = crate::runtimes::command("git").arg("-C").arg(root).args(args).stderr(Stdio::null()).output().ok()?;
+        o.status.success().then_some(o.stdout)
+    };
+    let mut h = Sha256::new();
+    h.update(git(&["rev-parse", "HEAD:./"])?);
+    h.update(git(&["diff", "HEAD", "--binary", "--", "."])?);
+    h.update(git(&["ls-files", "--others", "--exclude-standard", "--", "."])?);
+    if patching() && let Ok(p) = fs::read(patch_file(name)) {
+        h.update(b"patch");
+        h.update(&p);
+    }
+    h.update(line.join("\x1f").as_bytes());
+    if let Some(t) = target {
+        h.update(t.display().to_string().as_bytes());
+    }
+    Some(format!("{:x}", h.finalize()))
 }
 
 /// Python 3 for a toml command that starts with `python`: the py launcher's
