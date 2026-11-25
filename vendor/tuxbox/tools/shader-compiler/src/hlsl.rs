@@ -6806,8 +6806,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // threads still belong to the group and must participate in the HLSL
             // barrier. Only lift the barrier if every enclosing skip exits the
             // program and no loop could change how many times a wave reaches it.
+            // Ours (after xcl recomp/emit.rs safe_barrier, GPL-3.0: a barrier that lanes
+            // skipping it never reach must not hang the host): outside every loop a
+            // thread reaches the barrier once whichever forward skips it takes, so the
+            // guarded barrier is lifted out of its guards and syncs the whole group,
+            // instead of keeping only its fence. TB_LIFT_GUARDED_BARRIER=0 lifts only
+            // past skips that exit the program, as before.
+            let lift_any = !std::env::var("TB_LIFT_GUARDED_BARRIER").is_ok_and(|v| v.trim() == "0");
             if self.is_cs && ins.mnemonic == "s_barrier" && loops.is_empty()
-                && active.iter().all(|&t| t == insns.len() || (t + 1 == insns.len() && insns[t].mnemonic == "s_endpgm"))
+                && (lift_any || active.iter().all(|&t| t == insns.len() || (t + 1 == insns.len() && insns[t].mnemonic == "s_endpgm")))
             {
                 active.clear();
             }
