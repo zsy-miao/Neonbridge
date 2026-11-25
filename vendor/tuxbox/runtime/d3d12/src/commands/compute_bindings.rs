@@ -392,7 +392,7 @@ impl Bindings {
                         let visible = arena.visible();
                         (unsafe { visible.GetCPUDescriptorHandleForHeapStart() }.ptr, unsafe { visible.GetDesc() }.NumDescriptors)
                     }
-                    None => (heap.cpu.start, (heap.cpu.len() / stride.max(1)) as u32),
+                    None => (heap.cpu.start, heap.table_slots()),
                 };
                 let (buffer, address) = unsafe { crate::device::view_formats_address(owner, start, count, stride)? };
                 let held_buffer = ID3D12Pageable::from(buffer);
@@ -415,7 +415,7 @@ impl Bindings {
                         let visible = arena.visible();
                         (unsafe { visible.GetCPUDescriptorHandleForHeapStart() }.ptr, unsafe { visible.GetDesc() }.NumDescriptors)
                     }
-                    None => (heap.cpu.start, (heap.cpu.len() / stride.max(1)) as u32),
+                    None => (heap.cpu.start, heap.table_slots()),
                 };
                 let (buffer, address) = unsafe { crate::device::slot_views_address(owner, start, count, stride)? };
                 let held_buffer = ID3D12Pageable::from(buffer);
@@ -438,7 +438,7 @@ impl Bindings {
                         let visible = arena.visible();
                         (unsafe { visible.GetCPUDescriptorHandleForHeapStart() }.ptr, unsafe { visible.GetDesc() }.NumDescriptors)
                     }
-                    None => (heap.cpu.start, (heap.cpu.len() / stride.max(1)) as u32),
+                    None => (heap.cpu.start, heap.table_slots()),
                 };
                 let mut device = None::<ID3D12Device>;
                 unsafe { guest.native.GetDevice(&mut device)? };

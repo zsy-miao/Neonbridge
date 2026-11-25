@@ -42,6 +42,13 @@ impl ResourceHeap {
         Some(ScalarDescriptor { index, cpu })
     }
 
+    /// Entries of the per-slot tables (view_formats, slot_views, view_marks)
+    /// of an unpaged heap: every slot an index can reach, so the null guard
+    /// slot the identity clamp lands on (ea11afd) is inside them too.
+    pub(super) fn table_slots(&self) -> u32 {
+        if self.clamp != 0 { self.clamp } else { (self.cpu.len() / self.table_stride().max(1)) as u32 }
+    }
+
     pub(super) fn index_map(
         &self, list: &List, arena: Option<&device::descriptor_paging::Arena>,
         resources: &device::MediaResources,
