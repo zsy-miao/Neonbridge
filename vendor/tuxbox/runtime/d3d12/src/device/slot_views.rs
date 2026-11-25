@@ -49,7 +49,10 @@ pub(crate) fn entry(base: u64, format: DXGI_FORMAT, structure_stride: u32, raw: 
     let Some(stride) = stride.filter(|_| base != 0) else { return [0; 4] };
     let address = base.wrapping_add(first.wrapping_mul(u64::from(stride)));
     let length = u64::from(elements) * u64::from(stride);
-    [address as u32, (address >> 32) as u32, length.min(u64::from(u32::MAX)) as u32, stride]
+    // A structured view made raw from below its start carries the byte bias
+    // in bits 24-31 of the stride word (raw_views::bias_on).
+    let bias = if structure_stride != 0 && !raw { super::raw_views::bias(first, elements, structure_stride).unwrap_or(0) } else { 0 };
+    [address as u32, (address >> 32) as u32, length.min(u64::from(u32::MAX)) as u32, stride | bias << 24]
 }
 
 pub(crate) fn srv_entry(base: u64, desc: Option<&D3D12_SHADER_RESOURCE_VIEW_DESC>) -> Entry {
@@ -60,6 +63,15 @@ pub(crate) fn srv_entry(base: u64, desc: Option<&D3D12_SHADER_RESOURCE_VIEW_DESC
         }
         _ => [0; 4],
     }
+}
+
+/// A UAV with a counter stays structured (raw_views::uav), so its slot
+/// carries no raw bias.
+pub(crate) fn counted(mut entry: Entry, counter: bool) -> Entry {
+    if counter {
+        entry[3] &= 0x00ff_ffff;
+    }
+    entry
 }
 
 pub(crate) fn uav_entry(base: u64, desc: Option<&D3D12_UNORDERED_ACCESS_VIEW_DESC>) -> Entry {

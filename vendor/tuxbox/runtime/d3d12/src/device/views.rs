@@ -1050,7 +1050,7 @@ pub(super) unsafe extern "system" fn uav(
     super::view_formats::write(handle.ptr, super::view_formats::uav_code(unsafe { desc.as_ref() }));
     let owner = identity(device).as_raw();
     let proxy = unsafe { super::resource_proxy(object, owner) };
-    super::slot_views::write(handle.ptr, super::slot_views::uav_entry(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }));
+    super::slot_views::write(handle.ptr, super::slot_views::counted(super::slot_views::uav_entry(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }), !counter.is_null()));
     if super::slot_words::enabled() && let Some(native) = proxy.map(|p| &p.native) {
         let words = super::slot_words::uav(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }, Some(&unsafe { native.GetDesc() }));
         if words != [0; 8] { super::slot_words::write(handle.ptr, words); }

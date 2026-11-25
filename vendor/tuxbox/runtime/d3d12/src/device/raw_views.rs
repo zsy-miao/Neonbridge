@@ -16,14 +16,38 @@ pub(crate) fn enabled() -> bool {
     *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RAW_STRUCTURED") != Some("0"))
 }
 
-/// (first dword, dwords) of a structured window, when it can be raw.
-fn raw_window(first: u64, count: u32, stride: u32) -> Option<(u64, u32)> {
-    if stride == 0 {
+/// TUXBOX_RAW_BIAS (default on, =0 such windows stay structured): a window
+/// whose start is not on 16 bytes (a raw view's offset rule) is made raw from
+/// its start rounded down to 16, and the remainder goes to the shader as a
+/// byte bias (0..15) in bits 24-31 of its slot_views stride word (xshader
+/// TB_SLOT_BIAS adds it and masks the stride to 24 bits; Coder4's half).
+fn bias_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RAW_BIAS") != Some("0"))
+}
+
+/// (first dword, dwords, byte bias) of a structured window, when it can be raw.
+fn raw_window(first: u64, count: u32, stride: u32) -> Option<(u64, u32, u32)> {
+    if stride == 0 || stride >= 1 << 24 {
         return None;
     }
     let start = first.checked_mul(u64::from(stride))?;
     let bytes = u64::from(count) * u64::from(stride);
-    (start % 16 == 0 && bytes % 4 == 0 && bytes != 0).then(|| u32::try_from(bytes / 4).ok().map(|dwords| (start / 4, dwords))).flatten()
+    let bias = start % 16;
+    if bytes % 4 != 0 || bytes == 0 || start % 4 != 0 || (bias != 0 && !bias_on()) {
+        return None;
+    }
+    let dwords = u32::try_from((bytes + bias) / 4).ok()?;
+    Some(((start - bias) / 4, dwords, bias as u32))
+}
+
+/// The byte bias a structured view's slot carries once it is made raw
+/// (see `bias_on`); None when it stays structured.
+pub(crate) fn bias(first: u64, count: u32, stride: u32) -> Option<u32> {
+    if !enabled() {
+        return None;
+    }
+    raw_window(first, count, stride).map(|w| w.2)
 }
 
 fn note(kind: &str, stride: u32) {
@@ -41,7 +65,7 @@ pub(crate) fn srv(view: &mut D3D12_SHADER_RESOURCE_VIEW_DESC) {
         return;
     }
     let b = unsafe { view.Anonymous.Buffer };
-    let Some((first, dwords)) = raw_window(b.FirstElement, b.NumElements, b.StructureByteStride) else { return };
+    let Some((first, dwords, _)) = raw_window(b.FirstElement, b.NumElements, b.StructureByteStride) else { return };
     view.Format = DXGI_FORMAT_R32_TYPELESS;
     view.Anonymous.Buffer = D3D12_BUFFER_SRV { FirstElement: first, NumElements: dwords, StructureByteStride: 0, Flags: D3D12_BUFFER_SRV_FLAG_RAW };
     note("SRV", b.StructureByteStride);
@@ -53,7 +77,7 @@ pub(crate) fn uav(view: &mut D3D12_UNORDERED_ACCESS_VIEW_DESC, counter: bool) {
         return;
     }
     let b = unsafe { view.Anonymous.Buffer };
-    let Some((first, dwords)) = raw_window(b.FirstElement, b.NumElements, b.StructureByteStride) else { return };
+    let Some((first, dwords, _)) = raw_window(b.FirstElement, b.NumElements, b.StructureByteStride) else { return };
     view.Format = DXGI_FORMAT_R32_TYPELESS;
     view.Anonymous.Buffer = D3D12_BUFFER_UAV { FirstElement: first, NumElements: dwords, StructureByteStride: 0, CounterOffsetInBytes: 0, Flags: D3D12_BUFFER_UAV_FLAG_RAW };
     note("UAV", b.StructureByteStride);
