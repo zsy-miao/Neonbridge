@@ -44,6 +44,10 @@ struct Entry {
     /// address, bytes), filled from title memory by the CPU before the
     /// piece's GPU copy (see cpu_piece).
     cpu: Vec<(usize, u64, u64, ID3D12Resource)>,
+    /// Writable copies over CPU pieces (host copies, no import to copy back
+    /// into): each piece's readback buffer and its bytes before the GPU ran,
+    /// merged into title memory after the write-back's fence (Back::merge).
+    backs: Vec<Arc<Back>>,
     /// Writable copies: its bits in the view-marks bitmap (view_marks.rs),
     /// so a write-back copies only the 64 KiB pages a shader marked. None
     /// copies it whole.
@@ -355,6 +359,127 @@ fn hash_span(mut h: u64, address: u64, bytes: u64) -> u64 {
     h
 }
 
+/// A writable CPU piece's way back to title memory (TUXBOX_HOST_COPIES): the
+/// copy's bytes land in `readback` after a submission, and only the bytes
+/// that differ from `before` (what the upload piece gave the GPU, or the last
+/// merge) are written to title memory, so title CPU writes to other bytes
+/// meanwhile are kept. ztrx/VIctory victory-gpu shadow.rs Shadow::writing
+/// and copy_back_with (GPL-3.0, credited): its snapshot and byte merge.
+pub(crate) struct Back {
+    readback: ID3D12Resource,
+    mapped: usize,
+    /// Upload piece's mapping (what the refresh filled).
+    upload: usize,
+    address: u64,
+    bytes: u64,
+    /// Offset of the piece in the copy.
+    at: u64,
+    before: Mutex<Vec<u8>>,
+    /// A write-back is in flight: refreshes leave the copy alone (it holds
+    /// the GPU's bytes, title memory does not yet).
+    pending: std::sync::atomic::AtomicBool,
+}
+
+// SAFETY: the mappings live as long as their resources, held here.
+unsafe impl Send for Back {}
+unsafe impl Sync for Back {}
+
+impl Back {
+    fn new(device: &Device, upload: usize, address: u64, bytes: u64, at: u64) -> Result<Arc<Back>> {
+        let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_READBACK, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
+        let mut readback: Option<ID3D12Resource> = None;
+        unsafe {
+            device.native.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer(bytes.next_multiple_of(256)),
+                D3D12_RESOURCE_STATE_COPY_DEST, None, &mut readback)?;
+        }
+        let readback = readback.ok_or(E_POINTER)?;
+        let mut mapped = core::ptr::null_mut();
+        unsafe { readback.Map(0, None, Some(&mut mapped))? };
+        crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowImport, bytes);
+        Ok(Arc::new(Back { readback, mapped: mapped as usize, upload, address, bytes, at,
+            before: Mutex::new(vec![0; bytes as usize]), pending: Default::default() }))
+    }
+
+    /// After a refresh filled the upload piece: the GPU starts from these bytes.
+    fn filled(&self) {
+        let mut before = lock(&self.before);
+        // SAFETY: the upload mapping holds `bytes` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(self.upload as *const u8, before.as_mut_ptr(), self.bytes as usize) };
+    }
+
+    /// The write-back's copy into `readback` has completed: merge the bytes
+    /// the GPU changed into title memory. Returns the bytes written.
+    fn merge(&self) -> u64 {
+        use windows::Win32::System::{Diagnostics::Debug::WriteProcessMemory, Threading::GetCurrentProcess};
+        let mut before = lock(&self.before);
+        // SAFETY: the readback mapping holds `bytes` bytes; the GPU is done with it.
+        let after = unsafe { std::slice::from_raw_parts(self.mapped as *const u8, self.bytes as usize) };
+        let mut written = 0u64;
+        let mut i = 0usize;
+        let n = after.len();
+        while i < n {
+            // Whole 64-byte runs that match are skipped fast.
+            if i + 64 <= n && after[i..i + 64] == before[i..i + 64] {
+                i += 64;
+                continue;
+            }
+            if after[i] == before[i] {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < n && after[i] != before[i] {
+                i += 1;
+            }
+            let mut done = 0usize;
+            // WriteProcessMemory fails on a page the title decommitted
+            // instead of faulting; such bytes are dropped, as the title no
+            // longer has memory there.
+            let _ = unsafe { WriteProcessMemory(GetCurrentProcess(), (self.address as usize + start) as *const core::ffi::c_void,
+                after[start..i].as_ptr().cast(), i - start, Some(&mut done)) };
+            written += done as u64;
+        }
+        before.copy_from_slice(after);
+        self.pending.store(false, std::sync::atomic::Ordering::Release);
+        written
+    }
+}
+
+type MergeJob = (ID3D12Fence, u64, Vec<Arc<Back>>);
+struct MergeJobs(std::sync::mpsc::Sender<MergeJob>);
+// SAFETY: COM fences are free-threaded; Backs are Send.
+unsafe impl Send for MergeJobs {}
+unsafe impl Sync for MergeJobs {}
+struct MergeReceive(std::sync::mpsc::Receiver<MergeJob>);
+unsafe impl Send for MergeReceive {}
+
+/// Merges write-backs once their fence completes, on its own thread so no
+/// submission waits on the GPU.
+fn merge_after(fence: ID3D12Fence, value: u64, backs: Vec<Arc<Back>>) {
+    static JOBS: std::sync::OnceLock<Mutex<MergeJobs>> = std::sync::OnceLock::new();
+    let jobs = JOBS.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::channel::<MergeJob>();
+        let receive = MergeReceive(receive);
+        let _ = std::thread::Builder::new().name("tuxbox-shadow-merge".into()).spawn(move || {
+            let receive = receive;
+            static MERGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            while let Ok((fence, value, backs)) = receive.0.recv() {
+                if unsafe { fence.GetCompletedValue() } < value {
+                    let _ = unsafe { fence.SetEventOnCompletion(value, windows::Win32::Foundation::HANDLE::default()) };
+                }
+                let bytes: u64 = backs.iter().map(|b| b.merge()).sum();
+                let n = MERGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "host copies: write-back merge #{n}: {} pieces, {bytes} bytes the GPU changed written to title memory (TUXBOX_HOST_COPIES=0 off)", backs.len()));
+                }
+            }
+        });
+        Mutex::new(MergeJobs(send))
+    });
+    let _ = lock(jobs).0.send((fence, value, backs));
+}
+
 struct Recorder {
     kind: D3D12_COMMAND_LIST_TYPE,
     allocator: ID3D12CommandAllocator,
@@ -635,7 +760,10 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     let page = address & !0xffff;
     let width = (address - page + bytes).next_multiple_of(65536);
     let mut cpu: Vec<(usize, u64, u64, ID3D12Resource)> = Vec::new();
-    let pieces = match import_source(device, page, width) {
+    let first = if crate::device::heap::host_copies() {
+        Err(windows::Win32::Foundation::E_INVALIDARG.into())
+    } else { import_source(device, page, width) };
+    let pieces = match first {
         Ok(source) => vec![(source, address - page, 0, bytes)],
         // The range spans separately mapped title pages that no single heap can
         // open; split it in halves on 64 KiB boundaries until each part opens,
@@ -644,7 +772,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG => {
             let mut pieces = Vec::new();
             let end = (address + bytes).next_multiple_of(65536);
-            let mut cpu_vec = (!writable && cpu_pieces_on()).then(Vec::new);
+            let mut cpu_vec = ((!writable || crate::device::heap::host_copies()) && cpu_pieces_on()).then(Vec::new);
             split_import(device, address, bytes, page, (page + width / 2).next_multiple_of(65536).min(end), &mut pieces, cpu_vec.as_mut())?;
             split_import(device, address, bytes, (page + width / 2).next_multiple_of(65536).min(end), end, &mut pieces, cpu_vec.as_mut())?;
             cpu = cpu_vec.unwrap_or_default();
@@ -652,6 +780,13 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
         }
         Err(e) => return Err(e),
     };
+    // Host copies: each writable CPU piece gets its way back (Back).
+    let mut backs = Vec::new();
+    if writable {
+        for (mapped, at_address, len, _) in &cpu {
+            backs.push(Back::new(device, *mapped, *at_address, *len, at_address - address)?);
+        }
+    }
     let copy = match reused {
         Some(copy) => {
             COPY_REUSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -676,7 +811,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
-    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, owed: false, hash: None,
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, backs, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, owed: false, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -719,7 +854,10 @@ fn split_import(
     if from >= to {
         return Ok(());
     }
-    match import_source(device, from, to - from) {
+    let tried = if crate::device::heap::host_copies() {
+        Err(windows::Win32::Foundation::E_INVALIDARG.into())
+    } else { import_source(device, from, to - from) };
+    match tried {
         Ok(source) => {
             let (start, end) = (address.max(from), (address + bytes).min(to));
             if start < end {
@@ -727,7 +865,7 @@ fn split_import(
             }
             Ok(())
         }
-        Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG && to - from > 65536 => {
+        Err(e) if e.code() == windows::Win32::Foundation::E_INVALIDARG && to - from > 65536 && !crate::device::heap::host_copies() => {
             let middle = (from + (to - from) / 2).next_multiple_of(65536);
             let mut cpu = cpu;
             split_import(device, address, bytes, from, middle, pieces, cpu.as_deref_mut())?;
@@ -738,6 +876,11 @@ fn split_import(
             let (start, end) = (address.max(from), (address + bytes).min(to));
             if start >= end {
                 return Ok(());
+            }
+            // Host copies: lazy title views are committed first, as an
+            // import committed them (the GPU reads and writes these bytes).
+            if crate::device::heap::host_copies() {
+                crate::device::title_memory::commit_lazy(start as usize, (end - start) as usize);
             }
             if !readable(start, end - start) {
                 return Err(e);
@@ -872,6 +1015,10 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
     // CPU fills of upload pieces: (mapped, title address, bytes, the upload
     // buffer, held until filled).
     let mut fills: Vec<(usize, u64, u64, ID3D12Resource)> = Vec::new();
+    // Host copies: writable CPU pieces filled now (their `before` is taken
+    // after the fill), and those copied to readback by this write-back.
+    let mut filled: Vec<Arc<Back>> = Vec::new();
+    let mut backing: Vec<(Arc<Back>, ID3D12Resource)> = Vec::new();
     {
         // test79 froze 15 s with four title threads waiting on this lock: it
         // was held while hashing title memory, whose reads can fault into the
@@ -932,6 +1079,18 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 hashing += bytes;
             }
             entry.owed = false;
+            if !entry.backs.is_empty() {
+                if back {
+                    backing.extend(entry.backs.iter().map(|b| (b.clone(), view.native.clone())));
+                    continue;
+                }
+                // A write-back still in flight: the copy holds the GPU's
+                // bytes and title memory does not yet; leave the copy.
+                if entry.backs.iter().any(|b| b.pending.load(std::sync::atomic::Ordering::Acquire)) {
+                    continue;
+                }
+                filled.extend(entry.backs.iter().cloned());
+            }
             if aged_check || (skip && !entry.writable) {
                 if unlocked {
                     checks.push((key, aged_check, view));
@@ -1007,7 +1166,11 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         unsafe { fill(*mapped, *address, *bytes) };
     }
     drop(fills);
-    if copies.is_empty() && marked.is_empty() {
+    for b in &filled {
+        b.filled();
+    }
+    drop(filled);
+    if copies.is_empty() && marked.is_empty() && backing.is_empty() {
         return Ok(());
     }
     let mut recorders = lock(&shadows.recorders);
@@ -1046,12 +1209,20 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
             recorder.held.push((source.clone(), view.native.clone()));
         }
     }
+    for (b, copy) in &backing {
+        b.pending.store(true, std::sync::atomic::Ordering::Release);
+        unsafe { recorder.list.CopyBufferRegion(&b.readback, 0, copy, b.at, b.bytes) };
+        recorder.held.push((b.readback.clone(), copy.clone()));
+    }
     unsafe {
         recorder.list.Close()?;
         queue.ExecuteCommandLists(&[Some(recorder.list.cast()?)]);
         crate::dred::check(queue, if back { "shadow write-back" } else { "shadow refresh" });
         recorder.value += 1;
         queue.Signal(&recorder.fence, recorder.value)?;
+    }
+    if !backing.is_empty() {
+        merge_after(recorder.fence.clone(), recorder.value, backing.into_iter().map(|(b, _)| b).collect());
     }
     recorders.push(recorder);
     Ok(())

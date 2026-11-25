@@ -311,10 +311,31 @@ pub(super) fn import_buffer(
     import_buffer_with_heap(device, address, desc, state).map(|(resource, _)| resource)
 }
 
+/// TUXBOX_HOST_COPIES (default on; =0 imports title memory by address as
+/// before): no title range is opened as a heap (OpenExistingHeapFromAddress).
+/// Title buffers are host copies (views/shadow.rs) filled from title memory
+/// before each submission and merged back after it where shaders wrote, as
+/// ztrx/VIctory victory-gpu shadow.rs does (GPL-3.0, credited; its inplace.rs
+/// keeps address heaps off: while one stands, VirtualFree and unmaps fail 87
+/// and the pages cannot be freed). test169: heap imports made 7185 MiB,
+/// non-local 7639/7437 MiB, then the device was removed (0x887A0007).
+pub(crate) fn host_copies() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = crate::env_toggle!("TUXBOX_HOST_COPIES") != Some("0");
+        crate::diagnostics::log_line(format_args!(
+            "host copies: {} (TUXBOX_HOST_COPIES=0 imports title memory by address)", if on { "on, no address imports" } else { "off" }));
+        on
+    })
+}
+
 pub(super) fn import_buffer_with_heap(
     device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC, state: D3D12_RESOURCE_STATES,
 ) -> windows::core::Result<(ID3D12Resource, Arc<ImportedHeap>)> {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
+    if host_copies() {
+        return Err(E_INVALIDARG.into());
+    }
 
     // Pages remapped since the last import retire the imports over them first (61c095b).
     super::title_memory::follow_remaps();
@@ -427,8 +448,14 @@ pub(super) unsafe extern "system" fn place_virtual(
     }
     if let Err(error) = GPU_APERTURE.wait(address, 1) { return error.code(); }
     let state = super::host_state(initial, desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER);
+    // Host copies: the buffer is a host copy of its title range, as
+    // place_virtual_layout makes one (its import fails at once).
     if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && clear.is_null() {
-        let native = match super::placed_device::place(device, address, desc) {
+        let placed = super::placed_device::place(device, address, desc);
+        if placed.is_none() && host_copies() {
+            return unsafe { place_virtual_layout(device, address, desc, D3D12_BARRIER_LAYOUT_COMMON, clear, iid, out) };
+        }
+        let native = match placed {
             Some(native) => native,
             None => import_or_back(device, address, desc, state),
         };
