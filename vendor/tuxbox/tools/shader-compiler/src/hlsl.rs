@@ -4999,8 +4999,12 @@ impl<'a> Emitter<'a> {
                             let words = (|| Some([word(0)?, word(1)?, word(2)?, word(3)?]))().or_else(|| {
                                 (self.ex.stage == Stage::Compute).then(|| sampler_heap::guarded_words(insns, idx, ss as u8, compute_group(self.ex))).flatten()
                             });
-                            words.and_then(|w| sampler_heap::inline_sampler(self.ex, w, ins.op & 8 != 0))
-                                .or_else(|| self.static_sampler())
+                            // The fallback keeps the comparison mode too (VIctory 2286e03).
+                            let compare = ins.op & 8 != 0;
+                            words.and_then(|w| sampler_heap::inline_sampler(self.ex, w, compare))
+                                .or_else(|| self.static_sampler().filter(|&(reg, space)| self.ex.root_sig.as_ref().is_some_and(|root| {
+                                    root.static_samplers.iter().any(|e| e[10] == reg && e[11] == space && (e[0] >> 7 == 1) == compare)
+                                })))
                         } else { self.static_sampler() } {
                             if self.binding_spaces.insert((3, slot), space).is_some_and(|old| old != space) {
                                 return Err(format!("static sampler s{slot} overlaps another space"));
@@ -8372,7 +8376,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let mut v = Vec::new();
             for i in 0..3 {
                 let x = r(&s[i])?;
-                let mut e = if (opsel_hi >> i) & 1 != 0 {
+                // An inline float on a binary16 source is that value as a half,
+                // not the low bits of its binary32 form (1.0 read 0.0); a
+                // negative inline integer there is ambiguous (Xbox2Windows
+                // c1e83dd6 / dc9ba9ed, MIT).
+                let mut e = if (opsel_hi >> i) & 1 != 0 && matches!(s[i], Opnd::ConstF32(_)) {
+                    format!("f16tof32(f32tof16({}))", f(&s[i])?)
+                } else if (opsel_hi >> i) & 1 != 0 && matches!(s[i], Opnd::ConstInt(k) if k < 0) {
+                    return Err(format!("{m}: negative inline integer on a binary16 source"));
+                } else if (opsel_hi >> i) & 1 != 0 {
                     if (opsel >> i) & 1 != 0 { format!("f16tof32(({x}) >> 16)") } else { format!("f16tof32(({x}) & 0xffffu)") }
                 } else {
                     format!("asfloat({x})")
