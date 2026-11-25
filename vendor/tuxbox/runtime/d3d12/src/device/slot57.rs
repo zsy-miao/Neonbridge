@@ -53,7 +53,7 @@ pub(super) fn decode(desc: *const c_void) -> Option<Record> {
     }
     // SAFETY: 0x58 bytes are readable.
     let word = |n: usize| unsafe { (address as *const u64).add(n).read_unaligned() } as usize;
-    Some(Record {
+    let mut record = Record {
         root: word(0),
         a: blob(word(1), word(2), BLOCK_MAX),
         b: blob(word(3), word(4), BLOCK_MAX),
@@ -66,7 +66,32 @@ pub(super) fn decode(desc: *const c_void) -> Option<Record> {
                 format!("{n}={code:#x}:{size:#x}{}", if ok || code == 0 { "" } else { "!" })
             }).collect::<Vec<_>>().join(" ")
         } else { "unreadable".into() },
-    })
+    };
+    // five-star PipelineDescReader.CachedGraphics (GPL-3.0, credit to its
+    // authors) reads all seven code slots and takes each program's stage
+    // from its FSSM header (+0x100: 4 vertex, 5 pixel; FssmHeader.cs), not
+    // from its slot. A VS or PS missing from slot 1 / 0 is looked for in the
+    // other slots that way. TUXBOX_SLOT57_ANY_SLOT=0 reads slots 0 and 1 only.
+    if (record.vs.is_empty() || record.ps.is_empty()) && crate::env_toggle!("TUXBOX_SLOT57_ANY_SLOT") != Some("0")
+        && super::compute::readable(address, 0x28 + 7 * 32)
+    {
+        for n in 0..7 {
+            let code = blob(word(5 + 4 * n), word(6 + 4 * n), PROGRAM_MAX);
+            if code.len() <= 0x100 || &code[..4] != b"FSSM" {
+                continue;
+            }
+            // The ISA: offset at +0xC0 (from FSSM+0x10), size at +0xC8.
+            let u64_at = |at: usize| code.get(at..at + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize);
+            let (Some(off), Some(len)) = (u64_at(0xC0), u64_at(0xC8)) else { continue };
+            let Some(isa) = off.checked_add(0x10).and_then(|at| code.get(at..at.checked_add(len)?)) else { continue };
+            match code[0x100] {
+                4 if record.vs.is_empty() => record.vs = isa.to_vec(),
+                5 if record.ps.is_empty() => record.ps = isa.to_vec(),
+                _ => {}
+            }
+        }
+    }
+    Some(record)
 }
 
 fn bits(v: u32, lo: u32, hi: u32) -> u32 {
