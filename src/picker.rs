@@ -463,8 +463,15 @@ fn draw(dc: HDC, w: i32, h: i32, s: &mut State, f: &Fonts) {
     fill_rect(dc, rect(0, HEADER + 1, LEFT, foot), PANEL);
     fill_rect(dc, rect(LEFT, HEADER + 1, LEFT + 1, foot), BORDER);
     text(dc, "Runtimes", rect(24, HEADER + 12, LEFT, HEADER + 36), SUB, f.small, DT_LEFT | DT_VCENTER);
+    // Rows shrink to fit above the footer (nine runtimes overran it at 56 px):
+    // two lines down to 40 px, then the name alone; a row that still doesn't
+    // fit is not drawn over the footer.
+    let row_h = ((foot - ROWS_TOP) / s.rows.len().max(1) as i32).clamp(30, ROW);
     for (i, row) in s.rows.iter().enumerate() {
-        let r = rect(0, ROWS_TOP + i as i32 * ROW, LEFT, ROWS_TOP + (i as i32 + 1) * ROW);
+        let r = rect(0, ROWS_TOP + i as i32 * row_h, LEFT, ROWS_TOP + (i as i32 + 1) * row_h);
+        if r.bottom > foot {
+            break;
+        }
         if i == s.sel {
             fill_rect(dc, r, ROW_ON);
             fill_rect(dc, rect(0, r.top, 2, r.bottom), PINK);
@@ -472,11 +479,16 @@ fn draw(dc: HDC, w: i32, h: i32, s: &mut State, f: &Fonts) {
             fill_rect(dc, r, ROW_HOT);
         }
         let grey = row.missing.is_some();
-        text(dc, &row.title, rect(24, r.top + 8, LEFT - 40, r.top + 30), if grey { FAINT } else { TEXT }, f.strong, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
         let sub = if row.name == MIX { "Each crate from a tree".to_owned() } else if grey { format!("{} \u{00B7} not installed", row.version) } else { row.version.clone() };
-        text(dc, &sub, rect(24, r.top + 30, LEFT - 40, r.top + 50), SUB, f.small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+        if row_h >= 40 {
+            let top = r.top + (row_h - 40) / 2;
+            text(dc, &row.title, rect(24, top + 2, LEFT - 40, top + 22), if grey { FAINT } else { TEXT }, f.strong, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+            text(dc, &sub, rect(24, top + 22, LEFT - 40, top + 38), SUB, f.small, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+        } else {
+            text(dc, &row.title, rect(24, r.top, LEFT - 40, r.bottom), if grey { FAINT } else { TEXT }, f.strong, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+        }
         if row.name != MIX {
-            dot(dc, LEFT - 24, r.top + ROW / 2, if row.frames.is_some_and(|n| n > 0) { GREEN } else { FAINT });
+            dot(dc, LEFT - 24, r.top + row_h / 2, if row.frames.is_some_and(|n| n > 0) { GREEN } else { FAINT });
         }
         s.targets.push((r, Hit::Row(i)));
     }

@@ -69,7 +69,9 @@ fn hidden(cmd: &mut Command) -> &mut Command {
 /// otherwise flash a cmd window. Its stdio is still the launcher's (or the
 /// pipes the caller sets), so its output still reaches the log.
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut c = Command::new(program);
+    // `cargo` is the one found by cargo_exe (a shortcut-started launcher may
+    // not have ~/.cargo/bin on its PATH).
+    let mut c = if program.as_ref() == "cargo" { Command::new(cargo_exe()) } else { Command::new(program) };
     hidden(&mut c);
     c
 }
@@ -115,6 +117,50 @@ pub fn vendor() -> PathBuf {
 /// its exe at the same relative path (so the toml finds it, and the release
 /// never rebuilds: no sources, nothing stale), its LICENSE and UPSTREAM.
 /// The Agility DLLs are not shipped: the toml's setup step stages them.
+/// The cargo to run: `cargo` when it answers on PATH, else
+/// %CARGO_HOME%\bin\cargo.exe, else %USERPROFILE%\.cargo\bin\cargo.exe (a
+/// launcher started from an Explorer shortcut can lack the PATH entry its
+/// shells have). Found once; its folder is put first on this process's PATH,
+/// so builds and the tools they start (rustc through rustup) find it too.
+pub fn cargo_exe() -> PathBuf {
+    static FOUND: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let answers = |p: &Path| Command::new(p).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).creation_flags_hidden().status().is_ok_and(|s| s.success());
+            if answers(Path::new("cargo")) {
+                return PathBuf::from("cargo");
+            }
+            let homes = [std::env::var_os("CARGO_HOME").map(PathBuf::from), std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join(".cargo"))];
+            for home in homes.into_iter().flatten() {
+                let exe = home.join("bin").join("cargo.exe");
+                if exe.is_file() && answers(&exe) {
+                    println!("[launch] cargo is not on PATH; using {}", exe.display());
+                    let path = std::env::var_os("PATH").unwrap_or_default();
+                    let dirs = std::iter::once(home.join("bin")).chain(std::env::split_paths(&path));
+                    if let Ok(joined) = std::env::join_paths(dirs) {
+                        // SAFETY: set once, before any build starts.
+                        unsafe { std::env::set_var("PATH", joined) };
+                    }
+                    return exe;
+                }
+            }
+            println!("[launch] cargo not found on PATH, in %CARGO_HOME%\\bin or %USERPROFILE%\\.cargo\\bin");
+            PathBuf::from("cargo")
+        })
+        .clone()
+}
+
+trait HiddenExt {
+    fn creation_flags_hidden(&mut self) -> &mut Self;
+}
+
+impl HiddenExt for Command {
+    fn creation_flags_hidden(&mut self) -> &mut Self {
+        use std::os::windows::process::CommandExt;
+        self.creation_flags(CREATE_NO_WINDOW)
+    }
+}
+
 /// A runtime whose prerequisite is missing or whose build fails is left
 /// out, not fatal: it comes back in the second list as (name, reason), for
 /// the package's README.
@@ -182,7 +228,15 @@ fn prerequisite(root: &Path, spec: &Spec) -> Result<(), String> {
                 }
             }
             "cargo" => {
-                if !crate::runtimes::command("cargo").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success()) {
+                let exe = cargo_exe();
+                let o = crate::runtimes::command(&exe).arg("--version").output();
+                let fail = match &o {
+                    Ok(o) if o.status.success() => None,
+                    Ok(o) => Some(format!("{} --version: {}: {}", exe.display(), o.status, String::from_utf8_lossy(&o.stderr).trim())),
+                    Err(e) => Some(format!("{} --version: {e}", exe.display())),
+                };
+                if let Some(why) = fail {
+                    println!("[launch] cargo check failed: {why}");
                     return Err("needs Rust (cargo was not found)".into());
                 }
             }
