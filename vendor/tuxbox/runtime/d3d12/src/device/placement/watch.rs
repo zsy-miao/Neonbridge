@@ -44,10 +44,30 @@ fn clip_on() -> bool {
 /// piece per allocation, from its first range's start to its last's end.
 fn clip(ranges: &[Range<u64>]) -> Vec<Range<u64>> {
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
-    let allocation = |a: u64| {
+    // A VirtualQuery scans its whole region under the address-space lock
+    // (ms over GiB title views; test165's root walk 3.3 ms each), and this ran
+    // two per watched range every refresh. The region each answer covers is
+    // kept for 1 s with its allocation, as compute.rs walk_cache does.
+    // TUXBOX_WATCH_CLIP_CACHE=0 queries every range.
+    static SPANS: std::sync::Mutex<Vec<(u64, u64, u64, std::time::Instant)>> = std::sync::Mutex::new(Vec::new());
+    let cache = crate::env_toggle!("TUXBOX_WATCH_CLIP_CACHE") != Some("0");
+    let now = std::time::Instant::now();
+    let mut spans = SPANS.lock().unwrap_or_else(|e| e.into_inner());
+    spans.retain(|s| now.duration_since(s.3) < std::time::Duration::from_secs(1));
+    let mut allocation = |a: u64| {
+        if cache && let Some(s) = spans.iter().find(|s| s.0 <= a && a < s.1) {
+            return Some(s.2);
+        }
         let mut info = MEMORY_BASIC_INFORMATION::default();
         // SAFETY: VirtualQuery only reads the address space map.
-        (unsafe { VirtualQuery(Some(a as _), &mut info, size_of_val(&info)) } != 0).then(|| info.AllocationBase as u64)
+        let ok = unsafe { VirtualQuery(Some(a as _), &mut info, size_of_val(&info)) } != 0;
+        if ok && cache {
+            if spans.len() >= 512 {
+                spans.remove(0);
+            }
+            spans.push((info.BaseAddress as u64, info.BaseAddress as u64 + info.RegionSize as u64, info.AllocationBase as u64, now));
+        }
+        ok.then(|| info.AllocationBase as u64)
     };
     let mut out: Vec<(Option<u64>, Range<u64>)> = Vec::new();
     for r in ranges {
