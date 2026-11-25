@@ -460,6 +460,12 @@ impl Recording {
     }
 
     fn sample_tables<const COMPUTE: bool>(&mut self) {
+        if self.resource_heap.is_none()
+            && self.bindings.heap_access.as_ref().is_some_and(|a| !a.writes.is_empty())
+        {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&SAID, || "shadow uav re-mark: a heap-writing program ran with no resource heap bound on its list; its writes are not re-marked".to_string());
+        }
         if let Some(heap) = &self.resource_heap
             && crate::device::uav_remark()
         {

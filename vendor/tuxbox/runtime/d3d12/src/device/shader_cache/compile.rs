@@ -592,10 +592,24 @@ pub(crate) fn slots_text(source: &str) -> Option<String> {
 /// The heap access reflection the launcher published for `source`, from the
 /// session or the compiler cache. None: unknown (no file, older xshader).
 pub(crate) fn heap_access(source: &str) -> Option<std::sync::Arc<HeapAccess>> {
-    let dir = session()?;
+    // Census (test177: the re-mark never saw a heap write although the
+    // compiler cache held 1939 .heap files): lookups found / missed, the
+    // first misses with where they looked.
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static FOUND: AtomicU64 = AtomicU64::new(0);
+    static MISSED: AtomicU64 = AtomicU64::new(0);
     let name = format!("{source}.heap");
-    let text = fs::read_to_string(dir.join(&name)).ok()
-        .or_else(|| fs::read_to_string(compiler_cache(dir)?.join(&name)).ok())?;
+    let dir = session();
+    let cache = dir.and_then(|d| compiler_cache(d));
+    let text = dir.and_then(|d| fs::read_to_string(d.join(&name)).ok())
+        .or_else(|| fs::read_to_string(cache?.join(&name)).ok());
+    let (n, total) = if text.is_some() { (FOUND.fetch_add(1, Relaxed) + 1, MISSED.load(Relaxed)) } else { (MISSED.fetch_add(1, Relaxed) + 1, FOUND.load(Relaxed)) };
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "shadow uav re-mark: heap reflection {} for {source} (#{n}, {total} the other way): session {:?}, compiler cache {:?}",
+            if text.is_some() { "found" } else { "missing" }, dir, cache));
+    }
+    let text = text?;
     let mut access = HeapAccess::default();
     for line in text.lines() {
         let words: Vec<&str> = line.split_whitespace().collect();
