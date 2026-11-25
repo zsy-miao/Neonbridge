@@ -10,6 +10,24 @@ use windows::Win32::Graphics::Direct3D12::{
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringA;
 use windows::core::PCSTR;
 
+/// TUXBOX_LOG_TIME (default on, =0 off): each stderr line ends with the
+/// seconds since the process was created, so a run's boot can be split into
+/// phases from its log (no line had a time).
+pub(crate) fn stamp() -> String {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_LOG_TIME") != Some("0")) {
+        return String::new();
+    }
+    let ticks = |f: FILETIME| u64::from(f.dwHighDateTime) << 32 | u64::from(f.dwLowDateTime);
+    let (mut created, mut exited, mut kernel, mut user) = Default::default();
+    let _ = unsafe { GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user) };
+    let now = unsafe { GetSystemTimePreciseAsFileTime() };
+    format!(" [t={:.3} s]", ticks(now).saturating_sub(ticks(created)) as f64 / 1e7)
+}
+
 /// One milestone line, every time it is called.
 pub(crate) fn log_line(detail: std::fmt::Arguments) {
     log_once(&Once::new(), || detail.to_string());
@@ -20,7 +38,7 @@ pub(crate) fn log_once(site: &Once, detail: impl FnOnce() -> String) {
         let target = std::env::var_os("TUXBOX_LOG");
         if target.as_deref() == Some(OsStr::new("stderr")) {
             // A closed console must not interrupt the game's rendering thread.
-            let _ = writeln!(io::stderr().lock(), "TuxBox d3d12_xs: {}", detail());
+            let _ = writeln!(io::stderr().lock(), "TuxBox d3d12_xs: {}{}", detail(), stamp());
         } else if target.as_deref() == Some(OsStr::new("1")) {
             let line = format!("TuxBox d3d12_xs: {}\n\0", detail());
             // SAFETY: All milestone text is ASCII and the buffer is NUL-terminated.

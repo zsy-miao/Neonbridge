@@ -28,13 +28,34 @@ const CONSOLE: &[&str] = &["xgameruntime.dll", "xgameruntime", "d3d12_xs.dll", "
 static DIR: OnceLock<Vec<u16>> = OnceLock::new();
 static LOG: OnceLock<u8> = OnceLock::new(); // 0 off, 1 debug string, 2 stderr
 
+/// TUXBOX_LOG_TIME (default on, =0 off): each stderr line ends with the
+/// seconds since the process was created, so a run's boot can be split into
+/// phases from its log (no line had a time).
+pub(crate) fn stamp() -> String {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("TUXBOX_LOG_TIME").as_deref() != Ok("0")) {
+        return String::new();
+    }
+    let ticks = |f: FILETIME| u64::from(f.dwHighDateTime) << 32 | u64::from(f.dwLowDateTime);
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut created, mut exited, mut kernel, mut user, mut now) = (zero, zero, zero, zero, zero);
+    unsafe {
+        GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user);
+        GetSystemTimePreciseAsFileTime(&mut now);
+    }
+    format!(" [t={:.3} s]", ticks(now).saturating_sub(ticks(created)) as f64 / 1e7)
+}
+
 pub(crate) fn log(msg: &str) {
     match *LOG.get_or_init(|| match std::env::var("TUXBOX_LOG").as_deref() {
         Ok("stderr") => 2,
         Ok("1") => 1,
         _ => 0,
     }) {
-        2 => eprintln!("TuxBox xmem: {msg}"),
+        2 => eprintln!("TuxBox xmem: {msg}{}", stamp()),
         1 => {
             let s = format!("TuxBox xmem: {msg}\n\0");
             unsafe { OutputDebugStringA(s.as_ptr()) };
