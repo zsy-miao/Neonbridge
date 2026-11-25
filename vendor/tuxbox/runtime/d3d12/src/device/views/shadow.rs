@@ -713,21 +713,56 @@ fn import_source(device: &Device, page: u64, width: u64) -> Result<ID3D12Resourc
 
 /// A view of `bytes` at `address` whose resource begins exactly at `address`.
 pub(super) fn view(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
-    copy_of(device, address, bytes, false)
+    copy_of(device, address, bytes, false, false)
 }
 
 /// Like [`view`], for unordered access: the copy is written back.
 pub(super) fn writable_view(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
-    copy_of(device, address, bytes, true)
+    copy_of(device, address, bytes, true, false)
 }
 
-fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<Arc<TextureAddress>> {
+/// `view`, or the copy of a live buffer holding the range (TUXBOX_SHADOW_COVER):
+/// for callers that place by `TextureAddress::offset`, not at the copy's start.
+pub(super) fn view_in(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
+    copy_of(device, address, bytes, false, true)
+}
+
+/// `writable_view`, or a writable copy holding the range (see view_in).
+pub(super) fn writable_view_in(device: &Device, address: u64, bytes: u64) -> Result<Arc<TextureAddress>> {
+    copy_of(device, address, bytes, true, true)
+}
+
+fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool, cover: bool) -> Result<Arc<TextureAddress>> {
     let shadows = &device.state.shadows;
     shadows.register();
     let mut entries = lock(&shadows.entries);
     if let Some(entry) = entries.get_mut(&(address, bytes, writable)) {
         if let Some(view) = entry.view.upgrade() {
             entry.bound = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
+            return Ok(view);
+        }
+    }
+    // One copy per title buffer (TUXBOX_SHADOW_COVER, default on, =0 a copy
+    // per view as before): a live copy whose range holds this one, writable
+    // if this is, serves it; a title address inside it is the same offset in
+    // the copy, as ztrx/VIctory victory-gpu shadow.rs keeps one host buffer
+    // per title buffer (GPL-3.0, credited). test172: 6120 live copies of
+    // overlapping views, 4338 MiB and rising ~60 MiB/s.
+    if cover && crate::env_toggle!("TUXBOX_SHADOW_COVER") != Some("0") {
+        let end = address + bytes;
+        let cover = entries.iter_mut()
+            // 256-byte offsets only: a CBV's address must be 256-aligned.
+            .filter(|((a, b, w), _)| { let (a, b, w) = (*a, *b, *w); a <= address && end <= a + b && (w || !writable) && (address - a).is_multiple_of(256) })
+            .filter_map(|(_, e)| e.view.upgrade().map(|v| (e, v)))
+            .next();
+        if let Some((entry, view)) = cover {
+            entry.bound = REFRESHES.load(std::sync::atomic::Ordering::Relaxed);
+            static COVERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = COVERED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "shadow cover: view at {address:#x} ({bytes} bytes) served by the copy of the buffer holding it ({n} so far; TUXBOX_SHADOW_COVER=0 copies each view)"));
+            }
             return Ok(view);
         }
     }

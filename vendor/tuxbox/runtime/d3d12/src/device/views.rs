@@ -555,7 +555,7 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
             .map(|n| address - n * u64::from(stride))
             .find(|&base| (base - origin).is_multiple_of(info.Alignment));
         // No host placement boundary is a whole number of records away.
-        let Some(base) = base else { return shadow::view(device, address, bytes).map(Some) };
+        let Some(base) = base else { return shadow::view_in(device, address, bytes).map(Some) };
         base
     } else { nearest };
     host.Width = bytes.checked_add(address - page).ok_or(E_INVALIDARG)?;
@@ -564,7 +564,7 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     // one heap; read it through a shadow copy instead.
     match super::heap::import_buffer_with_heap(device, page, &host, D3D12_RESOURCE_STATE_COMMON) {
         Ok((native, heap)) => Ok(Some(TextureAddress::with_heap(device, &native, page as usize, false, None, None, None, 0, Some(heap)))),
-        Err(e) if e.code() == E_INVALIDARG => shadow::view(device, address, bytes).map(Some),
+        Err(e) if e.code() == E_INVALIDARG => shadow::view_in(device, address, bytes).map(Some),
         Err(e) => Err(e),
     }
 }
@@ -765,7 +765,7 @@ pub(super) unsafe extern "system" fn address_srv(
             // Title pages no heap opens (views that would not join): read the
             // buffer from a copy that starts at the guest VA, else bind a
             // null view; logged, never a fail-fast (TUXBOX_CBV_FALLBACK=0).
-            Err(e) => match shadow::view(device, desc.address, resource_desc.Width.max(1)) {
+            Err(e) => match shadow::view_in(device, desc.address, resource_desc.Width.max(1)) {
                 Ok(copy) => {
                     view_fell_back("address SRV", desc.address, resource_desc.Width, e.code(), true);
                     copy
@@ -1758,7 +1758,7 @@ pub(super) unsafe extern "system" fn address_uav(
         }
         // No host buffer, or one the view cannot start in on a whole
         // element: a written-back copy that starts at the guest VA.
-        _ => match shadow::writable_view(device, desc.address, width) {
+        _ => match shadow::writable_view_in(device, desc.address, width) {
             Ok(copy) => {
                 view_fell_back("address UAV", desc.address, width, windows::Win32::Foundation::S_OK, true);
                 copy
