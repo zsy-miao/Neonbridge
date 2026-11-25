@@ -5746,6 +5746,16 @@ impl<'a> Emitter<'a> {
                                     root.static_samplers.iter().any(|e| e[10] == reg && e[11] == space && (e[0] >> 7 == 1) == compare)
                                 })))
                         } else { self.static_sampler() } {
+                            // A sampler register already used in another space gets a name
+                            // of its own, as table resources do (table_binding, SPACE_ALIAS;
+                            // register_of declares the real register). test152 source
+                            // 9e856925 was refused here. TB_SAMPLER_SPACE_ALIAS=0 refuses.
+                            let alias = !std::env::var("TB_SAMPLER_SPACE_ALIAS").is_ok_and(|v| v.trim() == "0");
+                            let slot = if alias && slot < SPACE_ALIAS {
+                                (0..16).map(|n| slot + n * SPACE_ALIAS)
+                                    .find(|name| self.binding_spaces.get(&(3, *name)).is_none_or(|&used| used == space))
+                                    .unwrap_or(slot)
+                            } else { slot };
                             if self.binding_spaces.insert((3, slot), space).is_some_and(|old| old != space) {
                                 return Err(format!("static sampler s{slot} overlaps another space"));
                             }
