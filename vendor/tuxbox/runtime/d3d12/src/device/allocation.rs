@@ -312,6 +312,24 @@ pub(super) unsafe extern "system" fn info(
     } else {
         invalid
     };
+    // A single description the desktop refuses only for its unordered-access
+    // bit (D3D12 has no UAV depth, and the console flags some typeless depth
+    // that way) is sized without it, as the runtime computes it; never a
+    // formula (ScarlettCompat e6588c4, GPL-3.0, credit: 2560x1440
+    // R32_FLOAT_X8X24_TYPELESS flags 0x6 was UINT64_MAX, 19,988,480 without
+    // the bit). TUXBOX_ALLOC_UAV_RETRY=0 keeps the refusal.
+    if supported && out.SizeInBytes == u64::MAX && descs.len() == 1
+        && descs[0].Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 != 0
+        && crate::env_toggle!("TUXBOX_ALLOC_UAV_RETRY") != Some("0")
+    {
+        let base = host_description(&descs[0]).unwrap_or(descs[0]);
+        let no_uav = D3D12_RESOURCE_DESC { Flags: D3D12_RESOURCE_FLAGS(base.Flags.0 & !D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0), ..base };
+        let retry = unsafe { device.native.GetResourceAllocationInfo(visible, slice::from_ref(&no_uav)) };
+        static RETRIED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&RETRIED, || format!("allocation format={} flags={:#x} refused; without ALLOW_UNORDERED_ACCESS: {} bytes, align {} (ScarlettCompat e6588c4; TUXBOX_ALLOC_UAV_RETRY=0 off)",
+            no_uav.Format.0, descs[0].Flags.0, retry.SizeInBytes, retry.Alignment));
+        *out = retry;
+    }
     if out.SizeInBytes == u64::MAX {
         let d = descs[0];
         static INVALID: std::sync::Once = std::sync::Once::new();

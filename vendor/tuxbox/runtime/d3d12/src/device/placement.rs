@@ -684,7 +684,30 @@ pub(super) fn color_plane(desc: &D3D12_RESOURCE_DESC) -> Result<Plane> {
         let volume = Desc { dimension: 3, alignment: 0, ..layout };
         return Plane::compute_4k_volume(&volume).map_err(|status| HRESULT(status).into());
     }
-    Plane::compute(&layout).or_else(|_| Plane::compute_64k_color(&layout)).map_err(|status| HRESULT(status).into())
+    Plane::compute(&layout).or_else(|_| Plane::compute_64k_color(&layout))
+        .or_else(|status| mode0_64k(desc, &layout).ok_or(status))
+        .map_err(|status| HRESULT(status).into())
+}
+
+/// A 2D layout-0x100 texture the linear model refuses is sized as the
+/// console's 64 KiB chain (standard 64 KiB swizzle, shared mip-tail tile):
+/// the game's desc builder writes 0x100 for its tile-mode byte 0, which its
+/// texture metadata reads as 64 KB tiles (ScarlettCompat b92f060, GPL-3.0,
+/// credit: a 2048x2048 A8 0x100 texture refused, slot 25 returned UINT64_MAX
+/// and the title asserted). Only after every other model refuses, so the
+/// linear sizes XGCreateTextureComputer gives stay. TUXBOX_MODE0_64K=0 refuses.
+fn mode0_64k(desc: &D3D12_RESOURCE_DESC, layout: &Desc) -> Option<Plane> {
+    if desc.Layout.0 != 0x100 || desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        || crate::env_toggle!("TUXBOX_MODE0_64K") == Some("0") {
+        return None;
+    }
+    let chain = Desc { layout: 265, alignment: 0, flags: layout.flags & 0x0030_0004, ..*layout };
+    let plane = Plane::compute_sparse_64k(&chain).ok()?;
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&LOGGED, || format!(
+        "layout 0x100 {}x{} mips={} format={} flags={:#x}: sized as the 64 KiB chain, {} bytes (ScarlettCompat b92f060; TUXBOX_MODE0_64K=0 refuses)",
+        desc.Width, desc.Height, desc.MipLevels, desc.Format.0, desc.Flags.0, plane.size));
+    Some(plane)
 }
 
 /// The desktop description of a placed texture's committed copy. A
