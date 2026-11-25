@@ -426,6 +426,7 @@ pub extern "system" fn uncloak_windows() {
                     });
                 }
                 log(&format!("window: uncloaked {hwnd:#x} (show and raise posted; TUXBOX_UNCLOAK_FOREGROUND=0 skips the foreground request)"));
+                log("TIMELINE: title window shown");
             }
         }
     }

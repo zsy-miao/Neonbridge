@@ -102,6 +102,7 @@ unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
                 reason += &format!(" ({op} at {:#x})", record.ExceptionInformation[1]);
                 fault_address = Some(record.ExceptionInformation[1]);
             }
+            super::log_line(format_args!("TIMELINE: crash: {reason}"));
             if write(&reason, context, unsafe { GetCurrentThreadId() }) {
                 detail(context, fault_address);
                 self::record(format_args!("crash record: unwound stack {}", unwind(context)));
@@ -372,6 +373,12 @@ fn watch_hang() {
             read(base + 0x71B_6330, 1),
             read(base + 0x71B_6348, 8).map(|h| if h >= base as u64 { h - base as u64 } else { h }),
         ];
+        // Launcher timeline (<log>.timeline.txt): loading screen on and off.
+        if now[2].is_some() && now[2] != last[2] && last[2].is_some() {
+            static TURNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = TURNS.fetch_add(1, Ordering::Relaxed) / 2 + 1;
+            super::log_line(format_args!("TIMELINE: loading screen {} {n}", if now[2] != Some(0) { "on" } else { "off" }));
+        }
         if now != last && lines < 4096 {
             lines += 1;
             let f = |v: Option<u64>| v.map_or("?".to_string(), |v| format!("{v:#x}"));

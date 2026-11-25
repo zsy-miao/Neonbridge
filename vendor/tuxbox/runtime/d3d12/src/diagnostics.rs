@@ -260,9 +260,11 @@ pub(super) fn pipeline_stream(bytes: usize, error: Option<i32>) {
         Some(code) => log_once(&FAILURE, || {
             format!("slot 86 pipeline stream ({bytes} bytes) failed: {code:#010x}")
         }),
-        None => log_once(&SUCCESS, || {
-            format!("created pipeline from Xbox slot 86 stream ({bytes} bytes)")
-        }),
+        None => {
+            log_once(&SUCCESS, || format!("created pipeline from Xbox slot 86 stream ({bytes} bytes)"));
+            static TIMELINE: Once = Once::new();
+            log_once(&TIMELINE, || "TIMELINE: first pipeline created".into());
+        }
     }
 }
 
