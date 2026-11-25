@@ -25,6 +25,7 @@ mod graphics;
 mod indirect_clamp;
 mod media;
 mod memory_wait;
+mod slot_trace;
 
 /// A GPU memory wait is holding queued work back (the present throttle).
 pub(crate) fn memory_wait_held() -> bool {
@@ -2404,7 +2405,7 @@ unsafe extern "system" fn release_list(this: *mut List) -> u32 {
     unsafe { crate::proxy::release_with(this, || device::alloc_swap::forget_list(this as usize)) }
 }
 
-static LIST_SLOTS: Slots<149> = {
+static LIST_RAW: Slots<149> = {
     let mut slots = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
     slots[2] = crate::slot!(release_list);
     slots[8] = crate::slot!(get_type);
@@ -2548,8 +2549,8 @@ unsafe extern "system" fn slot131(list: &List, a: u32, b: usize, c: u64, d: u64)
 
 // Device11 titles use the new raster-state slots even when requesting the
 // base graphics-list IID. The List6-only cache barriers remain separate.
-static DEVICE11_LIST_SLOTS: Slots<149> = {
-    let mut slots = LIST_SLOTS;
+static DEVICE11_RAW: Slots<149> = {
+    let mut slots = LIST_RAW;
     // Scarlett's list adds InsertGpuMarker and InsertTimingMarker after
     // EndEvent (GDK d3d12_xs.h), so ExecuteIndirect moves from slot 59 to 61.
     // GTA VI calls it at title RVA 0x248cbba (vtable +0x1e8, one command) and
@@ -2598,12 +2599,17 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     slots
 };
 
-static EXTENDED_LIST_SLOTS: Slots<149> = {
-    let mut slots = DEVICE11_LIST_SLOTS;
+static EXTENDED_RAW: Slots<149> = {
+    let mut slots = DEVICE11_RAW;
     slots[131] = crate::slot!(extended_cache_barrier);
     slots[132] = crate::slot!(extended_cache_barrier);
     slots
 };
+
+// The tables the guest sees: slots 59..149 log their first call (slot_trace).
+static LIST_SLOTS: Slots<149> = slot_trace::older(LIST_RAW);
+static DEVICE11_LIST_SLOTS: Slots<149> = slot_trace::device11(DEVICE11_RAW);
+static EXTENDED_LIST_SLOTS: Slots<149> = slot_trace::extended(EXTENDED_RAW);
 
 unsafe fn guest_list<'a>(object: *mut c_void, device: *mut c_void) -> Option<&'a List> {
     unsafe {
