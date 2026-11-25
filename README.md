@@ -19,7 +19,8 @@ Best first, by how far each project's own authors say it gets. The launcher list
 | 5 | [xcl](https://github.com/ivall/xcl) | About 5 fps in the 3D world (RTX 5090, NVIDIA branch only); menus at 30 fps | Builds; its first shader preparation runs |
 | 6 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
 | 7 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | About 4 fps in the prologue; gameplay starts | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
-| 8 | [ztrx-victory](https://github.com/Zettrox/ztrx) | 1–3 fps in the world; shadows black | No |
+
+ztrx-victory (Zettrox/ztrx, upstream now gone) is archived: `git checkout 2210a25024c0ffedc232661f7b312c06e88c86f2 -- vendor/ztrx-victory` brings it back.
 
 ## Get started
 

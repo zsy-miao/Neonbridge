@@ -29,7 +29,6 @@ In picker order: each toml's `rank = N` (best first, by the leader's own publish
 | 5 | `xcl` | xcl | ivall/xcl |
 | 6 | `belobug` | VIctory-Belobug-AMD, a VIctory fork tuned for AMD | Belobug/VIctory-Belobug-AMD |
 | 7 | `scarlettport` (default for `--runtime`) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
-| 8 | `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
 | - | `neonbridge-own` | Neonbridge (own build), hidden from the picker: TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator | brcly/TuxBox |
 
 Each runtime's default launch is exactly its author's (flags, environment, preset, cited in its toml); anything of Neonbridge's is an optional `preset_*`.
