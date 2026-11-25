@@ -481,6 +481,19 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
             return Ok(Some(entry));
         }
     }
+    // rebox 18c049c (Brian McKenna, credit): below 4 GiB is no title memory,
+    // so a buffer there that is none of ours (the lookup above) is a V# whose
+    // words are no address (a float base 1.0 = 0x3f800000 faulted the GPU
+    // there): read as empty. TUXBOX_LOW_VSHARP_EMPTY=0 imports it as before.
+    if address < 1 << 32 && crate::env_toggle!("TUXBOX_LOW_VSHARP_EMPTY") != Some("0") {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "a guest buffer at {address:#x} ({bytes:#x} bytes) is below 4 GiB and none of ours: read as empty ({n} so far; TUXBOX_LOW_VSHARP_EMPTY=0 imports it)"));
+        }
+        return Ok(None);
+    }
     // FirstElement is measured in whole records. If the guest's suballocation
     // starts between records relative to a 64 KiB page, place the buffer at
     // the guest byte offset using the adapter's tight buffer alignment.
