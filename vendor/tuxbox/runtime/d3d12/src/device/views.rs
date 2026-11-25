@@ -210,9 +210,11 @@ pub(super) fn shadow_buffer(device: &Device, address: u64, bytes: u64)
 /// zeroed read/write memory covering both the host and the console size, so
 /// those reads see memory, not a fault. The GPU does not write these pages:
 /// GPU-written contents stay in the native texture.
-/// TUXBOX_BACK_IMAGES=0 reserves the range with no access, as before.
+/// Off by default (port audit): the zeroed backing hides a title CPU read of
+/// an image address instead of finding why it reads one; a read faults as
+/// before. TUXBOX_BACK_IMAGES=1 backs them.
 fn back_images() -> bool {
-    crate::env_toggle!("TUXBOX_BACK_IMAGES") != Some("0")
+    crate::env_toggle!("TUXBOX_BACK_IMAGES") == Some("1")
 }
 
 /// Whether `address` lies in the backing of a committed image's address
