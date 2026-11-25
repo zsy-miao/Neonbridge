@@ -147,6 +147,27 @@ static STORED: AtomicU64 = AtomicU64::new(0);
 /// whose name an earlier run stored (the driver refused the description, or
 /// the library holding it was started afresh).
 static MISSED_NEW: AtomicU64 = AtomicU64::new(0);
+/// Library misses that waited for the same name's compile already running
+/// on another thread instead of compiling it again.
+static JOINED: AtomicU64 = AtomicU64::new(0);
+
+/// A driver compile of one library name in progress; threads that miss the
+/// same name meanwhile wait for its result (xcl 04f34ce, GPL-3.0, idea:
+/// duplicate builds coalesced). The title creates many pipelines whose host
+/// descriptions are identical, and the pipeline workers, the title's own
+/// threads and prefetch reached the driver with them at once, each paying
+/// the whole compile. TUXBOX_PIPELINE_JOIN=0 compiles each again.
+struct Flight {
+    done: Mutex<Option<Result<ID3D12PipelineState>>>,
+    ready: std::sync::Condvar,
+}
+
+// SAFETY: D3D12 pipeline states are free-threaded; the result is only
+// cloned (AddRef) out of the mutex.
+unsafe impl Send for Flight {}
+unsafe impl Sync for Flight {}
+
+static FLIGHTS: Mutex<Option<std::collections::HashMap<String, std::sync::Arc<Flight>>>> = Mutex::new(None);
 static MISSED_KNOWN: AtomicU64 = AtomicU64::new(0);
 
 struct Names {
@@ -258,8 +279,44 @@ fn load_or_make(
         let names = names.lock().unwrap_or_else(|e| e.into_inner());
         if names.known.contains(&text) { &MISSED_KNOWN } else { &MISSED_NEW }.fetch_add(1, Ordering::Relaxed);
     }
+    let join = crate::env_toggle!("TUXBOX_PIPELINE_JOIN") != Some("0");
+    let flight = if join {
+        let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+        let flights = flights.get_or_insert_with(Default::default);
+        if let Some(running) = flights.get(&text) {
+            let running = running.clone();
+            drop(flights);
+            JOINED.fetch_add(1, Ordering::Relaxed);
+            let mut done = running.done.lock().unwrap_or_else(|e| e.into_inner());
+            while done.is_none() {
+                done = running.ready.wait(done).unwrap_or_else(|e| e.into_inner());
+            }
+            return done.clone().expect("a finished flight holds its result");
+        }
+        let flight = std::sync::Arc::new(Flight { done: Mutex::new(None), ready: std::sync::Condvar::new() });
+        flights.insert(text.clone(), flight.clone());
+        Some(flight)
+    } else {
+        None
+    };
+    // Whatever happens below, waiters get a result and the name leaves the map.
+    struct Land<'a>(Option<std::sync::Arc<Flight>>, &'a str, Option<Result<ID3D12PipelineState>>);
+    impl Drop for Land<'_> {
+        fn drop(&mut self) {
+            let Some(flight) = self.0.take() else { return };
+            let result = self.2.take().unwrap_or_else(|| Err(windows::Win32::Foundation::E_FAIL.into()));
+            *flight.done.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+            flight.ready.notify_all();
+            if let Some(flights) = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                flights.remove(self.1);
+            }
+        }
+    }
+    let mut land = Land(flight, &text, None);
     // The driver compiles outside the lock.
-    let made = make()?;
+    let made = make();
+    land.2 = Some(made.clone());
+    let made = made?;
     with_library(host, |l| {
         // A name already present (another description) keeps its entry.
         if unsafe { l.library.StorePipeline(&name, &made) }.is_ok() {
@@ -268,7 +325,7 @@ fn load_or_make(
             if let Some(names) = names() {
                 let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
                 if names.known.insert(text.clone()) {
-                    names.new.push(text);
+                    names.new.push(text.clone());
                 }
             }
         }
@@ -463,8 +520,9 @@ fn save(dir: &Path) {
     if let Some(len) = written {
         let (loaded, stored) = (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed));
         let (new, known) = (MISSED_NEW.load(Ordering::Relaxed), MISSED_KNOWN.load(Ordering::Relaxed));
+        let joined = JOINED.load(Ordering::Relaxed);
         crate::diagnostics::log_once(&std::sync::Once::new(), || {
-            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library)", len)
+            format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library); {joined} waited for the same pipeline compiling on another thread (TUXBOX_PIPELINE_JOIN=0 compiles it again)", len)
         });
     }
     if let Some(names) = names() {
