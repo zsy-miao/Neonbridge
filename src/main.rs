@@ -19,6 +19,7 @@ mod picker;
 mod xshader_lib;
 mod progress;
 mod replay;
+mod timeline;
 mod shaders;
 mod splash;
 
@@ -1271,6 +1272,7 @@ q
     // The displays stay on for the run: with them off, DWM paces presents at ~10 Hz (src/awake.rs).
     let _awake = awake::hold();
     let t = Instant::now();
+    timeline::start(&log, t);
     let mut child = Command::new(&argv[0])
         .current_dir(game)
         .args(&argv[1..])
@@ -1297,6 +1299,7 @@ q
                 } else if line.contains("D3D12") {
                     splash::status(0.8, "Waiting for the first frame");
                 }
+                timeline::line(&line);
                 eprintln!("{line}");
                 let _ = writeln!(f, "{line}");
             }
@@ -1305,6 +1308,7 @@ q
     if let Ok(spec) = std::env::var("NEONBRIDGE_WATCH_HANG") {
         let f = std::sync::Mutex::new(file.try_clone()?);
         hang_watch::start(&spec, exe.file_name().unwrap_or_default().to_string_lossy().into_owned(), move |line| {
+            timeline::line(&line);
             eprintln!("{line}");
             let _ = writeln!(f.lock().unwrap_or_else(|e| e.into_inner()), "{line}");
         })?;
@@ -1319,6 +1323,7 @@ q
         }
         if timeout.is_some_and(|limit| t.elapsed().as_secs_f64() >= limit) {
             println!("[launch] --timeout: stopping the run after {:.0}s", t.elapsed().as_secs_f64());
+            timeline::note(None, "--timeout: the launcher stops the run");
             let _ = child.kill();
             if let Some(name) = exe.file_name() {
                 let _ = Command::new("taskkill").args(["/F", "/T", "/IM"]).arg(name).stdout(Stdio::null()).stderr(Stdio::null()).status();
@@ -1330,6 +1335,7 @@ q
     let _ = (a.join(), b.join());
     wait_for_image(exe);
     splash::close();
+    timeline::exit(&format!("{status}{}", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default()));
     println!("[launch] exited with {status}{} after {:.1}s", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default(), t.elapsed().as_secs_f64());
     // A loader failure names only its status: name the DLL behind it.
     if let Some(c) = status.code().map(|c| c as u32)
