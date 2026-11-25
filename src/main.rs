@@ -1570,6 +1570,7 @@ q
         .stderr(Stdio::piped())
         .spawn()?;
     shaders::GAME_PID.store(child.id(), std::sync::atomic::Ordering::Relaxed);
+    neonbridge_feed::watch_pid(child.id());
     kill_on_close(&child);
     splash::watch(exe);
     controls::show(runtimes::TUXBOX, exe, controls::tuxbox_rows());
@@ -2066,6 +2067,10 @@ fn main() {
     refresh_path();
     job_self();
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    // NEONBRIDGE_FEED=1 starts the feed before setup and building, so the loader shows on it too.
+    if neonbridge_feed::enabled() {
+        neonbridge_feed::start(neonbridge_feed::Settings::from_env());
+    }
     let result = run(&args);
     splash::close();
     // -O0 DXIL still queued is recompiled at -O1 between runs.

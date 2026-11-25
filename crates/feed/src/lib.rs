@@ -61,6 +61,11 @@ impl Settings {
     }
 }
 
+/// Show this process's windows on the feed too (the game the launcher started).
+pub fn watch_pid(pid: u32) {
+    frames::watch_pid(pid);
+}
+
 pub fn enabled() -> bool {
     std::env::var("NEONBRIDGE_FEED").is_ok_and(|v| v.trim() == "1")
 }

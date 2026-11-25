@@ -154,7 +154,7 @@ impl Encoder {
             let stale_number = if stale_after().is_some() { crate::frames::published() } else { 0 };
             let first = loop {
                 crate::frames::heartbeat();
-                if let Some(f) = crate::frames::latest(stale_number) {
+                if let Some(f) = crate::frames::next_frame(stale_number) {
                     break f;
                 }
                 if Instant::now() > until {
@@ -192,7 +192,7 @@ impl Encoder {
             // Constant rate: the newest frame is re-sent until the next one lands.
             while !self.dead.load(Ordering::SeqCst) {
                 crate::frames::heartbeat();
-                if let Some(f) = crate::frames::latest(frame.number) {
+                if let Some(f) = crate::frames::next_frame(frame.number) {
                     if (f.width, f.height) != (w, h) {
                         break; // resized: viewers reconnect to a new encoder
                     }
