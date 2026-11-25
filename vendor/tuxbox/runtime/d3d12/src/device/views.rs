@@ -411,7 +411,7 @@ pub(crate) unsafe fn view_formats_address(
 /// A command or view may write `resource` (a raw native resource).
 pub(crate) unsafe fn note_shadow_write(owner: *mut core::ffi::c_void, resource: *mut core::ffi::c_void) {
     let device = unsafe { &*owner.cast::<Device>() };
-    let _ = shadow::marks_entry(device, resource, None);
+    shadow::mark_copied(device, resource);
 }
 
 pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
