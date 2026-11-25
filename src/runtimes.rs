@@ -837,16 +837,38 @@ fn build_stamp(name: &str, root: &Path, line: &[String], target: Option<&Path>) 
 /// `py -3` when it works, else `python` on PATH. Neither: a clear error.
 fn python() -> Result<Vec<String>, String> {
     static FOUND: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
-    let ok = |args: &[&str]| crate::runtimes::command(args[0]).args(&args[1..]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    let ok = |args: &[&str]| match crate::runtimes::command(args[0]).args(&args[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status() {
+        Ok(s) => s.success(),
+        Err(e) => {
+            println!("[launch] {} could not start: {e}", args[0]);
+            false
+        }
+    };
     FOUND
         .get_or_init(|| {
-            if ok(&["py", "-3", "-c", "import sys; assert sys.version_info >= (3, 10)"]) {
-                Some(vec!["py".into(), "-3".into()])
-            } else if ok(&["python", "-c", "import sys; assert sys.version_info >= (3, 10)"]) {
-                Some(vec!["python".into()])
-            } else {
-                None
+            const CHECK: &str = "import sys; assert sys.version_info >= (3, 10)";
+            if ok(&["py", "-3", "-c", CHECK]) {
+                return Some(vec!["py".into(), "-3".into()]);
             }
+            if ok(&["python", "-c", CHECK]) {
+                return Some(vec!["python".into()]);
+            }
+            // Not on PATH: python.org's per-user install places.
+            let programs = std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("Programs").join("Python"))?;
+            let launcher = programs.join("Launcher").join("py.exe");
+            if launcher.is_file() && ok(&[&launcher.to_string_lossy(), "-3", "-c", CHECK]) {
+                return Some(vec![launcher.to_string_lossy().into_owned(), "-3".into()]);
+            }
+            let mut found: Vec<PathBuf> = fs::read_dir(&programs).ok()?.flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Python3"))).map(|p| p.join("python.exe")).filter(|p| p.is_file()).collect();
+            found.sort();
+            for exe in found.into_iter().rev() {
+                let exe = exe.to_string_lossy().into_owned();
+                if ok(&[&exe, "-c", CHECK]) {
+                    return Some(vec![exe]);
+                }
+            }
+            println!("[launch] python not found: py -3, python, {} and Python3*\\python.exe there", launcher.display());
+            None
         })
         .clone()
         .ok_or_else(|| "Python 3.10 or newer was not found (tried py -3 and python). Install it from python.org with the py launcher, then try again.".to_owned())

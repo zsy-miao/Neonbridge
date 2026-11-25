@@ -159,6 +159,10 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         // SAFETY: plain kernel32 calls on a local buffer.
         if unsafe { GetConsoleProcessList(ids.as_mut_ptr(), 4) } == 1 {
             unsafe { FreeConsole() };
+            // The std handles still name the freed console; children that
+            // inherit them fail to start (os error 6), which the prerequisite
+            // probes read as "not found". NUL until redirect_output.
+            null_std_handles();
         }
     }
     let mut it = args.iter();
@@ -1996,8 +2000,79 @@ fn job_self() {
     }
 }
 
+/// Points stdin, stdout and stderr at NUL (after FreeConsole).
+fn null_std_handles() {
+    use std::os::windows::io::IntoRawHandle;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetStdHandle(which: u32, h: *mut std::ffi::c_void) -> i32;
+    }
+    for which in [-10i32 as u32, -11i32 as u32, -12i32 as u32] {
+        if let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open("NUL") {
+            // SAFETY: the handle is ours and stays open for the process.
+            unsafe { SetStdHandle(which, f.into_raw_handle()) };
+        }
+    }
+}
+
+/// Explorer hands a shortcut-started process the PATH it had at logon, so
+/// tools installed since (cargo, py, python, dotnet) are missing. The live
+/// machine and user Path from the registry are appended at startup.
+fn refresh_path() {
+    let read = |key: &str| {
+        crate::runtimes::command("reg").args(["query", key, "/v", "Path"]).output().ok().and_then(|o| {
+            let out = String::from_utf8_lossy(&o.stdout).into_owned();
+            out.lines().find_map(|l| {
+                let l = l.trim_start();
+                let rest = l.strip_prefix("Path").or_else(|| l.strip_prefix("PATH"))?.trim_start();
+                let rest = rest.strip_prefix("REG_EXPAND_SZ").or_else(|| rest.strip_prefix("REG_SZ"))?;
+                Some(rest.trim().to_owned())
+            })
+        })
+    };
+    let expand = |s: &str| {
+        let mut out = String::new();
+        let mut parts = s.split('%');
+        out.push_str(parts.next().unwrap_or(""));
+        let mut var = true;
+        for p in parts {
+            if var {
+                match std::env::var(p) {
+                    Ok(v) if !p.is_empty() => out.push_str(&v),
+                    _ => {
+                        out.push('%');
+                        out.push_str(p);
+                        out.push('%');
+                    }
+                }
+            } else {
+                out.push_str(p);
+            }
+            var = !var;
+        }
+        out
+    };
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    let before = dirs.len();
+    for key in [r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment", r"HKCU\Environment"] {
+        for d in read(key).map(|v| expand(&v)).unwrap_or_default().split(';').filter(|d| !d.trim().is_empty()) {
+            let d = std::path::PathBuf::from(d.trim());
+            if !dirs.iter().any(|x| x.as_os_str().eq_ignore_ascii_case(d.as_os_str())) {
+                dirs.push(d);
+            }
+        }
+    }
+    if dirs.len() > before {
+        if let Ok(joined) = std::env::join_paths(dirs) {
+            // SAFETY: at startup, before any thread is started.
+            unsafe { std::env::set_var("PATH", joined) };
+        }
+    }
+}
+
 fn main() {
     panic_hook();
+    refresh_path();
     job_self();
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let result = run(&args);
