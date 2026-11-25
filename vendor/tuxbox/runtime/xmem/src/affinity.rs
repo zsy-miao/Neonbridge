@@ -4,7 +4,7 @@
 // Copyright (C) Neonbridge contributors
 //
 // Copied from omonkeyz/xbox-emulator
-// crates/compat/compat-common/src/os_host/affinity.rs (commit 27122f7),
+// crates/compat/compat-common/src/os_host/affinity.rs (commit ff39277),
 // with its hook list from os_host/mod.rs. Changes: TOMBOX_* switches are
 // TUXBOX_*, logging goes through xmem's log, and the hooks are installed on
 // the exe's and title DLLs' imports and GetProcAddress lookups.

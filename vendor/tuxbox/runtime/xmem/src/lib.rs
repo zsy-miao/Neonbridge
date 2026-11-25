@@ -394,7 +394,7 @@ fn publish_graphics_budget(out: *mut [u64; 15]) {
 /// headroom and commit limit (RAM plus page file), and it sized its pools and
 /// streaming past what the PC could commit (test142: 165 MiB of commit free;
 /// memory atlas gap 1). The refs cap it there: xcl config.rs:117-123 (GPL-3.0),
-/// OpenScarlett-OCE xmem.cpp:481-495, rebox xmem.c:626-668 (GPL-2.0),
+/// OpenScarlett-OCE xmem.cpp:481-495, rebox xmem.c:626-668 (GPL-2.0; it caps at 13 GiB),
 /// VIctory console.rs:22-27, credit to their authors.
 /// TUXBOX_TITLE_MEMORY_MB=<MiB> sets it, 0 leaves it uncapped as before.
 pub(crate) fn title_memory_cap() -> Option<u64> {

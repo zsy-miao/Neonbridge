@@ -22,7 +22,7 @@
 //! for a default position, else the one nearest the requested position; N is
 //! the 0-based enumeration index). The process can be made per-monitor DPI aware
 //! (v2) before any window exists so rcMonitor is in real pixels
-//! (opt-in with TUXBOX_DPI_AWARE=1; rebox 49e3f2a). TUXBOX_CLIP_CURSOR=1 confines
+//! (opt-in with TUXBOX_DPI_AWARE=1). TUXBOX_CLIP_CURSOR=1 confines
 //! the cursor to the client area while the window is active.
 
 use std::ffi::c_void;

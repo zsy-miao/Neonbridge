@@ -68,7 +68,6 @@ Open work. Each item is tested in a run of its own.
   - map B8G8R8X8_TYPELESS for present;
   - confirm GTA VI never calls Scarlett slot 59;
   - 733f135: flush the commit_guard log before exit;
-  - c4f8bd8: the credit should be VIctory 35b054e;
   - 88dbc97/d97535c: parity-only unless their notices fire.
 
 ### xshader
@@ -80,7 +79,6 @@ Open work. Each item is tested in a run of its own.
 ### runtime/launcher
 - Risk 65e77ca: stale shaders mix xshader builds. Keep NEONBRIDGE_STALE_SHADERS=0 for test runs.
 - b69a488: re-evaluate f1b5622 now that the AnyPS5 ban is lifted.
-- Credits: c608da2 should cite ff39277; 04a7bee's rebox figure is 13 GiB; 65fc79e's rebox credit is wrong.
 
 ## Done / not needed
 - not needed: leonida 273b3bdf9 (c63e099): neither the exe nor any 6m DLL imports ReadFileEx/ReadFileScatter; ReadFile already commits before the read (read_commit.rs:77).

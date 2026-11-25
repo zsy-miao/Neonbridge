@@ -416,7 +416,7 @@ fn inline(mut job: Job) {
     }
 }
 
-/// Workers run below normal priority (VIctory 4302e2b), raised by hurry() while
+/// Workers run below normal priority (VIctory 35b054e), raised by hurry() while
 /// the title waits on their build. five-star-recomp 0566186 went back to normal
 /// priority for its compile threads (reverting its 24cd32d, which we never
 /// had); TUXBOX_PIPELINE_PRIORITY=normal does the same here.
