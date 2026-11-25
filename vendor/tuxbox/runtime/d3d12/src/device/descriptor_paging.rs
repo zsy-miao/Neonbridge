@@ -18,7 +18,8 @@ pub(crate) struct Registry {
     arenas: Mutex<BTreeMap<usize, Weak<Arena>>>,
     count: std::sync::atomic::AtomicUsize,
     next_version: AtomicU64,
-    identity_map: Mutex<Option<ID3D12Resource>>,
+    /// Identity index maps by heap size (0: unclamped, the shared one).
+    identity_map: Mutex<std::collections::HashMap<u32, ID3D12Resource>>,
 }
 impl Registry {
     pub(crate) fn find(&self, address: usize) -> Option<Arc<Arena>> {

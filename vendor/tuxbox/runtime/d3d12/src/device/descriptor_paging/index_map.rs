@@ -16,15 +16,26 @@ struct Upload {
 impl Upload {
     /// `fill`: the slot every entry names until it is set (the null tail).
     fn new(device: &ID3D12Device, count: u32, fill: Option<u32>) -> Result<Self> {
+        Self::with_header(device, count, fill, if count == 0 { 0 } else { 0x8000_0000 | (count & 0x7fff_ffff) })
+    }
+
+    /// An identity map whose shader clamps a guest index to `slots - 1`:
+    /// header 0x4000_0000 | slots, no entries (xshader e5ae009 reads bit 30
+    /// with bit 31 clear as a clamped identity heap).
+    fn identity(device: &ID3D12Device, slots: u32) -> Result<Self> {
+        Self::with_header(device, 0, None, if slots == 0 { 0 } else { 0x4000_0000 | (slots & 0x3fff_ffff) })
+    }
+
+    fn with_header(device: &ID3D12Device, count: u32, fill: Option<u32>, header: u32) -> Result<Self> {
         let native = upload_buffer(device, (1 + u64::from(count)) * 4)?;
         let mut data = std::ptr::null_mut();
         unsafe { native.Map(0, Some(&D3D12_RANGE::default()), Some(&mut data))? };
         if data.is_null() {
             return Err(E_POINTER.into());
         }
-        // Word 0: 0 = identity, 0x8000_0000 | count = mapped with `count`
-        // entries; the shader clamps indices to count - 1 (xshader 932afdd).
-        let header = if count == 0 { 0 } else { 0x8000_0000 | (count & 0x7fff_ffff) };
+        // Word 0: 0 = identity, 0x4000_0000 | slots = identity clamped to
+        // slots - 1, 0x8000_0000 | count = mapped with `count` entries; the
+        // shader clamps indices to count - 1 (xshader 932afdd, e5ae009).
         unsafe { data.cast::<u32>().write_volatile(header) };
         if let Some(slot) = fill {
             for i in 0..count as usize {
@@ -158,7 +169,9 @@ impl Direct {
 
 /// # Safety
 /// The owner must be the controlling unknown of the live guest device.
-pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Result<ID3D12Resource> {
+/// `slots`: an unpaged heap's descriptor count, which its identity map
+/// clamps guest indices to (0 or TUXBOX_IDENTITY_CLAMP=0: unclamped).
+pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>, slots: u32) -> Result<ID3D12Resource> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     let Some(arena) = arena else {
         let mut identity = device
@@ -167,11 +180,18 @@ pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Resul
             .identity_map
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if let Some(buffer) = identity.as_ref() {
+        // A stray index past an unpaged heap stays inside it (the read past a
+        // heap's end hung NVIDIA, VIctory host.rs:510-590); one map per size.
+        static CLAMP: std::sync::LazyLock<bool> = std::sync::LazyLock::new(||
+            // Off with xshader's TB_HEAP_CLAMP_ALL=0 too: a shader without the
+            // 0x4000_0000 arm would take the header as a mapped heap.
+            ["TUXBOX_IDENTITY_CLAMP", "TB_HEAP_CLAMP_ALL"].iter().all(|k| std::env::var(k).map_or(true, |v| v.trim() != "0")));
+        let slots = if *CLAMP { slots } else { 0 };
+        if let Some(buffer) = identity.get(&slots) {
             return Ok(buffer.clone());
         }
-        let buffer = Upload::new(&device.native, 0, None)?.native.clone();
-        *identity = Some(buffer.clone());
+        let buffer = Upload::identity(&device.native, slots)?.native.clone();
+        identity.insert(slots, buffer.clone());
         return Ok(buffer);
     };
     let mut tables = arena.tables.lock().unwrap_or_else(|e| e.into_inner());

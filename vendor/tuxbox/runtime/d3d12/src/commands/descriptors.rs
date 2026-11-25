@@ -45,7 +45,8 @@ impl ResourceHeap {
     ) -> windows::core::Result<u64> {
         let parent = list.parent.as_ref().ok_or(E_INVALIDARG)?;
         // All command list proxies own a reference to their creating Device.
-        let map = unsafe { device::descriptor_paging::index_map(parent, arena)? };
+        let slots = if self.stride == 0 { 0 } else { u32::try_from(self.cpu.len() / self.stride).unwrap_or(0) };
+        let map = unsafe { device::descriptor_paging::index_map(parent, arena, slots)? };
         let address = unsafe { map.GetGPUVirtualAddress() };
         if address == 0 { return Err(E_INVALIDARG.into()); }
         let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
