@@ -142,7 +142,18 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
         return address(list, state, guest, 1);
     }
     // A page only the GPU writes is still reserved in a lazy title view.
-    device::commit_lazy(guest as usize, 0x10000 - (guest as usize & 0xffff));
+    // 49702da committed only to the end of the guest address's own 64 KiB
+    // page, so an unaligned window's second page stayed reserved, the span
+    // walk below stopped there and the import fell short of what the shader
+    // reads (the GPU fault the note above describes). The whole window is
+    // committed (only pages inside lazy views are touched).
+    // TUXBOX_ROOT_COMMIT_PAGE=1 commits the first page alone as before.
+    let window = if crate::env_toggle!("TUXBOX_ROOT_COMMIT_PAGE") == Some("1") {
+        0x10000 - (guest as usize & 0xffff)
+    } else {
+        0x10000
+    };
+    device::commit_lazy(guest as usize, window);
     // xcl c1a9b52 (GPL-3.0, idea): a VirtualQuery scans its whole region
     // under the address-space lock (test137: 16 ms per GiB of view, and the
     // GPU page pool is one 5.4 GiB view), and every root view bind made one
