@@ -490,6 +490,24 @@ impl Bindings {
                 }
             }
         }
+        // Root raw view strides (root_strides): by register key.
+        let mut stride_table = None;
+        if COMPUTE && let Some((slot, guests)) = &table.root_strides {
+            let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+            let keys: Vec<(u32, u32)> = guests.iter()
+                .map(|&(param, key)| (key, self.root_guests.get(&param)
+                    .map_or(0, |&va| crate::device::slot_views::stride_at(va))))
+                .collect();
+            if let Some((buffer, address)) = crate::device::root_strides::table(owner, &keys) {
+                let held_buffer = ID3D12Pageable::from(buffer);
+                let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+                if !held.contains(&held_buffer) {
+                    held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                    held.push(held_buffer);
+                }
+                stride_table = Some((*slot, address));
+            }
+        }
         let list = &guest.native;
         unsafe {
             if COMPUTE {
@@ -516,6 +534,9 @@ impl Bindings {
                     list.SetComputeRootUnorderedAccessView(slot + 1, bitmap);
                 }
                 for &(slot, address) in &bvh_views {
+                    list.SetComputeRootShaderResourceView(slot, address);
+                }
+                if let Some((slot, address)) = stride_table {
                     list.SetComputeRootShaderResourceView(slot, address);
                 }
                 dispatch();

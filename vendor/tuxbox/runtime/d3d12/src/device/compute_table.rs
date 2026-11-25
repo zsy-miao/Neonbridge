@@ -26,6 +26,10 @@ pub(crate) struct ComputeTable {
     /// space32766 over each guest root SRV parameter's acceleration
     /// structure, and those guest parameters' slots (see bvh_raw).
     pub(crate) bvh_raw: Option<(u32, Vec<u32>)>,
+    /// TUXBOX_ROOT_RAW_STRIDE: the root SRV slot of tb_root_raw_stride
+    /// (t4 space32766) and each guest root SRV/UAV parameter's slot and
+    /// key, register + 1024 for a UAV (see root_strides).
+    pub(crate) root_strides: Option<(u32, Vec<(u32, u32)>)>,
     /// Root slot of the two root constants of SetSampleMaskX's quad mask
     /// (b0, space32766; see quad_mask).
     pub(crate) quad_mask: Option<u32>,
@@ -341,6 +345,7 @@ fn reflected_tables(
             view_formats: None,
             slot_views: None,
             bvh_raw: None,
+            root_strides: None,
             view_marks: None,
             quad_mask: None,
         })))
@@ -446,6 +451,7 @@ fn extend_root_from(
             view_formats: None,
             slot_views: None,
             bvh_raw: None,
+            root_strides: None,
             view_marks: None,
             quad_mask: None,
         })))
@@ -458,7 +464,7 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool,
+    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool, strides: bool,
 ) -> Result<Arc<ComputeTable>> {
     let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
     let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
@@ -466,7 +472,8 @@ pub(super) fn with_runtime_tables(
     let add_marks = marks && !table.is_some_and(|t| t.view_marks.is_some());
     let add_quad = quad && !table.is_some_and(|t| t.quad_mask.is_some());
     let add_bvh = bvh && !table.is_some_and(|t| t.bvh_raw.is_some());
-    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh) {
+    let add_strides = strides && !table.is_some_and(|t| t.root_strides.is_some());
+    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh && !add_strides) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -536,6 +543,16 @@ pub(super) fn with_runtime_tables(
             }
             (!guests.is_empty()).then_some((first, guests))
         } else { table.and_then(|t| t.bvh_raw.clone()) };
+        let strides_slot = if add_strides {
+            let guests: Vec<(u32, u32)> = parameters.iter().enumerate()
+                .filter(|(_, p)| matches!(p.ParameterType, D3D12_ROOT_PARAMETER_TYPE_SRV | D3D12_ROOT_PARAMETER_TYPE_UAV)
+                    && p.Anonymous.Descriptor.RegisterSpace != super::root_strides::SPACE)
+                .map(|(i, p)| (i as u32, p.Anonymous.Descriptor.ShaderRegister
+                    + if p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_UAV { 1024 } else { 0 }))
+                .collect();
+            parameters.push(root_srv(super::root_strides::REGISTER, super::root_strides::SPACE));
+            Some((parameters.len() as u32 - 1, guests))
+        } else { table.and_then(|t| t.root_strides.clone()) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let _padded = pad_root_constants(&mut desc);
@@ -557,6 +574,7 @@ pub(super) fn with_runtime_tables(
             view_marks: marks_slot,
             quad_mask: quad_slot,
             bvh_raw: bvh_slot,
+            root_strides: strides_slot,
         }))
     }
 }
@@ -662,6 +680,7 @@ fn append_corroborated_ranges(
             view_formats: None,
             slot_views: None,
             bvh_raw: None,
+            root_strides: None,
             view_marks: None,
             quad_mask: None,
         })))

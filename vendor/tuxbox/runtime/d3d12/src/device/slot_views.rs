@@ -135,6 +135,32 @@ fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The element stride of a recorded buffer view whose range holds title
+/// address `va` (root_strides); 0 when none does. The newest match wins.
+pub(crate) fn stride_at(va: u64) -> u32 {
+    use std::collections::HashMap;
+    static CACHE: Mutex<Option<HashMap<u64, u32>>> = Mutex::new(None);
+    if va == 0 || !ANY.load(Ordering::Relaxed) {
+        return 0;
+    }
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = cache.get_or_insert_with(HashMap::new);
+    if let Some(&stride) = cache.get(&va) {
+        return stride;
+    }
+    let stride = state().codes.values().rev()
+        .find(|[lo, hi, length, _]| {
+            let start = u64::from(*lo) | u64::from(*hi) << 32;
+            start <= va && va < start + u64::from((*length).max(1))
+        })
+        .map_or(0, |e| e[3]);
+    if cache.len() >= 1 << 16 {
+        cache.clear();
+    }
+    cache.insert(va, stride);
+    stride
+}
+
 /// A view was created at `handle`.
 pub(crate) fn write(handle: usize, code: Entry) {
     if !enabled() || (code == [0; 4] && !ANY.load(Ordering::Relaxed)) {

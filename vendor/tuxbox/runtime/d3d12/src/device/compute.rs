@@ -624,7 +624,8 @@ unsafe fn make_compute(
     let reflected = match (&translation, root) {
         (Some(code), Some(root)) if scene_root.is_none()
             && (super::desc_table::declared(code) || super::view_formats::declared(code) || super::slot_views::declared(code)
-                || super::view_marks::declared(code) || super::bvh_raw::declared(code)) =>
+                || super::view_marks::declared(code) || super::bvh_raw::declared(code)
+                || super::root_strides::declared(code)) =>
         {
             let samplers = super::desc_table::declared(code);
             if samplers {
@@ -632,7 +633,7 @@ unsafe fn make_compute(
             }
             match super::compute_table::with_runtime_tables(
                 &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code), super::slot_views::declared(code),
-                super::view_marks::declared(code), false, super::bvh_raw::declared(code),
+                super::view_marks::declared(code), false, super::bvh_raw::declared(code), super::root_strides::declared(code),
             ) {
                 Ok(table) => Some(table),
                 Err(error) => return error.code(),

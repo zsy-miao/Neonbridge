@@ -89,7 +89,7 @@ fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: f
         if let (BufferView::Uav(_), Some(buffer)) = (view, buffer.as_ref()) {
             unsafe { device::note_root_uav(parent(&list.parent), windows::core::Interface::as_raw(buffer)) };
         }
-        state.bindings.note_guest::<COMPUTE>(index, matches!(view, BufferView::Srv(_)).then_some(guest));
+        state.bindings.note_guest::<COMPUTE>(index, matches!(view, BufferView::Srv(_) | BufferView::Uav(_)).then_some(guest));
         state.bindings.bind_buffer::<COMPUTE>(&list.native, index, view, buffer.as_ref());
     }
 }
