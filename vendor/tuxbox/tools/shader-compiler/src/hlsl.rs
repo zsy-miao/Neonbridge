@@ -766,6 +766,9 @@ struct Emitter<'a> {
     declared_samplers: BTreeMap<usize, (u32, u32)>,
     /// Instructions reading a lane mask as wave data (see `lane_mask_reads`).
     lane_masks: BTreeSet<usize>,
+    /// See `MaskForms`: registers carrying a form tag, and the writes of them.
+    mask_tagged: BTreeSet<u8>,
+    mask_tag_writes: BTreeMap<usize, Vec<(u8, bool)>>,
     /// Scalar bitwise ops mixing a lane mask with a number: index -> the mask's
     /// source position (see `mixed_mask`).
     mixed_masks: BTreeMap<usize, usize>,
@@ -1813,7 +1816,22 @@ fn mask_step(state: &mut MaskState, park: &Parking, ins: &Insn, i: usize, half_p
 /// edge (five-star-recomp b5fe3a7/48c08b8, GPL-3.0, ThatRecompDev: a register that
 /// is a mask on one path and an integer on another). A register that may be a mask
 /// on any path into a read is read as one. TB_MASK_CFG=0 follows program order.
-fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<usize, usize>, BTreeSet<usize>) {
+/// Registers written as a lane mask on one path and as an integer on another
+/// and read as a mask (five-star-recomp b5fe3a7/48c08b8, GPL-3.0,
+/// ThatRecompDev): every write of one records its form in `tb_mk<n>`, and a
+/// mask read (s_bcnt1, v_mbcnt) takes the form the reaching write left
+/// instead of the may-be-a-mask guess. TB_MASK_BOTH_FORMS=0 turns it off.
+#[derive(Default)]
+struct MaskForms {
+    tagged: BTreeSet<u8>,
+    writes: BTreeMap<usize, Vec<(u8, bool)>>,
+}
+
+fn mask_both_forms() -> bool {
+    std::env::var("TB_MASK_BOTH_FORMS").map_or(true, |v| v.trim() != "0")
+}
+
+fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<usize, usize>, BTreeSet<usize>, MaskForms) {
     let park = parking(insns, wave64);
     let mut mixed = BTreeMap::new();
     let mut scc = BTreeSet::new();
@@ -1825,7 +1843,7 @@ fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<u
         for (i, ins) in insns.iter().enumerate() {
             mask_step(&mut state, &park, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
         }
-        return (reads, mixed, scc);
+        return (reads, mixed, scc, MaskForms::default());
     }
     let index: HashMap<i64, usize> = insns.iter().enumerate().map(|(i, ins)| (ins.offset as i64, i)).collect();
     let successors = |i: usize| -> Vec<usize> {
@@ -1845,7 +1863,7 @@ fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<u
     };
     let mut before: Vec<Option<MaskState>> = vec![None; insns.len()];
     if insns.is_empty() {
-        return (reads, mixed, scc);
+        return (reads, mixed, scc, MaskForms::default());
     }
     before[0] = Some(MaskState::default());
     let mut work = std::collections::VecDeque::from([0usize]);
@@ -1872,13 +1890,35 @@ fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<u
             }
         }
     }
+    let mut kinds: BTreeMap<u8, (bool, bool)> = BTreeMap::new();
+    let mut written: Vec<(usize, u8, bool)> = Vec::new();
     for (i, ins) in insns.iter().enumerate() {
         if let Some(state) = &before[i] {
             let mut state = state.clone();
             mask_step(&mut state, &park, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
+            if let Some(&Opnd::Sgpr(d)) = ins.dst.first() {
+                let mask = state.masks.contains(&d);
+                let k = kinds.entry(d).or_default();
+                if mask { k.0 = true } else { k.1 = true }
+                written.push((i, d, mask));
+            }
         }
     }
-    (reads, mixed, scc)
+    let mut forms = MaskForms::default();
+    if mask_both_forms() {
+        let read_regs: BTreeSet<u8> = reads.iter().filter_map(|&i| match insns[i].src.first() {
+            Some(&Opnd::Sgpr(n)) if insns[i].mnemonic == "v_mbcnt_hi_u32_b32" => n.checked_sub(1),
+            Some(&Opnd::Sgpr(n)) => Some(n),
+            _ => None,
+        }).collect();
+        forms.tagged = kinds.iter().filter(|(n, k)| k.0 && k.1 && read_regs.contains(n)).map(|(&n, _)| n).collect();
+        for (i, d, mask) in written {
+            if forms.tagged.contains(&d) {
+                forms.writes.entry(i).or_default().push((d, mask));
+            }
+        }
+    }
+    (reads, mixed, scc, forms)
 }
 
 /// The user SGPR that carries the resource descriptor heap of a shader that
@@ -2412,12 +2452,13 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // Pixel shaders: whole-wave integer sums and exclusive prefixes (TuxBox 444066e).
     if ex.stage == Stage::Pixel && !wave_cull && !page_waves { wave_alloc::prepare(&mut insns); }
     let scc_votes_on = !resolve_wave32 && std::env::var("TB_SCC_VOTE").map_or(true, |v| v.trim() != "0");
-    let (lane_masks, mixed_masks, scc_votes) = if general_elections || (!resolve_wave32 && mixed_mask::on()) || scc_votes_on {
-        let (reads, mixed, scc) = lane_mask_reads(&insns, !resolve_wave32);
+    let (lane_masks, mixed_masks, scc_votes, mask_forms) = if general_elections || (!resolve_wave32 && mixed_mask::on()) || scc_votes_on {
+        let (reads, mixed, scc, forms) = lane_mask_reads(&insns, !resolve_wave32);
+        let forms = if general_elections { forms } else { MaskForms::default() };
         (if general_elections { reads } else { BTreeSet::new() },
          if !resolve_wave32 && mixed_mask::on() { mixed } else { BTreeMap::new() },
-         if scc_votes_on { scc } else { BTreeSet::new() })
-    } else { (BTreeSet::new(), BTreeMap::new(), BTreeSet::new()) };
+         if scc_votes_on { scc } else { BTreeSet::new() }, forms)
+    } else { (BTreeSet::new(), BTreeMap::new(), BTreeSet::new(), MaskForms::default()) };
     // The passes below splice instructions in (exit_stubs::inline moves loop
     // exits before the code they rejoin), so an index into `insns` here names
     // another instruction at emission (test142: four panics in the mixed-mask
@@ -2427,6 +2468,8 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     let lane_masks: BTreeSet<(usize, String)> = lane_masks.into_iter().map(key).collect();
     let mixed_masks: BTreeMap<(usize, String), usize> = mixed_masks.into_iter().map(|(i, k)| (key(i), k)).collect();
     let scc_votes: BTreeSet<(usize, String)> = scc_votes.into_iter().map(key).collect();
+    let mask_tagged = mask_forms.tagged;
+    let mask_tag_writes: BTreeMap<(usize, String), Vec<(u8, bool)>> = mask_forms.writes.into_iter().map(|(i, w)| (key(i), w)).collect();
     let reflection = reflection_compact::prepare(ex, &mut insns);
     let group_extrema = group_extrema::prepare(ex, &mut insns);
     let straight_exchange = ex.stage == Stage::Compute && !lone_lane::on()
@@ -2477,6 +2520,11 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     em.lane_masks = em.insns.iter().enumerate().filter(|(_, i)| lane_masks.contains(&keyed(i))).map(|(j, _)| j).collect();
     em.mixed_masks = em.insns.iter().enumerate().filter_map(|(j, i)| mixed_masks.get(&keyed(i)).map(|&k| (j, k))).collect();
     em.scc_votes = em.insns.iter().enumerate().filter(|(_, i)| scc_votes.contains(&keyed(i))).map(|(j, _)| j).collect();
+    em.mask_tag_writes = em.insns.iter().enumerate().filter_map(|(j, i)| mask_tag_writes.get(&keyed(i)).map(|w| (j, w.clone()))).collect();
+    for n in &mask_tagged {
+        em.body.insert_str(0, &format!("    uint tb_mk{n} = 0u;\n"));
+    }
+    em.mask_tagged = mask_tagged;
     em.page_waves = page_waves;
     em.wave_cull = wave_cull;
     em.fspx_wave = fspx_wave;
@@ -3125,6 +3173,8 @@ impl<'a> Emitter<'a> {
                 .unwrap_or_default(),
             declared_samplers: declared_samplers(ex),
             lane_masks: BTreeSet::new(),
+            mask_tagged: BTreeSet::new(),
+            mask_tag_writes: BTreeMap::new(),
             mixed_masks: BTreeMap::new(),
             scc_votes: BTreeSet::new(),
             binding_spaces: BTreeMap::new(),
@@ -5662,6 +5712,15 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         Ok(())
     }
 
+    /// Record the form a tagged register's write left (see `MaskForms`).
+    fn tag_mask_form(&mut self, i: usize) {
+        if let Some(w) = self.mask_tag_writes.get(&i).cloned() {
+            for (n, mask) in w {
+                self.line(&format!("tb_mk{n} = {}u;", u32::from(mask)));
+            }
+        }
+    }
+
     fn ws(&mut self, dst: &Opnd, expr: &str) -> Result<(), String> {
         self.touch(dst);
         let d = name(dst)?;
@@ -6079,6 +6138,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             self.emit_insn(i, ins, is_ps, target.get(&i).copied())
                 .map_err(|e| format!("{e} [{} @ {:#x}]", ins.mnemonic, ins.offset))?;
+            self.tag_mask_form(i);
             self.vote_scc(i);
             if open && target.get(&i).is_some_and(|t| cur.contains(t)) {
                 // Another branch to an enclosing target just updated its flag.
@@ -6193,7 +6253,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
                 let is_ctl = ins.enc == Enc::Sopp && (Self::branch_cond(ins.op).is_some() || ins.op == 1);
                 if !is_ctl || ins.mnemonic == "s_swappc_b64" {
-                    self.emit_insn(i, ins, is_ps, None)
+                    self.emit_insn(i, ins, is_ps, None).and_then(|r| { self.tag_mask_form(i); Ok(r) })
                         .map_err(|e| format!("{e} [{} @ {:#x}]", ins.mnemonic, ins.offset))?;
                 }
             }
@@ -6459,6 +6519,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 first = false;
                 self.res.insert(idx, vec![*res]);
                 self.emit_insn(idx, ins, is_ps, br)?;
+                self.tag_mask_form(idx);
                 self.line("}");
                 self.drop_heap_handles();
             }
@@ -6942,7 +7003,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         let t = self.tmp;
                         self.tmp += 1;
                         self.line(&format!("uint4 t{t} = WaveActiveBallot(({a} & 1u) != 0u);"));
-                        self.ws(&d, &format!("(countbits(t{t}.x) + countbits(t{t}.y))"))?;
+                        match ins.src.first() {
+                            Some(&Opnd::Sgpr(n)) if self.mask_tagged.contains(&n) => {
+                                // An integer on this path: count its own bits.
+                                let h = r(&Opnd::Sgpr(n + 1))?;
+                                self.ws(&d, &format!("(tb_mk{n} != 0u ? countbits(t{t}.x) + countbits(t{t}.y) : countbits({a}) + countbits({h}))"))?;
+                            }
+                            _ => self.ws(&d, &format!("(countbits(t{t}.x) + countbits(t{t}.y))"))?,
+                        }
                         self.line(&format!("scc = ({} != 0u) ? 1u : 0u;", name(&d)?));
                         Ok(())
                     }
@@ -9369,9 +9437,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         Opnd::Sgpr(n) if m == "v_mbcnt_hi_u32_b32" => (r(&Opnd::Sgpr(n - 1))?, "y"),
                         Opnd::VccHi => (r(&Opnd::VccLo)?, "y"),
                         Opnd::ExecHi => (r(&Opnd::ExecLo)?, "y"),
-                        _ => (a, "x"),
+                        _ => (a.clone(), "x"),
                     };
-                    format!("WaveActiveBallot(({base} & 1u) != 0u).{word}")
+                    let tag = match &s[0] {
+                        Opnd::Sgpr(n) if m == "v_mbcnt_hi_u32_b32" => n.checked_sub(1),
+                        Opnd::Sgpr(n) => Some(*n),
+                        _ => None,
+                    }.filter(|n| self.mask_tagged.contains(n));
+                    match tag {
+                        Some(n) => format!("(tb_mk{n} != 0u ? WaveActiveBallot(({base} & 1u) != 0u).{word} : {a})"),
+                        None => format!("WaveActiveBallot(({base} & 1u) != 0u).{word}"),
+                    }
                 } else { a };
                 let t = self.tmp;
                 self.tmp += 1;
