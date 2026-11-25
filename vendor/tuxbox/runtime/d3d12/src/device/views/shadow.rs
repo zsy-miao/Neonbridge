@@ -265,9 +265,21 @@ fn cpu_pieces_on() -> bool {
     crate::env_toggle!("TUXBOX_SHADOW_CPU") != Some("0")
 }
 
+fn read_without_commit() -> bool {
+    crate::env_toggle!("TUXBOX_SHADOW_READ_COMMIT") != Some("0")
+}
+
 /// Whether [address, address + bytes) is committed and readable.
 fn readable(address: u64, bytes: u64) -> bool {
     use windows::Win32::System::Memory::*;
+    // test175: commits grew by GBs. A reserved page of a lazy title view
+    // was never written and reads as zero (fill), so reading it commits
+    // nothing; the write-back commits only the pages the GPU changed (merge).
+    // TUXBOX_SHADOW_READ_COMMIT=0 commits the whole range first, as before.
+    let state = crate::device::view_state(address as usize, bytes as usize);
+    if read_without_commit() && state.covered() {
+        return true;
+    }
     // The CPU piece of a shadow is copied both ways; a range only the GPU
     // wrote is still reserved in a lazy title view, so commit it first.
     crate::device::commit_lazy(address as usize, bytes as usize);
@@ -623,8 +635,14 @@ impl Back {
             // WriteProcessMemory fails on a page the title decommitted
             // instead of faulting; such bytes are dropped, as the title no
             // longer has memory there.
-            let _ = unsafe { WriteProcessMemory(GetCurrentProcess(), (self.address as usize + start) as *const core::ffi::c_void,
-                after[start..i].as_ptr().cast(), i - start, Some(&mut done)) };
+            let at = self.address as usize + start;
+            let ok = unsafe { WriteProcessMemory(GetCurrentProcess(), at as *const core::ffi::c_void,
+                after[start..i].as_ptr().cast(), i - start, Some(&mut done)) }.is_ok();
+            // A page read uncommitted (readable) commits now that the GPU wrote it.
+            if !ok && read_without_commit() && crate::device::commit_lazy(at, i - start) > 0 {
+                let _ = unsafe { WriteProcessMemory(GetCurrentProcess(), at as *const core::ffi::c_void,
+                    after[start..i].as_ptr().cast(), i - start, Some(&mut done)) };
+            }
             written += done as u64;
         }
         before.copy_from_slice(after);
