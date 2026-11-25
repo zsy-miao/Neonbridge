@@ -1,5 +1,5 @@
 name = "vitoriabr"
-rank = 4   # launcher list order (Master)
+rank = 5   # launcher list order (Master)
 about = "VItoriaBr 9ceb7e7, GPL-3.0"
 upstream = "https://github.com/uiliannn/VItoriaBr"
 build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md:95 (+--locked; Cargo.lock vendored)

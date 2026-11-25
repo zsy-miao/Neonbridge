@@ -6,21 +6,41 @@ Test them all in one convenient launcher.
 
 Neonbridge is a Windows app that runs every project trying to bring the Xbox Series version of GTA VI to PC, from one window, on a copy of the game you dumped from your own console. **None of them is playable yet.** No game files are included.
 
-## Status
+## Standings
 
-Best first, by how far each project's own authors say it gets. The launcher lists them in this order too.
+Read from the [GTA VI PC race tracker](https://github.com/vuyp/gta6-pc-race) ([live page](https://vuyp.github.io/gta6-pc-race/)), which ranks every open-source project by its own public claims. **Nothing is playable yet**: the tracker's playable bar is 20 fps and 30 minutes without a crash. 🟢 = in Neonbridge (pick it in the launcher).
 
-"Verified here" means tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB (driver 616.92), 16 GB RAM, Windows 11. Most authors test on faster cards (RTX 4070 to 5090, RX 9070 XT), so expect lower frame rates here than theirs.
+Lanes, as the tracker reads them: **Picture** (1 mostly dark, 3 lit with faults, 5 the console's picture), **Speed** (fps reported in play), **Stability** (longest session without a crash).
 
-| # | Runtime | How far it gets (its authors' own results) | Verified here |
-|---|---|---|---|
-| 1 | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | 5–9 fps in free roam; new game to the open world in one 77-minute session without a crash (AMD RX 9070 XT). First on the [GTA VI PC race tracker](https://github.com/vuyp/gta6-pc-race) | No (not yet tested on NVIDIA by its author) |
-| 2 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene (9–10 since its victory-fork merge, cold cache); shadows still dark | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
-| 3 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | About 10 fps in the first rooms; 2–4 fps in the world | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
-| 4 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | Up to 6 fps in the open world | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
-| 5 | [xcl](https://github.com/ivall/xcl) | About 5 fps in the 3D world (RTX 5090, NVIDIA branch only); menus at 30 fps | Builds; its first shader preparation runs |
-| 6 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
-| 7 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | About 4 fps in the prologue; gameplay starts | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
+| Race # | Project | Card | Picture | Speed | Stability |
+|---|---|---|---|---|---|
+| 1 | 🟢 **[klbf-lab](https://github.com/PastiiJay/klbf-lab)** | AMD | 3/5: lit, tints and faint lines | 5–9 fps | 77 min |
+| 2 | 🟢 **[Flamingo](https://github.com/realblastex/flamingo)** | NVIDIA | 2/5: shadows missing, rooms dark | 7.8–14 fps (unconfirmed) | 24 min |
+| 3 | 🟢 **[victory-fork](https://github.com/fxceless/victory-fork)** (VIctory-fxceless) | NVIDIA | 2/5: shadows black | 4.5–7.6 fps | 30 min |
+| 4 | [VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT) | NVIDIA 8 GB | 2/5: shadows black | 4–7 fps at 1080p | about an hour |
+| 5 | 🟢 **[VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD)** | AMD | lit and whole, stand-in light | 5–7 fps | 15 min |
+| 6 | [ruff-lab](https://github.com/LoverCatys/ruff-lab) | AMD | lit, no magenta | 3.6 fps | 39 min |
+| 7 | [victory-unified](https://github.com/Itsbatt/victory-unified) | NVIDIA | stand-in light | about 2 fps | 49 min |
+| 8–18 | CBL VIctory, AnyXboxX, ztrx (archived here), [Kelvaroq](https://github.com/fablinoo/kelvaroq), vilocity, BRVIctory-ka1qux, VIniVIdiVIci, victory-perf, Vice-Tay, omonkey, victory-amd | | | 1–14 fps | |
+| 19 | 🟢 **[VItoriaBr](https://github.com/uiliannn/VItoriaBr)** | NVIDIA | lit, stand-in light | 3.5–6 fps | not reported |
+| 23 | 🟢 **[ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort)** | NVIDIA | shadows dark | about 4 fps | not reported |
+| 28 | 🟢 **[XCL](https://github.com/ivall/xcl)** | NVIDIA | stage 5: recognisable picture | | |
+
+25 projects are in-game (stage 6 of 7) and 12 more show a recognisable picture (stage 5); the full list is on the tracker.
+
+### Verified here
+
+Tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB (driver 616.92), 16 GB RAM, Windows 11. Most authors test on faster cards (RTX 4070 to 5090, RX 9070 XT), so expect lower frame rates here than theirs. The launcher lists the runtimes in this order.
+
+| # | Runtime | Verified here |
+|---|---|---|
+| 1 | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | No (not yet tested on NVIDIA by its author) |
+| 2 | [Flamingo](https://github.com/realblastex/flamingo) | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
+| 3 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
+| 4 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | No |
+| 5 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
+| 6 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
+| 7 | [xcl](https://github.com/ivall/xcl) | Builds; its first shader preparation runs |
 
 ztrx-victory (Zettrox/ztrx, upstream now gone) is archived: `git checkout 2210a25024c0ffedc232661f7b312c06e88c86f2 -- vendor/ztrx-victory` brings it back.
 
