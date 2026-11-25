@@ -339,7 +339,10 @@ impl Pool {
     /// only when d3d12 asks.
     fn join_neighbours(&mut self, address: usize, bytes: usize) {
         static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_XMEM_EAGER_JOIN").map_or(true, |v| v.trim() != "0"));
-        if !*ON || bytes == 0 { return; }
+        // Eager joins only make one section's consecutive pages one view,
+        // which the section import already covers without a view: skipped
+        // while it is on (d3d12 still asks join_range for what it refuses).
+        if !*ON || bytes == 0 || section_import() { return; }
         let follows = |pool: &Self, before: usize, after: usize| -> bool {
             let (Some(a), Some(b)) = (pool.mappings.get(&before), pool.mappings.get(&after)) else { return false };
             let (a, b) = (&pool.pages[a], &pool.pages[b]);
@@ -1812,6 +1815,13 @@ fn install_joining_fault() {
     });
 }
 
+/// Section import on (d3d12 d26cb24 opens the section, xmem answers):
+/// TUXBOX_POOL_SECTION_IMPORT=0 off.
+fn section_import() -> bool {
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_POOL_SECTION_IMPORT").map_or(true, |v| v.trim() != "0"));
+    *ON
+}
+
 /// XPortPC era_gpu_alias::open_mapping / era_title_gpu (41da567, credited):
 /// a title range is reachable by the host GPU through one
 /// OpenExistingHeapFromFileMapping import of the section its pages live in,
@@ -1825,8 +1835,7 @@ fn install_joining_fault() {
 #[unsafe(export_name = "TuxBoxPageSection")]
 unsafe extern "system" fn page_section(address: usize, want: usize, out: *mut [u64; 4]) -> u32 {
     // Off until d3d12's section import lands: TUXBOX_POOL_SECTION_IMPORT=1 on.
-    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("TUXBOX_POOL_SECTION_IMPORT").is_ok_and(|v| v.trim() == "1"));
-    if !*ON || out.is_null() { return 0; }
+    if !section_import() || out.is_null() { return 0; }
     let pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     let at = address & !(PAGE - 1);
     let Some(page) = pool.mappings.get(&at).and_then(|t| pool.pages.get(t)) else { return 0 };
@@ -1849,7 +1858,7 @@ unsafe extern "system" fn page_section(address: usize, want: usize, out: *mut [u
         seen.push(handle as u64);
         static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let total = TOTAL.fetch_add(bytes, Ordering::Relaxed) + bytes;
-        crate::loader::log(&format!("pool section import: section {:#x} of {} MiB at {address:#x} handed out; {} section(s), {} MiB total (TUXBOX_POOL_SECTION_IMPORT=1 on)",
+        crate::loader::log(&format!("pool section import: section {:#x} of {} MiB at {address:#x} handed out; {} section(s), {} MiB total (TUXBOX_POOL_SECTION_IMPORT=0 off)",
             handle as u64, bytes >> 20, seen.len(), total >> 20));
     }
     1
