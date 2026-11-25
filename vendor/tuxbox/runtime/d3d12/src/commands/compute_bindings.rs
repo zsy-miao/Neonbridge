@@ -23,6 +23,9 @@ pub(super) struct Bindings {
     /// Root views bound as one-view tables (root_tables), by (compute, slot).
     /// The BufferView beside each keeps the address (scene detection).
     view_tables: BTreeMap<(bool, u32), D3D12_GPU_DESCRIPTOR_HANDLE>,
+    /// SetSampleMaskX's quad mask (None: none set), for translated pixel
+    /// shaders that declare it (quad_mask).
+    pub(super) quad_mask: Option<u64>,
 }
 
 // A private root descriptor captures its value when recording. A guest
@@ -508,6 +511,10 @@ impl Bindings {
                 if let Some((slot, table, bitmap)) = view_marks {
                     list.SetGraphicsRootShaderResourceView(slot, table);
                     list.SetGraphicsRootUnorderedAccessView(slot + 1, bitmap);
+                }
+                if let Some(slot) = table.quad_mask {
+                    let words = crate::device::quad_mask::words(self.quad_mask);
+                    list.SetGraphicsRoot32BitConstants(slot, 2, words.as_ptr().cast(), 0);
                 }
                 dispatch();
                 list.SetGraphicsRootSignature(self.graphics.as_ref());

@@ -128,6 +128,7 @@ pub(super) fn reflected(
             view_formats: None,
             slot_views: None,
             view_marks: None,
+            quad_mask: None,
         })))
     }
 }

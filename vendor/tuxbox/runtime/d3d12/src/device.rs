@@ -42,6 +42,7 @@ mod graphics;
 mod heap;
 mod reserved;
 pub(crate) mod root_tables;
+pub(crate) mod quad_mask;
 mod derived;
 pub(crate) mod indirect;
 pub(crate) mod media;

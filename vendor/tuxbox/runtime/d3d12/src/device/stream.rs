@@ -652,14 +652,16 @@ unsafe fn create(
         .filter(|(i, _)| *i != 5)
         .filter_map(|(_, stage)| match *stage { Some((_, Some(index))) => Some(index), _ => None });
     let marks = translated().any(|index| super::view_marks::declared(&stages[index]));
+    // SetSampleMaskX's quad mask (quad_mask): a stage declaring it gets the constants.
+    let quad = translated().any(|index| super::quad_mask::declared(&stages[index]));
     super::view_marks::note_pipeline(translated().any(|index| super::view_marks::writes(&stages[index])), marks);
-    if let (true, Some(root), Some(field)) = (!declaring.is_empty() || reads_formats || reads_slots || marks, guest_root, root_record) {
+    if let (true, Some(root), Some(field)) = (!declaring.is_empty() || reads_formats || reads_slots || marks || quad, guest_root, root_record) {
         let words: Vec<_> = declaring.iter().flat_map(|code| tuxbox_dxbc::inline_sampler::literal_words(code)).collect();
         if !words.is_empty() {
             device.state.desc_table.literals(&device.native, &words);
         }
         let table = super::compute_table::with_runtime_tables(
-            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats, reads_slots, marks)?;
+            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats, reads_slots, marks, quad)?;
         unsafe { field.write(table.native.as_raw()) };
         binding_root = Some(table.layout.payload().to_vec());
         pipeline.raster_table = Some(table);

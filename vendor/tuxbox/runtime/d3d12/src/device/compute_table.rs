@@ -22,6 +22,9 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding buffer view addresses per heap slot
     /// (t3, space32766; see slot_views).
     pub(crate) slot_views: Option<u32>,
+    /// Root slot of the two root constants of SetSampleMaskX's quad mask
+    /// (b0, space32766; see quad_mask).
+    pub(crate) quad_mask: Option<u32>,
     /// Root slot of the root SRV holding view-mark entries per heap slot
     /// (t4, space32766), the bitmap's root UAV (u0) the next one (see
     /// view_marks).
@@ -333,6 +336,7 @@ fn reflected_tables(
             view_formats: None,
             slot_views: None,
             view_marks: None,
+            quad_mask: None,
         })))
     }
 }
@@ -435,6 +439,7 @@ fn extend_root_from(
             view_formats: None,
             slot_views: None,
             view_marks: None,
+            quad_mask: None,
         })))
     }
 }
@@ -445,13 +450,14 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool, slots: bool, marks: bool,
+    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool,
 ) -> Result<Arc<ComputeTable>> {
     let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
     let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
     let add_slots = slots && !table.is_some_and(|t| t.slot_views.is_some());
     let add_marks = marks && !table.is_some_and(|t| t.view_marks.is_some());
-    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks) {
+    let add_quad = quad && !table.is_some_and(|t| t.quad_mask.is_some());
+    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks && !add_quad) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -500,6 +506,16 @@ pub(super) fn with_runtime_tables(
             });
             Some(parameters.len() as u32 - 2)
         } else { table.and_then(|t| t.view_marks) };
+        let quad_slot = if add_quad {
+            parameters.push(D3D12_ROOT_PARAMETER1 {
+                ParameterType: D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS,
+                ShaderVisibility: D3D12_SHADER_VISIBILITY_PIXEL,
+                Anonymous: D3D12_ROOT_PARAMETER1_0 {
+                    Constants: D3D12_ROOT_CONSTANTS { ShaderRegister: super::quad_mask::REGISTER, RegisterSpace: super::quad_mask::SPACE, Num32BitValues: 2 },
+                },
+            });
+            Some(parameters.len() as u32 - 1)
+        } else { table.and_then(|t| t.quad_mask) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let mut blob = None;
@@ -518,6 +534,7 @@ pub(super) fn with_runtime_tables(
             view_formats: formats_slot,
             slot_views: slots_slot,
             view_marks: marks_slot,
+            quad_mask: quad_slot,
         }))
     }
 }
@@ -622,6 +639,7 @@ fn append_corroborated_ranges(
             view_formats: None,
             slot_views: None,
             view_marks: None,
+            quad_mask: None,
         })))
     }
 }

@@ -270,6 +270,11 @@ pub(super) unsafe extern "system" fn sample_mask(list: &List, mask: u64) {
     if !state.can_record_graphics(&list.native) {
         return;
     }
+    // A translated pixel shader declaring tb_quad_mask applies it per pixel
+    // (device/quad_mask.rs); others draw with full coverage as below.
+    if crate::device::quad_mask::enabled() {
+        state.bindings.quad_mask = (mask != u64::MAX).then_some(mask);
+    }
     // TuxBox 3f2a717: a mask that differs between a quad's pixels has no
     // desktop equivalent; refusing it dropped the call and flagged the list.
     // It is logged once and the draw keeps full coverage.

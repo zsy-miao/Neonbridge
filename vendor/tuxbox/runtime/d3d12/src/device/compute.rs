@@ -605,7 +605,7 @@ unsafe fn make_compute(
             }
             match super::compute_table::with_runtime_tables(
                 &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code), super::slot_views::declared(code),
-                super::view_marks::declared(code),
+                super::view_marks::declared(code), false,
             ) {
                 Ok(table) => Some(table),
                 Err(error) => return error.code(),
