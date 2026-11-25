@@ -955,6 +955,8 @@ struct Emitter<'a> {
     /// Declares tb_slot_views (t3, space32766): 16 B per host heap slot, the
     /// last dword the view's element stride (runtime slot_views.rs, b1155aa).
     slot_views: bool,
+    /// Declares tb_root_raw_stride (t4, space32766; d3d12 9841a78).
+    root_raw_stride: bool,
     /// Compute sampler heap base SGPR (FSSM user-data class 6).
     sampler_heap_base: Option<u8>,
     /// Sampler slots read from that heap: bound from SamplerDescriptorHeap in main.
@@ -3846,6 +3848,7 @@ impl<'a> Emitter<'a> {
             heap_sampler_slots: BTreeSet::new(),
             view_formats: false,
             slot_views: false,
+            root_raw_stride: false,
             heap_map: ex.root_sig.as_ref().is_some_and(|root| root.params.iter().any(|p| matches!(p.kind,
                 crate::meta::RootParamKind::Descriptor { kind: 3, register: 0, space: 32766 }))),
             heap_words: 0,
@@ -10784,6 +10787,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.regs.insert(format!("s{src}"));
                 stride = Some(format!("max(tb_slot_views.Load(s{src} * 16u + 12u), 1u)"));
             }
+            // A compute raw view bound as a root SRV/UAV parameter reads its element
+            // stride from the runtime's tb_root_raw_stride (t4, space32766; d3d12
+            // 9841a78): the word at (register + 1024 * uav) * 4, 0 unknown (bytes).
+            // Only these programs change. TB_ROOT_RAW_STRIDE=0 refuses as before.
+            if stride.is_none() && heap_raw.is_none() && self.is_cs && !self.raw_byte_index.contains(&ins.offset)
+                && !std::env::var("TB_ROOT_RAW_STRIDE").is_ok_and(|v| v.trim() == "0")
+            {
+                if let Some(&Res::Raw(slot, uav)) = self.res.get(&self.cur_idx).and_then(|v| v.first()) {
+                    let register = self.register_of(u32::from(uav), slot);
+                    if register < 1024 {
+                        self.root_raw_stride = true;
+                        stride = Some(format!("max(tb_root_raw_stride.Load({}u), 1u)", (register + 1024 * u32::from(uav)) * 4));
+                    }
+                }
+            }
             if !std::env::var("TB_RAW_IDXEN_LOOSE").is_ok_and(|v| v.trim() == "1")
                 && ((stride.is_none() && !self.raw_byte_index.contains(&ins.offset))
                     || !(ins.mnemonic.starts_with("buffer_load_dword") || (store_slot && stride.is_some())))
@@ -13476,6 +13494,10 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
         }
         if self.slot_views {
             h.push_str("ByteAddressBuffer tb_slot_views : register(t3, space32766);
+");
+        }
+        if self.root_raw_stride {
+            h.push_str("ByteAddressBuffer tb_root_raw_stride : register(t4, space32766);
 ");
         }
         if self.bvh_raw {
