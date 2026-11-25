@@ -600,9 +600,25 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
                         std::thread::sleep(Duration::from_secs(2));
                     }
                     let payload = &bytes[frame.start..frame.end];
-                    let _ = crate::device::shader_cache::take_misses();
-                    let outcome = crate::big_stack::run(|| unsafe { build_one(device.get(), frame.tag, payload, root.get(), &shader) });
-                    if !crate::device::shader_cache::take_misses().is_empty() {
+                    // big_stack::run builds on its own thread, and this thread's
+                    // marks (WORKER, offline, unbounded waits) did not go with it:
+                    // every journal pipeline took the title's lazy path, a
+                    // placeholder in 0.1 ms, nothing compiled or stored (prewarm176:
+                    // 111862 of 111874 "made but not in the library", 106046
+                    // created lazily). The marks are set on the build thread now.
+                    // TUXBOX_PIPELINE_BUILD_MARKS=0 builds as before.
+                    let marks = crate::env_toggle!("TUXBOX_PIPELINE_BUILD_MARKS") != Some("0");
+                    let (outcome, missed) = crate::big_stack::run(|| {
+                        if marks {
+                            WORKER.with(|w| w.set(true));
+                            crate::device::shader_cache::wait_unbounded();
+                            crate::device::pipeline_cache::offline_thread();
+                        }
+                        let _ = crate::device::shader_cache::take_misses();
+                        let outcome = unsafe { build_one(device.get(), frame.tag, payload, root.get(), &shader) };
+                        (outcome, !crate::device::shader_cache::take_misses().is_empty())
+                    });
+                    if missed {
                         unanswered.fetch_add(1, Ordering::Relaxed);
                     }
                     match outcome {
