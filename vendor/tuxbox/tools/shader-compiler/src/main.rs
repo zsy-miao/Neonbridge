@@ -206,6 +206,11 @@ fn run() -> Result<(), Error> {
         shader.isa.len()
     );
     fs::write(&output, hlsl).map_err(|e| format!("{}: {e}", output.display()))?;
+    // Heap access reflection for the runtime (hlsl/heap_reflect.rs).
+    if let Some(heap) = tuxbox_xshader::hlsl::heap_reflect::take() {
+        let path = format!("{}.heap", output.display());
+        fs::write(&path, heap).map_err(|e| format!("{path}: {e}"))?;
+    }
     Ok(())
 }
 

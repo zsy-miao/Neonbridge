@@ -395,6 +395,8 @@ pub unsafe extern "C" fn tuxbox_xshader_translate(
     let bytes = |p: *const u8, n: usize| (!p.is_null()).then(|| std::slice::from_raw_parts(p, n));
     let (source, consumer, pixel_order) = (bytes(source, source_len).unwrap_or(&[]), bytes(consumer, consumer_len), bytes(pixel_order, pixel_order_len));
     let stencil = u32::try_from(stencil_target).ok();
+    // A reflection left by an earlier program on this thread is not this one's.
+    let _ = hlsl::heap_reflect::take();
     let result = std::panic::catch_unwind(|| translate_request(source, consumer, pixel_order, stencil));
     let (status, data, prof) = match result {
         Ok(Ok((data, prof))) => (0, data, prof),
@@ -425,6 +427,26 @@ pub unsafe extern "C" fn tuxbox_xshader_translate_quad_mask(
     out: *mut *mut u8, out_len: *mut usize, profile: *mut [u8; 16],
 ) -> u32 {
     hlsl::with_quad_mask(|| tuxbox_xshader_translate(source, source_len, std::ptr::null(), 0, std::ptr::null(), 0, -1, out, out_len, profile))
+}
+
+/// The heap access reflection (`hlsl::heap_reflect`, the `.heap` sidecar) of the
+/// last `tuxbox_xshader_translate` on this thread: returns 1 and a buffer to free
+/// with `tuxbox_xshader_free`, or 0 when there is none.
+///
+/// # Safety
+/// `out` and `out_len` are writable.
+#[cfg(feature = "legacy-hlsl")]
+#[no_mangle]
+pub unsafe extern "C" fn tuxbox_xshader_heap(out: *mut *mut u8, out_len: *mut usize) -> u32 {
+    let Some(text) = hlsl::heap_reflect::take() else {
+        *out = std::ptr::null_mut();
+        *out_len = 0;
+        return 0;
+    };
+    let boxed = text.into_bytes().into_boxed_slice();
+    *out_len = boxed.len();
+    *out = Box::into_raw(boxed) as *mut u8;
+    1
 }
 
 /// Frees a buffer `tuxbox_xshader_translate` returned.

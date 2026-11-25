@@ -102,6 +102,7 @@ mod sampler_heap;
 mod lane_reads;
 mod heap_offsets;
 mod heap_origins;
+pub mod heap_reflect;
 use sampler_heap::DirectSampler;
 mod reflection_probe;
 mod wave_scan;
@@ -935,6 +936,8 @@ struct Emitter<'a> {
     /// Declares tb_desc_table / tb_desc_lookup for Res::SamplerLookup.
     desc_lookup: bool,
     resource_heap_base: Option<u8>,
+    /// Heap index sources and accesses for the `.heap` sidecar (heap_reflect).
+    heap_reflect: heap_reflect::HeapReflect,
     /// The heap base comes from compute user data (FSSM class 5) of a program the
     /// root-based `heap_register` does not cover; see `compute_heap_base`.
     compute_heap: bool,
@@ -3973,6 +3976,7 @@ impl<'a> Emitter<'a> {
             img_ty: BTreeMap::new(),
             uses_heap_sampler: false,
             desc_lookup: false,
+            heap_reflect: Default::default(),
             resource_heap_base: sampler_heap::resource_base(ex).or_else(|| heap_register(ex)).or_else(|| compute_heap_base(ex))
                 .or_else(|| pixel_heap_base(ex, 5)),
             compute_heap: sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none()
@@ -4117,6 +4121,28 @@ impl<'a> Emitter<'a> {
             Some(root) => root.params.get(idx).map(|_| idx),
             None => Some(idx),
         }
+    }
+
+    /// The root constant (parameter, dword) arriving in user SGPR `sgpr`, counting
+    /// each table as one SGPR and each root descriptor as two, as `heap_register`.
+    fn root_word_of(&self, sgpr: u8) -> Option<(usize, u32)> {
+        use crate::meta::RootParamKind;
+        let off = u32::try_from((sgpr as usize).checked_sub(self.root_sgpr_base(sgpr))?).ok()?;
+        let Some(root) = self.ex.root_sig.as_ref() else { return Some((off as usize, 0)) };
+        let mut at = 0u32;
+        for (i, p) in root.params.iter().enumerate() {
+            let words = match &p.kind {
+                RootParamKind::Descriptor { space: 32766, .. } => 0,
+                RootParamKind::Table(_) => 1,
+                RootParamKind::Descriptor { .. } => 2,
+                RootParamKind::Constants { num32, .. } => *num32,
+            };
+            if off < at + words {
+                return matches!(p.kind, RootParamKind::Constants { .. }).then_some((i, off - at));
+            }
+            at += words;
+        }
+        None
     }
 
     fn root_table(&self, sgpr: u8) -> Option<&[crate::meta::RootRange]> {
@@ -4683,6 +4709,9 @@ impl<'a> Emitter<'a> {
                 self.df_maybe = maybe_in[b].clone();
                 self.res_block(&program, &mut sym, &mut written, r.clone(), track_heap_origin).map_err(|e| first_err.clone().unwrap_or(e))?;
             }
+        }
+        if heap_reflect::on() {
+            self.heap_reflect.publish();
         }
         Ok(())
     }
@@ -5509,6 +5538,21 @@ impl<'a> Emitter<'a> {
                 Opnd::Temp(n) if *n >= LANE_TEMP_BASE => Some(1000 + (*n - LANE_TEMP_BASE)),
                 _ => None,
             };
+            if heap_reflect::on() {
+                if matches!(ins.enc, Enc::Mimg | Enc::Mubuf | Enc::Mtbuf) {
+                    let write = ins.mnemonic.contains("store") || ins.mnemonic.contains("atomic");
+                    for o in &ins.src {
+                        if let Some(Sym::HeapDescriptor(_, origin)) = sg(o).and_then(|s| sym.get(&s)).copied() {
+                            self.heap_reflect.use_(origin, write);
+                        }
+                    }
+                }
+                for o in &ins.dst {
+                    if let Some(s) = sg(o) {
+                        self.heap_reflect.src.remove(&s);
+                    }
+                }
+            }
             if self.mesh_bindings.is_some() && ins.mnemonic != "v_nop" {
                 for (i, source) in ins.src.iter().enumerate() {
                     let Some(Sym::MeshRawAddress { word, .. }) = sg(source).and_then(|s| sym.get(&s)) else {
@@ -5645,6 +5689,16 @@ impl<'a> Emitter<'a> {
                 }
                 Enc::Sop2 if self.resource_heap_base.is_some() && ins.mnemonic == "s_lshl_b32" && ins.src.get(1) == Some(&Opnd::ConstInt(5)) => {
                     if let Some(d) = ins.dst.first().and_then(sg) {
+                        if heap_reflect::on() {
+                            let src = match ins.src.first() {
+                                Some(Opnd::Sgpr(s)) if !written.contains(&u16::from(*s)) =>
+                                    self.root_word_of(*s).map(|(p, w)| heap_reflect::Src::Root(p, w)),
+                                Some(Opnd::ConstInt(v)) => u32::try_from(*v).ok().map(heap_reflect::Src::Const),
+                                Some(Opnd::Literal(v)) => Some(heap_reflect::Src::Const(*v)),
+                                _ => None,
+                            };
+                            if let Some(src) = src { self.heap_reflect.src.insert(d, src); }
+                        }
                         sym.insert(d, Sym::HeapOffset);
                         written.insert(d);
                     }
@@ -5942,6 +5996,9 @@ impl<'a> Emitter<'a> {
                             }
                             sym.insert(d, Sym::HeapDescriptor(n, heap_origin));
                             self.res.insert(idx, vec![Res::HeapLoad(soff)]);
+                            if heap_reflect::on() {
+                                self.heap_reflect.site(idx, soff, i64::from(ins.aux.imm));
+                            }
                             continue;
                         }
                         // A sampler picked at run time from the directly indexed compute sampler
