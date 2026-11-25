@@ -1074,7 +1074,8 @@ fn supervised(name: &str, mut cmd: Command, log: Option<&Path>, timeout: Option<
             if let Some(d) = p.parent() {
                 let _ = fs::create_dir_all(d);
             }
-            Box::new(fs::File::create(p)?)
+            // Appended: a picker launch's own lines are in it already.
+            Box::new(fs::OpenOptions::new().create(true).append(true).open(p)?)
         }
         None => Box::new(std::io::stderr()),
     }));
@@ -1122,6 +1123,10 @@ fn supervised(name: &str, mut cmd: Command, log: Option<&Path>, timeout: Option<
     let _ = (a.join(), b.join());
     crate::splash::close();
     println!("[launch] {name} exited ({status})");
+    if !status.success() {
+        let code = status.code().map_or_else(|| status.to_string(), |c| format!("{c} (0x{:08X})", c as u32));
+        return Err(format!("{name} exited with code {code}.\nLog: {}", log.map_or_else(|| "this console".to_owned(), |p| p.display().to_string())).into());
+    }
     Ok(())
 }
 
@@ -1480,6 +1485,9 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     let result = supervised(name, cmd, log.as_deref(), timeout);
     if matches!(task, Task::Run) && let Some(l) = &log {
         let _ = fs::copy(l, cache.join("last-run.log"));
+    }
+    if matches!(task, Task::Run) && let Err(e) = &result {
+        fail_box(e);
     }
     result
 }

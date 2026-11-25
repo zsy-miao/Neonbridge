@@ -141,6 +141,8 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
     let mut rev = std::env::var("NEONBRIDGE_REV").ok().map(|r| r.trim().to_owned()).filter(|r| !r.is_empty());
     let mut runtime_arg: Option<String> = None;
+    // Started from the picker: no console, so the run's log is the only record.
+    let mut gui = false;
     let (mut sets, mut preset, mut list_of): (Vec<String>, Option<String>, Option<Option<String>>) = (Vec::new(), None, None);
     // --mix <saved name | last-good | file>, --mix-part <part>=<runtime>.
     let mut mix: Option<mix::Mix> = None;
@@ -261,6 +263,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
     // No --game: the one-line picker (folder, exe or MicrosoftGame.Config).
     if game.is_none() && mode != Mode::BuildOnly && mode != Mode::Prewarm && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
         let Some(p) = picker::pick() else { return Ok(()) };
+        gui = true;
         game = Some(p.folder);
         exe = exe.or(p.exe);
         // The picker's runtime, preset and options, under what the command line named.
@@ -282,8 +285,25 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         let base = m.app().map(str::to_owned).unwrap_or_else(|| runtime.clone());
         let m = m.filled(if runtimes::victory_tree(&base).is_some() { &base } else { "scarlettport" });
         runtime = m.app().unwrap_or("scarlettport").to_owned();
-        println!("[launch] mix (app from {runtime}):\n{}", m.text());
-        mix = Some(m);
+        // Every part from one tree is that runtime itself, not a mix: run its
+        // own build, toml and cache (an all-scarlettport mix built a second
+        // victory.exe under 6ixpack\mix for nothing).
+        if m.parts.values().all(|t| *t == runtime) {
+            println!("[launch] mix: every part is {runtime}; running {runtime} itself");
+        } else {
+            println!("[launch] mix (app from {runtime}):\n{}", m.text());
+            mix = Some(m);
+        }
+    }
+    // A picker launch has no console: everything the launcher and the
+    // runtime print goes to 6ixpack\logs\<runtime>_<time>.log (copied to the
+    // runtime's last-run.log when it ends).
+    if gui && log.is_none() && runtime != runtimes::TUXBOX {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let path = data_dir().join("logs").join(format!("{runtime}_{secs}.log"));
+        if redirect_output(&path) {
+            log = Some(path);
+        }
     }
     if runtime != runtimes::TUXBOX && matches!(mode, Mode::Run | Mode::BuildOnly | Mode::Prewarm) {
         if debug || sandbox || rev.is_some() || tuxbox.is_some() {
@@ -1156,6 +1176,31 @@ fn package_release(tuxbox: PathBuf, dir: &Path, all: Option<&str>) -> Result<(),
     )?;
     println!("[package] {} ({} providers, xshader) -> {}", stage.display(), dlls.len(), zip.display());
     Ok(())
+}
+
+/// Points this process's stdout and stderr at `path` (appending), so the
+/// launcher's own lines land in the run's log; the runtime's output is
+/// appended to the same file by runtimes::supervised.
+fn redirect_output(path: &Path) -> bool {
+    use std::os::windows::io::IntoRawHandle;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetStdHandle(which: u32, handle: *mut std::ffi::c_void) -> i32;
+    }
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+    if let Some(d) = path.parent() {
+        let _ = fs::create_dir_all(d);
+    }
+    let Ok(out) = fs::OpenOptions::new().create(true).append(true).open(path) else { return false };
+    let Ok(err) = out.try_clone() else { return false };
+    // SAFETY: the handles are ours and stay open for the process's life.
+    unsafe {
+        SetStdHandle(STD_OUTPUT_HANDLE, out.into_raw_handle());
+        SetStdHandle(STD_ERROR_HANDLE, err.into_raw_handle());
+    }
+    println!("[launch] log: {}", path.display());
+    true
 }
 
 fn env_path(k: &str) -> Option<PathBuf> {
