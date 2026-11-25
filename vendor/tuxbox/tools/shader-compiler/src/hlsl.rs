@@ -12860,8 +12860,18 @@ fn heap_descriptor(sym: &HashMap<u16, Sym>, base: u16, n: u16) -> bool {
 /// when SFI0 declares that heap directly indexed (bits 25 and 26). The row sits next
 /// to the pixel stage's table rows, which count SGPRs the same way.
 fn pixel_heap_base(ex: &ShaderExtract, class: u32) -> Option<u8> {
-    if ex.stage != Stage::Pixel || ex.root_sig.is_some() || ex.required_features? & (1 << (20 + class)) == 0 {
+    if ex.stage != Stage::Pixel || ex.required_features? & (1 << (20 + class)) == 0 {
         return None;
+    }
+    // TuxBox 0b6e788: a rooted pixel shader with RESOURCE_HEAP_DIRECTLY_INDEXED
+    // (0x400) takes its class-5 resource heap base from the user SGPR too,
+    // unless sampler_heap::resource_base claims the root layout.
+    // TB_PIXEL_HEAP_ROOTED=0 keeps rooted pixel shaders out.
+    if let Some(root) = ex.root_sig.as_ref() {
+        let rooted = std::env::var("TB_PIXEL_HEAP_ROOTED").map_or(true, |v| v.trim() != "0");
+        if !rooted || class != 5 || root.flags & 0x400 == 0 || sampler_heap::resource_base(ex).is_some() {
+            return None;
+        }
     }
     let mut rows = tuxbox_dxbc::compute_table::user_data_records(&ex.fssm)?.filter(|&[c, ..]| c == class);
     let [_, 0, 1, 0, loc @ 0..=0xff] = rows.next()? else { return None };
