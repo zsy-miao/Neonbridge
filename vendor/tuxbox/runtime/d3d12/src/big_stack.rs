@@ -77,30 +77,71 @@ pub(crate) fn lane_enabled() -> bool {
     *ON.get_or_init(|| crate::env_toggle!("TUXBOX_COMPILE_LANE") != Some("0"))
 }
 
-/// Run `job` on the large-compile lane and return its result; on the
-/// calling thread when already on the lane or the lane cannot start.
-pub(crate) fn run_on_lane<R, F: FnOnce() -> R>(job: F) -> R {
-    use std::sync::{Mutex, OnceLock, mpsc};
-    static LANE: OnceLock<Option<Mutex<mpsc::Sender<LaneJob>>>> = OnceLock::new();
+/// Lanes for large compiles (TUXBOX_COMPILE_LANES, default min(4, cores/4),
+/// at least 1; =1 is the single lane as before). test177: the one lane was
+/// the top CPU thread from 56 s on (82-124 ms a frame) while 2772 pipelines
+/// waited. Each lane keeps its own driver arena, so lanes stay few; 1 MiB
+/// programs still compile one at a time (pipeline_cache::heavy_turn) and the
+/// compile budget still admits each. A lane takes jobs a title waits on
+/// before prefetches.
+fn lanes() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+        crate::env_toggle!("TUXBOX_COMPILE_LANES").and_then(|v| v.trim().parse().ok())
+            .unwrap_or((cores / 4).min(4)).max(1)
+    })
+}
+
+#[derive(Default)]
+struct LaneQueue {
+    urgent: std::collections::VecDeque<LaneJob>,
+    prefetch: std::collections::VecDeque<LaneJob>,
+}
+
+/// Run `job` on a large-compile lane and return its result; on the
+/// calling thread when already on a lane or no lane can start. `urgent`:
+/// a title binds or waits on the pipeline (taken before prefetches).
+pub(crate) fn run_on_lane<R, F: FnOnce() -> R>(job: F, urgent: bool) -> R {
+    use std::sync::{Condvar, Mutex, OnceLock, mpsc};
+    static QUEUE: (Mutex<LaneQueue>, Condvar) = (Mutex::new(LaneQueue { urgent: std::collections::VecDeque::new(), prefetch: std::collections::VecDeque::new() }), Condvar::new());
+    static STARTED: OnceLock<bool> = OnceLock::new();
     if ON_LANE.with(Cell::get) {
         return job();
     }
-    let lane = LANE.get_or_init(|| {
-        let (send, receive) = mpsc::channel::<LaneJob>();
-        std::thread::Builder::new()
-            .name("tuxbox-compile-lane".into())
-            .stack_size(STACK_BYTES)
-            .spawn(move || {
-                mark_big();
-                ON_LANE.with(|l| l.set(true));
-                for job in receive {
-                    job();
-                }
-            })
-            .ok()
-            .map(|_| Mutex::new(send))
+    let started = *STARTED.get_or_init(|| {
+        let n = lanes();
+        let mut any = false;
+        for i in 0..n {
+            any |= std::thread::Builder::new()
+                .name(if n == 1 { "tuxbox-compile-lane".into() } else { format!("tuxbox-compile-lane-{i}") })
+                .stack_size(STACK_BYTES)
+                .spawn(|| {
+                    mark_big();
+                    ON_LANE.with(|l| l.set(true));
+                    loop {
+                        let job = {
+                            let (lock, ready) = &QUEUE;
+                            let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+                            loop {
+                                if let Some(job) = q.urgent.pop_front().or_else(|| q.prefetch.pop_front()) {
+                                    break job;
+                                }
+                                q = ready.wait(q).unwrap_or_else(|e| e.into_inner());
+                            }
+                        };
+                        job();
+                    }
+                })
+                .is_ok();
+        }
+        crate::diagnostics::log_line(format_args!(
+            "compile lanes: {n} for programs of 256 KiB or more, title-waited first (TUXBOX_COMPILE_LANES=N; 1 as before)"));
+        any
     });
-    let Some(lane) = lane else { return run(job) };
+    if !started {
+        return run(job);
+    }
     let mut slot = Some(job);
     let mut result: Option<std::thread::Result<R>> = None;
     let pointers = AssertSend((&mut slot as *mut Option<F>, &mut result as *mut Option<std::thread::Result<R>>));
@@ -116,8 +157,14 @@ pub(crate) fn run_on_lane<R, F: FnOnce() -> R>(job: F) -> R {
     // SAFETY: the caller waits for the task to finish before `slot` and
     // `result` go out of scope, so the erased lifetime is never outlived.
     let task: LaneJob = unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + '_>, LaneJob>(task) };
-    let sent = lane.lock().unwrap_or_else(|e| e.into_inner()).send(task).is_ok();
-    if !sent || finished.recv().is_err() {
+    {
+        let (lock, ready) = &QUEUE;
+        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if urgent { q.urgent.push_back(task) } else { q.prefetch.push_back(task) }
+        drop(q);
+        ready.notify_one();
+    }
+    if finished.recv().is_err() {
         if let Some(job) = slot.take() {
             return run(job);
         }

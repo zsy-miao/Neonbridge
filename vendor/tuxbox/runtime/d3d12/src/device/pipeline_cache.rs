@@ -410,7 +410,7 @@ fn load_or_make(
         let _admitted = super::compile_budget::enter(shader_bytes);
         let _measured = super::compile_budget::measure(shader_bytes, key.as_deref());
         if shader_bytes >= 256 << 10 && crate::big_stack::lane_enabled() {
-            crate::big_stack::run_on_lane(make)
+            crate::big_stack::run_on_lane(make, !super::stream::background::prefetching() || super::stream::background::waited_on())
         } else {
             crate::big_stack::run(make)
         }
