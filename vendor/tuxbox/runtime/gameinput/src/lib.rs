@@ -256,29 +256,33 @@ impl Pool {
     fn refresh(&mut self, mask: u32) {
         let now = gi_time();
         let (active, desktop_slot) = self.update_devices(now, mask & PAD != 0);
-        // Input (the auto A press included) only advances while the title's
-        // window is foreground: say once, 20 s into the pad polls, if it never was.
-        if !active && mask & PAD != 0 && !matches!(self.auto_start, AutoStart::Off | AutoStart::Done) {
-            static FIRST_BG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            static TOLD_BG: std::sync::Once = std::sync::Once::new();
-            let first = match FIRST_BG.compare_exchange(0, now.max(1), std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
-                Ok(_) => now.max(1),
-                Err(f) => f,
-            };
-            if now.saturating_sub(first) >= 20_000_000 {
-                TOLD_BG.call_once(|| eprintln!("TuxBox gameinput: auto start: no A pressed 20 s into the pad polls: the title's window is not foreground (input is ignored until it is)"));
-            }
-        }
-        if !active {
+        // Auto presses (and ctl presses) are synthetic: they reach the title's
+        // primary pad whether or not its window is foreground, with every real
+        // input left out, so a run the user is not watching still walks the
+        // menus (test168: 0 presses, the window behind the user's). Real pad,
+        // keyboard and mouse sampling stays gated on the foreground.
+        // NEONBRIDGE_AUTO_PRESS_ANY_FOCUS=0 presses only while foreground.
+        let synthetic = !active && mask & PAD != 0
+            && (!matches!(self.auto_start, AutoStart::Off | AutoStart::Done) || injected(now) != 0)
+            && std::env::var("NEONBRIDGE_AUTO_PRESS_ANY_FOCUS").as_deref() != Ok("0");
+        if !active && !synthetic {
             self.mouse.previous = None;
             return;
         }
+        if synthetic {
+            self.mouse.previous = None;
+        }
         // The title's primary pad: the keyboard-merged pad, else the first XInput pad.
         let primary = desktop_slot.or_else(|| self.pads.iter().position(Option::is_some).map(|i| i + 2));
-        let real = match primary {
+        let real = if synthetic { 0 } else { match primary {
             Some(slot) => self.pads.get(slot.wrapping_sub(2)).copied().flatten().map_or(0, |pad| pad.buttons),
             _ => 0,
-        };
+        } };
+        if synthetic && let Some(slot) = primary
+            && let Value::Device { status, .. } = &self.devices[slot].value
+        {
+            status.store(3, Ordering::Relaxed);
+        }
         let press_a = mask & PAD != 0 && primary.is_some() && self.auto_start.step(now, real);
         // The auto press is silent until it fires: say once, 20 s into the
         // title's pad polls, what it still waits for (test168 set
@@ -304,7 +308,7 @@ impl Pool {
         let inject = injected(now);
         for slot in 0..DEVICES {
             let kind = kind(slot);
-            if kind & mask == 0 {
+            if kind & mask == 0 || synthetic && primary != Some(slot) {
                 continue;
             }
             let data = match slot {
@@ -317,10 +321,11 @@ impl Pool {
                         .copied()
                         .flatten()
                         .unwrap_or_default();
-                    Sample::Pad(self.desktop.as_mut().unwrap().merge(pad))
+                    if synthetic { Sample::Pad(Default::default()) } else { Sample::Pad(self.desktop.as_mut().unwrap().merge(pad)) }
                 }
                 VIRTUAL => continue,
                 _ => match self.pads[slot - 2] {
+                    Some(_) if synthetic => Sample::Pad(Default::default()),
                     Some(pad) => Sample::Pad(pad),
                     None => continue,
                 },
