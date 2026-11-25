@@ -422,10 +422,6 @@ fn split_args(s: &str) -> Vec<OsString> {
     out
 }
 
-/// Pre-flight: Windows commit (RAM plus page file) available for the title.
-/// Translation layers commit about 15 GB at the menu; when commit runs out
-/// allocations fail with error 1455 and the title crashes. Warns below
-/// TUXBOX_MIN_COMMIT_GB (default 20); NEONBRIDGE_COMMIT_CHECK=0 skips it.
 /// Port of TuxBox 02dcc15 (Apache-2.0, warn_scarlett_dxc): advisory only.
 /// d3d12_xs compiles rectangle-list pipelines with the dxcompiler.dll and
 /// dxil.dll beside the game (a system copy may still work).
@@ -457,6 +453,10 @@ fn dxc_preflight(game: &Path) {
     }
 }
 
+/// Pre-flight: Windows commit (RAM plus page file) available for the title.
+/// Translation layers commit about 15 GB at the menu; when commit runs out
+/// allocations fail with error 1455 and the title crashes. Warns below
+/// TUXBOX_MIN_COMMIT_GB (default 20); NEONBRIDGE_COMMIT_CHECK=0 skips it.
 fn commit_preflight() {
     #[repr(C)]
     struct MemoryStatusEx { length: u32, load: u32, total_phys: u64, avail_phys: u64, total_page_file: u64, avail_page_file: u64, total_virtual: u64, avail_virtual: u64, avail_extended: u64 }
