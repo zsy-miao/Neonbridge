@@ -249,6 +249,11 @@ fn cached_refusal(cache: &Path, key: &str) -> bool {
     true
 }
 
+/// Whether the worker has published a translation for `key` already.
+pub(super) fn published(key: &str) -> bool {
+    session().is_some_and(|dir| dir.join(format!("{key}.cso")).is_file())
+}
+
 pub(super) fn on_demand(shader: &[u8], source: &str, stage: Stage) -> Option<Vec<u8>> {
     request(source, stage, |pending, requests| {
         let published = fs::write(pending, shader).and_then(|()| fs::rename(pending, requests.join(format!("{source}.dxbc"))));

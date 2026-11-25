@@ -170,7 +170,15 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
             Work::Compute(_) => false,
         };
         let job = Job { device, work, graphics, slot: slot.clone() };
-        match small(&job) && first_use::admit() {
+        // five-star-recomp 9d61a3c (GPL-3.0, credit to its authors): a small
+        // compute first use made inline waited on programs still being made
+        // on demand, and a loading frame met hundreds of them, past the
+        // title's hang watchdog. Only a translation already cached is made
+        // inline; the rest go to the workers. TUXBOX_INLINE_UNCACHED=1 makes
+        // them inline as before.
+        let cached = crate::env_toggle!("TUXBOX_INLINE_UNCACHED") == Some("1")
+            || matches!(&job.work, Work::Compute(c) if crate::device::shader_cache::translation_ready(&c.code));
+        match small(&job) && cached && first_use::admit() {
             true => {
                 let started = std::time::Instant::now();
                 inline(job);

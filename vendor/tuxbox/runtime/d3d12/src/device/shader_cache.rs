@@ -263,6 +263,20 @@ pub(super) fn ray_library(bytes: &[u8], source: &str) -> Option<Vec<u8>> {
     library
 }
 
+/// Whether a shader needs no translation wait: it is portable already, or
+/// its translation is in the portable cache or published by the worker. A
+/// file check only; nothing is read or requested.
+pub(super) fn translation_ready(shader: &[u8]) -> bool {
+    match shader_code(shader) {
+        Some((_, ShaderCode::Portable)) => true,
+        Some((_, ShaderCode::Xbox)) => source_digest(shader).is_some_and(|source| {
+            std::env::temp_dir().join("tuxbox_shader_cache").join("by_source").join(format!("{source}.cso")).is_file()
+                || compile::published(&source)
+        }),
+        None => false,
+    }
+}
+
 pub(super) fn prepared(shader: &[u8]) -> Option<Vec<u8>> {
     let (stage, ShaderCode::Xbox) = shader_code(shader)? else {
         return None;
