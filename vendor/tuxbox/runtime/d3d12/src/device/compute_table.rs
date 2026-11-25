@@ -22,6 +22,8 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding buffer view addresses per heap slot
     /// (t3, space32766; see slot_views).
     pub(crate) slot_views: Option<u32>,
+    /// Root parameter of the console descriptor words table (t6, space32766; slot_words).
+    pub(crate) slot_words: Option<u32>,
     /// TUXBOX_BVH_RAW_SRV (default on, =0 off): the first of the raw root SRVs at t5..,
     /// space32766 over each guest root SRV parameter's acceleration
     /// structure, and those guest parameters' slots (see bvh_raw).
@@ -344,6 +346,7 @@ fn reflected_tables(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            slot_words: None,
             bvh_raw: None,
             root_strides: None,
             view_marks: None,
@@ -450,6 +453,7 @@ fn extend_root_from(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            slot_words: None,
             bvh_raw: None,
             root_strides: None,
             view_marks: None,
@@ -464,8 +468,9 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool, strides: bool,
+    desc: bool, formats: bool, slots: bool, marks: bool, quad: bool, bvh: bool, strides: bool, words: bool,
 ) -> Result<Arc<ComputeTable>> {
+    let add_words = words && !table.is_some_and(|t| t.slot_words.is_some());
     let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
     let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
     let add_slots = slots && !table.is_some_and(|t| t.slot_views.is_some());
@@ -473,7 +478,7 @@ pub(super) fn with_runtime_tables(
     let add_quad = quad && !table.is_some_and(|t| t.quad_mask.is_some());
     let add_bvh = bvh && !table.is_some_and(|t| t.bvh_raw.is_some());
     let add_strides = strides && !table.is_some_and(|t| t.root_strides.is_some());
-    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh && !add_strides) {
+    if let Some(table) = table.filter(|_| !add_words && !add_desc && !add_formats && !add_slots && !add_marks && !add_quad && !add_bvh && !add_strides) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -513,6 +518,10 @@ pub(super) fn with_runtime_tables(
             parameters.push(root_srv(super::slot_views::REGISTER, super::slot_views::SPACE));
             Some(parameters.len() as u32 - 1)
         } else { table.and_then(|t| t.slot_views) };
+        let words_slot = if add_words {
+            parameters.push(root_srv(super::slot_words::REGISTER, super::slot_words::SPACE));
+            Some(parameters.len() as u32 - 1)
+        } else { table.and_then(|t| t.slot_words) };
         // Write marks (view_marks, VIctory cd94d35): the table, then the bitmap.
         let marks_slot = if add_marks {
             parameters.push(root_srv(super::view_marks::TABLE_REGISTER, super::view_marks::SPACE));
@@ -571,6 +580,7 @@ pub(super) fn with_runtime_tables(
             desc_table: desc_slot,
             view_formats: formats_slot,
             slot_views: slots_slot,
+            slot_words: words_slot,
             view_marks: marks_slot,
             quad_mask: quad_slot,
             bvh_raw: bvh_slot,
@@ -679,6 +689,7 @@ fn append_corroborated_ranges(
             desc_table: None,
             view_formats: None,
             slot_views: None,
+            slot_words: None,
             bvh_raw: None,
             root_strides: None,
             view_marks: None,

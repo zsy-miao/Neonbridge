@@ -163,6 +163,9 @@ pub(crate) fn stride_at(va: u64) -> u32 {
 
 /// A view was created at `handle`.
 pub(crate) fn write(handle: usize, code: Entry) {
+    // Its V# for shaders reading descriptor words as data (slot_words); a
+    // texture's T# is written after this by the view's own call.
+    super::slot_words::write(handle, super::slot_words::buffer(code, code[3] != 4));
     if !enabled() || (code == [0; 4] && !ANY.load(Ordering::Relaxed)) {
         return;
     }
@@ -174,6 +177,7 @@ pub(crate) fn write(handle: usize, code: Entry) {
 
 /// `count` descriptors were copied from `src` to `dst`.
 pub(crate) fn copy(dst: usize, src: usize, count: usize, stride: usize) {
+    super::slot_words::copy(dst, src, count, stride);
     if !enabled() || !ANY.load(Ordering::Relaxed) || count == 0 || dst == src {
         return;
     }
@@ -225,6 +229,7 @@ pub(crate) fn address(device: &ID3D12Device, start: usize, count: u32, stride: u
 /// Forgets the entries and table of a released heap's handles (called with
 /// view_formats::HeapGuard's ranges).
 pub(crate) fn forget(ranges: &[std::ops::Range<usize>]) {
+    super::slot_words::forget(ranges);
     if !enabled() {
         return;
     }

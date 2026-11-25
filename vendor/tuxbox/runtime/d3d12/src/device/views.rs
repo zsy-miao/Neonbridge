@@ -393,6 +393,14 @@ pub(crate) unsafe fn desc_table_address(owner: &windows::core::IUnknown) -> wind
 
 /// The slot view address table of the shader-visible heap at `start` and its
 /// GPU address, for a draw being recorded (slot_views).
+pub(crate) unsafe fn slot_words_address(
+    owner: &windows::core::IUnknown, start: usize, count: u32, stride: usize,
+) -> windows::core::Result<(ID3D12Resource, u64)> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    super::slot_words::address(&device.native, start, count, stride)
+}
+
+/// The slot view address table (slot_views), as above.
 pub(crate) unsafe fn slot_views_address(
     owner: &windows::core::IUnknown, start: usize, count: u32, stride: usize,
 ) -> windows::core::Result<(ID3D12Resource, u64)> {
@@ -963,6 +971,10 @@ pub(super) unsafe extern "system" fn srv(
     crate::diagnostics::display::texture_view(handle.ptr, resource, unsafe { desc.as_ref() }.map(|view| view.Format.0));
     super::view_formats::write(handle.ptr, super::view_formats::srv_code(unsafe { desc.as_ref() }));
     super::slot_views::write(handle.ptr, super::slot_views::srv_entry(super::slot_views::title_base(proxy), title_view.as_ref()));
+    if super::slot_words::enabled() && let Some(native) = resource {
+        let words = super::slot_words::srv(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }, Some(&unsafe { native.GetDesc() }));
+        if words != [0; 8] { super::slot_words::write(handle.ptr, words); }
+    }
     let texture = proxy.and_then(|resource| resource.state.placed());
     let scene = device.state.blas.scene_view(proxy, unsafe { desc.as_ref() });
     device.state.blas.views.store(handle.ptr, scene);
@@ -1014,6 +1026,10 @@ pub(super) unsafe extern "system" fn uav(
     let owner = identity(device).as_raw();
     let proxy = unsafe { super::resource_proxy(object, owner) };
     super::slot_views::write(handle.ptr, super::slot_views::uav_entry(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }));
+    if super::slot_words::enabled() && let Some(native) = proxy.map(|p| &p.native) {
+        let words = super::slot_words::uav(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }, Some(&unsafe { native.GetDesc() }));
+        if words != [0; 8] { super::slot_words::write(handle.ptr, words); }
+    }
     let placed = proxy.and_then(|p| p.state.placed());
     let window = proxy.and_then(|p| p.state.buffer_window());
     let counter_window = unsafe { super::resource_proxy(counter, owner) }.and_then(|p| p.state.buffer_window());
