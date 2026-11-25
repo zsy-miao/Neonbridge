@@ -247,6 +247,34 @@ pub(super) fn link_mesh(
     compile::linked((&source, producer), pixel, pixel_dxil, Stage::Mesh)
 }
 
+/// The link `link_mesh` would make, when it is cached already (the `7 =>`
+/// lookup beside by_vs_ps and by_gs_ps); `request` also asks for one now
+/// when the signatures do not match, before the first create (five-star-
+/// recomp ProducerLinks / 1236bfa, GPL-3.0, credit to its authors: pairs
+/// are linked before the pipeline is made, not after the driver refuses).
+pub(super) fn mesh_link_before(
+    mesh: &[u8],
+    root: Option<&[u8]>,
+    pixel: (&str, &[u8]),
+    mesh_dxil: &[u8],
+    pixel_dxil: &[u8],
+    request: bool,
+) -> Option<Vec<u8>> {
+    if !matches!(shader_code(mesh_dxil)?, (Stage::Mesh, ShaderCode::Portable))
+        || !matches!(shader_code(mesh)?, (Stage::Mesh, ShaderCode::Xbox))
+    {
+        return None;
+    }
+    let rooted = root.and_then(|root| with_root(mesh, root));
+    let producer = rooted.as_deref().unwrap_or(mesh);
+    let source = source_digest(producer)?;
+    compile::linked_cached(&source, pixel.0, pixel_dxil, Stage::Mesh).or_else(|| {
+        (request && tuxbox_dxbc::has_packing_mismatch(mesh_dxil, pixel_dxil))
+            .then(|| compile::linked((&source, producer), pixel, pixel_dxil, Stage::Mesh))
+            .flatten()
+    })
+}
+
 pub(super) fn stencil_target(shader: &[u8], slot: u32) -> Option<Vec<u8>> {
     let source = source_digest(shader)?;
     compile::stencil(shader, &source, slot)

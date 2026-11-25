@@ -277,6 +277,16 @@ pub(crate) fn stencil(shader: &[u8], source: &str, slot: u32) -> Option<Vec<u8>>
     })
 }
 
+/// A link `linked` would make, if this session or the compiler cache has it
+/// already; nothing is requested.
+pub(super) fn linked_cached(producer: &str, pixel: &str, pixel_dxil: &[u8], stage: Stage) -> Option<Vec<u8>> {
+    let order = super::source_digest(pixel_dxil)?;
+    let key = format!("{producer}_{pixel}_{order}");
+    let dir = session()?;
+    read_portable_file(&dir.join(format!("{key}.cso")), stage)
+        .or_else(|| cached_translation(compiler_cache(dir)?, &key, stage))
+}
+
 pub(super) fn linked(
     producer: (&str, &[u8]),
     pixel: (&str, &[u8]),

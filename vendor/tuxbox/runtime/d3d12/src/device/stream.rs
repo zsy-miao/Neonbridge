@@ -763,6 +763,30 @@ unsafe fn create(
             return result;
         }
     }
+    // A mesh pipeline with a cached link to its pixel shader (or signatures
+    // that do not match) takes the linked mesh shader before the create,
+    // instead of a refused driver compile first (five-star-recomp
+    // ProducerLinks, 1236bfa, GPL-3.0, credit to its authors).
+    // TUXBOX_MESH_LINK_FIRST=0 links only after a refusal, as before.
+    let mesh_pre_linked = if fields[7].is_some()
+        && fields[0].is_none()
+        && fields[2..6].iter().all(Option::is_none)
+        && crate::env_toggle!("TUXBOX_MESH_LINK") != Some("0")
+        && crate::env_toggle!("TUXBOX_MESH_LINK_FIRST") != Some("0")
+        && let (Some((mesh_code, Some(i))), Some((pixel_code, Some(j))), Some(field)) = (original[7], original[1], fields[7])
+        && let Some(pixel) = shader_cache::source_digest(pixel_code)
+        && let Some(linked) = shader_cache::mesh_link_before(
+            mesh_code, guest_root.map(|root| root.payload()), (&pixel, pixel_code), &stages[i], &stages[j], true,
+        ) {
+        unsafe {
+            field.write(D3D12_SHADER_BYTECODE { pShaderBytecode: linked.as_ptr().cast(), BytecodeLength: linked.len() })
+        };
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!("linked mesh shader to PS={pixel} before the create (TUXBOX_MESH_LINK_FIRST=0 off)"));
+        Some(linked)
+    } else {
+        None
+    };
     // SAFETY: the stream storage, translated shaders, and guest-owned inputs
     // all stay alive throughout this synchronous call on the desktop Device2.
     let initial = unsafe { super::pipeline_cache::stream(host, &native_desc) };
@@ -822,7 +846,15 @@ unsafe fn create(
             (fields[producer], &hashes[producer], &hashes[1])
         && let Some(linked) = (match producer {
             4 => shader_cache::linked_geometry(source, pixel),
-            7 => None,
+            // Already in the stream when linked before the create.
+            7 if mesh_pre_linked.is_some() => None,
+            7 => (|| {
+                let (mesh_code, i) = original[7].and_then(|(c, i)| Some((c, i?)))?;
+                let (pixel_code, j) = original[1].and_then(|(c, j)| Some((c, j?)))?;
+                shader_cache::mesh_link_before(
+                    mesh_code, guest_root.map(|root| root.payload()), (pixel, pixel_code), &stages[i], &stages[j], false,
+                )
+            })(),
             _ => shader_cache::linked_vertex(source, pixel),
         })
         .or_else(|| {
@@ -830,6 +862,10 @@ unsafe fn create(
                 return None;
             }
             if producer == 7 {
+                // The linked form was refused already.
+                if mesh_pre_linked.is_some() {
+                    return None;
+                }
                 let (mesh_code, Some(i)) = original[7]? else { return None };
                 let (pixel_code, Some(j)) = original[1]? else { return None };
                 return shader_cache::link_mesh(
