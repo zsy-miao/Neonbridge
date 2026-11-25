@@ -475,6 +475,29 @@ pub(crate) fn new_buffer_imports() -> u64 {
     NEW_IMPORTS.swap(0, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether every page of `address..address + bytes` is committed memory.
+fn low_committed(address: u64, bytes: u64) -> bool {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    let end = address.saturating_add(bytes.max(1));
+    let mut at = address;
+    while at < end {
+        let mut r = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(at as _), &mut r, size_of_val(&r)) } == 0 || r.State != MEM_COMMIT {
+            return false;
+        }
+        let next = r.BaseAddress.addr() as u64 + r.RegionSize as u64;
+        if next <= at { return false; }
+        at = next;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "a guest buffer at {address:#x} ({bytes:#x} bytes) is below 4 GiB but committed title memory: imported ({n} so far; TUXBOX_LOW_COMMITTED_IMPORT=0 reads it as empty)"));
+    }
+    true
+}
+
 fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool, uav: bool)
     -> windows::core::Result<Option<std::sync::Arc<TextureAddress>>> {
     use windows::Win32::Foundation::E_INVALIDARG;
@@ -502,7 +525,15 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
     // so a buffer there that is none of ours (the lookup above) is a V# whose
     // words are no address (a float base 1.0 = 0x3f800000 faulted the GPU
     // there): read as empty. TUXBOX_LOW_VSHARP_EMPTY=0 imports it as before.
-    if address < 1 << 32 && crate::env_toggle!("TUXBOX_LOW_VSHARP_EMPTY") != Some("0") {
+    // TUXBOX_LOW_COMMITTED_IMPORT (default on, =0 reads all of it as empty):
+    // the rule above holds only for addresses the title never committed.
+    // test180's title drew from a 1179648-byte vertex/index buffer it
+    // allocated at 0x84a02400 (its heap lives at 0x841xxxxx); read as empty,
+    // the index buffer passed the raw VA through and the GPU page-faulted.
+    // Committed title memory below 4 GiB is imported like any other.
+    if address < 1 << 32 && crate::env_toggle!("TUXBOX_LOW_VSHARP_EMPTY") != Some("0")
+        && !(crate::env_toggle!("TUXBOX_LOW_COMMITTED_IMPORT") != Some("0") && low_committed(address, bytes))
+    {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         if n <= 8 || n.is_power_of_two() {
