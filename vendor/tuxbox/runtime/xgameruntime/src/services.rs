@@ -809,6 +809,14 @@ pub(super) unsafe extern "system" fn save_enumerate_blobs_by_name(
 /// Read the named blobs (every blob when `names` is None).
 fn read_blobs(container: &str, names: Option<Vec<String>>) -> Result<Vec<(String, Vec<u8>)>, i32> {
     let _shared = lock_saves_shared()?;
+    // Reading every blob of a container never written is BLOB_NOT_FOUND, not
+    // an empty S_OK, as VIctory-fxceless xgamesave.rs (GPL-3.0, credit) says.
+    // TUXBOX_SAVE_MISSING_NOT_FOUND=0 returns no blobs again.
+    if names.is_none() && !container_dir(container).exists()
+        && std::env::var_os("TUXBOX_SAVE_MISSING_NOT_FOUND").is_none_or(|v| v != "0")
+    {
+        return Err(BLOB_NOT_FOUND);
+    }
     let names = names.unwrap_or_else(|| list_blobs(container).into_iter().map(|b| b.0).collect());
     let dir = container_dir(container).join("blobs");
     names.into_iter().map(|name| {
