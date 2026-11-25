@@ -98,6 +98,10 @@ fn available() -> (u64, u64) {
     (status.ullAvailPhys, status.ullAvailPageFile)
 }
 
+fn wanted_at_once() -> u32 {
+    crate::env_toggle!("TUXBOX_WANTED_AT_ONCE").and_then(|v| v.trim().parse().ok()).unwrap_or(6)
+}
+
 fn max_large() -> u32 {
     crate::env_toggle!("TUXBOX_MAX_DRIVER_COMPILES").and_then(|v| v.trim().parse().ok()).unwrap_or(4)
 }
@@ -194,7 +198,7 @@ fn commit_reserve(shader_bytes: u64) -> u64 {
     if floor == 0 || crate::env_toggle!("TUXBOX_COMPILE_COMMIT_RESERVE") == Some("fixed") { COMMIT_RESERVE } else { floor }
 }
 
-fn try_enter(estimate: u64, tiny: bool, forced: bool, large: bool, shader_bytes: u64) -> bool {
+fn try_enter(estimate: u64, tiny: bool, forced: bool, wanted: bool, large: bool, shader_bytes: u64) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if large && state.large != 0 && enabled() {
         let floor = sized_floor(shader_bytes);
@@ -229,6 +233,12 @@ fn try_enter(estimate: u64, tiny: bool, forced: bool, large: bool, shader_bytes:
     // one past TUXBOX_COMPILE_BUDGET_WAIT_MS still starts.
     // TUXBOX_COMPILE_CAP_ALL=0 caps gated compiles only, as before.
     let capped = if crate::env_toggle!("TUXBOX_COMPILE_CAP_ALL") == Some("0") { !tiny } else { large && !forced };
+    // xcl 9a272d4 (GPL-2.0-only, credit to its authors): a compile a title
+    // thread waits on goes on at once, past the cap and the ceiling, while
+    // fewer than TUXBOX_WANTED_AT_ONCE (6; 0 off) large ones run; at a world
+    // load the title's threads otherwise stood behind the queue until its
+    // hang watchdog fired.
+    let capped = capped && !(wanted && state.large < wanted_at_once());
     if capped && state.large != 0 {
         let need = estimate.saturating_add(remaining);
         let (most, ceiling) = (max_large(), ceiling());
@@ -281,9 +291,10 @@ pub(super) fn enter(shader_bytes: u64) -> Option<Admitted> {
     let large = shader_bytes >= TINY_SHADER_BYTES;
     loop {
         // A prefetch the title turned to wait on meanwhile starts at once.
-        let tiny = tiny || (gated && super::stream::background::waited_on());
+        let wanted = !gated || super::stream::background::waited_on();
+        let tiny = tiny || (gated && wanted);
         let forced = waited.is_some_and(|s: std::time::Instant| s.elapsed() >= max_wait());
-        if try_enter(estimate, tiny || forced, forced, large, shader_bytes) {
+        if try_enter(estimate, tiny || forced, forced, wanted, large, shader_bytes) {
             break;
         }
         if waited.is_none() {
