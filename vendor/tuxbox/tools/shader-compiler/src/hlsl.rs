@@ -1065,6 +1065,11 @@ struct Emitter<'a> {
     /// survived a join only optimistically (another path had nothing known), with
     /// that tag. A read of one is not counted in `desc_data` (`desc_data_exact`).
     df_maybe: HashMap<u16, Sym>,
+    /// Descriptor words read as data, per instruction: (SGPR, table SGPR, byte
+    /// offset of the word in the table). Emission loads the guest word first.
+    desc_words: BTreeMap<usize, Vec<(u16, u8, u32)>>,
+    /// Tables whose guest words are read (`tb_tw<t>`, t<t> space32765).
+    table_words: BTreeSet<u8>,
     /// S_BARRIERs reached inside a per-thread guard: a group sync there is
     /// non-uniform on the host, so they lower to a memory fence only.
     fence_only: BTreeSet<usize>,
@@ -1832,6 +1837,10 @@ fn used_sources(ins: &Insn) -> usize {
             || ((m.ends_with("_b16") || m.ends_with("_u16") || m.ends_with("_i16")) && !m.starts_with("v_mad")) => 2,
         _ => 3,
     }
+}
+
+fn table_words_on() -> bool {
+    std::env::var("TB_TABLE_WORDS").map_or(true, |v| v.trim() != "0")
 }
 
 fn desc_as_data_refused() -> bool {
@@ -3966,6 +3975,8 @@ impl<'a> Emitter<'a> {
             loop_swizzles: BTreeSet::new(),
             desc_data: BTreeSet::new(),
             df_maybe: HashMap::new(),
+            desc_words: BTreeMap::new(),
+            table_words: BTreeSet::new(),
             fence_only: BTreeSet::new(),
             indexed_lane: false,
             single_wave32: false,
@@ -4534,6 +4545,7 @@ impl<'a> Emitter<'a> {
         self.dsel_runtime.clear();
         self.dsel_moves.clear();
         self.raw_byte_index.clear();
+        self.desc_words.clear();
         // Recording pass with the converged entry states.
         for (b, r) in ranges.iter().enumerate() {
             if let Some((mut sym, mut written)) = states[b].clone() {
@@ -6278,6 +6290,10 @@ impl<'a> Emitter<'a> {
                             && !(desc_data_exact() && self.df_maybe.get(&n) == sym.get(&n)))
                     {
                         self.desc_data.insert(idx);
+                        let words: Vec<(u16, u8, u32)> = ins.src.iter().take(used_sources(ins)).filter_map(sg)
+                            .filter_map(|n| match sym.get(&n) { Some(&Sym::Desc { table, off, k }) => Some((n, table, off + 4 * k)), _ => None })
+                            .collect();
+                        if !words.is_empty() { self.desc_words.insert(idx, words); }
                     }
                     for d in &ins.dst {
                         if let Opnd::Vgpr(v) = d {
@@ -7441,6 +7457,19 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     fn emit_insn(&mut self, idx: usize, ins: &Insn, is_ps: bool, br: Option<usize>) -> Result<(), String> {
         if self.desc_data.contains(&idx) && desc_as_data_refused() {
             return Err(format!("a statically resolved descriptor's words read as data [{} @ {:#x}] (TB_DESC_AS_DATA=0 refuses)", ins.mnemonic, ins.offset));
+        }
+        // The descriptor's s_load wrote no SGPR (it is resolved at translation), so
+        // a read of its words as data loads the guest's own words first, from the
+        // runtime's raw view of that root table (tb_tw<t>: t<t>, space32765, over
+        // the table's guest VA). Only programs that read descriptor words change.
+        // TB_TABLE_WORDS=0 reads the stale SGPRs as before.
+        if let Some(words) = self.desc_words.get(&idx).filter(|_| table_words_on()).cloned() {
+            for (n, table, at) in words {
+                let reg = Opnd::Sgpr(n as u8);
+                self.touch(&reg);
+                self.table_words.insert(table);
+                self.ws(&reg, &format!("tb_tw{table}.Load({at:#x}u)"))?;
+            }
         }
         self.emit_insn_body(idx, ins, is_ps, br)?;
         if self.vote_defs.contains(&idx) {
@@ -13552,6 +13581,9 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
         if self.slot_views {
             h.push_str("ByteAddressBuffer tb_slot_views : register(t3, space32766);
 ");
+        }
+        for t in &self.table_words {
+            let _ = writeln!(h, "ByteAddressBuffer tb_tw{t} : register(t{t}, space32765);");
         }
         if self.root_raw_stride {
             h.push_str("ByteAddressBuffer tb_root_raw_stride : register(t4, space32766);
