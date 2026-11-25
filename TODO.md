@@ -14,8 +14,8 @@ Open work. Each item is tested in a run of its own.
 
 ## Runs
 - A/B for the untested commits, one per run:
-  - 04a7bee: the title memory cap is already on by default (13824 MiB unless TUXBOX_TITLE_MEMORY_MB is set). B: `TUXBOX_TITLE_MEMORY_MB=0`, uncapped. Compare commit growth and the working set budget line. Safe.
-  - 81a0a3a: the CRT ReadFile commit is already on by default. B: `TUXBOX_READ_COMMIT_CRT=0`. Watch for short CRT reads (998) in the video atlas. Safe.
+  - 04a7bee: never tested on, because the base env sets `TUXBOX_TITLE_MEMORY_MB=0`. B: drop it from the env, giving the 13824 MiB cap. Compare commit growth and the working set budget line. Safe.
+  - 81a0a3a: never tested on, because the base env sets `TUXBOX_READ_COMMIT_CRT=0`. B: drop it from the env. Watch for short CRT reads (998) in the video atlas. Safe.
   - 65e77ca: stale shader serving is off in test runs, because the launcher sets `NEONBRIDGE_STALE_SHADERS=0` (main.rs:198,546). A/B: `NEONBRIDGE_STALE_SHADERS=1` on a run right after an xshader landing. Risk: it mixes xshader builds (see risk 65e77ca), so it voids that run's shader results.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
