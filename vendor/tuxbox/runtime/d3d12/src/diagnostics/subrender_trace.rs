@@ -19,12 +19,20 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 const GO_RETURN: usize = 0x43c421e;
 const SET_RETURN: usize = 0x43c431d;
+/// The render's wait on a group's event (game+0x43c3d58, through the thunk
+/// at 0x1784d0); returns to game+0x43c3d5d.
+const GROUP_WAIT_RETURN: usize = 0x43c3d5d;
+/// Group events: CreateEventA (auto-reset) at game+0x43c39dc fills
+/// game+0x9c3be78 + 0x30 * g for 128 groups (0x18..0x1818 step 0x30).
+const GROUP_EVENTS: usize = 0x9c3be78;
+const GROUPS: usize = 128;
 const SLOTS: usize = 0x9c3d670;
 
 static WAIT_REAL: AtomicUsize = AtomicUsize::new(0);
 static SET_REAL: AtomicUsize = AtomicUsize::new(0);
 static GO_RET: AtomicUsize = AtomicUsize::new(usize::MAX);
 static SET_RET: AtomicUsize = AtomicUsize::new(usize::MAX);
+static GROUP_WAIT_RET: AtomicUsize = AtomicUsize::new(usize::MAX);
 static BASE: AtomicUsize = AtomicUsize::new(0);
 
 fn on() -> bool {
@@ -99,6 +107,9 @@ unsafe fn hook(base: usize) {
     }
     GO_RET.store(base + GO_RETURN, Ordering::Relaxed);
     SET_RET.store(base + SET_RETURN, Ordering::Relaxed);
+    if unsafe { call_before(base + GROUP_WAIT_RETURN) } {
+        GROUP_WAIT_RET.store(base + GROUP_WAIT_RETURN, Ordering::Relaxed);
+    }
     for (slot, real, stub) in [(wait, &WAIT_REAL, wait_stub as *const () as usize), (set, &SET_REAL, set_stub as *const () as usize)] {
         let mut old = PAGE_PROTECTION_FLAGS(0);
         if unsafe { VirtualProtect(slot.cast(), 8, PAGE_READWRITE, &mut old) }.is_err() {
@@ -122,8 +133,12 @@ unsafe extern "system" fn wait_stub() {
         "mov r8, r15",
         "jmp {slow}",
         "2:",
+        "cmp rax, qword ptr [rip + {gret}]",
+        "jne 3f",
+        "jmp {group}",
+        "3:",
         "jmp qword ptr [rip + {real}]",
-        ret = sym GO_RET, real = sym WAIT_REAL, slow = sym wait_go,
+        ret = sym GO_RET, real = sym WAIT_REAL, slow = sym wait_go, gret = sym GROUP_WAIT_RET, group = sym group_wait,
     )
 }
 
@@ -156,11 +171,42 @@ extern "system" fn wait_go(handle: usize, timeout: u32, slot: usize) -> u32 {
 
 /// test176: no SetEvent came from game+0x43c4318 in 330 s while the loading
 /// render's groups kept completing, so every SetEvent of a group event
-/// (game+0x9c3be78 + 0x30 * group) is logged with its caller too: the first
+/// (game+0x9c3be78 + 0x30 * group, 128 groups) is logged with its caller too: the first
 /// 8 per (group, caller), then every power of two.
+fn group_of(handle: usize) -> Option<usize> {
+    let base = BASE.load(Ordering::Relaxed);
+    (0..GROUPS).find(|g| unsafe { ((base + GROUP_EVENTS + g * 0x30) as *const usize).read_volatile() } == handle)
+}
+
+/// The render thread's wait on a group's event: the first 8 per group, then
+/// every power of two, and every wait that took 2 s or more when it returns.
+/// Static: the event (auto-reset) is set only by a Subrender worker after it
+/// ran that group (game+0x43c4318 SetEvent([group+0x18]); the worker ring's
+/// job is the group itself), so a wait logged here with no worker SetEvent
+/// after it is the test173 deadlock.
+extern "system" fn group_wait(handle: usize, timeout: u32) -> u32 {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let real: extern "system" fn(usize, u32) -> u32 = unsafe { core::mem::transmute(WAIT_REAL.load(Ordering::Acquire)) };
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    let group = group_of(handle).map_or_else(|| "?".to_string(), |g| g.to_string());
+    let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "subrender trace: render waits on group {group}'s event {handle:#x} on thread {tid} ({n} group waits so far)"));
+    }
+    let start = std::time::Instant::now();
+    let result = real(handle, timeout);
+    let took = start.elapsed();
+    if took.as_secs() >= 2 {
+        crate::diagnostics::log_line(format_args!(
+            "subrender trace: render's wait on group {group}'s event {handle:#x} took {:.1} s (wait {n}, result {result:#x})", took.as_secs_f64()));
+    }
+    result
+}
+
 fn group_set(handle: usize, ret: usize) {
     let base = BASE.load(Ordering::Relaxed);
-    let Some(group) = (0..8).find(|g| unsafe { ((base + 0x9c3be78 + g * 0x30) as *const usize).read_volatile() } == handle) else { return };
+    let Some(group) = group_of(handle) else { return };
     static SEEN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(usize, usize), u64>>> = std::sync::LazyLock::new(Default::default);
     let n = {
         let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -188,7 +234,8 @@ extern "system" fn set_job(handle: usize, job: usize, slot: usize, ret: usize) -
         let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
         let who = worker(slot).map_or_else(|| format!("slot {slot:#x}"), |i| format!("worker {i}"));
         crate::diagnostics::log_line(format_args!(
-            "subrender trace: {who} on thread {tid} sets job {job:#x}'s event {handle:#x} ({n} so far)"));
+            "subrender trace: {who} on thread {tid} sets job {job:#x}'s event {handle:#x}, group {} ({n} so far)",
+            group_of(handle).map_or_else(|| "?".to_string(), |g| g.to_string())));
     }
     real(handle)
 }
