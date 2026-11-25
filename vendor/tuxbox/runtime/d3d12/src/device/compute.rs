@@ -665,6 +665,8 @@ unsafe fn make_compute(
     let create = |descriptor: &D3D12_COMPUTE_PIPELINE_STATE_DESC| unsafe {
         super::pipeline_cache::compute(&this.native, descriptor)
     };
+    // xcl 79fde18: a failure names how long the host spent on it.
+    let started = std::time::Instant::now();
     let mut native = create(&host);
     let first = native.as_ref().err().map(|e| e.code());
     if translation.is_some() && reflected.is_none() && scene_root.is_none() && native.is_err() {
@@ -696,8 +698,8 @@ unsafe fn make_compute(
         let root_kind = if scene_root.is_some() { "scene root" } else if reflected.is_some() { "runtime tables" } else { "title root" };
         let digest = super::shader_cache::source_digest(bytes).map(|d| d.to_string()).unwrap_or_default();
         let why = format!(
-            "host CreateComputePipelineState rejected it: {} ({} bytes) on the {root_kind}, first create {:?}, source SHA-256 {digest}",
-            if translation.is_some() { "translated DXIL" } else { "guest shader" }, code.len(), first.map(|c| format!("{:#010x}", c.0)));
+            "host CreateComputePipelineState rejected it: {} ({} bytes) on the {root_kind}, first create {:?}, source SHA-256 {digest}, {:.1} ms in the host create",
+            if translation.is_some() { "translated DXIL" } else { "guest shader" }, code.len(), first.map(|c| format!("{:#010x}", c.0)), started.elapsed().as_secs_f64() * 1e3);
         crate::diagnostics::compute_failure(bytes, error.code().0, &why);
         if let Some(status) = unsafe { null_compute(this, root.map(|p| &p.native), desc, out) } {
             return status;
