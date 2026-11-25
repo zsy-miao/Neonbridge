@@ -396,6 +396,13 @@ fn loop_cap(stage: Stage) -> u32 {
 /// shader unmarked: it declares neither binding (the mark code sits under
 /// `#ifdef TB_VIEW_MARKS`), so the runtime keeps its whole write-back.
 /// On by default; TB_VIEW_MARKS=0 turns it off.
+/// tb_slot_views word 3 carries the raw-view byte bias in bits 24..28 beside the
+/// stride (an unaligned structured window rewritten raw, Coder5); TB_SLOT_BIAS=0
+/// reads the whole word as the stride.
+fn slot_bias_on() -> bool {
+    std::env::var("TB_SLOT_BIAS").map_or(true, |v| v.trim() != "0")
+}
+
 fn view_marks_on() -> bool {
     std::env::var("TB_VIEW_MARKS").map_or(true, |v| v.trim() != "0")
 }
@@ -11117,6 +11124,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // sibling stride or the slot's recorded one (b1155aa), as the
             // loads do; with no stride it stays refused (TuxBox 63343eb).
             // TB_RAW_IDXEN_STORE=0 refuses every indexed store as before.
+            let mut slot_bias: Option<String> = None;
             let store_slot = ins.mnemonic.starts_with("buffer_store_dword")
                 && !std::env::var("TB_RAW_IDXEN_STORE").is_ok_and(|v| v.trim() == "0");
             let slot_src = heap_raw.filter(|_| stride.is_none() && !self.raw_byte_index.contains(&ins.offset)
@@ -11125,7 +11133,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             if let Some(src) = slot_src {
                 self.slot_views = true;
                 self.regs.insert(format!("s{src}"));
-                stride = Some(format!("max(tb_slot_views.Load(s{src} * 16u + 12u), 1u)"));
+                stride = Some(self.slot_stride(src));
+                slot_bias = Some(self.slot_bias(src));
             }
             // A compute raw view bound as a root SRV/UAV parameter reads its element
             // stride from the runtime's tb_root_raw_stride (t4, space32766; d3d12
@@ -11150,6 +11159,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             let mut index = r(&ins.src[0])?;
             if let Some(stride) = stride { index = format!("({index} * {stride})"); }
+            if let Some(bias) = slot_bias.filter(|b| b != "0u") { index = format!("({index} + {bias})"); }
             if offen {
                 let Opnd::Vgpr(base) = ins.src[0] else {
                     return Err("raw buffer index needs a VGPR".into());
@@ -11348,7 +11358,21 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     /// The element stride of the heap view at SGPR `slot` (tb_slot_views).
     fn slot_stride(&mut self, slot: u16) -> String {
         self.slot_views = true;
+        if slot_bias_on() {
+            return format!("max(tb_slot_views.Load(s{slot} * 16u + 12u) & 0xffffffu, 1u)");
+        }
         format!("max(tb_slot_views.Load(s{slot} * 16u + 12u), 1u)")
+    }
+
+    /// Bytes from the heap slot's raw view start (rounded down to 16, the D3D12
+    /// raw-view rule) to the title's window start: word 3 bits 24..28 of the slot's
+    /// tb_slot_views entry (Coder5's TUXBOX_RAW_STRUCTURED rewrite). "0u" when off.
+    fn slot_bias(&mut self, slot: u16) -> String {
+        if !slot_bias_on() {
+            return "0u".into();
+        }
+        self.slot_views = true;
+        format!("((tb_slot_views.Load(s{slot} * 16u + 12u) >> 24) & 15u)")
     }
 
     /// Whether every buffer write of the shader marked its pages.
@@ -11725,7 +11749,8 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let idxen_raw = idxen && !offen && std::env::var("TB_IDXEN_RAW").map_or(true, |v| v.trim() != "0");
         if idxen_raw {
             let stride = self.slot_stride(src);
-            byte = format!("{} * {stride} + {byte}", r(&ins.src[0])?);
+            let bias = self.slot_bias(src);
+            byte = format!("{} * {stride} + {bias} + {byte}", r(&ins.src[0])?);
         }
         if idxen && !idxen_raw {
             // Structured view: the descriptor stride advances the element index.
