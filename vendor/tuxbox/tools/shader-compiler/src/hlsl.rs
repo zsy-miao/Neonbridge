@@ -3970,7 +3970,10 @@ impl<'a> Emitter<'a> {
                 && (compute_heap_base(ex).is_some() || pixel_heap_base(ex, 5).is_some()),
             sampler_heap_base: (sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none())
                 .then(|| compute_heap_base(ex).and_then(|_| compute_user_sgpr(ex, 6)).or_else(|| pixel_heap_base(ex, 6))).flatten()
-                .or_else(|| rooted_sampler_heap(ex)),
+                .or_else(|| rooted_sampler_heap(ex))
+                // A rooted pixel shader with a heap register still names its sampler
+                // heap in the FSSM class-6 record (see pixel_heap_base).
+                .or_else(|| pixel_heap_base(ex, 6)),
             pixel_heap: pixel_heap_base(ex, 5).is_some() || pixel_heap_base(ex, 6).is_some(),
             table_samplers: BTreeSet::new(),
             heap_load_ty: HashMap::new(),
