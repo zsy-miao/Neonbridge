@@ -129,6 +129,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_RECT_UNWRITTEN` (1): 0 copies every declared channel in the rectangle GS.
 - `TUXBOX_INDIRECT_ORDER` (1), `TUXBOX_INDIRECT_GUARD` (1), `TUXBOX_INDIRECT_SCRATCH` (1), `TUXBOX_INDIRECT_CALL_TIME` (1): ExecuteIndirect ordering, guard, scratch clamp, call-time clamp.
 - `TUXBOX_INDIRECT_STALE` (run clamped): `empty` empties every stale call.
+- `TUXBOX_INDIRECT_STALE_NARROW` (1; 0 every call after a skip stays stale): a skipped dispatch whose writes are bounded to root UAVs leaves stale only ExecuteIndirects whose argument or count buffer holds one of those addresses. A dispatch refused on a paged descriptor arena names its compute pipeline and root shape once; the dropped-dispatch log names the pending pipeline key.
 - `TUXBOX_INDIRECT_MAX` (65536): MaxCommandCount cap.
 - `TUXBOX_COPY_FLAGS_STRICT` (0): 1 refuses nonzero copy flags.
 - `TUXBOX_SCISSOR_CLAMP` (1): 0 passes over 16 scissors.
@@ -253,11 +254,14 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_PLANE_DECODE_SKIP` (1): a video plane already read since Bink's last completed decode is skipped, once that count has moved; 0 reads every plane every refresh.
 - `TUXBOX_UPLOAD_WORKERS` (1 = inline), `TUXBOX_UPLOAD_LIST_POOL` (1): detile worker threads; 0 creates copy lists per refresh.
 - `TUXBOX_PAGES_COMPACT` (1): over budget, once a second, the sparsest idle pool's pages move to other pools so trim_empty can evict it; moves wait on every title queue's fence first.
+- `TUXBOX_PAGES_COMPACT_FILL_PCT` (50; was 25): pools up to this full are compacted; when none qualifies each live pool's first blocker is logged every 30 s.
 - `TUXBOX_PAGES_DENSE_FIRST` (1): a texture no pool fits whole takes tiles from the densest pool first; 0 the pool with most free tiles.
 - `TUXBOX_PAGES_RELEASE_EMPTY` (1; 0 evicts as before): empty page pools over budget are released, one kept.
 - `TUXBOX_READBACK_POOL_MB` (256; 0 off): placed-texture write-back readback buffers pooled by power-of-two size and reused (test177 made 5931, 15019 MiB).
 
 ### xmem
+
+- The 15 s map-calls stats line also logs the live pool: pages allocated, pages mapped, addresses mapped, pages at 2+ addresses.
 
 - `TUXBOX_LAZY_COMMIT` (1), `TUXBOX_LAZY_ALLOWS` (1), `TUXBOX_COMMIT_BITS` (1).
 - `TUXBOX_READ_COMMIT` (1), `TUXBOX_READ_COMMIT_CRT` (1).
@@ -280,6 +284,12 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_SLOT57_REFUSED_NOTIMPL` (1): a record build() refuses answers E_NOTIMPL; 0 a placeholder. `TUXBOX_SLOT57_VARIANT_WAIT` (1): a variant in progress is waited for up to 500 ms; 0 drops its draw. `TUXBOX_SLOT57_DUMP` (0): 1 writes each record's code slots to `%TEMP%	uxbox-slot57-<hash>-s<n>.bin`.
 - `TUXBOX_CB_DUAL_SOURCE_RT0` (1): RT1-7 beside a dual-source RT0 are left unblended (Xbox2Windows, MIT); 0 keeps them.
 - `TUXBOX_JOURNAL_BUFFERED` (1), `TUXBOX_JOURNAL_WARM` (1): the pipeline journal reads through an 8 MiB buffer on its own thread from precache load; 0 seeks per frame / opens at the first pipeline.
+- `TUXBOX_BIND_SKIP_HEAVY` (1; 0 waits): a title thread never starts or waits on a driver compile of 256 KiB of DXIL or more; it goes to the workers.
+- `TUXBOX_COMPILE_LANES` (min(4, cores/4); 1 single lane): large compiles share one queue, title-bound pipelines before prefetches.
+- `TUXBOX_HEAVY_COMPILE_SERIAL` (1; 0 together): 1 MiB+ compiles queue with no give-up and log queue depth. `TUXBOX_HEAVY_COMPILE_BUDGET` (1; 0 strictly one at a time): another starts while free commit covers all running peaks (1 GiB per MB of DXIL) plus 2 GiB.
+- `TUXBOX_COMPILE_START_LOG` (1; 0 off): each large compile logs its start (key, KiB, thread, others running) and "still compiling" at 30 s and each doubling.
+- `TUXBOX_PIPELINE_MISS_LOG` (1; 0 off): pipeline-library misses (name, HRESULT, per-record digests) and failed StorePipeline calls are logged, first 16 then powers of two.
+- `TUXBOX_PIPELINE_BUILD_ALL` (0; 1 all journal pipelines): the prewarm builder makes only pipelines a run bound, most-bound first, starting none past `TUXBOX_PIPELINE_BUILD_MIN` minutes (10; set by `NEONBRIDGE_PREWARM_PSO_MIN`).
 - `TUXBOX_SLOT57_ANY_SLOT` (1): a missing VS/PS is taken from any code slot whose FSSM header names the stage; 0 reads slots 0 and 1 only.
 - `TUXBOX_PIPELINE_THREAD_CAP` (1): compile threads capped to a quarter of the cores; 0 keeps half plus a quarter.
 - `TUXBOX_COMPILE_LANE` (1): driver compiles of 256 KiB DXIL or more run on one long-lived lane thread; 0 compiles on the calling worker.
@@ -364,6 +374,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_HANG_FIND` (0x23cf104,0x43c3d5d,0x43c421e): hang-time group waits and Subrender workers; 0 off. `TUXBOX_SUBRENDER_DUMP` (1): a 5 s heartbeat stall dumps the loading-screen Subrender handshake and GPU channel once; 0 off.
 - `TUXBOX_WATCH_HANG` (1): 100 ms in-process sampler of the title's main state, loading flag and heartbeat (five-star --watch-hang); 0 off.
 - `TUXBOX_WRITE_WATCH` (ring credits, game+0x75e5ed8): counts writes from the taker 0x2a42d0 and logs every other writer RIP up to 4 times with its game returns; 0 off. test159 named game+0x24825a7 as the ring-credit releaser, and ended at 119 s on an int3 at game+0x14a6390.
+- A write watch on a game+RVA past the exe image is refused, and `TUXBOX_SUBRENDER_TRACE` is not installed when the image is too small (the prewarm builder loads d3d12_xs into neonbridge.exe). The shadow UAV re-mark logs a heap-reflection census and notes heap writers run with no resource heap bound.
 - `TUXBOX_HANG_SECONDS_BOOT` (30): a stall before the first present prints every thread's stack once after N s; 0 off.
 - `TUXBOX_LOG_TIME` (1): every stderr line ends with `[t=S s]` since process creation; 0 off.
 - `TUXBOX_COMMIT_WALK_EVERY` (6): the commit breakdown walk runs every Nth memory line or after 256 MiB of commit movement; 1 walks every line. The residency line counts render heaps freed; the root views line counts new buffer imports.
@@ -406,6 +417,9 @@ Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is
 - `TB_COMPUTE_FSSM_TABLE` (1): a compute root rebuilt from FSSM names each table descriptor by its FSSM row, not the guest RTS0 range (1ed6594a).
 - `TB_IDXEN_RAW` (1; 0 off): IDXEN heap buffer accesses read a ByteAddressBuffer at index * slot stride + byte (ztrx 578d459, credit). `TB_SLOT_BIAS` (1; 0 reads the word as stride): raw slot reads add the stride word's bias in bits 24-31.
 - `TB_SRV_AS_UAV` (1; 0 off): a store/atomic to an RTS0 SRV slot declares it a UAV and emits a uav_from_srv line. `TUXBOX_MESH_TABLE_AS_RAW` (1; 0 off): a mesh FSSM raw-buffer record on a table parameter rebinds it as that root SRV.
+- `TB_SRV_AS_UAV_BUF` (1; 0 off): buffer_store/atomics through a root SRV slot retype it UAV. `TB_SRV_AS_UAV_READ` (1; 0 refuses): reads of a retyped slot use the same RWTexture.
+- `TB_SAMPLER_HEAP_FSSM` (1; 0 off): a pixel sampler at root-constant index << 4 on the FSSM class-6 pointer is a heap sampler even off 9 + num32.
+- `TB_F32_NATIVE_CMP` (1; 0 off): in programs of `TB_NATIVE_CMP_MIN_INSNS` (8000)+ instructions, flushed f32 compares are native with NaN tested on the bits.
 
 ## Recent runs
 
@@ -413,6 +427,7 @@ Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is
 - test174: crashed at 46.8 s on the TUXBOX_SECTION_WATCH guard lock race (fixed by 794137f/90d96e0).
 - test175 (TUXBOX_SECTION_WATCH=0): 23-26 fps, then a Subrender group-2 deadlock at a scene change at 254 s (open); device-local over budget from 218 s.
 - test177: about 11 fps, reached the Lucia loading screen, hung at 410 s: Subrender group 2 never got a job (worker 1 set group 3). Free commit min 343 MiB. 81k pipelines still created lazily (prewarm loaded a stale DLL; fixed by 81b8e5e). Shadow UAV re-mark hit 0 views; SRV_AS_UAV logged nothing.
+- test178 (rev 3fa508f): 897 s, 16450 presents. 18-22 fps behind the Lucia art from t=101 (in gameplay, no reads after 96 s); no Subrender hang. About 1/3 of dispatches dropped as "pipeline still being made" while 1.1-1.3 MB compiles ran serially (addressed by the heavy-compile budget). At 825 s device-local went 979 MiB over budget and texture write-backs blocked on WRITEBACK_INFLIGHT; 3-4 s submits followed and run.sh stopped it as slow. Readback pool reused 8190 of 8192.
 
 ## Credits
 
