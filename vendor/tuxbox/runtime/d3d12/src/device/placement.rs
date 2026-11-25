@@ -343,6 +343,25 @@ fn uncovered(images: &Images, gone: &Texture) -> Vec<Arc<Texture>> {
     chosen
 }
 
+/// Whether `small`'s size is one of `big`'s mip levels (rebox fe7f1d4
+/// `view_is_part`, GPL-2.0, credit to its authors).
+fn is_part(big: &D3D12_RESOURCE_DESC, small: &D3D12_RESOURCE_DESC) -> bool {
+    (0..16).any(|m| (big.Width >> m).max(1) == small.Width && (big.Height >> m).max(1) == small.Height)
+}
+
+/// A view of some of a texture's mips or slices, or the texture of part of a
+/// new one: neither retires the other (rebox fe7f1d4 `view_stays`; the
+/// loading screen's art was retired by its own mip-0 view and drew empty).
+/// TUXBOX_PART_VIEWS_STAY=0 supersedes them as before.
+fn part_view(old: &Texture, new: &Texture) -> bool {
+    if crate::env_toggle!("TUXBOX_PART_VIEWS_STAY") == Some("0") {
+        return false;
+    }
+    let (o, n) = (old.range(), new.range());
+    (n.start >= o.start && n.end <= o.end && is_part(&old.desc, &new.desc))
+        || (o.start >= n.start && o.end <= n.end && is_part(&new.desc, &old.desc))
+}
+
 /// Indexes a new texture by page and marks the live older textures it
 /// overlaps superseded. Returns those textures: the caller drops them
 /// after releasing the image locks, since a last reference runs Drop,
@@ -355,7 +374,7 @@ fn index_pages(images: &Images, texture: &Arc<Texture>) -> Vec<Arc<Texture>> {
         let list = index.entry(page).or_default();
         list.retain(|t| t.strong_count() != 0);
         for old in list.iter().filter_map(Weak::upgrade) {
-            if overlaps(&old.range(), &range) && !old.superseded.swap(true, Ordering::Relaxed) {
+            if overlaps(&old.range(), &range) && !part_view(&old, texture) && !old.superseded.swap(true, Ordering::Relaxed) {
                 pool::superseded(old.bytes, true);
             }
             older.push(old);
