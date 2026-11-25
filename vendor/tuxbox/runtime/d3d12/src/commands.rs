@@ -53,6 +53,11 @@ enum ListState {
     Closed,
 }
 
+fn dispatch_pending_wait() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_DISPATCH_PENDING_WAIT") != Some("0"))
+}
+
 /// Count draws and dispatches dropped for a pipeline still being made.
 fn dropped_for_pending() {
     crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DroppedPending);
@@ -237,7 +242,15 @@ impl Recording {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchesRecorded);
             dispatch()
         };
-        if self.still_pending(list) {
+        // test173 hung at a scene change: dispatches were still dropped as
+        // "pipeline still being made" (384.1 s) after binds that had not
+        // waited, and subrender group 2's event was never set. A dispatch
+        // whose compute pipeline is still pending waits for it once more
+        // here (compute::wait_pending_compute: bounded per bind and frame)
+        // and records if it is made (VIctory-fxceless draw.rs prepare_for,
+        // credit to its authors: a dispatch is never dropped).
+        // TUXBOX_DISPATCH_PENDING_WAIT=0 drops it at once as before.
+        if self.still_pending(list) && !(dispatch_pending_wait() && self.wait_pending_dispatch() && !self.still_pending(list)) {
             dropped_for_pending();
             return;
         }
@@ -526,6 +539,24 @@ impl Recording {
     /// the next bind. A draw now asks again (and waits within the frame's
     /// pipeline budget, as the bind does) and binds it once it exists.
     /// TUXBOX_PENDING_RECHECK=0 keeps the bind's answer.
+    /// Waits for the pending compute pipeline of a dispatch; whether it waited.
+    fn wait_pending_dispatch(&self) -> bool {
+        if self.pending_pipeline == 0 {
+            return false;
+        }
+        // SAFETY: as in still_pending, the title keeps a bound pipeline alive.
+        let host = unsafe { &*(self.pending_pipeline as *const device::compute::Pipeline) };
+        let waited = device::compute::wait_pending_compute(host);
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "a dispatch met its compute pipeline still being made: {} ({n} so far; TUXBOX_DISPATCH_PENDING_WAIT=0 drops at once)",
+                if !waited { "not waited (failed, not lazy or no wait left), dropped" } else if device::compute::current(host).2 { "waited, still not made, dropped" } else { "waited, made, recorded" }));
+        }
+        waited
+    }
+
     fn still_pending(&mut self, list: &List) -> bool {
         if !self.pipeline_pending {
             return false;
