@@ -847,7 +847,18 @@ mod sound {
             format!("queue {queue:#x} capacity {} entries {count} head {head} bytes", r32(queue + 0xc))
         };
         let table: Vec<String> = (0..8).map(|i| format!("{:#x}", r64(game + 0x9dc_6320 + 0x18 * i))).collect();
-        format!("{q}; stream {stream:#x}, mixer table {}, mixer gate byte {}", table.join(" "), unsafe { *((game + 0x9dd_6ee8) as *const u8) })
+        // The mixer callback writes into the sink queue [game+0x9ae9948]
+        // (free = capacity - head size, at most 0x2000; 0x43b2d80) only
+        // while it has room; the engine method game+0x5267350 (vtable
+        // game+0x65f4930) drains the sink 0x400 bytes at a time (0x43af0f0).
+        let sink = r64(game + 0x9ae_9948);
+        let sink = if sink == 0 { "sink 0".to_string() } else {
+            let count = r32(sink + 0x34);
+            let entries = r64(sink + 0x38);
+            let head = if count != 0 && entries != 0 { r32(entries + 8) } else { 0 };
+            format!("sink {sink:#x} capacity {} entries {count} head {head} bytes", r32(sink + 0xc))
+        };
+        format!("{q}; {sink}; stream {stream:#x}, mixer table {}, gate byte {} (0: the normal path)", table.join(" "), unsafe { *((game + 0x9dd_6ee8) as *const u8) })
     }
 
     macro_rules! slot {
