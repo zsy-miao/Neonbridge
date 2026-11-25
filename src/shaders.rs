@@ -698,7 +698,9 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
 /// Reused carries the xshader milliseconds of a translation whose HLSL dxc had compiled before.
 enum Outcome { Compiled(u64, u64), Reused(u64), Cached, Unsupported(String), Failed(String) }
 
-fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path, o0_first: bool) -> Outcome {
+/// `cancel`: the prewarm's tail ran out (prewarm_tail): a dxc still running
+/// is ended and the program left to the title's request, with no failure kept.
+fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path, o0_first: bool, cancel: Option<&AtomicBool>) -> Outcome {
     let work = cache.join(format!("tmp-{}-{}", std::process::id(), sha256(key.as_bytes()).get(..12).unwrap_or("x")));
     let _ = fs::remove_dir_all(&work);
     if let Err(e) = fs::create_dir_all(&work) {
@@ -915,20 +917,48 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // 727f287e; up to its 10 s cut-off, then -O0 again). The driver
         // optimises the DXIL again, as for the urgent path above.
         // Opt-in only (NEONBRIDGE_PREWARM_DXC_O0=1, prewarm_o0).
-        let first = if o0_first || urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &urgent) };
+        // A dxc failure or timeout is kept beside the HLSL's reuse path
+        // (`.dxcfail`), so the same HLSL is not sent to dxc again on every
+        // launch (test152 sat at 1336/1338 on two programs a full prewarm of
+        // the same rev had already timed out on); changed HLSL is a new path.
+        // NEONBRIDGE_DXC_RETRY_FAILED=1 retries them.
+        let failed_mark = reused.as_ref().map(|p| p.with_extension("dxcfail"));
+        if std::env::var("NEONBRIDGE_DXC_RETRY_FAILED").as_deref() != Ok("1")
+            && let Some(reason) = failed_mark.as_ref().and_then(|p| fs::read_to_string(p).ok()) {
+            return Err(format!("{} (kept from an earlier run for this HLSL; NEONBRIDGE_DXC_RETRY_FAILED=1 retries)", reason.trim()));
+        }
+        let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Acquire));
+        let keep_failure = |reason: &str| {
+            if let Some(p) = &failed_mark {
+                let _ = fs::write(p, reason);
+            }
+        };
+        let first = if o0_first || urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &|| urgent() || cancelled()) };
         let mut dxil_o0 = false;
         let compiled = match first {
-            Err(ToolError::Other(msg)) if msg == "timed out" => {
+            Err(ToolError::Other(msg)) if msg == "timed out" && !cancelled() => {
                 let _ = fs::remove_file(&output);
                 dxil_o0 = true;
-                dxc("-O0", 120, &|| false)
+                dxc("-O0", 120, &cancelled)
             }
             other => other,
         };
         match compiled {
             Ok(()) => {}
-            Err(ToolError::Exit(c, msg)) => return Err(format!("dxc failed ({c}): {msg}")),
-            Err(ToolError::Other(msg)) => return Err(format!("dxc: {msg}")),
+            Err(ToolError::Other(msg)) if msg == "timed out" && cancelled() =>
+                return Err("dxc: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
+            Err(ToolError::Exit(c, msg)) => {
+                let reason = format!("dxc failed ({c}): {msg}");
+                keep_failure(&reason);
+                return Err(reason);
+            }
+            Err(ToolError::Other(msg)) => {
+                let reason = format!("dxc: {msg}");
+                if msg == "timed out" {
+                    keep_failure("dxc: timed out at -O1 and -O0");
+                }
+                return Err(reason);
+            }
         }
         let dxc_ms = dxc_started.elapsed().as_millis() as u64;
         let bytes = fs::read(&output).map_err(|e| format!("dxc wrote no output: {e}"))?;
@@ -1212,6 +1242,11 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     let done = AtomicUsize::new(0);
     let finished = AtomicBool::new(false);
     let workers_done = AtomicUsize::new(0);
+    // Set once every program is taken and the last ones have run
+    // NEONBRIDGE_PREWARM_TAIL_S (20; 0 waits for all) more: their dxc is ended and
+    // the title asks for them while it runs, so a few stragglers never hold the launch.
+    let tail = AtomicBool::new(false);
+    let tail_secs = std::env::var("NEONBRIDGE_PREWARM_TAIL_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(20);
     let total = jobs.len();
     let say = |line: String| {
         println!("[launch] {line}");
@@ -1228,8 +1263,16 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
             // one plain line every 10 s, which triage parses.
             let mut meter = crate::progress::Meter::new(total);
             let mut last = std::time::Instant::now();
+            let mut taken_at: Option<std::time::Instant> = None;
             while !finished.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(200));
+                if tail_secs > 0 && next.load(Ordering::Relaxed) >= total && !tail.load(Ordering::Relaxed) {
+                    let at = *taken_at.get_or_insert_with(std::time::Instant::now);
+                    if at.elapsed() >= Duration::from_secs(tail_secs) {
+                        say(format!("{label}: the last {} programs left to the title's requests after {tail_secs} s (NEONBRIDGE_PREWARM_TAIL_S)", running.load(Ordering::Relaxed)));
+                        tail.store(true, Ordering::Release);
+                    }
+                }
                 meter.sample(done.load(Ordering::Relaxed));
                 if stop.is_none() {
                     crate::progress::report(label, &meter, 0.4, 0.6);
@@ -1261,7 +1304,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                         thread::sleep(Duration::from_millis(250));
                     }
                     running.fetch_add(1, Ordering::AcqRel);
-                    let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0());
+                    let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail));
                     note_times(&outcome);
                     running.fetch_sub(1, Ordering::AcqRel);
                     let counter = match outcome {
@@ -1517,7 +1560,7 @@ impl Worker {
                                     log(format!("Xbox shader {key}: served an older xshader's translation while the new one is made ({n} so far; NEONBRIDGE_STALE_SHADERS=0 waits)"));
                                 }
                             }
-                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session, false);
+                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session, false, None);
                             match &outcome {
                                 Outcome::Compiled(xs, dxc) => {
                                     // Measures whether dxc dominates (a direct DXIL writer would only save the dxc part).
