@@ -275,7 +275,8 @@ struct Pages {
     /// signalled after each mapping; title queues wait for it before their next work
     fence: ID3D12Fence,
     value: u64,
-    pools: Vec<ID3D12Heap>,
+    /// None: released while empty (`trim_empty`, TUXBOX_PAGES_RELEASE_EMPTY)
+    pools: Vec<Option<ID3D12Heap>>,
     /// free and cooling tiles, per pool heap (xcl 3bc7143)
     pool: TilePool,
     /// title page address → its video memory
@@ -326,6 +327,12 @@ fn compact_on() -> bool {
 }
 
 static EMPTY_EVICTED: AtomicU64 = AtomicU64::new(0);
+static EMPTY_RELEASED: AtomicU64 = AtomicU64::new(0);
+
+fn release_empty() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_PAGES_RELEASE_EMPTY") != Some("0"))
+}
 static EMPTY_RESIDENT: AtomicU64 = AtomicU64::new(0);
 
 // D3D12 objects are free-threaded
@@ -512,8 +519,29 @@ impl Pages {
         let resident: Vec<usize> = empty.iter().copied().filter(|&h| !self.pool_empty[h]).collect();
         let kept = usize::from(empty.len() == resident.len());
         let cold: Vec<usize> = resident.into_iter().skip(kept).collect();
-        if !cold.is_empty() {
-            let list: Vec<Option<ID3D12Pageable>> = cold.iter().map(|&h| self.pools[h].cast().ok()).collect();
+        // Released, not evicted (TUXBOX_PAGES_RELEASE_EMPTY, default on; =0
+        // evicts): a default-heap allocation is charged to the process's
+        // commit as write-combined private bytes whether resident or evicted
+        // (five-star-recomp 5015f08's probe, GPL-3.0, credited: 400 MB of
+        // textures added 400 MB of write-combined private). test175's host
+        // write-combined memory grew 5.1 GB as free commit sat under 1.3 GB.
+        // Not while a compaction copy may still read one of its tiles.
+        let done = self.fence.GetCompletedValue();
+        self.compacted.retain(|c| c.0 > done);
+        if !cold.is_empty() && release_empty() && self.compacted.is_empty() {
+            for &h in &cold {
+                let free = std::mem::take(&mut self.pool.free_by_heap[h]);
+                self.pool.free_total -= free.len();
+                self.pool.dirty_sort[h] = false;
+                self.pools[h] = None;
+                self.pool_empty[h] = true;
+            }
+            let n = EMPTY_RELEASED.fetch_add(cold.len() as u64, Relaxed) + cold.len() as u64;
+            crate::diagnostics::log_line(format_args!(
+                "placed textures: released {} empty page pools ({} MiB; {n} so far; TUXBOX_PAGES_RELEASE_EMPTY=0 evicts them)",
+                cold.len(), cold.len() * POOL_PAGES as usize * PAGE >> 20));
+        } else if !cold.is_empty() && !release_empty() {
+            let list: Vec<Option<ID3D12Pageable>> = cold.iter().map(|&h| self.pools[h].as_ref().and_then(|p| p.cast().ok())).collect();
             match dev.Evict(&list) {
                 Ok(()) => {
                     for &h in &cold {
@@ -560,7 +588,7 @@ impl Pages {
         heaps.sort_unstable();
         heaps.dedup();
         for h in heaps {
-            let list = [self.pools[h as usize].cast::<ID3D12Pageable>().ok()];
+            let list = [self.pools[h as usize].as_ref().and_then(|p| p.cast::<ID3D12Pageable>().ok())];
             if let Err(e) = dev.MakeResident(&list) {
                 crate::diagnostics::log_line(format_args!("placed textures: MakeResident of an empty page pool failed {e}"));
                 self.pool.return_tiles(&tiles);
@@ -593,7 +621,7 @@ impl Pages {
             crate::diagnostics::log_line(format_args!("D3D12.X: no video memory for more pages of title textures ({e})"));
             return None;
         }
-        self.pools.push(heap?);
+        self.pools.push(Some(heap?));
         self.pool_used.push(std::time::Instant::now());
         self.pool_evicted.push(false);
         self.pool_system.push(system);
@@ -630,7 +658,7 @@ impl Pages {
                 1,
                 Some(&coord),
                 Some(&region),
-                &self.pools[h as usize],
+                self.pools[h as usize].as_ref().expect("a mapped tile's pool is not released"),
                 ranges.len() as u32,
                 Some(flags.as_ptr()),
                 Some(offsets.as_ptr()),
@@ -906,7 +934,7 @@ pub(super) unsafe fn before_execute(queue: &ID3D12CommandQueue) {
 pub fn page_bytes() -> (usize, usize) {
     let g = PAGES.lock().unwrap_or_else(|e| e.into_inner());
     g.values().flatten().fold((0, 0), |(used, pools), p| {
-        (used + (p.pages.len() + p.extra_pages.len()) * PAGE, pools + p.pools.len() * POOL_PAGES as usize * PAGE)
+        (used + (p.pages.len() + p.extra_pages.len()) * PAGE, pools + p.pools.iter().flatten().count() * POOL_PAGES as usize * PAGE)
     })
 }
 
@@ -917,7 +945,7 @@ pub fn pool_summary() -> String {
     let mib = |tiles: usize| tiles * PAGE >> 20;
     let (mut pools, mut evicted, mut empty, mut system, mut free, mut cooling, mut used, mut idle) = (0, 0, 0, 0, 0, 0, 0, 0);
     for p in g.values().flatten() {
-        pools += p.pools.len();
+        pools += p.pools.iter().flatten().count();
         evicted += p.pool_evicted.iter().filter(|&&e| e).count();
         empty += p.pool_empty.iter().filter(|&&e| e).count();
         system += p.pool_system.iter().filter(|&&e| e).count();
@@ -1327,7 +1355,7 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
     }
     let priority = |pools: &[usize], pages: &Pages, value: D3D12_RESIDENCY_PRIORITY| -> windows::core::Result<()> {
         let device1 = device.cast::<ID3D12Device1>()?;
-        let list: Vec<Option<ID3D12Pageable>> = pools.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
+        let list: Vec<Option<ID3D12Pageable>> = pools.iter().filter_map(|&h| pages.pools[h].as_ref().and_then(|p| p.cast().ok())).map(Some).collect();
         let values = vec![value; list.len()];
         unsafe { device1.SetResidencyPriority(list.len() as u32, list.as_ptr(), values.as_ptr()) }
     };
@@ -1362,7 +1390,7 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
         if cold.is_empty() {
             return 0;
         }
-        let list: Vec<Option<ID3D12Pageable>> = cold.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
+        let list: Vec<Option<ID3D12Pageable>> = cold.iter().filter_map(|&h| pages.pools[h].as_ref().and_then(|p| p.cast().ok())).map(Some).collect();
         let done = if evicting { unsafe { device.Evict(&list) } } else { priority(&cold, pages, D3D12_RESIDENCY_PRIORITY_MINIMUM) };
         if let Err(e) = done {
             crate::diagnostics::log_line(format_args!("placed textures: {} of {} page pools failed {e}", if evicting { "Evict" } else { "demoting" }, cold.len()));
@@ -1379,7 +1407,7 @@ pub(super) fn touch<'a>(device: &ID3D12Device, textures: impl Iterator<Item = &'
         cold.len()
     };
     if !resident.is_empty() {
-        let list: Vec<Option<ID3D12Pageable>> = resident.iter().filter_map(|&h| pages.pools[h].cast().ok()).map(Some).collect();
+        let list: Vec<Option<ID3D12Pageable>> = resident.iter().filter_map(|&h| pages.pools[h].as_ref().and_then(|p| p.cast().ok())).map(Some).collect();
         if !evicting {
             if let Err(e) = priority(&resident, pages, D3D12_RESIDENCY_PRIORITY_NORMAL) {
                 crate::diagnostics::log_line(format_args!("placed textures: restoring the priority of {} page pools failed {e}", resident.len()));
