@@ -1252,6 +1252,38 @@ fn same_memory_other_format(images: &BTreeMap<u64, Vec<Alias>>, address: u64, de
     }
 }
 
+/// Gap 6: the title packs light as R9G9B9E5 into R32_UINT render targets
+/// (compute cannot write R9G9B9E5) and samples them through R9G9B9E5 views
+/// placed at the same address: the sky, the light probes, bounced light. Each
+/// format got its own native texture, and the R9G9B9E5 one, filled from title
+/// memory nothing writes, read black. An R9G9B9E5 texture placed over a live
+/// R32_UINT target of the same shape is now that target, which is created
+/// castable to R9G9B9E5 (allocation.rs packed_uav_formats). VIctory-fxceless
+/// resource.rs:1187-1237 alias_of (GPL-3.0, credit to its authors).
+/// TUXBOX_PACKED_ALIAS=0 gives it its own texture again.
+fn packed_target(images: &BTreeMap<u64, Vec<Alias>>, address: u64, desc: &D3D12_RESOURCE_DESC) -> Option<Arc<Texture>> {
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R9G9B9E5_SHAREDEXP};
+    if desc.Format != DXGI_FORMAT_R9G9B9E5_SHAREDEXP || desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+        || desc.SampleDesc.Count > 1 || crate::env_toggle!("TUXBOX_PACKED_ALIAS") == Some("0") {
+        return None;
+    }
+    let found = images.get(&address)?.iter().filter(|a| {
+        let d = &a.desc;
+        d.Format == DXGI_FORMAT_R32_UINT && d.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
+            && d.Dimension == desc.Dimension && d.Width == desc.Width && d.Height == desc.Height
+            && d.DepthOrArraySize == desc.DepthOrArraySize && d.MipLevels == desc.MipLevels
+            && d.SampleDesc.Count <= 1 && d.Layout == desc.Layout
+    }).find_map(|a| a.texture.upgrade())?;
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "placed textures: R9G9B9E5 {}x{} at {address:#x} reads the R32_UINT target there ({n} so far; TUXBOX_PACKED_ALIAS=0 makes its own)",
+            desc.Width, desc.Height));
+    }
+    Some(found)
+}
+
 impl Placements {
     pub(super) fn finish_cpu_write(&self, texture: &Arc<Texture>) -> Result<()> {
         self.memory.flush_textures(vec![texture.clone()])
@@ -1285,6 +1317,9 @@ impl Placements {
         // An optimized clear value is a creation hint. Reopening a placed
         // texture with another hint must preserve its GPU and CPU contents.
         if let Some(texture) = Self::find_texture(&images, address, desc) {
+            return Ok(texture);
+        }
+        if let Some(texture) = packed_target(&images, address, desc) {
             return Ok(texture);
         }
         same_memory_other_format(&images, address, desc);
