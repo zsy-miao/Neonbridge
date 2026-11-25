@@ -720,7 +720,16 @@ unsafe fn create(
         let record = unsafe { output.add(size) };
         unsafe { ptr::write_bytes(record, 0, bytes) };
         unsafe { record.cast::<i32>().write(14) };
-        unsafe { record.add(offset).cast::<i32>().write(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE.0) };
+        // The guest stream gave no topology, so the type is the guest's default,
+        // UNDEFINED (VIctory pipeline/host.rs:81 and host_topology, GPL-3.0,
+        // credit to its authors). TUXBOX_MESH_TOPOLOGY_UNDEFINED=0 writes
+        // TRIANGLE as before.
+        let topology = if crate::env_toggle!("TUXBOX_MESH_TOPOLOGY_UNDEFINED") == Some("0") {
+            D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE
+        } else {
+            D3D12_PRIMITIVE_TOPOLOGY_TYPE_UNDEFINED
+        };
+        unsafe { record.add(offset).cast::<i32>().write(topology.0) };
         size += bytes;
     }
     let rectangle_geometry;
