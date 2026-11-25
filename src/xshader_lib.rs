@@ -56,11 +56,16 @@ pub enum Outcome {
     Failed(String),
     /// No DLL, a panic or past the time: run the xshader process instead.
     Fallback(String),
+    /// Detached at the prewarm's tail: the title's request translates it.
+    Deferred,
 }
 
 /// Translates on a 64 MiB-stack thread (the translator recurses over long
 /// programs); past `timeout` the caller falls back and the thread runs on.
-pub fn translate(dll: &Path, source: Vec<u8>, consumer: Option<Vec<u8>>, order: Option<Vec<u8>>, stencil: Option<u32>, timeout: Duration) -> Outcome {
+/// `cancel` (the prewarm's tail) detaches a translation still running: the
+/// caller gets Deferred at once and the thread's result is dropped.
+pub fn translate(dll: &Path, source: Vec<u8>, consumer: Option<Vec<u8>>, order: Option<Vec<u8>>, stencil: Option<u32>, timeout: Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>) -> Outcome {
     let Some((translate, free)) = load(dll) else {
         return Outcome::Fallback(format!("{} did not load", dll.display()));
     };
@@ -80,7 +85,17 @@ pub fn translate(dll: &Path, source: Vec<u8>, consumer: Option<Vec<u8>>, order: 
     if let Err(e) = spawned {
         return Outcome::Fallback(format!("thread: {e}"));
     }
-    match rx.recv_timeout(timeout) {
+    let start = std::time::Instant::now();
+    let got = loop {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(r) => break Ok(r),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break Err(()),
+            Err(_) if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Acquire)) => return Outcome::Deferred,
+            Err(_) if start.elapsed() > timeout => break Err(()),
+            Err(_) => {}
+        }
+    };
+    match got {
         Ok((0, data, profile)) => Outcome::Done(data, profile),
         Ok((65, data, _)) => Outcome::Unsupported(String::from_utf8_lossy(&data).trim().to_owned()),
         Ok((1, data, _)) => Outcome::Failed(String::from_utf8_lossy(&data).trim().to_owned()),

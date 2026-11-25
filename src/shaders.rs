@@ -766,7 +766,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 (Some(read(&work.join("pixel.dxbc"))?), Some(read(&work.join("pixel.cso"))?))
             } else { (None, None) };
             let stencil = (ext == "stencil").then(|| key.split_once("_rt").and_then(|(_, n)| n.parse().ok())).flatten();
-            match crate::xshader_lib::translate(&dll, read(&cooked)?, consumer, order, stencil, Duration::from_secs(120)) {
+            match crate::xshader_lib::translate(&dll, read(&cooked)?, consumer, order, stencil, Duration::from_secs(120), cancel) {
                 crate::xshader_lib::Outcome::Done(text, prof) => {
                     fs::write(&hlsl, text).and_then(|_| fs::write(&profile, prof)).map_err(|e| format!("write {}: {e}", hlsl.display()))?;
                     true
@@ -778,6 +778,8 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                     return Ok(Outcome::Unsupported(msg));
                 }
                 crate::xshader_lib::Outcome::Failed(msg) => return Err(format!("xshader failed (1): {msg}")),
+                crate::xshader_lib::Outcome::Deferred =>
+                    return Err("xshader: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
                 crate::xshader_lib::Outcome::Fallback(why) => {
                     static SAID: std::sync::Once = std::sync::Once::new();
                     SAID.call_once(|| println!("[launch] shaders: in-process xshader fell back to the xshader process: {why} (more may follow unlogged)"));
@@ -785,8 +787,10 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 }
             }
         } else { false };
-        if !inproc { match run(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
-            .arg("--profile-out").arg(&profile), Duration::from_secs(120)) {
+        if !inproc { match run_until(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
+            .arg("--profile-out").arg(&profile), Duration::from_secs(120), || cancel.is_some_and(|c| c.load(Ordering::Acquire))) {
+            Err(ToolError::Other(msg)) if msg == "timed out" && cancel.is_some_and(|c| c.load(Ordering::Acquire)) =>
+                return Err("xshader: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
             Ok(()) => {}
             Err(ToolError::Exit(XSHADER_UNSUPPORTED_HLSL, msg)) => {
                 let _ = fs::write(&refusal, format!("{key}\n{msg}"));
