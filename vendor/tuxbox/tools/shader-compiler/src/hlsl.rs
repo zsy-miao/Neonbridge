@@ -10498,8 +10498,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             // space32766; 0 = unknown, taken as bytes). test152: DXBC 8a4d8b4d
             // (buffer_load_dwordx4 @ 0xf0) was refused here. Loads only.
             // TB_RAW_IDXEN_SLOT=0 refuses as before.
+            // An indexed raw store scales by the same stride: a proven
+            // sibling stride or the slot's recorded one (b1155aa), as the
+            // loads do; with no stride it stays refused (TuxBox 63343eb).
+            // TB_RAW_IDXEN_STORE=0 refuses every indexed store as before.
+            let store_slot = ins.mnemonic.starts_with("buffer_store_dword")
+                && !std::env::var("TB_RAW_IDXEN_STORE").is_ok_and(|v| v.trim() == "0");
             let slot_src = heap_raw.filter(|_| stride.is_none() && !self.raw_byte_index.contains(&ins.offset)
-                && ins.mnemonic.starts_with("buffer_load_dword")
+                && (ins.mnemonic.starts_with("buffer_load_dword") || store_slot)
                 && !std::env::var("TB_RAW_IDXEN_SLOT").is_ok_and(|v| v.trim() == "0"));
             if let Some(src) = slot_src {
                 self.slot_views = true;
@@ -10508,7 +10514,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             }
             if !std::env::var("TB_RAW_IDXEN_LOOSE").is_ok_and(|v| v.trim() == "1")
                 && ((stride.is_none() && !self.raw_byte_index.contains(&ins.offset))
-                    || !ins.mnemonic.starts_with("buffer_load_dword"))
+                    || !(ins.mnemonic.starts_with("buffer_load_dword") || (store_slot && stride.is_some())))
             {
                 return Err("raw buffer IDXEN needs the console descriptor stride".into());
             }
