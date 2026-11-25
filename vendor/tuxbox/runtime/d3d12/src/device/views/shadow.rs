@@ -1281,8 +1281,23 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         drop(entries);
         drop(pruned);
         static LOGGED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+        // The line is sampled (#1, 2, 4, ...) and a written shadow is written
+        // back only within TUXBOX_SHADOW_RECENT write-backs of its mark, so
+        // "0 live" there said nothing of the rest: totals since the start.
+        static TOTALS: [[std::sync::atomic::AtomicU64; 3]; 2] = [const { [const { std::sync::atomic::AtomicU64::new(0) }; 3] }; 2];
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            let t = &TOTALS[usize::from(back)];
+            if live + marked.len() as u64 + backing.len() as u64 > 0 { t[0].fetch_add(1, Relaxed); }
+            t[1].fetch_add(copies.len() as u64 + marked.len() as u64 + backing.len() as u64, Relaxed);
+            t[2].fetch_add(copies.iter().map(|c| c.3).sum::<u64>() + backing.iter().map(|b| b.0.bytes).sum::<u64>(), Relaxed);
+        }
         let n = LOGGED[usize::from(back)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if n < 4 || (n + 1).is_power_of_two() {
+            use std::sync::atomic::Ordering::Relaxed;
+            let t = &TOTALS[usize::from(back)];
+            crate::diagnostics::log_line(format_args!("shadow {} totals: {} of {} with live entries, {} copies, {} bytes",
+                if back { "write-back" } else { "refresh" }, t[0].load(Relaxed), n + 1, t[1].load(Relaxed), t[2].load(Relaxed)));
             let total: u64 = copies.iter().map(|c| c.3).sum();
             crate::diagnostics::log_line(format_args!(
                 "shadow {} #{}: {live} live, {skipped} unchanged skipped, {aged} aged skipped (TUXBOX_SHADOW_AGING=0 copies them), {unwritten} unwritten pieces skipped (TUXBOX_SHADOW_WATCH=0 copies them), {} copies, {total} bytes",
