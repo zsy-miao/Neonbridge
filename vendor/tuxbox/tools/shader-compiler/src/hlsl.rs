@@ -6097,7 +6097,13 @@ impl<'a> Emitter<'a> {
                         if let Some(Sym::SamplerOffset(index)) = sym.get(&soff).copied() {
                             // Four dwords per sampler, on the heap pointer following
                             // s8 (table) and its immediately following root constants.
-                            if u32::from(table) == 9 + index.count && n == 4 && ins.aux.imm == 0 {
+                            // TB_SAMPLER_HEAP_FSSM (default on, =0 off): or on the FSSM class-6
+                            // sampler heap pointer, which follows only the root words the shader
+                            // receives (test177 297aec81 / 3f385766 / 736b9e5c / c60e8a72 / 0508ba19:
+                            // 4-dword constants, two in s9-s10, heap in s11, refused as a dynamic soffset).
+                            let fssm_heap = self.sampler_heap_base == Some(table)
+                                && std::env::var("TB_SAMPLER_HEAP_FSSM").map_or(true, |v| v.trim() != "0");
+                            if (u32::from(table) == 9 + index.count || fssm_heap) && n == 4 && ins.aux.imm == 0 {
                                 for k in 0..4 {
                                     sym.remove(&(d+k));
                                     written.insert(d+k);
