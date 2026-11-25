@@ -106,10 +106,33 @@ fn protect(at: usize, bytes: usize, to: PAGE_PROTECTION_FLAGS) -> bool {
     xmem().is_some_and(|x| unsafe { (x.aliases)(at, bytes, to.0) } != 0)
 }
 
+/// Why a placed buffer was not given a device buffer (test162/164 made
+/// none): the first 8 and every power of two.
+fn declined(address: u64, desc: &D3D12_RESOURCE_DESC, why: &str) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "placed device buffer declined: {address:#x} ({} KiB): {why} ({n} declined so far)", desc.Width >> 10));
+    }
+}
+
 /// A device buffer for a buffer placed at `address` in a GPU page pool, or
 /// None to import as before.
 pub(super) fn place(device: &super::Device, address: u64, desc: &D3D12_RESOURCE_DESC) -> Option<Result<ID3D12Resource>> {
-    if !enabled() || !device.state.page_pools.contains(address) || desc.Width == 0 || desc.Width > 1 << 30 {
+    if crate::env_toggle!("TUXBOX_PLACED_DEVICE") == Some("0") {
+        return None;
+    }
+    if xmem().is_none() {
+        declined(address, desc, "xmem exports missing");
+        return None;
+    }
+    if !device.state.page_pools.contains(address) {
+        declined(address, desc, "outside the GPU page pools");
+        return None;
+    }
+    if desc.Width == 0 || desc.Width > 1 << 30 {
+        declined(address, desc, "size 0 or over 1 GiB");
         return None;
     }
     let x = xmem()?;
@@ -122,12 +145,14 @@ pub(super) fn place(device: &super::Device, address: u64, desc: &D3D12_RESOURCE_
         {
             // Overlaps a device-backed buffer: two device copies of one range
             // would disagree, so this one imports.
+            declined(address, desc, "overlaps a device buffer");
             return None;
         }
     }
     // A sub-page start would need a view at an offset into the device
     // buffer: those import as before.
     if address as usize != base {
+        declined(address, desc, "not page-aligned");
         return None;
     }
     let uav = desc.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 != 0;
