@@ -21,6 +21,17 @@ fn lenient() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_EAGER").is_ok_and(|v| v.trim() == "1"))
 }
 
+/// TUXBOX_XAPU_STRICT=1: the old strict decode (TOO_SMALL past frame_count
+/// or the output, always interleaved). Default: as VIctory-fxceless apu.rs
+/// decode (GPL-3.0), the parity target: frames kept from first_frame, at
+/// most frame_count and what fits the output, deinterleaved when the
+/// connection asks. Before, that path ran only under TUXBOX_XAPU_EAGER=1,
+/// so a deinterleaved stereo stream got interleaved samples.
+fn strict() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !lenient() && std::env::var("TUXBOX_XAPU_STRICT").is_ok_and(|v| v.trim() == "1"))
+}
+
 fn clamp() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_CLAMP").map_or(true, |v| v.trim() != "0"))
@@ -244,7 +255,7 @@ impl Stream {
                 let channels = self.channels;
                 let decoded = (|| {
                     let frames = opus::packet_samples(compressed).map_err(|_| BAD_PACKET)?;
-                    if !lenient() {
+                    if strict() {
                         let skipped = field(32).min(frames);
                         if frames > field(36) || (frames - skipped) * channels * 4 > capacity {
                             return Err(TOO_SMALL);
@@ -254,7 +265,7 @@ impl Stream {
                     let frames = decoder
                         .decode_interleaved(compressed, &mut self.pcm)
                         .map_err(|_| BAD_PACKET)?;
-                    if !lenient() {
+                    if strict() {
                         let skipped = field(32).min(frames);
                         return Ok((skipped * channels, (frames - skipped) * channels * 4));
                     }
