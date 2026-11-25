@@ -1026,8 +1026,24 @@ struct Recycled {
     desc: D3D12_RESOURCE_DESC,
     native: ID3D12Resource,
     readers: Readers,
+    bytes: u64,
+    when: std::time::Instant,
 }
 unsafe impl Send for Recycled {}
+
+/// test152: host-private commit grew 1.8 -> 9.6 GiB (4.6 GiB read-write)
+/// with re-placements, while this queue, capped only by count, never filled
+/// (2239 < 4096) and so freed nothing, keeping every varied description's
+/// reserved resource and its driver bookkeeping. It is also capped by the
+/// resources' allocation size, TUXBOX_PAGES_RECYCLE_MB (256; 0 count only),
+/// and drops entries unused for TUXBOX_PAGES_RECYCLE_SECS (10; 0 never).
+fn recycle_limits() -> (u64, u64) {
+    static L: std::sync::OnceLock<(u64, u64)> = std::sync::OnceLock::new();
+    *L.get_or_init(|| {
+        let n = |v: Option<&str>, d: u64| v.and_then(|v| v.trim().parse().ok()).unwrap_or(d);
+        (n(crate::env_toggle!("TUXBOX_PAGES_RECYCLE_MB"), 256) << 20, n(crate::env_toggle!("TUXBOX_PAGES_RECYCLE_SECS"), 10))
+    })
+}
 
 static RECYCLE: Mutex<std::collections::VecDeque<Recycled>> = Mutex::new(std::collections::VecDeque::new());
 static RECYCLED: AtomicU64 = AtomicU64::new(0);
@@ -1051,10 +1067,24 @@ fn recycle(native: &ID3D12Resource, readers: Readers) {
     let Some(device) = device else { return };
     // Keyed as place() asks: the runtime may report the 64 KiB alignment.
     let desc = D3D12_RESOURCE_DESC { Alignment: 0, ..unsafe { native.GetDesc() } };
+    let (max_bytes, secs) = recycle_limits();
+    let bytes = if max_bytes != 0 { unsafe { device.GetResourceAllocationInfo(0, &[desc]) }.SizeInBytes } else { 0 };
+    let now = std::time::Instant::now();
     let mut r = RECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-    r.push_back(Recycled { device: device.as_raw() as usize, desc, native: native.clone(), readers });
+    r.push_back(Recycled { device: device.as_raw() as usize, desc, native: native.clone(), readers, bytes, when: now });
     while r.len() > cap {
         r.pop_front();
+    }
+    if secs != 0 {
+        while r.front().is_some_and(|e| now.duration_since(e.when).as_secs() >= secs) {
+            r.pop_front();
+        }
+    }
+    if max_bytes != 0 {
+        let mut total: u64 = r.iter().map(|e| e.bytes).sum();
+        while total > max_bytes && let Some(e) = r.pop_front() {
+            total -= e.bytes;
+        }
     }
 }
 
