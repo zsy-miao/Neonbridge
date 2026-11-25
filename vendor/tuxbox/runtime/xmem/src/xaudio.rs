@@ -76,6 +76,12 @@ unsafe fn voice_rate(voice: *mut H) -> u32 {
 static REAL_CREATE: AtomicUsize = AtomicUsize::new(0);
 static REAL_CREATE_VERSION: AtomicUsize = AtomicUsize::new(0);
 static REAL_MASTER: AtomicUsize = AtomicUsize::new(0);
+static REAL_SOURCE: AtomicUsize = AtomicUsize::new(0);
+const SOURCE_SLOT: usize = 5;
+type CreateSource = unsafe extern "system" fn(H, *mut H, *const c_void, u32, f32, *const c_void, *const c_void, *const c_void) -> i32;
+/// CreateSourceVoice flags the desktop accepts: NOPITCH, NOSRC, USEFILTER
+/// (xcl hle/xaudio2.rs:57-58 VOICE_FLAGS, GPL-2.0, copied with credit).
+const VOICE_FLAGS: u32 = 0x2 | 0x4 | 0x8;
 static REAL_RELEASE: AtomicUsize = AtomicUsize::new(0);
 const RELEASE_SLOT: usize = 2;
 const PERFORMANCE_SLOT: usize = 11;
@@ -252,6 +258,16 @@ unsafe fn hook_engine(engine: *mut H) {
         at.write(ours);
         let mut ignored = 0;
         VirtualProtect(at.cast(), 8, old, &mut ignored);
+        let source = (*object.cast::<*mut usize>()).add(SOURCE_SLOT);
+        let current = source.read();
+        if !std::env::var("TUXBOX_XAUDIO_VOICE_FLAGS").is_ok_and(|v| v.trim() == "0")
+            && current != create_source as *const () as usize
+            && VirtualProtect(source.cast(), 8, 0x04, &mut old) != 0
+        {
+            REAL_SOURCE.store(current, Ordering::Release);
+            source.write(create_source as *const () as usize);
+            VirtualProtect(source.cast(), 8, old, &mut ignored);
+        }
         let release = (*object.cast::<*mut usize>()).add(RELEASE_SLOT);
         let current = release.read();
         if current != engine_release as *const () as usize && VirtualProtect(release.cast(), 8, 0x04, &mut old) != 0 {
@@ -260,6 +276,25 @@ unsafe fn hook_engine(engine: *mut H) {
             VirtualProtect(release.cast(), 8, old, &mut ignored);
         }
     }
+}
+
+/// Console-only CreateSourceVoice flags make the desktop XAudio2 fail the
+/// call, so the voice never exists; xcl masks them off (xaudio2.rs:825).
+/// TUXBOX_XAUDIO_VOICE_FLAGS=0 leaves the slot unwrapped.
+unsafe extern "system" fn create_source(
+    engine: H, voice: *mut H, format: *const c_void, flags: u32, ratio: f32, callback: *const c_void, sends: *const c_void, effects: *const c_void,
+) -> i32 {
+    let real: CreateSource = unsafe { std::mem::transmute(REAL_SOURCE.load(Ordering::Acquire)) };
+    let kept = flags & VOICE_FLAGS;
+    let hr = unsafe { real(engine, voice, format, kept, ratio, callback, sends, effects) };
+    if kept != flags || hr < 0 {
+        static SEEN: AtomicUsize = AtomicUsize::new(0);
+        let n = SEEN.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            log(&format!("xaudio2: CreateSourceVoice flags {flags:#x} -> {kept:#x} = {hr:#x} ({n} so far)"));
+        }
+    }
+    hr
 }
 
 unsafe extern "system" fn create_master(
