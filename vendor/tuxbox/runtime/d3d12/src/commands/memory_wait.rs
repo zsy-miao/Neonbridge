@@ -329,6 +329,7 @@ unsafe fn wait_value(
                 return Ok(());
             }
             capture_wait(list, "skipped: the list cannot split", address, target);
+            skip_barrier(list);
             static UNSPLIT: AtomicU64 = AtomicU64::new(0);
             let n = UNSPLIT.fetch_add(1, Ordering::Relaxed);
             if n < 4 || (n + 1).is_power_of_two() {
@@ -343,6 +344,7 @@ unsafe fn wait_value(
             // rejected the whole list (black frames); dropping the wait keeps
             // the rendering and only loosens ordering with the signalling queue.
             capture_wait(list, "skipped: after rendering commands", address, target);
+            skip_barrier(list);
             static SKIPPED: AtomicU64 = AtomicU64::new(0);
             let n = SKIPPED.fetch_add(1, Ordering::Relaxed);
             if n < 4 || (n + 1).is_power_of_two() {
@@ -674,6 +676,28 @@ fn present_release(address: u64) -> bool {
         return true;
     }
     crate::env_toggle!("TUXBOX_MEMORY_WAIT_FORCE") != Some("0") && writers::writer_queue(address).is_none()
+}
+
+/// TuxBox 3f2a717: a wait that cannot be honoured inside a list still orders
+/// the work already recorded in it with a global UAV barrier, so the list's
+/// own earlier writes land before what follows. A value another queue or the
+/// CPU produces is still not waited for. TUXBOX_WAIT_SKIP_BARRIER=0 records
+/// nothing, as before.
+fn skip_barrier(list: &List) {
+    use windows::Win32::Graphics::Direct3D12::*;
+    if crate::env_toggle!("TUXBOX_WAIT_SKIP_BARRIER") == Some("0")
+        || unsafe { list.native.GetType() } == D3D12_COMMAND_LIST_TYPE_COPY {
+        return;
+    }
+    let barrier = D3D12_RESOURCE_BARRIER {
+        Type: D3D12_RESOURCE_BARRIER_TYPE_UAV,
+        Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
+        Anonymous: D3D12_RESOURCE_BARRIER_0 {
+            UAV: std::mem::ManuallyDrop::new(D3D12_RESOURCE_UAV_BARRIER { pResource: std::mem::ManuallyDrop::new(None) }),
+        },
+    };
+    // The list is open and recording; a null resource names every UAV.
+    unsafe { list.native.ResourceBarrier(&[barrier]) };
 }
 
 /// Whether a GPU memory wait is holding a queue's work back.

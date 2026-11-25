@@ -270,6 +270,15 @@ pub(super) unsafe extern "system" fn sample_mask(list: &List, mask: u64) {
     if !state.can_record_graphics(&list.native) {
         return;
     }
+    // TuxBox 3f2a717: a mask that differs between a quad's pixels has no
+    // desktop equivalent; refusing it dropped the call and flagged the list.
+    // It is logged once and the draw keeps full coverage.
+    // TUXBOX_QUAD_MASK_REFUSE=1 refuses as before.
+    if mask != u64::MAX && crate::env_toggle!("TUXBOX_QUAD_MASK_REFUSE") != Some("1") {
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!("SetSampleMaskX quad mask {mask:#018x} ignored; drawing with full coverage (TUXBOX_QUAD_MASK_REFUSE=1 refuses)"));
+        return;
+    }
     if mask != u64::MAX {
         crate::diagnostics::recording_error(format_args!("SetSampleMaskX quad mask {mask:#018x}"));
         { state.error = windows::Win32::Foundation::E_NOTIMPL; state.error_at = (file!(), line!()); }
