@@ -85,6 +85,15 @@ pub(crate) fn share_with_shadows() {
     SHADOWS_ON.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Ends hand-offs (the shadow consumer turned itself off).
+pub(crate) fn stop_sharing() {
+    SHADOWS_ON.store(false, std::sync::atomic::Ordering::Relaxed);
+    let mut handoff = HANDOFF.lock().unwrap_or_else(|e| e.into_inner());
+    for list in handoff.iter_mut() {
+        *list = Vec::new();
+    }
+}
+
 pub(crate) fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !std::env::var("TUXBOX_PLACED_WATCH").is_ok_and(|v| v.trim() == "0") && take().is_some())
@@ -209,6 +218,11 @@ impl Watch {
         }
         self.watched.push(range);
         true
+    }
+
+    /// Whether the last refresh watched any range.
+    pub(crate) fn watched_any(&self) -> bool {
+        !self.watched.is_empty()
     }
 
     /// False when `range` must be compared: not watched, or a page written.

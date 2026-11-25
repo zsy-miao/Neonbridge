@@ -870,10 +870,23 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         let now = if back { 0 } else { REFRESHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 };
         let (mut live, mut skipped, mut aged, mut unwritten) = (0u64, 0u64, 0u64, 0u64);
         let all = write_back_all();
-        let mut watch = if back { None } else { shadow_watch().map(|w| lock(w)) };
+        // test156: the shadows' title memory had no working write watch (0
+        // pieces skipped) and the refused scans cost ~3.7 s a frame in submit.
+        // A refresh that watches nothing, or takes over 2 ms, turns the shadow
+        // watch off for good.
+        static WATCH_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let mut watch = if back || WATCH_OFF.load(std::sync::atomic::Ordering::Relaxed) { None } else { shadow_watch().map(|w| lock(w)) };
         if let Some(w) = watch.as_mut() {
+            let start = std::time::Instant::now();
             w.refresh(entries.iter().filter(|(_, e)| !e.writable && e.view.strong_count() > 0)
                 .map(|(&(address, bytes, _), _)| address..address + bytes).collect());
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            if ms > 2.0 || !w.watched_any() {
+                WATCH_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+                crate::device::placement::watch::stop_sharing();
+                crate::diagnostics::log_line(format_args!("shadow watch: off ({ms:.2} ms, watched any {}): shadows copy as without TUXBOX_SHADOW_WATCH", w.watched_any()));
+                watch = None;
+            }
         }
         // (key, is an aged check, view) to hash outside the lock.
         let mut checks: Vec<((u64, u64, bool), bool, Arc<TextureAddress>)> = Vec::new();
