@@ -227,7 +227,16 @@ fn cached_translation(cache: &Path, key: &str, stage: Stage) -> Option<Vec<u8>> 
     let bytes = read_portable_file(&file, stage)?;
     // Host writers replace both files atomically, but can publish between
     // these two reads. Validate exactly what the pipeline will consume.
-    (source_digest(&bytes)?.as_bytes() == expected).then_some(bytes)
+    let digest = source_digest(&bytes)?;
+    if digest.as_bytes() != expected {
+        return None;
+    }
+    if super::slots::enabled()
+        && let Ok(text) = fs::read_to_string(file.with_extension("slots"))
+    {
+        super::slots::note(&digest, &text);
+    }
+    Some(bytes)
 }
 
 /// One line per refused shader a title thread waits on, with the

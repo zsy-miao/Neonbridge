@@ -3,6 +3,7 @@
 //! in the original guest shader. Portable input never opens the cache.
 use std::collections::HashSet;
 mod compile;
+pub(crate) mod slots;
 pub(crate) use compile::{HeapAccess, HeapSource, heap_access, frame_presented, runtime_dir, spend_wait, missed, patience, take_misses, take_missed, take_reason, urge_worker, wait_unbounded, wait_until, worker_pid};
 
 use std::fmt::Write as _;
