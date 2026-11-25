@@ -89,10 +89,21 @@ impl Completion {
         if ref_layout() {
             let mut bytes = self.bytes;
             bytes[44..48].copy_from_slice(&self.result.to_le_bytes());
-            let length = if self.kind() == 3 { 80 } else { 48 };
+            if !rebox_layout() {
+                // VIctory-fxceless apu.rs:384 (GPL-3.0): every kind gets the
+                // full 80-byte record; outside Process it is all zero past
+                // the header but the error and pitch 1.0.
+                if self.kind() != 3 {
+                    bytes[24..44].fill(0);
+                    bytes[48..80].fill(0);
+                    bytes[64..68].copy_from_slice(&1.0f32.to_le_bytes());
+                }
+                unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out, 80) };
+                return 0;
+            }
             unsafe {
                 if self.kind() == 3 {
-                    ptr::copy_nonoverlapping(bytes.as_ptr(), out, length);
+                    ptr::copy_nonoverlapping(bytes.as_ptr(), out, 80);
                 } else {
                     ptr::copy_nonoverlapping(bytes.as_ptr(), out, 24);
                     ptr::copy_nonoverlapping(bytes.as_ptr().add(36), out.add(36), 12);
@@ -127,14 +138,24 @@ pub(super) fn ref_layout() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_REF_LAYOUT").map_or(true, |v| v.trim() != "0"))
 }
 
+/// TUXBOX_XAPU_REBOX_LAYOUT=1: rebox xapu.c's record (state 3, the command's
+/// target pitch, only the header and timing words for non-Process kinds).
+/// Default: VIctory-fxceless apu.rs:384, the parity target (state 0, pitch
+/// 1.0, the full 80-byte record for every kind).
+pub(super) fn rebox_layout() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_REBOX_LAYOUT").is_ok_and(|v| v.trim() == "1"))
+}
+
 /// The process result fields after the header, reference layout.
 fn fill_result(bytes: &mut [u8; 80], frames: u32, output_length: u32, output: usize, pitch: f32, input_length: u32, input: usize) {
-    bytes[24..28].copy_from_slice(&3u32.to_le_bytes());
+    let rebox = rebox_layout();
+    bytes[24..28].copy_from_slice(&(if rebox { 3u32 } else { 0 }).to_le_bytes());
     bytes[28..44].fill(0);
     bytes[48..52].copy_from_slice(&frames.to_le_bytes());
     bytes[52..56].copy_from_slice(&output_length.to_le_bytes());
     bytes[56..64].copy_from_slice(&output.to_le_bytes());
-    let pitch = if pitch.is_finite() && pitch > 0.0 { pitch } else { 1.0 };
+    let pitch = if rebox && pitch.is_finite() && pitch > 0.0 { pitch } else { 1.0 };
     bytes[64..68].copy_from_slice(&pitch.to_le_bytes());
     bytes[68..72].copy_from_slice(&input_length.to_le_bytes());
     bytes[72..80].copy_from_slice(&input.to_le_bytes());
@@ -145,7 +166,7 @@ fn fill_result(bytes: &mut [u8; 80], frames: u32, output_length: u32, output: us
 fn reference_process_result_layout() {
     let mut bytes = [0xaau8; 80];
     fill_result(&mut bytes, 960, 7680, 0x1000, f32::NAN, 120, 0x2000);
-    assert_eq!(&bytes[24..28], &3u32.to_le_bytes());
+    assert_eq!(&bytes[24..28], &(if rebox_layout() { 3u32 } else { 0 }).to_le_bytes());
     assert_eq!(&bytes[36..44], &[0; 8]);
     assert_eq!(&bytes[48..52], &960u32.to_le_bytes());
     assert_eq!(&bytes[52..56], &7680u32.to_le_bytes());
