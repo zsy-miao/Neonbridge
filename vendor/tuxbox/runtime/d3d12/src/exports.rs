@@ -252,6 +252,13 @@ pub extern "system" fn tuxbox_save_pipeline_cache() {
     crate::device::pipeline_cache::save_now();
 }
 
+/// How many title threads are now held waiting for a pipeline, for xmem's
+/// Sleep (a held thread's time is not the title's).
+#[unsafe(no_mangle)]
+pub extern "system" fn tuxbox_title_held() -> u32 {
+    crate::device::title_held()
+}
+
 /// Builds the pipelines earlier runs created (the pipeline journal) into the
 /// pipeline library on `threads` threads, for `neonbridge --pipelines` in its
 /// own process; returns the pipelines made. XCL's `xcl pipelines`.

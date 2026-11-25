@@ -54,6 +54,11 @@ pub(crate) mod stencil;
 pub(crate) mod null_kinds;
 pub(crate) mod pipeline_cache;
 mod stream;
+
+/// Title threads now held waiting for a pipeline (tuxbox_title_held).
+pub(crate) fn title_held() -> u32 {
+    stream::background::TITLE_HELD.load(std::sync::atomic::Ordering::Relaxed)
+}
 mod title_memory;
 pub(crate) use title_memory::{commit_lazy, view_state};
 mod views;

@@ -136,10 +136,31 @@ pub(crate) fn failed(slot: &Upgrade) -> bool {
     slot.built.get().is_none() && slot.failed.load(Ordering::Relaxed)
 }
 
+/// Title threads now held in a bind or draw waiting for a pipeline (built
+/// inline or by a worker). xmem's Sleep does not count the time they are held
+/// (tuxbox_title_held).
+pub(crate) static TITLE_HELD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+struct Held;
+
+impl Held {
+    fn new() -> Held {
+        TITLE_HELD.fetch_add(1, Ordering::Relaxed);
+        Held
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        TITLE_HELD.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     if let Some(built) = slot.built.get() {
         return Some(built);
     }
+    let _held = Held::new();
     let deferred = slot.deferred.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some((device, mut work)) = deferred {
         let graphics = match &mut work {
@@ -182,6 +203,7 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
     if let Some(built) = ready(slot) {
         return Some(built);
     }
+    let _held = Held::new();
     promote(slot);
     let Some(limit) = first_use::grant(limit) else { return None };
     let started = std::time::Instant::now();
