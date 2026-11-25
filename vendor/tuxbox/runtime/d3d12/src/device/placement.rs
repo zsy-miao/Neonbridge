@@ -7,7 +7,7 @@ pub(crate) mod pool;
 mod publication;
 mod upload;
 pub(crate) mod watch;
-mod writeback;
+pub(crate) mod writeback;
 pub(crate) use descriptors::{DescriptorMap, DescriptorRange, HeapViews, PlacedView, Views};
 pub(crate) use publication::QueueAccess;
 

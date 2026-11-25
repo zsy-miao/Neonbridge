@@ -346,6 +346,48 @@ fn query_region(address: usize) -> Result<(usize, MEMORY_BASIC_INFORMATION)> {
     Ok((end, info))
 }
 
+/// TUXBOX_WRITEBACK_IMAGE_GUARD (default on, =0 off): no GPU write-back
+/// lands in a loaded module's image. Coder3 found two of our title code
+/// patches back at their original bytes before test169 died; the title cannot
+/// write its .text, but a write-back over pages our patcher left writable
+/// can. Logged once per image allocation with the resource's base address,
+/// to find how an image range got a GPU resource.
+pub(crate) fn image_guard() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_WRITEBACK_IMAGE_GUARD") != Some("0"))
+}
+
+pub(crate) fn image_refused(what: &str, base: usize, addr: usize, bytes: usize, info: &MEMORY_BASIC_INFORMATION) {
+    static SEEN: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+    let module = info.AllocationBase as usize;
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.contains(&module) || seen.len() >= 64 {
+        return;
+    }
+    seen.push(module);
+    let rva = addr.wrapping_sub(module);
+    crate::diagnostics::log_line(format_args!(
+        "write-back guard: {what} of {bytes:#x} bytes at {addr:#x} (resource base {base:#x}) lies in the module image at {module:#x} (+{rva:#x}, protect {:#x}); skipped (TUXBOX_WRITEBACK_IMAGE_GUARD=0 writes it)",
+        info.Protect.0));
+}
+
+/// Whether any page of [address, address + bytes) is in a module image.
+pub(crate) fn in_image(address: usize, bytes: usize) -> Option<MEMORY_BASIC_INFORMATION> {
+    let end = address.saturating_add(bytes.max(1));
+    let mut at = address;
+    while at < end {
+        let (next, info) = query_region(at).ok()?;
+        if info.Type == MEM_IMAGE {
+            return Some(info);
+        }
+        if next <= at {
+            return None;
+        }
+        at = next;
+    }
+    None
+}
+
 fn mapped_region(info: &MEMORY_BASIC_INFORMATION) -> bool {
     info.State == MEM_COMMIT && info.Protect.0 & 0xff != PAGE_NOACCESS.0
 }
@@ -372,6 +414,11 @@ fn write_mapped(
         }
         let end = (region.0 - base).min(range.end);
         let info = &region.1;
+        if info.Type == MEM_IMAGE && image_guard() {
+            image_refused("placed texture write-back", base, addr, end - at, info);
+            at = end;
+            continue;
+        }
         if mapped_region(info) {
             let access = PAGE_PROTECTION_FLAGS(info.Protect.0 & 0xff);
             if info.Protect.contains(PAGE_GUARD)

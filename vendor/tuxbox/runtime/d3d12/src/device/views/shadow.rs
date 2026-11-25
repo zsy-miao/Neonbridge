@@ -386,6 +386,12 @@ unsafe impl Sync for Back {}
 
 impl Back {
     fn new(device: &Device, upload: usize, address: u64, bytes: u64, at: u64) -> Result<Arc<Back>> {
+        // Never merged into a module image (placement::writeback image_guard).
+        if crate::device::placement::writeback::image_guard()
+            && let Some(info) = crate::device::placement::writeback::in_image(address as usize, bytes as usize) {
+            crate::device::placement::writeback::image_refused("writable host copy", address as usize, address as usize, bytes as usize, &info);
+            return Err(windows::Win32::Foundation::E_ACCESSDENIED.into());
+        }
         let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_READBACK, CreationNodeMask: 1, VisibleNodeMask: 1, ..Default::default() };
         let mut readback: Option<ID3D12Resource> = None;
         unsafe {
