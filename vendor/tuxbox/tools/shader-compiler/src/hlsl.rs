@@ -5426,7 +5426,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         self.tmp += 1;
         self.line("#if __SHADER_TARGET_MAJOR >= 6");
         self.line(&format!("uint t{t} = WaveActiveMin((exec_lo & 1u) ? WaveGetLaneIndex() : 0xffffffffu);"));
-        self.line(&format!("{dst} = WaveReadLaneAt({value}, t{t} == 0xffffffffu ? 0u : t{t});"));
+        self.line(&format!("{dst} = t{t} == 0xffffffffu ? {value} : WaveReadLaneAt({value}, t{t});"));
         self.line("#else");
         self.line(&format!("{dst} = {value};"));
         self.line("#endif");
@@ -8837,7 +8837,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             self.tmp += 1;
             self.line("#if __SHADER_TARGET_MAJOR >= 6");
             self.line(&format!("uint t{t} = WaveActiveMin((exec_lo & 1u) ? WaveGetLaneIndex() : 0xffffffffu);"));
-            self.ws(&d, &format!("WaveReadLaneAt({value}, t{t} == 0xffffffffu ? 0u : t{t})"))?;
+            self.ws(&d, &format!("t{t} == 0xffffffffu ? {value} : WaveReadLaneAt({value}, t{t})"))?;
             self.line("#else");
             self.ws(&d, &value)?;
             self.line("#endif");
