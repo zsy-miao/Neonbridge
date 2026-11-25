@@ -238,6 +238,23 @@ impl Transfer {
         let read_site = crate::diagnostics::cost::site();
         let (mut skipped, mut mips) = (0, 0);
         let mut budget = super::refresh_read_budget();
+        // The default read budget scales with the adapter's device-local
+        // budget, as ScarlettPort f14d3ff staging_budget_per_frame (draw.rs:
+        // 3279, MIT, credit to its authors) scales its 192 MiB 12 GiB
+        // baseline: x1/2 at 6 GiB or less, x4/3 over 12 GiB, x2 at 20 GiB or
+        // more. An explicit TUXBOX_REFRESH_READ_MB is kept as given.
+        // TUXBOX_REFRESH_VRAM_SCALE=0 keeps the fixed budget.
+        if crate::env_toggle!("TUXBOX_REFRESH_READ_MB").is_none()
+            && crate::env_toggle!("TUXBOX_REFRESH_VRAM_SCALE") != Some("0")
+        {
+            const GIB: u64 = 1 << 30;
+            budget = match super::alias::segment(device, true).map(|(_, b)| b) {
+                Some(b) if b <= 6 * GIB => budget / 2,
+                Some(b) if b >= 20 * GIB => budget * 2,
+                Some(b) if b > 12 * GIB => budget * 4 / 3,
+                _ => budget,
+            };
+        }
         // test72 deferred 524288 levels: each refresh walked its textures in
         // the same order and spent the budget on the same leading ones, so
         // the tail never read. A refresh now starts where the last one ran
