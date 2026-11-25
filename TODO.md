@@ -20,13 +20,24 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - Older queue: memory-atlas gaps 4-10, video gaps 3-6 and 9-10, pipeline gap 5, and the earlier ref batches (xcl, five-star, X2W, rebox, ScarlettCompat, leonida A8).
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
 
-## xshader (held, unpushed)
-- Fence-only barriers (saved as fence_only.patch in xshader's scratch).
-- Port the wave64 partition classifier.
-- Descriptor-as-data gap.
-- Find the 5 programs the prewarm fails with "^": DXC rejects their translated HLSL. The launcher logs only the 2 DXC timeouts by hash (35af8e6d, 40a6b3dc).
-- Shrink the emitted HLSL for 35af8e6d and 40a6b3dc. They translate in 7 s, but their ~89k-instruction HLSL overruns the DXC timeout.
-- Refs the atlas has queued.
+## xshader (tree clean at 1befb53, nothing pushed)
+- Fence-only barriers inside per-thread guards (fxceless lower.rs 1391-1419). The patch compiles and sits in xshader's scratch as fence_only.patch.
+- Five programs fail DXC with "^". These are DXC rejections, not panics. Name them by logging every failed shader by hash (see Launcher).
+- 35af8e6d and 40a6b3dc hit the DXC timeout. xshader translates each in 7 s, but each emits 12.7 MB of flat HLSL: a ~3,300-case v_cmpx_ne v31,k chain. Fix by emitting it as a switch, or by raising the DXC timeout or lowering its -O level for huge programs.
+- Partition classifier (xcl dfc5578, 5796cc4, 43a5550): written in xshader's scratch (partition.rs, partition_cfg.rs), not wired in yet.
+- xcl 7bea019 (split-wave64 mask liveness per block) and 9e2c7a5 (fold the reduction-tail readlane).
+- Atlas gaps 1-9:
+  - descriptors read as data (at least refuse them)
+  - mask-as-data ballot
+  - runtime V# stride
+  - safe barriers
+  - wave64 split for any group size
+  - a retry ladder
+  - irreducible-CFG split
+  - leftover cross-lane refusals
+  - votes in resolve_wave32, wave_cull and packed
+- VIctory cd94d35 view_marks, shader half. It waits on d3d12's bitmap binding.
+- BVH intersection (7 refusals). Needs console BVH nodes from the runtime.
 
 ## Launcher
 - Log every failed shader by hash: remove the `if m.contains("timed out")` gate at src/shaders.rs:1112, so every Failed prints `Xbox shader {key}: {m}`. The next prewarm then names all 7.
