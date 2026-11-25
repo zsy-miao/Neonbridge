@@ -158,15 +158,28 @@ impl Pages {
         Ok(Self { array: array as usize, tokens, offset: offset as usize })
     }
 
+    /// The tokens, entries still 0 read again. A queue half full is
+    /// submitted on its own, so a request can run before the title filled
+    /// its list: those entries are read again for up to
+    /// TUXBOX_DSTORAGE_PAGE_WAIT_MS (8; 0 reads once) before the request
+    /// fails (VIctory d09f3aa, GPL-3.0, credit to its authors).
     fn resolved(&self) -> Vec<u64> {
+        static WAIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let wait = *WAIT.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_PAGE_WAIT_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(8));
+        let started = std::time::Instant::now();
         let mut tokens = self.tokens.clone();
-        for (i, token) in tokens.iter_mut().enumerate() {
-            if *token == 0 {
-                // SAFETY: as at enqueue; the title owns its page table.
-                *token = unsafe { (self.array as *const u64).add(i).read_unaligned() };
+        loop {
+            for (i, token) in tokens.iter_mut().enumerate() {
+                if *token == 0 {
+                    // SAFETY: as at enqueue; the title owns its page table.
+                    *token = unsafe { (self.array as *const u64).add(i).read_unaligned() };
+                }
             }
+            if !tokens.contains(&0) || started.elapsed() >= std::time::Duration::from_millis(wait) {
+                return tokens;
+            }
+            std::thread::yield_now();
         }
-        tokens
     }
 }
 
@@ -549,6 +562,34 @@ impl Read {
     /// Write the request's output to its destination. A destination that is not
     /// committed and writable fails the request like a failed read.
     fn store(&self, bytes: &[u8]) -> Result<(), HRESULT> {
+        // A destination the title has not committed or mapped yet is tried
+        // again up to TUXBOX_DSTORAGE_RETRIES times (12; 0 fails at once),
+        // waiting 2 ms doubling to 128 ms: the title never reads a request's
+        // result, so a failed store left its model or texture stale for good
+        // (VIctory-fxceless 578d459, GPL-3.0, credit to its authors).
+        static RETRIES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let retries = *RETRIES.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_RETRIES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(12));
+        let mut result = self.store_once(bytes);
+        let mut pause = 2u64;
+        for _ in 0..retries {
+            if result.is_ok() || self.cancelled {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(pause));
+            pause = (pause * 2).min(128);
+            result = self.store_once(bytes);
+        }
+        if result.is_err() {
+            static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                log(format_args!("request store #{n} failed after {retries} retries: destination unwritable"));
+            }
+        }
+        result
+    }
+
+    fn store_once(&self, bytes: &[u8]) -> Result<(), HRESULT> {
         let bytes = &bytes[..bytes.len().min(self.capacity)];
         match &self.dest_pages {
             Some(pages) => page_copy(true, pages, bytes.as_ptr().cast_mut(), bytes.len()),
