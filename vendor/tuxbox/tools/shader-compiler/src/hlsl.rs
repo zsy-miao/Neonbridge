@@ -504,12 +504,39 @@ fn name(o: &Opnd) -> Result<String, String> {
     })
 }
 
+/// xcl 1f8d4be (GPL-2.0, credit): a pixel shader using Primitive Ordered Pixel
+/// Shading (operand 239 src_pops_exiting_wave_id, or hwreg 25 HW_REG_POPS_PACKER
+/// through s_getreg/s_setreg) gets rasterizer-ordered UAVs, so its overlapping
+/// pixels' read-modify-writes stay in primitive order. TB_POPS_ROV=0 refuses as before.
+fn pops_rov_on() -> bool {
+    std::env::var("TB_POPS_ROV").map_or(true, |v| v.trim() != "0")
+}
+
+fn uses_pops(insns: &[Insn]) -> bool {
+    insns.iter().any(|i| {
+        (matches!(i.mnemonic.as_str(), "s_getreg_b32" | "s_setreg_b32" | "s_setreg_imm32_b32") && i.raw[0] & 63 == 25)
+            || i.src.contains(&Opnd::Raw(239))
+    })
+}
+
+/// Every UAV declaration and heap cast becomes its RasterizerOrdered form.
+fn pops_rov(hlsl: &str) -> String {
+    hlsl.replace("RWByteAddressBuffer", "RasterizerOrderedByteAddressBuffer")
+        .replace("RWStructuredBuffer<", "RasterizerOrderedStructuredBuffer<")
+        .replace("RWBuffer<", "RasterizerOrderedBuffer<")
+        .replace("RWTexture", "RasterizerOrderedTexture")
+}
+
 /// Operand as a `uint` rvalue expression.
 fn r(o: &Opnd) -> Result<String, String> {
     Ok(match o {
         Opnd::ConstInt(v) => format!("{:#x}u", *v as i32 as u32),
         Opnd::ConstF32(f) => format!("{:#x}u", f.to_bits()),
         Opnd::Literal(v) => format!("{v:#x}u"),
+        // xcl 1f8d4be emit.rs: POPS exiting wave id. Every overlapping earlier wave has
+        // already left, so the ordered-section wait passes at once; the PS UAVs are
+        // rasterizer ordered instead (pops_rov).
+        Opnd::Raw(239) if pops_rov_on() => "0x7fffffffu".into(),
         Opnd::Raw(c) => return Err(format!("unmodelled operand code {c}")),
         other => name(other)?,
     })
@@ -3269,6 +3296,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     if particle_sort { em.body.push_str(particle_sort::EPILOGUE); }
     phase("emit");
     let mut hlsl = em.finish(is_ps, output_order, stencil_target)?;
+    if is_ps && pops_rov_on() && uses_pops(&em.insns) { hlsl = pops_rov(&hlsl); }
     phase("finish");
     if hzb_cull {
         hlsl.insert_str(0, &instance_cull::queue_declarations(3));
