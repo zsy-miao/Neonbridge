@@ -649,7 +649,11 @@ mod sound {
         let result = unsafe { real(snd, b, c, d) };
         if snd != 0 {
             let mut names = Vec::new();
-            for (i, wrapper) in WRAPPERS.iter().enumerate() {
+            // test165 crashed in Bink after the first +0x1a0 call: only
+            // Ready/Lock/Unlock (+0x170..+0x180, integer arguments, test164's
+            // Lock/Unlock wrap ran clean) are wrapped; the others may take
+            // float or stack arguments a 4-integer wrapper does not carry.
+            for (i, wrapper) in WRAPPERS.iter().enumerate().take(3) {
                 let slot = (snd + FIRST + 8 * i as u64) as *mut usize;
                 let old = unsafe { slot.read_unaligned() };
                 let wrapper = *wrapper as usize;
