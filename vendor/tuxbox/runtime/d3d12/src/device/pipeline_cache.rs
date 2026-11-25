@@ -364,6 +364,33 @@ fn over_offline_cap(shader_bytes: u64) -> bool {
     kb != 0 && shader_bytes > kb << 10
 }
 
+/// test177: in-game driver compiles of 1.5-5.5 MB of DXIL each took 5-7 GB of
+/// private memory at peak, up to five at once (private 33 GB; the budget's
+/// 30 s give-up let them all start). One of 1 MiB of DXIL or more now waits
+/// for the one before it, with no give-up: title threads skip such compiles
+/// (BIND_SKIP_HEAVY), so only background compiles queue. The queue depth is
+/// logged. TUXBOX_HEAVY_COMPILE_SERIAL=0 runs them together again.
+fn heavy_turn(shader_bytes: u64) -> Option<std::sync::MutexGuard<'static, ()>> {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static QUEUED: AtomicU64 = AtomicU64::new(0);
+    static LOGGED: AtomicU64 = AtomicU64::new(0);
+    if shader_bytes < 1 << 20 || crate::env_toggle!("TUXBOX_HEAVY_COMPILE_SERIAL") == Some("0") {
+        return None;
+    }
+    let depth = QUEUED.fetch_add(1, Relaxed) + 1;
+    let start = std::time::Instant::now();
+    let turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+    QUEUED.fetch_sub(1, Relaxed);
+    let n = LOGGED.fetch_add(1, Relaxed) + 1;
+    if n <= 16 || n.is_power_of_two() || depth > 1 {
+        crate::diagnostics::log_line(format_args!(
+            "heavy compile: {} KiB of DXIL starts after {} ms in a queue of {depth} (one at a time from 1 MiB; {n} so far; TUXBOX_HEAVY_COMPILE_SERIAL=0 off)",
+            shader_bytes >> 10, start.elapsed().as_millis()));
+    }
+    Some(turn)
+}
+
 fn load_or_make(
     host: &ID3D12Device,
     shader_bytes: u64,
@@ -377,6 +404,7 @@ fn load_or_make(
         if super::stream::background::skip_heavy_on_title(shader_bytes) {
             return Err(windows::Win32::Foundation::E_ABORT.into());
         }
+        let _heavy = heavy_turn(shader_bytes);
         let _admitted = super::compile_budget::enter(shader_bytes);
         let _measured = super::compile_budget::measure(shader_bytes);
         if shader_bytes >= 256 << 10 && crate::big_stack::lane_enabled() {
