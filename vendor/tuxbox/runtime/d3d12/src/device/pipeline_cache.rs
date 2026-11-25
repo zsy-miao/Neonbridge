@@ -410,13 +410,22 @@ fn heavy_turn(shader_bytes: u64) -> Option<HeavyTurn> {
         return None;
     }
     let budget = crate::env_toggle!("TUXBOX_HEAVY_COMPILE_BUDGET") != Some("0");
-    let need = shader_bytes << 10;
+    // prewarm179: 1 GiB per MB and a 2 GiB margin let parallel compiles
+    // past what commit could hold (the commit guard stopped the build with
+    // 1928 MiB left). Each running compile counts its whole peak against the
+    // free commit read now, at TUXBOX_HEAVY_GIB_PER_MB (2; test177 measured
+    // 1.3-3.3) plus TUXBOX_HEAVY_MARGIN_MB (4096).
+    static PER_MB: OnceLock<u64> = OnceLock::new();
+    static MARGIN: OnceLock<u64> = OnceLock::new();
+    let per_mb = *PER_MB.get_or_init(|| crate::env_toggle!("TUXBOX_HEAVY_GIB_PER_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(2));
+    let margin = *MARGIN.get_or_init(|| crate::env_toggle!("TUXBOX_HEAVY_MARGIN_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(4096)) << 20;
+    let need = (shader_bytes << 10).saturating_mul(per_mb);
     let depth = QUEUED.fetch_add(1, Relaxed) + 1;
     let start = std::time::Instant::now();
     let (lock, ready) = &HEAVY;
     let mut h = lock.lock().unwrap_or_else(|e| e.into_inner());
     loop {
-        if h.running == 0 || (budget && free_commit() >= h.need + need + (2 << 30)) {
+        if h.running == 0 || (budget && free_commit() >= h.need + need + margin) {
             break;
         }
         // Recheck memory now and then, not only when one finishes.
