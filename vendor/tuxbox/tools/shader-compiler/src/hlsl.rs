@@ -2026,7 +2026,9 @@ fn mask_both_forms() -> bool {
 }
 
 fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<usize, usize>, BTreeSet<usize>, MaskForms) {
+    phase("mask entry");
     let park = parking(insns, wave64);
+    phase("parking");
     let mut mixed = BTreeMap::new();
     let mut scc = BTreeSet::new();
     let half_pairs = std::env::var("TB_MASK_HALF_PAIR").map_or(true, |v| v.trim() != "0");
@@ -2055,48 +2057,91 @@ fn lane_mask_reads(insns: &[Insn], wave64: bool) -> (BTreeSet<usize>, BTreeMap<u
         }
         out
     };
-    let mut before: Vec<Option<MaskState>> = vec![None; insns.len()];
     if insns.is_empty() {
         return (reads, mixed, scc, MaskForms::default());
     }
+    // Block-level fixed point: a state is kept only at block entries and
+    // carried through each block, not cloned and queued per instruction (the
+    // per-instruction worklist took ~5 s on an 88k-instruction program).
+    // Same joins, same result.
+    let succ: Vec<Vec<usize>> = (0..insns.len()).map(successors).collect();
+    let mut leader = vec![false; insns.len()];
+    leader[0] = true;
+    for (i, ss) in succ.iter().enumerate() {
+        if ss.as_slice() != [i + 1] {
+            for &t in ss {
+                leader[t] = true;
+            }
+            if i + 1 < insns.len() {
+                leader[i + 1] = true;
+            }
+        }
+    }
+    let end_of = |b: usize| -> usize { (b + 1..insns.len()).find(|&j| leader[j]).unwrap_or(insns.len()) };
+    let ends: Vec<usize> = (0..insns.len()).map(|b| if leader[b] { end_of(b) } else { 0 }).collect();
+    let mut before: Vec<Option<MaskState>> = vec![None; insns.len()];
     before[0] = Some(MaskState::default());
     let mut work = std::collections::VecDeque::from([0usize]);
+    let mut queued = vec![false; insns.len()];
+    queued[0] = true;
     let mut scratch = BTreeSet::new();
-    while let Some(i) = work.pop_front() {
-        let mut state = before[i].clone().unwrap_or_default();
-        mask_step(&mut state, &park, &insns[i], i, half_pairs, &mut scratch, &mut BTreeMap::new(), &mut BTreeSet::new());
-        for s in successors(i) {
-            let joined = match &before[s] {
-                None => state.clone(),
-                Some(old) => {
-                    let mut j = old.clone();
+    let (mut sm, mut ss) = (BTreeMap::new(), BTreeSet::new());
+    while let Some(b) = work.pop_front() {
+        queued[b] = false;
+        let mut state = before[b].clone().unwrap_or_default();
+        let last = ends[b] - 1;
+        for i in b..=last {
+            mask_step(&mut state, &park, &insns[i], i, half_pairs, &mut scratch, &mut sm, &mut ss);
+        }
+        for &s in &succ[last] {
+            let changed = match &mut before[s] {
+                slot @ None => {
+                    *slot = Some(state.clone());
+                    true
+                }
+                Some(j) => {
+                    let n = (j.masks.len(), j.parked.len());
                     j.masks.extend(state.masks.iter().copied());
                     j.parked.extend(state.parked.iter().copied());
+                    let mut grew = (j.masks.len(), j.parked.len()) != n;
                     for (&k, &v) in &state.half {
-                        *j.half.entry(k).or_insert(v) |= v;
+                        let e = j.half.entry(k).or_insert_with(|| {
+                            grew = true;
+                            v
+                        });
+                        if v && !*e {
+                            *e = true;
+                            grew = true;
+                        }
                     }
-                    j
+                    grew
                 }
             };
-            if before[s].as_ref() != Some(&joined) {
-                before[s] = Some(joined);
+            if changed && !queued[s] {
+                queued[s] = true;
                 work.push_back(s);
             }
         }
     }
     let mut kinds: BTreeMap<u8, (bool, bool)> = BTreeMap::new();
     let mut written: Vec<(usize, u8, bool)> = Vec::new();
-    for (i, ins) in insns.iter().enumerate() {
-        if let Some(state) = &before[i] {
+    let mut b = 0;
+    while b < insns.len() {
+        let e = ends[b];
+        if let Some(state) = &before[b] {
             let mut state = state.clone();
-            mask_step(&mut state, &park, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
-            if let Some(&Opnd::Sgpr(d)) = ins.dst.first() {
-                let mask = state.masks.contains(&d);
-                let k = kinds.entry(d).or_default();
-                if mask { k.0 = true } else { k.1 = true }
-                written.push((i, d, mask));
+            for i in b..e {
+                let ins = &insns[i];
+                mask_step(&mut state, &park, ins, i, half_pairs, &mut reads, &mut mixed, &mut scc);
+                if let Some(&Opnd::Sgpr(d)) = ins.dst.first() {
+                    let mask = state.masks.contains(&d);
+                    let k = kinds.entry(d).or_default();
+                    if mask { k.0 = true } else { k.1 = true }
+                    written.push((i, d, mask));
+                }
             }
         }
+        b = e;
     }
     let mut forms = MaskForms::default();
     if mask_both_forms() {
@@ -2664,6 +2709,21 @@ fn translate_outputs_lone(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     }
 }
 
+thread_local! {
+    static PHASE_AT: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// TB_PHASE_TIMES=1 prints each translation phase's time to stderr.
+fn phase(name: &str) {
+    if std::env::var_os("TB_PHASE_TIMES").is_none() {
+        return;
+    }
+    let now = std::time::Instant::now();
+    if let Some(at) = PHASE_AT.with(|c| c.replace(Some(now))) {
+        eprintln!("phase {name}: {:.1} ms", (now - at).as_secs_f64() * 1e3);
+    }
+}
+
 fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, output_order: &[String],
     stencil_target: Option<u32>) -> Result<Translated, String> {
     if stencil_target.is_none() {
@@ -2691,6 +2751,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         other => return Err(format!("stage {other:?} not supported yet")),
     };
     let mut insns = disassemble(&ex.isa);
+    phase("decode");
     // A branch whose target is the next instruction does nothing either way:
     // fold it to s_nop so the structurizer sees no edge (VIctory 825c045,
     // EatCodeSleep2, MIT, re-derived). TB_FOLD_NULL_BRANCH=0 keeps it.
@@ -2703,6 +2764,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         }
     }
     if lone_lane::on() { lone_lane::prepare(&mut insns)?; }
+    phase("pre");
     let resolve_wave32 = !lone_lane::on() && ray_resolve::wave32(ex, &insns)?;
     let probe = radiance_probe::identify(ex);
     let probe_trace = probe.is_some();
@@ -2759,7 +2821,9 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     if ex.stage == Stage::Pixel && !wave_cull && !page_waves { wave_alloc::prepare(&mut insns); }
     let scc_votes_on = !resolve_wave32 && std::env::var("TB_SCC_VOTE").map_or(true, |v| v.trim() != "0");
     let (lane_masks, mixed_masks, scc_votes, mask_forms) = if general_elections || (!resolve_wave32 && mixed_mask::on()) || scc_votes_on {
+        phase("before mask reads");
         let (reads, mixed, scc, forms) = lane_mask_reads(&insns, !resolve_wave32);
+        phase("lane_mask_reads");
         let forms = if general_elections { forms } else { MaskForms::default() };
         (if general_elections { reads } else { BTreeSet::new() },
          if !resolve_wave32 && mixed_mask::on() { mixed } else { BTreeMap::new() },
@@ -2777,6 +2841,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     let mask_tagged = mask_forms.tagged;
     let mask_tag_writes: BTreeMap<(usize, String), Vec<(u8, bool)>> = mask_forms.writes.into_iter().map(|(i, w)| (key(i), w)).collect();
     let reflection = reflection_compact::prepare(ex, &mut insns);
+    phase("masks");
     let group_extrema = group_extrema::prepare(ex, &mut insns);
     let straight_exchange = ex.stage == Stage::Compute && !lone_lane::on()
         && !wave_cull && !page_waves && !resolve_wave32 && !allocation_wave64
@@ -2822,6 +2887,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // dxc -O1). Move each one before the code it rejoins. TB_INLINE_EXIT_STUBS=0 off.
     exit_stubs::inline(&mut insns);
     let mut em = Emitter::new(ex, insns);
+    phase("recognizers");
     let keyed = |i: &Insn| (i.offset, i.mnemonic.clone());
     em.lane_masks = em.insns.iter().enumerate().filter(|(_, i)| lane_masks.contains(&keyed(i))).map(|(j, _)| j).collect();
     em.mixed_masks = em.insns.iter().enumerate().filter_map(|(j, i)| mixed_masks.get(&keyed(i)).map(|&k| (j, k))).collect();
@@ -2895,6 +2961,7 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         }
         em.tbuf_uint.extend(list_slots);
     }
+    phase("resources");
     let light_grid = allocation_wave64 && light_grid::prepare(&mut em)?;
     let requires_ballot = (allocation_wave64 && !light_grid) || general_elections || em.packed.as_ref().is_some_and(|p| !p.ballots.is_empty());
     if (requires_ballot && scan_width.or(required_wave_size) == Some(32))
@@ -2987,7 +3054,8 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         return Err("straight DPP8 exchange conflicts with a specialized lowering".into());
     }
     if is_ps {
-        em.find_export_epilogs();
+        phase("wave");
+    em.find_export_epilogs();
         em.classify_interpolation();
     }
     em.infer_tbuf_types();
@@ -3056,9 +3124,11 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     }
     em.resolve_structured_strides();
     let live_in = em.live_in();
+    phase("passes");
     em.live = live_in.clone();
     em.view_cull = view_cull;
     em.light_grid = light_grid;
+    phase("livein");
     em.emit_body(is_ps)?;
     // Compute: every guest VGPR write was its own `if (exec_lo & 1u)` (1428 in
     // 727f287e, 5524 in a64767c5), each a block DXC's -O1 merges back. One region
@@ -3111,7 +3181,9 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         em.body.push_str(instance_cull::EPILOGUE);
     }
     if particle_sort { em.body.push_str(particle_sort::EPILOGUE); }
+    phase("emit");
     let mut hlsl = em.finish(is_ps, output_order, stencil_target)?;
+    phase("finish");
     if hzb_cull {
         hlsl.insert_str(0, &instance_cull::queue_declarations(3));
         hlsl.insert_str(0, instance_cull_hzb::HIDDEN_DECLARATIONS);
