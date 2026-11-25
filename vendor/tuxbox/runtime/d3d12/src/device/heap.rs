@@ -1632,6 +1632,26 @@ fn a_misaligned_image_starts_its_own_heap() {
     assert_eq!(heap_offset(0xd4330_0000, 0xd4332_0000, 0x1_0000), Some(0x2_0000));
 }
 
+/// The layout word a host placement gets. Console layouts (0x100 and up,
+/// e.g. 0x102 4 KiB swizzle) are not D3D12_TEXTURE_LAYOUT values, and the
+/// runtime refuses them with E_INVALIDARG, leaving the title a null resource;
+/// the console tiling is modelled by the placement code, not by the desktop
+/// object. Anything past 64KB_STANDARD_SWIZZLE becomes UNKNOWN for a texture
+/// and ROW_MAJOR for a buffer, the committed path's rule (ScarlettCompat
+/// 93c0f96, credit to its authors). TUXBOX_PLACED_LAYOUT_MAP=0 forwards it as before.
+fn forwarded_layout(desc: &D3D12_RESOURCE_DESC) -> D3D12_TEXTURE_LAYOUT {
+    if desc.Layout.0 <= D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE.0 || crate::env_toggle!("TUXBOX_PLACED_LAYOUT_MAP") == Some("0") {
+        return desc.Layout;
+    }
+    static MAPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = MAPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("placed GPU image layout {:#x} forwarded as {} ({n} so far; TUXBOX_PLACED_LAYOUT_MAP=0 forwards it)",
+            desc.Layout.0, if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER { "ROW_MAJOR" } else { "UNKNOWN" }));
+    }
+    if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER { D3D12_TEXTURE_LAYOUT_ROW_MAJOR } else { D3D12_TEXTURE_LAYOUT_UNKNOWN }
+}
+
 unsafe fn place_gpu_target(
     device: &Device, address: u64, desc: &D3D12_RESOURCE_DESC,
     initial: D3D12_BARRIER_LAYOUT, clear: *const D3D12_CLEAR_VALUE, out: Out,
@@ -1644,7 +1664,7 @@ unsafe fn place_gpu_target(
     let mut host = D3D12_RESOURCE_DESC1 {
         Dimension: desc.Dimension, Alignment: desc.Alignment, Width: desc.Width, Height: desc.Height,
         DepthOrArraySize: desc.DepthOrArraySize, MipLevels: desc.MipLevels, Format: desc.Format,
-        SampleDesc: desc.SampleDesc, Layout: desc.Layout, Flags: D3D12_RESOURCE_FLAGS(desc.Flags.0 & 0x1ff),
+        SampleDesc: desc.SampleDesc, Layout: forwarded_layout(desc), Flags: D3D12_RESOURCE_FLAGS(desc.Flags.0 & 0x1ff),
         ..Default::default()
     };
     if let Some(primary) = &primary {
