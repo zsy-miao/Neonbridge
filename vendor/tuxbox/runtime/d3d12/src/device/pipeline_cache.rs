@@ -370,25 +370,70 @@ fn over_offline_cap(shader_bytes: u64) -> bool {
 /// for the one before it, with no give-up: title threads skip such compiles
 /// (BIND_SKIP_HEAVY), so only background compiles queue. The queue depth is
 /// logged. TUXBOX_HEAVY_COMPILE_SERIAL=0 runs them together again.
-fn heavy_turn(shader_bytes: u64) -> Option<std::sync::MutexGuard<'static, ()>> {
+/// test178: run one at a time, 1.1-1.3 MB compiles of 22-45 s each held
+/// 1901 pipelines back and a third of the dispatches were dropped for
+/// minutes. One now starts beside those running while free commit covers the
+/// peak of all of them (1 GiB per MB of DXIL, test177's 5-7 GB for 5.5 MB)
+/// plus 2 GiB; the first always starts. TUXBOX_HEAVY_COMPILE_BUDGET=0 runs
+/// them strictly one at a time again.
+struct HeavyTurn(u64);
+
+#[derive(Default)]
+struct Heavy { running: u32, need: u64 }
+
+static HEAVY: (std::sync::Mutex<Heavy>, std::sync::Condvar) = (std::sync::Mutex::new(Heavy { running: 0, need: 0 }), std::sync::Condvar::new());
+
+impl Drop for HeavyTurn {
+    fn drop(&mut self) {
+        let mut h = HEAVY.0.lock().unwrap_or_else(|e| e.into_inner());
+        h.running -= 1;
+        h.need -= self.0;
+        drop(h);
+        HEAVY.1.notify_all();
+    }
+}
+
+fn free_commit() -> u64 {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX { dwLength: size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    if unsafe { GlobalMemoryStatusEx(&mut status) }.is_err() {
+        return 0;
+    }
+    status.ullAvailPageFile
+}
+
+fn heavy_turn(shader_bytes: u64) -> Option<HeavyTurn> {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-    static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static QUEUED: AtomicU64 = AtomicU64::new(0);
     static LOGGED: AtomicU64 = AtomicU64::new(0);
     if shader_bytes < 1 << 20 || crate::env_toggle!("TUXBOX_HEAVY_COMPILE_SERIAL") == Some("0") {
         return None;
     }
+    let budget = crate::env_toggle!("TUXBOX_HEAVY_COMPILE_BUDGET") != Some("0");
+    let need = shader_bytes << 10;
     let depth = QUEUED.fetch_add(1, Relaxed) + 1;
     let start = std::time::Instant::now();
-    let turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+    let (lock, ready) = &HEAVY;
+    let mut h = lock.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        if h.running == 0 || (budget && free_commit() >= h.need + need + (2 << 30)) {
+            break;
+        }
+        // Recheck memory now and then, not only when one finishes.
+        h = ready.wait_timeout(h, std::time::Duration::from_millis(500)).unwrap_or_else(|e| e.into_inner()).0;
+    }
+    h.running += 1;
+    h.need += need;
+    let others = h.running - 1;
+    drop(h);
     QUEUED.fetch_sub(1, Relaxed);
     let n = LOGGED.fetch_add(1, Relaxed) + 1;
     if n <= 16 || n.is_power_of_two() || depth > 1 {
         crate::diagnostics::log_line(format_args!(
-            "heavy compile: {} KiB of DXIL starts after {} ms in a queue of {depth} (one at a time from 1 MiB; {n} so far; TUXBOX_HEAVY_COMPILE_SERIAL=0 off)",
-            shader_bytes >> 10, start.elapsed().as_millis()));
+            "heavy compile: {} KiB of DXIL starts after {} ms in a queue of {depth}, beside {others} (free commit {} MiB; TUXBOX_HEAVY_COMPILE_BUDGET=0 one at a time; {n} so far; TUXBOX_HEAVY_COMPILE_SERIAL=0 off)",
+            shader_bytes >> 10, start.elapsed().as_millis(), free_commit() >> 20));
     }
-    Some(turn)
+    Some(HeavyTurn(need))
 }
 
 fn load_or_make(
