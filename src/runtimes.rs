@@ -587,25 +587,6 @@ fn stale(root: &Path, spec: &Spec, exe: &Path) -> bool {
     src > built
 }
 
-/// Takes `diagnostics` out of a cargo build line's `--features` (the flag
-/// pair goes when it was the only feature).
-fn drop_diagnostics(line: &mut Vec<String>) {
-    if line.first().map(String::as_str) != Some("cargo") {
-        return;
-    }
-    let end = line.iter().position(|a| a == "--").unwrap_or(line.len());
-    if let Some(i) = line[..end].iter().position(|a| a == "--features") && let Some(v) = line.get(i + 1) {
-        let rest: Vec<&str> = v.split([',', ' ']).filter(|f| !f.is_empty() && *f != "diagnostics").collect();
-        if rest.len() != v.split([',', ' ']).filter(|f| !f.is_empty()).count() {
-            if rest.is_empty() {
-                line.drain(i..i + 2);
-            } else {
-                line[i + 1] = rest.join(",");
-            }
-        }
-    }
-}
-
 /// NEONBRIDGE_DIAG=1 (the picker's Diagnostics box): victory-family trees
 /// build with their `diagnostics` cargo feature and run with
 /// VICTORY_D3D12_DRED=1, so a removed device logs DRED breadcrumbs.
@@ -618,7 +599,7 @@ pub fn diag() -> bool {
 /// the target folder target-diag beside its target, the exe in it). The
 /// release build in target\ stays as it is, cached.
 fn diag_build(name: &str, root: &Path, cmd: &[String], exe: &Path) -> Option<(Vec<String>, PathBuf, PathBuf)> {
-    if !diag() || cmd.first().map(String::as_str) != Some("cargo") {
+    if !diag() || cmd.first().map(String::as_str) != Some("cargo") || cmd.iter().any(|a| a.contains("diagnostics")) {
         return None;
     }
     let tree = victory_tree(name)?;
@@ -630,11 +611,8 @@ fn diag_build(name: &str, root: &Path, cmd: &[String], exe: &Path) -> Option<(Ve
     let rel = exe.strip_prefix(&target).ok()?;
     let to = tree.join("target-diag");
     let mut line = cmd.to_vec();
-    // ScarlettPort's line names the feature already; it still builds in target-diag.
-    if !cmd.iter().any(|a| a.contains("diagnostics")) {
-        let at = line.iter().position(|a| a == "--").unwrap_or(line.len());
-        line.splice(at..at, ["--features".to_owned(), "diagnostics".to_owned()]);
-    }
+    let at = line.iter().position(|a| a == "--").unwrap_or(line.len());
+    line.splice(at..at, ["--features".to_owned(), "diagnostics".to_owned()]);
     let _ = root;
     Some((line, to.clone(), to.join(rel)))
 }
@@ -642,12 +620,7 @@ fn diag_build(name: &str, root: &Path, cmd: &[String], exe: &Path) -> Option<(Ve
 /// Builds the tree when its exe is stale. NEONBRIDGE_BUILD=0 never builds.
 fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>> {
     let exe = root.join(spec.str("exe").ok_or_else(|| format!("runtime {name}: NEONBRIDGE.toml names no exe"))?);
-    let mut line = spec.list("build").map(<[String]>::to_vec).unwrap_or_default();
-    // Diagnostics stay off unless toggled: ScarlettPort's build line (copied
-    // from its setup-victory.ps1:21) names `--features diagnostics` itself.
-    if !diag() {
-        drop_diagnostics(&mut line);
-    }
+    let line = spec.list("build").map(<[String]>::to_vec).unwrap_or_default();
     let (line, target, exe) = match diag_build(name, root, &line, &exe) {
         Some((l, t, e)) => {
             println!("[launch] {name}: diagnostics build in {} (NEONBRIDGE_DIAG=1)", t.display());
