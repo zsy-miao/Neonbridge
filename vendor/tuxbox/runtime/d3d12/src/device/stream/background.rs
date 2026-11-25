@@ -885,13 +885,19 @@ fn send(job: Job, bound: bool) {
         // test117a: with every translation prewarmed, eight workers created
         // pipelines at once (two of them 375 ms of CPU a frame each, in the
         // driver's DXIL-to-ISA compile) and the intro fell from 39 to 2.6-7.8
-        // fps. TUXBOX_PIPELINE_WORKERS=N sets the count (default 2);
-        // =auto uses half the cores, 2 to 8, as before.
+        // fps, so the count went down to 2. But two workers cannot drain the
+        // ~80,000 pipelines the title creates during loading, and their draws
+        // are dropped meanwhile: VIctory-fxceless (make.rs:295-300, GPL-3.0,
+        // credit to its authors) builds with half the cores, 2 to 8, below
+        // normal priority, and draws where we do not. Ours run below normal
+        // too (worker_priority), and a frame now waits for its pipelines
+        // within the pipeline budget instead of dropping their draws, so half
+        // the cores is the default again. TUXBOX_PIPELINE_WORKERS=N sets the
+        // count (2 is test117a's); =auto is the default.
         let auto = || std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).clamp(2, 8));
         let workers = match crate::env_toggle!("TUXBOX_PIPELINE_WORKERS") {
-            Some("auto") => auto(),
-            Some(v) => v.trim().parse::<usize>().ok().filter(|&n| n > 0).map_or(2, |n| n.min(16)),
-            None => 2,
+            Some(v) => v.trim().parse::<usize>().ok().filter(|&n| n > 0).map_or_else(auto, |n| n.min(16)),
+            None => auto(),
         };
         // test139: the title creates some 84,000 pipelines at load and the
         // cutscene after it binds about 1,200 of them; the ones earlier runs
