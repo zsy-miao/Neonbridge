@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 mod code_table;
+mod mem_dir;
 mod mixed_mask;
 /// Comment the emitter writes at each mixed mask/number scalar op (`--refusals` counts it).
 pub const MIXED_MASK_MARK: &str = mixed_mask::MARK;
@@ -1013,6 +1014,8 @@ struct Emitter<'a> {
     bvh_root: BTreeMap<usize, u32>,
     /// Offsets of s_loads from a BVH address that read zeros (TB_BVH_NO_HIT).
     bvh_zero_smem: std::cell::RefCell<BTreeSet<usize>>,
+    /// A BVH header read went through the title-memory page directory (mem_dir).
+    uses_mem_dir: bool,
     /// EXEC was last set by `s_wqm_b* exec, exec`: whole quads are active (X2W a351c0fb).
     wqm_exec: bool,
     is_gs: bool,
@@ -3675,11 +3678,12 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     if post_cull { hlsl.insert_str(0, "groupshared uint cull_mask[2], cull_base;\n"); }
     if let Some(program) = view_cull { hlsl.insert_str(0, &program.declarations()); }
     if material_classify { hlsl.insert_str(0, ps09_classify::DECLARATIONS); }
+    if em.uses_mem_dir { hlsl.insert_str(0, mem_dir::DECLARATIONS); }
     hlsl.insert_str(0, &format!("// entry-live registers (read before written): {}
 ", live_in.join(" ")));
     // ps_5_0 forces UAV slots to start after the render-target outputs (FXC X4509);
     // SM5.1 has no such rule, and D3D12 accepts SM5.1 bytecode.
-    let profile = if em.compute_derivatives || em.resolve_wave32 {
+    let profile = if em.compute_derivatives || em.resolve_wave32 || em.uses_mem_dir {
         "cs_6_6"
     } else if em.uses_heap_sampler || em.resource_heap_base.is_some() || em.pixel_heap {
         match ex.stage {
@@ -3982,6 +3986,7 @@ impl<'a> Emitter<'a> {
             loop_depth: 0,
             wqm_exec: false,
             bvh_zero_smem: Default::default(),
+            uses_mem_dir: false,
             bvh_raw: false,
             bvh_heap: false,
             bvh_root: BTreeMap::new(),
@@ -8753,6 +8758,26 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 }
                 if ins.op <= 4 && self.bvh_zero_smem.borrow().contains(&ins.offset) {
                     let Some(Opnd::Sgpr(base)) = d else { return Err("bvh s_load: bad destination".into()) };
+                    // TB_MEM_DIR: read the header from title memory through the page directory.
+                    let addr = match ins.src.first() {
+                        Some(&Opnd::Sgpr(b)) if mem_dir::on() && self.is_cs && (ins.raw.get(1).copied().unwrap_or(0) >> 25) == 0x7d => Some(b),
+                        _ => None,
+                    };
+                    if let Some(b) = addr {
+                        self.uses_mem_dir = true;
+                        let (lo, hi) = (r(&Opnd::Sgpr(b))?, r(&Opnd::Sgpr(b + 1))?);
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint t{t}l = {lo} + {:#x}u; uint t{t}h = {hi} + (t{t}l < {lo} ? 1u : 0u);", ins.aux.imm as u32));
+                        let n = 1u8 << ins.op;
+                        for k in 0..n {
+                            self.line(&format!("uint t{t}_{k} = tb_mem_load(t{t}l + {}u, t{t}h + (t{t}l + {}u < t{t}l ? 1u : 0u));", 4 * u32::from(k), 4 * u32::from(k)));
+                        }
+                        for k in 0..n {
+                            self.ws(&Opnd::Sgpr(base + k), &format!("t{t}_{k}"))?;
+                        }
+                        return Ok(());
+                    }
                     for k in 0..(1u8 << ins.op) {
                         self.ws(&Opnd::Sgpr(base + k), "0u")?;
                     }
@@ -9013,6 +9038,24 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         _ => 4,
                     };
                     let Some(Opnd::Vgpr(vd)) = d else { return Err("bad vdst".into()) };
+                    // TB_MEM_DIR: a 64-bit VGPR address with no SGPR base reads title memory
+                    // through the page directory; otherwise zeros (no-hit stand-in).
+                    if let (Some(&Opnd::Vgpr(a)), true) = (s.first(), mem_dir::on() && self.is_cs && matches!(s.get(2), Some(Opnd::Null) | None)) {
+                        self.uses_mem_dir = true;
+                        let (lo, hi) = (r(&Opnd::Vgpr(a))?, r(&Opnd::Vgpr(a + 1))?);
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        let imm = ins.aux.imm as i32 as u32;
+                        self.line(&format!("uint t{t}l = {lo} + {imm:#x}u; uint t{t}h = {hi} + (t{t}l < {lo} ? 1u : 0u) - ({} ? 1u : 0u);", if (ins.aux.imm as i32) < 0 { "true" } else { "false" }));
+                        for k in 0..n {
+                            let o = 4 * u32::from(k);
+                            self.line(&format!("uint t{t}_{k} = (exec_lo & 1u) ? tb_mem_load(t{t}l + {o}u, t{t}h + (t{t}l + {o}u < t{t}l ? 1u : 0u)) : 0u;"));
+                        }
+                        for k in 0..n {
+                            self.wv(&Opnd::Vgpr(vd + k), &format!("t{t}_{k}"))?;
+                        }
+                        return Ok(());
+                    }
                     self.line("// BVH header read: zeros (no-hit fallback)");
                     for k in 0..n {
                         self.wv(&Opnd::Vgpr(vd + k), "0u")?;

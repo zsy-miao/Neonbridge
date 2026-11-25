@@ -1891,9 +1891,10 @@ pub(crate) unsafe fn bvh_root_address(owner: &windows::core::IUnknown, location:
 /// TUXBOX_MEM_DIR (mem_dir): the title import holding `[address, address +
 /// bytes)` with unordered access, and the title address at its byte 0.
 /// None: no such import (not committed title memory, or not importable).
-pub(crate) unsafe fn mem_dir_import(owner: &windows::core::IUnknown, address: u64, bytes: u64) -> Option<(ID3D12Resource, u64)> {
+pub(crate) unsafe fn mem_dir_import(owner: &windows::core::IUnknown, address: u64, bytes: u64)
+    -> Option<(ID3D12Resource, std::sync::Weak<TextureAddress>, u64)> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     let entry = buffer_at(device, address, bytes, 4, false, true).ok()??;
     let base = address.checked_sub(entry.offset(address))?;
-    Some((entry.native.clone(), base))
+    Some((entry.native.clone(), std::sync::Arc::downgrade(&entry), base))
 }

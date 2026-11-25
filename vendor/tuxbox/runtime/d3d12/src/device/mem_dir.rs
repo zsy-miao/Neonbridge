@@ -58,8 +58,22 @@ pub(crate) fn declared(code: &[u8]) -> bool {
 
 struct Copy {
     native: ID3D12Resource,
+    /// The import: once the registry drops it (retired on a remap, or
+    /// replaced), the copy is retired (sweep).
+    import: std::sync::Weak<super::views::TextureAddress>,
+    /// The title address at byte 0, and the bytes.
+    base: u64,
     bytes: u64,
 }
+
+/// A retired copy's resource, kept until lists recorded with its view have
+/// finished (RETIRE_GRACE), then released and its number reused.
+struct Retired {
+    _native: ID3D12Resource,
+    number: u32,
+    at: std::time::Instant,
+}
+const RETIRE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 struct State {
     directory: ID3D12Resource,
@@ -71,12 +85,16 @@ struct State {
     empty: ID3D12Resource,
     /// The fault buffer's mapping (CPU write-back memory): FAULTS u32.
     fault_words: *mut u32,
-    /// Copy n + 1 is copies[n].
-    copies: Vec<Copy>,
+    /// Copy n + 1 is copies[n] (None: retired or free).
+    copies: Vec<Option<Copy>>,
     by_resource: HashMap<usize, u32>,
-    /// Per heap: how many copies its run holds views of.
-    runs: HashMap<usize, u32>,
+    retired: Vec<Retired>,
+    /// Numbers free to reuse (their grace is over).
+    free: Vec<u32>,
+    /// Per heap: the resource each run slot views (usize::MAX: none yet).
+    runs: HashMap<usize, Vec<usize>>,
     last_faults: Option<std::time::Instant>,
+    last_sweep: Option<std::time::Instant>,
 }
 // The mappings stay valid while the resources live in this state.
 unsafe impl Send for State {}
@@ -123,7 +141,8 @@ fn with_state<R>(device: &ID3D12Device, f: impl FnOnce(&mut State) -> R) -> Opti
                     "memory directory: {} pages, {FAULTS} faults, {COPIES} copies (TUXBOX_MEM_DIR=0 off)", PAGES));
                 *state = Some(State {
                     directory, entries, faults, fault_words, empty, copies: Vec::new(),
-                    by_resource: HashMap::new(), runs: HashMap::new(), last_faults: None,
+                    by_resource: HashMap::new(), retired: Vec::new(), free: Vec::new(),
+                    runs: HashMap::new(), last_faults: None, last_sweep: None,
                 });
             }
             Err(error) => {
@@ -143,25 +162,30 @@ impl State {
 
     /// Numbers the import (once) and fills every empty page it holds whole.
     /// `base`: the title address at byte 0 of `native`.
-    fn add(&mut self, native: &ID3D12Resource, base: u64) {
+    fn add(&mut self, native: &ID3D12Resource, import: std::sync::Weak<super::views::TextureAddress>, base: u64) {
         let key = native.as_raw() as usize;
+        let bytes = unsafe { native.GetDesc() }.Width;
         let copy = match self.by_resource.get(&key) {
             Some(&n) => n,
             None => {
-                if self.copies.len() >= COPIES {
-                    static FULL: std::sync::Once = std::sync::Once::new();
-                    crate::diagnostics::log_once(&FULL, || format!(
-                        "memory directory: {COPIES} copies numbered, later pages stay missing"));
-                    return;
-                }
-                let bytes = unsafe { native.GetDesc() }.Width;
-                self.copies.push(Copy { native: native.clone(), bytes });
-                let n = self.copies.len() as u32;
+                let n = match self.free.pop() {
+                    Some(n) => n,
+                    None if self.copies.len() < COPIES => {
+                        self.copies.push(None);
+                        self.copies.len() as u32
+                    }
+                    None => {
+                        static FULL: std::sync::Once = std::sync::Once::new();
+                        crate::diagnostics::log_once(&FULL, || format!(
+                            "memory directory: {COPIES} copies live, later pages stay missing until some retire"));
+                        return;
+                    }
+                };
+                self.copies[n as usize - 1] = Some(Copy { native: native.clone(), import, base, bytes });
                 self.by_resource.insert(key, n);
                 n
             }
         };
-        let bytes = self.copies[copy as usize - 1].bytes;
         let first = base.div_ceil(PAGE);
         let end = (base + bytes) / PAGE;
         for page in first..end.min(PAGES as u64 - 1) {
@@ -177,6 +201,61 @@ impl State {
                 self.entries.add(page * 2).write_volatile(copy);
             }
         }
+    }
+
+    /// Empties the copy's pages and keeps its resource for the grace.
+    fn retire(&mut self, n: u32) {
+        let Some(copy) = self.copies[n as usize - 1].take() else { return };
+        self.by_resource.remove(&(copy.native.as_raw() as usize));
+        let first = copy.base / PAGE;
+        let end = (copy.base + copy.bytes).div_ceil(PAGE).min(PAGES as u64);
+        for page in first..end {
+            let page = page as usize;
+            // A list reading the page now sees copy 0 (zeros and a fault,
+            // then the new import), never a view of remapped pages.
+            unsafe {
+                if self.entries.add(page * 2).read_volatile() == n {
+                    self.entries.add(page * 2).write_volatile(0);
+                }
+            }
+        }
+        self.retired.push(Retired { _native: copy.native, number: n, at: std::time::Instant::now() });
+    }
+
+    /// Retires copies whose import the registry dropped, and frees numbers
+    /// past their grace (at most every 250 ms).
+    fn sweep(&mut self) {
+        if self.last_sweep.is_some_and(|t| t.elapsed().as_millis() < 250) {
+            return;
+        }
+        self.last_sweep = Some(std::time::Instant::now());
+        let dead: Vec<u32> = self.copies.iter().enumerate()
+            .filter(|(_, c)| c.as_ref().is_some_and(|c| c.import.strong_count() == 0))
+            .map(|(i, _)| i as u32 + 1).collect();
+        for n in dead {
+            self.retire(n);
+        }
+        let (done, kept): (Vec<_>, Vec<_>) = self.retired.drain(..).partition(|r| r.at.elapsed() >= RETIRE_GRACE);
+        self.retired = kept;
+        self.free.extend(done.into_iter().map(|r| r.number));
+    }
+
+    /// Retires every copy over title `[lo, hi)`.
+    fn retire_over(&mut self, lo: u64, hi: u64) {
+        let over: Vec<u32> = self.copies.iter().enumerate()
+            .filter(|(_, c)| c.as_ref().is_some_and(|c| c.base < hi && lo < c.base + c.bytes))
+            .map(|(i, _)| i as u32 + 1).collect();
+        for n in over {
+            self.retire(n);
+        }
+    }
+}
+
+/// A remap of title `[lo, hi)` (heap.rs retire_imports_over): its copies
+/// leave the directory.
+pub(crate) fn retire_over(lo: u64, hi: u64) {
+    if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        s.retire_over(lo, hi);
     }
 }
 
@@ -207,8 +286,8 @@ pub(crate) fn ready(owner: &windows::core::IUnknown, device: &ID3D12Device, addr
             let cell = at & !(CELL - 1);
             let found = unsafe { super::views::mem_dir_import(owner, cell, CELL) }
                 .or_else(|| unsafe { super::views::mem_dir_import(owner, at, PAGE) });
-            if let Some((native, base)) = found {
-                with_state(device, |s| s.add(&native, base));
+            if let Some((native, import, base)) = found {
+                with_state(device, |s| s.add(&native, import, base));
             }
         }
     }
@@ -236,6 +315,7 @@ pub(crate) fn named(views: impl IntoIterator<Item = u64>, constants: &[u32]) -> 
 /// Reads and clears the faults at most every 16 ms, making their pages ready.
 pub(crate) fn take_faults(owner: &windows::core::IUnknown, device: &ID3D12Device) {
     let pages = with_state(device, |s| {
+        s.sweep();
         if s.last_faults.is_some_and(|t| t.elapsed().as_millis() < 16) {
             return Vec::new();
         }
@@ -274,7 +354,6 @@ pub(crate) fn binding(device: &ID3D12Device, heap: Option<&ID3D12DescriptorHeap>
     };
     with_state(device, |s| {
         let key = heap.as_raw() as usize;
-        let written = s.runs.get(&key).copied();
         let raw = |n: u64| D3D12_UNORDERED_ACCESS_VIEW_DESC {
             Format: DXGI_FORMAT_R32_TYPELESS,
             ViewDimension: D3D12_UAV_DIMENSION_BUFFER,
@@ -284,17 +363,25 @@ pub(crate) fn binding(device: &ID3D12Device, heap: Option<&ID3D12DescriptorHeap>
             },
         };
         let at = |i: u32| D3D12_CPU_DESCRIPTOR_HANDLE { ptr: cpu + i as usize * stride };
-        if written.is_none() {
+        let run = s.runs.entry(key).or_insert_with(|| {
             unsafe { device.CreateUnorderedAccessView(None, None, Some(&raw(0)), at(0)) };
-        }
-        let from = written.unwrap_or(0);
-        for n in from..s.copies.len() as u32 {
-            let copy = &s.copies[n as usize];
+            Vec::new()
+        });
+        run.resize(s.copies.len(), usize::MAX);
+        // Rewrite each slot whose copy changed (new or reused). A retired
+        // copy's slot keeps its view until reuse; the resource lives through
+        // the grace, so lists in flight stay valid.
+        for (i, copy) in s.copies.iter().enumerate() {
+            let Some(copy) = copy else { continue };
+            let viewed = copy.native.as_raw() as usize;
+            if run[i] == viewed {
+                continue;
+            }
             // Raw views hold at most 2^32 - 1 dwords; a start is a u32 byte offset.
             let words = (copy.bytes / 4).min(u64::from(u32::MAX) / 4);
-            unsafe { device.CreateUnorderedAccessView(&copy.native, None, Some(&raw(words)), at(n + 1)) };
+            unsafe { device.CreateUnorderedAccessView(&copy.native, None, Some(&raw(words)), at(i as u32 + 1)) };
+            run[i] = viewed;
         }
-        s.runs.insert(key, s.copies.len() as u32);
         unsafe { (s.directory.GetGPUVirtualAddress(), s.faults.GetGPUVirtualAddress(), first) }
     })
 }

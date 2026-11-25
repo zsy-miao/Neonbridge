@@ -221,6 +221,8 @@ pub(crate) fn release_shadows_over(lo: u64, hi: u64) -> usize {
 
 /// Cached heap imports over [lo, hi), whose pages were remapped, dropped (heap.rs).
 pub(crate) fn retire_imports_over(lo: u64, hi: u64) -> usize {
+    // The memory directory's copies over remapped pages leave it (mem_dir).
+    mem_dir::retire_over(lo, hi);
     heap::retire_imports_over(lo, hi)
 }
 
