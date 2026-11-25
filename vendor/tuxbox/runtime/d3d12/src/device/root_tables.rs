@@ -173,6 +173,27 @@ pub(crate) fn tail_len(heap: &ID3D12DescriptorHeap) -> u32 {
     tails.as_ref().and_then(|t| t.get(&(heap.as_raw() as usize))).map_or(0, |_| TAIL)
 }
 
+/// `count` contiguous private slots of `heap`'s ring (SRV-as-UAV tables,
+/// srv_views::fill_table): (CPU start, GPU start). None: no ring, or more
+/// than it holds. Wrapping rewrites slots older lists may still read, as for
+/// the root view tables (logged once there).
+pub(crate) fn private_slots(heap: &ID3D12DescriptorHeap, count: u32) -> Option<(usize, u64, usize)> {
+    let mut tails = TAILS.lock().unwrap_or_else(|e| e.into_inner());
+    let tail = tails.as_mut()?.get_mut(&(heap.as_raw() as usize))?;
+    if count == 0 || count > TAIL / 4 {
+        return None;
+    }
+    if tail.next + count > TAIL {
+        tail.next = 0;
+        tail.cached.clear();
+    }
+    let index = tail.next;
+    tail.next = (tail.next + count) % TAIL;
+    tail.cached.retain(|_, &mut i| !(index..index + count).contains(&i));
+    let at = u64::from(tail.first + index) * tail.stride;
+    Some((tail.cpu + at as usize, tail.gpu + at, tail.stride as usize))
+}
+
 /// A one-view table in `heap` for a root view at host `address` inside
 /// `buffer` (None: a null view): a raw SRV/UAV to the buffer's end. None
 /// when the heap has no private slots.

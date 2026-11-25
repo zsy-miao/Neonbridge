@@ -415,6 +415,22 @@ impl Bindings {
             });
         }
         let heap = heap.ok_or(E_INVALIDARG)?;
+        // SRV-as-UAV piece 4 (TUXBOX_SRV_AS_UAV=1): a root made for a program's
+        // stored-to SRV slots binds a private copy of each such table with
+        // UAVs of the slots' resources there (device::srv_views::fill_table).
+        if arena.is_none()
+            && let Some(slots) = crate::device::srv_views::table_slots(&table.native)
+            && let Some(native_heap) = self.heaps.iter().flatten()
+                .find(|h| unsafe { h.GetDesc() }.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+        {
+            for (index, &length) in table.lengths.iter().enumerate().filter(|(_, len)| **len != 0) {
+                let Some(base) = bases[index] else { continue };
+                let Some(src) = heap.table(base.ptr, &(0..length)) else { continue };
+                if let Some(gpu) = crate::device::srv_views::fill_table(native_heap, src.start, length, index as u32, &slots) {
+                    bases[index] = Some(D3D12_GPU_DESCRIPTOR_HANDLE { ptr: gpu });
+                }
+            }
+        }
         let index_map = if let Some(binding) = table.index_map {
             // Global indices originate in shader data. Any resident SRV can
             // sample placed textures and needs the usual pre-submit upload.
