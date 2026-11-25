@@ -23,7 +23,7 @@ use windows::core::Interface;
 
 pub(crate) fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_VIEW_TABLES") == Some("1"))
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_VIEW_TABLES") != Some("0"))
 }
 
 /// Our own root views (spaces at or above this) stay root descriptors.

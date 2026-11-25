@@ -30,7 +30,7 @@ pub(super) fn primary(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC>
 /// `TwinUse::late`; commands/depth.rs `late_pass`). Off: only one-mip, one-slice R32G8X24 textures with the two
 /// console flag words seen first, as before.
 pub(crate) fn twins() -> bool {
-    crate::env_toggle!("TUXBOX_DEPTH_TWINS") == Some("1")
+    crate::env_toggle!("TUXBOX_DEPTH_TWINS") != Some("0")
 }
 
 fn pair_primary(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
