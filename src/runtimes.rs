@@ -1563,7 +1563,9 @@ fn cache_format(name: &str) -> Option<&'static str> {
 /// files are never overwritten. Translated game code (`images`) is not copied:
 /// each fork's CPU side differs. NEONBRIDGE_CACHE_SEED=0 off.
 fn seed_cache(name: &str, cache: &Path) {
-    if std::env::var("NEONBRIDGE_CACHE_SEED").is_ok_and(|v| v.trim() == "0") {
+    // Off by default: measured, the old cache, vibrport and flamingo share 0 keys
+    // (108k / 51k / 27k shaders), so a copy only costs disk. NEONBRIDGE_CACHE_SEED=1 on.
+    if !std::env::var("NEONBRIDGE_CACHE_SEED").is_ok_and(|v| v.trim() == "1") {
         return;
     }
     let Some(fmt) = cache_format(name) else { return };
