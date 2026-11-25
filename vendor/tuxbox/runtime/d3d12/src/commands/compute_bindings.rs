@@ -862,6 +862,7 @@ impl Bindings {
         heap: &super::descriptors::ResourceHeap,
         written: &mut Vec<std::ops::Range<usize>>,
         fallback: &mut Vec<std::ops::Range<usize>>,
+        touched: &mut Vec<std::ops::Range<usize>>,
     ) {
         use crate::device::shader_cache::HeapSource;
         let Some(access) = self.heap_access.as_ref() else { return };
@@ -869,6 +870,26 @@ impl Bindings {
             let index = u32::try_from(index).ok()?;
             heap.table(heap.gpu_start(), &(index..index.checked_add(1)?))
         };
+        // Every exact source (read or written) also goes to `touched`, the
+        // list's sampled heap ranges placement::submit hands the shadow
+        // eviction (Coder5's touch_views): direct heap reads were invisible to it.
+        for source in access.reads.iter().chain(&access.writes) {
+            let range = match *source {
+                HeapSource::Const(index) => slot(i64::from(index)),
+                HeapSource::Root(param, dword, add) => {
+                    let value = if COMPUTE {
+                        match self.compute_args.get(&param) { Some(Argument::Constants(words)) => words.get(&dword).copied(), _ => None }
+                    } else {
+                        self.graphics_constants.get(&(param, dword)).copied()
+                    };
+                    value.and_then(|v| slot(i64::from(v) + add))
+                }
+                _ => None,
+            };
+            if let Some(range) = range {
+                super::descriptors::include_range(touched, range);
+            }
+        }
         for source in &access.writes {
             let range = match *source {
                 HeapSource::Const(index) => slot(i64::from(index)),
