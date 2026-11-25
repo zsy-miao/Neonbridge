@@ -366,18 +366,40 @@ pub(super) struct Measured {
     others: u64,
 }
 
-pub(super) fn measure(shader_bytes: u64) -> Option<Measured> {
+/// test177: the compile that held the lane from about 230 s to the hang at
+/// 424 s left no line (one is logged only when a compile ends), so the
+/// pipeline that blocked Subrender groups 2 and 4 had no key or size. Each
+/// large compile now logs its start (library key, KiB of DXIL, thread) and,
+/// while it runs, "still compiling" at 30 s and every doubling after (60,
+/// 120, 240 s...). TUXBOX_COMPILE_START_LOG=0 off.
+pub(super) fn measure(shader_bytes: u64, key: Option<&str>) -> Option<Measured> {
     if shader_bytes < TINY_SHADER_BYTES || crate::env_toggle!("TUXBOX_COMPILE_MEASURE") == Some("0") {
         return None;
+    }
+    let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    let key = key.unwrap_or("(no library key)").to_string();
+    let started_log = crate::env_toggle!("TUXBOX_COMPILE_START_LOG") != Some("0");
+    if started_log {
+        crate::diagnostics::log_line(format_args!(
+            "compile budget: large compile started: {key}, {} KiB of DXIL, thread {tid} ({} others running; TUXBOX_COMPILE_START_LOG=0 off)",
+            shader_bytes >> 10, ACTIVE.load(Ordering::Relaxed)));
     }
     let start = crate::diagnostics::memory::private_bytes();
     let peak = std::sync::Arc::new(AtomicU64::new(start));
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (p, d) = (peak.clone(), done.clone());
     let sampler = std::thread::Builder::new().name("TuxBox compile measure".into()).spawn(move || {
+        let began = std::time::Instant::now();
+        let mut next = 30u64;
         while !d.load(Ordering::Relaxed) {
             p.fetch_max(crate::diagnostics::memory::private_bytes(), Ordering::Relaxed);
             std::thread::sleep(std::time::Duration::from_millis(20));
+            if started_log && began.elapsed().as_secs() >= next && !d.load(Ordering::Relaxed) {
+                crate::diagnostics::log_line(format_args!(
+                    "compile budget: still compiling after {next} s: {key}, {} KiB of DXIL, thread {tid}, private +{} MiB so far",
+                    shader_bytes >> 10, p.load(Ordering::Relaxed).saturating_sub(start) >> 20));
+                next *= 2;
+            }
         }
     });
     if sampler.is_err() {
