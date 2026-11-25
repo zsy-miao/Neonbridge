@@ -11156,7 +11156,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         if let Some(Res::CbDyn(slot)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
             let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
-            if (idxen && offen) || !self.zero_buffer_offset(ins) || !ins.mnemonic.starts_with("buffer_load_dword") {
+            // RDNA2 ISA MUBUF addressing: byte address = offset + SOFFSET + (OFFEN ? vaddr : 0)
+            // + (IDXEN ? index * stride : 0). A register SOFFSET (test154 1cc786f8:
+            // s_mul s30 = s32 * 48 then IDXEN load_dwordx3) is added to the cbuffer offset.
+            // TB_CB_MUBUF_SOFFSET=0 refuses it as before.
+            let soff = match ins.src.get(2) {
+                Some(o @ Opnd::Sgpr(_)) if !self.zero_buffer_offset(ins)
+                    && std::env::var("TB_CB_MUBUF_SOFFSET").map_or(true, |v| v.trim() != "0") => Some(r(o)?),
+                _ => None,
+            };
+            if (idxen && offen) || (!self.zero_buffer_offset(ins) && soff.is_none()) || !ins.mnemonic.starts_with("buffer_load_dword") {
                 return Err("constant-buffer MUBUF form unsupported".into());
             }
             let n = Self::mubuf_dwords(&ins.mnemonic).ok_or("unsupported MUBUF op")?;
@@ -11174,6 +11183,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             } else {
                 format!("{:#x}u", ins.aux.imm as u32)
             };
+            let base = match soff { Some(so) => format!("({base} + {so})"), None => base };
             let t = self.tmp;
             self.tmp += 1;
             self.line(&format!("uint t{t} = {base} >> 2;"));
