@@ -415,6 +415,12 @@ pub(crate) unsafe fn note_shadow_write(owner: *mut core::ffi::c_void, resource: 
     shadow::mark_copied(device, resource);
 }
 
+/// A title root UAV resolved into `resource` (a raw native resource).
+pub(crate) unsafe fn note_root_uav(owner: *mut core::ffi::c_void, resource: *mut core::ffi::c_void) {
+    let device = unsafe { &*owner.cast::<Device>() };
+    shadow::mark_root_uav(device, resource);
+}
+
 pub(crate) unsafe fn write_back_shadows(owner: &windows::core::IUnknown, queue: &ID3D12CommandQueue) -> windows::core::Result<()> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     unsafe { shadow::write_back(device, queue) }

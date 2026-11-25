@@ -84,6 +84,11 @@ fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: f
         }
         let buffer = ROOT_IMPORT.with(|b| b.take());
         let view = view(address);
+        // Root UAV writes set no view marks: flag a shadow copy they land in
+        // for a whole write-back (VIctory cd94d35).
+        if let (BufferView::Uav(_), Some(buffer)) = (view, buffer.as_ref()) {
+            unsafe { device::note_root_uav(parent(&list.parent), windows::core::Interface::as_raw(buffer)) };
+        }
         state.bindings.bind_buffer::<COMPUTE>(&list.native, index, view, buffer.as_ref());
     }
 }

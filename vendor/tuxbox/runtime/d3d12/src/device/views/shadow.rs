@@ -48,6 +48,10 @@ struct Entry {
     /// so a write-back copies only the 64 KiB pages a shader marked. None
     /// copies it whole.
     run: Option<super::super::view_marks::Run>,
+    /// Write-back number at which a title root UAV last resolved into the
+    /// copy (0 never): root UAVs set no marks, so the copy is written back
+    /// whole, unpredicated, while one is recent (see mark_root_uav).
+    root_uav: u64,
 }
 
 impl Drop for Entry {
@@ -657,7 +661,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
-    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, hash: None,
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -749,6 +753,39 @@ pub(crate) fn mark_written(device: &Device, resource: *mut core::ffi::c_void) {
             crate::diagnostics::log_line(format_args!("shadow at {:#x} ({} bytes) is written; writing it back", key.0, key.1));
         }
     }
+}
+
+/// TUXBOX_ROOT_UAV_MARK=0 leaves root UAV writes to the predicated write-back.
+fn root_uav_mark() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_UAV_MARK") != Some("0"))
+}
+
+/// A title root UAV (Set*RootUnorderedAccessView) resolved into `resource`.
+/// Its shader writes go through no heap UAV, so they set no view mark and a
+/// predicated write-back (view_marks::record_write_back) would skip their
+/// pages. When `resource` is a writable shadow's copy, it is flagged written
+/// and copied back whole for the next write-backs (the list is submitted
+/// within a couple of them) while its run is kept for later marked frames.
+/// VIctory cd94d35 (root UAV marking, idea).
+pub(crate) fn mark_root_uav(device: &Device, resource: *mut core::ffi::c_void) {
+    if !root_uav_mark() {
+        return;
+    }
+    mark_written(device, resource);
+    let shadows = &device.state.shadows;
+    let Some(key) = lock(&shadows.by_copy).get(&(resource as usize)).copied() else { return };
+    let mut entries = lock(&shadows.entries);
+    let Some(entry) = entries.get_mut(&key) else { return };
+    entry.root_uav = WRITE_BACKS.load(std::sync::atomic::Ordering::Relaxed) + 1;
+}
+
+/// Write-backs a root UAV mark copies whole: the one after the recording and
+/// one more, for a list submitted after another queue's write-back.
+const ROOT_UAV_WINDOW: u64 = 2;
+
+fn root_uav_recent(entry: &Entry) -> bool {
+    entry.root_uav != 0 && WRITE_BACKS.load(std::sync::atomic::Ordering::Relaxed) < entry.root_uav + ROOT_UAV_WINDOW
 }
 
 /// Write-backs so far: a shadow is copied back while a write targeted it in
@@ -851,7 +888,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 fills.extend(entry.cpu.iter().map(|(m, a, b, r)| (*m, *a, *b, r.clone())));
             } else if !entry.cpu.is_empty() {
                 continue;
-            } else if let Some(run) = entry.run {
+            } else if let Some(run) = entry.run && !root_uav_recent(entry) {
                 marked.push((run, view.clone(), entry.pieces.clone()));
                 continue;
             }
