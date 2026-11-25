@@ -119,6 +119,18 @@ pub(crate) fn recorded(list: usize, guest: &Allocator, host: &ID3D12CommandAlloc
     t.guests.entry(key(guest)).or_default().kind.get_or_insert(kind);
 }
 
+/// A list's last Release: its recording no longer holds its host allocator
+/// (xcl b55c478 `forget_list`, GPL-2.0, credit to ivall). Pending
+/// submissions still hold it through their fences. Released lists kept every
+/// allocator they last recorded on referenced, so none was reset again.
+/// TUXBOX_FORGET_RELEASED_LISTS=0 keeps the entry as before.
+pub(crate) fn forget_list(list: usize) {
+    if !enabled() || crate::env_toggle!("TUXBOX_FORGET_RELEASED_LISTS") == Some("0") {
+        return;
+    }
+    table().lists.remove(&list);
+}
+
 /// After a host ExecuteCommandLists of `lists` (raw guest list keys) on `queue`.
 pub(crate) fn submitted(queue: &ID3D12CommandQueue, lists: &[usize]) {
     if !enabled() || lists.is_empty() {

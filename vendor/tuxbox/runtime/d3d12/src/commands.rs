@@ -2277,8 +2277,14 @@ unsafe extern "system" fn fill128(list: &List, address: u64, size: u64, value: *
     fill_memory(list, address, size, unsafe { value.read_unaligned() }, 16);
 }
 
+/// Last Release of a list: forget its allocator recording (xcl b55c478).
+unsafe extern "system" fn release_list(this: *mut List) -> u32 {
+    unsafe { crate::proxy::release_with(this, || device::alloc_swap::forget_list(this as usize)) }
+}
+
 static LIST_SLOTS: Slots<149> = {
     let mut slots = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
+    slots[2] = crate::slot!(release_list);
     slots[8] = crate::slot!(get_type);
     slots[9] = crate::slot!(close);
     slots[10] = crate::slot!(reset);
