@@ -1230,6 +1230,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         Some((e.path(), key.to_owned(), ext.to_owned()))
     }).collect();
     if jobs.is_empty() || fs::create_dir_all(scratch).is_err() {
+        println!("[launch] {label}: nothing to do ({} programs matched in {}, scratch {})", jobs.len(), archive.display(), scratch.display());
         return;
     }
     let next = AtomicUsize::new(0);
@@ -1445,6 +1446,8 @@ impl Worker {
             thread::Builder::new().name("shader-prewarm".into()).spawn(move || {
                 let forever = std::time::Instant::now() + Duration::from_secs(10 * 365 * 24 * 3600);
                 if let Some(seen) = &seen_later {
+                    // test159 printed no seen-prewarm line at all: say that it starts, and with how many.
+                    println!("[launch] seen prewarm in the background: {} programs the title asked for before (NEONBRIDGE_BLOCKING_PREWARM=1 waits for them)", seen.len());
                     seen_prewarm(&tools, &cache, &archive, &seen_scratch, n, &stats, seen, forever, &*log, Some(&stop));
                 }
                 if !full || stop.load(Ordering::Acquire) {

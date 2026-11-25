@@ -749,8 +749,8 @@ fn build_xshader(tuxbox: &Path, out: &Path) -> Result<(PathBuf, Option<String>),
     let before = if keyed { xshader_source_key(tuxbox) } else { None };
     // /Brepro: a rebuild of unchanged sources gives the same bytes (kept for
     // the prebuilt and unkeyed cases, which key the cache by xshader's hash).
-    let status = Command::new("cargo").args(["build", "--release", "--quiet", "--manifest-path"]).arg(&manifest)
-        .arg("--target-dir").arg(&target_dir).env("RUSTFLAGS", "-C link-arg=/Brepro").status()?;
+    let status = cargo_status(Command::new("cargo").args(["build", "--release", "--manifest-path"]).arg(&manifest)
+        .arg("--target-dir").arg(&target_dir).env("RUSTFLAGS", "-C link-arg=/Brepro"), 0.4, 0.2, "Building the shader translator")?;
     let built = target_dir.join("release/xshader.exe");
     if status.success() {
         let key = before.filter(|b| xshader_source_key(tuxbox).as_ref() == Some(b));
@@ -953,6 +953,35 @@ fn tool(env: &HashMap<String, String>, exe: &str) -> PathBuf {
     path.split(';').map(|d| Path::new(d).join(exe)).find(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(exe))
 }
 
+/// Runs cargo with its stderr echoed, moving the splash bar from `base` across
+/// `span` as crates compile (test159: a --rev build sat at 0% with no sign of
+/// work). The total is unknown up front, so each crate closes a fixed share of
+/// what is left. NEONBRIDGE_BUILD_PROGRESS=0 runs cargo as before.
+fn cargo_status(cmd: &mut Command, base: f32, span: f32, label: &str) -> std::io::Result<std::process::ExitStatus> {
+    use std::io::BufRead;
+    if std::env::var("NEONBRIDGE_BUILD_PROGRESS").as_deref() == Ok("0") {
+        return cmd.status();
+    }
+    let mut child = cmd.stderr(std::process::Stdio::piped()).spawn()?;
+    let mut n = 0i32;
+    if let Some(err) = child.stderr.take() {
+        for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+            eprintln!("{line}");
+            if let Some(name) = line.trim_start().strip_prefix("Compiling ") {
+                n += 1;
+                let krate = name.split_whitespace().next().unwrap_or(name);
+                splash::counted(base + span * 0.9 * (1.0 - 0.8f32.powi(n)), &format!("{label}: {krate} ({n} compiled)"));
+            }
+        }
+    }
+    child.wait()
+}
+
+fn cargo_with_progress(cmd: &mut Command, what: &str, base: f32, span: f32, label: &str) -> Result<(), Box<dyn Error>> {
+    let s = cargo_status(cmd, base, span, label).map_err(|e| format!("{what}: {e}"))?;
+    if s.success() { Ok(()) } else { Err(format!("{what} failed ({s})").into()) }
+}
+
 fn check(cmd: &mut Command, what: &str) -> Result<(), Box<dyn Error>> {
     let s = cmd.status().map_err(|e| format!("{what}: {e}"))?;
     if s.success() { Ok(()) } else { Err(format!("{what} failed ({s})").into()) }
@@ -973,7 +1002,7 @@ fn build_providers(tuxbox: &Path, out: &Path) -> Result<Vec<PathBuf>, Box<dyn Er
     for p in &packages {
         cargo.args(["--package", p]);
     }
-    check(&mut cargo, "cargo build")?;
+    cargo_with_progress(&mut cargo, "cargo build", 0.0, 0.3, "Building the TuxBox runtime")?;
     eprintln!("[launch] cargo done in {:.0}s", t.elapsed().as_secs_f64());
     let lib_dir = cargo_dir.join(TARGET).join("release");
     let mut dlls = Vec::new();
