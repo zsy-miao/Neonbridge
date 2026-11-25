@@ -643,8 +643,18 @@ impl Bindings {
         if !COMPUTE {
             for &slot in &table.hoisted {
                 let base = bases.get(slot as usize).copied().flatten().or_else(|| self.graphics_tables.get(&slot).map(|b| b.native));
-                let title = base.and_then(|b| heap.table(b.ptr, &(0..1)))
-                    .and_then(|cpu| crate::device::slot_views::get(cpu.start))
+                let cpu = base.and_then(|b| heap.table(b.ptr, &(0..1)));
+                let entry = cpu.as_ref().and_then(|cpu| crate::device::slot_views::get(cpu.start));
+                {
+                    // Confirm (Coder4): the table and its slot 0 view for the first draws.
+                    static SEEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+                        crate::diagnostics::log_line(format_args!(
+                            "mesh hoisted SRV: param {slot} table gpu {:#x} cpu {:#x?}, slot 0 view [addr lo, hi, len, stride] {entry:x?}",
+                            base.map_or(0, |b| b.ptr), cpu.as_ref().map(|c| c.start)));
+                    }
+                }
+                let title = entry
                     .map(|e| u64::from(e[0]) | u64::from(e[1]) << 32)
                     .filter(|&va| va != 0);
                 let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
