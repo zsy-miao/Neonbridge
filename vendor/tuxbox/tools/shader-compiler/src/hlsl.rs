@@ -939,6 +939,9 @@ struct Emitter<'a> {
     vote_uses: BTreeMap<usize, usize>,
     reflected_lds_words: Option<u32>,
     hoisted_swizzle: Option<usize>,
+    /// Bit-mask `ds_swizzle_b32`s inside a guest loop, read with
+    /// `WaveReadLaneAt` instead of the group exchange (see `wave_loop_swizzle`).
+    loop_swizzles: BTreeSet<usize>,
     /// ALU instructions reading a statically resolved descriptor's words as
     /// data (see `desc_as_data`).
     desc_data: BTreeSet<usize>,
@@ -1675,6 +1678,18 @@ fn heap_clamp_all() -> bool {
 /// until that is told apart.
 fn desc_as_data_refused() -> bool {
     std::env::var("TB_DESC_AS_DATA").is_ok_and(|v| v.trim() == "0")
+}
+
+/// A bit-mask `ds_swizzle_b32` inside a guest loop runs a different number
+/// of times per invocation, so the group exchange (one barrier per
+/// swizzle) cannot hold it. Bit-mask mode only moves values within a group
+/// of 32 lanes, so it is a subgroup shuffle within that group, as leonida
+/// and palmetto translate it (rdna2spirv.py `ds_swizzle` -> OpGroupNonUniformShuffle
+/// on the lane within its 32; GPL-3.0, credit). That takes host lanes laid
+/// out as guest lanes in groups of 32, as the scan-width swizzle path
+/// already does. TB_WAVE_LOOP_SWIZZLE=0 refuses as before.
+fn wave_loop_swizzle() -> bool {
+    std::env::var("TB_WAVE_LOOP_SWIZZLE").map_or(true, |v| v.trim() != "0")
 }
 
 fn resinfo_cube() -> bool {
@@ -3162,8 +3177,16 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
         // invocation rejoins. A backward branch could execute it different numbers of times.
         for branch in em.insns.iter().filter(|i| i.enc == Enc::Sopp && Emitter::branch_cond(i.op).is_some() && i.aux.imm < 0) {
             let head = branch.offset as i64 + 4 + 4 * branch.aux.imm;
-            if em.insns.iter().any(|i| exchanges(i) && (head..=branch.offset as i64).contains(&(i.offset as i64))) {
-                return Err("compute swizzle inside a loop".into());
+            let inside: Vec<usize> = (0..em.insns.len())
+                .filter(|&k| exchanges(&em.insns[k]) && (head..=branch.offset as i64).contains(&(em.insns[k].offset as i64)))
+                .collect();
+            for k in inside {
+                let i = &em.insns[k];
+                let bitmask = i.mnemonic == "ds_swizzle_b32" && i.raw[0] & (1 << 17) == 0 && i.aux.imm as u32 & 0x8000 == 0;
+                if !(bitmask && wave_loop_swizzle()) {
+                    return Err("compute swizzle inside a loop".into());
+                }
+                em.loop_swizzles.insert(k);
             }
         }
     }
@@ -3769,6 +3792,7 @@ impl<'a> Emitter<'a> {
             vote_uses: BTreeMap::new(),
             reflected_lds_words: None,
             hoisted_swizzle: None,
+            loop_swizzles: BTreeSet::new(),
             desc_data: BTreeSet::new(),
             fence_only: BTreeSet::new(),
             indexed_lane: false,
@@ -6668,7 +6692,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             {
                 self.fence_only.insert(i);
             }
-            if self.compute_swizzle && exchanges(ins) && !active.is_empty() {
+            if self.compute_swizzle && exchanges(ins) && !active.is_empty() && !self.loop_swizzles.contains(&i) {
                 self.end_guard(&mut open);
                 cur.clear();
                 self.emit_compute_swizzle(i, ins, &active)?;
@@ -8585,6 +8609,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     let t = self.tmp;
                     self.tmp += 1;
                     // Bitmask mode rearranges lanes within each independent group of 32.
+                    self.line(&format!("uint t{t}lane = WaveGetLaneIndex();"));
+                    self.line(&format!("uint t{t}src = (t{t}lane & ~31u) | (((t{t}lane & {}u) | {}u) ^ {}u);",
+                        off & 31, (off >> 5) & 31, (off >> 10) & 31));
+                    self.line(&format!("uint t{t}value = WaveReadLaneAt({}, t{t}src);", r(&s[0])?));
+                    return self.wv(&d.ok_or("no swizzle destination")?, &format!("t{t}value"));
+                }
+                if self.loop_swizzles.contains(&idx) {
+                    // See `wave_loop_swizzle`: the lane within its group of 32.
+                    let off = ins.aux.imm as u32;
+                    let t = self.tmp;
+                    self.tmp += 1;
                     self.line(&format!("uint t{t}lane = WaveGetLaneIndex();"));
                     self.line(&format!("uint t{t}src = (t{t}lane & ~31u) | (((t{t}lane & {}u) | {}u) ^ {}u);",
                         off & 31, (off >> 5) & 31, (off >> 10) & 31));
