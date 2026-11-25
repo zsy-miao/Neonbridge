@@ -1878,18 +1878,10 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     if name == "xcl" && std::env::var_os("XCL_DXIL_CACHE").is_none() {
         env.push(("XCL_DXIL_CACHE".to_owned(), xcl_cache().display().to_string()));
     }
-    // Display settings (the idea of ScarlettPort's display.rs), mapped to what each runtime reads:
-    // NEONBRIDGE_RESOLUTION=WxH -> VICTORY_DISPLAY_MODE (victory family), NEONBRIDGE_FPS_CAP=N ->
-    // VICTORY_PACE_FPS (ScarlettPort's victory), NEONBRIDGE_VSYNC=1 -> XCL_PRESENT_SYNC (xcl).
-    let nb = |k: &str| std::env::var(k).ok().map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
-    if let Some(r) = nb("NEONBRIDGE_RESOLUTION") {
-        env.push(("VICTORY_DISPLAY_MODE".to_owned(), r));
-    }
-    if let Some(f) = nb("NEONBRIDGE_FPS_CAP") {
-        env.push(("VICTORY_PACE_FPS".to_owned(), f));
-    }
-    if nb("NEONBRIDGE_VSYNC").as_deref() == Some("1") {
-        env.push(("XCL_PRESENT_SYNC".to_owned(), "1".to_owned()));
+    // Display settings (cloned from ScarlettPort's display.rs): NEONBRIDGE_DISPLAY / _RESOLUTION /
+    // _FPS_CAP / _VSYNC / _MONITOR, mapped to each runtime's own variables.
+    if let Some(d) = crate::display::from_env() {
+        env.extend(crate::display::all_env(&d));
     }
     if logging() && !env.iter().any(|(k, _)| k == "RUST_LOG") {
         env.push(("RUST_LOG".to_owned(), "info".to_owned()));

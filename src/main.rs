@@ -12,6 +12,7 @@
 mod autopress;
 mod verify;
 mod preflight;
+mod display;
 mod report;
 mod awake;
 mod ctl;
