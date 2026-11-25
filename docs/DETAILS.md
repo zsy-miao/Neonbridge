@@ -346,6 +346,14 @@ These are in the vendored TuxBox provider.
   - `xshader`: a typed buffer load whose element starts mid-dword reads the two dwords around it and shifts (Xbox2Windows 5d0dce30; `TB_TYPED_UNALIGNED=0` loads the aligned-down dword).
   - `xshader`: with VM=1 exports a pixel starts invalid, so a lane no VM=1 export reached is discarded at DONE (xcl dc0d25f; `TB_EXP_VM_START=1` starts it valid).
   - `xshader`: heap `image_get_resinfo` on a cube gives its faces in z, 6 per cube, through the cube view (xcl recomp get_resinfo; `TB_RESINFO_CUBE=0` refuses the shader as before).
+  - Root SRVs and UAVs become one-view descriptor tables at the same register and space; only the root signature half is in, so it is opt-in (`TUXBOX_ROOT_VIEW_TABLES=1`) until the bind half lands (VIctory-fxceless `bounded_root_srvs`, gap 5).
+  - `xshader`: heap map word `0x40000000|count` clamps an identity-mapped heap index below count, onto its null last slot (VIctory HEAP_VIEWS, fxceless 31714de; `TB_HEAP_CLAMP_ALL=0` ignores it). Unpaged d3d12 heaps' identity index map clamps guest indices to the heap the same way.
+  - Indirect arguments are copied into a per-recording scratch, clamped there and executed from it, so the title's argument buffers are never rewritten (VIctory-fxceless indirect.rs `bound`/`record_clamp`; `TUXBOX_INDIRECT_SCRATCH=0` clamps in place).
+  - A structured view off an element boundary is made raw over the same bytes instead of re-strided (five-star-recomp 955a679 AsRaw; `TUXBOX_OFF_ELEMENT_RAW=0` re-strides).
+  - `xshader`: an S_BARRIER inside a per-thread guard lowers to a memory fence only, since a group sync some threads never reach hangs the host (fxceless lower.rs 1391-1419; `TB_FENCE_GUARDED=0` keeps the group sync).
+  - An exact span offset off the resource's placement alignment is aligned down, so 1-row textures 4 KiB into a span place instead of failing E_INVALIDARG (`TUXBOX_ALIAS_EXACT_UNALIGNED=1` turns this off).
+  - Title window adoption skips minimised, empty, IME and TuxBox windows and prefers the title's sgaWindowClass over a larger window (palmetto 87b3da3; `TUXBOX_ADOPT_RULE=0` takes the largest visible window).
+  - `xmem`: a failed page join logs which OS step failed (unmap, coalesce, map or commit).
 
 ## Diagnostics
 
