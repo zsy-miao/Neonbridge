@@ -868,7 +868,11 @@ pub(super) fn late_pass(list: &ID3D12GraphicsCommandList) {
         return;
     }
     let Some(lates) = pending().remove(&(list.as_raw() as usize)) else { return };
-    let Ok(device) = (unsafe { list.GetDevice::<ID3D12Device>() }) else { return };
+    let mut device: Option<ID3D12Device> = None;
+    if unsafe { list.GetDevice(&mut device) }.is_err() {
+        return;
+    }
+    let Some(device) = device else { return };
     let Some(pass) = plane_pass(&device) else { return };
     let write = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     let uav = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
