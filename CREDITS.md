@@ -8,10 +8,10 @@ Neonbridge is a launcher around other people's work. Each vendored tree under `v
 |---|---|---|---|---|
 | `vendor/scarlettport` | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | Ziggy (ZigZagBoi1), Vlad Bondarenko (vladbondarenko97), grooving6; its `runtime/victory` is the VIctory authors' and its `runtime/xcl` the xcl authors' | GPL-3.0-or-later; `runtime/xcl` GPL-2.0-only (its `LICENSE.md`) | `925f90a17b5897e34a4d8d3ce5e628d1dca08904` |
 | `vendor/victory` | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | fxceless, Marvis (Marvisak), Duff, 9hvn9yt2vk-netizen and the VIctory contributors | GPL-3.0 | `9c184b35b43de3455b74ac1770e1c8734a047810` |
-| `vendor/vitoriabr` | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | uiliannn, fxceless, Marvis (Marvisak), Duff and the VIctory contributors | GPL-3.0 | `081a89d2e5767beb38c94e2f4adc7eeca0ad69db` |
+| `vendor/vitoriabr` | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | uiliannn, fxceless, Marvis (Marvisak), Duff and the VIctory contributors | GPL-3.0 | `2b33e081ed7831f49610b747a508fb56d3cb3aa9` |
 | `vendor/ztrx-victory` (archived, in git history) | [ztrx](https://github.com/Zettrox/ztrx) | Zettrox, Marvis (Marvisak), Duff, fxceless, 9hvn9yt2vk-netizen and the VIctory contributors | GPL-3.0 | `90b529f878a470fec9bf07b7be316bc769a12232` |
 | `vendor/vibrport` | [VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT) | edsuuu; built on VIctory (Marvisak) and victory-fork (fxceless) | GPL-3.0 | `96135bda29dc3048253d4ea66f02da6c60ec21a8` |
-| `vendor/flamingo` | [Flamingo](https://github.com/realblastex/flamingo) | realblastex and the VIctory contributors | GPL-3.0 | `78bb903518014999110f70d51f2c7532b9980258` |
+| `vendor/flamingo` | [Flamingo](https://github.com/realblastex/flamingo) | realblastex and the VIctory contributors | GPL-3.0 | `fe12291d37636b9cf5bc47a6a8c9fbd44a4dd069` |
 | `vendor/klbf` | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | PastiiJay and the VIctory contributors | GPL-3.0 | `94cf8a7af9ce364175774cfdd5365f6d4220ab86` |
 | `vendor/belobug` | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | Belobug and the VIctory contributors | GPL-3.0 | `4f62c2a5e27e7beebf3e8d68f77898e43dc7b77c` |
 | `vendor/unified` | [victory-unified](https://github.com/Itsbatt/victory-unified) | Itsbatt, with fxceless, Belobug, DexNom, Zettrox and the VIctory contributors | GPL-3.0-or-later | `d5b5fca6cf3c325634f90eb897aa43d0eb665847` |

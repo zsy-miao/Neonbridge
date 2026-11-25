@@ -5,7 +5,8 @@ rem
 rem Use: drag the title's executable from your own dump onto this file, or run
 rem   flamingo-log.cmd "D:\path\to\your\dump\the-title.exe"
 rem The path is remembered in flamingo-game.txt for the next time.
-rem Series X profile instead of Series S: set FLAMINGO_SERIES_X=1 before running.
+rem It runs the Series X profile (Series S showed a black screen after loading on some PCs);
+rem Series S instead: set FLAMINGO_SERIES_S=1 before running.
 rem FLAMINGO_LOG_QUIET=1: no pause and no Explorer window at the end (for scripts).
 setlocal
 cd /d "%~dp0"
@@ -49,8 +50,8 @@ set VICTORY_WIDE_TEXTURES=1
 set VICTORY_VIEW_GUARD=0
 set FLAMINGO_BVH_MISS=1
 set FLAMINGO_OSD=1
-set "CONSOLE=series-s"
-if "%FLAMINGO_SERIES_X%"=="1" set "CONSOLE=series-x"
+set "CONSOLE=series-x"
+if "%FLAMINGO_SERIES_S%"=="1" set "CONSOLE=series-s"
 >> "%LOG%" echo profile %CONSOLE%
 
 echo.

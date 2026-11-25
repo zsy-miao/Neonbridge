@@ -114,8 +114,11 @@ set VICTORY_INDIRECT_WINDOW=1
 set VICTORY_SHADER_OPT=0
 set VICTORY_WIDE_MERGE=1
 set FLAMINGO_OSD=1
-target\diag\victory.exe run <path to your dump>\<the title's executable> --execute --console series-s
+target\diag\victory.exe run <path to your dump>\<the title's executable> --execute --console series-x
 ```
+
+The Series X profile is the one to use: on some PCs the Series S profile (`--console series-s`,
+faster) shows a black screen once the game has loaded.
 
 The first launch after a build translates and compiles shaders for a few minutes. Later launches
 use the cache.
@@ -149,8 +152,8 @@ happened on your PC. `flamingo-log.cmd` makes one:
 
 The log starts with your Windows version, processor, memory and graphics cards with their
 driver versions. It also holds file paths of your PC, which can include your Windows user
-name: look it over before you share it. `set FLAMINGO_SERIES_X=1` before running uses the
-Series X profile instead of Series S.
+name: look it over before you share it. `set FLAMINGO_SERIES_S=1` before running uses the
+Series S profile instead of Series X.
 
 ## Credits
 

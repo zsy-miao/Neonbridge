@@ -1241,7 +1241,7 @@ impl Staging {
             let unwritten = last.asked != 0 && written.iter().all(|&(_, w)| w <= last.asked);
             last.asked = now;
             let frame = crate::frame::current();
-            let turn = frame.wrapping_add((start >> 16) as u64) % HASH_EVERY == 0;
+            let turn = frame.wrapping_add((start >> 16) as u64).is_multiple_of(HASH_EVERY);
             // Linear pictures of one level are what the processor draws (the
             // planes of a movie), through a view of its own.
             let desc = &self.layout.desc;
