@@ -1382,8 +1382,9 @@ impl Worker {
                 seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
                 stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
             let o0 = O0_REUSES.load(Ordering::Relaxed);
-            log(format!("seen prewarm: DXIL: {} reused at -O1, {o0} reused at -O0 (queued for the -O1 upgrade), {} fresh dxc compiles",
-                stats.reused.load(Ordering::Relaxed).saturating_sub(o0), stats.prewarmed.load(Ordering::Relaxed)));
+            log(format!("seen prewarm: DXIL: {} reused at -O1, {o0} reused at -O0 (queued for the -O1 upgrade), {} fresh dxc compiles; {} programs left at -O0 in the upgrade queue (drained between runs)",
+                stats.reused.load(Ordering::Relaxed).saturating_sub(o0), stats.prewarmed.load(Ordering::Relaxed),
+                tools.dxil.as_deref().map_or(0, crate::dxil_upgrade::left)));
             // The churn line: how much of this xshader's output was new HLSL.
             // 1273355's 515 s prewarm compiled 1141 and reused 25, from an
             // xshader change three revs back (59ad7f5's helper pruning).

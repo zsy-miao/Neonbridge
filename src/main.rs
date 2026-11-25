@@ -140,6 +140,8 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             Some("--prewarm" | "prewarm") => mode = Mode::Prewarm,
             Some("--pipelines" | "pipelines") => mode = Mode::Pipelines,
             Some("--restore") => mode = Mode::Restore,
+            // Started detached at a launcher's exit (dxil_upgrade::spawn_drainer).
+            Some("--drain-upgrades") => return Ok(dxil_upgrade::drain(Path::new(&val("--drain-upgrades")?))?),
             Some("--debug") => debug = true,
             Some("--debug-full") => {
                 debug = true;
@@ -1587,6 +1589,8 @@ fn main() {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let result = run(&args);
     splash::close();
+    // -O0 DXIL still queued is recompiled at -O1 between runs.
+    dxil_upgrade::spawn_drainer();
     if let Err(e) = result {
         eprintln!("neonbridge: {e}");
         std::process::exit(1);
