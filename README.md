@@ -49,6 +49,20 @@ The first start of a runtime takes a while: it builds the runtime and prepares t
 | ![The loader preparing the shaders](assets/loader.png) | ![The controls overlay](assets/controls.png) |
 | **The loader.** Shows what's happening before the game starts. | **On-screen keys and frame rate.** |
 
+## Mix and match (help wanted)
+
+**Advanced** in the launcher builds one runtime from parts of several (VIctory-fxceless, VItoriaBr, ScarlettPort, Flamingo, KLBF Lab, Belobug). These mixes **compiled** in our own build check (made against older copies of each runtime). **None has been run in the game yet**, by us or by the runtimes' authors, so please try them and open an issue with what you see.
+
+| Main program | Part swapped in | From |
+|---|---|---|
+| VIctory-fxceless | shader translator (`victory-shader`) | VItoriaBr |
+| VIctory-fxceless | console system layer (`victory-hle`) | VItoriaBr |
+| VIctory-fxceless | game file loader (`victory-loader`) | VItoriaBr or ScarlettPort |
+| VIctory-fxceless | program loader (`victory-pe`) | VItoriaBr |
+| VIctory-fxceless | `victory-core`, `victory-game` or `victory-formats` | ScarlettPort |
+
+Flamingo, KLBF Lab and Belobug parts haven't been checked at all. A mix that fails to compile is remembered and refused next time.
+
 ## Watch on your phone (Tailscale)
 
 Hand this to your AI agent (Claude Code, Codex and the like), or run it yourself in a terminal in the Neonbridge folder:
