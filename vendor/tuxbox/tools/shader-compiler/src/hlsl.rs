@@ -11348,6 +11348,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     let mut e = match ety {
                         // A packed load reads each selected byte unconverted. Through a
                         // normalized (float) view the byte is recovered from the value.
+                        // A signed packed load through a normalized view is an SNORM
+                        // byte: saturate() would zero every negative one (2ad360a).
+                        // TB_PCK_SNORM=0 reads it as UNORM again.
+                        "float4" if pck && sgn && std::env::var("TB_PCK_SNORM").map_or(true, |v| v.trim() != "0") =>
+                            format!("((uint)(int)round(clamp({x}, -1.0, 1.0) * 127.0))"),
                         "float4" if pck => format!("((uint)round(saturate({x}) * 255.0))"),
                         "float4" => format!("asuint({x})"),
                         "int4" => format!("(uint){x}"),
