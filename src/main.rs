@@ -414,6 +414,12 @@ fn build_pipelines(game: &Path, session: &str) -> Result<(), Box<dyn Error>> {
         if std::env::var_os("TUXBOX_LOG").is_none() {
             std::env::set_var("TUXBOX_LOG", "stderr");
         }
+        // The build's time cap (prewarm178c: 0.4 pipelines/s, ~3 days for
+        // the journal): NEONBRIDGE_PREWARM_PSO_MIN minutes (10; 0 none).
+        if std::env::var_os("TUXBOX_PIPELINE_BUILD_MIN").is_none() {
+            let minutes = std::env::var("NEONBRIDGE_PREWARM_PSO_MIN").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10);
+            std::env::set_var("TUXBOX_PIPELINE_BUILD_MIN", minutes.to_string());
+        }
         SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     }
     let dll = game.join("d3d12_xs.dll");

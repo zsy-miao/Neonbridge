@@ -541,7 +541,21 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     };
     let (shaders, roots_at) = (lookup(b'S'), lookup(b'R'));
     let used: HashSet<u64> = frames.iter().filter(|f| f.tag == b'U').map(|f| f.hash).collect();
+    // Runs that bound each pipeline: each run journals a `U` per key it binds.
+    let mut binds: HashMap<u64, u32> = HashMap::new();
+    for f in frames.iter().filter(|f| f.tag == b'U') {
+        *binds.entry(f.hash).or_default() += 1;
+    }
     let mut order: Vec<&Frame> = frames.iter().filter(|f| matches!(f.tag, b'G' | b'C')).collect();
+    // prewarm178c: real driver compiles ran at 0.4/s (85 programs of 256+ KiB
+    // took 3416 s between them), so the 111875 journal pipelines were ~3 days
+    // away and the 110765 no run ever bound held the build up. Only the bound
+    // are built now. TUXBOX_PIPELINE_BUILD_ALL=1 builds every one.
+    let all = crate::env_toggle!("TUXBOX_PIPELINE_BUILD_ALL") == Some("1");
+    let journalled = order.len();
+    if !all {
+        order.retain(|f| used.contains(&f.hash));
+    }
     // Bound by a run first, then compute, then graphics; newest first within
     // each (later in the journal): with real driver compiles 112k pipelines
     // take hours, and a stop keeps what is most likely bound next.
@@ -549,14 +563,21 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     if crate::env_toggle!("TUXBOX_PIPELINE_BUILD_ORDER") == Some("0") {
         order.sort_by_key(|f| !used.contains(&f.hash));
     } else {
-        order.sort_by_key(|f| (!used.contains(&f.hash), f.tag != b'C', std::cmp::Reverse(f.start)));
+        // Most-bound (bound by the most runs) first.
+        order.sort_by_key(|f| (std::cmp::Reverse(binds.get(&f.hash).copied().unwrap_or(0)), f.tag != b'C', std::cmp::Reverse(f.start)));
     }
     let bound = order.iter().filter(|f| used.contains(&f.hash)).count();
     let floor = crate::env_toggle!("TUXBOX_PIPELINE_BUILD_FREE_GB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(6) << 30;
     let cap = crate::device::pipeline_cache::library_cap_mb() << 20;
+    // A time cap: past TUXBOX_PIPELINE_BUILD_MIN minutes (10; 0 none) no
+    // pipeline is started; those compiling finish and are stored.
+    let minutes = crate::env_toggle!("TUXBOX_PIPELINE_BUILD_MIN").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10);
+    let deadline = (minutes != 0).then(|| Instant::now() + Duration::from_secs(minutes * 60));
+    let timed_out = std::sync::atomic::AtomicBool::new(false);
     crate::diagnostics::log_line(format_args!(
-        "pipeline build: {} pipelines in {} ({bound} bound by a run, built first) on {threads} threads; waits while under {} GiB of commit is free",
-        order.len(), path.display(), floor >> 30));
+        "pipeline build: {} of {journalled} journal pipelines in {} ({bound} bound by a run, most-bound first{}) on {threads} threads, {}; waits while under {} GiB of commit is free",
+        order.len(), path.display(), if all { "; TUXBOX_PIPELINE_BUILD_ALL=1: the rest after" } else { "; only those, TUXBOX_PIPELINE_BUILD_ALL=1 builds all" },
+        if minutes == 0 { "no time cap".to_owned() } else { format!("for at most {minutes} min (TUXBOX_PIPELINE_BUILD_MIN)") }, floor >> 30));
     let device = Shared(unsafe { &*owner.as_raw().cast::<Device>() });
     let roots: Shared<Mutex<HashMap<u64, Option<IUnknown>>>> = Shared(Mutex::new(HashMap::new()));
     let root = |hash: u64| -> Option<IUnknown> {
@@ -597,6 +618,13 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(frame) = order.get(i) else { break };
                     if full.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if deadline.is_some_and(|d| Instant::now() >= d) {
+                        if !timed_out.swap(true, Ordering::Relaxed) {
+                            crate::diagnostics::log_line(format_args!(
+                                "pipeline build: {minutes} min up (TUXBOX_PIPELINE_BUILD_MIN); no more started, those compiling finish and are kept"));
+                        }
                         break;
                     }
                     let mut waited = false;
