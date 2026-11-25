@@ -35,6 +35,16 @@
 //! system may drop them under pressure. TUXBOX_PIPELINE_LIBRARY_MAPPED=0
 //! reads and serialises through the heap as before.
 //!
+//! The mapped file's handle stays open while its view lives (VIctory-fxceless
+//! 578d459, GPL-3.0, credit to its authors). With it closed, a save renaming
+//! the new library over the mapped file makes Windows drop the old file's
+//! contents: every page of the view not in memory then, or trimmed later,
+//! reads as zeros, the driver loads zeroed pipelines and removes the device
+//! with DXGI_ERROR_DRIVER_INTERNAL_ERROR (their runs 72/73/82; they measured
+//! 16,352 of 16,384 pages of a replaced 64 MB file reading zero). test142 was
+//! removed with that reason after five saves, at 165 MiB of free commit.
+//! TUXBOX_PIPELINE_LIBRARY_HANDLE=0 closes it after mapping, as before.
+//!
 //! All library calls are serialised: the interface does not promise that
 //! stores, loads and serialising may overlap. A saver thread writes both
 //! files every 20 s when they changed.
@@ -78,6 +88,12 @@ fn mapped() -> bool {
 struct View {
     at: *mut u8,
     len: usize,
+    /// The mapped file, open until the view is unmapped (module notes).
+    file: Option<windows::Win32::Foundation::HANDLE>,
+}
+
+fn holds_file() -> bool {
+    crate::env_toggle!("TUXBOX_PIPELINE_LIBRARY_HANDLE") != Some("0")
 }
 
 impl View {
@@ -104,10 +120,18 @@ impl View {
             let view = MapViewOfFile(mapping, if write { FILE_MAP_WRITE } else { FILE_MAP_READ }, 0, 0, len);
             // The view keeps the section, and the section the file.
             let _ = CloseHandle(mapping);
-            (!view.Value.is_null()).then(|| View { at: view.Value.cast(), len })
+            (!view.Value.is_null()).then(|| View { at: view.Value.cast(), len, file: None })
         }).flatten();
-        let _ = unsafe { CloseHandle(file) };
-        view
+        match view {
+            Some(mut view) if holds_file() => {
+                view.file = Some(file);
+                Some(view)
+            }
+            view => {
+                let _ = unsafe { CloseHandle(file) };
+                view
+            }
+        }
     }
 
     fn bytes(&self) -> &[u8] {
@@ -123,6 +147,9 @@ impl Drop for View {
     fn drop(&mut self) {
         use windows::Win32::System::Memory::*;
         let _ = unsafe { UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS { Value: self.at.cast() }) };
+        if let Some(file) = self.file.take() {
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(file) };
+        }
     }
 }
 
