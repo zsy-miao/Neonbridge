@@ -4167,6 +4167,13 @@ impl<'a> Emitter<'a> {
         states[0] = Some((entry, BTreeSet::new()));
         let mut work = vec![0usize];
         let mut budget = 20_000usize;
+        // Registers whose incoming descriptors disagreed at a block. Without this the
+        // optimistic re-insert below put back the arriving path's value after a failed
+        // join, so the entry flipped between the two descriptors on every visit and the
+        // fixpoint never settled (test153 e155e80d / 8ae931bd "did not converge").
+        // TB_DF_STICKY_CONFLICT=0 re-inserts as before.
+        let sticky = std::env::var("TB_DF_STICKY_CONFLICT").map_or(true, |v| v.trim() != "0");
+        let mut conflicts: Vec<BTreeSet<u16>> = vec![BTreeSet::new(); ranges.len()];
         // TB_SPECULATE_DESCRIPTORS (off by default, unverified): a descriptor word,
         // heap offset or raw address known on only one incoming path is taken as the
         // value on every path, the same optimistic meet this pass already applies to
@@ -4221,6 +4228,7 @@ impl<'a> Emitter<'a> {
                                     }
                                     None => {
                                         osym.remove(&k);
+                                        if sticky { conflicts[s].insert(k); }
                                     }
                                 },
                                 // Known on one path only. A descriptor stays (see below);
@@ -4239,7 +4247,7 @@ impl<'a> Emitter<'a> {
                         // path the result is unused. A later use as a descriptor would be
                         // invalid anyway if the register held something else.
                         for (k, v) in sym.iter() {
-                            if optimistic(v) && !osym.contains_key(k) {
+                            if optimistic(v) && !osym.contains_key(k) && !conflicts[s].contains(k) {
                                 osym.insert(*k, *v);
                             }
                         }
