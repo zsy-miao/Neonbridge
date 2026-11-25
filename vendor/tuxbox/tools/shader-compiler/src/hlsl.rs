@@ -9987,13 +9987,24 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let packed1 = format!("t{}", self.tmp + 1);
         self.tmp += 2;
         let half4 = ins.aux.imm2 == 71 && typed_half4();
+        // A typed element need only be aligned to its channel, so a dword may
+        // start mid-word: read the two words around it and shift (Xbox2Windows
+        // 5d0dce30 gfx2hlsl.py `ldu`, MIT, triggered02). TB_TYPED_UNALIGNED=0
+        // loads the aligned-down word as before.
+        let (a, word) = (format!("{packed}a"), |at: String| -> String {
+            if std::env::var("TB_TYPED_UNALIGNED").is_ok_and(|v| v.trim() == "0") {
+                return format!("{buffer}.Load({at})");
+            }
+            format!("((({at}) & 3u) == 0u ? {buffer}.Load({at}) : ({buffer}.Load(({at}) & ~3u) >> ((({at}) & 3u) * 8u)) | ({buffer}.Load((({at}) & ~3u) + 4u) << (32u - (({at}) & 3u) * 8u)))")
+        });
         if (ins.aux.imm2 == 69 && upstream_ff1_fmt69()) || half4 {
             self.line(&format!(
-                "uint {packed} = 0u; uint {packed1} = 0u; if (exec_lo & 1u) {{ {packed} = {buffer}.Load({address}); {packed1} = {buffer}.Load({address} + 4u); }}"
+                "uint {packed} = 0u; uint {packed1} = 0u; if (exec_lo & 1u) {{ uint {a} = {address}; {packed} = {}; {packed1} = {}; }}",
+                word(a.clone()), word(format!("{a} + 4u"))
             ));
         } else {
             self.line(&format!(
-                "uint {packed} = 0u; if (exec_lo & 1u) {packed} = {buffer}.Load({address});"
+                "uint {packed} = 0u; if (exec_lo & 1u) {{ uint {a} = {address}; {packed} = {}; }}", word(a.clone())
             ));
         }
         for channel in 0..=ins.op {
