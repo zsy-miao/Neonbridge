@@ -424,6 +424,8 @@ fn valid_request(name: &str) -> Option<(&str, &str)> {
         "dxbc" => is_key(key),
         "stencil" => key.split_once("_rt").is_some_and(|(k, n)| is_key(k) && n.len() == 1 && (b'0'..=b'7').contains(&n.as_bytes()[0])),
         "link" => { let p: Vec<_> = key.split('_').collect(); p.len() == 3 && p.iter().all(|k| is_key(k)) }
+        // The runtime's quad-mask pixel variant (xshader --quad-mask, 84fbaed).
+        "quadmask" => key.strip_suffix("_qm").is_some_and(is_key),
         _ => false,
     };
     ok.then_some((key, ext))
@@ -653,6 +655,9 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
                 let (h, slot) = key.split_once("_rt").unwrap();
                 flags.extend(["--stencil-target".into(), slot.into()]);
                 h
+            } else if ext == "quadmask" {
+                flags.push("--quad-mask".into());
+                key.strip_suffix("_qm").unwrap()
             } else { key };
             fs::write(&cooked, verified(source, source_hash)?).map_err(|e| format!("write {}: {e}", cooked.display()))?;
         }
@@ -681,7 +686,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let translate_started = std::time::Instant::now();
         // In-process first (xshader_lib.rs): the same inputs as the command line below.
         let dll = tools.xshader.with_file_name(crate::xshader_lib::DLL);
-        let inproc = if crate::xshader_lib::enabled() && dll.is_file() {
+        let inproc = if crate::xshader_lib::enabled() && dll.is_file() && ext != "quadmask" {
             let read = |p: &Path| fs::read(p).map_err(|e| format!("read {}: {e}", p.display()));
             let (consumer, order) = if ext == "link" {
                 (Some(read(&work.join("pixel.dxbc"))?), Some(read(&work.join("pixel.cso"))?))
@@ -1505,7 +1510,7 @@ impl Worker {
                 fs::read_dir(&urgent_dir).map(|d| d.flatten()
                     .map(|e| e.file_name().to_string_lossy().into_owned())
                     .filter(|k| {
-                        let pending = ["dxbc", "stencil", "link"].iter().any(|x| requests.join(format!("{k}.{x}")).exists());
+                        let pending = ["dxbc", "stencil", "link", "quadmask"].iter().any(|x| requests.join(format!("{k}.{x}")).exists());
                         if !pending { let _ = fs::remove_file(urgent_dir.join(k)); }
                         pending
                     })
