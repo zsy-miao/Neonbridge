@@ -33,6 +33,8 @@ struct Entry {
     copy: ID3D12Resource,
     /// A UAV or copy has targeted the copy: only then is it written back.
     written: bool,
+    /// Write-back number of the last UAV, copy or clear that targeted it.
+    marked: u64,
     /// Hash of the title bytes at the last refresh (TUXBOX_SHADOW_SKIP=1).
     hash: Option<u64>,
     /// Refresh number at which a descriptor last bound this shadow (or its
@@ -614,7 +616,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
-    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, hash: None,
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -696,13 +698,38 @@ fn split_import(
 pub(crate) fn mark_written(device: &Device, resource: *mut core::ffi::c_void) {
     let shadows = &device.state.shadows;
     let Some(key) = lock(&shadows.by_copy).get(&(resource as usize)).copied() else { return };
-    if let Some(entry) = lock(&shadows.entries).get_mut(&key) && !entry.written {
+    let mut entries = lock(&shadows.entries);
+    let Some(entry) = entries.get_mut(&key) else { return };
+    entry.marked = WRITE_BACKS.load(std::sync::atomic::Ordering::Relaxed);
+    if !entry.written {
         entry.written = true;
         static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
             crate::diagnostics::log_line(format_args!("shadow at {:#x} ({} bytes) is written; writing it back", key.0, key.1));
         }
     }
+}
+
+/// Write-backs so far: a shadow is copied back while a write targeted it in
+/// the last RECENT of them, not for the rest of the run, and refreshed only
+/// when its title bytes change once none has (as a read-only one ages). The
+/// mark was sticky: test137-148 copied the same 191 MB of 56 shadows back and
+/// forth every submission (refresh and write-back), ~380 MB a submit over
+/// PCIe and ~100 ms of GPU time a frame against test134's 23. A list is
+/// submitted within a few write-backs of its recording, so RECENT covers it.
+/// TUXBOX_SHADOW_RECENT=0 keeps the sticky mark; =N sets the window (4).
+static WRITE_BACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn recent_window() -> Option<u64> {
+    static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let n = *N.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_RECENT").and_then(|v| v.trim().parse().ok()).unwrap_or(4));
+    (n != 0).then_some(n)
+}
+
+/// Whether a writable shadow was targeted in the last write-backs (always,
+/// with the window off).
+fn recently_written(entry: &Entry) -> bool {
+    entry.written && recent_window().is_none_or(|n| WRITE_BACKS.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(entry.marked) <= n)
 }
 
 /// TUXBOX_SHADOW_WRITEBACK=all writes back every writable shadow, written or not.
@@ -746,12 +773,17 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         let all = write_back_all();
         // (key, is an aged check, view) to hash outside the lock.
         let mut checks: Vec<((u64, u64, bool), bool, Arc<TextureAddress>)> = Vec::new();
-        for (&key, entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (e.written || all))) {
+        if back {
+            WRITE_BACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        for (&key, entry) in entries.iter_mut().filter(|(_, e)| !back || (e.writable && (all || recently_written(e)))) {
             let (address, bytes, _) = key;
             // Dead entries wait for revival; their title pages may be unmapped.
             let Some(view) = entry.view.upgrade() else { continue };
             live += 1;
-            let aged_check = aging && !entry.writable && !fresh(now, entry.bound);
+            // A writable shadow no write targeted lately ages like a read-only one.
+            let idle_writable = entry.writable && recent_window().is_some() && !recently_written(entry);
+            let aged_check = aging && ((!entry.writable && !fresh(now, entry.bound)) || idle_writable);
             if aged_check && !aged_check_due(now, address) {
                 aged += 1;
                 continue;
