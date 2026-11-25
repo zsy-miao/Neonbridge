@@ -65,11 +65,20 @@ pub fn start(dxc: PathBuf, defines: Vec<String>, dxil: PathBuf, log: impl Fn(Str
             // among them) first: their -O0 DXIL is what the next run draws with.
             let seen = dxil.parent().and_then(Path::parent).map(|root| root.join("seen"));
             jobs.sort_by_key(|job| !seen.as_ref().is_some_and(|seen| asked_before(job, seen)));
+            // Not while the title runs (main.rs sets GAME_PID): the upgrade's
+            // dxc competes with the game for CPU. NEONBRIDGE_DXC_UPGRADE_IN_GAME=1 runs it anyway.
+            if game_running() {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
             if jobs.is_empty() {
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
             for job in jobs {
+                if game_running() {
+                    break;
+                }
                 match upgrade(&dxc, &defines, &job, secs) {
                     Ok(()) => done += 1,
                     Err(e) => {
@@ -163,4 +172,27 @@ fn asked_before(job: &Path, seen: &Path) -> bool {
     let Ok(text) = fs::read_to_string(job) else { return false };
     text.lines().skip(1).filter_map(|l| Path::new(l).file_stem()?.to_str().map(str::to_owned))
         .any(|key| seen.join(format!("{key}.dxbc")).exists() || seen.join(format!("{key}.link")).exists())
+}
+
+/// Whether the title started by this launcher is still running.
+fn game_running() -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    if std::env::var("NEONBRIDGE_DXC_UPGRADE_IN_GAME").as_deref() == Ok("1") {
+        return false;
+    }
+    let pid = crate::shaders::GAME_PID.load(std::sync::atomic::Ordering::Relaxed);
+    if pid == 0 {
+        return false;
+    }
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let alive = GetExitCodeProcess(h, &mut code) != 0 && code == STILL_ACTIVE as u32;
+        CloseHandle(h);
+        alive
+    }
 }
