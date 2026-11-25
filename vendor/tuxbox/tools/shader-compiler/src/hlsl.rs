@@ -6661,10 +6661,11 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     // outstanding in a translated shader) and s_ttracedata_imm (0x28,
                     // as VIctory 79fb722 also corrected).
                     0x03 | 0x0b | 0x12..=0x1a | 0x22 | 0x28 => None,
-                    // 0x26 is unassigned on GFX10; some tools numbered s_ttracedata_imm
-                    // there (VIctory 79fb722). Treated as the same trace no-op unless
-                    // TB_SOPP_STRICT=1, which refuses it.
-                    0x26 if std::env::var_os("TB_SOPP_STRICT").is_none_or(|v| v != "1") => None,
+                    // 0x26 is unassigned on GFX10 (VIctory 79fb722 moved
+                    // s_ttracedata_imm to 0x28), so a word there is not a known
+                    // op and the shader is refused, as the ref does.
+                    // TB_SOPP_26_NOP=1 treats it as a trace no-op again.
+                    0x26 if std::env::var("TB_SOPP_26_NOP").is_ok_and(|v| v.trim() == "1") => None,
                     0x0d if ins.aux.imm & 1 == 0 => None,
                     _ => return Err("unsupported SOPP".into()),
                 };
