@@ -230,6 +230,31 @@ fn cached_translation(cache: &Path, key: &str, stage: Stage) -> Option<Vec<u8>> 
     (source_digest(&bytes)?.as_bytes() == expected).then_some(bytes)
 }
 
+/// One line per refused shader a title thread waits on, with the
+/// translator's reason (the `.unsupported` marker's second line, else the
+/// `.failed` reply): test173 hung at 387 s on two urgent compute shaders
+/// xshader refused ("dynamic soffset unsupported"), and the log said only
+/// "prepared compute shader missing". TUXBOX_REFUSED_WAIT_LOG=0 off.
+fn log_waited_refusal(cache: Option<&Path>, failed: &Path, key: &str) {
+    if crate::env_toggle!("TUXBOX_REFUSED_WAIT_LOG") == Some("0") {
+        return;
+    }
+    static LOGGED: std::sync::Mutex<Option<std::collections::HashSet<String>>> = std::sync::Mutex::new(None);
+    {
+        let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+        let set = logged.get_or_insert_with(Default::default);
+        if set.len() >= 256 || !set.insert(key.to_owned()) {
+            return;
+        }
+    }
+    let marker = cache.and_then(|c| fs::read_to_string(c.join(format!("{key}.unsupported"))).ok());
+    let reason = marker.as_deref().and_then(|m| m.lines().nth(1)).map(str::to_owned)
+        .or_else(|| fs::read_to_string(failed).ok().map(|f| f.lines().next().unwrap_or("").to_owned()))
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or_else(|| "no reason recorded".into());
+    crate::diagnostics::log_line(format_args!("title waits on refused shader {key}: {}", reason.trim()));
+}
+
 fn cached_refusal(cache: &Path, key: &str) -> bool {
     let Ok(file) = fs::File::open(cache.join(format!("{key}.unsupported"))) else {
         return false;
@@ -462,6 +487,9 @@ fn request(
             return Some(bytes);
         }
         if cached_refusal(cache, key) {
+            if DEADLINE.with(|d| d.get()).is_some() || UNBOUNDED.with(|u| u.get()) {
+                log_waited_refusal(Some(cache.as_ref()), &failed, key);
+            }
             reason("translator refused it (cached .unsupported)");
             return None;
         }
@@ -503,6 +531,9 @@ fn request(
             mark();
         }
         if failed.exists() {
+            if marked {
+                log_waited_refusal(compiler_cache(dir).map(|c| c.as_path()), &failed, key);
+            }
             reason("translator refused or failed it (.failed; see shader-worker.log)");
             return None;
         }
