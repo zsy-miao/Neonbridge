@@ -19,10 +19,20 @@
 //! load. A DIAGNOSTIC, off by default: TUXBOX_NO_WATCHDOG=1 turns both
 //! branches into NOPs, so an A/B run shows whether a post-load exit or stall
 //! is this watchdog. The cause it masks is the slow builds themselves.
+//!
+//! Format 0x0a pitch (leonida-ce e8ca18c79, GPL-3.0, credit to its authors):
+//! the title's pitch function at +0x1555c10 handles format & 0xfff values 1-4,
+//! 9 and above 0x14, so a CPU staging image of format 0x0a (R32G32B32A32) gets
+//! pitch 0. Its generated colour ramp then fills 4 KiB into a 0-byte buffer
+//! and overruns the heap's next node: the 117-143 s stop. A stub answers
+//! width * 16 for 0x0a and runs the replaced code otherwise.
+//! TUXBOX_FMT10_PITCH=0 leaves it alone. The open cause upstream is why the
+//! title takes the staging fallback at all (its texture lock at +0x1336320
+//! fails).
 use core::ffi::c_void;
 use windows_sys::Win32::System::Diagnostics::Debug::FlushInstructionCache;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Memory::{PAGE_EXECUTE_READWRITE, VirtualProtect};
+use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAlloc, VirtualProtect};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 /// Rewrites `expect.len()` bytes at `rva` of the exe to `with` when they are `expect`.
@@ -67,9 +77,60 @@ pub(crate) unsafe fn install() {
         with[2..].copy_from_slice(&rel.to_le_bytes());
         unsafe { patch("audio lock leak (leonida-ce 62ad4fdf, TUXBOX_AUDIO_LOCK_PATCH=0 off)", AT, &[0x0f, 0x84, 0xae, 0x05, 0x00, 0x00], &with) };
     }
+    if std::env::var_os("TUXBOX_FMT10_PITCH").is_none_or(|v| v != "0") {
+        unsafe { fmt10_pitch() };
+    }
     if std::env::var_os("TUXBOX_NO_WATCHDOG").is_some_and(|v| v == "1") {
         for (rva, expect) in [(0x221_5c70usize, [0x74u8, 0x04]), (0x221_5bdc, [0x73, 0x2e])] {
             unsafe { patch("stall watchdog off (ScarlettPort bb3a27a, TUXBOX_NO_WATCHDOG=1 diagnostic)", rva, &expect, &[0x90, 0x90]) };
         }
     }
+}
+
+/// leonida-ce e8ca18c79 `xs_patch_fmt10_pitch`, base-relative.
+unsafe fn fmt10_pitch() {
+    const AT: usize = 0x155_5c29;
+    const EXPECT: [u8; 10] = [0x83, 0xc0, 0xfd, 0x83, 0xf8, 0x02, 0x72, 0x55, 0x31, 0xd2];
+    let base = unsafe { GetModuleHandleW(core::ptr::null()) } as usize;
+    if base == 0 {
+        return;
+    }
+    let now = unsafe { core::slice::from_raw_parts((base + AT) as *const u8, EXPECT.len()) };
+    if now != EXPECT {
+        crate::loader::log(&format!("title patch format 0x0a pitch: bytes at game+{AT:#x} differ ({}), not applied", hex(now)));
+        return;
+    }
+    // A stub page within rel32 reach below the image.
+    let mut stub = core::ptr::null_mut::<u8>();
+    let mut a = base.saturating_sub(0x100_0000);
+    while stub.is_null() && a > base.saturating_sub(0x7f00_0000) && a >= 0x1_0000 {
+        stub = unsafe { VirtualAlloc(a as *const c_void, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE) }.cast();
+        a -= 0x1_0000;
+    }
+    if stub.is_null() {
+        crate::loader::log("title patch format 0x0a pitch: no stub page near the image, not applied");
+        return;
+    }
+    let mut code = vec![
+        0x83, 0xf8, 0x0a, // cmp eax, 10 (eax = format & 0xfff)
+        0x75, 0x06, // jne +6
+        0xc1, 0xe2, 0x04, // shl edx, 4 (width * 16)
+        0x89, 0xd0, // mov eax, edx
+        0xc3, // ret
+        0x83, 0xc0, 0xfd, // add eax, -3 (replaced)
+        0x83, 0xf8, 0x02, // cmp eax, 2
+        0x73, 0x0e, // jae +14
+    ];
+    for target in [base + 0x155_5c86, base + 0x155_5c31] {
+        code.extend_from_slice(&[0xff, 0x25, 0, 0, 0, 0]);
+        code.extend_from_slice(&(target as u64).to_le_bytes());
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(code.as_ptr(), stub, code.len());
+        FlushInstructionCache(GetCurrentProcess(), stub as *const c_void, code.len());
+    }
+    let rel = (stub as i64 - (base + AT + 5) as i64) as i32;
+    let mut with = [0xe9, 0, 0, 0, 0, 0x90, 0x90, 0x90];
+    with[1..5].copy_from_slice(&rel.to_le_bytes());
+    unsafe { patch("format 0x0a pitch (leonida-ce e8ca18c79, TUXBOX_FMT10_PITCH=0 off)", AT, &EXPECT[..8], &with) };
 }
