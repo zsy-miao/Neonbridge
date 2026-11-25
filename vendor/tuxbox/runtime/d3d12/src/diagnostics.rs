@@ -633,6 +633,7 @@ pub(crate) mod memory;
 pub(crate) mod queue_waits;
 pub(crate) mod frame_work;
 pub(crate) mod transient_pool;
+pub(crate) mod tdr;
 
 pub(crate) mod threads {
     use std::collections::HashMap;

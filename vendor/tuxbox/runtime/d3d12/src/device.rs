@@ -1597,6 +1597,7 @@ mod adapters {
             None => list.first().cloned(),
         };
         let all: Vec<String> = list.iter().map(name).collect();
+        crate::diagnostics::tdr::log();
         crate::diagnostics::log_line(format_args!("adapters by performance {all:?}; using {:?}{}",
             pick.as_ref().map(name), wanted.map(|w| format!(" (TUXBOX_ADAPTER={w})")).unwrap_or_default()));
         pick
