@@ -132,9 +132,120 @@ fn wave_size_defines(cache_root: &Path) -> Vec<String> {
 
 pub struct Worker {
     stop: Arc<AtomicBool>,
+    /// Retranslates stale programs while the game runs (stale_on); not
+    /// joined at stop, it stops taking programs.
+    _background: Option<thread::JoinHandle<()>>,
     handle: Option<thread::JoinHandle<()>>,
     pub stats: Arc<Stats>,
     private: PathBuf,
+}
+
+/// Stale translations: a program's last good translation from any xshader
+/// build is kept in `<cache_root>/last/<key>.cso` (with `.sha256`, and
+/// `.from` naming the build that made it). After an xshader change every
+/// build-keyed entry was stale and the launch translated the whole seen set
+/// again (test143: ten minutes) before the game started. Now only programs
+/// never translated hold the launch; the rest start on their last
+/// translation, are translated again in the background, and the title's
+/// requests are answered from the last translation at once while the fresh
+/// one is made (it is served from the next request on). VIctory c47b529 keys
+/// its cache by the translator and five-star 2d73fe7 keeps it across
+/// rebuilds; this keeps the last one across translator builds as a fallback.
+/// NEONBRIDGE_STALE_SHADERS=0 blocks on every stale program as before.
+pub fn stale_on() -> bool {
+    std::env::var("NEONBRIDGE_STALE_SHADERS").as_deref() != Ok("0")
+}
+
+pub static STALE_SERVED: AtomicUsize = AtomicUsize::new(0);
+pub static STALE_REPLACED: AtomicUsize = AtomicUsize::new(0);
+pub static STALE_UNCHANGED: AtomicUsize = AtomicUsize::new(0);
+
+/// `<cache_root>/last` for a build cache `<cache_root>/runtime/<build>`.
+fn last_dir(cache: &Path) -> Option<PathBuf> {
+    Some(cache.parent()?.parent()?.join("last"))
+}
+
+/// The last good translation of `key` from any build, verified.
+fn last_good(cache: &Path, key: &str) -> Option<Vec<u8>> {
+    let dir = last_dir(cache)?;
+    let (bytes, sum) = (fs::read(dir.join(format!("{key}.cso"))).ok()?, fs::read(dir.join(format!("{key}.sha256"))).ok()?);
+    (bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes)).then_some(bytes)
+}
+
+/// Keeps `bytes` as `key`'s last good translation (made by build `cache`),
+/// counting whether it replaced a different one.
+fn remember(cache: &Path, key: &str, bytes: &[u8]) {
+    let Some(dir) = last_dir(cache) else { return };
+    let build = cache.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let from = dir.join(format!("{key}.from"));
+    if fs::read_to_string(&from).is_ok_and(|b| b == build) {
+        return;
+    }
+    match last_good(cache, key) {
+        Some(old) if old == bytes => { STALE_UNCHANGED.fetch_add(1, Ordering::Relaxed); }
+        Some(_) => { STALE_REPLACED.fetch_add(1, Ordering::Relaxed); }
+        None => {}
+    }
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    // Under temporary names, then renamed: a reader sees a whole pair or the old one.
+    let tag = format!("{}.{}", std::process::id(), sha256(key.as_bytes()).get(..8).unwrap_or("x"));
+    let (cso, sum) = (dir.join(format!("{key}.cso.{tag}.tmp")), dir.join(format!("{key}.sha256.{tag}.tmp")));
+    let ok = fs::write(&cso, bytes).is_ok() && fs::write(&sum, sha256(bytes)).is_ok()
+        && fs::rename(&cso, dir.join(format!("{key}.cso"))).is_ok() && fs::rename(&sum, dir.join(format!("{key}.sha256"))).is_ok();
+    if ok {
+        let _ = fs::write(&from, build);
+    } else {
+        let _ = fs::remove_file(&cso);
+        let _ = fs::remove_file(&sum);
+    }
+}
+
+/// A program this build refuses loses its last translation: the refusal may
+/// be what an older build got wrong.
+fn forget(cache: &Path, key: &str) {
+    if let Some(dir) = last_dir(cache) {
+        for ext in ["cso", "sha256", "from"] {
+            let _ = fs::remove_file(dir.join(format!("{key}.{ext}")));
+        }
+    }
+}
+
+/// Fills `last` once from the build caches already on disk, newest first, so
+/// the first xshader change after this landed already starts on them.
+fn seed_last(cache_root: &Path, cache: &Path) -> usize {
+    let Some(dir) = last_dir(cache) else { return 0 };
+    if dir.exists() || fs::create_dir_all(&dir).is_err() {
+        return 0;
+    }
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(cache_root.join("runtime")).into_iter().flatten().flatten()
+        .filter(|e| is_key(&e.file_name().to_string_lossy()))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut seeded = 0;
+    for (_, build) in dirs.iter().take(8) {
+        let Ok(entries) = fs::read_dir(build) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(key) = name.strip_suffix(".cso") else { continue };
+            if dir.join(&name).exists() {
+                continue;
+            }
+            let (Ok(bytes), Ok(sum)) = (fs::read(entry.path()), fs::read(build.join(format!("{key}.sha256")))) else { continue };
+            if bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes) {
+                remember(build, key, &bytes);
+                seeded += 1;
+            }
+        }
+    }
+    seeded
+}
+
+/// One line on how many of this run's programs were served stale.
+pub fn stale_summary() -> String {
+    format!("stale shaders: {} served from an older xshader's translation while the new one was made, {} retranslated to different code, {} retranslated unchanged (NEONBRIDGE_STALE_SHADERS=0 waits for every one)",
+        STALE_SERVED.load(Ordering::Relaxed), STALE_REPLACED.load(Ordering::Relaxed), STALE_UNCHANGED.load(Ordering::Relaxed))
 }
 
 /// dxc outputs reused by the normalised HLSL key alone (not the exact text).
@@ -559,6 +670,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         };
         if let (Ok(bytes), Ok(sum)) = (fs::read(&dest), fs::read(&checksum))
             && bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() {
+            remember(cache, key, &bytes);
             publish(&bytes)?;
             return Ok(Outcome::Cached);
         }
@@ -577,6 +689,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Ok(()) => {}
             Err(ToolError::Exit(XSHADER_UNSUPPORTED_HLSL, msg)) => {
                 let _ = fs::write(&refusal, format!("{key}\n{msg}"));
+                forget(cache, key);
                 return Ok(Outcome::Unsupported(msg));
             }
             Err(ToolError::Exit(c, msg)) => return Err(format!("xshader failed ({c}): {msg}")),
@@ -629,6 +742,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
                 .and_then(|_| fs::rename(&copy, &dest)).and_then(|_| fs::rename(&stamp, &checksum))
                 .map_err(|e| format!("store {}: {e}", dest.display()))?;
+            remember(cache, key, &bytes);
             publish(&bytes)?;
             return Ok(Outcome::Reused(translate_ms));
         }
@@ -692,6 +806,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         fs::rename(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
         fs::rename(&stamp, &checksum).map_err(|e| e.to_string())?;
+        remember(cache, key, &bytes);
         publish(&bytes)?;
         Ok(Outcome::Compiled(translate_ms, dxc_ms))
     })();
@@ -928,7 +1043,8 @@ fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet
 /// title asks for them).
 #[allow(clippy::too_many_arguments)]
 fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
-    only: Option<&std::collections::HashSet<String>>, label: &str, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync)) {
+    only: Option<&std::collections::HashSet<String>>, label: &str, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync),
+    stop: Option<&AtomicBool>) {
     let Ok(entries) = fs::read_dir(archive) else { return };
     let jobs: Vec<(PathBuf, String, String)> = entries.flatten().filter_map(|e| {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -951,8 +1067,8 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         println!("[launch] {line}");
         log(line);
     };
-    say(format!("{label}: {total} programs to translate before the game starts (stops taking new ones {} s from now; NEONBRIDGE_PREWARM_MAX_S)",
-        deadline.saturating_duration_since(std::time::Instant::now()).as_secs()));
+    say(format!("{label}: {total} programs to translate {} (stops taking new ones {} s from now; NEONBRIDGE_PREWARM_MAX_S)",
+        if stop.is_some() { "while the game runs" } else { "before the game starts" }, deadline.saturating_duration_since(std::time::Instant::now()).as_secs()));
     let started = std::time::Instant::now();
     thread::scope(|scope| {
         scope.spawn(|| {
@@ -977,9 +1093,10 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
         for _ in 0..workers {
             scope.spawn(|| {
                 while std::time::Instant::now() < deadline
+                    && !stop.is_some_and(|s| s.load(Ordering::Acquire))
                     && let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed))
                 {
-                    while !room_for_programs(running.load(Ordering::Acquire)) {
+                    while !room_for_programs(running.load(Ordering::Acquire)) && !stop.is_some_and(|s| s.load(Ordering::Acquire)) {
                         thread::sleep(Duration::from_millis(250));
                     }
                     running.fetch_add(1, Ordering::AcqRel);
@@ -1076,22 +1193,59 @@ impl Worker {
         // whatever TUXBOX_PREWARM says; with an unchanged toolchain they are
         // cache hits. NEONBRIDGE_PREWARM_SEEN=0 turns it off.
         let deadline = prewarm_deadline();
+        let stale = stale_on();
+        // Seen programs with a translation from an older build only: the game
+        // starts on it and they are translated again in the background.
+        let mut stale_seen = std::collections::HashSet::new();
+        if stale {
+            let seeded = seed_last(&cache_root, &cache);
+            if seeded > 0 {
+                log(format!("stale shaders: {seeded} last good translations kept from the build caches on disk"));
+            }
+        }
         if std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0") {
             let started = std::time::Instant::now();
-            let seen = seen_requests(&cache_root, &archive);
-            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, Some(&seen), "seen prewarm", deadline, &log);
+            let mut seen = seen_requests(&cache_root, &archive);
+            if stale {
+                stale_seen = seen.iter().filter(|n| valid_request(n).is_some_and(|(key, _)| {
+                    !cache.join(format!("{key}.cso")).exists() && last_good(&cache, key).is_some()
+                })).cloned().collect();
+                seen.retain(|n| !stale_seen.contains(n));
+                log(format!("seen prewarm: {} programs have only an older xshader's translation: the game starts on it and they are translated again while it runs (NEONBRIDGE_STALE_SHADERS=0 waits for them)",
+                    stale_seen.len()));
+            }
+            prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, Some(&seen), "seen prewarm", deadline, &log, None);
             log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
                 seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
                 stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
         }
-        // TUXBOX_PREWARM=0 serves the title's requests at once, without building the archive first.
-        if std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
-            prewarm(&tools, &cache, &archive, &private.join("prewarm"), prewarm_workers, &stats, None, "full prewarm (TUXBOX_PREWARM=0 skips)", deadline, &log);
+        // TUXBOX_PREWARM=0 serves the title's requests at once, without
+        // building the archive first. With stale translations served it runs
+        // in the background after the stale programs.
+        let full = std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0");
+        if full && !stale {
+            prewarm(&tools, &cache, &archive, &private.join("prewarm"), prewarm_workers, &stats, None, "full prewarm (TUXBOX_PREWARM=0 skips)", deadline, &log, None);
         }
-        let (s, st) = (stop.clone(), stats.clone());
         let log = Arc::new(log);
+        let tools = Arc::new(tools);
+        let background = (stale && (full || !stale_seen.is_empty())).then(|| {
+            let (tools, cache, archive, scratch, stats, log, stop) =
+                (tools.clone(), cache.clone(), archive.clone(), private.join("prewarm-stale"), stats.clone(), log.clone(), stop.clone());
+            // Half the game-time workers: the title's own requests keep the rest.
+            let n = workers.div_ceil(2).max(1);
+            thread::Builder::new().name("shader-stale".into()).spawn(move || {
+                let forever = std::time::Instant::now() + Duration::from_secs(10 * 365 * 24 * 3600);
+                if !stale_seen.is_empty() {
+                    prewarm(&tools, &cache, &archive, &scratch, n, &stats, Some(&stale_seen), "stale retranslation", forever, &*log, Some(&stop));
+                }
+                if full {
+                    prewarm(&tools, &cache, &archive, &scratch.with_file_name("prewarm"), n, &stats, None, "full prewarm in the background (TUXBOX_PREWARM=0 skips)", forever, &*log, Some(&stop));
+                }
+                log(stale_summary());
+            }).ok()
+        }).flatten();
+        let (s, st) = (stop.clone(), stats.clone());
         let handle = thread::Builder::new().name("shader-worker".into()).spawn(move || {
-            let tools = Arc::new(tools);
             let busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>> = Default::default();
             let active = Arc::new(AtomicUsize::new(0));
             // test110: a title thread waiting on one translation sat behind
@@ -1167,6 +1321,21 @@ impl Worker {
                         let (tools, cache, session, st, log, busy, active) =
                             (tools.clone(), cache.clone(), session_dir.clone(), st.clone(), log.clone(), busy.clone(), active.clone());
                         thread::spawn(move || {
+                            // A program translated by an older build only is
+                            // answered with that at once, then translated:
+                            // the fresh one serves the next request.
+                            let served_stale = stale && !cache.join(format!("{key}.cso")).exists()
+                                && last_good(&cache, &key).is_some_and(|bytes| {
+                                    let tmp = session.join(format!("{key}.{}.stale", std::process::id()));
+                                    fs::write(&tmp, &bytes).and_then(|_| fs::rename(&tmp, session.join(format!("{key}.cso")))).is_ok()
+                                });
+                            if served_stale {
+                                let _ = fs::remove_file(session.join("urgent").join(&key));
+                                let n = STALE_SERVED.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n <= 8 || n.is_power_of_two() {
+                                    log(format!("Xbox shader {key}: served an older xshader's translation while the new one is made ({n} so far; NEONBRIDGE_STALE_SHADERS=0 waits)"));
+                                }
+                            }
                             let outcome = compile(&path, &key, &ext, &tools, &cache, &session);
                             match &outcome {
                                 Outcome::Compiled(xs, dxc) => {
@@ -1186,7 +1355,10 @@ impl Worker {
                                 Outcome::Failed(m) => { st.failed.fetch_add(1, Ordering::Relaxed); log(format!("Xbox shader {key}: {m}")); }
                             }
                             if matches!(outcome, Outcome::Unsupported(_) | Outcome::Failed(_)) {
-                                let _ = fs::write(session.join(format!("{key}.failed")), b"");
+                                // The title holds the older translation already.
+                                if !served_stale {
+                                    let _ = fs::write(session.join(format!("{key}.failed")), b"");
+                                }
                                 // Keep refused programs as a corpus for translator work offline.
                                 if ext == "dxbc" && let Some(root) = cache.parent() {
                                     let refused = root.join("refused");
@@ -1209,7 +1381,7 @@ impl Worker {
                 thread::sleep(Duration::from_millis(10));
             }
         }).map_err(|e| e.to_string())?;
-        Ok(Self { stop, handle: Some(handle), stats, private })
+        Ok(Self { stop, _background: background, handle: Some(handle), stats, private })
     }
 
     pub fn stop(mut self) -> Arc<Stats> {

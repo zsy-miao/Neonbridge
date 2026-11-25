@@ -186,6 +186,10 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             if std::env::var_os("TUXBOX_LOG").is_none() {
                 std::env::set_var("TUXBOX_LOG", "stderr");
             }
+            // Every program is translated by this build, none served stale.
+            if std::env::var_os("NEONBRIDGE_STALE_SHADERS").is_none() {
+                std::env::set_var("NEONBRIDGE_STALE_SHADERS", "0");
+            }
         }
     }
     // A release ships the providers prebuilt beside the exe: use them unless a
@@ -519,6 +523,11 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
         }
         if std::env::var_os("TUXBOX_PREWARM").is_none() {
             std::env::set_var("TUXBOX_PREWARM", "0");
+        }
+        // The point is to translate with this build before the game, so
+        // nothing is left to stale serving.
+        if std::env::var_os("NEONBRIDGE_STALE_SHADERS").is_none() {
+            std::env::set_var("NEONBRIDGE_STALE_SHADERS", "0");
         }
     }
     let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
