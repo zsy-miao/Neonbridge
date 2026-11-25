@@ -1048,6 +1048,22 @@ pub(super) unsafe extern "system" fn uav(
     let buffer = unsafe { view_resource(device, object, desc, handle) };
     let buffer = uav_alias.as_ref().map(|(alias, _)| alias).or(buffer);
     if let Some(resource) = buffer { shadow::mark_written(device, resource.as_raw()); }
+    // View marks (view_marks.rs): a UAV of a writable shadow's copy marks
+    // the pages it writes; its byte offset in the copy is known for raw and
+    // structured views (a typed one gives the shadow's marks up).
+    super::view_marks::write(handle.ptr, buffer.and_then(|resource| {
+        let offset = unsafe { desc.as_ref() }.filter(|d| d.ViewDimension == D3D12_UAV_DIMENSION_BUFFER).and_then(|d| {
+            let b = unsafe { d.Anonymous.Buffer };
+            if b.StructureByteStride != 0 {
+                Some(b.FirstElement * u64::from(b.StructureByteStride))
+            } else if b.Flags.contains(D3D12_BUFFER_UAV_FLAG_RAW) {
+                Some(b.FirstElement * 4)
+            } else {
+                None
+            }
+        });
+        shadow::marks_entry(device, resource.as_raw(), offset)
+    }));
     let counter = if counter.is_null() {
         None
     } else {
@@ -1653,6 +1669,7 @@ pub(super) unsafe extern "system" fn address_uav(
         }
     }
     shadow::mark_written(device, entry.native.as_raw());
+    super::view_marks::write(handle.ptr, shadow::marks_entry(device, entry.native.as_raw(), Some(unsafe { view.Anonymous.Buffer.FirstElement } * element)));
     unsafe { device.native.CreateUnorderedAccessView(Some(&entry.native), None, Some(&view), handle) };
     device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
     static FIRST: std::sync::Once = std::sync::Once::new();

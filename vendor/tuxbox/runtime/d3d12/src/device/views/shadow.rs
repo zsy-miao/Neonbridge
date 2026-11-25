@@ -44,6 +44,38 @@ struct Entry {
     /// address, bytes), filled from title memory by the CPU before the
     /// piece's GPU copy (see cpu_piece).
     cpu: Vec<(usize, u64, u64, ID3D12Resource)>,
+    /// Writable copies: its bits in the view-marks bitmap (view_marks.rs),
+    /// so a write-back copies only the 64 KiB pages a shader marked. None
+    /// copies it whole.
+    run: Option<super::super::view_marks::Run>,
+}
+
+impl Drop for Entry {
+    fn drop(&mut self) {
+        if let Some(run) = self.run.take() {
+            super::super::view_marks::release(run);
+        }
+    }
+}
+
+/// The view-marks entry for a UAV of `resource` starting `offset` bytes into
+/// it, when `resource` is a writable shadow's copy with a run. A UAV whose
+/// offset is unknown (None) gives the shadow's run up, so it copies whole:
+/// a view that cannot mark must not leave its writes unmarked.
+pub(crate) fn marks_entry(device: &Device, resource: *mut core::ffi::c_void, offset: Option<u64>) -> Option<(u32, u32)> {
+    let shadows = &device.state.shadows;
+    let key = lock(&shadows.by_copy).get(&(resource as usize)).copied()?;
+    let mut entries = lock(&shadows.entries);
+    let entry = entries.get_mut(&key)?;
+    let run = entry.run?;
+    match offset {
+        Some(offset) => Some(super::super::view_marks::entry(run, offset)),
+        None => {
+            entry.run = None;
+            super::super::view_marks::release(run);
+            None
+        }
+    }
 }
 
 /// test108/109 bound over 8192 small address SRVs (32 B to 12 KiB, title RVA
@@ -616,7 +648,7 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool) -> Result<
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
-    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, hash: None,
+    let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, hash: None,
         bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed) });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
@@ -755,6 +787,8 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         return Ok(());
     }
     let mut copies = Vec::new();
+    // Write-backs by view marks: (run, view, pieces).
+    let mut marked: Vec<(super::super::view_marks::Run, Arc<TextureAddress>, Vec<(ID3D12Resource, u64, u64, u64)>)> = Vec::new();
     // CPU fills of upload pieces: (mapped, title address, bytes, the upload
     // buffer, held until filled).
     let mut fills: Vec<(usize, u64, u64, ID3D12Resource)> = Vec::new();
@@ -808,6 +842,9 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 fills.extend(entry.cpu.iter().map(|(m, a, b, r)| (*m, *a, *b, r.clone())));
             } else if !entry.cpu.is_empty() {
                 continue;
+            } else if let Some(run) = entry.run {
+                marked.push((run, view.clone(), entry.pieces.clone()));
+                continue;
             }
             for (source, offset, at, bytes) in &entry.pieces {
                 copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
@@ -849,7 +886,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         unsafe { fill(*mapped, *address, *bytes) };
     }
     drop(fills);
-    if copies.is_empty() {
+    if copies.is_empty() && marked.is_empty() {
         return Ok(());
     }
     let mut recorders = lock(&shadows.recorders);
@@ -877,6 +914,16 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
             unsafe { recorder.list.CopyBufferRegion(&view.native, *at, source, *offset, *bytes) };
         }
         recorder.held.push((source.clone(), view.native.clone()));
+    }
+    for (run, view, pieces) in &marked {
+        if !super::super::view_marks::record_write_back(&recorder.list, *run, &view.native, pieces) {
+            for (source, offset, at, bytes) in pieces {
+                unsafe { recorder.list.CopyBufferRegion(source, *offset, &view.native, *at, *bytes) };
+            }
+        }
+        for (source, ..) in pieces {
+            recorder.held.push((source.clone(), view.native.clone()));
+        }
     }
     unsafe {
         recorder.list.Close()?;
