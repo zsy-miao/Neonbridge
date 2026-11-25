@@ -9317,6 +9317,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             };
             return self.wv(&d, &format!("({pack}({}) | ({pack}({}) << 16))", halves[0], halves[1]));
         }
+        // xcl 74fe4c2 (GPL-2.0, credit): v_div_fixup_f16 is v_div_fixup_f32 on
+        // half operands, rounded back with tb_f16_rne. TB_DIV_FIXUP_F16=0 leaves it unsupported.
+        if m == "v_div_fixup_f16" && div_ops_on() && std::env::var("TB_DIV_FIXUP_F16").map_or(true, |v| v.trim() != "0") {
+            let (a, b, c) = (h16(&s[0])?, h16(&s[1])?, h16(&s[2])?);
+            return self.wv(&d, &hres(format!("asfloat(tb_div_fixup({a}, {b}, {c}))")));
+        }
         if matches!(m.as_str(), "v_min3_f16" | "v_max3_f16" | "v_med3_f16") {
             let (a, b, c) = (h16(&s[0])?, h16(&s[1])?, h16(&s[2])?);
             let e = match m.as_str() {
