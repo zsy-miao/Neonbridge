@@ -27,7 +27,7 @@
 //! smallest lead over the clock.
 use std::ffi::c_void;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use crate::loader::{log, patch_imports};
@@ -211,6 +211,43 @@ pub unsafe extern "system" fn tuxbox_bink_state(decoded: *mut u64) -> u32 {
     SYNC_DECODES.load(Ordering::Acquire) + u32::from(IN_FLIGHT.load(Ordering::Acquire))
 }
 
+/// The highest completed-decode count (TuxBoxBinkState's) d3d12 has read the
+/// video planes after: d3d12 calls this once it has read a plane texture
+/// while Bink was idle, passing the count it saw then.
+static PLANES_READ: AtomicU64 = AtomicU64::new(0);
+/// Whether d3d12 has ever reported a plane read (an older d3d12 never does).
+static PLANES_REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[unsafe(export_name = "TuxBoxBinkPlanesRead")]
+pub extern "system" fn tuxbox_bink_planes_read(decoded: u64) {
+    PLANES_REPORTED.store(true, Ordering::Release);
+    PLANES_READ.fetch_max(decoded, Ordering::AcqRel);
+}
+
+/// Catch-up's fence: wait until d3d12 has read the planes of the latest
+/// decode (the frame the title shows), so the extra decodes cannot overwrite
+/// a ring slot before it is read. TUXBOX_BINK_PLANE_FENCE_MS (default 8, short since the read may come from the same thread after this returns; 0
+/// off) bounds the wait; a timeout skips this call's catch-up.
+fn planes_fenced() -> bool {
+    use std::sync::OnceLock;
+    static MS: OnceLock<u64> = OnceLock::new();
+    let ms = *MS.get_or_init(|| std::env::var("TUXBOX_BINK_PLANE_FENCE_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(8));
+    if ms == 0 || !PLANES_REPORTED.load(Ordering::Acquire) {
+        return true;
+    }
+    let want = DECODED.load(Ordering::Acquire);
+    let until = Instant::now() + std::time::Duration::from_millis(ms);
+    while PLANES_READ.load(Ordering::Acquire) < want {
+        if Instant::now() >= until {
+            FENCE_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(500));
+    }
+    true
+}
+static FENCE_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+
 /// The first calls of the decode cycle, in order, with frame and thread
 /// (TUXBOX_BINK_CALL_TRACE, default 48; 0 none).
 fn trace_call(index: usize, movie: u64, phase: &str) {
@@ -323,7 +360,7 @@ unsafe fn catch_up(movie: u64) {
     let real = |i: usize| -> F4 { unsafe { std::mem::transmute(REAL[i].load(Ordering::Acquire)) } };
     let mut done = 0;
     for _ in 0..behind.min(cap) {
-        if header(movie).is_none_or(|h| h[3] >= frames) {
+        if header(movie).is_none_or(|h| h[3] >= frames) || !planes_fenced() {
             break;
         }
         match multi {
