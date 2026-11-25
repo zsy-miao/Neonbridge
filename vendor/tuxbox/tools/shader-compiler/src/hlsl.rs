@@ -1858,6 +1858,26 @@ fn unspill_on() -> bool {
     std::env::var("TB_MASK_UNSPILL").map_or(true, |v| v.trim() != "0")
 }
 
+/// No s_cmp / s_bitcmp reads an SGPR that ever holds a lane mask (a v_cmp
+/// destination, a saveexec result or EXEC copy), and no SCC comes from s_cmp on
+/// VCC or EXEC: every SCC branch is then wave-uniform in the lane model.
+fn bpermute_scc_uniform(insns: &[Insn]) -> bool {
+    let mut masks: BTreeSet<u8> = BTreeSet::new();
+    for ins in insns {
+        let m = ins.mnemonic.as_str();
+        let from_mask = m.starts_with("v_cmp") || m.contains("saveexec") || m.starts_with("v_cndmask")
+            || ins.src.iter().any(|o| matches!(o, Opnd::ExecLo | Opnd::ExecHi | Opnd::VccLo | Opnd::VccHi) || matches!(o, Opnd::Sgpr(k) if masks.contains(k)));
+        if from_mask && !m.starts_with("s_cmp") && !m.starts_with("s_bitcmp") {
+            for k in sgpr_writes(ins) { masks.insert(k); }
+        }
+    }
+    insns.iter().all(|ins| {
+        let m = ins.mnemonic.as_str();
+        !(m.starts_with("s_cmp") || m.starts_with("s_bitcmp"))
+            || !ins.src.iter().any(|o| matches!(o, Opnd::ExecLo | Opnd::ExecHi | Opnd::VccLo | Opnd::VccHi) || matches!(o, Opnd::Sgpr(k) if masks.contains(k)))
+    })
+}
+
 /// SGPR numbers `ins` writes, conservatively wide.
 fn sgpr_writes(ins: &Insn) -> Vec<u8> {
     let m = ins.mnemonic.as_str();
@@ -2985,7 +3005,13 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     // EXEC and VCC branches vote across the wave (Emitter::exec_vote), so the
     // host wave stays whole and absent source lanes are masked at the read
     // (leonida ds_lane_read). SCC branches can still split it per lane.
-    if uses_bpermute && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && !matches!(ins.op, 2 | 6..=9)) {
+    // An SCC branch splits the host wave only when its SCC differs per lane. Mask
+    // ops set it from the whole mask (scc_votes, xcl 438d420 / 1c971de SccKind::Any);
+    // a compare of SGPRs no lane mask was ever written to is uniform. Such SCC
+    // branches no longer refuse the permute. TB_BPERMUTE_UNIFORM_SCC=0 refuses them.
+    let uniform_scc = !wave_cull && !resolve_wave32 && bpermute_scc_uniform(&insns)
+        && std::env::var("TB_BPERMUTE_UNIFORM_SCC").map_or(true, |v| v.trim() != "0");
+    if uses_bpermute && !uniform_scc && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some() && !matches!(ins.op, 2 | 6..=9)) {
         return Err("backward permute with scalar branches needs verified convergent control flow".into());
     }
     let uses_quad_add = insns.iter().any(is_quad_exchange);
