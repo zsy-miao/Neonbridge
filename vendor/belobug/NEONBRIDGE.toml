@@ -5,7 +5,7 @@
 # No rt patch: rt-victory.patch does not apply to this tree (draw.rs, list.rs,
 # pipeline/library.rs moved) and the tree runs rays off, as its README says.
 name = "belobug"
-rank = 4   # launcher list order (Master)
+rank = 5   # launcher list order (Master)
 about = "VIctory-Belobug-AMD 000ffdd (GPL-3.0), unverified here: claims a lit world with vehicles at 3-5 fps (AMD)"
 upstream = "https://github.com/Belobug/VIctory-Belobug-AMD"
 build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md:202 (+--locked)

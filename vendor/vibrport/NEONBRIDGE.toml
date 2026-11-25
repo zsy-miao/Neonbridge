@@ -1,0 +1,41 @@
+# Neonbridge launcher spec for vendor/vibrport: edsuuu's VI-BR-PORT, a victory-fork fork for
+# 8 GB NVIDIA cards with 32-lane waves and a 1080p monitor (tested by its author on an
+# RTX 4060 Ti 8 GB). Build, keys and run are its README.md "Como compilar e rodar".
+name = "vibrport"
+rank = 4   # launcher list order (Master): 4th on the gta6-pc-race tracker
+about = "VI-BR-PORT 00c3c48 (GPL-3.0): 8 GB NVIDIA fork; 4-7 fps at 1080p, hour-long sessions (its author's RTX 4060 Ti)"
+upstream = "https://github.com/edsuuu/VI-BR-PORT"
+build = ["cargo", "build", "--profile", "diag", "-p", "victory", "--features", "diagnostics", "--locked"]   # README.md:143 (+--locked)
+watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
+exe = "target/diag/victory.exe"   # README.md:154
+diag_build = []   # its only build is already the diagnostics one
+run = ["run", "{game_exe}", "--execute"]   # README.md:154
+prewarm = ["translate", "{game}", "--write-cache", "--used-only", "--jobs", "{jobs}"]   # README.md:160
+game_env = "VICTORY_GAME_DIR"
+cache_env = "VICTORY_CACHE_DIR"
+agility = false
+
+options = [
+  "VICTORY_RELAY=1|2 (README: 2 shows faults on 8 GB cards)",
+  "VICTORY_TEXTURE_NO_WAIT, VICTORY_TEXTURE_BUDGET_MS (default 10): README.md:117",
+]
+
+[env]   # README.md:147-152, its recommended keys for an 8 GB card
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family
+VICTORY_RELAY = "1"
+VICTORY_WIDE_BACK = "1"
+VICTORY_WIDE_REFRESH = "1"
+VICTORY_DISPLAY_MODE = "1920x1080"
+VICTORY_NO_WATCHDOG = "1"
+VICTORY_PRESS_FILE = "{press}"
+
+[controls]
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter"
+b = "Backspace"
+x = "X"
+y = "Y"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

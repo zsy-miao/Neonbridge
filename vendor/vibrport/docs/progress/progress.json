@@ -1,0 +1,54 @@
+{
+  "measured": "2026-11-25",
+  "gpu": "NVIDIA GeForce RTX 4060 Ti 8 GB, Intel Core i7-13700K, Windows 11",
+  "commit": "783a54ca",
+  "shaders": [
+    {
+      "stage": "Mesh",
+      "translated": 8765,
+      "total": 8765
+    },
+    {
+      "stage": "Vertex/pixel",
+      "translated": 14259,
+      "total": 14259
+    },
+    {
+      "stage": "Compute",
+      "translated": 2734,
+      "total": 2734
+    }
+  ],
+  "game": [
+    {
+      "stage": "Carrega e inicia",
+      "state": "works",
+      "note": "uns 10 s até o primeiro quadro"
+    },
+    {
+      "stage": "Vídeo de abertura e menus",
+      "state": "works",
+      "note": "30 fps"
+    },
+    {
+      "stage": "Cutscene de abertura",
+      "state": "partial",
+      "note": "vai até o fim; rostos, cabelo e roupa com textura, mas a cena fica escura sem a luz por ray tracing; 1-5 fps"
+    },
+    {
+      "stage": "Entrada no mundo",
+      "state": "works",
+      "note": "alcançada, pipelines vindas da biblioteca salva"
+    },
+    {
+      "stage": "Jogável",
+      "state": "partial",
+      "note": "controle, HUD e pausa funcionam, mas a 4-7 fps em 1080p"
+    },
+    {
+      "stage": "Luz por ray tracing",
+      "state": "broken",
+      "note": "ainda não roda; tudo na sombra fica preto"
+    }
+  ]
+}

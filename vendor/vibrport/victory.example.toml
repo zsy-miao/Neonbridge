@@ -1,0 +1,19 @@
+# Copy to `victory.toml` (git-ignored) and point it at YOUR files.
+# Every path must be OUTSIDE the repository; the tools refuse otherwise.
+# Environment variables (shown below) take precedence over this file.
+# VICTORY_CONFIG selects a different config file.
+
+[paths]
+# Your own dump of the title.     env: VICTORY_GAME_DIR
+game_dir = 'D:\victory-data\game'
+
+# Derived data. Default: %LOCALAPPDATA%\victory\cache.   env: VICTORY_CACHE_DIR
+# cache_dir = 'D:\victory-data\cache'
+
+# What titles save (persistent local storage), kept apart from the cache.
+# Default: %LOCALAPPDATA%\victory\data.   env: VICTORY_DATA_DIR
+# data_dir = 'D:\victory-data\data'
+
+# Other Xbox Series titles used to test platform-level code.
+# env: VICTORY_TEST_TITLES (separated by ';')
+test_titles = []

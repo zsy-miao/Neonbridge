@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# RULE #1: nothing from the game (or any other proprietary source) is ever
+# committed.
+# Everything is built from files the user supplies at runtime.
+# This file is the first line of defence; `cargo xtask policy` (also run by
+# the pre-commit hook in .githooks/) is the second and is authoritative.
+# See docs/asset-policy.md.
+# ---------------------------------------------------------------------------
+
+# Build output
+/target/
+/tests/fixtures/*/target/
+
+# Local configuration (contains paths to YOUR files)
+/victory.toml
+
+# Places people tend to drop data into. Keep data outside the repo instead.
+/game/
+/games/
+/assets/
+/data/
+/dump/
+/dumps/
+/extracted/
+/cache/
+/out/
+
+# Executables, libraries, symbols
+*.exe
+*.dll
+*.pdb
+*.lib
+*.sys
+*.obj
+*.exp
+*.ilk
+
+# Console packages and containers
+*.xvd
+*.xvc
+*.msixvc
+*.xsp
+*.cab
+*.msi
+
+# Typical game data (non-exhaustive on purpose; the policy check is an allowlist)
+*.bin
+# The one exception (docs/asset-policy.md): the BCPack format's constant tables.
+!/crates/victory-formats/src/bcpack-tables.bin
+*.dat
+*.pak
+*.rpf
+*.dds
+*.ktx
+*.ktx2
+*.dxbc
+*.dxil
+*.cso
+*.spv
+*.wav
+*.xma
+*.ogg
+*.opus
+*.mp3
+*.mp4
+*.bik
+*.bk2
+*.awc
+*.zip
+*.7z
+*.rar
+
+# Editor / OS noise
+.vs/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

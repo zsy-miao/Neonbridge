@@ -10,7 +10,7 @@ Neonbridge is a launcher around other people's work. Each vendored tree under `v
 | `vendor/victory` | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | fxceless, Marvis (Marvisak), Duff, 9hvn9yt2vk-netizen and the VIctory contributors | GPL-3.0 | `085ee7ca9b635bcc345207a73ccb4c4fceb8228c` |
 | `vendor/vitoriabr` | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | uiliannn, fxceless, Marvis (Marvisak), Duff and the VIctory contributors | GPL-3.0 | `9ceb7e71e10c736ed940cc454c75f46dc8369073` |
 | `vendor/ztrx-victory` (archived, in git history) | [ztrx](https://github.com/Zettrox/ztrx) | Zettrox, Marvis (Marvisak), Duff, fxceless, 9hvn9yt2vk-netizen and the VIctory contributors | GPL-3.0 | `90b529f878a470fec9bf07b7be316bc769a12232` |
-| `vendor/xcl` | [xcl](https://github.com/ivall/xcl) | ivall, bmjask, gefydev, raylitebull and the xcl contributors | GPL-2.0-only | `6d12f5846f5fe99cc71c0bd1e890aa2c9a8f9109` |
+| `vendor/vibrport` | [VI-BR-PORT](https://github.com/edsuuu/VI-BR-PORT) | edsuuu; built on VIctory (Marvisak) and victory-fork (fxceless) | GPL-3.0 | `00c3c48c8ff88212383a72f7fe95c529b5c4cec4` |
 | `vendor/flamingo` | [Flamingo](https://github.com/realblastex/flamingo) | realblastex and the VIctory contributors | GPL-3.0 | `866d277917bb572d9f9c8b464e6f24fec1b2572d` |
 | `vendor/klbf` | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | PastiiJay and the VIctory contributors | GPL-3.0 | `39b99cd66faafe6701d86090d5e7e53957f5c88c` |
 | `vendor/belobug` | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | Belobug and the VIctory contributors | GPL-3.0 | `000ffdd4ee0ff085596b798958bce534a69b4f07` |

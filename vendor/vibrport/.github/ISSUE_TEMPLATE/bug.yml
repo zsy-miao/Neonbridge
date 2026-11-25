@@ -1,0 +1,39 @@
+name: Problema
+description: Algo quebra, trava ou sai errado na tela
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Não anexe arquivos do jogo nem links de download. Prints de log e da tela são bem-vindos.
+  - type: textarea
+    id: what
+    attributes:
+      label: O que aconteceu
+      description: Em que cena ou etapa, e o que você esperava ver.
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Placa de vídeo e driver
+      placeholder: RTX 4060 Ti 8 GB, driver 581.xx
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit do VI-BR-PORT
+      placeholder: git log --oneline -1
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Variáveis VICTORY_* usadas
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Trecho do log
+      description: As linhas em volta do erro (procure por ERROR, panicked, device removed).
+      render: text

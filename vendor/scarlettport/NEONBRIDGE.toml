@@ -2,7 +2,7 @@
 # playable path (scripts/setup.ps1:15 `cargo build --release` in runtime\xcl -> runtime\xcl\target\release\xcl.exe,
 # scripts/play.ps1:34 `xcl run <game>` with XCL_DXC_THREADS=4, XCL_NO_WATCHDOG=1, XCL_PRESS_FILE); not modelled here.
 name = "scarlettport"
-rank = 6   # launcher list order (Master)
+rank = 7   # launcher list order (Master)
 about = "ScarlettPort 925f90a (victory runtime), GPL-3.0"
 upstream = "https://github.com/ZigZagBoi1/ScarlettPort"
 # scripts/setup-victory.ps1:18,21 (run in runtime\victory; --manifest-path keeps that workspace's own target dir)
