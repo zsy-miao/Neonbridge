@@ -424,9 +424,22 @@ fn heavy_turn(shader_bytes: u64) -> Option<HeavyTurn> {
     let start = std::time::Instant::now();
     let (lock, ready) = &HEAVY;
     let mut h = lock.lock().unwrap_or_else(|e| e.into_inner());
+    // test179: the first of them always started, a 2133 KiB one with 450 MiB
+    // of commit free. Alone it now waits for its own peak too; when none runs
+    // and it has waited TUXBOX_HEAVY_ALONE_WAIT_S (120) it starts anyway.
+    static ALONE_S: OnceLock<u64> = OnceLock::new();
+    let alone_s = *ALONE_S.get_or_init(|| crate::env_toggle!("TUXBOX_HEAVY_ALONE_WAIT_S").and_then(|v| v.trim().parse().ok()).unwrap_or(120));
+    let mut said = false;
     loop {
-        if h.running == 0 || (budget && free_commit() >= h.need + need + margin) {
+        let fits = free_commit() >= h.need + need + margin;
+        if (h.running == 0 && (!budget || fits || start.elapsed().as_secs() >= alone_s)) || (h.running > 0 && budget && fits) {
             break;
+        }
+        if !said && h.running == 0 {
+            said = true;
+            crate::diagnostics::log_line(format_args!(
+                "heavy compile: {} KiB of DXIL waits alone for commit: {} MiB free, needs {} MiB with the margin (up to TUXBOX_HEAVY_ALONE_WAIT_S={alone_s})",
+                shader_bytes >> 10, free_commit() >> 20, (need + margin) >> 20));
         }
         // Recheck memory now and then, not only when one finishes.
         h = ready.wait_timeout(h, std::time::Duration::from_millis(500)).unwrap_or_else(|e| e.into_inner()).0;
@@ -463,7 +476,9 @@ fn load_or_make(
         let _heavy = heavy_turn(shader_bytes);
         let _admitted = super::compile_budget::enter(shader_bytes);
         let _measured = super::compile_budget::measure(shader_bytes, key.as_deref());
-        if shader_bytes >= 256 << 10 && crate::big_stack::lane_enabled() {
+        if shader_bytes >= 1 << 20 && crate::big_stack::fresh_usable() {
+            crate::big_stack::run_fresh(make)
+        } else if shader_bytes >= 256 << 10 && crate::big_stack::lane_enabled() {
             crate::big_stack::run_on_lane(make, !super::stream::background::prefetching() || super::stream::background::waited_on())
         } else {
             crate::big_stack::run(make)

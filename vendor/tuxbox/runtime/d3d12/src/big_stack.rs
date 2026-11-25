@@ -175,3 +175,70 @@ pub(crate) fn run_on_lane<R, F: FnOnce() -> R>(job: F, urgent: bool) -> R {
         None => panic!("compile lane dropped a job"),
     }
 }
+
+
+/// TUXBOX_COMPILE_FRESH_THREAD (default on, =0 off): heavy compiles (1 MiB of
+/// DXIL or more) run on a thread made for the one compile, which exits
+/// after it. test179: each kept its peak after it finished (1558 KiB: +2929
+/// MiB peak, +2869 MiB still held): the driver keeps its arena with the
+/// compiling thread, so on a lane it was never given back. The first four
+/// are checked: when private bytes do not fall by half of what the compile
+/// added once its thread exits, the arena outlives the thread and heavy
+/// compiles go back to the lanes (logged).
+pub(crate) fn fresh_usable() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_COMPILE_FRESH_THREAD") != Some("0"))
+        && !FRESH_OFF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static FRESH_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Run `job` on a new `STACK_BYTES` thread that exits after it; on the
+/// calling thread (`run`) when none can start.
+pub(crate) fn run_fresh<R, F: FnOnce() -> R>(job: F) -> R {
+    // As on the lanes: the caller blocks until the thread has run the job
+    // and handed its result back, so neither outlives this call.
+    struct Sendable<T>(T);
+    unsafe impl<T> Send for Sendable<T> {}
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static CHECKED: AtomicU64 = AtomicU64::new(0);
+    let before = crate::diagnostics::memory::private_bytes();
+    let mut slot = Some(job);
+    let done = std::thread::scope(|scope| {
+        let slot = Sendable(&mut slot);
+        let spawned = std::thread::Builder::new()
+            .name("tuxbox-compile-once".into())
+            .stack_size(STACK_BYTES)
+            .spawn_scoped(scope, move || {
+                let slot = slot;
+                mark_big();
+                ON_LANE.with(|l| l.set(true));
+                let job = slot.0.take().expect("fresh compile job taken");
+                let value = job();
+                Sendable((value, crate::diagnostics::memory::private_bytes()))
+            });
+        spawned.ok().map(|handle| match handle.join() {
+            Ok(done) => done.0,
+            Err(panic) => std::panic::resume_unwind(panic),
+        })
+    });
+    let Some((value, during)) = done else {
+        return run(slot.take().expect("fresh compile job kept"));
+    };
+    let after = crate::diagnostics::memory::private_bytes();
+    let n = CHECKED.fetch_add(1, Relaxed) + 1;
+    let added = during.saturating_sub(before);
+    let returned = during.saturating_sub(after);
+    if n <= 8 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "compile on a fresh thread #{n}: private +{} MiB at its end, {} MiB given back when the thread exited (TUXBOX_COMPILE_FRESH_THREAD=0 off)",
+            added >> 20, returned >> 20));
+    }
+    if n <= 4 && added >= 256 << 20 && returned < added / 2 {
+        FRESH_OFF.store(true, Relaxed);
+        crate::diagnostics::log_line(format_args!(
+            "compile on a fresh thread: the arena outlived its thread ({} of {} MiB given back); heavy compiles go back to the lanes",
+            returned >> 20, added >> 20));
+    }
+    value
+}
