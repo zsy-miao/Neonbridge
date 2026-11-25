@@ -216,11 +216,25 @@ unsafe fn sse4a(code: *const u8, xmm: &mut [M128A; 16]) -> Option<usize> {
         }
         let target = if immediate { src } else { dst };
         xmm[target].Low = (xmm[target].Low >> shift) & mask;
+        if zero_high() {
+            xmm[target].High = 0;
+        }
     } else {
         let value = (xmm[src].Low & mask) << shift;
         xmm[dst].Low = xmm[dst].Low & !(mask << shift) | value;
+        if zero_high() {
+            xmm[dst].High = 0;
+        }
     }
     Some(len)
+}
+
+/// The destination's high quadword is zeroed, as a Zen CPU does (the
+/// console's); it kept stale bits here (ztrx console_insn.rs Extrq/Insertq,
+/// GPL-3.0, credit to its authors). TUXBOX_SSE4A_ZERO_HIGH=0 leaves it.
+fn zero_high() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_SSE4A_ZERO_HIGH").map_or(true, |v| v.trim() != "0"))
 }
 
 pub(crate) unsafe fn install() {
