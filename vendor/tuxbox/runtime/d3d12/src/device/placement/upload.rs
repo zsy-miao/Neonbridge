@@ -98,7 +98,8 @@ fn upload_buckets_are_pooled_by_size_under_the_cap() {
 /// Logs, for placed R8/R8G8 textures 256 wide or more, whether each refresh
 /// read every mip, skipped some (unwritten per the write watch, or deferred by
 /// the read budget) and how many changed: the first 64 lines, then every
-/// 1024th. TUXBOX_PLANE_TRACE=0 is quiet.
+/// 1024th, and again the first 64 once Bink has finished a decode (test142's
+/// 64 all came before the movie's first frame). TUXBOX_PLANE_TRACE=0 is quiet.
 fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget: bool) {
     use std::sync::atomic::{AtomicU64, Ordering};
     let desc = &texture.desc;
@@ -106,8 +107,11 @@ fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget:
         return;
     }
     static N: AtomicU64 = AtomicU64::new(0);
+    static DECODING: AtomicU64 = AtomicU64::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
-    if n >= 64 && n % 1024 != 0 {
+    let after_decode = super::bink_state().is_some_and(|(_, done)| done != 0)
+        && DECODING.fetch_add(1, Ordering::Relaxed) < 64;
+    if n >= 64 && n % 1024 != 0 && !after_decode {
         return;
     }
     let mips = texture.mips.len();
@@ -210,8 +214,10 @@ impl Transfer {
         self.refreshes += 1;
         if matches!(self.refreshes, 1 | 100 | 1000 | 10000 | 100000) {
             crate::diagnostics::log_line(format_args!(
-                "placed textures refresh #{}: {skipped} of {mips} mips skipped by write watch (unwritten) or deferred, {} changed, {} textures so far re-read after another claimed their pages{}",
-                self.refreshes, changes.len(), super::LOST_CLAIMS.load(std::sync::atomic::Ordering::Relaxed), if watch.is_none() { "; no write watch (TUXBOX_PLACED_WATCH=0 or xmem without TuxBoxTakeWriteWatch)" } else { "" }));
+                "placed textures refresh #{}: {skipped} of {mips} mips skipped by write watch (unwritten) or deferred, {} changed, {} textures so far re-read after another claimed their pages; video planes so far: {} read while Bink decodes (expected 0), {} put off by the Bink gate{}",
+                self.refreshes, changes.len(), super::LOST_CLAIMS.load(std::sync::atomic::Ordering::Relaxed),
+                super::PLANE_READ_DURING_DECODE.load(std::sync::atomic::Ordering::Relaxed),
+                super::PLANE_GATED.load(std::sync::atomic::Ordering::Relaxed), if watch.is_none() { "; no write watch (TUXBOX_PLACED_WATCH=0 or xmem without TuxBoxTakeWriteWatch)" } else { "" }));
         }
         if changes.is_empty() {
             return Ok(());

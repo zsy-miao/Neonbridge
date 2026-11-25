@@ -169,6 +169,12 @@ pub(super) fn refresh_read_budget() -> u64 {
 
 /// Textures whose pages another texture had claimed since their last
 /// refresh (each re-reads every level): the refresh log line reports it.
+/// The datamosh guard, for the periodic refresh line: video planes read
+/// while xmem reported a Bink decode in flight (expected 0: a half-written
+/// frame uploaded), and plane reads the Bink gate put off to a later refresh.
+pub(super) static PLANE_READ_DURING_DECODE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(super) static PLANE_GATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub(super) static LOST_CLAIMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Adds inherited readers keeping one entry per fence (the highest value) and
@@ -877,9 +883,9 @@ impl Texture {
                 skipped += 1;
                 continue;
             }
-            if video_plane(&self.desc, self.mips.len()) && bink_gate() {
-                static GATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                let n = GATED.fetch_add(1, Ordering::Relaxed) + 1;
+            let plane = video_plane(&self.desc, self.mips.len());
+            if plane && bink_gate() {
+                let n = PLANE_GATED.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 8 || n.is_power_of_two() {
                     crate::diagnostics::log_line(format_args!(
                         "placed textures: video plane at {:#x} not read while Bink decodes, read next refresh ({n} so far; TUXBOX_BINK_PLANE_GATE=0 reads it)",
@@ -919,6 +925,13 @@ impl Texture {
                 }
                 skipped += 1;
                 continue;
+            }
+            if plane && bink_state().is_some_and(|(busy, _)| busy != 0) {
+                let n = PLANE_READ_DURING_DECODE.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "placed textures: video plane at {:#x} read while Bink decodes ({n} so far; expected 0)", self.address));
+                }
             }
             *budget = budget.saturating_sub(size);
             if size > 1 << 20 {
