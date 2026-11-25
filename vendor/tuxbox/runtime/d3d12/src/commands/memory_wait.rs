@@ -333,7 +333,7 @@ unsafe fn wait_value(
             let n = UNSPLIT.fetch_add(1, Ordering::Relaxed);
             if n < 4 || (n + 1).is_power_of_two() {
                 crate::diagnostics::log_line(format_args!(
-                    "GPU memory wait {address:#x} >= {target:#x} after rendering commands skipped: the list cannot split (open queries, split barriers, predication, a bundle or 4 splits; {} so far)",
+                    "GPU memory wait {address:#x} >= {target:#x} after rendering commands skipped: the list cannot split (open queries, split barriers, predication, a bundle or 32 splits; {} so far)",
                     n + 1));
             }
             return Ok(());

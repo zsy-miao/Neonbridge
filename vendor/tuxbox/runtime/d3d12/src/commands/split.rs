@@ -12,8 +12,15 @@
 //! wait before the segment it precedes. Open queries, unfinished split
 //! barriers and predication are not carried over: a list holding any of them
 //! is not split, and the wait is skipped as before. A recording splits at
-//! most `CAPACITY` times. Off by default: five-star saw the split lists'
-//! waits on the frame cells stall every queue for the full timeout.
+//! most `CAPACITY` times. Five-star turned it off when the split lists'
+//! waits on the frame cells stalled every queue for the full timeout; here
+//! the GPU wait watchdog releases such a wait. It is on by default now and
+//! splits up to 32 times: with it off (and at 4), the title's waits recorded
+//! after rendering were skipped (test135-142: 32 and more per run), so the
+//! compute queue's lighting ran before the graphics queue's depth pass wrote
+//! what it waits for and read a cleared depth buffer (a black picture).
+//! VIctory-fxceless orders every such wait (list.rs:1846-1856, queue.rs:84-121,
+//! GPL-3.0, credit to its authors). TUXBOX_SPLIT_AT_WAITS=0 skips them as before.
 use super::*;
 use std::sync::atomic::AtomicU64;
 use windows::Win32::Foundation::RECT;
@@ -21,10 +28,10 @@ use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY;
 
 pub(super) fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_SPLIT_AT_WAITS") == Some("1"))
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_SPLIT_AT_WAITS") != Some("0"))
 }
 
-const CAPACITY: usize = 4;
+const CAPACITY: usize = 32;
 
 /// Host state a new host list does not inherit and the bindings do not
 /// hold, as the host list got it. Tracked only while splitting is on.
