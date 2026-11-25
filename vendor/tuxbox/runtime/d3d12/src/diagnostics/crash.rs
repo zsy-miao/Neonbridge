@@ -264,10 +264,14 @@ unsafe fn scan(rsp: usize) -> Vec<usize> {
 
 /// "leaf < caller < caller ..." from return addresses into any loaded module.
 fn stack_text(list: &[Module], rip: usize, stack: &[usize]) -> String {
+    stack_chain(list, rip, stack, FRAMES)
+}
+
+fn stack_chain(list: &[Module], rip: usize, stack: &[usize], frames: usize) -> String {
     let mut chain = vec![label(list, rip)];
     let mut last = function_start(rip);
     for &word in stack {
-        if chain.len() == FRAMES {
+        if chain.len() == frames {
             break;
         }
         if let Some(module) = module_of(list, word)
@@ -314,6 +318,71 @@ fn hang_report(presents: u64, seconds: u64) {
     for line in peek_lines() {
         record(format_args!("hang: {line}"));
     }
+    for line in find_lines() {
+        record(format_args!("hang: {line}"));
+    }
+}
+
+/// TUXBOX_HANG_FIND="0x23cf104,0x23cf0ff": the hang report also samples every
+/// thread three times 500 ms apart and, for each thread whose stack holds a
+/// return into one of these main-image offsets, prints its full chain (48
+/// frames, not 12) and RIP each time, so a thread parked in one wait shows the
+/// same leaf thrice. Unset prints nothing.
+fn find_lines() -> Vec<String> {
+    let Ok(spec) = std::env::var("TUXBOX_HANG_FIND") else { return Vec::new() };
+    let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return Vec::new() };
+    let base = base.0 as usize;
+    let targets: Vec<usize> = spec
+        .split(',')
+        .filter_map(|v| usize::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok())
+        .map(|off| base + off)
+        .collect();
+    if targets.is_empty() {
+        return Vec::new();
+    }
+    let list = modules();
+    let own = unsafe { GetCurrentThreadId() };
+    let mut out = Vec::new();
+    let mut context = Box::new(Aligned(CONTEXT::default()));
+    let mut stack = vec![0usize; SCAN_WORDS];
+    for sample in 1..=3 {
+        if sample > 1 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        let mut threads = Vec::new();
+        unsafe {
+            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return out };
+            let pid = GetCurrentProcessId();
+            let mut entry = THREADENTRY32 { dwSize: size_of::<THREADENTRY32>() as u32, ..Default::default() };
+            let mut more = Thread32First(snap, &mut entry).is_ok();
+            while more {
+                if entry.th32OwnerProcessID == pid && entry.th32ThreadID != own {
+                    threads.push(entry.th32ThreadID);
+                }
+                more = Thread32Next(snap, &mut entry).is_ok();
+            }
+            let _ = CloseHandle(snap);
+        }
+        let mut found = 0;
+        for tid in threads {
+            let access = THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION;
+            let Ok(handle) = (unsafe { OpenThread(access, false, tid) }) else { continue };
+            let words = unsafe { capture(handle, &mut context.0, &mut stack) };
+            let _ = unsafe { CloseHandle(handle) };
+            let Some(words) = words else { continue };
+            let Some(hit) = stack[..words].iter().position(|w| targets.contains(w)) else { continue };
+            found += 1;
+            let name = super::threads::name_of(tid);
+            let wait = waits::describe(&context.0);
+            out.push(format!(
+                "find #{sample} thread {name}({tid}){wait} rip {:#x}, game+{:#x} at word {hit}: {}",
+                context.0.Rip, stack[hit] - base, stack_chain(&list, context.0.Rip as usize, &stack[..words], 48)));
+        }
+        if found == 0 {
+            out.push(format!("find #{sample}: no thread's stack holds {spec}"));
+        }
+    }
+    out
 }
 
 /// TUXBOX_HANG_PEEK="0x9c3d660:4,0x9c3be58:8": the hang report also prints these
