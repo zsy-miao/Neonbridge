@@ -84,7 +84,15 @@ fn max_wait() -> std::time::Duration {
     }))
 }
 
+/// Driver memory expected for a compile. five-star-recomp 51c338d refit it on
+/// 101 measured compiles (256 KB to 1.94 MB of DXIL): 2,816 bytes per byte,
+/// 0.5 to 8 GB, where 4,096 and 2 to 32 GB held boots to one or two compiles.
+/// TUXBOX_COMPILE_ESTIMATE_FIT=0 keeps the old figures.
 fn estimate(shader_bytes: u64) -> u64 {
+    static FIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *FIT.get_or_init(|| crate::env_toggle!("TUXBOX_COMPILE_ESTIMATE_FIT") != Some("0")) {
+        return shader_bytes.saturating_mul(2816).clamp(512 << 20, 8 << 30);
+    }
     shader_bytes.saturating_mul(BYTES_PER_SHADER_BYTE).clamp(MINIMUM_ESTIMATE, MAXIMUM_ESTIMATE)
 }
 
