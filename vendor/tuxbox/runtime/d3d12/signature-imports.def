@@ -1,4 +1,0 @@
-LIBRARY d3d12_xs.dll
-EXPORTS
-    D3D12SerializeRootSignature
-    D3D12CreateRootSignatureDeserializer

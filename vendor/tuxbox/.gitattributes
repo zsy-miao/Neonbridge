@@ -1,3 +1,0 @@
-# Unified diffs prefix context lines with a space, including tab-indented recipes.
-*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
-docs/progress.svg linguist-generated=true

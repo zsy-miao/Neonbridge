@@ -638,8 +638,8 @@ fn refill_presets(want: Option<&str>) {
 }
 
 fn rows() -> Vec<Row> {
-    let mut names = vec![crate::runtimes::TUXBOX.to_owned()];
-    names.extend(crate::runtimes::names());
+    // The top 7 leaders only; Neonbridge's own build stays reachable with --runtime neonbridge-own.
+    let names = crate::runtimes::names();
     let mut rows: Vec<Row> = names
         .into_iter()
         .map(|n| {

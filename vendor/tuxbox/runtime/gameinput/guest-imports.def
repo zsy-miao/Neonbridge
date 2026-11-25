@@ -1,3 +1,0 @@
-LIBRARY GameInput.dll
-EXPORTS
-    GameInputCreate @1 NONAME

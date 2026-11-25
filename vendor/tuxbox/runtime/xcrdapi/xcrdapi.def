@@ -1,3 +1,0 @@
-LIBRARY xcrdapi
-EXPORTS
-    DStorageGetFactory @1

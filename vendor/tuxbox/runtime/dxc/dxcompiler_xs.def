@@ -1,6 +1,0 @@
-LIBRARY dxcompiler_xs
-EXPORTS
-    CreateXdxrCompiler2 @1
-    CreateXdxrCompiler @2
-    DxcCreateInstance=dxcompiler.DxcCreateInstance @3
-    DxcCreateInstance2=dxcompiler.DxcCreateInstance2 @4

@@ -19,9 +19,6 @@ Best first, by how far each project's own authors say it gets. The launcher list
 | 5 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
 | 6 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | About 4 fps in the prologue; gameplay starts | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
 | 7 | [ztrx-victory](https://github.com/Zettrox/ztrx) | 1–3 fps in the world; shadows black | No |
-| 8 | [Five Star Recomp](https://github.com/ThatRecompDev/five-star-recomp) | The opening cutscene at 30 fps; the 3D world draws, lighting unfinished | No (needs .NET 10 and the PC GDK) |
-| 9 | [TuxBox](https://github.com/brcly/TuxBox) | The story intro, on Linux; Windows support is still in progress | No |
-| 10 | Neonbridge (own build) | Not tested yet | No |
 
 ## Get started
 
@@ -44,8 +41,6 @@ Some runtimes need one more thing. Neonbridge greys them out until it's there, a
 
 | Runtime | Also needs |
 |---|---|
-| Five Star Recomp | The [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and the [Microsoft PC GDK](https://github.com/microsoft/GDK/releases) (**Install...** downloads Microsoft's signed GDK setup and runs it, after you say yes) |
-| TuxBox | [Python 3.10 or newer](https://www.python.org/downloads/windows/) and the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (C++ tools) |
 
 ## Screenshots
 
@@ -103,6 +98,6 @@ Every runtime and every project Neonbridge borrows from is named in [CREDITS.md]
 
 ## Licence
 
-GPL-3.0-or-later ([LICENSE](LICENSE)). Each runtime keeps its own licence (`vendor/<name>/LICENSE`): xcl is GPL-2.0-only, the VIctory forks (Flamingo and VIctory-Belobug-AMD among them) and ScarlettPort are GPL-3.0, TuxBox is Apache-2.0 and Five Star Recomp is GPL-3.0-or-later. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive; Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by them.
+GPL-3.0-or-later ([LICENSE](LICENSE)). Each runtime keeps its own licence (`vendor/<name>/LICENSE`): xcl is GPL-2.0-only, the VIctory forks (Flamingo and VIctory-Belobug-AMD among them) and ScarlettPort are GPL-3.0, and Neonbridge's own TuxBox-based code is Apache-2.0. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive; Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by them.
 
-<sub>Keywords: GTA 6 PC, GTA VI PC, GTA 6 launcher, Grand Theft Auto VI Windows, Xbox Series X|S to PC, Scarlett, VIctory, Flamingo, Belobug, ScarlettPort, xcl, TuxBox, Five Star Recomp.</sub>
+<sub>Keywords: GTA 6 PC, GTA VI PC, GTA 6 launcher, Grand Theft Auto VI Windows, Xbox Series X|S to PC, Scarlett, VIctory, Flamingo, Belobug, ScarlettPort, xcl, ztrx.</sub>

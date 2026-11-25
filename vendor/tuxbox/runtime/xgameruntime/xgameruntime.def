@@ -1,7 +1,0 @@
-LIBRARY xgameruntime
-EXPORTS
-  InitializeApiImpl @1
-  InitializeApiImplEx @2
-  QueryApiImpl @3
-  UninitializeApiImpl @4
-  XErrorReport @5
