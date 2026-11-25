@@ -409,6 +409,11 @@ fn build_pipelines(game: &Path, session: &str) -> Result<(), Box<dyn Error>> {
         std::env::set_var("TUXBOX_SHADER_SESSION", session);
         // The title's control pipe stays the title's.
         std::env::set_var("TUXBOX_CTL", "0");
+        // The builder's reasons ("pipeline build: ...") reach this console:
+        // --prewarm set no TUXBOX_LOG, so a build that stopped early said nothing.
+        if std::env::var_os("TUXBOX_LOG").is_none() {
+            std::env::set_var("TUXBOX_LOG", "stderr");
+        }
         SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     }
     let dll = game.join("d3d12_xs.dll");
@@ -566,7 +571,10 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>, game: Option<&Path>) -> 
     };
     let dxc = shaders::find_dxc().ok_or("no Windows SDK dxc.exe with dxil.dll (or set DXC)")?;
     let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
-    let session = cache_root.join(format!("prewarm-{}", std::process::id()));
+    // d3d12_xs binds only a `run-*` session (shader_cache::compile::session),
+    // so the PSO build of a `prewarm-<pid>` session found no cache folder and
+    // built nothing ("0 in the pipeline library", prewarm174b).
+    let session = cache_root.join(format!("run-prewarm-{}", std::process::id()));
     println!("[prewarm] {} + {}", xshader.display(), dxc.display());
     // No loading screen here: the prewarm's progress is one console line
     // rewritten in place, its plain summary lines after it.
