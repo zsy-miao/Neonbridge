@@ -88,6 +88,10 @@ struct Recording {
     /// The bound pipeline is lazy and still being made: draws and
     /// dispatches are dropped until the list binds it again once it exists.
     pipeline_pending: bool,
+    /// The pending pipeline itself (a `device::compute::Pipeline`), 0 when
+    /// `pipeline_pending` has another cause: each draw and dispatch looks at
+    /// it again (Recording::still_pending).
+    pending_pipeline: usize,
     /// A dispatch of this recording did not run (dropped or refused): the
     /// buffers it would have written, indirect arguments and counts among
     /// them, hold what they held before (see `indirect_guard`).
@@ -212,7 +216,7 @@ impl Recording {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchesRecorded);
             dispatch()
         };
-        if self.pipeline_pending {
+        if self.still_pending(list) {
             dropped_for_pending();
             return;
         }
@@ -287,7 +291,7 @@ impl Recording {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawsRecorded);
             draw()
         };
-        if self.pipeline_pending {
+        if self.still_pending(list) {
             dropped_for_pending();
             return;
         }
@@ -491,6 +495,39 @@ impl Recording {
         }
         self.error = S_OK;
         self.pipeline_pending = true;
+        self.pending_pipeline = 0;
+    }
+
+    /// Whether the bound pipeline is still pending, looked at again for this
+    /// draw or dispatch (VIctory-fxceless draw.rs:775, GPL-3.0, credit to its
+    /// authors). Pending was decided at the bind alone, so a pipeline its
+    /// worker made a millisecond after SetPipelineState lost every draw until
+    /// the next bind. A draw now asks again (and waits within the frame's
+    /// pipeline budget, as the bind does) and binds it once it exists.
+    /// TUXBOX_PENDING_RECHECK=0 keeps the bind's answer.
+    fn still_pending(&mut self, list: &List) -> bool {
+        if !self.pipeline_pending {
+            return false;
+        }
+        if self.pending_pipeline == 0 || crate::env_toggle!("TUXBOX_PENDING_RECHECK") == Some("0") {
+            return true;
+        }
+        // SAFETY: the title keeps a pipeline it bound alive while the list
+        // records and runs (a D3D12 rule); the pointer was taken at the bind.
+        let host = unsafe { &*(self.pending_pipeline as *const device::compute::Pipeline) };
+        let (native, data, pending) = device::compute::current(host);
+        if pending {
+            return true;
+        }
+        let native = native.clone();
+        graphics::bind_host(list, self, host, &native, data, false);
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = MADE.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "a pending pipeline was made after its bind and draws again from its next draw ({n} so far; TUXBOX_PENDING_RECHECK=0 off)"));
+        }
+        false
     }
 
     fn ensure_open(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
@@ -738,6 +775,7 @@ unsafe extern "system" fn reset(
         }
         state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
         state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
+        state.pending_pipeline = initial.filter(|_| state.pipeline_pending).map_or(0, |p| p as *const device::compute::Pipeline as usize);
         state.skipped_compute = false;
         state.capture_pipeline = initial.and_then(|p| device::compute::current(p).1.key.clone())
             .filter(|_| crate::diagnostics::capture::active());
@@ -3214,6 +3252,7 @@ pub(crate) unsafe fn wrap_command_list(
             trace_samples: Vec::new(),
             null_pipeline: false,
             pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
+            pending_pipeline: initial.filter(|p| device::compute::current(p).2).map_or(0, |p| p as *const device::compute::Pipeline as usize),
             skipped_compute: false,
             capture_pipeline: None,
             unresolved_roots: [0; 2],

@@ -53,21 +53,32 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
             if pending && state.display_sized && crate::device::compute::wait_pending_display(host) {
                 (native, data, pending) = crate::device::compute::current(host);
             }
-            state.pipeline_pending = pending;
-            if crate::diagnostics::capture::active() {
-                state.capture_pipeline = data.key.clone();
-            }
-            state.stencil_slot = data.stencil_slot;
-            state.null_pipeline = crate::diagnostics::display::is_null_pipeline(native.as_raw());
-            state.bindings.pipeline = Some(host.into());
-            state.bindings.draw_trace = data.draw_trace.clone();
-            unsafe { list.native.SetPipelineState(native) };
+            bind_host(list, &mut state, host, native, data, pending);
         }
         _ => {
             crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BindsRefused);
             { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
         }
     }
+}
+
+/// Makes `host` the list's pipeline as resolved now (`native`, `data`),
+/// pending while its worker has not made it: SetPipelineState, and a draw
+/// or dispatch that finds a pending pipeline made since (Recording::still_pending).
+pub(super) fn bind_host(
+    list: &List, state: &mut super::Recording, host: &crate::device::compute::Pipeline,
+    native: &ID3D12PipelineState, data: &crate::device::compute::PipelineData, pending: bool,
+) {
+    state.pipeline_pending = pending;
+    state.pending_pipeline = if pending { host as *const crate::device::compute::Pipeline as usize } else { 0 };
+    if crate::diagnostics::capture::active() {
+        state.capture_pipeline = data.key.clone();
+    }
+    state.stencil_slot = data.stencil_slot;
+    state.null_pipeline = crate::diagnostics::display::is_null_pipeline(native.as_raw());
+    state.bindings.pipeline = Some(host.into());
+    state.bindings.draw_trace = data.draw_trace.clone();
+    unsafe { list.native.SetPipelineState(native) };
 }
 
 pub(super) unsafe extern "system" fn viewports(
