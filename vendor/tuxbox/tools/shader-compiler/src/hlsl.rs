@@ -5321,7 +5321,25 @@ impl<'a> Emitter<'a> {
     }
 
     fn mubuf_res(&mut self, ins: &Insn, offset: u32, table: u8) -> Result<Res, String> {
-        let (kind, slot) = self.buffer_table_binding(table, offset)?;
+        let (mut kind, mut slot) = self.buffer_table_binding(table, offset)?;
+        // A buffer store or atomic through a slot the guest root types SRV: the slot holds a
+        // writable descriptor whatever RTS0 says (test177: 7 "buffer_store to a non-UAV table"
+        // refusals). Retyped UAV like the image path (TB_SRV_AS_UAV, `uav_from_srv` in .heap).
+        // TB_SRV_AS_UAV_BUF=0 keeps the refusal.
+        if kind == Some(0) && (ins.mnemonic.starts_with("buffer_store") || ins.mnemonic.contains("_atomic_"))
+            && std::env::var("TB_SRV_AS_UAV").map_or(true, |v| v.trim() != "0")
+            && std::env::var("TB_SRV_AS_UAV_BUF").map_or(true, |v| v.trim() != "0")
+        {
+            if let Some((param, range, space, register)) = self.root_srv_range(table, offset) {
+                if self.binding_spaces.get(&(1, register)).is_some_and(|&used| used != space) {
+                    return Err(format!("mubuf at {:#x}: SRV slot retyped as UAV u{register} clashes with another space", ins.offset));
+                }
+                self.binding_spaces.insert((1, register), space);
+                self.srv_as_uav.insert((param, space, offset, range, register));
+                kind = Some(1);
+                slot = register;
+            }
+        }
         let is_uav = match kind {
             Some(0) => false,
             Some(1) => true,
