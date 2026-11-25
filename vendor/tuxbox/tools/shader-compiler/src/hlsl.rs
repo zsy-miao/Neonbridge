@@ -1069,7 +1069,7 @@ struct Emitter<'a> {
     /// offset of the word in the table). Emission loads the guest word first.
     desc_words: BTreeMap<usize, Vec<(u16, u8, u32)>>,
     /// Tables whose guest words are read (`tb_tw<t>`, t<t> space32765).
-    table_words: BTreeSet<u8>,
+    table_words: BTreeSet<usize>,
     /// S_BARRIERs reached inside a per-thread guard: a group sync there is
     /// non-uniform on the host, so they lower to a memory fence only.
     fence_only: BTreeSet<usize>,
@@ -4029,7 +4029,26 @@ impl<'a> Emitter<'a> {
     /// maps user SGPR (base + i) to root parameter i, with base 8 for graphics stages and
     /// 4 for compute (observed: PS s8/s9/s10 = params 0/1/2, VS s12 = param 4, CS s5/s7 =
     /// params 1/3). `None` when the root signature is unavailable or the SGPR is not a table.
+    /// The guest root parameter index whose pointer arrives in `sgpr`, by the
+    /// same user-SGPR layout `root_table` resolves tables with.
+    fn root_param_of(&self, sgpr: u8) -> Option<usize> {
+        let idx = (sgpr as usize).checked_sub(self.root_sgpr_base(sgpr))?;
+        // No RTS0 in the program: the title's own root signature is bound, by index.
+        match self.ex.root_sig.as_ref() {
+            Some(root) => root.params.get(idx).map(|_| idx),
+            None => Some(idx),
+        }
+    }
+
     fn root_table(&self, sgpr: u8) -> Option<&[crate::meta::RootRange]> {
+        let idx = (sgpr as usize).checked_sub(self.root_sgpr_base(sgpr))?;
+        match &self.ex.root_sig.as_ref()?.params.get(idx)?.kind {
+            crate::meta::RootParamKind::Table(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    fn root_sgpr_base(&self, sgpr: u8) -> usize {
         // Root descriptor-table pointers arrive in consecutive user SGPRs: from s4 in compute
         // shaders and s8 in the other stages. Vertex shaders compiled to feed a geometry
         // shader ("MainForGS") start with `s_swappc_b64 s12, s12` and receive them from s19
@@ -4049,11 +4068,7 @@ impl<'a> Emitter<'a> {
             Stage::Mesh => 16,
             _ => chained.unwrap_or(8),
         };
-        let idx = (sgpr as usize).checked_sub(base)?;
-        match &self.ex.root_sig.as_ref()?.params.get(idx)?.kind {
-            crate::meta::RootParamKind::Table(r) => Some(r),
-            _ => None,
-        }
+        base
     }
 
     /// Resolve the guest descriptor's physical table element to its shader register.
@@ -7476,10 +7491,14 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         // TB_TABLE_WORDS=0 reads the stale SGPRs as before.
         if let Some(words) = self.desc_words.get(&idx).filter(|_| table_words_on()).cloned() {
             for (n, table, at) in words {
+                // The runtime binds by guest root parameter index (a table's view
+                // holds GFX10 words it encodes per slot, 32 bytes a slot; a root
+                // descriptor's is the title memory). No parameter: stale SGPR.
+                let Some(p) = self.root_param_of(table) else { continue };
                 let reg = Opnd::Sgpr(n as u8);
                 self.touch(&reg);
-                self.table_words.insert(table);
-                self.ws(&reg, &format!("tb_tw{table}.Load({at:#x}u)"))?;
+                self.table_words.insert(p);
+                self.ws(&reg, &format!("tb_tw{p}.Load({at:#x}u)"))?;
             }
         }
         self.emit_insn_body(idx, ins, is_ps, br)?;
