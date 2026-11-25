@@ -11,6 +11,8 @@ use windows::core::{IUnknown, Result};
 pub(super) struct Bindings {
     pub(super) pipeline: Option<Pipeline>,
     pub(super) draw_trace: Option<Arc<crate::diagnostics::RasterDraw>>,
+    /// The bound pipeline's heap access reflection (TUXBOX_SHADOW_UAV_REMARK).
+    pub(super) heap_access: Option<Arc<crate::device::shader_cache::HeapAccess>>,
     heaps: Vec<Option<ID3D12DescriptorHeap>>,
     compute: Option<ID3D12RootSignature>,
     layout: Option<RootSource>,
@@ -847,6 +849,55 @@ impl Bindings {
             };
             if let Some(cpu) = heap.table(base.native.ptr, range) {
                 super::descriptors::include_range(written, cpu);
+            }
+        }
+    }
+
+    /// CPU handles of the heap descriptors the bound program writes through
+    /// direct heap indexing, from its reflection (`<key>.heap`): a literal
+    /// index, a root constant plus add, or a table entry. A per-lane or root
+    /// CBV source takes the whole heap.
+    pub(super) fn heap_writes<const COMPUTE: bool>(
+        &self,
+        heap: &super::descriptors::ResourceHeap,
+        written: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        use crate::device::shader_cache::HeapSource;
+        let Some(access) = self.heap_access.as_ref() else { return };
+        let slot = |index: i64| -> Option<std::ops::Range<usize>> {
+            let index = u32::try_from(index).ok()?;
+            heap.table(heap.gpu_start(), &(index..index.checked_add(1)?))
+        };
+        for source in &access.writes {
+            let range = match *source {
+                HeapSource::Const(index) => slot(i64::from(index)),
+                HeapSource::Root(param, dword, add) => {
+                    let value = if COMPUTE {
+                        match self.compute_args.get(&param) {
+                            Some(Argument::Constants(words)) => words.get(&dword).copied(),
+                            _ => None,
+                        }
+                    } else {
+                        self.graphics_constants.get(&(param, dword)).copied()
+                    };
+                    value.and_then(|v| slot(i64::from(v) + add))
+                }
+                HeapSource::Table(param, byte) => {
+                    let base = if COMPUTE {
+                        match self.compute_args.get(&param) { Some(Argument::Table(base)) => Some(base), _ => None }
+                    } else {
+                        self.graphics_tables.get(&param)
+                    };
+                    base.and_then(|base| heap.table(base.native.ptr, &(byte / 32..byte / 32 + 1)))
+                }
+                HeapSource::Cbv(..) | HeapSource::Dynamic => {
+                    static SAID: std::sync::Once = std::sync::Once::new();
+                    crate::diagnostics::log_once(&SAID, || "shadow uav re-mark: a program writes the heap through a per-lane or root CBV index; its draws and dispatches re-mark every shadow UAV in the heap".to_string());
+                    Some(heap.cpu.clone())
+                }
+            };
+            if let Some(range) = range {
+                super::descriptors::include_range(written, range);
             }
         }
     }

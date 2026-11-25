@@ -460,6 +460,7 @@ impl Recording {
             && crate::device::uav_remark()
         {
             self.bindings.uav_tables::<COMPUTE>(heap, &mut self.written_views);
+            self.bindings.heap_writes::<COMPUTE>(heap, &mut self.written_views);
         }
         if let Some(heap) = &self.resource_heap
             && self.bindings.sample_tables::<COMPUTE>(heap, &mut self.sampled_heaps).is_none()

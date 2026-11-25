@@ -27,6 +27,8 @@ pub(crate) struct PipelineData {
     pub(crate) raster_table: Option<std::sync::Arc<ComputeTable>>,
     /// The null descriptor each unwritten table slot needs for these shaders.
     pub(crate) null_kinds: Option<std::sync::Arc<super::null_kinds::NullKinds>>,
+    /// The heap descriptors the program reads and writes (xshader reflection).
+    pub(crate) heap_access: Option<std::sync::Arc<super::shader_cache::HeapAccess>>,
     /// Filled by a background worker when this pipeline was created without
     /// its translation (see `stream::background`).
     pub(crate) upgrade: std::sync::OnceLock<std::sync::Arc<super::stream::Upgrade>>,
@@ -741,6 +743,9 @@ unsafe fn make_compute(
                 scene_root,
                 reflected,
                 null_kinds,
+                heap_access: super::views::uav_remark()
+                    .then(|| super::shader_cache::source_digest(bytes).and_then(|d| super::shader_cache::heap_access(&d)))
+                    .flatten(),
                 ..Default::default()
             },
             out,

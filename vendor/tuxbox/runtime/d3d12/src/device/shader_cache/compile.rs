@@ -567,3 +567,38 @@ fn request(
         std::thread::sleep(Duration::from_millis(25));
     }
 }
+
+/// Where a heap index a program uses comes from (xshader TB_HEAP_REFLECT,
+/// `<key>.heap`): a literal, a root constant dword plus `add`, a root CBV
+/// word plus `add`, a table entry (param, byte offset), or something per lane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum HeapSource { Const(u32), Root(u32, u32, i64), Cbv(u32, u32, i64), Table(u32, u32), Dynamic }
+
+/// The heap descriptors a program reads and writes (TUXBOX_SHADOW_UAV_REMARK).
+#[derive(Debug, Default)]
+pub(crate) struct HeapAccess { pub(crate) writes: Vec<HeapSource>, pub(crate) reads: Vec<HeapSource> }
+
+/// The heap access reflection the launcher published for `source`, from the
+/// session or the compiler cache. None: unknown (no file, older xshader).
+pub(crate) fn heap_access(source: &str) -> Option<std::sync::Arc<HeapAccess>> {
+    let dir = session()?;
+    let name = format!("{source}.heap");
+    let text = fs::read_to_string(dir.join(&name)).ok()
+        .or_else(|| fs::read_to_string(compiler_cache(dir)?.join(&name)).ok())?;
+    let mut access = HeapAccess::default();
+    for line in text.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let [op, kind, rest @ ..] = words.as_slice() else { continue };
+        let n = |i: usize| rest.get(i).and_then(|w| w.parse::<i64>().ok());
+        let source = match *kind {
+            "const" => n(0).and_then(|v| u32::try_from(v).ok()).map_or(HeapSource::Dynamic, HeapSource::Const),
+            "root" => HeapSource::Root(n(0).unwrap_or(0) as u32, n(1).unwrap_or(0) as u32, n(2).unwrap_or(0)),
+            "cbv" => HeapSource::Cbv(n(0).unwrap_or(0) as u32, n(1).unwrap_or(0) as u32, n(2).unwrap_or(0)),
+            "table" => HeapSource::Table(n(0).unwrap_or(0) as u32, n(1).unwrap_or(0) as u32),
+            _ => HeapSource::Dynamic,
+        };
+        if op.contains('w') || *op == "atomic" { access.writes.push(source); }
+        if op.contains('r') { access.reads.push(source); }
+    }
+    Some(std::sync::Arc::new(access))
+}
