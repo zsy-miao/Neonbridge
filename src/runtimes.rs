@@ -1524,6 +1524,34 @@ enum WarmLine {
     Other,
 }
 
+/// Keeps a copy of a runtime's shader/pipeline cache in
+/// %LOCALAPPDATA%\6ixpack\cache-backup\<same path> (or NEONBRIDGE_CACHE_BACKUP=<dir>;
+/// =0 turns it off), so hours of compiling survive a deleted or clobbered cache.
+/// robocopy in the background at idle priority: only new or changed files are
+/// copied, nothing is ever deleted from the backup.
+fn backup_cache(cache: &Path) {
+    let setting = std::env::var("NEONBRIDGE_CACHE_BACKUP").unwrap_or_default();
+    if setting.trim() == "0" {
+        return;
+    }
+    let base = pack();
+    let rel = cache.strip_prefix(&base).map(Path::to_path_buf).unwrap_or_else(|_| PathBuf::from(cache.file_name().unwrap_or_default()));
+    let root = if setting.trim().is_empty() { base.join("cache-backup") } else { PathBuf::from(setting.trim()) };
+    let to = root.join(rel);
+    let from = cache.to_path_buf();
+    std::thread::spawn(move || {
+        use std::os::windows::process::CommandExt;
+        // 0x40 IDLE_PRIORITY_CLASS, 0x0800_0000 CREATE_NO_WINDOW
+        let r = Command::new("robocopy").arg(&from).arg(&to).args(["/E", "/XO", "/R:0", "/W:0", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/MT:2"])
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).creation_flags(0x40 | 0x0800_0000).status();
+        // robocopy: 0-7 success, 8+ failure
+        match r.map(|s| s.code().unwrap_or(16)) {
+            Ok(c) if c < 8 => println!("[launch] cache backed up to {}", to.display()),
+            other => println!("[launch] cache backup to {} failed ({other:?})", to.display()),
+        }
+    });
+}
+
 fn warm_line(l: &str) -> WarmLine {
     let number_before = |at: usize| l[..at].trim_end().rsplit(' ').next().and_then(|n| n.parse().ok());
     let t = l.trim();
@@ -1756,6 +1784,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     };
     let cache = cache(name);
     let _ = fs::create_dir_all(&cache);
+    backup_cache(&cache); // what the last run added
     if matches!(task, Task::Run) && choice.mix.is_none() {
         auto_setup(name, &root, &spec, &game);
     }
@@ -1881,6 +1910,7 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
             fail_box(&e);
             return Err(e.into());
         }
+        backup_cache(&cache);
         // ScarlettPort's second phase (launcher 0.3, shaderbuild.rs:272):
         // precompile-graphics in chunks of 1000 records, {skip} = 0, 1000,
         // ... until a chunk's summary gives fewer than 1000. Play runs set

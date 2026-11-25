@@ -571,7 +571,7 @@ pub(super) fn toolchain_identity() -> &'static str {
 /// FNV-1a 64 of the inputs that determine the DXIL.
 fn cache_key_for_toolchain(src: &str, entry: &str, profile: &str, toolchain: &str) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for part in [env!("CARGO_PKG_VERSION"), toolchain, profile, entry, src] {
+    for part in ["0.1.0", toolchain, profile, entry, src]   // Neonbridge: was env!("CARGO_PKG_VERSION"), pinned so a version bump alone keeps the DXIL cache (the HLSL and toolchain already key it) {
         for b in part.bytes().chain([0u8]) {
             h ^= b as u64;
             h = h.wrapping_mul(0x100_0000_01b3);
