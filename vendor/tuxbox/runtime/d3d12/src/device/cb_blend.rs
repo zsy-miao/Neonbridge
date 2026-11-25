@@ -19,8 +19,17 @@ fn field(value: u32, low: u32, high: u32) -> u32 {
     (value >> low) & ((1 << (high - low + 1)) - 1)
 }
 
-/// Blend factor codes; 11/12 (BOTH_*) and 19/20 (constant alpha, no alpha
-/// blend factor here) have no desktop form.
+/// Blend factor codes; 11/12 (BOTH_*) have no desktop form, 19/20 (constant
+/// alpha) only with the host's alpha blend factor.
+/// The host's D3D12_FEATURE_DATA_D3D12_OPTIONS13.AlphaBlendFactorSupported,
+/// noted when a slot 57/67 pipeline is first described.
+pub(super) static ALPHA_FACTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// TUXBOX_CB_ALPHA_FACTOR=0: factors 19/20 refuse the target, as before.
+fn alpha_factor() -> bool {
+    ALPHA_FACTOR.load(std::sync::atomic::Ordering::Relaxed) && crate::env_toggle!("TUXBOX_CB_ALPHA_FACTOR") != Some("0")
+}
+
 fn factor(code: u32) -> Option<D3D12_BLEND> {
     Some(match code {
         0 => D3D12_BLEND_ZERO,
@@ -40,6 +49,11 @@ fn factor(code: u32) -> Option<D3D12_BLEND> {
         16 => D3D12_BLEND_INV_SRC1_COLOR,
         17 => D3D12_BLEND_SRC1_ALPHA,
         18 => D3D12_BLEND_INV_SRC1_ALPHA,
+        // AnyPS5 libSceAgcDriver State.cpp:889-890 (GPL-3): 19/20 are
+        // CONSTANT_ALPHA / ONE_MINUS_CONSTANT_ALPHA, the blend constant's
+        // alpha; D3D12 has them as ALPHA_FACTOR where OPTIONS13 says so.
+        19 if alpha_factor() => D3D12_BLEND_ALPHA_FACTOR,
+        20 if alpha_factor() => D3D12_BLEND_INV_ALPHA_FACTOR,
         _ => return None,
     })
 }

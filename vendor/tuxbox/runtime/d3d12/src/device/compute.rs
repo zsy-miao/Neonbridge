@@ -335,6 +335,11 @@ pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
     // (test38-45: clears only; test46 with the stub drew).
     // TUXBOX_SLOT57=placeholder answers the placeholder.
     let stub = crate::env_toggle!("TUXBOX_SLOT57") != Some("placeholder");
+    if call == 0 {
+        let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS13::default();
+        let ok = unsafe { this.native.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS13, (&raw mut options).cast(), size_of_val(&options) as u32) }.is_ok();
+        super::cb_blend::ALPHA_FACTOR.store(ok && options.AlphaBlendFactorSupported.as_bool(), std::sync::atomic::Ordering::Relaxed);
+    }
     if call < 2 {
         unsafe { describe_state_blocks(N, call, desc) };
     }

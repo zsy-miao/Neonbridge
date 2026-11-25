@@ -55,7 +55,7 @@ Open work. Each item is tested in a run of its own.
 ## Port audit findings (each fix gets a run of its own)
 
 ### d3d12
-- ref better: 689199f (alpha blend factor 19/20; a placeholder pipeline drops draws).
+- ref better: 689199f (a placeholder pipeline drops draws; blend 19/20 done).
 - f40b107: the table arena never frees (VIctory HostHeap release + c1c3281 scan fix are better).
 - five-star b828157 (e1ce01d): release every pending memory wait at each present (79dff41 releases only waits no queued list writes).
 - five-star 226887c (f96284e): trigger on the slot-74 64-bit wait.
