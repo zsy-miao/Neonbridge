@@ -795,13 +795,14 @@ fn root_uav_recent(entry: &Entry) -> bool {
 /// forth every submission (refresh and write-back), ~380 MB a submit over
 /// PCIe and ~100 ms of GPU time a frame against test134's 23. A list is
 /// submitted within a few write-backs of its recording, so RECENT covers it.
-/// Opt-in (test149: shadows were not the 100 ms): TUXBOX_SHADOW_RECENT=N
-/// sets the window; unset or 0 keeps the sticky mark.
+/// On by default, RECENT 4 (test156: the same 56 shadows were still written
+/// back whole, 130 MB, and refreshed whole every submission under the sticky
+/// mark): TUXBOX_SHADOW_RECENT=N sets the window, 0 keeps the sticky mark.
 static WRITE_BACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn recent_window() -> Option<u64> {
     static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    let n = *N.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_RECENT").and_then(|v| v.trim().parse().ok()).unwrap_or(0));
+    let n = *N.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_RECENT").and_then(|v| v.trim().parse().ok()).unwrap_or(4));
     (n != 0).then_some(n)
 }
 
