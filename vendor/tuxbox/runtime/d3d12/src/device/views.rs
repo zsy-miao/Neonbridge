@@ -1473,9 +1473,16 @@ pub(super) unsafe extern "system" fn sampler_x(
     // 0 point, 1 bilinear, 2/3 anisotropic; compares only for 2..=7; a min/max
     // mode beats comparison; the bias is w[11] alone; a non-anisotropic
     // sampler gets MaxAnisotropy 1 (VIctory-fxceless victory-gpu sampler.rs
-    // 11-92, matching VIctory victory-shader emit/sampler.rs:55-62). Default
-    // (unset or victory) keeps the decode below.
-    let fx = crate::env_toggle!("TUXBOX_SAMPLER_DECODE") == Some("fxceless");
+    // 11-92, matching VIctory victory-shader emit/sampler.rs:55-62).
+    // test153 slot 61 words settle it: w[1..=4] came as (1,1,2,2) and
+    // (2,2,1,1), so the mip word uses the hardware's none/point/linear
+    // 0/1/2 and the filter words the hardware's point/bilinear/aniso-point/
+    // aniso-bilinear 0..=3. The old decode read 1 as point and turned every
+    // trilinear sampler into point min/mag. Mag/min order, compare (w[16] was
+    // NEVER) and the w[12] bias (always 0) were not exercised; fxceless is
+    // taken for them too. Default fxceless; TUXBOX_SAMPLER_DECODE=victory
+    // keeps the old decode below.
+    let fx = crate::env_toggle!("TUXBOX_SAMPLER_DECODE") != Some("victory");
     let comparison = if fx { (2..=7).contains(&w[16]) && w[5] == 0 } else { w[16] != D3D12_COMPARISON_FUNC_NEVER.0 as u32 && w[16] != 0 };
     // Unknown reductions and filters fall back to standard / linear (logged
     // once each) instead of stopping the title; TUXBOX_UNMAPPED=failfast stops.
