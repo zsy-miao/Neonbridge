@@ -2489,8 +2489,27 @@ static LIST_SLOTS: Slots<149> = {
     slots[131] = crate::slot!(build_raytracing::batch);
     slots[139] = crate::slot!(reset_extended);
     slots[146] = crate::slot!(enhanced::barrier);
+    // ztrx victory-gpu list.rs (MIT, credit): DispatchMeshX at older #98 and
+    // ResetX at older #137 (0x448); both were unmapped here.
+    // TUXBOX_ZTRX_SLOTS=0 makes DispatchMeshX a no-op again.
+    slots[98] = crate::slot!(dispatch_mesh_x);
+    slots[137] = crate::slot!(reset_extended);
     slots
 };
+
+/// DispatchMeshX (list, x, flags, indirect, payload), ztrx victory-gpu list.rs:
+/// a direct dispatch is DispatchMesh(x, 1, 1); an indirect one is dropped and logged.
+unsafe extern "system" fn dispatch_mesh_x(list: &List, x: u32, flags: u64, indirect: u64, payload: u64) {
+    if crate::env_toggle!("TUXBOX_ZTRX_SLOTS") == Some("0") {
+        return;
+    }
+    if indirect != 0 {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&ONCE, || format!("DispatchMeshX indirect {indirect:#x} (x {x} flags {flags:#x} payload {payload:#x}) dropped"));
+        return;
+    }
+    unsafe { graphics::dispatch_mesh(list, x, 1, 1) }
+}
 
 unsafe extern "system" fn reset_extended(list: &List, allocator: *mut c_void, initial: *mut c_void, options: usize) -> HRESULT {
     // The console options have no desktop equivalent; reset as plain Reset does
@@ -2568,6 +2587,11 @@ static DEVICE11_LIST_SLOTS: Slots<149> = {
     slots[123] = crate::slot!(ray_dispatch::dispatch);
     slots[129] = crate::slot!(graphics::dispatch_mesh);
     slots[148] = crate::slot!(allocate_embedded);
+    // ztrx: older #98 DispatchMeshX and #137 ResetX are two later here.
+    let base = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
+    slots[98] = base[98];
+    slots[100] = crate::slot!(dispatch_mesh_x);
+    slots[137] = base[137];
     slots[70] = crate::slot!(graphics::depth_bounds);
     slots[75] = crate::slot!(graphics::force_shader_depth_order);
     slots[142] = crate::slot!(graphics::sample_mask);
