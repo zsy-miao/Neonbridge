@@ -1091,9 +1091,11 @@ pub(super) struct Placements {
 /// use. That is what the hold by list age guarded, and the hold kept every
 /// idle heap resident (test154/155: 572 render heaps idle 30 s+, none
 /// evicted, device-local 7739/6969 MiB). With the retouch the hold is
-/// dropped; TUXBOX_TARGET_RETOUCH=0 keeps the hold by list age.
+/// dropped; TUXBOX_TARGET_RETOUCH=0 keeps the hold by list age. Held weakly:
+/// a list recorded once and never reset would otherwise keep each heap it
+/// named alive (and its driver commit) after the title released the images.
 #[derive(Default)]
-pub(crate) struct TargetHeaps(Vec<Arc<super::heap::RenderHeap>>);
+pub(crate) struct TargetHeaps(Vec<std::sync::Weak<super::heap::RenderHeap>>);
 
 impl TargetHeaps {
     pub(crate) fn clear(&mut self) {
@@ -1102,14 +1104,15 @@ impl TargetHeaps {
 
     fn note(&mut self, heap: Arc<super::heap::RenderHeap>) {
         heap.touch();
-        if !self.0.iter().any(|h| Arc::ptr_eq(h, &heap)) && self.0.try_reserve(1).is_ok() {
-            self.0.push(heap);
+        let weak = Arc::downgrade(&heap);
+        if !self.0.iter().any(|h| h.ptr_eq(&weak)) && self.0.try_reserve(1).is_ok() {
+            self.0.push(weak);
         }
     }
 
     /// The submit of a list that recorded these targets: each heap is used now.
     pub(crate) fn retouch(&self) {
-        for heap in &self.0 {
+        for heap in self.0.iter().filter_map(std::sync::Weak::upgrade) {
             heap.touch();
         }
     }
