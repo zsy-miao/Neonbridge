@@ -1135,6 +1135,8 @@ pub(super) struct RenderHeap {
     end: u64,
     /// holds a render target or depth image (`rank`)
     renderable: std::sync::atomic::AtomicBool,
+    /// made for a depth image in the opaque (unknown) layout (`inner_depth`)
+    opaque_depth: bool,
     bytes: u64,
     /// the native device it was made on
     device: usize,
@@ -1166,7 +1168,7 @@ impl RenderHeaps {
         })
     }
 
-    fn acquire(&self, device: &ID3D12Device, address: u64, end: u64, alignment: u64, renderable: bool)
+    fn acquire(&self, device: &ID3D12Device, address: u64, end: u64, alignment: u64, renderable: bool, opaque_depth: bool)
         -> windows::core::Result<(std::sync::Arc<RenderHeap>, u64)> {
         use std::sync::Arc;
         let mixed = self.mixed(device);
@@ -1175,7 +1177,29 @@ impl RenderHeaps {
         }
         let mut heaps = self.0.lock().unwrap_or_else(|e| e.into_inner());
         heaps.retain(|_, entry| entry.strong_count() != 0);
-        if let Some((&base, entry)) = heaps.range(..end).next_back()
+        // A placement's extent is the host allocation size, which can run past
+        // the title's own block (a large D16 target is sized above it), so the
+        // title's next depth block starts inside the previous range. Two
+        // opaque depth layouts at different addresses never shared bytes on
+        // the console: the inner one gets a heap of its own instead of
+        // aliasing the outer one's tail (leonida d16eb1ff0,
+        // d3d12_xs_placed_depth.h, GPL-3.0, credited). Same-address rules are
+        // unchanged. TUXBOX_INNER_DEPTH_OWN=0 aliases as before.
+        let inner = opaque_depth && crate::env_toggle!("TUXBOX_INNER_DEPTH_OWN") != Some("0")
+            && heaps.range(..address).any(|(&base, entry)| base < address
+                && entry.upgrade().is_some_and(|heap| heap.end > address && heap.opaque_depth));
+        if inner {
+            static INNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = INNER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "depth image at {address:#x}..{end:#x} starts inside another depth image's range: own heap ({n} so far; TUXBOX_INNER_DEPTH_OWN=0 aliases)"));
+            }
+        }
+        // The covering heap is the last one at or below the address: an inner
+        // depth heap above it no longer hides the outer one from its own image.
+        let last = if crate::env_toggle!("TUXBOX_INNER_DEPTH_OWN") != Some("0") { address + 1 } else { end };
+        if !inner && let Some((&base, entry)) = heaps.range(..last).next_back()
             && let Some(heap) = entry.upgrade()
             && heap.end > address
             && end <= heap.end
@@ -1205,10 +1229,10 @@ impl RenderHeaps {
         // stayed alive with their images, so a pool the title keeps placing
         // into grew a new union-sized heap each time (test47: device memory
         // +5 GB in 20 s). Past the cap the image gets a heap of its own size.
-        let own = !union_fits(stop - start, end - address);
+        let own = inner || !union_fits(stop - start, end - address);
         if own {
             (start, stop) = (address, end);
-            note_own_heap(stop - start);
+            if !inner { note_own_heap(stop - start); }
         } else {
             let overlapped: Vec<u64> = heaps.range(start..stop).map(|(&base, _)| base).collect();
             for base in overlapped {
@@ -1225,7 +1249,7 @@ impl RenderHeaps {
         let native = native.ok_or(E_POINTER)?;
         rank(device, &native, renderable, desc.SizeInBytes);
         let heap = Arc::new(RenderHeap { native, end: stop, renderable: renderable.into(),
-            bytes: desc.SizeInBytes, device: device.as_raw() as usize,
+            opaque_depth, bytes: desc.SizeInBytes, device: device.as_raw() as usize,
             used: residency::now_ms().into(), evicted: false.into(),
             _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::RenderHeap, desc.SizeInBytes) });
         heaps.insert(start, Arc::downgrade(&heap));
@@ -1702,7 +1726,8 @@ unsafe fn place_gpu_target(
         // GPU copies and views, not through its CPU mapping of this range.
         step = "host heap";
         let (entry, offset) = device.state.render_heaps.acquire(&device.native, address,
-            address + allocation.SizeInBytes, allocation.Alignment, renderable)?;
+            address + allocation.SizeInBytes, allocation.Alignment, renderable,
+            desc.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN && desc.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL))?;
         let heap = entry.native.clone();
         render_heap = Some(entry);
         step = "host placement";
