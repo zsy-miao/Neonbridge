@@ -1859,6 +1859,15 @@ fn wave_loop_swizzle() -> bool {
     std::env::var("TB_WAVE_LOOP_SWIZZLE").map_or(true, |v| v.trim() != "0")
 }
 
+/// QDMode `ds_swizzle_b32` (offset bit 15) inside a guest loop: a quad
+/// permute, lane = (lane & ~3) | ((offset >> 2*(lane & 3)) & 3), which stays
+/// inside its quad, so `WaveReadLaneAt` on the host lane gives it exactly
+/// (RDNA ISA DS_SWIZZLE_B32 QDMode; leonida/palmetto rdna2spirv.py map it to
+/// the same subgroup shuffle; GPL-3.0, credit). TB_WAVE_LOOP_QUAD_SWIZZLE=0 refuses.
+fn wave_loop_quad_swizzle() -> bool {
+    std::env::var("TB_WAVE_LOOP_QUAD_SWIZZLE").map_or(true, |v| v.trim() != "0")
+}
+
 fn resinfo_cube() -> bool {
     std::env::var("TB_RESINFO_CUBE").map_or(true, |v| v.trim() != "0")
 }
@@ -3357,8 +3366,10 @@ fn translate_outputs_once(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
                 .collect();
             for k in inside {
                 let i = &em.insns[k];
-                let bitmask = i.mnemonic == "ds_swizzle_b32" && i.raw[0] & (1 << 17) == 0 && i.aux.imm as u32 & 0x8000 == 0;
-                if !(bitmask && wave_loop_swizzle()) {
+                let plain = i.mnemonic == "ds_swizzle_b32" && i.raw[0] & (1 << 17) == 0;
+                let bitmask = plain && i.aux.imm as u32 & 0x8000 == 0;
+                let quad = plain && i.aux.imm as u32 & 0x8000 != 0 && wave_loop_quad_swizzle();
+                if !((bitmask || quad) && wave_loop_swizzle()) {
                     return Err("compute swizzle inside a loop".into());
                 }
                 em.loop_swizzles.insert(k);
@@ -9025,8 +9036,13 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     let t = self.tmp;
                     self.tmp += 1;
                     self.line(&format!("uint t{t}lane = WaveGetLaneIndex();"));
-                    self.line(&format!("uint t{t}src = (t{t}lane & ~31u) | (((t{t}lane & {}u) | {}u) ^ {}u);",
-                        off & 31, (off >> 5) & 31, (off >> 10) & 31));
+                    if off & 0x8000 != 0 {
+                        // QDMode quad permute (see `wave_loop_quad_swizzle`).
+                        self.line(&format!("uint t{t}src = (t{t}lane & ~3u) | (({}u >> ((t{t}lane & 3u) * 2u)) & 3u);", off & 0xff));
+                    } else {
+                        self.line(&format!("uint t{t}src = (t{t}lane & ~31u) | (((t{t}lane & {}u) | {}u) ^ {}u);",
+                            off & 31, (off >> 5) & 31, (off >> 10) & 31));
+                    }
                     self.line(&format!("uint t{t}value = WaveReadLaneAt({}, t{t}src);", r(&s[0])?));
                     return self.wv(&d.ok_or("no swizzle destination")?, &format!("t{t}value"));
                 }
