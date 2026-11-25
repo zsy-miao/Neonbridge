@@ -42,6 +42,7 @@ pub(crate) fn frame_presented() {
     let pipelines = crate::env_toggle!("TUXBOX_PIPELINE_WAIT_MS").and_then(|v| v.parse().ok()).unwrap_or(PIPELINE_FRAME_MS);
     PIPELINE_WAIT_MS.store(pipelines, Ordering::Relaxed);
     crate::device::compute::refill_bind_wait();
+    crate::device::stream::background::frame_presented();
 }
 
 /// Whether this thread's last request ran out of time (left set, unlike take_missed).

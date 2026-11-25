@@ -387,6 +387,68 @@ fn worker_priority() {
     let _ = unsafe { SetThreadPriority(GetCurrentThread(), priority) };
 }
 
+/// Microseconds between the last two presents (smoothed), and when the last
+/// one came (ms since START).
+static FRAME_US: AtomicU64 = AtomicU64::new(0);
+static PRESENT_AT_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+pub(crate) fn frame_presented() {
+    let now = now_ms();
+    let last = PRESENT_AT_MS.swap(now, Ordering::Relaxed);
+    if last != 0 {
+        let us = (now - last).saturating_mul(1000);
+        let old = FRAME_US.load(Ordering::Relaxed);
+        FRAME_US.store(if old == 0 { us } else { (old * 7 + us) / 8 }, Ordering::Relaxed);
+    }
+}
+
+/// test145 (as test117a before it): eight pipeline workers and four
+/// prefetchers compiling in the driver (nvgpucomp64, ~3,700 samples each)
+/// took the intro to 12.6-13.7 fps with Bink at 5.8 frames a second and the
+/// audio glitching. Below-normal priority does not keep them off the title:
+/// the title's threads are pinned to the cores xmem maps the console's onto,
+/// and inside the driver the workers hold its locks. So while the title
+/// presents slower than TUXBOX_PIPELINE_FPS_FLOOR (30) frames a second, only
+/// the first two pipeline workers take jobs; the others and the prefetchers
+/// wait. A title thread waiting on a pipeline (TITLE_HELD) or a stretch with
+/// no presents (a loading screen that does not draw) lets them all build.
+/// VIctory-fxceless runs n/2 workers below normal with no prefetchers or
+/// compile pool beside them (make.rs:295-310). TUXBOX_PIPELINE_FPS_FLOOR=0
+/// never holds them.
+fn throttled() -> bool {
+    static FLOOR: OnceLock<u64> = OnceLock::new();
+    let floor = *FLOOR.get_or_init(|| crate::env_toggle!("TUXBOX_PIPELINE_FPS_FLOOR").and_then(|v| v.trim().parse().ok()).unwrap_or(30));
+    if floor == 0 || TITLE_HELD.load(Ordering::Relaxed) != 0 {
+        return false;
+    }
+    let at = PRESENT_AT_MS.load(Ordering::Relaxed);
+    let frame = FRAME_US.load(Ordering::Relaxed);
+    at != 0 && now_ms().saturating_sub(at) < 1000 && frame > 1_000_000 / floor
+}
+
+/// A throttled worker waits here before taking its next job.
+fn hold_while_throttled() {
+    static HELD: AtomicU64 = AtomicU64::new(0);
+    let mut noted = false;
+    while throttled() {
+        if !noted {
+            noted = true;
+            let n = HELD.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "background pipelines: a worker holds while the title presents at {:.1} fps, under TUXBOX_PIPELINE_FPS_FLOOR ({n} so far; 0 never holds)",
+                    1e6 / FRAME_US.load(Ordering::Relaxed).max(1) as f64));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// xcl's idea (re-derived): a pipeline the title is waiting on that a worker
 /// is already building gets that worker raised to normal priority; the
 /// worker drops back after the build. TUXBOX_PIPELINE_HURRY=0 off.
@@ -953,6 +1015,9 @@ fn send(job: Job, bound: bool) {
                     // Ready workers wait only briefly on the translator.
                     crate::device::shader_cache::patience(handoff_wait());
                     loop {
+                        if prefetch_only || i >= 2 {
+                            hold_while_throttled();
+                        }
                         let (job, prefetch) = next_job(prefetch_only);
                         PREFETCH.with(|p| p.set(prefetch));
                         HANDING.with(|h| h.set(handoff_wait().map(|_| prefetch)));
