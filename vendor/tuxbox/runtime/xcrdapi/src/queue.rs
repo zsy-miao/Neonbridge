@@ -494,6 +494,35 @@ fn bcpack_block(mode: u8) -> Option<Vec<u8>> {
     })
 }
 
+/// Title ranges a ReadFile is writing into right now. xmem asks
+/// (TuxBoxReadsInFlight) when unmapping a view fails 87 at unmap:256: the
+/// kernel's I/O locks the pages under an in-flight read.
+static IN_FLIGHT: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
+struct InFlight(usize, usize);
+
+impl InFlight {
+    fn new(at: usize, bytes: usize) -> Self {
+        IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).push((at, at + bytes));
+        Self(at, at + bytes)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut v = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = v.iter().position(|&r| r == (self.0, self.1)) {
+            v.swap_remove(i);
+        }
+    }
+}
+
+/// How many file reads are writing into [lo, hi) now (TUXBOX_UNMAP87_REGION).
+#[unsafe(no_mangle)]
+pub extern "system" fn TuxBoxReadsInFlight(lo: usize, hi: usize) -> u32 {
+    IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|&&(a, b)| a < hi && lo < b).count() as u32
+}
+
 impl Read {
     fn read_source(&self, target: *mut u8) -> Result<(), HRESULT> {
         match &self.source {
@@ -511,6 +540,7 @@ impl Read {
                     stats.total_reads = stats.total_reads.saturating_add(1);
                 }
                 commit_title_range(target, self.size);
+                let _flight = InFlight::new(target as usize, self.size);
                 let success = unsafe {
                     ReadFile(
                         file.file.as_raw_handle(),

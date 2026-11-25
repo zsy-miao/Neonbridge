@@ -380,8 +380,17 @@ fn unmap_once(address: usize) -> Result<(), u32> {
                         format!("refused {}", unsafe { GetLastError() })
                     }
                 });
+                // File reads writing into the view now (xcrdapi's ledger):
+                // their I/O holds the pages locked against the unmap.
+                let reads = {
+                    type Count = unsafe extern "system" fn(usize, usize) -> u32;
+                    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+                    let module = unsafe { GetModuleHandleW(windows_sys::w!("xcrdapi.dll")) };
+                    let f = if module.is_null() { None } else { unsafe { GetProcAddress(module, c"TuxBoxReadsInFlight".as_ptr().cast()) } };
+                    f.map_or_else(|| "unknown".to_string(), |f| unsafe { core::mem::transmute::<_, Count>(f)(address, address + bytes) }.to_string())
+                };
                 crate::loader::log(&format!(
-                    "xmem: unmap:256 error {e} for view {address:#x}: region {}; before {}; after {}; first page {ws}; same-protect {protect} ({n} so far; TUXBOX_UNMAP87_REGION=0 off)",
+                    "xmem: unmap:256 error {e} for view {address:#x}: region {}; before {}; after {}; first page {ws}; same-protect {protect}; file reads in flight over it {reads} ({n} so far; TUXBOX_UNMAP87_REGION=0 off)",
                     show(address), show(address.wrapping_sub(1)), show(address + bytes)));
             }
         }
