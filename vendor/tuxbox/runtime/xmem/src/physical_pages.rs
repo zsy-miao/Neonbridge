@@ -1459,7 +1459,7 @@ impl Pool {
             } else {
                 FAILED_FROZEN.store(0, Ordering::Relaxed);
             }
-            crate::loader::log(&format!("join range {lo:#x}..{hi:#x}: failed 87 unfrozen; frozen retry {joined:?} (TUXBOX_JOIN_FREEZE=0 off)"));
+            crate::loader::log(&format!("join range {lo:#x}..{hi:#x}: failed 87 unfrozen; frozen retry {joined:?} (TUXBOX_JOIN_FREEZE=1 on)"));
         }
         JOINING[0].store(0, Ordering::Release);
         JOIN_GEN.fetch_add(1, Ordering::AcqRel);
@@ -1930,7 +1930,9 @@ static ALIAS_INDEX: LazyLock<std::sync::Mutex<(u64, HashMap<u64, Vec<usize>>)>> 
 
 fn join_freeze() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TUXBOX_JOIN_FREEZE").map_or(true, |v| v.trim() != "0"))
+    // Off by default: no frozen retry has ever cured an 87 (test168, test171),
+    // and each stops every thread. TUXBOX_JOIN_FREEZE=1 on.
+    *ON.get_or_init(|| std::env::var("TUXBOX_JOIN_FREEZE").is_ok_and(|v| v.trim() == "1"))
 }
 
 /// Every other thread of the process suspended until drop (xbox-emulator
