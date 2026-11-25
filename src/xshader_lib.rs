@@ -50,8 +50,8 @@ fn load(dll: &Path) -> Option<(Translate, Free)> {
 }
 
 pub enum Outcome {
-    /// HLSL (or a ray library) and its DXC profile.
-    Done(Vec<u8>, String),
+    /// HLSL (or a ray library), its DXC profile and its `.heap` reflection.
+    Done(Vec<u8>, String, Option<Vec<u8>>),
     Unsupported(String),
     Failed(String),
     /// No DLL, a panic or past the time: run the xshader process instead.
@@ -69,6 +69,13 @@ pub fn translate(dll: &Path, source: Vec<u8>, consumer: Option<Vec<u8>>, order: 
     let Some((translate, free)) = load(dll) else {
         return Outcome::Fallback(format!("{} did not load", dll.display()));
     };
+    // Optional: a DLL from before the heap reflection has no such export.
+    static HEAP: OnceLock<usize> = OnceLock::new();
+    let heap = *HEAP.get_or_init(|| unsafe {
+        use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let h = GetModuleHandleW(wide(&dll.to_string_lossy()).as_ptr());
+        if h.is_null() { 0 } else { GetProcAddress(h, b"tuxbox_xshader_heap\0".as_ptr()).map_or(0, |p| p as usize) }
+    });
     let (tx, rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new().name("xshader".into()).stack_size(64 << 20).spawn(move || {
         let ptr = |v: &Option<Vec<u8>>| v.as_ref().map_or((std::ptr::null(), 0), |v| (v.as_ptr(), v.len()));
@@ -80,7 +87,17 @@ pub fn translate(dll: &Path, source: Vec<u8>, consumer: Option<Vec<u8>>, order: 
         let data = if out.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(out, len).to_vec() } };
         unsafe { free(out, len) };
         let profile = String::from_utf8_lossy(&profile[..profile.iter().position(|&b| b == 0).unwrap_or(16)]).into_owned();
-        let _ = tx.send((status, data, profile));
+        // Same thread: the reflection is a thread-local of the translation just run.
+        let reflection = (heap != 0).then(|| {
+            type Heap = unsafe extern "C" fn(*mut *mut u8, *mut usize) -> u32;
+            let f = unsafe { std::mem::transmute::<usize, Heap>(heap) };
+            let (mut p, mut n) = (std::ptr::null_mut::<u8>(), 0usize);
+            let got = unsafe { f(&mut p, &mut n) } == 1 && !p.is_null();
+            let v = got.then(|| unsafe { std::slice::from_raw_parts(p, n).to_vec() });
+            unsafe { free(p, n) };
+            v
+        }).flatten();
+        let _ = tx.send((status, data, profile, reflection));
     });
     if let Err(e) = spawned {
         return Outcome::Fallback(format!("thread: {e}"));
@@ -96,10 +113,10 @@ pub fn translate(dll: &Path, source: Vec<u8>, consumer: Option<Vec<u8>>, order: 
         }
     };
     match got {
-        Ok((0, data, profile)) => Outcome::Done(data, profile),
-        Ok((65, data, _)) => Outcome::Unsupported(String::from_utf8_lossy(&data).trim().to_owned()),
-        Ok((1, data, _)) => Outcome::Failed(String::from_utf8_lossy(&data).trim().to_owned()),
-        Ok((s, data, _)) => Outcome::Fallback(format!("status {s}: {}", String::from_utf8_lossy(&data).trim())),
+        Ok((0, data, profile, heap)) => Outcome::Done(data, profile, heap),
+        Ok((65, data, _, _)) => Outcome::Unsupported(String::from_utf8_lossy(&data).trim().to_owned()),
+        Ok((1, data, _, _)) => Outcome::Failed(String::from_utf8_lossy(&data).trim().to_owned()),
+        Ok((s, data, _, _)) => Outcome::Fallback(format!("status {s}: {}", String::from_utf8_lossy(&data).trim())),
         Err(_) => Outcome::Fallback("timed out".into()),
     }
 }
