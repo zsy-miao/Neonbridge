@@ -328,6 +328,22 @@ fn with_root(shader: &[u8], root: &[u8]) -> Option<Vec<u8>> {
     use tuxbox_dxbc::Dxbc;
     let dxbc = Dxbc::parse(shader).ok()?;
     if dxbc.chunk(b"RTS0").is_some() || root.is_empty() { return None; }
+    // Xbox2Windows 155397e6 (MIT, credit to its authors): a truncated root blob
+    // sent with a translation request failed the translator's whole run,
+    // not that one request. A root the RTS0 parser refuses is not attached
+    // here, so the request goes without it as with no root.
+    // TUXBOX_ROOT_CHECK=0 attaches it unchecked, as before.
+    if crate::env_toggle!("TUXBOX_ROOT_CHECK") != Some("0")
+        && let Err(why) = tuxbox_dxbc::rootsig::parse_rts0(root)
+    {
+        static REFUSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = REFUSED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "shader cache: a malformed root signature ({} bytes: {why}) left out of a translation request ({n} so far; TUXBOX_ROOT_CHECK=0 attaches it)", root.len()));
+        }
+        return None;
+    }
     let count = dxbc.chunks.len();
     let end = 32 + count * 4;
     let root_offset = (shader.len() + 4).next_multiple_of(4);
