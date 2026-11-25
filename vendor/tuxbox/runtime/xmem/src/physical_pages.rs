@@ -1441,10 +1441,24 @@ impl Pool {
         // growing joins starved the title (test166: 0 presents; test167 with
         // the freeze off presented). TUXBOX_JOIN_FREEZE=0 off.
         let mut joined = attempt();
-        if joined == Err(87) && join_freeze() {
+        // Once GIVE_UP frozen retries in a row have failed 87 too, joins stop
+        // freezing: the freeze does not cure it, and each one stops every
+        // thread (test171: 88 failed frozen retries, a 9.6 s stall at
+        // t=16.2-25.9). TUXBOX_JOIN_FREEZE_GIVEUP=0 keeps retrying.
+        static FAILED_FROZEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        const GIVE_UP: u32 = 3;
+        let give_up = std::env::var("TUXBOX_JOIN_FREEZE_GIVEUP").map_or(true, |v| v.trim() != "0");
+        if joined == Err(87) && join_freeze() && !(give_up && FAILED_FROZEN.load(Ordering::Relaxed) >= GIVE_UP) {
             let frozen = Frozen::new();
             joined = attempt();
             drop(frozen);
+            if joined == Err(87) {
+                if FAILED_FROZEN.fetch_add(1, Ordering::Relaxed) + 1 == GIVE_UP && give_up {
+                    crate::loader::log(&format!("join freeze: {GIVE_UP} frozen retries in a row failed 87; joins no longer freeze (TUXBOX_JOIN_FREEZE_GIVEUP=0 keeps freezing)"));
+                }
+            } else {
+                FAILED_FROZEN.store(0, Ordering::Relaxed);
+            }
             crate::loader::log(&format!("join range {lo:#x}..{hi:#x}: failed 87 unfrozen; frozen retry {joined:?} (TUXBOX_JOIN_FREEZE=0 off)"));
         }
         JOINING[0].store(0, Ordering::Release);
