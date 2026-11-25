@@ -789,7 +789,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         // through dxc, most of that the -O1 pass (8.8 s vs 0.5 s at -O0 on
         // 727f287e; up to its 10 s cut-off, then -O0 again). The driver
         // optimises the DXIL again, as for the urgent path above.
-        // NEONBRIDGE_PREWARM_DXC_O1=1 keeps -O1 first in the prewarm.
+        // Opt-in only (NEONBRIDGE_PREWARM_DXC_O0=1, prewarm_o0).
         let first = if o0_first || urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &urgent) };
         let compiled = match first {
             Err(ToolError::Other(msg)) if msg == "timed out" => {
@@ -1149,9 +1149,11 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     let _ = fs::remove_dir_all(scratch);
 }
 
-/// Whether the prewarm skips dxc's -O1 pass (see compile; NEONBRIDGE_PREWARM_DXC_O1=1 keeps it).
+/// Whether the prewarm skips dxc's -O1 pass (see compile). Opt-in,
+/// NEONBRIDGE_PREWARM_DXC_O0=1: -O0 DXIL runs slower on the GPU and the
+/// intro is GPU-bound, so it waits for an -O1 upgrade path.
 fn prewarm_o0() -> bool {
-    std::env::var("NEONBRIDGE_PREWARM_DXC_O1").as_deref() != Ok("1")
+    std::env::var("NEONBRIDGE_PREWARM_DXC_O0").as_deref() == Ok("1")
 }
 
 /// Parallel translations (xshader, then dxc) for the prewarm and for the
