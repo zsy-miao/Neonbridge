@@ -2232,6 +2232,22 @@ fn declared_samplers(ex: &ShaderExtract) -> BTreeMap<usize, (u32, u32)> {
     })().unwrap_or_default()
 }
 
+/// The guest sampler heap pointer of a rooted compute shader that indexes both
+/// heaps directly (root flags 0x400 | 0x800, features bits 25 and 26): the user
+/// SGPR right after the resource heap pointer `heap_register` names. Without it
+/// the sampler-heap s_load (byte offset = index << 4 read from one lane) had no
+/// base and was refused as "dynamic soffset" (fe9b1d15 s11, 1652 of 3000 requests).
+/// VIctory heap_index: descriptor address = base + offset + soffset, index = >> 4
+/// for samplers. TB_ROOTED_SAMPLER_HEAP=0 leaves it unset.
+fn rooted_sampler_heap(ex: &ShaderExtract) -> Option<u8> {
+    if std::env::var("TB_ROOTED_SAMPLER_HEAP").is_ok_and(|v| v.trim() == "0") || ex.stage != Stage::Compute
+        || ex.root_sig.as_ref()?.flags & 0x800 == 0 || !sampler_heap_indexed(ex)
+    {
+        return None;
+    }
+    heap_register(ex)?.checked_add(1).filter(|&r| r < 100)
+}
+
 fn heap_register(ex: &ShaderExtract) -> Option<u8> {
     use crate::meta::RootParamKind;
     let root = ex.root_sig.as_ref()?;
@@ -3605,7 +3621,8 @@ impl<'a> Emitter<'a> {
             compute_heap: sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none()
                 && (compute_heap_base(ex).is_some() || pixel_heap_base(ex, 5).is_some()),
             sampler_heap_base: (sampler_heap::resource_base(ex).is_none() && heap_register(ex).is_none())
-                .then(|| compute_heap_base(ex).and_then(|_| compute_user_sgpr(ex, 6)).or_else(|| pixel_heap_base(ex, 6))).flatten(),
+                .then(|| compute_heap_base(ex).and_then(|_| compute_user_sgpr(ex, 6)).or_else(|| pixel_heap_base(ex, 6))).flatten()
+                .or_else(|| rooted_sampler_heap(ex)),
             pixel_heap: pixel_heap_base(ex, 5).is_some() || pixel_heap_base(ex, 6).is_some(),
             table_samplers: BTreeSet::new(),
             heap_load_ty: HashMap::new(),
