@@ -108,10 +108,21 @@ pub(super) fn decode_operands(enc: Enc, raw: &[u32]) -> (Vec<Opnd>, Vec<Opnd>, I
             (Vec::new(), Vec::new())
         }
         Enc::Smem => {
-            // OFFSET is a 21-bit signed byte offset (palmetto 36ab9ce7).
-            // TUXBOX_SMEM_SIGNED_OFFSET=0 reads it unsigned as before.
+            // OFFSET is a 21-bit signed byte offset (palmetto 36ab9ce7) for
+            // s_load only: the RDNA2 ISA treats it as unsigned for
+            // s_buffer_load/store (opcodes 8-12, 0x18-0x1b), and no ref
+            // signs it there. TUXBOX_SMEM_SIGNED_OFFSET=0 reads it unsigned
+            // everywhere; =all signs buffer loads too (the b7ee00c form).
+            static SIGNED: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+            let signed = *SIGNED.get_or_init(|| match std::env::var("TUXBOX_SMEM_SIGNED_OFFSET").as_deref().map(str::trim) {
+                Ok("0") => 0,
+                Ok("all") => 2,
+                _ => 1,
+            });
+            let op = (first >> 18) & 0xff;
+            let buffer = (8..=12).contains(&op) || (0x18..=0x1b).contains(&op);
             let raw_off = second & 0x1f_ffff;
-            aux.imm = if std::env::var("TUXBOX_SMEM_SIGNED_OFFSET").map_or(true, |v| v.trim() != "0") {
+            aux.imm = if signed == 2 || (signed == 1 && !buffer) {
                 i64::from(((raw_off << 11) as i32) >> 11)
             } else {
                 i64::from(raw_off)
