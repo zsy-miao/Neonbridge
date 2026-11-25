@@ -161,6 +161,7 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_RETIRE_WAITS_ALL` (0): 1 waits on every queue before completion writes.
 - `TUXBOX_PRESENT_BGRX` (1): 0 refuses B8G8R8X8 presents (drawn into BGRA with alpha 1).
 - `TUXBOX_WAIT_TITLE_WORD` (1): a wait whose word's buffer cannot be mapped reads the word at the title address, and marker/value writes to it are made by the CPU there once their batch has run; 0 drops such waits.
+- `TUXBOX_WRITER_DONE_FRESH` (1; 0 off): a resubmitted list drops its done value until this run's progress signal, so a GPU memory wait is not released early on the previous run's completion.
 
 ### d3d12: resources, views and imports
 
@@ -198,6 +199,8 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_JOIN_RERESERVE` (1), `TUXBOX_JOIN_AHEAD_MB` (32), `TUXBOX_JOIN_SKIP_PINNED` (1).
 - `TUXBOX_SHADOW_IMPORT_CACHE` (1), `TUXBOX_SHADOW_COPY_REUSE` (1).
 - `TUXBOX_IMPORT_KEEP` (512), `TUXBOX_IMPORT_REUSE` (1), `TUXBOX_IMPORT_SINGLE` (1), `TUXBOX_IMPORT_SWEEP` (1), `TUXBOX_IMPORT_PRECHECK` (1), `TUXBOX_IMPORT_RETIRE` (1).
+- `TUXBOX_MEM_DIR` (1; 0 off): a page directory over the 40-bit title address space for translated compute stages (MESIA-Unified memory.rs / draw.rs, GPL-3.0, credit): t0 space32764 a root SRV of 2^21 {copy, start} entries, one per 64 KiB page; u0 a 4096-word fault UAV ((page % 4095) + 1, 0 the sink); b0 the heap index of a 1024-slot raw-UAV copy run past each shader-visible heap's root-table ring (slot 0 null). Copies are the title imports with unordered access; each dispatch makes ready its root view addresses, 40-bit root-constant pairs and constants >= 0x01000000 as <<8 addresses (plus the next 4 MiB), and faults are read at most every 16 ms. Stages are recognised by a PSV0 binding at t0/space32764; paged-arena heaps get an empty directory. A copy whose import the registry dropped (swept every 250 ms) or whose title range was remapped leaves the directory: its pages go back to empty (readers fault, then see the new import), its resource is kept 2 s for lists in flight, then its number and run slot are reused.
+- `TUXBOX_SLOW_IMPORT_LINE` (1; 0 off): each OpenExistingHeapFromAddress1 over 20 ms logs size, time and private bytes.
 - `TUXBOX_IMPORT_REMAPPABLE` (remapped ranges kept out): `1` opens every view, `mapped` keeps out all physical views.
 - `TUXBOX_REFUSED_PAGES` (1), `TUXBOX_RESERVATION_WALK_ALL` (0), `TUXBOX_PUBLISH_SCAN_ALL` (0), `TUXBOX_HOST_FLAG_MASK` (1).
 - `TUXBOX_SHADOW_CPU` (1), `TUXBOX_SHADOW_FILL_CHECKED` (1).
@@ -298,6 +301,11 @@ Format: name (default): effect of changing it. "on" means the fix runs unless se
 - `TUXBOX_MESH_STATIC_SAMPLER` (1), `TUXBOX_MESH_TYPED_BUFFER` (1): mesh bindings read static samplers and four-element typed buffers (TuxBox 63343eb); 0 turns each off.
 - `TUXBOX_PIPELINE_WORKERS` (half the cores, 2-8), `TUXBOX_PIPELINE_HANDOFF_MS` (150), `TUXBOX_COMPILE_WORKERS` (2), `TUXBOX_PREFETCH_WORKERS` (quarter of cores, up to 4).
 - `TUXBOX_PIPELINE_SHAPE` (unset): `fxceless` drops prefetchers and the fps hold.
+- `TUXBOX_PATIENT_URGENT` (1; 0 off): a ready pipeline worker's translation request is marked urgent like a title thread's, so the launcher serves it ahead of the background prewarm.
+- `TUXBOX_HEAP_LATE` (1; 0 creation's lookup only): a pipeline whose stage `.heap` was missing at creation looks it up again at its binds, at most once a second, until found.
+- `TUXBOX_COMPILE_FRESH_THREAD` (1; 0 off): compiles of 1 MiB DXIL or more run on a thread made for that one compile, which exits after it (the driver keeps its arena with the compiling thread); after the first four, falls back to the lanes unless private bytes fell by half on exit. `TUXBOX_HEAVY_ALONE_WAIT_S` (120): a heavy compile running alone still waits for its own peak plus the margin, at most this long.
+- `TUXBOX_TITLE_NO_JOIN` (1; 0 joins): a title thread (or steal) never joins a pipeline compiling on another thread; the job goes to the workers first in line and its binds skip until made.
+- `TUXBOX_STORE_DEFER` (1; 0 waits): a pipeline-library store that meets a save serialising is left to the next save, which stores it before serialising. `TUXBOX_SAVE_SNAPSHOT` (1; 0 off): a library save serialises into memory under the store lock and writes the file after releasing it. `TUXBOX_SAVE_LOG` (1; 0 off): each save logs its MiB, ms holding the stores and ms writing after.
 - `TUXBOX_PIPELINE_FPS_FLOOR` (30): 0 never holds workers.
 - `TUXBOX_PIPELINE_PRIORITY` (1): 0 no bound-first queue; `normal` keeps workers at normal priority.
 - `TUXBOX_PIPELINE_HURRY` (1), `TUXBOX_EAGER_ON_TITLE` (0), `TUXBOX_GRAPHICS_FIRST` (1), `TUXBOX_DISPLAY_BUILD_NOW` (1).
@@ -420,6 +428,7 @@ Every set `TB_*` switch is part of the shader cache key. `TB_NO_WAVESIZE_<n>` is
 - `TB_SRV_AS_UAV_BUF` (1; 0 off): buffer_store/atomics through a root SRV slot retype it UAV. `TB_SRV_AS_UAV_READ` (1; 0 refuses): reads of a retyped slot use the same RWTexture.
 - `TB_SAMPLER_HEAP_FSSM` (1; 0 off): a pixel sampler at root-constant index << 4 on the FSSM class-6 pointer is a heap sampler even off 9 + num32.
 - `TB_F32_NATIVE_CMP` (1; 0 off): in programs of `TB_NATIVE_CMP_MIN_INSNS` (8000)+ instructions, flushed f32 compares are native with NaN tested on the bits.
+- `TB_MEM_DIR` (1; 0 keeps the zero stand-ins): getpc-less flat loads and BVH s_loads in compute read title memory by guest address through the runtime page directory (t0/u0/b0 space32764, `TUXBOX_MEM_DIR`) via `tb_mem_load`; a missing page records a fault and reads zeros; such programs compile as cs_6_6 (MESIA-Unified emit/lower.rs memory(), GPL-3.0, credit). `TB_BVH_FLAT_ZERO` (1; 0 refuses): a getpc-less flat load in a BVH program reads zeros (no hit) where `TB_MEM_DIR` does not apply. `TB_WAVE_LOOP_GROUP_READ` (1; 0 refuses): a group lane read inside a guest loop keeps its group exchange when the group is exactly one 64-lane guest wave (all branches scalar, so every invocation meets each barrier).
 
 ## Recent runs
 
