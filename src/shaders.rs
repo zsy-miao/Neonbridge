@@ -645,7 +645,14 @@ fn run_until(cmd: &mut Command, timeout: Duration, give_up: impl Fn() -> bool) -
                 return Err(ToolError::Exit(status.code().unwrap_or(-1), tail.trim().to_owned()));
             }
             Ok(None) if start.elapsed() > timeout => {
-                let _ = child.kill();
+                // Said, so a tool left running past its time shows whether the
+                // kill was tried and what it returned (the master saw six dxc.exe
+                // well past 120 s in prewarm174b). NEONBRIDGE_TOOL_KILL_LOG=0 off.
+                let killed = child.kill();
+                if std::env::var("NEONBRIDGE_TOOL_KILL_LOG").as_deref() != Ok("0") {
+                    println!("[launch] tool pid {} past {} s: kill {}", child.id(), timeout.as_secs(),
+                        killed.as_ref().map_or_else(|e| format!("failed: {e}"), |_| "sent".into()));
+                }
                 return Err(ToolError::Other("timed out".into()));
             }
             Ok(None) => thread::sleep(Duration::from_millis(10)),
