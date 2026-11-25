@@ -299,7 +299,7 @@ thread_local! {
     static ADVANCED: Cell<HWND> = const { Cell::new(null_mut()) };
     static UI: RefCell<Option<Ui>> = const { RefCell::new(None) };
     static COMBO_PROC: Cell<isize> = const { Cell::new(0) };
-    /// The Diagnostics box (NEONBRIDGE_DIAG=1 for the run).
+    /// The Diagnostics box (on by default; NEONBRIDGE_DIAG=0 for the run when off).
     static DIAG: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -760,11 +760,10 @@ fn play(hwnd: HWND) {
     for s in &sets {
         memory.push_str(&format!("opt={s}\n"));
     }
-    if DIAG.get() {
-        memory.push_str("diag=1\n");
-        // SAFETY: the picker's thread is the launcher's only one here.
-        unsafe { std::env::set_var("NEONBRIDGE_DIAG", "1") };
-    }
+    // Diagnostics is on by default; the box's state is remembered either way.
+    memory.push_str(if DIAG.get() { "diag=1\n" } else { "diag=0\n" });
+    // SAFETY: the picker's thread is the launcher's only one here.
+    unsafe { std::env::set_var("NEONBRIDGE_DIAG", if DIAG.get() { "1" } else { "0" }) };
     let _ = fs::write(last_pick(), memory);
     PICKED.with(|p| *p.borrow_mut() = Some(Pick { folder, exe, runtime: Some(runtime), preset, mix: if mix { parts } else { None }, sets }));
     unsafe { DestroyWindow(hwnd) };
@@ -1379,7 +1378,7 @@ fn create_advanced(owner: HWND, memory: &[(String, String)]) {
     let w = wide(&opts.join("\r\n"));
     unsafe { SetWindowTextW(options, w.as_ptr()) };
     button(hwnd, "Done", (ADV_WIDTH - 24 - 96, options_y + 24 + 96 + 24, 96, 36), ID_DONE);
-    DIAG.set(memory.iter().any(|(k, v)| k == "diag" && v == "1") || crate::runtimes::diag());
+    DIAG.set(crate::runtimes::diag() && !memory.iter().any(|(k, v)| k == "diag" && v == "0"));
     button(hwnd, "Diagnostics", (24, options_y + 24 + 96 + 24, 420, 36), ID_DIAG);
 
     let ui = Ui { saved, saved_names, name, save, parts, options, status };
@@ -1403,6 +1402,8 @@ pub fn pick() -> Option<Pick> {
     dark_app();
     let memory = remembered();
     let get = |k: &str| memory.iter().find(|(m, _)| m == k).map(|(_, v)| v.clone());
+    // Diagnostics on unless NEONBRIDGE_DIAG=0 or the box was last left off.
+    DIAG.set(crate::runtimes::diag() && get("diag").as_deref() != Some("0"));
     let rows = rows();
     // The last pick, else NEONBRIDGE_RUNTIME, else the top-ranked runtime.
     let want = get("runtime").map(|r| crate::runtimes::alias(&r)).or_else(|| std::env::var("NEONBRIDGE_RUNTIME").ok().filter(|v| !v.trim().is_empty()).map(|v| crate::runtimes::name(Some(&v)))).unwrap_or_else(|| rows[0].name.clone());

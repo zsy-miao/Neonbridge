@@ -619,7 +619,13 @@ fn run_steps(name: &str, root: &Path, spec: &Spec, game: Option<&Path>, ask: &dy
         let rest = rest.as_str();
         let (command, mark) = rest.split_once(" [").map_or((rest.trim(), ""), |(c, m)| (c.trim(), m.trim_end_matches(']')));
         println!("[setup] {name}: {title}: {command}");
-        if mark.contains("asks first") && !ask(mark) {
+        // A diagnostics step follows the Diagnostics switch, never a prompt.
+        if title.contains("diag") || mark.contains("diagnostics") {
+            if !diag() {
+                println!("[setup] skipped (diagnostics off)");
+                continue;
+            }
+        } else if mark.contains("asks first") && !ask(mark) {
             println!("[setup] skipped");
             continue;
         }
@@ -747,19 +753,43 @@ fn stale(root: &Path, spec: &Spec, exe: &Path) -> bool {
     src > built
 }
 
-/// NEONBRIDGE_DIAG=1 (the picker's Diagnostics box): victory-family trees
-/// build with their `diagnostics` cargo feature and run with
-/// VICTORY_D3D12_DRED=1, so a removed device logs DRED breadcrumbs.
+/// Diagnostics builds, on by default for every runtime (the user's rule);
+/// NEONBRIDGE_DIAG=0 or the picker's Diagnostics box turns them off. A tree
+/// builds with its toml's `diag` line, else (victory family) with its
+/// `diagnostics` cargo feature, and runs with VICTORY_D3D12_DRED=1.
 pub fn diag() -> bool {
-    std::env::var("NEONBRIDGE_DIAG").is_ok_and(|v| v.trim() == "1")
+    std::env::var("NEONBRIDGE_DIAG").map_or(true, |v| v.trim() != "0")
 }
 
 /// Under [`diag`], a victory tree whose app has a `diagnostics` feature and
 /// whose build line lacks it: (the build line with `--features diagnostics`,
 /// the target folder target-diag beside its target, the exe in it). The
 /// release build in target\ stays as it is, cached.
-fn diag_build(name: &str, root: &Path, cmd: &[String], exe: &Path) -> Option<(Vec<String>, PathBuf, PathBuf)> {
-    if !diag() || cmd.first().map(String::as_str) != Some("cargo") || cmd.iter().any(|a| a.contains("diagnostics")) {
+fn diag_build(name: &str, root: &Path, spec: &Spec, cmd: &[String], exe: &Path) -> Option<(Vec<String>, PathBuf, PathBuf)> {
+    if !diag() {
+        return None;
+    }
+    // The toml's own `diag_build` line (the author's diagnostics build) and
+    // its `diag_exe`; `diag_build = []`: the tree has none, its build is
+    // used as it is. The diag exe lives apart from the release one (cargo's
+    // diag profile in target\diag; with no diag_exe, a cargo line builds into
+    // target-diag), so each keeps its own stamp and switching the box never
+    // forces a rebuild.
+    if let Some(line) = spec.list("diag_build") {
+        if line.is_empty() {
+            return None;
+        }
+        let (target, exe) = match spec.str("diag_exe") {
+            Some(e) => (PathBuf::new(), root.join(e)),
+            None => {
+                let to = root.join("target-diag");
+                let exe = exe.strip_prefix(root.join("target")).map(|rel| to.join(rel)).unwrap_or_else(|_| exe.to_path_buf());
+                (if line.first().map(String::as_str) == Some("cargo") { to } else { PathBuf::new() }, exe)
+            }
+        };
+        return Some((line.to_vec(), target, exe));
+    }
+    if cmd.first().map(String::as_str) != Some("cargo") || cmd.iter().any(|a| a.contains("diagnostics")) {
         return None;
     }
     let tree = victory_tree(name)?;
@@ -781,10 +811,10 @@ fn diag_build(name: &str, root: &Path, cmd: &[String], exe: &Path) -> Option<(Ve
 fn build(name: &str, root: &Path, spec: &Spec) -> Result<PathBuf, Box<dyn Error>> {
     let exe = root.join(spec.str("exe").ok_or_else(|| format!("runtime {name}: NEONBRIDGE.toml names no exe"))?);
     let line = spec.list("build").map(<[String]>::to_vec).unwrap_or_default();
-    let (line, target, exe) = match diag_build(name, root, &line, &exe) {
+    let (line, target, exe) = match diag_build(name, root, spec, &line, &exe) {
         Some((l, t, e)) => {
-            println!("[launch] {name}: diagnostics build in {} (NEONBRIDGE_DIAG=1)", t.display());
-            (l, Some(t), e)
+            println!("[launch] {name}: diagnostics build ({}) -> {} (NEONBRIDGE_DIAG=0 builds release)", l.join(" "), e.display());
+            (l, Some(t).filter(|t| !t.as_os_str().is_empty()), e)
         }
         None => (line, None, exe),
     };
