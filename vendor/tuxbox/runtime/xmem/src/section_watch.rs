@@ -176,11 +176,18 @@ pub(crate) fn remapped(at: usize, len: usize) {
     let blocks: Vec<usize> = g.alias_of.range(at & !(BLOCK - 1)..at.saturating_add(len)).map(|(&b, _)| b).collect();
     for b in blocks {
         let Some(owner) = g.alias_of.remove(&b) else { continue };
-        if let Some(mut aliases) = g.clean.remove(&owner) {
-            // The other aliases are still read-only by our hand: give them back.
-            aliases.retain(|&(a, _)| a != b);
+        if let Some(aliases) = g.clean.remove(&owner) {
+            // Every alias still read-only by our hand gets its protection
+            // back, the remapped ones too: a remap that kept the old view
+            // (a re-commit, a failed map) keeps our read-only, and with its
+            // guard forgotten a write there was an unhandled AV (test174).
             for (a, old) in aliases {
-                if g.alias_of.remove(&a).is_some() && !(at..at.saturating_add(len)).contains(&a) {
+                g.alias_of.remove(&a);
+                let mut info: MEMORY_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+                let ours = unsafe { VirtualQuery(a as *const c_void, &mut info, size_of::<MEMORY_BASIC_INFORMATION>()) } != 0
+                    && info.State == MEM_COMMIT
+                    && info.Protect & 0xff == PAGE_READONLY;
+                if ours {
                     let mut was = 0;
                     unsafe { VirtualProtect(a as *const c_void, BLOCK, old, &mut was) };
                 }
@@ -211,20 +218,21 @@ fn install() {
             return CONTINUE_SEARCH;
         }
         let at = r.ExceptionInformation[1];
-        // try_lock spin: the faulting thread may hold the lock (a query's own
-        // write cannot fault: it writes nothing guarded).
-        for _ in 0..10_000 {
-            if let Ok(mut slot) = GUARDS.try_lock() {
-                let ours = slot.as_mut().is_some_and(|g| open(g, at));
-                if ours {
-                    static FAULTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                    FAULTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                return if ours { CONTINUE_EXECUTION } else { CONTINUE_SEARCH };
+        // Blocks on the lock: no holder writes guarded memory (a query or
+        // remap only protects), so the holder always finishes. The 10k-yield
+        // try_lock spin it replaces gave up while a long query held the lock
+        // and passed a guarded write on as an AV (test174).
+        let mut slot = lock();
+        let ours = slot.as_mut().is_some_and(|g| open(g, at));
+        drop(slot);
+        if !ours && enabled() && is_view(at) {
+            // A write AV on a view page we do not guard: log the first few.
+            static LOST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            if LOST.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+                crate::loader::log(&format!("section watch: write AV at {at:#x} on a view block we do not guard (passed on)"));
             }
-            std::thread::yield_now();
         }
-        CONTINUE_SEARCH
+        if ours { CONTINUE_EXECUTION } else { CONTINUE_SEARCH }
     }
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| unsafe {
