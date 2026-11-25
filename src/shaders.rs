@@ -542,6 +542,71 @@ fn job_times(workers: usize) -> String {
         }
 }
 
+/// Prewarm jobs under way: key -> (started, the dxc/xshader child's pid).
+/// The prewarm's watchdog ends a job past NEONBRIDGE_PREWARM_JOB_S (300; 0
+/// off): the last --prewarm sat at 1704/1705 for over 10 minutes on one
+/// program (fe9c9850..., 3.4 MB of HLSL in dxc) until it was killed by hand.
+static PREWARM_JOBS: std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, Option<u32>)>>> = std::sync::Mutex::new(None);
+/// Keys the watchdog ended, with the seconds they ran.
+static PREWARM_STUCK: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+thread_local! {
+    static PREWARM_KEY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+fn prewarm_job_secs() -> u64 {
+    std::env::var("NEONBRIDGE_PREWARM_JOB_S").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(300)
+}
+
+fn prewarm_job(key: Option<&str>) {
+    let mut jobs = PREWARM_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+    let jobs = jobs.get_or_insert_with(Default::default);
+    PREWARM_KEY.with(|k| {
+        if let Some(old) = k.borrow_mut().take() {
+            jobs.remove(&old);
+        }
+        if let Some(key) = key {
+            jobs.insert(key.to_owned(), (std::time::Instant::now(), None));
+            *k.borrow_mut() = Some(key.to_owned());
+        }
+    });
+}
+
+fn prewarm_child(pid: Option<u32>) {
+    PREWARM_KEY.with(|k| {
+        if let Some(key) = k.borrow().as_ref()
+            && let Some(job) = PREWARM_JOBS.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|j| j.get_mut(key))
+        {
+            job.1 = pid;
+        }
+    });
+}
+
+fn prewarm_stuck(key: &str) -> Option<u64> {
+    PREWARM_STUCK.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| k == key).map(|s| s.1)
+}
+
+/// Ends every prewarm job past its time (its child killed, its key kept as
+/// a dxc failure so later prewarms skip it); the lines to say.
+fn prewarm_watchdog() -> Vec<String> {
+    let limit = prewarm_job_secs();
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut jobs = PREWARM_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+    for (key, (since, pid)) in jobs.iter_mut().flat_map(|j| j.iter_mut()) {
+        let secs = since.elapsed().as_secs();
+        if secs < limit || prewarm_stuck(key).is_some() {
+            continue;
+        }
+        let Some(id) = pid.take() else { continue };
+        let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &id.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        PREWARM_STUCK.lock().unwrap_or_else(|e| e.into_inner()).push((key.clone(), secs));
+        out.push(format!("prewarm: {key} ran {secs} s, ended (pid {id}); later prewarms skip it (NEONBRIDGE_PREWARM_JOB_S={limit}; NEONBRIDGE_DXC_RETRY_FAILED=1 retries)"));
+    }
+    out
+}
+
 fn job_peaks() -> String {
     let n = JOB_PEAK_N.load(Ordering::Relaxed).max(1);
     format!("xshader/dxc process peaks: mean {} MiB, max {} MiB over {} processes; in-process compiles still running past their time: {}",
@@ -552,6 +617,10 @@ fn job_peaks() -> String {
 fn run_until(cmd: &mut Command, timeout: Duration, give_up: impl Fn() -> bool) -> Result<(), ToolError> {
     let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
         .map_err(|e| ToolError::Other(format!("{e}")))?;
+    prewarm_child(Some(child.id()));
+    struct Clear;
+    impl Drop for Clear { fn drop(&mut self) { prewarm_child(None); } }
+    let _clear = Clear;
     let start = std::time::Instant::now();
     let mut polls = 0u32;
     loop {
@@ -923,6 +992,11 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Ok(()) => {}
             Err(ToolError::Other(msg)) if msg == "timed out" && cancelled() =>
                 return Err("dxc: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
+            Err(ToolError::Exit(_, _)) | Err(ToolError::Other(_)) if prewarm_stuck(key).is_some() => {
+                let reason = format!("error: dxc ended by the prewarm watchdog after {} s (NEONBRIDGE_PREWARM_JOB_S)", prewarm_stuck(key).unwrap_or(0));
+                keep_failure(&reason);
+                return Err(reason);
+            }
             Err(ToolError::Exit(c, msg)) => {
                 let reason = format!("dxc failed ({c}): {msg}");
                 if compile_error(&msg) {
@@ -1323,6 +1397,9 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
             let mut taken_at: Option<std::time::Instant> = None;
             while !finished.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(200));
+                for line in prewarm_watchdog() {
+                    say(format!("{label}: {line}"));
+                }
                 if tail_secs > 0 && next.load(Ordering::Relaxed) >= total && !tail.load(Ordering::Relaxed) {
                     let at = *taken_at.get_or_insert_with(std::time::Instant::now);
                     if at.elapsed() >= Duration::from_secs(tail_secs) {
@@ -1365,7 +1442,9 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                         thread::sleep(Duration::from_millis(250));
                     }
                     running.fetch_add(1, Ordering::AcqRel);
+                    prewarm_job(Some(key));
                     let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail));
+                    prewarm_job(None);
                     note_times(&outcome, &key);
                     running.fetch_sub(1, Ordering::AcqRel);
                     let counter = match outcome {
@@ -1406,6 +1485,13 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
     }
     say(format!("{label}: {}", job_peaks()));
     say(format!("{label}: {}", job_times(workers)));
+    {
+        let stuck = PREWARM_STUCK.lock().unwrap_or_else(|e| e.into_inner());
+        if !stuck.is_empty() {
+            say(format!("{label}: {} program(s) ended by the watchdog (NEONBRIDGE_PREWARM_JOB_S): {}", stuck.len(),
+                stuck.iter().map(|(k, s)| format!("{k} ({s} s)")).collect::<Vec<_>>().join(", ")));
+        }
+    }
     let _ = fs::remove_dir_all(scratch);
 }
 
