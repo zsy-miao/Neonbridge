@@ -291,6 +291,18 @@ fn loop_cap(stage: Stage) -> u32 {
 /// Each structured loop gets its own counter, reset before its `do {`, and a
 /// lane that reaches the cap leaves the program (discard in a pixel shader,
 /// return elsewhere), as fxceless lower.rs 10906-10918 / abort_block does.
+/// Write marks (d3d12 device/view_marks.rs; VIctory-zhai cd94d35 emit
+/// "Write marks", lower.rs mark_view_write, GPL-3.0): a store through a heap
+/// byte-address view sets, in `tb_view_writes` (u0, space32766), bit
+/// base + ((phase + x) >> 16) for its first and last byte x, base and phase
+/// being the slot's two dwords in `tb_view_marks` (t4, space32766); base
+/// 0xFFFFFFFF marks nothing, bits clamp to (1 << 22) - 1. Typed and
+/// structured heap stores (no stride in the shader) and static slots (no
+/// heap index) are not marked yet. Opt-in with TB_VIEW_MARKS=1.
+fn view_marks_on() -> bool {
+    std::env::var("TB_VIEW_MARKS").is_ok_and(|v| v.trim() == "1")
+}
+
 /// SetSampleMaskX's quad mask (d3d12 ccafab1, device/quad_mask.rs): a pixel
 /// shader declares `tb_quad_mask` (b0, space32766, the mask's low and high
 /// words) and discards a pixel whose 16-bit lane, p = ((y & 1) << 1) | (x & 1),
@@ -868,6 +880,10 @@ struct Emitter<'a> {
     live: Vec<String>,
     /// Pixel shader needs its position within the 2x2 quad (ds_swizzle).
     uses_quad: bool,
+    /// A store marked its pages in tb_view_writes (TB_VIEW_MARKS=1).
+    view_marks: bool,
+    /// The heap SGPR of the raw store being emitted, for its marks.
+    mark_slot: Option<u16>,
     compute_swizzle: bool,
     vote_defs: BTreeSet<usize>,
     vote_uses: BTreeMap<usize, usize>,
@@ -3648,6 +3664,8 @@ impl<'a> Emitter<'a> {
             vdsel_reads: HashMap::new(),
             live: Vec::new(),
             uses_quad: false,
+            view_marks: false,
+            mark_slot: None,
             compute_swizzle: false,
             vote_defs: BTreeSet::new(),
             vote_uses: BTreeMap::new(),
@@ -10398,13 +10416,30 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         self.raw_transfer_on(ins, buffer, is_uav)
     }
 
+    /// Marks the pages of a `bytes`-byte store at view byte `x` through the heap
+    /// view at SGPR `slot` (see [`view_marks_on`]); a lane that does not store
+    /// marks nothing.
+    fn mark_view_write(&mut self, slot: u16, x: &str, bytes: u32) {
+        if !view_marks_on() {
+            return;
+        }
+        self.view_marks = true;
+        self.regs.insert(format!("s{slot}"));
+        let t = self.tmp;
+        self.tmp += 1;
+        self.line(&format!("if (exec_lo & 1u) {{ uint tb_mb{t} = tb_view_marks.Load(s{slot} * 8u); if (tb_mb{t} != 0xffffffffu) {{ uint tb_mf{t} = tb_view_marks.Load(s{slot} * 8u + 4u) + ({x}); uint tb_m0{t} = min(tb_mb{t} + (tb_mf{t} >> 16), 4194303u); uint tb_m1{t} = min(tb_mb{t} + ((tb_mf{t} + {}u) >> 16), 4194303u); uint tb_mo{t}; tb_view_writes.InterlockedOr((tb_m0{t} >> 5) * 4u, 1u << (tb_m0{t} & 31u), tb_mo{t}); if (tb_m1{t} != tb_m0{t}) tb_view_writes.InterlockedOr((tb_m1{t} >> 5) * 4u, 1u << (tb_m1{t} & 31u), tb_mo{t}); }} }}", bytes.max(1) - 1));
+    }
+
     /// Raw transfer through a heap index held in `src` (compute heap). Stores use the
     /// writable view of the same descriptor.
     fn heap_raw_transfer(&mut self, ins: &Insn, src: u16) -> Result<(), String> {
         let store = ins.mnemonic.starts_with("buffer_store_");
         let view = if store { HeapView::RawRw } else { HeapView::Raw };
         let buf = self.bind_heap(view, src);
-        self.raw_transfer_on(ins, buf, store)
+        self.mark_slot = store.then_some(src);
+        let result = self.raw_transfer_on(ins, buf, store);
+        self.mark_slot = None;
+        result
     }
 
     /// `v_permlane16_b32` / `v_permlanex16_b32 vD, vS, lo, hi` (RDNA2 ISA): lane i
@@ -10617,6 +10652,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.line(&format!("if (exec_lo & 1u) {buffer}.Store({offset}, {});", r(&reg)?));
             }
         }
+        if let (false, Some(slot)) = (load, self.mark_slot) {
+            self.mark_view_write(slot, &address, 4 * u32::from(width));
+        }
         if load {
             for k in 0..width {
                 self.wv(&Opnd::Vgpr(base + k), &format!("t{t}_{k}"))?;
@@ -10768,6 +10806,9 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                     let o = reg(k)?; self.touch(&o);
                     self.line(&format!("if (exec_lo & 1u) tb_hb{t}.Store(tb_ha{t} + {}u, {});", 4 * k, r(&o)?));
                 }
+            }
+            if !load {
+                self.mark_view_write(src, &format!("tb_ha{t}"), 4 * u32::from(width));
             }
         }
         if load {
@@ -12740,6 +12781,11 @@ uint tb_desc_lookup(uint hash, uint4 a, uint4 b) {
         }
         if self.view_formats {
             h.push_str("ByteAddressBuffer tb_view_formats : register(t2, space32766);
+");
+        }
+        if self.view_marks {
+            h.push_str("ByteAddressBuffer tb_view_marks : register(t4, space32766);
+RWByteAddressBuffer tb_view_writes : register(u0, space32766);
 ");
         }
         if self.compute_heap && !self.heap_map {
