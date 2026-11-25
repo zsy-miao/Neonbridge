@@ -453,6 +453,63 @@ fn uniform_forward_guard(
     true
 }
 
+/// Whole-wave forward skip: a proven uniform skip, or an EXEC-empty skip of a
+/// self-contained masked full-mask region. Copied from TuxBox d59da4d (Pavel
+/// Kirilin), with credit.
+fn execz_forward_guard(
+    insns: &[Insn],
+    branch_index: usize,
+    region_start: usize,
+    reduction_end: usize,
+    first: usize,
+    operation: &str,
+    verified_reads: &[usize],
+) -> bool {
+    let branch = &insns[branch_index];
+    if branch.op == 8 {
+        let masked = masked_identity(operation)
+            .map(|id| masked_prologue(insns, first, id).is_some())
+            .unwrap_or(false);
+        if !masked {
+            return false;
+        }
+        let pc = branch.offset as i64;
+        let target = pc + 4 + 4 * branch.aux.imm;
+        if target <= reduction_end as i64 {
+            return false;
+        }
+        // Branches between the guard and the region whose edges skip or
+        // enter the region (or lands exactly at the region start) are
+        // non-uniform and would make the whole-wave reduction execute
+        // partially. Anything else in the window is a local conditional that
+        // cannot skip the region; branches after the region are independent
+        // of its execution (the guard skips it wholesale). Indirect edges
+        // are never statically bounded.
+        for (index, op) in insns.iter().enumerate() {
+            if index == branch_index {
+                continue;
+            }
+            if matches!(op.mnemonic.as_str(),
+                "s_setpc_b64" | "s_swappc_b64" | "s_call_b64" | "s_rfe_b64" | "s_trap")
+            {
+                return false;
+            }
+            if op.enc == Enc::Sopp && (Emitter::branch_cond(op.op).is_some() || op.op == 1) {
+                let from = op.offset as i64;
+                if from < pc || from >= region_start as i64 {
+                    continue;
+                }
+                let target_edge = from + 4 + 4 * op.aux.imm;
+                if target_edge >= region_start as i64 {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    uniform_forward_guard(insns, branch_index, reduction_end, verified_reads)
+}
+
 /// The branch emitter predicates regions per host invocation. HLSL lane reads
 /// require the source invocation to participate, including lane zero when guest
 /// EXEC has masked it. A branch around or into the region can violate that, so such
@@ -491,9 +548,9 @@ pub(super) fn check_control_flow(insns: &mut [Insn], width: u32) -> Result<(), S
             }
             if Emitter::branch_cond(branch.op).is_some() {
                 let target = pc + 4 + 4 * branch.aux.imm;
-                if ((pc < start && target > start) || (pc > end && target <= end)
+                if ((pc < start && target >= start) || (pc > end && target <= end)
                     || (pc >= start && pc <= end))
-                    && !(pc < start && uniform_forward_guard(insns, branch_index, end as usize, &verified_reads))
+                    && !(pc < start && execz_forward_guard(insns, branch_index, start as usize, end as usize, first, &ins.mnemonic, &verified_reads))
                 {
                     divergent = true;
                 }
