@@ -542,7 +542,15 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
     let (shaders, roots_at) = (lookup(b'S'), lookup(b'R'));
     let used: HashSet<u64> = frames.iter().filter(|f| f.tag == b'U').map(|f| f.hash).collect();
     let mut order: Vec<&Frame> = frames.iter().filter(|f| matches!(f.tag, b'G' | b'C')).collect();
-    order.sort_by_key(|f| !used.contains(&f.hash));
+    // Bound by a run first, then compute, then graphics; newest first within
+    // each (later in the journal): with real driver compiles 112k pipelines
+    // take hours, and a stop keeps what is most likely bound next.
+    // TUXBOX_PIPELINE_BUILD_ORDER=0 keeps bound-first in journal order.
+    if crate::env_toggle!("TUXBOX_PIPELINE_BUILD_ORDER") == Some("0") {
+        order.sort_by_key(|f| !used.contains(&f.hash));
+    } else {
+        order.sort_by_key(|f| (!used.contains(&f.hash), f.tag != b'C', std::cmp::Reverse(f.start)));
+    }
     let bound = order.iter().filter(|f| used.contains(&f.hash)).count();
     let floor = crate::env_toggle!("TUXBOX_PIPELINE_BUILD_FREE_GB").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(6) << 30;
     let cap = crate::device::pipeline_cache::library_cap_mb() << 20;
@@ -639,8 +647,10 @@ pub(in crate::device) fn build(threads: u32) -> u32 {
                     }
                     if ok && (n.is_power_of_two() || n.is_multiple_of(500)) {
                         crate::diagnostics::log_line(format_args!(
-                            "pipeline build: {n} made, {} failed, {} left, {:.0} s",
-                            failed.load(Ordering::Relaxed), order.len().saturating_sub(i + 1), started.elapsed().as_secs_f64()));
+                            "pipeline build: {n} made, {} failed, {} left, {:.0} s, {:.1}/s, about {:.0} min left (Ctrl+C stops; what is made is kept)",
+                            failed.load(Ordering::Relaxed), order.len().saturating_sub(i + 1), started.elapsed().as_secs_f64(),
+                            (i + 1) as f64 / started.elapsed().as_secs_f64().max(0.001),
+                            order.len().saturating_sub(i + 1) as f64 / ((i + 1) as f64 / started.elapsed().as_secs_f64().max(0.001)) / 60.0));
                         crate::device::pipeline_cache::save_now();
                     }
                 }
