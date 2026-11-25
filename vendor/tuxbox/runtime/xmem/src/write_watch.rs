@@ -54,6 +54,51 @@ fn owed_to(side: usize, pages: &[usize]) -> Vec<usize> {
     }).collect()
 }
 
+/// test169: the runtime's watch refresh took 29 ms/frame in 14 queries.
+/// Per side every 10 s: queries, MiB asked, OS pages returned, and ms waiting
+/// for the query lock, in GetWriteWatch, and in the owed sets.
+/// TUXBOX_WATCH_STATS=0 off.
+struct Stat {
+    side: usize,
+    bytes: usize,
+    os_pages: usize,
+    times: [std::time::Instant; 3],
+}
+
+static STATS: Mutex<[[u64; 6]; 2]> = Mutex::new([[0; 6]; 2]);
+
+impl Drop for Stat {
+    fn drop(&mut self) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var("TUXBOX_WATCH_STATS").map_or(true, |v| v.trim() != "0")) {
+            return;
+        }
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10);
+        let [t0, t1, t2] = self.times;
+        let us = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_micros() as u64;
+        let mut stats = lock(&STATS);
+        let s = &mut stats[self.side];
+        s[0] += 1;
+        s[1] += self.bytes as u64;
+        s[2] += self.os_pages as u64;
+        s[3] += us(t0, t1);
+        s[4] += us(t1, t2);
+        s[5] += us(t2, std::time::Instant::now());
+        let secs = START.get_or_init(std::time::Instant::now).elapsed().as_secs();
+        let next = NEXT.load(std::sync::atomic::Ordering::Relaxed);
+        if secs < next || NEXT.compare_exchange(next, secs + 10, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed).is_err() {
+            return;
+        }
+        let line = |n: &str, s: &[u64; 6]| format!("{n} {} queries {} MiB, {} OS pages, ms lock {:.1} os {:.1} owed {:.1}",
+            s[0], s[1] >> 20, s[2], s[3] as f64 / 1e3, s[4] as f64 / 1e3, s[5] as f64 / 1e3);
+        let text = format!("write watch last 10 s: {}; {} (TUXBOX_WATCH_STATS=0 off)", line("title", &stats[0]), line("runtime", &stats[1]));
+        *stats = [[0; 6]; 2];
+        drop(stats);
+        crate::loader::log(&text);
+    }
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -79,13 +124,17 @@ unsafe fn query(
     if count.is_null() || out.is_null() || granularity.is_null() {
         return unsafe { GetWriteWatch(if reset { RESET } else { 0 }, base, bytes, out, count, granularity) };
     }
+    let t0 = std::time::Instant::now();
     let _one = lock(&QUERY);
+    let t1 = std::time::Instant::now();
     note_watched(me, base as usize, bytes);
     let mut gran = 0;
     let os = match unsafe { os_pages(reset, base, bytes, &mut gran) } {
         Ok(p) => p,
         Err(e) => return e,
     };
+    let t2 = std::time::Instant::now();
+    let _stat = Stat { side: me, bytes, os_pages: os.len(), times: [t0, t1, t2] };
     let range = base as usize..(base as usize).saturating_add(bytes);
     if reset {
         let owed = owed_to(other, &os);
