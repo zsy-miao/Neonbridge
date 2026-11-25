@@ -1,5 +1,5 @@
 name = "xcl"
-rank = 7   # launcher list order (Master)
+rank = 4   # launcher list order (Master)
 about = "xcl 0829441, GPL-2.0"
 upstream = "https://github.com/ivall/xcl"
 build = ["cargo", "build", "--release", "--workspace", "--locked"]   # README.md:98,216 (+--locked)

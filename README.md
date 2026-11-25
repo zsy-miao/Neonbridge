@@ -12,14 +12,14 @@ Best first, by how far each project's own authors say it gets. The launcher list
 
 | # | Runtime | How far it gets (its authors' own results) | Verified here |
 |---|---|---|---|
-| 1 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene, shadows still dark | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
-| 2 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | 7–8 fps in the first rooms; the graphics device is lost in the open world | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
-| 3 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | 3.5–6 fps in the open world | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
-| 4 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
-| 5 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | Intro and 3D scenes | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
-| 6 | [ztrx-victory](https://github.com/Zettrox/ztrx) | No published result yet | No |
-| 7 | [xcl](https://github.com/ivall/xcl) | No published result yet | Builds; its first shader preparation runs |
-| 8 | Five Star Recomp | A cutscene | No (needs .NET 10 and the PC GDK) |
+| 1 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene (9–10 since its victory-fork merge, cold cache); shadows still dark | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
+| 2 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | About 10 fps in the first rooms; 2–4 fps in the world | Yes: intro at 30 fps, then the 3D prison scene in the first mission at about 1 fps (2,681 draws a frame), washed out with grey flicker |
+| 3 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | Up to 6 fps in the open world | Yes: renders the 3D prison scene in the first mission at 2–3 fps (2,649 draws a frame, diagnostics build); orange flame-like glitches on characters. The best result verified here so far |
+| 4 | [xcl](https://github.com/ivall/xcl) | About 5 fps in the 3D world (RTX 5090, NVIDIA branch only); menus at 30 fps | Builds; its first shader preparation runs |
+| 5 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
+| 6 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | About 4 fps in the prologue; gameplay starts | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
+| 7 | [ztrx-victory](https://github.com/Zettrox/ztrx) | 1–3 fps in the world; shadows black | No |
+| 8 | [Five Star Recomp](https://github.com/ThatRecompDev/five-star-recomp) | The opening cutscene at 30 fps; the 3D world draws, lighting unfinished | No (needs .NET 10 and the PC GDK) |
 | 9 | [TuxBox](https://github.com/brcly/TuxBox) | The story intro, on Linux; Windows support is still in progress | No |
 | 10 | Neonbridge (own build) | Not tested yet | No |
 
