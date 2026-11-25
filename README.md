@@ -17,6 +17,15 @@ neonbridge ctl status | screenshot shot.bmp | press A | stop
 
 Build with `cargo build --release` (needs Visual Studio Build Tools x64 C++ and the x86_64-pc-windows-msvc target). `--debug` needs cdb from the Windows SDK. Without `--game` it opens a picker. `neonbridge ctl` controls a running game from another terminal. Run `neonbridge --help` for every option, and see [docs/DETAILS.md](docs/DETAILS.md) for every fix and switch.
 
+## Requirements
+
+- **Game:** your own dump of the Xbox Series X|S build of GTA VI: the folder with `game_scarlett_master.exe`, `shaders.rpf` and `pack/`, about 210 GB.
+- **System:** Windows 10 or 11, x64, with a CPU that has AVX2 (the game's code is run as-is).
+- **GPU:** a D3D12 GPU with Shader Model 6.6 and an up-to-date driver. Tested on an NVIDIA GeForce RTX 4060 (8 GB).
+- **Memory:** at least 20 GB of free commit (RAM plus page file), since the game grows to about 19 GB. 32 GB of RAM with a system-managed page file is recommended.
+- **Disk:** the dump, plus up to about 20 GB for the shader cache and the pipeline library the launcher builds.
+- **To build:** Rust (stable, `x86_64-pc-windows-msvc`), Visual Studio Build Tools with the x64 C++ tools, and the Windows SDK. Shaders are compiled with the SDK's `dxc.exe`, and `--debug` uses its `cdb`.
+
 ## Controls
 
 ![GTA 6 keyboard and mouse controls mapped to an Xbox pad](assets/controls.svg)
@@ -28,7 +37,7 @@ Alt+Enter or F11 switches to borderless fullscreen (`TUXBOX_FULLSCREEN=1` starts
 - **Can I play GTA 6 on PC with this?** Not yet; GTA VI on PC is a work in progress. It gets through the menus, plays the intro videos and shows the story loading screens. After them the first cutscene starts and its sound plays, but almost nothing is drawn and the game stops: nearly every draw waits on a pipeline the GPU driver is still building. Building all of the game's pipelines ahead of time is the next fix.
 - **Is this a download or crack?** No. No game files, keys or binaries, and no protection bypassed. Bring your own dump.
 - **Is it an emulator?** Not a full one. Like Wine, it swaps only the system layer; the game's x64 code runs natively. It isn't a recompiler either: Xbox shaders are translated to DXIL as the game runs.
-- **What do I need?** Windows 10 or 11 x64, a D3D12 GPU, and at least 20 GB of free commit (RAM plus page file); the game grows to about 19 GB.
+- **What do I need?** See [Requirements](#requirements): Windows 10 or 11 x64, a D3D12 GPU, at least 20 GB of free commit, and your own dump.
 - **Can I watch it from my phone?** Yes. With `NEONBRIDGE_FEED=1` the launcher streams the picture to a password-protected page on this PC (port 8788) and on your Tailscale network; the first run prints a sign-in link to approve the PC once. `neonbridge --feed-only` keeps the page up between games. The launcher keeps the displays on while the game runs, since with every display asleep Windows slows it to about 10 fps.
 - **Why does it run at 1080p?** Before each start the launcher sets the game to 1920x1080 with ray-traced shadows, motion blur, SSR water reflections and particle shadows off, since the game writes 4K and those effects back on exit. `NEONBRIDGE_SAFE_SETTINGS=0` keeps your own settings.
 - **Does it go online?** No. The game's crash handler would upload details of your PC, so it's blocked (`TUXBOX_NETWORK=1` lifts it).
