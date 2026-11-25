@@ -228,9 +228,16 @@ fn wait_granted(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Option<&Buil
     let deadline = std::time::Instant::now() + limit;
     slot.wanted.store(true, Ordering::Release);
     if steal_on() && let Some(job) = steal(slot) {
-        build_here(job, limit);
-        if let Some(built) = slot.built.get() {
-            return Some(built);
+        match job.graphics && display_now() {
+            // Only display-sized binds wait on a graphics pipeline here
+            // (compute::wait_pending_display).
+            true => build_display(job),
+            false => {
+                build_here(job, limit);
+                if let Some(built) = slot.built.get() {
+                    return Some(built);
+                }
+            }
         }
     }
     hurry(slot);
@@ -931,6 +938,62 @@ fn steal(slot: &Arc<Upgrade>) -> Option<Job> {
     }
     let at = jobs.created.iter().position(|j| Arc::ptr_eq(&j.slot, slot))?;
     jobs.created.remove(at)
+}
+
+/// rebox c78d9f4/f0bcabe (GPL-2.0, credit to its authors): a scene queues
+/// hundreds of first compiles at once, and stages drawing into display-sized
+/// targets (the UI, text, the composite) waited behind them; on the title's
+/// thread a stolen build was cut at the bind's wait, so a loading screen's
+/// layer went black whenever it needed a new pipeline. Such a pipeline is
+/// now built at once on a thread of its own, as long as it takes, at most
+/// 2 at a time (else it goes to the front of the workers' queue); the bind
+/// still waits only up to its limit. TUXBOX_DISPLAY_BUILD_NOW=0 builds it on
+/// the title's thread within the bind's wait, as before.
+fn display_now() -> bool {
+    crate::env_toggle!("TUXBOX_DISPLAY_BUILD_NOW") != Some("0")
+}
+
+fn build_display(job: Job) {
+    static RUNNING: AtomicU64 = AtomicU64::new(0);
+    static BUILT: AtomicU64 = AtomicU64::new(0);
+    let front = |job: Job| {
+        let (lock, ready) = &JOBS;
+        lock.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).bound.push_front(job);
+        ready.notify_one();
+    };
+    if RUNNING.fetch_add(1, Ordering::AcqRel) >= 2 {
+        RUNNING.fetch_sub(1, Ordering::AcqRel);
+        return front(job);
+    }
+    // Shared so a thread that could not start hands the job back.
+    let shared = Arc::new(Mutex::new(Some(job)));
+    let spawned = std::thread::Builder::new()
+        .name("tuxbox-display-pipeline".into())
+        .stack_size(crate::big_stack::STACK_BYTES)
+        .spawn({
+            let shared = shared.clone();
+            move || {
+                WORKER.with(|w| w.set(true));
+                crate::big_stack::mark_big();
+                crate::device::shader_cache::wait_unbounded();
+                let job = shared.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let Some(job) = job {
+                    build(job);
+                }
+                RUNNING.fetch_sub(1, Ordering::AcqRel);
+                let n = BUILT.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "background pipelines: a display-sized draw's pipeline built on its own thread ({n} so far; TUXBOX_DISPLAY_BUILD_NOW=0 off)"));
+                }
+            }
+        });
+    if spawned.is_err() {
+        RUNNING.fetch_sub(1, Ordering::AcqRel);
+        if let Some(job) = shared.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            front(job);
+        }
+    }
 }
 
 /// Builds a job on this thread as a worker would, keeping its priority. Its
