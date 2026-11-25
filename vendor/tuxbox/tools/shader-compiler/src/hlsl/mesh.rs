@@ -702,6 +702,21 @@ fn signature(
     flat: &[u32],
     interp: Option<&InputInterp>,
 ) -> Result<(), String> {
+    // The linked pixel shader's pulled attributes carry the TB_VERTEX_INPUT
+    // modifier (hlsl.rs defines it only for vertex/pixel stages); without the
+    // define dxc refuses the struct ("unknown type name", prewarm-1273355
+    // 4754bb97). TB_MESH_VERTEX_INPUT_DEFINE=0 leaves it undefined.
+    if std::env::var("TB_MESH_VERTEX_INPUT_DEFINE").map_or(true, |v| v.trim() != "0")
+        && interp.is_some_and(|mods| mods.0.iter().any(|(_, m)| m == "TB_VERTEX_INPUT"))
+        && !h.contains("#define TB_VERTEX_INPUT")
+    {
+        h.push_str("#if __SHADER_TARGET_MAJOR >= 6
+#define TB_VERTEX_INPUT nointerpolation
+#else
+#define TB_VERTEX_INPUT
+#endif
+");
+    }
     writeln!(h, "struct {name} {{").unwrap();
     for (i, e) in elements.iter().enumerate() {
         if !(matches!(e.comp_type, 1..=3) || e.comp_type == 6 && name == "Vertex")
