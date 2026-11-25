@@ -1320,7 +1320,9 @@ pub(super) unsafe extern "system" fn sampler(
     if desc.is_null() {
         fail_call(format_args!("null D3D12 sampler description"));
     }
-    unsafe { device.native.CreateSampler(desc, handle) };
+    let mut host = unsafe { *desc };
+    host.Filter = super::features::host_filter(&device.native, host.Filter);
+    unsafe { device.native.CreateSampler(&host, handle) };
     device.state.desc_table.created(handle.ptr, unsafe { &*desc });
 }
 
@@ -1358,7 +1360,9 @@ pub(super) unsafe extern "system" fn sampler_x(
     };
     let reduction = if comparison { 1 } else { match w[5] { 0 => 0, 1 => 2, 2 => 3, other => unknown("reduction", other, 0) } };
     let linear = |filter: u32| match filter { 0 | 1 => 0, 2 | 3 => 1, other => unknown("filter", other, 1) };
-    let bits = if w[1] == 3 && w[2] == 3 { 0x55 } else {
+    // An anisotropic sampler keeps its mip filter: 0x54 with a point mip
+    // (VIctory 170ab23); features::host_filter falls back to 0x55.
+    let bits = if w[1] == 3 && w[2] == 3 { 0x54 | linear(w[3]) } else {
         linear(w[1]) << 4 | linear(w[2]) << 2 | linear(w[3])
     };
     let host = D3D12_SAMPLER_DESC {

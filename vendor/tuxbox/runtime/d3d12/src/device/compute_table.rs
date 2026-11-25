@@ -405,6 +405,8 @@ fn extend_root_from(
                 let guest = std::slice::from_raw_parts(source.pStaticSamplers, source.NumStaticSamplers as usize);
                 samplers.splice(0..0, guest.iter().copied());
             }
+            // Guest anisotropic point-mip filters the host lacks go linear-mip.
+            for s in &mut samplers { s.Filter = super::features::host_filter(device, s.Filter); }
             desc.Anonymous.Desc_1_1.pStaticSamplers = samplers.as_ptr();
             desc.Anonymous.Desc_1_1.NumStaticSamplers = samplers.len() as u32;
         }

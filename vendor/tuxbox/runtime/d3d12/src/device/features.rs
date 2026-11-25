@@ -197,3 +197,39 @@ unsafe fn translate(
     }
     Ok(())
 }
+
+/// The host filter for a sampler's filter (VIctory 170ab23, PR #1337,
+/// GPL-3.0, credit to its authors). Anisotropic filtering with a point mip
+/// filter (0x54 and its comparison/min/max forms) is optional on desktop
+/// D3D12, reported by D3D12_OPTIONS19.AnisoFilterWithPointMipSupported; a
+/// device without it is handed the linear-mip 0x55 forms, as every sampler
+/// was before. Console S# words and extended samplers ask for a point mip
+/// with anisotropy as often as for a linear one, and blending mips the title
+/// meant to keep apart blurs textures that pick a level on purpose.
+/// TUXBOX_ANISO_POINT_MIP=0 hands every anisotropic sampler 0x55 again.
+pub(crate) fn host_filter(native: &ID3D12Device, filter: D3D12_FILTER) -> D3D12_FILTER {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let bits = filter.0 as u32;
+    if bits & !0x180 != 0x54 {
+        return filter;
+    }
+    let supported = *SUPPORTED.get_or_init(|| {
+        if crate::env_toggle!("TUXBOX_ANISO_POINT_MIP") == Some("0") {
+            return false;
+        }
+        let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS19::default();
+        // SAFETY: the query writes a record of the size given. A runtime
+        // that does not know OPTIONS19 fails it, which means no support.
+        let ok = unsafe {
+            native.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, (&raw mut options).cast(), size_of_val(&options) as u32)
+        }
+        .is_ok()
+            && options.AnisoFilterWithPointMipSupported.as_bool();
+        crate::diagnostics::log_line(format_args!(
+            "anisotropic samplers with a point mip filter: {}",
+            if ok { "host filter 0x54" } else { "no host support, linear mip (0x55) instead" }
+        ));
+        ok
+    });
+    if supported { filter } else { D3D12_FILTER((bits | 1) as i32) }
+}

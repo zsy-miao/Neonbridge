@@ -207,7 +207,7 @@ pub(crate) fn encode(desc: &D3D12_SAMPLER_DESC) -> [u32; 4] {
     let aniso = filter & 0x40 != 0;
     let linear = |bit: u32| (filter >> bit) & 1;
     let (mag, min) = if aniso { (3, 3) } else { (linear(2), linear(4)) };
-    let mip = if aniso || linear(0) != 0 { 2 } else { 1 };
+    let mip = if linear(0) != 0 { 2 } else { 1 };
     let ratio = if aniso { (31 - desc.MaxAnisotropy.clamp(1, 16).leading_zeros()).min(4) } else { 0 };
     let compare = if reduction == 1 { (desc.ComparisonFunc.0 as u32).clamp(1, 8) - 1 } else { 0 };
     let filter_mode = match reduction { 2 => 1, 3 => 2, _ => 0 };
@@ -237,7 +237,9 @@ pub(crate) fn decode(w: [u32; 4]) -> D3D12_SAMPLER_DESC {
     let reduction = match get(w[0], 29, 2) { 1 => 2, 2 => 3, _ => u32::from(compare != 0) };
     let (mag, min, mip) = (get(w[2], 20, 2), get(w[2], 22, 2), get(w[2], 26, 2));
     let aniso = mag >= 2 || min >= 2;
-    let filter = if aniso { 0x55 } else { (min & 1) << 4 | (mag & 1) << 2 | u32::from(mip == 2) };
+    // The mip filter stands with anisotropy too: 0x54 is ANISOTROPIC with a
+    // point mip (VIctory 170ab23); features::host_filter falls back to 0x55.
+    let filter = if aniso { 0x54 | u32::from(mip == 2) } else { (min & 1) << 4 | (mag & 1) << 2 | u32::from(mip == 2) };
     let min_lod = get(w[1], 0, 12) as f32 / 256.0;
     // MIP_FILTER none samples the base level only.
     let max_lod = if mip == 0 { min_lod } else { get(w[1], 12, 12) as f32 / 256.0 };
@@ -422,7 +424,8 @@ impl DescTable {
                 crate::diagnostics::log_once(&FULL, || "literal sampler slots exhausted; tb_desc_table lookups fall back to index 0".into());
                 return;
             };
-            let desc = decode(words);
+            let mut desc = decode(words);
+            desc.Filter = super::features::host_filter(device, desc.Filter);
             for heap in samplers.heaps.iter().filter(|h| h.count <= slot) {
                 unsafe { device.CreateSampler(&desc, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: heap.cpu + slot as usize * samplers.stride }) };
             }
