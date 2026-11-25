@@ -193,7 +193,7 @@ pub(crate) extern "system" fn gi_stop(_: &Object, token: u64) {
 #[unsafe(no_mangle)]
 pub(crate) extern "system" fn gi_unregister(_: &Object, token: u64, timeout: u64) -> bool {
     let Some(reg) = lock(&REGISTRATIONS).get(&token).cloned() else {
-        return false;
+        return token & crate::abi::ACCEPTED != 0;
     };
     let mut state = lock(&reg.state);
     state.stopped = true;

@@ -67,10 +67,10 @@ pub(crate) static INPUT: Table<22> = Table([
     f!(gi_query), f!(gi_add), f!(gi_release),
     f!(timestamp), f!(current), f!(next), f!(previous),
     f!(clear_3), // GetTemporalReading
-    f!(not_implemented), // RegisterReadingCallback
+    f!(accept_reading), // RegisterReadingCallback
     f!(gi_register_device),
-    f!(not_implemented), // RegisterSystemButtonCallback
-    f!(not_implemented), // RegisterKeyboardLayoutCallback
+    f!(accept_reading), // RegisterSystemButtonCallback (same shape)
+    f!(accept_layout), // RegisterKeyboardLayoutCallback
     f!(gi_stop), f!(gi_unregister),
     f!(clear_1), // CreateDispatcher
     f!(clear_2), // CreateAggregateDevice
@@ -211,4 +211,26 @@ unsafe extern "system" fn info(this: &Object) -> *const DeviceInfo {
         })
     });
     &DEVICES[gi_slot(this) as usize]
+}
+
+// Reading, system-button and keyboard-layout callbacks are accepted with a
+// token and never fire (the title polls readings), as VIctory-fxceless
+// gameinput.rs (GPL-3.0, credit) does; E_NOTIMPL could fail the title's input
+// setup. TUXBOX_GI_ACCEPT_CALLBACKS=0 refuses them again.
+pub(crate) const ACCEPTED: u64 = 1 << 63;
+fn accept(token: *mut u64) -> i32 {
+    if std::env::var_os("TUXBOX_GI_ACCEPT_CALLBACKS").is_some_and(|v| v == "0") {
+        return E_NOTIMPL;
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    if !token.is_null() {
+        unsafe { *token = ACCEPTED | NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) };
+    }
+    0
+}
+unsafe extern "system" fn accept_reading(_: usize, _: usize, _: u32, _: usize, _: usize, token: *mut u64) -> i32 {
+    accept(token)
+}
+unsafe extern "system" fn accept_layout(_: usize, _: usize, _: usize, _: usize, token: *mut u64) -> i32 {
+    accept(token)
 }
