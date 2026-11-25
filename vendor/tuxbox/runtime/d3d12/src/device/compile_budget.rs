@@ -37,6 +37,18 @@
 //! `worker-pid` and its children (xshader, dxc), all but this one, sampled at
 //! most every 250 ms. The launcher holds its own translation jobs to the same
 //! ceiling (src/shaders.rs).
+//!
+//! A commit floor holds every large compile, awaited or not. test142 lost
+//! the device (0x887A0020, a driver internal error, no command list in
+//! flight) 124 s in: the machine sat at its commit limit the whole run (free
+//! commit 0.5-1.5 GB while the page file grew from 34.6 to 41.8 GB), the
+//! compiles a title thread waits on skipped every check above, three ran at
+//! once at +1.7-2.2 GB private each, and free commit was 165 MiB just before
+//! a driver allocation failed. Now no compile of 256 KiB of DXIL or more
+//! starts while another such compile runs and free commit is under
+//! TUXBOX_COMPILE_COMMIT_FLOOR_MB (3072; 0 off). Waiting for a running compile
+//! is finite, so this hold has no time limit; with none running it never
+//! holds, so a compile always gets to start.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -107,8 +119,28 @@ fn helper_private() -> u64 {
     bytes
 }
 
+fn commit_floor() -> u64 {
+    static MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MB.get_or_init(|| crate::env_toggle!("TUXBOX_COMPILE_COMMIT_FLOOR_MB").and_then(|v| v.trim().parse().ok()).unwrap_or(3072)) << 20
+}
+
+static FLOOR_HELD: AtomicU64 = AtomicU64::new(0);
+
 fn try_enter(estimate: u64, tiny: bool, large: bool) -> bool {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    if large && state.large != 0 && enabled() {
+        let floor = commit_floor();
+        let (_, commit) = available();
+        if floor != 0 && commit < floor {
+            let n = FLOOR_HELD.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                crate::diagnostics::log_line(format_args!(
+                    "compile budget: a large compile waits for one of the {} running: {} MiB commit free, under the {} MiB floor (TUXBOX_COMPILE_COMMIT_FLOOR_MB; {n} holds so far)",
+                    state.large, commit >> 20, floor >> 20));
+            }
+            return false;
+        }
+    }
     let private = crate::diagnostics::memory::private_bytes();
     if state.running == 0 {
         state.baseline = private;

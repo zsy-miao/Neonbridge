@@ -138,6 +138,13 @@ unsafe fn report(device: &ID3D12Device) {
         log("no breadcrumb output");
     }
     if let Ok(fault) = unsafe { data.GetPageFaultAllocationOutput() } {
+        // DRED answers with a zeroed record when no page fault caused the
+        // removal: test142's "page fault at GPU VA 0x0" was a driver internal
+        // error (0x887A0020) with no allocation named, not a fault at 0.
+        if fault.PageFaultVA == 0 && fault.pHeadExistingAllocationNode.is_null() && fault.pHeadRecentFreedAllocationNode.is_null() {
+            log("no page fault recorded (the removal was not a GPU page fault)");
+            return;
+        }
         log(&format!("page fault at GPU VA {:#x}", fault.PageFaultVA));
         for (label, mut node) in [("existing", fault.pHeadExistingAllocationNode), ("freed", fault.pHeadRecentFreedAllocationNode)] {
             let mut count = 0;
