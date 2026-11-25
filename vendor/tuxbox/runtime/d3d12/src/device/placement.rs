@@ -97,6 +97,18 @@ struct Contents {
     /// When each large level was last read back from guest memory (see
     /// `big_snapshot`).
     big_at: Vec<Option<std::time::Instant>>,
+    /// A video plane: Bink's completed-decode count when it was last read.
+    plane_done: Option<u64>,
+}
+
+/// test155: the 4K intro's nine format-61 planes (a three-frame ring of Y and
+/// CbCr) were each read back and hashed in full every refresh, 21-27 ms of a
+/// 76 ms frame on the submit thread, though only Bink writes them and only
+/// when it decodes. A plane already read since Bink's last completed decode
+/// (xmem TuxBoxBinkState) is unchanged and is skipped.
+/// TUXBOX_PLANE_DECODE_SKIP=0 reads every plane every refresh.
+fn plane_decode_skip() -> bool {
+    crate::env_toggle!("TUXBOX_PLANE_DECODE_SKIP") != Some("0")
 }
 
 /// test66 froze presents for 15 s, then the title's watchdog killed it.
@@ -973,6 +985,11 @@ impl Texture {
                 continue;
             }
             let plane = video_plane(&self.desc, self.mips.len());
+            let decodes = if plane && plane_decode_skip() { bink_state().map(|(_, done)| done) } else { None };
+            if decodes.is_some() && contents.previous[level].is_some() && contents.plane_done == decodes {
+                skipped += 1;
+                continue;
+            }
             if plane && plane_gated() {
                 let n = PLANE_GATED.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 8 || n.is_power_of_two() {
@@ -1029,6 +1046,9 @@ impl Texture {
             if !self.snapshot_mip(mip, scratch)? {
                 contents.previous[level] = None;
                 continue;
+            }
+            if decodes.is_some() {
+                contents.plane_done = decodes;
             }
             let hash = level_hash(scratch);
             if contents.previous[level] != Some(hash) {
