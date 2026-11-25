@@ -31,6 +31,9 @@ pub(super) struct Bindings {
     pub(super) quad_mask: Option<u64>,
     /// Title addresses of compute root SRVs, by slot (bvh_raw).
     root_guests: BTreeMap<u32, u64>,
+    /// Title addresses of every root CBV/SRV/UAV by (compute, slot), for the
+    /// table words a stage reads as data (table_words).
+    root_vas: BTreeMap<(bool, u32), u64>,
 }
 
 // A private root descriptor captures its value when recording. A guest
@@ -258,6 +261,10 @@ impl Bindings {
             None => unsafe { view.apply::<COMPUTE>(list, slot) },
         }
         self.buffer::<COMPUTE>(slot, view);
+    }
+
+    pub(super) fn note_root_va<const COMPUTE: bool>(&mut self, slot: u32, guest: u64) {
+        if guest == 0 { self.root_vas.remove(&(COMPUTE, slot)); } else { self.root_vas.insert((COMPUTE, slot), guest); }
     }
 
     pub(super) fn note_guest<const COMPUTE: bool>(&mut self, slot: u32, guest: Option<u64>) {
@@ -525,6 +532,33 @@ impl Bindings {
             }
             None => None,
         };
+        // Table words (table_words): each declared guest root parameter's title memory.
+        let mut word_views = Vec::new();
+        if let Some((first, params)) = &table.table_words {
+            let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+            for (k, param) in params.iter().enumerate() {
+                let resolved = self.root_vas.get(&(COMPUTE, *param))
+                    .and_then(|&va| unsafe { crate::device::table_words_address(owner, va) });
+                let address = match resolved {
+                    Some((buffer, address)) => {
+                        let held_buffer = ID3D12Pageable::from(buffer);
+                        let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+                        if !held.contains(&held_buffer) {
+                            held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                            held.push(held_buffer);
+                        }
+                        address
+                    }
+                    None => super::compute::null_sink(guest).unwrap_or(0),
+                };
+                if address != 0 {
+                    word_views.push((first + k as u32, address));
+                }
+            }
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&ONCE, || format!(
+                "table words bound for guest root parameters {params:?} (t<p> space32765; TUXBOX_TABLE_WORDS=0 leaves them out)"));
+        }
         // BVH raw root views (bvh_raw): each guest root SRV's title memory.
         let mut bvh_views = Vec::new();
         if COMPUTE && let Some((first, slots)) = &table.bvh_raw {
@@ -591,6 +625,9 @@ impl Bindings {
                 if let Some((slot, address)) = slot_words {
                     list.SetComputeRootShaderResourceView(slot, address);
                 }
+                for &(slot, address) in &word_views {
+                    list.SetComputeRootShaderResourceView(slot, address);
+                }
                 if let Some((slot, table, bitmap)) = view_marks {
                     list.SetComputeRootShaderResourceView(slot, table);
                     list.SetComputeRootUnorderedAccessView(slot + 1, bitmap);
@@ -630,6 +667,9 @@ impl Bindings {
                     list.SetGraphicsRootShaderResourceView(slot, address);
                 }
                 if let Some((slot, address)) = slot_words {
+                    list.SetGraphicsRootShaderResourceView(slot, address);
+                }
+                for &(slot, address) in &word_views {
                     list.SetGraphicsRootShaderResourceView(slot, address);
                 }
                 if let Some((slot, table, bitmap)) = view_marks {

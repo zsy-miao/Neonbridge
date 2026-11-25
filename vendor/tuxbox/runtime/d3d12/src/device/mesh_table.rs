@@ -128,6 +128,7 @@ pub(super) fn reflected(
             view_formats: None,
             slot_views: None,
             slot_words: None,
+            table_words: None,
             bvh_raw: None,
             root_strides: None,
             view_marks: None,

@@ -1823,6 +1823,30 @@ unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_D
 /// raw view over the title memory at `location`, an acceleration
 /// structure's title VA, for its t5.. root SRV (bvh_raw). None when no
 /// placed structure buffer holds it.
+/// The raw import of the title memory a root parameter's table words live
+/// in (table_words): from `location` to the end of its region or 64 KiB.
+pub(crate) unsafe fn table_words_address(owner: &windows::core::IUnknown, location: u64) -> Option<(ID3D12Resource, u64)> {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    if location == 0 {
+        return None;
+    }
+    let mut region = MEMORY_BASIC_INFORMATION::default();
+    if unsafe { VirtualQuery(Some(location as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
+        return None;
+    }
+    let end = region.BaseAddress as u64 + region.RegionSize as u64;
+    let bytes = end.saturating_sub(location).min(super::table_words::WINDOW) & !3;
+    if bytes == 0 {
+        return None;
+    }
+    let entry = buffer_at(device, location, bytes, 4, false, false).ok()??;
+    let offset = entry.offset(location);
+    let native = entry.native.clone();
+    let address = unsafe { native.GetGPUVirtualAddress() } + offset;
+    Some((native, address))
+}
+
 pub(crate) unsafe fn bvh_root_address(owner: &windows::core::IUnknown, location: u64) -> Option<(ID3D12Resource, u64)> {
     let device = unsafe { &*owner.as_raw().cast::<Device>() };
     let (start, bytes) = device.state.blas.structure_extent(location)?;
