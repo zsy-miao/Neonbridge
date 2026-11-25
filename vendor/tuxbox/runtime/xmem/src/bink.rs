@@ -154,10 +154,18 @@ struct Clock {
 
 static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
 
+/// Default 0, as every reference plays these intros: VIctory-fxceless and
+/// VIctory have no Bink hooks at all (fxceless files.rs only routes Bink's
+/// CreateFile2), rebox bink_trace.c and xcl hle/bink.rs pass the title's
+/// calls through (xcl's only change is its opt-in XCL_SKIP_BINK skip). The
+/// title's own BinkWait/BinkShouldSkip pace a slow title. Our extra decodes
+/// ran between the title's decode and its use of the planes (test146: 166
+/// catch-up frames, garbled intros 2 and 3). TUXBOX_BINK_CATCHUP=4 restores
+/// the old catch-up.
 fn catch_up_cap() -> u32 {
     use std::sync::OnceLock;
     static CAP: OnceLock<u32> = OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(4))
+    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
 }
 
 /// Frames ahead of its clock a movie is decoded to: TUXBOX_BINK_LEAD (default 1).
