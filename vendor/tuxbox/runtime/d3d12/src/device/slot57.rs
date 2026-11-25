@@ -18,6 +18,7 @@ const BLOCK_MAX: usize = 0x1000;
 const PROGRAM_MAX: usize = 1 << 20;
 
 /// A slot 57 record with its blobs copied at create time.
+#[derive(Clone)]
 pub(super) struct Record {
     pub root: usize,
     pub a: Vec<u8>,
@@ -45,8 +46,45 @@ fn blob(address: usize, size: usize, max: usize) -> Vec<u8> {
     unsafe { std::slice::from_raw_parts(address as *const u8, size) }.to_vec()
 }
 
+/// TUXBOX_SLOT57_DECODE_CACHE=0: every create decodes the record again.
+fn decode_cache() -> bool {
+    crate::env_toggle!("TUXBOX_SLOT57_DECODE_CACHE") != Some("0")
+}
+
 /// Copies the record at desc; None when its words are unreadable.
+///
+/// test159: the title creates its slot 57 pipelines every frame and each
+/// decode ran up to 16 VirtualQuery calls (`readable`) and copied every
+/// blob, twice per create (log_record, upgrade): five threads spent 6.8 ms
+/// a frame in it. A record whose 0x108 header bytes (root, both blocks and
+/// the seven code slots' addresses and sizes) were seen before is the same
+/// record (the blobs are the title's immutable compiled state), so its copy
+/// is reused after one VirtualQuery of the header.
 pub(super) fn decode(desc: *const c_void) -> Option<Record> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<Vec<u8>, Option<Record>>>> = Mutex::new(None);
+    const HEADER: usize = 0x28 + 7 * 32;
+    let address = desc as usize;
+    if !decode_cache() || !super::compute::readable(address, HEADER) {
+        return decode_uncached(desc);
+    }
+    // SAFETY: HEADER bytes are readable.
+    let key = unsafe { std::slice::from_raw_parts(address as *const u8, HEADER) }.to_vec();
+    if let Some(hit) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+        return hit.clone();
+    }
+    let record = decode_uncached(desc);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = cache.get_or_insert_with(HashMap::new);
+    if map.len() >= 4096 {
+        map.clear();
+    }
+    map.insert(key, record.clone());
+    record
+}
+
+fn decode_uncached(desc: *const c_void) -> Option<Record> {
     let address = desc as usize;
     if !super::compute::readable(address, 0x58) {
         return None;
@@ -63,7 +101,11 @@ pub(super) fn decode(desc: *const c_void) -> Option<Record> {
             (0..7).map(|n| {
                 let (code, size) = (word(5 + 4 * n), word(6 + 4 * n));
                 let ok = code != 0 && size != 0 && size <= PROGRAM_MAX && super::compute::readable(code, size);
-                format!("{n}={code:#x}:{size:#x}{}", if ok || code == 0 { "" } else { "!" })
+                // SAFETY: readable confirmed the range.
+                let stage = (ok && size > 0x100 && unsafe { std::slice::from_raw_parts(code as *const u8, 4) } == b"FSSM")
+                    .then(|| unsafe { (code as *const u8).add(0x100).read() });
+                format!("{n}={code:#x}:{size:#x}{}{}", if ok || code == 0 { "" } else { "!" },
+                    stage.map_or(String::new(), |s| format!("@stage{s}")))
             }).collect::<Vec<_>>().join(" ")
         } else { "unreadable".into() },
     };
@@ -614,7 +656,12 @@ unsafe fn build(device: &super::Device, record: &Record, targets: Targets) -> Re
     use super::stream::{Upgrade, background};
     use windows::core::Interface;
     static CACHE: Mutex<Vec<(u64, Arc<Upgrade>, Option<u8>)>> = Mutex::new(Vec::new());
-    if record.vs.is_empty() || record.ps.is_empty() {
+    // A VS with no PS is a depth-only pipeline (test159: 66 records with only
+    // slot 2 set); D3D12 takes it with an empty pixel shader. Five-star
+    // CachedGraphics builds such records without one (GPL-3.0, credit).
+    // TUXBOX_SLOT57_NO_PS=0 refuses them as before.
+    let no_ps = !record.vs.is_empty() && record.ps.is_empty() && crate::env_toggle!("TUXBOX_SLOT57_NO_PS") != Some("0");
+    if !no_ps && (record.vs.is_empty() || record.ps.is_empty()) {
         // test157: 32 records were refused here. Name each of the seven code
         // slots (five-star PipelineLayout: {code, size, metadata, size} at
         // +0x28 + 32n) so the empty or unreadable one shows.
@@ -646,7 +693,7 @@ unsafe fn build(device: &super::Device, record: &Record, targets: Targets) -> Re
         InstanceDataStepRate: 0,
     }).collect();
     let vs = wrap(&record.vs, 1);
-    let ps = wrap(&record.ps, 0);
+    let ps = if no_ps { Vec::new() } else { wrap(&record.ps, 0) };
     let blend = if super::cb_blend::enabled() {
         super::cb_blend::state_block_blend(&record.a).unwrap_or_else(|_| opaque())
     } else {
@@ -684,7 +731,7 @@ unsafe fn build(device: &super::Device, record: &Record, targets: Targets) -> Re
     let mut stream = Vec::new();
     push(&mut stream, 0, &(record.root as *mut c_void));
     push(&mut stream, 1, &D3D12_SHADER_BYTECODE { pShaderBytecode: vs.as_ptr().cast(), BytecodeLength: vs.len() });
-    push(&mut stream, 2, &D3D12_SHADER_BYTECODE { pShaderBytecode: ps.as_ptr().cast(), BytecodeLength: ps.len() });
+    push(&mut stream, 2, &D3D12_SHADER_BYTECODE { pShaderBytecode: if ps.is_empty() { std::ptr::null() } else { ps.as_ptr().cast() }, BytecodeLength: ps.len() });
     push(&mut stream, 8, &blend);
     push(&mut stream, 9, &u32::MAX);
     push(&mut stream, 10, &raster);
