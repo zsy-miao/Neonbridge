@@ -86,6 +86,15 @@ impl Spans {
         let end = va.checked_add(len.max(1))?;
         for (lo, v) in self.by_lo.range(..=va).rev().take(64) {
             for (i, s) in v.iter().enumerate() {
+                if exact() {
+                    // xbox-emulator alias.rs:76 `find`: the texture sits at
+                    // exactly va - lo, so a span serves it only when that
+                    // offset is aligned; never below the guest VA.
+                    if s.device == device && !s.retired && end <= s.hi && (va - lo) % align.max(1) == 0 && accept(s) {
+                        return Some((*lo, i));
+                    }
+                    continue;
+                }
                 let offset = (va - lo) / align.max(1) * align.max(1);
                 if s.device == device && !s.retired && end - (va - lo - offset) <= s.hi && accept(s) {
                     return Some((*lo, i));
@@ -137,7 +146,6 @@ impl Spans {
         self.by_lo.values().flatten().filter(|s| s.retired).fold((0, 0), |(n, b), s| (n + 1, b + s.heap_bytes))
     }
 
-    #[cfg(test)]
     pub(super) fn retire_overlapping(&mut self, device: usize, lo: u64, hi: u64) -> usize {
         let mut n = 0;
         for (_, v) in self.by_lo.range_mut(..hi) {
@@ -209,6 +217,14 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 pub(super) fn enabled() -> bool {
     crate::env_toggle!("TUXBOX_PLACED_ALIAS") != Some("0")
+}
+
+/// Placement as xbox-emulator alias.rs:76/103 does it (GPL-3.0, credit to
+/// omonkey): place only at an aligned va - lo, retire every overlapping span.
+/// TUXBOX_ALIAS_EXACT=0 places at the aligned offset below the VA and retires
+/// only covered spans, as before.
+pub(super) fn exact() -> bool {
+    crate::env_toggle!("TUXBOX_ALIAS_EXACT") != Some("0")
 }
 
 /// Resource heap tier 2: one heap holds render targets and sampled textures.
@@ -466,11 +482,12 @@ fn place_locked(
                 None if system => (create_heap(device, bytes, false).ok_or(HEAP)?, false),
                 None => return Err(HEAP),
             };
-            sp.retire_covered(id, lo, hi);
+            // xbox-emulator alias.rs:103: a new span retires every span it overlaps.
+            if exact() { sp.retire_overlapping(id, lo, hi) } else { sp.retire_covered(id, lo, hi) };
             Ok::<_, usize>(sp.insert(Span { lo, hi, device: id, heap: Some(heap), heap_bytes: round_up(bytes, PLACEMENT_ALIGN), system,
                 retired: false, evicted: false, used: Instant::now(), live: HashSet::new(), owners: Vec::new() }))
         };
-        // A va finer than the alignment is placed at the aligned offset below
+        // With TUXBOX_ALIAS_EXACT=0 a va finer than the alignment is placed at the aligned offset below
         // it: textures over the same guest bytes still share heap bytes, and
         // claim() orders any overlap, exact or not.
         let (key, fresh) = match (oversize_span(va, size, xbox_size), sp.find_where(id, va, size, align, |s| !(target && s.system))) {
@@ -483,7 +500,7 @@ fn place_locked(
         };
         let span = sp.get_mut(key);
         span.used = Instant::now();
-        let offset = (va - span.lo) / align * align;
+        let offset = if exact() { va - span.lo } else { (va - span.lo) / align * align };
         let mut native: Option<ID3D12Resource> = None;
         let heap = span.heap.as_ref().ok_or(PLACE)?;
         let hr = unsafe { device.CreatePlacedResource(heap, offset, &desc, D3D12_RESOURCE_STATE_COMMON, clear.map(core::ptr::from_ref), &mut native) };
