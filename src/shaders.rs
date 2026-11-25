@@ -23,8 +23,8 @@ use std::{fs, thread};
 
 const MAX_SHADER_BYTES: u64 = 64 << 20;
 
-/// The running title's process id (main.rs sets it at each start), whose
-/// private bytes count toward the compile ceiling below.
+/// The running title's process id (main.rs sets it at each start): a child
+/// of this process that the worker's own size below leaves out.
 pub static GAME_PID: AtomicU32 = AtomicU32::new(0);
 
 /// The private commit of `pid` and, with `children`, of the processes it
@@ -66,17 +66,18 @@ fn private_bytes(pid: u32, children: bool) -> u64 {
     }).sum()
 }
 
-/// Whether a translation job may start beside `running` others: the title's
-/// and this worker's private bytes (with its xshader and dxc) are under
-/// TUXBOX_COMPILE_CEILING_GB (28; 0 off), the ceiling d3d12_xs holds its
-/// driver compiles to, or none runs. Ported from five-star-recomp fec516c
-/// (GPL-3.0, CompileBudget.RoomForPrograms), with credit. test140 had 19.8 GB
-/// private in the title alone while translations and driver compiles ran
-/// together.
+/// Whether a translation job may start beside `running` others: this
+/// worker's private bytes, with its xshader and dxc, where the translations'
+/// memory goes, are under NEONBRIDGE_WORKER_CEILING_GB (8; 0 off), or none
+/// runs. Ported from five-star-recomp fec516c and 36c506c (GPL-3.0,
+/// CompileBudget.RoomForPrograms), with credit. The title's private bytes are
+/// left out: they are its own and the driver's (test140 had 19.8 GB), and
+/// past the 28 GB compile ceiling counting them ran translations one at a
+/// time while the title still waited on them.
 fn room_for_programs(running: usize) -> bool {
     static CEILING: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     let ceiling = *CEILING.get_or_init(|| {
-        std::env::var("TUXBOX_COMPILE_CEILING_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(28) << 30
+        std::env::var("NEONBRIDGE_WORKER_CEILING_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(8) << 30
     });
     if running == 0 || ceiling == 0 {
         return true;
@@ -88,8 +89,7 @@ fn room_for_programs(running: usize) -> bool {
         match *last {
             Some((at, total)) if at.elapsed() < Duration::from_millis(250) => total,
             _ => {
-                let game = GAME_PID.load(Ordering::Relaxed);
-                let total = private_bytes(std::process::id(), true) + if game != 0 { private_bytes(game, false) } else { 0 };
+                let total = private_bytes(std::process::id(), true);
                 *last = Some((std::time::Instant::now(), total));
                 total
             }
@@ -101,7 +101,7 @@ fn room_for_programs(running: usize) -> bool {
     static HELD: AtomicUsize = AtomicUsize::new(0);
     let n = HELD.fetch_add(1, Ordering::Relaxed) + 1;
     if n == 1 || n.is_power_of_two() {
-        println!("[launch] shaders: a translation waits: {} MiB private in the title and the shader worker is over TUXBOX_COMPILE_CEILING_GB={} ({running} running, {n} waits so far)",
+        println!("[launch] shaders: a translation waits: the shader worker with its xshader and dxc holds {} MiB private, over NEONBRIDGE_WORKER_CEILING_GB={} ({running} running, {n} waits so far)",
             total >> 20, ceiling >> 30);
     }
     false
