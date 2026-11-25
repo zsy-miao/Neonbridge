@@ -18,16 +18,24 @@ You need Visual Studio Build Tools with the x64 C++ tools, the Windows SDK and R
 
 Each runtime is a tree under `vendor/<name>`, copied unchanged from its upstream at the hash in its `UPSTREAM` file. Its `NEONBRIDGE.toml` tells the launcher how to build it, which exe and arguments to run, its environment, options, presets and setup steps. A runtime's own fixes, if any, are in `vendor/patches/rt-<name>.patch`, applied for the build and reverted after it.
 
-| `--runtime` | What it is | Upstream |
-|---|---|---|
-| `scarlettport` (default) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
-| `victory` | VIctory-fxceless, the victory emulator fork | fxceless/victory-fork |
-| `vitoriabr` | VItoriaBr's VIctory fork | uiliannn/VItoriaBr |
-| `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
-| `xcl` | xcl | ivall/xcl |
-| `tuxbox` | brcly's TuxBox, upstream as vendored, run through its Python CLI | brcly/TuxBox |
-| `fivestar` | Five Star Recomp (.NET 10, PC GDK) | ThatRecompDev |
-| `neonbridge-own` | Neonbridge (own build): TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator | brcly/TuxBox |
+In picker order: each toml's `rank = N` (best first, by the leader's own published results; unranked trees last, Mix always last).
+
+| Rank | `--runtime` | What it is | Upstream |
+|---|---|---|---|
+| 1 | `flamingo` | Flamingo, a VIctory fork | realblastex/flamingo |
+| 2 | `victory` | VIctory-fxceless, the victory emulator fork | fxceless/victory-fork |
+| 3 | `vitoriabr` | VItoriaBr's VIctory fork | uiliannn/VItoriaBr |
+| 4 | `belobug` | VIctory-Belobug-AMD, a VIctory fork tuned for AMD | Belobug/VIctory-Belobug-AMD |
+| 5 | `scarlettport` (default for `--runtime`) | ScarlettPort's VIctory-based runtime and launcher scripts | ZigZagBoi1/ScarlettPort |
+| 6 | `ztrx-victory` | ztrx's VIctory fork | Zettrox/ztrx |
+| 7 | `xcl` | xcl | ivall/xcl |
+| 8 | `fivestar` | Five Star Recomp (.NET 10, PC GDK) | ThatRecompDev |
+| 9 | `tuxbox` | brcly's TuxBox, upstream as vendored, run through its Python CLI | brcly/TuxBox |
+| 10 | `neonbridge-own` | Neonbridge (own build): TuxBox console-library providers staged into the game folder, with Neonbridge's fixes and shader translator | brcly/TuxBox |
+
+The picker selects the last pick, else `NEONBRIDGE_RUNTIME`, else rank 1.
+
+The loader reads each step's own counts (`src/progress.rs`, one parser test per runtime): cargo's `Building [..] N/M` (asked for with `CARGO_TERM_PROGRESS_WHEN=always`), victory's `warm-up N shaders so far`, xcl's `N/M (t s)`, TuxBox's `label · N/M ready`, ScarlettPort's precompile-graphics records over the last full pass (`graphics-total.txt`), and Five Star's `[i/n] step` and `N/M (p%)` lines. A step with no count shows a pulse, not a percentage.
 
 A build is skipped when its build stamp (`<exe>.nbstamp`: the tree's git hash, its uncommitted changes, its patch and its build line) still matches.
 
@@ -55,7 +63,7 @@ The `neonbridge-own` runtime keeps its own options (`--debug`, `--rev`, `--tuxbo
 
 | Variable | Does |
 |---|---|
-| `NEONBRIDGE_LOG=0` | No run log (logging is on by default; children get `RUST_LOG=info`, the victory family also `VICTORY_LOG=info`). |
+| `NEONBRIDGE_LOG=0` | No run log (logging is on by default for every runtime; children get `RUST_LOG=info`, the victory family also `VICTORY_LOG=info`). |
 | `NEONBRIDGE_DIAG=1` | Diagnostics build (`--features diagnostics` in `target-diag`) and `VICTORY_D3D12_DRED=1`. The picker's Diagnostics box sets it. |
 | `NEONBRIDGE_BUILD=0` | Never build; use the exe as it is. |
 | `NEONBRIDGE_BUILD_STAMP=0` | Use the mtime check instead of build stamps. |

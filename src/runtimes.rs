@@ -460,7 +460,7 @@ fn parse(text: &str) -> Result<Spec, String> {
         let val = value(v).ok_or_else(|| format!("line {}: cannot read the value of {k}", n + 1))?;
         if table.as_deref() == Some("env") {
             match val {
-                Value::Str(s) => spec.env.push((k, s)),
+                Value::Str(s) => spec.env.push((k, expand_env(&s))),
                 Value::Bool(b) => spec.env.push((k, if b { "1" } else { "0" }.into())),
                 Value::List(_) => return Err(format!("line {}: [env] {k} is a list", n + 1)),
             }
@@ -1316,8 +1316,35 @@ struct Places {
     press: String,
 }
 
+/// `%NAME%` replaced by that environment variable, as cmd.exe would; an
+/// unset one stays as written. A toml value like "%LOCALAPPDATA%\6ixpack\save"
+/// reached Flamingo literally, a relative path that resolved inside its tree.
+pub fn expand_env(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('%') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        match after.find('%') {
+            Some(j) if j > 0 && after[..j].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'(' || b == b')') => {
+                match std::env::var(&after[..j]) {
+                    Ok(v) => out.push_str(&v),
+                    Err(_) => out.push_str(&rest[i..i + j + 2]),
+                }
+                rest = &after[j + 1..];
+            }
+            _ => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn fill(s: &str, p: &Places) -> String {
-    s.replace("{game_exe}", &p.game_exe).replace("{game}", &p.game).replace("{cache}", &p.cache).replace("{jobs}", &p.jobs).replace("{press}", &p.press)
+    expand_env(s).replace("{game_exe}", &p.game_exe).replace("{game}", &p.game).replace("{cache}", &p.cache).replace("{jobs}", &p.jobs).replace("{press}", &p.press)
 }
 
 /// Runs `cmd` with stdout and stderr into `log` (or this console), adding
@@ -1882,6 +1909,11 @@ VICTORY_PRESS_FILE = "{press}"
         assert_eq!(s.str("exe"), Some(r"target\release\v.exe"));
         assert!(s.flag("agility"));
         assert_eq!(parse("rank = 3\n").unwrap().str("rank"), Some("3"));
+        let home = std::env::var("LOCALAPPDATA").unwrap();
+        assert_eq!(expand_env(r"%LOCALAPPDATA%\6ixpack\save"), format!(r"{home}\6ixpack\save"));
+        assert_eq!(expand_env("100% and %NO_SUCH_VAR_NB% stay"), "100% and %NO_SUCH_VAR_NB% stay");
+        let env = parse("[env]\nVICTORY_DATA_DIR = \"%LOCALAPPDATA%\\\\6ixpack\\\\save\"\n").unwrap().env;
+        assert_eq!(env[0].1, format!(r"{home}\6ixpack\save"));
         assert_eq!(s.env, [("VICTORY_RELAY".into(), "2".into()), ("VICTORY_PRESS_FILE".into(), "{press}".into())]);
     }
 

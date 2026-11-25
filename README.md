@@ -8,16 +8,20 @@ Neonbridge is a Windows app that runs every project trying to bring the Xbox Ser
 
 ## Status
 
-| Runtime | Builds | Starts | Intro | 3D scene | Playable | Notes |
-|---|---|---|---|---|---|---|
-| ScarlettPort | ✅ | ✅ | ✅ | ⚠️ | ❌ | Intro at 30 fps; 3D scenes at 2–3 fps |
-| VItoriaBr | ✅ | ✅ | ✅ | ⚠️ | ❌ | Stops in 3D scenes; a fix is coming |
-| victory (fxceless) | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
-| ztrx-victory | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
-| xcl | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
-| Neonbridge (own build) | ✅ | ❌ | ❌ | ❌ | ❌ | Not tested yet |
-| TuxBox (upstream) | ⚠️ | ❌ | ❌ | ❌ | ❌ | Its authors say Windows support is still in progress |
-| Five Star Recomp | ❌ | ❌ | ❌ | ❌ | ❌ | Not in the download yet; needs .NET 10 and the PC GDK |
+Best first, by how far each project's own authors say it gets. The launcher lists them in this order too.
+
+| # | Runtime | How far it gets (its authors' own results) | Verified here |
+|---|---|---|---|
+| 1 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene, shadows still dark | No |
+| 2 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | 7–8 fps in the first rooms; the graphics device is lost in the open world | No |
+| 3 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | 3.5–6 fps in the open world | Partly: the intro runs, 3D scenes stop |
+| 4 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
+| 5 | [ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | Intro and 3D scenes | Yes: intro at 30 fps, 3D scenes at 2–3 fps |
+| 6 | [ztrx-victory](https://github.com/Zettrox/ztrx) | No published result yet | No |
+| 7 | [xcl](https://github.com/ivall/xcl) | No published result yet | Builds; its first shader preparation runs |
+| 8 | Five Star Recomp | A cutscene | No (needs .NET 10 and the PC GDK) |
+| 9 | [TuxBox](https://github.com/brcly/TuxBox) | The story intro, on Linux; Windows support is still in progress | No |
+| 10 | Neonbridge (own build) | Not tested yet | No |
 
 ## Get started
 
@@ -26,7 +30,7 @@ Neonbridge is a Windows app that runs every project trying to bring the Xbox Ser
 3. Run `neonbridge.exe`.
 4. If it doesn't find your game folder by itself, click **Change** and choose it. Then pick a runtime and press **Play**.
 
-The first start of a runtime takes a while: it prepares the game's shaders. Later starts are quicker.
+The first start of a runtime takes a while: it builds the runtime and prepares the game's shaders. The loading screen shows real counts for each step (for example "translating shaders: 1,000 / 26,503"), and a moving pulse where a runtime gives no count. Later starts are quicker: a runtime that hasn't changed isn't built again.
 
 ## What you need
 
@@ -40,8 +44,8 @@ Some runtimes need one more thing. Neonbridge greys them out until it's there, a
 
 | Runtime | Also needs |
 |---|---|
-| TuxBox (upstream) | [Python 3.10 or newer](https://www.python.org/downloads/windows/) and the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (C++ tools) |
-| Five Star Recomp | The [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and the [Microsoft PC GDK](https://github.com/microsoft/GDK/releases) |
+| Five Star Recomp | The [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and the [Microsoft PC GDK](https://github.com/microsoft/GDK/releases) (**Install...** downloads Microsoft's signed GDK setup and runs it, after you say yes) |
+| TuxBox | [Python 3.10 or newer](https://www.python.org/downloads/windows/) and the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (C++ tools) |
 
 ## Screenshots
 
@@ -74,7 +78,7 @@ Everything Neonbridge keeps is in `%LOCALAPPDATA%\6ixpack`. Paste that into the 
 
 ## Troubleshooting
 
-- **The game crashed or closed.** Neonbridge shows the log's location. Send that file from `%LOCALAPPDATA%\6ixpack\logs` (the newest one) when you report the problem.
+- **The game crashed or closed.** Every run is logged, so there is always a log to send. Neonbridge shows its location. Send that file from `%LOCALAPPDATA%\6ixpack\logs` (the newest one) when you report the problem.
 - **A runtime is greyed out.** It needs something that isn't installed yet. Select it to see what, then click **Install...**.
 - **The first start is slow.** That's the shader preparation. It's only slow the first time.
 - **It says no game was found.** Click **Change** and choose the folder that holds `game_scarlett_master.exe`.
@@ -95,10 +99,10 @@ Building from source, the command line, runtime settings, patches and environmen
 
 ## Credits
 
-Every runtime and every project Neonbridge borrows from is named in [CREDITS.md](CREDITS.md), with its authors, licence and version.
+Every runtime and every project Neonbridge borrows from is named in [CREDITS.md](CREDITS.md), with its authors, licence and version. Thanks especially to [realblastex](https://github.com/realblastex) for [Flamingo](https://github.com/realblastex/flamingo) and to [Belobug](https://github.com/Belobug) for [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD).
 
 ## Licence
 
-GPL-3.0-or-later ([LICENSE](LICENSE)). Each runtime keeps its own licence (`vendor/<name>/LICENSE`): xcl is GPL-2.0-only, the VIctory forks and ScarlettPort are GPL-3.0, TuxBox is Apache-2.0 and Five Star Recomp is GPL-3.0-or-later. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive; Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by them.
+GPL-3.0-or-later ([LICENSE](LICENSE)). Each runtime keeps its own licence (`vendor/<name>/LICENSE`): xcl is GPL-2.0-only, the VIctory forks (Flamingo and VIctory-Belobug-AMD among them) and ScarlettPort are GPL-3.0, TuxBox is Apache-2.0 and Five Star Recomp is GPL-3.0-or-later. Grand Theft Auto, GTA and Rockstar Games are trademarks of Take-Two Interactive; Xbox is a trademark of Microsoft. Neonbridge isn't affiliated with or endorsed by them.
 
-<sub>Keywords: GTA 6 PC, GTA VI PC, GTA 6 launcher, Grand Theft Auto VI Windows, Xbox Series X|S to PC, Scarlett, VIctory, ScarlettPort, xcl, TuxBox, Five Star Recomp.</sub>
+<sub>Keywords: GTA 6 PC, GTA VI PC, GTA 6 launcher, Grand Theft Auto VI Windows, Xbox Series X|S to PC, Scarlett, VIctory, Flamingo, Belobug, ScarlettPort, xcl, TuxBox, Five Star Recomp.</sub>
