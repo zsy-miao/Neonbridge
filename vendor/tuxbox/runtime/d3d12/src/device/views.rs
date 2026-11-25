@@ -896,6 +896,9 @@ pub(super) unsafe extern "system" fn srv(
     mut handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 ) {
     let _write = super::descriptor_paging::Write::new(&device.state.descriptor_arenas, &mut handle);
+    if object.is_null() && unsafe { bvh_raw_srv(device, desc, handle) } {
+        return;
+    }
     let resource = unsafe { view_resource(device, object, desc, handle) };
     let proxy = unsafe { super::resource_proxy(object, identity(device).as_raw()) };
     let mut alias = None;
@@ -1705,4 +1708,42 @@ pub(super) unsafe extern "system" fn address_uav(
     crate::diagnostics::log_once(&FIRST, || format!(
         "address UAV served (device slot 71): {:#x}, {} bytes, format {} (TUXBOX_ADDRESS_UAV=0 off)",
         desc.address, resource_desc.Width, view.Format.0));
+}
+
+/// TUXBOX_BVH_RAW_SRV=1: an acceleration-structure SRV becomes a raw buffer
+/// SRV over the title memory of the placed structure buffer holding its
+/// Location, and its slot_views entry gets that buffer's title VA and length
+/// (VA <= the T# base; the translated node test reads
+/// ByteAddressBuffer(ResourceDescriptorHeap[slot]) at node address - VA,
+/// five-star-recomp rdna_bvh.hlsli, GPL-3.0, credit). Off: the native AS SRV
+/// as before. Returns false (native path) when no structure buffer is known.
+unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_DESC, handle: D3D12_CPU_DESCRIPTOR_HANDLE) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_BVH_RAW_SRV") == Some("1")) { return false; }
+    let Some(view) = (unsafe { desc.as_ref() }) else { return false };
+    if view.ViewDimension != D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE { return false; }
+    let location = unsafe { view.Anonymous.RaytracingAccelerationStructure.Location };
+    let Some((start, bytes)) = device.state.blas.structure_extent(location) else { return false };
+    let bytes = bytes & !3;
+    let entry = match buffer_at(device, start, bytes, 4, true, false) {
+        Ok(Some(entry)) => entry,
+        _ => return false,
+    };
+    let offset = entry.offset(start);
+    if !offset.is_multiple_of(4) || bytes / 4 > u64::from(u32::MAX) { return false; }
+    let raw = D3D12_SHADER_RESOURCE_VIEW_DESC {
+        Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R32_TYPELESS,
+        ViewDimension: D3D12_SRV_DIMENSION_BUFFER,
+        Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+        Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 { Buffer: D3D12_BUFFER_SRV {
+            FirstElement: offset / 4, NumElements: (bytes / 4) as u32, StructureByteStride: 0, Flags: D3D12_BUFFER_SRV_FLAG_RAW,
+        } },
+    };
+    unsafe { device.native.CreateShaderResourceView(&entry.native, Some(&raw), handle) };
+    device.state.blas.views.store(handle.ptr, None);
+    device.state.placements.views.set(handle.ptr, None, false);
+    super::view_formats::write(handle.ptr, super::view_formats::srv_code(Some(&raw)));
+    super::slot_views::write(handle.ptr, super::slot_views::entry(start, raw.Format, 0, true, 0, raw.Anonymous.Buffer.NumElements));
+    device.state.imported_views.store(handle.ptr, Some(DescriptorBacking::Registered { _address: entry }));
+    true
 }

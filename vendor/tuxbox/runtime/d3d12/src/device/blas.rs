@@ -171,6 +171,12 @@ impl Buffers {
         })
     }
 
+    /// Title VA and byte length of the placed acceleration-structure buffer
+    /// holding `address` (TUXBOX_BVH_RAW_SRV).
+    pub(in crate::device) fn structure_extent(&self, address: u64) -> Option<(u64, u64)> {
+        self.find(address, Kind::Structure).ok().map(|b| (b.start, b.bytes))
+    }
+
     fn find(&self, address: u64, kind: Kind) -> Result<Arc<Buffer>> {
         let index = lock(&self.index);
         let mut candidates = index
