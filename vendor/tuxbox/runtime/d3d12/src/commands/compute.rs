@@ -143,6 +143,17 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     }
     // A page only the GPU writes is still reserved in a lazy title view.
     device::commit_lazy(guest as usize, 0x10000 - (guest as usize & 0xffff));
+    // xcl c1a9b52 (GPL-3.0, idea): a VirtualQuery scans its whole region
+    // under the address-space lock (test137: 16 ms per GiB of view, and the
+    // GPU page pool is one 5.4 GiB view), and every root view bind made one
+    // or more. A window xmem knows committed in one lazy view needs none: it
+    // is read-write to the view's end. TUXBOX_COMMIT_BITS=0 (in xmem) walks.
+    let known = device::view_state(guest as usize, 0x10000);
+    if known.committed() && known.one_view() {
+        let end = (known.base + known.size) as u64;
+        let span = end.saturating_sub(guest).min(0x10000).max(1);
+        return root_import(list, state, guest, span);
+    }
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if unsafe { VirtualQuery(Some(guest as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
         static UNMAPPED: std::sync::Once = std::sync::Once::new();
@@ -167,6 +178,11 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
         end = next.BaseAddress as u64 + next.RegionSize as u64;
     }
     let span = end.saturating_sub(guest).min(0x10000).max(1);
+    root_import(list, state, guest, span)
+}
+
+/// Imports a root view's `span` bytes at `guest` (one byte when that fails).
+fn root_import(list: &List, state: &mut super::Recording, guest: u64, span: u64) -> Option<u64> {
     let result = unsafe { device::command_buffer_address(parent(&list.parent), guest, span) }
         .or_else(|_| unsafe { device::command_buffer_address(parent(&list.parent), guest, 1) })
         .and_then(|(buffer, va)| {
