@@ -357,8 +357,31 @@ fn unmap_once(address: usize) -> Result<(), u32> {
                         r.BaseAddress.addr(), r.RegionSize, r.AllocationBase.addr(), r.State, r.Type, r.Protect, r.AllocationProtect),
                     Err(e) => format!("{at:#x} query error {e}"),
                 };
+                // What holds the view: the first page's working-set flags
+                // (locked by VirtualLock, shared count, valid) and whether
+                // the range takes a protection change at all (a range a
+                // driver secured refuses both unmap and protect).
+                let ws = {
+                    use windows_sys::Win32::System::ProcessStatus::{K32QueryWorkingSetEx, PSAPI_WORKING_SET_EX_INFORMATION};
+                    let mut w: PSAPI_WORKING_SET_EX_INFORMATION = unsafe { core::mem::zeroed() };
+                    w.VirtualAddress = address as _;
+                    if unsafe { K32QueryWorkingSetEx(GetCurrentProcess(), (&raw mut w).cast(), size_of::<PSAPI_WORKING_SET_EX_INFORMATION>() as u32) } != 0 {
+                        let f = unsafe { w.VirtualAttributes.Flags };
+                        format!("valid {} share {} shared {} locked {} large {} bad {}", f & 1, (f >> 1) & 7, (f >> 15) & 1, (f >> 22) & 1, (f >> 23) & 1, (f >> 31) & 1)
+                    } else {
+                        format!("query error {}", unsafe { GetLastError() })
+                    }
+                };
+                let protect = region(address).map_or_else(|e| format!("query error {e}"), |r| {
+                    let mut old = 0;
+                    if unsafe { windows_sys::Win32::System::Memory::VirtualProtect(address as _, PAGE, r.Protect, &mut old) } != 0 {
+                        "takes".to_string()
+                    } else {
+                        format!("refused {}", unsafe { GetLastError() })
+                    }
+                });
                 crate::loader::log(&format!(
-                    "xmem: unmap:256 error {e} for view {address:#x}: region {}; before {}; after {} ({n} so far; TUXBOX_UNMAP87_REGION=0 off)",
+                    "xmem: unmap:256 error {e} for view {address:#x}: region {}; before {}; after {}; first page {ws}; same-protect {protect} ({n} so far; TUXBOX_UNMAP87_REGION=0 off)",
                     show(address), show(address.wrapping_sub(1)), show(address + bytes)));
             }
         }
