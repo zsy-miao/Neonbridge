@@ -659,6 +659,19 @@ mod sound {
                 }
                 names.push(format!("+{:#x} {}", FIRST + 8 * i as u64, module_of(ORIG[i].load(Ordering::Relaxed) as u64)));
             }
+            if result == 0 {
+                // The open's buffer comes from the allocator at
+                // game+0x9dc62d8 (thunk game+0x95eb60 at +0x18):
+                // [+0x98] * 16 bytes, 16-aligned, kept at [+0xa4].
+                let game = unsafe { windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(core::ptr::null()) } as u64;
+                let words: Vec<String> = (0..4).map(|i| {
+                    let w = unsafe { ((game + 0x9dc_62d8 + 8 * i) as *const u64).read_unaligned() };
+                    format!("{w:#x} ({})", module_of(w))
+                }).collect();
+                let field = |off: u64| unsafe { ((snd + off) as *const u32).read_unaligned() };
+                log(&format!("bink: sound open failed: buffer {} x 16 bytes asked ([+0x98]), [+0xa4] {:#x}, channels {} rate {}; allocator game+0x9dc62d8 = {}",
+                    field(0x98), unsafe { ((snd + 0xa4) as *const u64).read_unaligned() }, field(0x38), field(0x34), words.join(", ")));
+            }
             log(&format!("bink: sound open {snd:#x}({b:#x}, {c:#x}) = {result:#x}; callbacks {} counted (TUXBOX_BINK_SOUND_STATS=0 off)", names.join(", ")));
         }
         result
