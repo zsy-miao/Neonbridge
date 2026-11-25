@@ -476,6 +476,16 @@ fn throttled() -> bool {
     at != 0 && now_ms().saturating_sub(at) < 1000 && frame > 1_000_000 / floor
 }
 
+/// Pipeline workers that keep building while the title is throttled
+/// (TUXBOX_PIPELINE_THROTTLE_KEEP, default 2 as before). test152: the two
+/// kept workers spent 73 ms CPU a frame each inside nvgpucomp64 working the
+/// eager backlog at 11 fps while the title's submit thread was the limit; 0
+/// holds them all (a title wait or a bind steal still builds on demand).
+fn throttle_keep() -> usize {
+    static KEEP: OnceLock<usize> = OnceLock::new();
+    *KEEP.get_or_init(|| crate::env_toggle!("TUXBOX_PIPELINE_THROTTLE_KEEP").and_then(|v| v.trim().parse().ok()).unwrap_or(2))
+}
+
 /// A throttled worker waits here before taking its next job.
 fn fxceless_shape() -> bool {
     crate::env_toggle!("TUXBOX_PIPELINE_SHAPE") == Some("fxceless")
@@ -1158,7 +1168,7 @@ fn send(job: Job, bound: bool) {
                     // Ready workers wait only briefly on the translator.
                     crate::device::shader_cache::patience(handoff_wait());
                     loop {
-                        if prefetch_only || i >= 2 {
+                        if prefetch_only || i >= throttle_keep() {
                             hold_while_throttled();
                         }
                         let (job, prefetch) = next_job(prefetch_only);
