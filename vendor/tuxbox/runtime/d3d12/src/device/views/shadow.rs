@@ -1084,6 +1084,11 @@ fn cap_refresh(copies: &mut Vec<Copy>) {
     *owed = rest;
 }
 
+fn hash_dirty_only() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_HASH_DIRTY_ONLY") != Some("0"))
+}
+
 unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> Result<()> {
     let shadows = &device.state.shadows;
     let kind = unsafe { queue.GetDesc() }.Type;
@@ -1173,6 +1178,20 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 filled.extend(entry.backs.iter().cloned());
             }
             if aged_check || (skip && !entry.writable) {
+                // test173: the refresh cost 27 ms/frame, mostly hashing pieces
+                // the write watch already knows are unwritten. A read-only
+                // piece whose title pages were not written since its last
+                // hash keeps that hash (VICTORY ztrx shadow.rs compares only
+                // what changed, credit to its authors).
+                // TUXBOX_SHADOW_HASH_DIRTY_ONLY=0 hashes them all.
+                // Aged checks are not every refresh, so a write the watch saw at a
+                // skipped refresh is gone; only per-refresh checks use this.
+                if !aged_check && !entry.writable && entry.hash.is_some() && hash_dirty_only()
+                    && watch.as_ref().is_some_and(|w| w.unchanged(address..address + bytes))
+                {
+                    if aged_check { aged += 1 } else { skipped += 1 }
+                    continue;
+                }
                 if unlocked {
                     checks.push((key, aged_check, view));
                     continue;
