@@ -40,6 +40,11 @@ EXPORTS
     TuxBoxValidatePinnedPageMappings PRIVATE
     TuxBoxJoinPageRange PRIVATE
     TuxBoxPageSection PRIVATE
+    TuxBoxBinkPlanesRead PRIVATE
+    TuxBoxNoteGpuImport PRIVATE
+    TuxBoxTakeImportRemaps PRIVATE
+    TuxBoxUnmapTrace PRIVATE
+    TuxBoxViewState PRIVATE
     TuxBoxCommitRange PRIVATE
     TuxBoxDeviceRange PRIVATE
     TuxBoxDeviceFaultCallback PRIVATE
