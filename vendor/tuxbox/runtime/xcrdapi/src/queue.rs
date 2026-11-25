@@ -45,7 +45,23 @@ struct Stream {
     file: Arc<File>,
     base: u64,
     compressed: usize,
+    /// Piece 0's destination size: continuations step by it.
+    chunk: usize,
+    /// The Submit that inflated it: only its own requests are served.
+    submission: u64,
     data: Vec<u8>,
+}
+
+/// Xbox2Windows bb35f045 + 4f67e704 (credit to its authors): a chunked zlib
+/// stream's continuations step by piece 0's destination size, not the
+/// asking request's (a short last piece has a smaller one and was never
+/// found), a short last piece gets its slice, and a cached stream serves
+/// only requests made ready by the same Submit, so an unrelated later read
+/// with the same source and size is not handed stale stream bytes.
+/// TUXBOX_ZLIB_CHUNK_STEP=0 steps by each request's own size, unscoped.
+fn chunk_step() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_ZLIB_CHUNK_STEP").map_or(true, |v| v.trim() != "0"))
 }
 
 const CACHED_STREAMS: usize = 16;
@@ -71,9 +87,9 @@ fn has_zlib_header(bytes: &[u8]) -> bool {
 
 /// The `capacity` bytes of a stream inflated from `base` that a request at
 /// `offset` reads, with every bound checked (no wrap near u64::MAX).
-fn slice_at(data: &[u8], base: u64, offset: u64, capacity: usize) -> Option<&[u8]> {
+fn slice_at(data: &[u8], base: u64, offset: u64, step: usize, capacity: usize) -> Option<&[u8]> {
     let delta = offset.checked_sub(base).filter(|&d| d > 0)?;
-    if capacity == 0 || !delta.is_multiple_of(capacity as u64) {
+    if capacity == 0 || step == 0 || !delta.is_multiple_of(step as u64) {
         return None;
     }
     let start = usize::try_from(delta).ok()?;
@@ -101,6 +117,21 @@ struct State {
     closed: bool,
     error_count: u32,
     first_error: Option<Box<ErrorRecord>>,
+    /// Submits so far; each read made ready is stamped with it.
+    submissions: u64,
+}
+
+/// Every waiting entry becomes ready, as one submission.
+fn release(state: &mut State) {
+    state.submissions += 1;
+    let n = state.submissions;
+    let ready = state.ready;
+    for entry in state.entries.iter_mut().skip(ready) {
+        if let Entry::Read(read) = entry {
+            read.submission = n;
+        }
+    }
+    state.ready = state.entries.len();
 }
 
 enum Entry {
@@ -232,6 +263,8 @@ struct Read {
     options: u64,
     tag: u64,
     cancelled: bool,
+    /// The submission that made it ready (`release`).
+    submission: u64,
 }
 
 fn eof_partial() -> bool {
@@ -346,6 +379,7 @@ unsafe fn capture(queue_type: u64, req: *const Request) -> Result<Read, HRESULT>
         options: req.options,
         tag: req.tag,
         cancelled: false,
+        submission: 0,
     })
 }
 
@@ -529,8 +563,9 @@ impl Read {
         {
             let streams = lock(streams);
             for s in streams.iter().rev() {
-                if Arc::ptr_eq(&s.file, &file.file) && s.compressed == self.size
-                    && let Some(piece) = slice_at(&s.data, s.base, offset, self.capacity)
+                let (step, same) = if chunk_step() { (s.chunk, s.submission == self.submission) } else { (self.capacity, true) };
+                if Arc::ptr_eq(&s.file, &file.file) && s.compressed == self.size && same
+                    && let Some(piece) = slice_at(&s.data, s.base, offset, step, self.capacity)
                 {
                     return Some(piece.to_vec());
                 }
@@ -543,8 +578,8 @@ impl Read {
                 continue;
             }
             let Ok(data) = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&input, chunked_limit(self.capacity)) else { continue };
-            let piece = slice_at(&data, base, offset, self.capacity).map(<[u8]>::to_vec);
-            remember(streams, Stream { file: file.file.clone(), base, compressed: self.size, data });
+            let piece = slice_at(&data, base, offset, self.capacity, self.capacity).map(<[u8]>::to_vec);
+            remember(streams, Stream { file: file.file.clone(), base, compressed: self.size, chunk: self.capacity, submission: self.submission, data });
             if piece.is_some() {
                 return piece;
             }
@@ -730,7 +765,7 @@ impl Read {
                 "zlib stream of {} bytes outgrew its {}-byte destination: served as chunks (TUXBOX_ZLIB_CHUNKS=0 fails it)",
                 whole.len(), self.capacity));
             let first = whole[..self.capacity.min(whole.len())].to_vec();
-            remember(streams, Stream { file: file.file.clone(), base: *offset, compressed: self.size, data: whole });
+            remember(streams, Stream { file: file.file.clone(), base: *offset, compressed: self.size, chunk: self.capacity, submission: self.submission, data: whole });
             output = Ok(first);
         }
         {
@@ -984,6 +1019,7 @@ pub(super) unsafe fn create(desc: &QueueDesc, manual: bool) -> Result<IQueue2, H
         state: Mutex::new(State {
             entries: VecDeque::new(),
             ready: 0,
+            submissions: 0,
             processing: false,
             closed: false,
             error_count: 0,
@@ -1030,7 +1066,7 @@ impl Queue {
             && state.entries.len() + usize::from(state.processing) >= self.shared.capacity - 1
         {
             if !self.manual {
-                state.ready = state.entries.len();
+                release(&mut state);
                 self.shared.changed.notify_all();
             }
             state = self
@@ -1047,7 +1083,7 @@ impl Queue {
         }
         state.entries.push_back(entry);
         if !self.manual && state.entries.len() - state.ready >= self.shared.capacity / 2 {
-            state.ready = state.entries.len();
+            release(&mut state);
             self.shared.changed.notify_all();
         }
     }
@@ -1055,7 +1091,7 @@ impl Queue {
         {
             let mut state = lock(&self.shared.state);
             state.closed = true;
-            state.ready = state.entries.len();
+            release(&mut state);
             self.shared.changed.notify_all();
         }
         if let Some(worker) = lock(&self.worker).take() {
@@ -1103,7 +1139,7 @@ impl IQueue_Impl for Queue_Impl {
     }
     unsafe fn Submit(&self) {
         let mut s = lock(&self.shared.state);
-        s.ready = s.entries.len();
+        release(&mut s);
         self.shared.changed.notify_all();
     }
     unsafe fn CancelRequestsWithTag(&self, mask: u64, value: u64) {
@@ -1208,12 +1244,12 @@ impl IQueue2_Impl for Queue_Impl {
 #[test]
 fn a_chunk_slice_is_bounded_and_stepped_by_its_destination() {
     let data = vec![7u8; 0x40000];
-    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x10000, 0x10000).map(<[u8]>::len), Some(0x10000));
-    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x30000, 0x10000).map(<[u8]>::len), Some(0x10000));
-    assert!(slice_at(&data, 0x1000, 0x1000 + 0x40000, 0x10000).is_none());
-    assert!(slice_at(&data, 0x1000, 0x1000 + 0x8000, 0x10000).is_none());
-    assert!(slice_at(&data, 0x1000, 0x1000, 0x10000).is_none());
-    assert!(slice_at(&data, 0x1000, u64::MAX - 0xffff, 0x10000).is_none());
+    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x10000, 0x10000, 0x10000).map(<[u8]>::len), Some(0x10000));
+    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x30000, 0x10000, 0x10000).map(<[u8]>::len), Some(0x10000));
+    assert!(slice_at(&data, 0x1000, 0x1000 + 0x40000, 0x10000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, 0x1000 + 0x8000, 0x10000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, 0x1000, 0x10000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, u64::MAX - 0xffff, 0x10000, 0x10000).is_none());
     assert!(has_zlib_header(&[0x78, 0x9c]));
     assert!(!has_zlib_header(&[0x78, 0x9d]));
 }
