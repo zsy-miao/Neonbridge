@@ -284,7 +284,7 @@ mod counts {
 
     #[test]
     fn victory_warm() {
-        // victory, vitoriabr, ztrx-victory and ScarlettPort's warm (translate.rs).
+        // victory, vitoriabr and ScarlettPort's warm (translate.rs).
         assert_eq!(count("warm-up      120 shaders so far, 3 s"), Some((120, None)));
     }
 

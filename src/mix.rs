@@ -1,5 +1,5 @@
 //! Mix mode: one victory build made of crates from different victory-family
-//! trees (victory, scarlettport's runtime/victory, vitoriabr, ztrx-victory
+//! trees (victory, scarlettport's runtime/victory, vitoriabr
 //! share the crate names). A mix names the tree of the app (apps/victory,
 //! and with it the workspace's Cargo.toml, Cargo.lock, toolchain and the
 //! runtime's NEONBRIDGE.toml: run line, environment, warm step) and the tree

@@ -1104,7 +1104,7 @@ pub fn cargo(cmd: &[String], cwd: &Path, target: &Path, label: &str) -> Result<(
 
 fn patch_root(name: &str, root: &Path) -> Option<PathBuf> {
     match name {
-        "victory" | "vitoriabr" | "ztrx-victory" => Some(root.to_path_buf()),
+        "victory" | "vitoriabr" => Some(root.to_path_buf()),
         "scarlettport" => Some(root.join("runtime").join("victory")),
         _ => None,
     }
@@ -1216,7 +1216,7 @@ fn pack() -> PathBuf {
 }
 
 /// The victory family's one cache, %LOCALAPPDATA%\6ixpack\cache (a real
-/// folder): VICTORY_CACHE_DIR of victory, vitoriabr, ztrx-victory and
+/// folder): VICTORY_CACHE_DIR of victory, vitoriabr and
 /// scarlettport. shaders\ and images\ are shared as they are, since each tree
 /// keys its entries on its own translator identity. What would clash
 /// (pipelines\host-pipelines.bin, early-pipelines.txt, precompiled\) the rt
@@ -1291,7 +1291,7 @@ fn move_verified(from: &Path, to: &Path, n: &mut Moved) {
 /// press.txt, warm-total.txt and last-run.log stay in the old folder (they
 /// are the runtime's own). On a clean machine there is nothing to move.
 fn migrate_caches(to: &Path) {
-    let mut olds: Vec<(Option<String>, PathBuf)> = ["victory", "vitoriabr", "ztrx-victory", "scarlettport"].iter().map(|n| (Some((*n).to_owned()), cache(n))).collect();
+    let mut olds: Vec<(Option<String>, PathBuf)> = ["victory", "vitoriabr", "scarlettport"].iter().map(|n| (Some((*n).to_owned()), cache(n))).collect();
     olds.push((None, pack().join("victory-shared")));
     for (name, old) in olds {
         if !old.exists() || old == to {
@@ -1328,14 +1328,14 @@ fn family_saves() -> PathBuf {
 /// (copied, verified, then deleted; a file already there is never
 /// overwritten). Newest first, so on a clash the first source's file stays:
 /// 6ixpack\victory\data (fxceless runs), %LOCALAPPDATA%\victory\data
-/// (vitoriabr's and scarlettport's default), %LOCALAPPDATA%\ztrx\data.
+/// (vitoriabr's and scarlettport's default).
 /// ScarlettPort reads <TITLEID>\slots\default\{storage,saves} instead when
 /// that folder exists (its core saves.rs:60), so those merge into
 /// <TITLEID>\{storage,saves} where a file is missing and slots\default is
 /// renamed slots\default-migrated: all four trees then read one place.
 fn migrate_saves(to: &Path) {
     let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    for old in [pack().join("victory").join("data"), local.join("victory").join("data"), local.join("ztrx").join("data")] {
+    for old in [pack().join("victory").join("data"), local.join("victory").join("data")] {
         if !old.exists() || old == to {
             continue;
         }
