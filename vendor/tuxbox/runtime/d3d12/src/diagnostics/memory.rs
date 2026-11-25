@@ -25,10 +25,14 @@ pub(crate) enum Category {
     PlacedUpload,
     PlacedReadback,
     PlacedSpanHeap,
+    /// CPU-filled upload buffers of shadow pieces (host memory, write-combined)
+    ShadowUpload,
+    /// readback buffers of writable host copies (host memory)
+    ShadowReadback,
 }
 
-const N: usize = 13;
-const NAMES: [&str; N] = ["shadow copies", "shadow imports", "device buffers", "images in device memory", "committed resources", "slot 133 placements", "render heaps", "heap imports", "placed textures (committed)", "descriptor table buffers", "placed texture upload buffers", "placed texture readback buffers", "placed texture span heaps"];
+const N: usize = 15;
+const NAMES: [&str; N] = ["shadow copies", "shadow imports", "device buffers", "images in device memory", "committed resources", "slot 133 placements", "render heaps", "heap imports", "placed textures (committed)", "descriptor table buffers", "placed texture upload buffers", "placed texture readback buffers", "placed texture span heaps", "shadow upload buffers (host)", "shadow readback buffers (host)"];
 static COUNTS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 static BYTES: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 

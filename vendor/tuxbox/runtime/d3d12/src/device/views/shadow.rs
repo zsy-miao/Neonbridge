@@ -61,6 +61,9 @@ struct Entry {
     owed: bool,
     /// When a submission last named it (TUXBOX_SHADOW_EVICT_STALE).
     stamp: Arc<ShadowUse>,
+    /// Its CPU pieces' upload buffers, on the memory line (test175: host
+    /// write-combined memory grew 5.1 GB with nothing of ours counted).
+    _uploads: Vec<crate::diagnostics::memory::Live>,
 }
 
 /// TUXBOX_SHADOW_EVICT_STALE (default off, =1 on): over budget, once a
@@ -555,6 +558,7 @@ pub(crate) struct Back {
     /// A write-back is in flight: refreshes leave the copy alone (it holds
     /// the GPU's bytes, title memory does not yet).
     pending: std::sync::atomic::AtomicBool,
+    _live: crate::diagnostics::memory::Live,
 }
 
 // SAFETY: the mappings live as long as their resources, held here.
@@ -580,7 +584,8 @@ impl Back {
         unsafe { readback.Map(0, None, Some(&mut mapped))? };
         crate::diagnostics::memory::note(crate::diagnostics::memory::Category::ShadowImport, bytes);
         Ok(Arc::new(Back { readback, mapped: mapped as usize, upload, address, bytes, at,
-            before: Mutex::new(vec![0; bytes as usize]), pending: Default::default() }))
+            before: Mutex::new(vec![0; bytes as usize]), pending: Default::default(),
+            _live: crate::diagnostics::memory::live(crate::diagnostics::memory::Category::ShadowReadback, bytes) }))
     }
 
     /// After a refresh filled the upload piece: the GPU starts from these bytes.
@@ -1063,8 +1068,10 @@ fn copy_of(device: &Device, address: u64, bytes: u64, writable: bool, cover: boo
     // must keep reaching the title pages, never the copy.
     let view = TextureAddress::unlisted(device, &copy, address as usize);
     let pruned = prune(&mut entries, &shadows.sources);
+    let uploads = cpu.iter().map(|(_, _, len, _)| crate::diagnostics::memory::live(crate::diagnostics::memory::Category::ShadowUpload, *len)).collect();
     let replaced = entries.insert((address, bytes, writable), Entry { pieces, cpu, backs, writable, view: Arc::downgrade(&view), copy: copy.clone(), written: false, marked: 0, run: if writable { super::super::view_marks::assign(size) } else { None }, root_uav: 0, owed: false, hash: None,
-        bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed), stamp: new_stamp(&copy, address, bytes) });
+        bound: REFRESHES.load(std::sync::atomic::Ordering::Relaxed), stamp: new_stamp(&copy, address, bytes),
+        _uploads: uploads });
     if writable {
         let mut by_copy = lock(&shadows.by_copy);
         by_copy.retain(|_, key| entries.contains_key(key));
