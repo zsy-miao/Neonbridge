@@ -373,7 +373,11 @@ fn watch_hang() {
             last = now;
         }
         let heartbeat = read(base + 0x71B_6338, 8);
-        if heartbeat == beat && beat.is_some() && !dumped && beat_at.elapsed().as_secs() >= 5 && lines < 4096 {
+        // Only once the loading-screen render runs (flag set, or the GPU Loc Sig
+        // handler game+0x23cf620 armed): earlier stalls (test157's boot) have
+        // no workers yet and dumped zeros.
+        let loading = now[2].is_some_and(|v| v != 0) || now[5] == Some(0x23c_f620);
+        if loading && heartbeat == beat && beat.is_some() && !dumped && beat_at.elapsed().as_secs() >= 5 && lines < 4096 {
             dumped = true;
             for line in subrender_lines(base, &read) {
                 lines += 1;
