@@ -129,7 +129,12 @@ fn run() -> Result<(), Error> {
     let mut consumer = None;
     let mut pixel_order = None;
     let mut stencil_target = None;
+    let mut quad_mask = false;
     while let Some(argument) = args.next() {
+        if argument == "--quad-mask" {
+            quad_mask = true;
+            continue;
+        }
         if argument == "--stencil-target" {
             let index: u32 = args
                 .next()
@@ -175,13 +180,15 @@ fn run() -> Result<(), Error> {
         return Ok(());
     }
     let shader = extract(&source_bytes)?;
-    let (hlsl, profile) = translate(
+    let run = || translate(
         &source_bytes,
         &shader,
         consumer.as_deref(),
         pixel_order.as_deref(),
         stencil_target,
-    )?;
+    );
+    // A quad-mask variant (`hlsl::with_quad_mask`) of an unlinked pixel shader.
+    let (hlsl, profile) = if quad_mask { tuxbox_xshader::hlsl::with_quad_mask(run)? } else { run()? };
     if let Some(path) = profile_output {
         fs::write(&path, profile).map_err(|e| format!("{}: {e}", path.display()))?;
     }

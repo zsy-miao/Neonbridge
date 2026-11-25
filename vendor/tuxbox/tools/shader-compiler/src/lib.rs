@@ -412,6 +412,21 @@ pub unsafe extern "C" fn tuxbox_xshader_translate(
     status
 }
 
+/// `tuxbox_xshader_translate` of an unlinked pixel shader as its quad-mask
+/// variant (`hlsl::with_quad_mask`): the runtime's `.quadmask` requests, for
+/// pipelines drawn under a SetSampleMaskX mask that is not full.
+///
+/// # Safety
+/// As `tuxbox_xshader_translate`.
+#[cfg(feature = "legacy-hlsl")]
+#[no_mangle]
+pub unsafe extern "C" fn tuxbox_xshader_translate_quad_mask(
+    source: *const u8, source_len: usize,
+    out: *mut *mut u8, out_len: *mut usize, profile: *mut [u8; 16],
+) -> u32 {
+    hlsl::with_quad_mask(|| tuxbox_xshader_translate(source, source_len, std::ptr::null(), 0, std::ptr::null(), 0, -1, out, out_len, profile))
+}
+
 /// Frees a buffer `tuxbox_xshader_translate` returned.
 ///
 /// # Safety
