@@ -165,8 +165,12 @@ impl Drop for HeapRef {
 #[cfg(windows)]
 fn shader_slot(handle: u64) -> Option<(HeapRef, u32)> {
     let heaps = SHADER_HEAPS.read().unwrap_or_else(|e| e.into_inner());
+    // The newest heap that holds the handle (heaps are pushed as made): a
+    // heap that outlives its memory's reuse, as a leaked one does, must not
+    // answer for the heap now there (one test met another test's heap so).
     let &(_, _, at) = heaps
         .iter()
+        .rev()
         .find(|&&(start, end, _)| (start..end).contains(&handle))?;
     if !object::try_add_ref(at as This) {
         return None;

@@ -96,8 +96,9 @@ enum Command {
     /// Translate every shader found into the shader cache ahead of a run,
     /// so the first run reads them from the cache instead of translating
     /// them while the title waits. Run it with the same build and
-    /// VICTORY_* settings as the title. Defaults to the configured game
-    /// and test-title directories.
+    /// VICTORY_* settings as the title (including `VICTORY_HOST_WAVE` and
+    /// `VICTORY_VIEW_LIMIT` when matching the host run's log). Defaults to
+    /// the configured game and test-title directories.
     Warm {
         paths: Vec<PathBuf>,
         /// Print each shader that does not translate.
@@ -176,20 +177,16 @@ fn main() -> Result<()> {
             jobs,
             warm,
         } => {
-            // `VICTORY_VIEW_LIMIT=<null slot>`: translate as on a host whose view heap is capped
-            if let Some(n) = std::env::var("VICTORY_VIEW_LIMIT").ok().and_then(|v| v.parse().ok()) {
-                victory_shader::emit::set_view_heap_limit(n);
-            }
-            // `VICTORY_HOST_WAVE=32`: translate as for a GPU whose waves are at most 32 lanes
-            if let Some(n) = std::env::var("VICTORY_HOST_WAVE").ok().and_then(|v| v.parse().ok()) {
-                victory_shader::emit::set_host_max_wave(n);
-            }
+            apply_host_shader_overrides_from_env();
             if let Some(file) = warm {
                 return translate::warm(paths, &file, jobs);
             }
             translate::run(paths, validate, pipelines, list, jobs)
         }
-        Command::Warm { paths, list, jobs } => warm::run(paths, list, jobs),
+        Command::Warm { paths, list, jobs } => {
+            apply_host_shader_overrides_from_env();
+            warm::run(paths, list, jobs)
+        }
         Command::Run {
             exe,
             unimplemented,
@@ -246,4 +243,56 @@ pub(crate) fn default_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
         "no paths given and none configured (see victory.example.toml)"
     );
     Ok(all)
+}
+
+/// Applies offline `VICTORY_VIEW_LIMIT` and `VICTORY_HOST_WAVE` overrides so
+/// `victory translate` and `victory warm` produce cache keys matching the
+/// runtime device's view-heap cap and wave width.
+fn apply_host_shader_overrides(view_limit: Option<&str>, host_wave: Option<&str>) {
+    if let Some(n) = view_limit.and_then(|v| v.trim().parse().ok()) {
+        victory_shader::emit::set_view_heap_limit(n);
+    }
+    if let Some(n) = host_wave.and_then(|v| v.trim().parse().ok()) {
+        victory_shader::emit::set_host_max_wave(n);
+    }
+}
+
+fn apply_host_shader_overrides_from_env() {
+    apply_host_shader_overrides(
+        std::env::var("VICTORY_VIEW_LIMIT").ok().as_deref(),
+        std::env::var("VICTORY_HOST_WAVE").ok().as_deref(),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_host_shader_overrides;
+    use victory_shader::emit::{
+        host_max_wave, set_host_max_wave, set_view_heap_limit, translation_fingerprint,
+        view_heap_limit,
+    };
+
+    #[test]
+    fn offline_host_overrides_update_shader_cache_fingerprint() {
+        let prev_limit = view_heap_limit();
+        let prev_wave = host_max_wave();
+
+        set_view_heap_limit(0);
+        set_host_max_wave(0);
+        let default_fp = translation_fingerprint();
+
+        apply_host_shader_overrides(Some(" 999999 "), Some("32"));
+        assert_eq!(view_heap_limit(), 999_999);
+        assert_eq!(host_max_wave(), 32);
+        let tuned_fp = translation_fingerprint();
+        assert_ne!(default_fp, tuned_fp);
+
+        // Invalid values keep existing settings untouched.
+        apply_host_shader_overrides(Some("bad"), None);
+        assert_eq!(view_heap_limit(), 999_999);
+        assert_eq!(host_max_wave(), 32);
+
+        set_view_heap_limit(prev_limit);
+        set_host_max_wave(prev_wave);
+    }
 }

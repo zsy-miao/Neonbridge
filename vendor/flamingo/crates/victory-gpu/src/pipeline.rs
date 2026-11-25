@@ -70,6 +70,10 @@ pub(crate) struct Shader {
     /// ([`Shader::walks`]).
     #[cfg(windows)]
     walks: OnceLock<bool>,
+    /// Flamingo: the console compute program's thread-group size, once
+    /// looked at ([`console_threads`]).
+    #[cfg(windows)]
+    threads: OnceLock<Option<[u32; 3]>>,
 }
 
 impl std::fmt::Debug for Shader {
@@ -169,6 +173,8 @@ fn shader(stage: &'static str, bytes: &[u8]) -> Arc<Shader> {
                 translated: OnceLock::new(),
                 #[cfg(windows)]
                 walks: OnceLock::new(),
+                #[cfg(windows)]
+                threads: OnceLock::new(),
             })
         })
         .clone()
@@ -232,13 +238,16 @@ impl Shader {
                         samplers = t.host.samplers.len(),
                         "shader translated"
                     ),
-                    Err(e) => tracing::warn!(
-                        stage = self.stage,
-                        hash = %self.hash,
-                        name = program_name(&self.container).unwrap_or("?"),
-                        error = %e,
-                        "shader does not translate; its pipelines' draws are dropped"
-                    ),
+                    Err(e) => {
+                        SHADERS_FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        tracing::warn!(
+                            stage = self.stage,
+                            hash = %self.hash,
+                            name = program_name(&self.container).unwrap_or("?"),
+                            error = %e,
+                            "shader does not translate; its pipelines' draws are dropped"
+                        )
+                    }
                 }
                 done.ok()
             })
@@ -319,6 +328,7 @@ pub(crate) fn merged_pair(es: &Shader, gs: &Shader) -> Result<(Arc<Shader>, Arc<
                     container: Vec::new(),
                     resolves_light: false,
                     walks: OnceLock::new(),
+                    threads: OnceLock::new(),
                     translated,
                 })
             };
@@ -492,6 +502,27 @@ pub(crate) fn walk_held(this: This) -> bool {
     true
 }
 
+/// Flamingo: the thread-group size of the console compute program of the
+/// title's pipeline `this`, for a `DispatchX` that counts threads
+/// (`draw.rs` `State::dispatch_x`).
+#[cfg(windows)]
+pub(crate) fn console_threads(this: This) -> Option<[u32; 3]> {
+    use victory_shader::{Container, FourCC, native::StageIo};
+    if this.is_null() {
+        return None;
+    }
+    let p = pipeline(this);
+    let s = p.shaders.iter().find(|s| s.stage == "compute")?;
+    *s.threads.get_or_init(|| {
+        let c = Container::parse(&s.container).ok()?;
+        let programs = victory_shader::native_programs(c.part(FourCC::DXIL)?.data).ok()?;
+        programs.iter().find_map(|p| match p.io {
+            StageIo::Cs(cs) => Some(cs.threads),
+            _ => None,
+        })
+    })
+}
+
 /// Whether the title's pipeline `this` is one of the structure builder's.
 #[cfg(windows)]
 pub(crate) fn is_builder(this: This) -> bool {
@@ -656,6 +687,19 @@ pub(crate) fn host_pipeline<'a>(this: This) -> Option<&'a host::HostPipeline> {
 pub(crate) fn making() -> u64 {
     make::waiting()
 }
+
+/// Flamingo, for the stats overlay: pipelines made since the start and
+/// those without a host pipeline ([`make::made`]), and shaders that do not
+/// translate.
+#[cfg(windows)]
+pub(crate) fn overlay_counts() -> (u64, u64, u64) {
+    let (made, failed) = make::made();
+    (made, failed, SHADERS_FAILED.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Shaders that do not translate, since the start.
+#[cfg(windows)]
+static SHADERS_FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Draws and dispatches dropped since the last [`take_drops`], by reason
 /// (diagnostics).

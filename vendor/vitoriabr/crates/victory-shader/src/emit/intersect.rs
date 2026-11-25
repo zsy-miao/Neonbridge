@@ -47,7 +47,13 @@ enum NodeAt {
     /// In title memory: the raw view of the host copy holding the node's
     /// first 64 bytes and the node's byte in it ([`Lower::bvh_memory`]),
     /// and the node's address, for the second half of a 128-byte node.
-    Memory { handle: V, byte: V, low: V, high: V },
+    Memory {
+        handle: V,
+        byte: V,
+        low: V,
+        high: V,
+        mapped: V,
+    },
 }
 
 /// The ray operands, as floats.
@@ -163,12 +169,13 @@ impl<'a> Lower<'a> {
                 // One look for the node's copy, before the branches: a
                 // node is 64 bytes on 64, so its first half lies in one
                 // 64 KiB page whatever its kind.
-                let (handle, byte) = self.bvh_memory(low, high, guard);
+                let (handle, byte, mapped) = self.bvh_memory(low, high, guard);
                 NodeAt::Memory {
                     handle,
                     byte,
                     low,
                     high,
+                    mapped,
                 }
             }
         };
@@ -225,7 +232,7 @@ impl<'a> Lower<'a> {
     /// host copy holding the address and the byte in that view
     /// ([`Lower::memory`]: a page the host has no copy of reads zeros and
     /// is left for the host to fetch, for lanes that run).
-    fn bvh_memory(&mut self, low: V, high: V, guard: Option<V>) -> (V, V) {
+    fn bvh_memory(&mut self, low: V, high: V, guard: Option<V>) -> (V, V, V) {
         #[cfg(test)]
         if let Some((slot, base)) = TEST_MEMORY.get() {
             // The buffer at heap slot `slot` holds the bytes from title
@@ -242,7 +249,7 @@ impl<'a> Lower<'a> {
             let inside = self.s.m.bin(c, Bin::And, in_low, in_high);
             let outside = self.s.m.i32(0xffff_ff00);
             let at = self.s.m.select(c, inside, at, outside);
-            return (handle, at);
+            return (handle, at, inside);
         }
         self.memory(low, high, guard)
     }
@@ -266,7 +273,7 @@ impl<'a> Lower<'a> {
                 NodeAt::Memory { low, high, .. } => *second.get_or_insert_with(|| {
                     let (low, high) = self.address_plus(low, high, 64);
                     // Every lane in this block runs the instruction.
-                    let (handle, byte) = self.bvh_memory(low, high, None);
+                    let (handle, byte, _) = self.bvh_memory(low, high, None);
                     let k64 = self.s.m.i32(64);
                     (handle, self.s.m.bin(c, Bin::Sub, byte, k64))
                 }),
@@ -403,6 +410,12 @@ impl<'a> Lower<'a> {
             let on = self.s.m.bin(c, Bin::Xor, off, on);
             let hit = self.s.m.bin(c, Bin::And, through, before);
             let hit = self.s.m.bin(c, Bin::And, hit, on);
+            let child_present = self.s.m.cmp(c, pred::NE, children[n], none);
+            let hit = self.s.m.bin(c, Bin::And, hit, child_present);
+            let hit = match at {
+                NodeAt::Memory { mapped, .. } => self.s.m.bin(c, Bin::And, hit, mapped),
+                NodeAt::Buffer { .. } => hit,
+            };
             ids[n] = self.s.m.select(c, hit, children[n], none);
             distances[n] = self.s.m.select(c, hit, enter, infinity);
         }

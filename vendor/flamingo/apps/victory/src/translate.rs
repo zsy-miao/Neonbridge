@@ -170,14 +170,17 @@ impl Tally {
     }
 }
 
-/// Emitted shaders by label, shared between threads.
-type Kept = std::sync::Arc<Mutex<Vec<(String, emit::HostShader)>>>;
+/// Emitted shaders by label, with their containers, shared between threads.
+type Kept = std::sync::Arc<Mutex<Vec<(String, emit::HostShader, Vec<u8>)>>>;
 
 /// The optional checks after emission, one set per thread.
 struct Checks {
     /// Shaders named in `VICTORY_PAIRS` (`vs+ps,...`, label substrings),
-    /// kept to build those pipelines after the walk.
+    /// kept to build those pipelines after the walk: the names, and the
+    /// container being translated when its label holds one of them.
     keep: Option<Kept>,
+    names: Vec<String>,
+    current: Option<Vec<u8>>,
     validator: Option<Validator>,
     host: Option<(Host, emit::HostShader)>,
 }
@@ -321,6 +324,8 @@ pub fn run(
                         };
                         let mut checks = Checks {
                             keep: (!pairs.is_empty()).then(|| kept.clone()),
+                            names: pairs.iter().flat_map(|(v, p)| [v.clone(), p.clone()]).collect(),
+                            current: None,
                             validator: validate
                                 .then(|| Validator::load(dll.as_deref()).ok())
                                 .flatten(),
@@ -399,10 +404,34 @@ pub fn run(
     if !pairs.is_empty() {
         let host = Host::new(false).map_err(anyhow::Error::msg)?;
         let kept = lock(&kept);
-        let find = |name: &str| kept.iter().find(|(l, _)| l.contains(name));
+        let find = |name: &str| kept.iter().find(|(l, _, _)| l.contains(name));
+        let mut validator = Validator::load(dll.as_deref()).ok();
         for (v, p) in &pairs {
             let made = match (find(v), find(p)) {
-                (Some((_, vs)), Some((_, ps))) => if vs.stage == HwStage::Ms {
+                // A mesh program whose outputs pass the host's 32 KiB alone: linked with
+                // this pixel program, as the runtime makes its pipeline
+                // (`emit::link_mesh`), each of the two validated.
+                (Some((_, ms, msc)), Some((_, ps, psc))) if ms.stage == HwStage::Ms && !emit::mesh_fits(&ms.dxil).unwrap_or(true) => {
+                    match emit::link_mesh(msc, ms, psc, ps) {
+                        Ok(Some((lms, lps))) => {
+                            let mut checked = Vec::new();
+                            for (what, s) in [("mesh", &lms), ("pixel", &lps)] {
+                                if let Some(v) = validator.as_mut() {
+                                    let mut copy = s.dxil.clone();
+                                    checked.push(match v.validate(&mut copy) {
+                                        Ok(()) => format!("{what} validated"),
+                                        Err(e) => format!("{what} invalid: {}", e.lines().find(|l| l.contains("error")).unwrap_or(&e)),
+                                    });
+                                }
+                            }
+                            let made = host.mesh_pipeline(&lms, &lps).map(|_| "pipeline created".to_owned()).unwrap_or_else(|e| e);
+                            format!("linked, {}, {made}", checked.join(", "))
+                        }
+                        Ok(None) => "not linked (over 32 KiB)".to_owned(),
+                        Err(e) => format!("not linked: {e}"),
+                    }
+                }
+                (Some((_, vs, _)), Some((_, ps, _))) => if vs.stage == HwStage::Ms {
                     host.mesh_pipeline(vs, ps)
                 } else {
                     host.pipeline(vs, ps)
@@ -496,6 +525,11 @@ fn translate(
             let _ = std::fs::write(std::path::Path::new(dir).join(format!("{name}.{hash}.cdxil")), &bytes[..]);
         }
     }
+    // (`VICTORY_PAIRS`: a container whose label names a shader of a pair is kept)
+    checks.current = (!checks.names.is_empty())
+        .then(example)
+        .filter(|line| checks.names.iter().any(|n| line.contains(n.as_str())))
+        .map(|_| bytes.to_vec());
     if !lock(seen).insert(code) {
         t.duplicates += 1;
         if t.list {
@@ -712,8 +746,8 @@ fn check(
     checks: &mut Checks,
     label: impl Fn() -> String,
 ) {
-    if let Some(keep) = &checks.keep {
-        lock(keep).push((label(), shader.clone()));
+    if let (Some(keep), Some(bytes)) = (&checks.keep, &checks.current) {
+        lock(keep).push((label(), shader.clone(), bytes.clone()));
     }
     // `VICTORY_EMIT_DUMP` with `--list`: every emitted shader as a file.
     if t.list

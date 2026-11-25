@@ -158,6 +158,8 @@ TdrDelay raised to 60 s. Here TdrDelay is the default 2 s. Keep test runs short.
 | 103 | + the user's pull request #2 (guard-page faults in the plain copy), victory-fork #959's eight audio fixes, vx-layer eee5667d (textures shaders write that the title reads on the CPU are copied back), failed programs named | the four programs that fail are `CS_ShadowRenderTiledCascadesAlphaCBPPPC` (does not translate: a lane mask exchanged where not every lane runs), `CS_AlphTransmissionPrefilterMip`, `CS_DefragHeap_ComputeRelocations` and `CS_CollectTriangles_Meshlets` (refused) |
 | 104 | + the last two in the wave-wide form | both made; the boat floats and can be driven (the start now loads the boat mission) |
 | 105 | + `VICTORY_WAVE_DEEP_SKIPS=0`, the shadow program in the wave-wide form | worse: both refused again, `CS_TransmissionVolumetricsSubmerged` no longer translates; the shadow program still fails |
+| 106 | + victory-fork #854: wave64 programs in the paired form on 32-lane GPUs | no pipeline refused, no program untranslated (the cascades' alpha shadow program translates); rows of black boxes on the water |
+| 107, 108 | + `FLAMINGO_BVH_MISS=1` (every ray misses) | the black boxes on the water gone (light streaks left where reflections take their fallback); a cutscene face well lit; no hang in two runs. On in the newest-code launcher |
 
 ## Stats overlay
 

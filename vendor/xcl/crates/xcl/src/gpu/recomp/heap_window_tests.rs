@@ -71,6 +71,14 @@ fn gpu_raw_window_view_reaches_its_top() {
         super::runner::skip_test("no DXC");
         return;
     }
+    // the shader indexes the descriptor heap (SM 6.6): without it the pipeline is refused
+    // (E_INVALIDARG), as on Windows 10's inbox D3D12 – skipped like the runner's tests
+    let mut sm = D3D12_FEATURE_DATA_SHADER_MODEL { HighestShaderModel: D3D_SHADER_MODEL_6_6 };
+    let sm_ok = unsafe { dev.CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &mut sm as *mut _ as _, std::mem::size_of_val(&sm) as u32) };
+    if sm_ok.is_err() || sm.HighestShaderModel.0 < D3D_SHADER_MODEL_6_6.0 {
+        super::runner::skip_test(&crate::gpu::agility::format_no_sm66_message(&name, crate::gpu::agility::state()));
+        return;
+    }
     let top = (4 * GIB) - TILE; // the window's last tile
     let src = r#"
 #define RS "RootFlags(CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED), UAV(u0)"

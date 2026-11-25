@@ -1588,7 +1588,7 @@ impl Lw {
     }
 
     /// Bitwise IEEE-754 f64 ordered equality in pure i64 ops (no DoubleExtensions needed).
-    fn feq_bits64(&mut self, a: Value, b: Value) -> Value {
+    pub(super) fn feq_bits64(&mut self, a: Value, b: Value) -> Value {
         let mask = self.c64(0x7FFF_FFFF_FFFF_FFFF);
         let inf = self.c64(0x7FF0_0000_0000_0000);
         let z = self.c64(0);

@@ -1384,6 +1384,15 @@ unsafe fn publish_cpu_cycle_break_with(va: u64, val: u64, uma: Option<&crate::gp
     }
 }
 
+/// Remove a synthetic test fence and queue entry from `SYNC_GRAPH` before they are dropped.
+#[cfg(test)]
+pub(super) fn forget_title_fence_for_test(fence: usize, queue: usize) {
+    if let Some(graph) = SYNC_GRAPH.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        graph.title_fences.remove(&fence);
+        graph.queue_seq.remove(&queue);
+    }
+}
+
 /// Before a title `ID3D12CommandQueue::Signal(title_fence, value)` is submitted, check if it would
 /// close a mixed cycle passing through any `Wait64BitValueX` `SyncCell`. If so, release that
 /// `SyncCell` on CPU BEFORE the title signal executes so Vulkan never enters a semaphore cycle.
@@ -4199,6 +4208,55 @@ pub(super) unsafe extern "system" fn clear_depth_stencil_x(this: *mut c_void, ds
     pc::<unsafe extern "system" fn(*mut c_void, usize, u32, f32, u8, u32, *const windows::Win32::Foundation::RECT)>(this, PC_CLEAR_DEPTH_STENCIL_VIEW)(this, dsv, flags, depth, stencil, n, rects)
 }
 
+const PC_CLEAR_UAV_UINT: usize = 49;
+const PC_CLEAR_UAV_FLOAT: usize = 50;
+
+/// The handles a ClearUnorderedAccessView* of console code goes to the PC with.
+#[derive(Debug, PartialEq)]
+enum UavClearHandles {
+    /// both are console slots: their PC UAVs (GPU: in the heap lists bind; CPU: in the
+    /// title's CPU-only heap)
+    Console { gpu: u64, cpu: u64 },
+    /// neither is a console slot: PC handles already
+    Pc,
+    /// one console slot and one not, or a slot with no shader-visible UAV
+    Unusable,
+}
+
+fn uav_clear_handles(gpu: Option<super::console_heap::Slot>, cpu: Option<super::console_heap::Slot>) -> UavClearHandles {
+    match (gpu, cpu) {
+        (None, None) => UavClearHandles::Pc,
+        (Some(g), Some(c)) if !g.sampler && !c.sampler && g.pc_gpu_uav != 0 => UavClearHandles::Console { gpu: g.pc_gpu_uav, cpu: c.pc_uav },
+        _ => UavClearHandles::Unusable,
+    }
+}
+
+/// command list #53 / #54 ClearUnorderedAccessViewUint / Float(GPU handle, CPU handle,
+/// resource, values[4], rects, rect list) (PC #49 / #50): console handles are addresses of
+/// console heap slots (heap #9 / #10), not PC descriptors
+unsafe fn clear_uav(this: *mut c_void, slot: usize, gpu: u64, cpu: u64, res: usize, values: *const c_void, n: u32, rects: *const windows::Win32::Foundation::RECT) {
+    let (gpu, cpu) = match uav_clear_handles(super::console_heap::slot(gpu), super::console_heap::slot(cpu)) {
+        UavClearHandles::Console { gpu, cpu } => (gpu, cpu),
+        UavClearHandles::Pc => (gpu, cpu),
+        UavClearHandles::Unusable => {
+            static N: AtomicU64 = AtomicU64::new(0);
+            if once(&N, 1) {
+                crate::xlog_warn!("D3D12.X: ClearUnorderedAccessView with GPU handle {gpu:#x} / CPU handle {cpu:#x}: not both a console slot with a shader-visible UAV – not done");
+            }
+            return;
+        }
+    };
+    pc::<unsafe extern "system" fn(*mut c_void, u64, u64, usize, *const c_void, u32, *const windows::Win32::Foundation::RECT)>(this, slot)(this, gpu, cpu, res, values, n, rects)
+}
+
+pub(super) unsafe extern "system" fn clear_uav_uint_x(this: *mut c_void, gpu: u64, cpu: u64, res: usize, values: *const u32, n: u32, rects: *const windows::Win32::Foundation::RECT) {
+    clear_uav(this, PC_CLEAR_UAV_UINT, gpu, cpu, res, values as *const c_void, n, rects)
+}
+
+pub(super) unsafe extern "system" fn clear_uav_float_x(this: *mut c_void, gpu: u64, cpu: u64, res: usize, values: *const f32, n: u32, rects: *const windows::Win32::Foundation::RECT) {
+    clear_uav(this, PC_CLEAR_UAV_FLOAT, gpu, cpu, res, values as *const c_void, n, rects)
+}
+
 const PC_RESOLVE_SUBRESOURCE: usize = 19;
 const PC_RESOLVE_SUBRESOURCE_REGION: usize = 64;
 
@@ -4643,6 +4701,59 @@ mod tests {
             cell64.store(0x0000_0002_0000_0001, Ordering::Release);
             assert!(w64.is_satisfied());
         }
+    }
+
+    #[test]
+    fn wait64_flags_do_not_mask_the_recorded_counter() {
+        let mut token = 0usize;
+        let list = (&mut token as *mut usize).cast::<c_void>();
+        let cell = AtomicU64::new(0);
+        let va = &cell as *const AtomicU64 as u64;
+        for (current, wanted, flags) in [
+            (2, 1, 0x231_0000_0001),
+            (4, 2, 0x270_0000_0001),
+            (5, 3, 1),
+            (0x1_0000_0004, 0x1_0000_0002, 0xFFFF_FFFF_0000_0001),
+        ] {
+            cell.store(current, Ordering::Release);
+            unsafe { wait64_x(list, va, D3D12_COMPARISON_FUNC_GREATER_EQUAL.0 as u32, wanted, flags, 0) };
+            let waits = LISTS.lock().unwrap().as_ref().unwrap()[&(list as usize)].pending_waits.clone();
+            on_release(list as usize);
+            assert_eq!(waits.len(), 1);
+            let w = waits[0];
+            assert_eq!((w.width, w.value, w.mask), (8, wanted, u64::MAX));
+            unsafe {
+                assert!(w.is_satisfied(), "{current:#x} >= {wanted:#x}; flags {flags:#x}");
+                cell.store(wanted - 1, Ordering::Release);
+                assert!(!w.is_satisfied(), "a genuinely earlier counter must still wait");
+                cell.store(wanted, Ordering::Release);
+                assert!(w.is_satisfied(), "equality satisfies GREATER_EQUAL");
+            }
+        }
+    }
+
+    #[test]
+    fn wait64_satisfied_counter_keeps_submission_together_and_wait32_keeps_its_mask() {
+        let mut tokens = [0usize; 2];
+        let lists = [tokens.as_mut_ptr().cast::<c_void>(), unsafe { tokens.as_mut_ptr().add(1).cast::<c_void>() }];
+        let cell64 = AtomicU64::new(4);
+        let cell32 = AtomicU32::new(0xDEAD_005A);
+        unsafe {
+            wait64_x(lists[1], &cell64 as *const AtomicU64 as u64, D3D12_COMPARISON_FUNC_GREATER_EQUAL.0 as u32, 2, 0x270_0000_0001, 0);
+        }
+        let mut batches = Vec::new();
+        unsafe { execute_with_waits(&lists, |chunk| batches.push(chunk.to_vec())) };
+        on_release(lists[1] as usize);
+        assert_eq!(batches, vec![lists.to_vec()], "an already satisfied counter must not split the batch");
+
+        unsafe {
+            wait32_x(lists[0], &cell32 as *const AtomicU32 as u64, D3D12_COMPARISON_FUNC_EQUAL.0 as u32, 0x5A, 0xFF, 0);
+        }
+        let waits = LISTS.lock().unwrap().as_ref().unwrap()[&(lists[0] as usize)].pending_waits.clone();
+        on_release(lists[0] as usize);
+        assert_eq!(waits.len(), 1);
+        assert_eq!((waits[0].width, waits[0].mask), (4, 0xFF));
+        assert!(unsafe { waits[0].is_satisfied() });
     }
 
     #[test]
@@ -6928,5 +7039,128 @@ mod tests {
         // Both heaps already bound -> no-op
         assert_eq!(default_bound_heaps(Some(0x10), Some(0x20), &[0x10, 0x20], true), None);
         assert_eq!(default_bound_heaps(Some(0x10), Some(0x20), &[0x10, 0x99], true), None);
+    }
+
+    /// ClearUnorderedAccessView* handles: two console slots → their PC UAVs, two PC handles as
+    /// they are, anything else not usable.
+    #[test]
+    fn uav_clear_handles_translate_console_slots() {
+        use super::super::console_heap::Slot;
+        let s = |pc_uav: u64, pc_gpu_uav: u64, sampler: bool| Some(Slot { at: 0x1000, index: 1, pc_srv: 0, pc_uav, pc_gpu_uav, sampler, shared_srv: 0, k: 0 });
+        assert_eq!(uav_clear_handles(s(0x10, 0x5010, false), s(0x20, 0, false)), UavClearHandles::Console { gpu: 0x5010, cpu: 0x20 });
+        assert_eq!(uav_clear_handles(None, None), UavClearHandles::Pc);
+        // a console slot beside a PC handle, a GPU slot of a heap that is not shader visible,
+        // sampler slots
+        assert_eq!(uav_clear_handles(s(0x10, 0x5010, false), None), UavClearHandles::Unusable);
+        assert_eq!(uav_clear_handles(None, s(0x20, 0, false)), UavClearHandles::Unusable);
+        assert_eq!(uav_clear_handles(s(0x10, 0, false), s(0x20, 0, false)), UavClearHandles::Unusable);
+        assert_eq!(uav_clear_handles(s(0x10, 0x5010, false), s(0, 0, true)), UavClearHandles::Unusable);
+        assert_eq!(uav_clear_handles(s(0, 0, true), s(0x20, 0, false)), UavClearHandles::Unusable);
+    }
+
+    /// Console code clears a UAV with its console heap slots (heap #9 / #10 give it their
+    /// addresses): the clear reaches the PC with the slots' UAVs. Before, the slot addresses
+    /// went to the PC method as handles. On WARP (a software adapter).
+    #[test]
+    fn clear_uav_with_console_handles_clears_the_slots_view() {
+        use super::super::console_heap;
+        use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
+        use windows::Win32::Graphics::Dxgi::*;
+        if crate::gpu::uma::get().is_none() {
+            crate::gpu::recomp::runner::skip_test("no unified memory");
+            return;
+        }
+        unsafe {
+            let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory4>() else {
+                crate::gpu::recomp::runner::skip_test("no WARP");
+                return;
+            };
+            let Ok(warp) = factory.EnumWarpAdapter::<IDXGIAdapter>() else {
+                crate::gpu::recomp::runner::skip_test("no WARP");
+                return;
+            };
+            let mut dev: Option<ID3D12Device> = None;
+            if D3D12CreateDevice(&warp, D3D_FEATURE_LEVEL_11_0, &mut dev).is_err() {
+                crate::gpu::recomp::runner::skip_test("no WARP");
+                return;
+            }
+            let dev = dev.unwrap();
+            const N: u32 = 64;
+            let desc = |flags| D3D12_RESOURCE_DESC {
+                Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+                Width: 4 * N as u64,
+                Height: 1,
+                DepthOrArraySize: 1,
+                MipLevels: 1,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                Flags: flags,
+                ..Default::default()
+            };
+            let committed = |ty, flags, state| {
+                let mut r: Option<ID3D12Resource> = None;
+                dev.CreateCommittedResource(&D3D12_HEAP_PROPERTIES { Type: ty, ..Default::default() }, D3D12_HEAP_FLAG_NONE, &desc(flags), state, None, &mut r).unwrap();
+                r.unwrap()
+            };
+            let buf = committed(D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            let rb = committed(D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+
+            // the title's heaps of one view slot each (SRV, UAV): a CPU-only one and a shader-visible one
+            let inc = dev.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            let heap = |flags| -> ID3D12DescriptorHeap {
+                dev.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC { Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, NumDescriptors: 2, Flags: flags, NodeMask: 0 }).unwrap()
+            };
+            let (cpu_heap, gpu_heap) = (heap(D3D12_DESCRIPTOR_HEAP_FLAG_NONE), heap(D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE));
+            let uav = D3D12_UNORDERED_ACCESS_VIEW_DESC {
+                Format: DXGI_FORMAT_R32_UINT,
+                ViewDimension: D3D12_UAV_DIMENSION_BUFFER,
+                Anonymous: D3D12_UNORDERED_ACCESS_VIEW_DESC_0 { Buffer: D3D12_BUFFER_UAV { NumElements: N, ..Default::default() } },
+            };
+            for h in [&cpu_heap, &gpu_heap] {
+                let at = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: h.GetCPUDescriptorHandleForHeapStart().ptr + inc as usize };
+                dev.CreateUnorderedAccessView(&buf, None, Some(&uav), at);
+            }
+            let (co, go) = (cpu_heap.as_raw() as usize, gpu_heap.as_raw() as usize);
+            assert!(console_heap::register(co, 1, cpu_heap.GetCPUDescriptorHandleForHeapStart().ptr as u64, 0, inc, false, false, false));
+            assert!(console_heap::register(go, 1, gpu_heap.GetCPUDescriptorHandleForHeapStart().ptr as u64, gpu_heap.GetGPUDescriptorHandleForHeapStart().ptr, inc, false, false, true));
+            let (console_cpu, console_gpu) = (console_heap::start(co).unwrap(), console_heap::start(go).unwrap());
+
+            let q: ID3D12CommandQueue = dev.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC { Type: D3D12_COMMAND_LIST_TYPE_DIRECT, ..Default::default() }).unwrap();
+            let a: ID3D12CommandAllocator = dev.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT).unwrap();
+            let l: ID3D12GraphicsCommandList = dev.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &a, None).unwrap();
+            l.SetDescriptorHeaps(&[Some(gpu_heap.clone())]);
+            // the title's call (#53) on the adopted list, then the PC vtable back
+            let raw = l.as_raw();
+            real::adopt(raw, real::Kind::CommandList);
+            clear_uav_uint_x(raw, console_gpu, console_cpu, buf.as_raw() as usize, [0xDEAD_BEEFu32; 4].as_ptr(), 0, std::ptr::null());
+            let ext = *(raw as *const *const usize);
+            *(raw as *mut usize) = *ext.sub(1);
+            let b = D3D12_RESOURCE_BARRIER {
+                Type: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+                Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
+                Anonymous: D3D12_RESOURCE_BARRIER_0 {
+                    Transition: ManuallyDrop::new(D3D12_RESOURCE_TRANSITION_BARRIER {
+                        pResource: ManuallyDrop::new(Some(buf.clone())),
+                        Subresource: D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                        StateBefore: D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        StateAfter: D3D12_RESOURCE_STATE_COPY_SOURCE,
+                    }),
+                },
+            };
+            l.ResourceBarrier(&[b]);
+            l.CopyResource(&rb, &buf);
+            l.Close().unwrap();
+            q.ExecuteCommandLists(&[Some(l.cast().unwrap())]);
+            let fence: ID3D12Fence = dev.CreateFence(0, D3D12_FENCE_FLAG_NONE).unwrap();
+            q.Signal(&fence, 1).unwrap();
+            crate::gpu::fence::wait(&fence, 1, &dev, None, 5000).expect("the clear completes");
+            let mut p = std::ptr::null_mut();
+            rb.Map(0, None, Some(&mut p)).unwrap();
+            let got = std::slice::from_raw_parts(p as *const u32, N as usize).to_vec();
+            rb.Unmap(0, None);
+            console_heap::unregister(co);
+            console_heap::unregister(go);
+            assert!(got.iter().all(|&v| v == 0xDEAD_BEEF), "the UAV was not cleared: {:x?}", &got[..4]);
+        }
     }
 }

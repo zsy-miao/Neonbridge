@@ -101,12 +101,17 @@ pub(crate) struct State {
     /// Graphics, compute.
     host_roots: [usize; 2],
     host_heaps: [usize; 2],
-    /// Tables made afresh in this list: (table, what it holds) → first
-    /// dynamic slot.
-    fresh_tables: std::collections::HashMap<(u64, u64), u32>,
+    /// Tables made afresh in this list, by a hash of the table and what it
+    /// holds ([`table_hash`]).
+    fresh_tables: std::collections::HashMap<u64, Fresh, std::hash::BuildHasherDefault<Plain>>,
+    /// The record words of [`Fresh`] tables, one after the other.
+    fresh_records: Vec<[u32; 3]>,
     /// Of them, large ones by table: the records it was made from and the
     /// first dynamic slot. A shader that reads less of one takes the same.
     large_tables: std::collections::HashMap<u64, Vec<(Vec<[u32; 3]>, u32)>>,
+    /// What [`State::tables`] made for the stage being bound: root slot, byte
+    /// offset of its fresh table. Kept to reuse its storage across draws.
+    made: Vec<(u8, u32)>,
     /// The dynamic slots the list holds: title heap, first, count; given
     /// back when the list is reset or released.
     dynamic: Vec<(usize, u32, u32)>,
@@ -208,23 +213,115 @@ pub(crate) fn dispatched() -> u64 {
 fn root_view(list: &HostList, address: u64, kind: u8) -> Option<u64> {
     let reach = if kind == 0 { 1 << 16 } else { 1 << 20 };
     let shadow = crate::shadow::find_reaching(address, reach)?;
-    let len = shadow.left(address).min(reach);
+    let mut len = shadow.left(address).min(reach);
+    // In a sparse copy only the tiles asked for are there, and a shader that
+    // reads a root view past them faults (the structure builders' views have
+    // no length: Radeon GPU Detective, run rt10, a read at an address of no
+    // resource). To the end of the title's buffer then, within reason.
+    // shortcut: 64 MiB at most; a longer buffer is cut there.
+    if kind != 0
+        && shadow.is_sparse()
+        && let Some(end) = crate::shadow::buffer_end(address)
+    {
+        len = len.max((end - address).min(64 << 20)).min(shadow.left(address));
+    }
     let gpu = shadow.gpu(address);
     if kind != 0 || gpu % 256 == 0 {
+        // The list holds the copy it gives the address of: the title may
+        // release the buffer before it submits the list, and a retired copy
+        // only outlives the submissions started by then and a few frames
+        // (menus present a hundred a second). The structure builders' lists
+        // read and wrote freed copies (page fault in a copy loop of root
+        // views, Radeon GPU Detective, run rt2, 2026-11-25).
+        if kind != 0 && list.first_use(shadow.buffer.as_raw() as usize) {
+            list.keep(&shadow.buffer);
+        }
         shadow.refresh(list, address, len);
         if kind == 2 {
             shadow.gpu_writes(list, address, len);
         }
         return Some(gpu);
     }
-    let (gpu, to) = list.scratch(len)?;
-    list.defer_fill(to, address as *const u8, len as usize);
-    Some(gpu)
+    list.fill_scratch(address as *const u8, len)
 }
 
 /// Tables from this many entries on are made once for every length shaders
 /// read them to.
 const LARGE: u32 = 64;
+
+/// Root slots (bytes) as a set that lives on the stack: a draw collects them
+/// without the heap, and they come out in order.
+#[derive(Default)]
+struct Slots([u64; 4]);
+
+impl Slots {
+    fn insert(&mut self, slot: u8) {
+        self.0[usize::from(slot / 64)] |= 1 << (slot % 64);
+    }
+
+    fn contains(&self, slot: u8) -> bool {
+        (self.0[usize::from(slot / 64)] >> (slot % 64)) & 1 != 0
+    }
+
+    fn iter(&self) -> impl Iterator<Item = u8> {
+        let words = self.0;
+        (0..4u8).flat_map(move |w| {
+            let mut bits = words[usize::from(w)];
+            std::iter::from_fn(move || {
+                (bits != 0).then(|| {
+                    let bit = bits.trailing_zeros() as u8;
+                    bits &= bits - 1;
+                    w * 64 + bit
+                })
+            })
+        })
+    }
+}
+
+/// A table made afresh: what it was made from (the `n` records at `at` in
+/// [`State::fresh_records`]) and its first dynamic slot.
+struct Fresh {
+    table: u64,
+    n: u32,
+    at: usize,
+    first: u32,
+}
+
+/// A hash that is mixed already, used as it is.
+#[derive(Default)]
+struct Plain(u64);
+
+impl std::hash::Hasher for Plain {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0 << 8 | u64::from(b);
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        self.0 = x;
+    }
+}
+
+/// A quick hash of `table` and its `n` records. It only finds the table
+/// made before: the records are compared too, so a collision costs a copy,
+/// not wrong descriptors.
+fn table_hash(table: u64, n: u32) -> u64 {
+    let mix = |h: u64, x: u64| (h.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+    let h = (0..n).fold(table, |h, k| {
+        let [a, b, c] = record(table, k);
+        mix(mix(h, u64::from(a) | u64::from(b) << 32), u64::from(c))
+    });
+    h ^ h >> 32
+}
+
+/// The words of entry `k` of `table`.
+fn record(table: u64, k: u32) -> [u32; 3] {
+    // SAFETY: a descriptor slot in title memory.
+    unsafe { ((table + u64::from(k) * 32) as *const [u32; 3]).read_unaligned() }
+}
 
 /// The longest `table` of `heap` was asked for, now for `n` entries.
 fn longest(heap: &crate::descriptor::Heap, table: u64, n: u32) -> u32 {
@@ -395,6 +492,7 @@ impl State {
         self.host_heaps = [0; 2];
         // Making one refreshes what it names, which is each list's own work.
         self.fresh_tables.clear();
+        self.fresh_records.clear();
         self.large_tables.clear();
         if self.topology != 0 {
             self.set_topology(list, self.topology);
@@ -567,7 +665,11 @@ impl State {
     /// After a dispatch of `p`: the least indirect light, if it is the
     /// program that resolves that.
     fn ambient(&self, list: &HostList, p: &crate::pipeline::host::HostPipeline) -> bool {
-        let Some(stage) = p.stages.first().filter(|s| s.shader.resolves_light) else {
+        let Some(stage) = p
+            .stages
+            .first()
+            .filter(|s| s.shader.resolves_light || s.shader.ends_reflections)
+        else {
             return false;
         };
         let view = |kind: ResourceType, (slot, offset): (u8, u32)| {
@@ -601,6 +703,13 @@ impl State {
                     );
                 }
             });
+        }
+        if !stage.shader.resolves_light {
+            // The reflections, held to the light around.
+            return match view(ResourceType::Uav, crate::ambient::REFLECTIONS) {
+                Some(View::Unordered(r, ..)) if r != 0 => crate::ambient::hold(list, r as This),
+                _ => false,
+            };
         }
         let light = match view(ResourceType::Uav, crate::ambient::LIGHT) {
             Some(View::Unordered(r, ..)) => r,
@@ -665,6 +774,11 @@ impl State {
         }
         if !self.bind(list, p, false) {
             return false;
+        }
+        if p.stages.iter().any(|s| s.shader.draws_sky)
+            && let Some(&sky) = self.targets.first()
+        {
+            crate::ambient::sky_drawn(sky);
         }
         let l = &list.list;
         // Vertex buffers the input layout reads.
@@ -776,10 +890,8 @@ impl State {
                 self.apply_depth_bounds(list);
             }
             self.host_pipeline = p.pso.as_raw() as usize;
-            list.used_pipeline(&p.name);
             // The title may release the pipeline before it submits the list.
-            list.keep(&p.pso);
-            list.keep(&p.root);
+            list.bind_pipeline(p);
         }
         if p.stages.iter().any(|s| s.translated().resource_heap)
             && self.heaps[0] != 0
@@ -791,13 +903,16 @@ impl State {
         }
         for stage in &p.stages {
             let t = stage.translated();
-            let Some(made) = self.tables(list, &t.used, compute) else {
+            if !self.tables(list, &t.used, compute) {
                 return no("a table not made");
-            };
+            }
             if let Some((param, dwords)) = stage.user_data {
-                let mut values = vec![0u32; dwords as usize];
+                // A root signature holds at most 64 dwords, constants included.
+                let mut stack = [0u32; 64];
+                let values = &mut stack[..dwords as usize];
                 for u in &t.host.user_data {
-                    let fresh = made
+                    let fresh = self
+                        .made
                         .iter()
                         .find(|m| m.0 == u.slot && u.root == RootType::Table);
                     if u.root == RootType::MEMORY {
@@ -1155,27 +1270,28 @@ impl State {
     /// filled at submission (the host wants constant buffers 256-byte
     /// aligned, the console only 16). Identical descriptors share slots
     /// within a list. Returns the fresh tables' new byte offsets by root
-    /// parameter, or `None` when the draw must be dropped (a constant table
-    /// found no dynamic slots).
-    fn tables(
-        &mut self,
-        list: &HostList,
-        used: &[UsedResource],
-        compute: bool,
-    ) -> Option<Vec<(u8, u32)>> {
+    /// parameter in `self.made`, or `false` when the draw must be dropped (a
+    /// constant table found no dynamic slots).
+    fn tables(&mut self, list: &HostList, used: &[UsedResource], compute: bool) -> bool {
         let tables = |u: &&UsedResource| u.root == RootType::Table;
-        let mut fresh: Vec<u8> = used
+        // Taken out so `self` stays free to borrow; a draw dropped below
+        // leaves it empty, and it grows again.
+        let mut made = std::mem::take(&mut self.made);
+        made.clear();
+        let mut fresh = Slots::default();
+        for u in used
             .iter()
             .filter(tables)
             .filter(|u| matches!(u.kind, ResourceType::Cbv | ResourceType::Srv))
-            .map(|u| u.slot)
-            .collect();
+        {
+            fresh.insert(u.slot);
+        }
         // Tables reaching past a host heap smaller than the title's (the
         // host's limit, 1,000,000 views on NVIDIA, 2,048 samplers anywhere)
         // are made afresh too: the title's slots there have no host slot of
         // their own.
         for u in used.iter().filter(tables) {
-            if fresh.contains(&u.slot) {
+            if fresh.contains(u.slot) {
                 continue;
             }
             let Some(&Root::Table(table)) = self.roots_ref(compute).get(usize::from(u.slot)) else {
@@ -1189,18 +1305,15 @@ impl State {
                 continue;
             };
             if index >= host.count() {
-                fresh.push(u.slot);
+                fresh.insert(u.slot);
             }
         }
-        fresh.sort_unstable();
-        fresh.dedup();
         for u in used.iter().filter(tables) {
-            if !fresh.contains(&u.slot) {
+            if !fresh.contains(u.slot) {
                 self.table_entry(list, u, compute);
             }
         }
-        let mut made = Vec::new();
-        for slot in fresh {
+        for slot in fresh.iter() {
             let Some(&Root::Table(table)) = self.roots_ref(compute).get(usize::from(slot)) else {
                 continue;
             };
@@ -1264,17 +1377,16 @@ impl State {
                 continue;
             }
             // The table and what its entries hold (record words).
-            let key = {
-                use std::hash::{Hash, Hasher};
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                for k in 0..n {
-                    let at = table + u64::from(k) * 32;
-                    // SAFETY: a descriptor slot in title memory.
-                    unsafe { (at as *const [u32; 3]).read_unaligned() }.hash(&mut h);
-                }
-                (table, h.finish())
-            };
-            if let Some(&first) = self.fresh_tables.get(&key) {
+            let key = table_hash(table, n);
+            let same = self.fresh_tables.get(&key).filter(|f| {
+                f.table == table
+                    && f.n == n
+                    && self.fresh_records[f.at..f.at + n as usize]
+                        .iter()
+                        .enumerate()
+                        .all(|(k, r)| *r == record(table, k as u32))
+            });
+            if let Some(&Fresh { first, .. }) = same {
                 for u in entries.iter().filter(|u| u.kind != ResourceType::Cbv) {
                     let handle = table + u64::from(u.table_offset_dwords) * 4;
                     match crate::descriptor::view(handle) {
@@ -1291,7 +1403,7 @@ impl State {
                 // tables fall back to the title's slots.
                 if entries.iter().any(|u| u.kind == ResourceType::Cbv) {
                     once!(n, "a constant table did not fit in command-list slots; draw dropped");
-                    return None;
+                    return false;
                 }
                 once!(n, "descriptor table did not fit in command-list slots");
                 for u in entries {
@@ -1299,7 +1411,9 @@ impl State {
                 }
                 continue;
             };
-            self.fresh_tables.insert(key, first);
+            let at = self.fresh_records.len();
+            self.fresh_records.extend((0..n).map(|k| record(table, k)));
+            self.fresh_tables.insert(key, Fresh { table, n, at, first });
             if n >= LARGE {
                 self.large_tables.entry(table).or_default().push((records, first));
             }
@@ -1338,7 +1452,8 @@ impl State {
             }
             made.push((slot, first * 32));
         }
-        Some(made)
+        self.made = made;
+        true
     }
 
     /// The first draws, at debug level: what they bind and read
@@ -1841,7 +1956,8 @@ impl State {
             list.count_write();
             list.count_work();
             DISPATCHED.fetch_add(1, Ordering::Relaxed);
-            if crate::twin::resolve(list) {
+            let lit = self.ambient(list, p);
+            if crate::twin::resolve(list) | lit {
                 self.continue_in(list);
             }
         } else {

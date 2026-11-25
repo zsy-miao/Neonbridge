@@ -52,6 +52,22 @@ pub const UPSCALERS: [&str; 4] = ["", "title", "stretch", "fsr"];
 pub const QUALITIES: [&str; 5] = ["native", "quality", "balanced", "performance", "ultra"];
 pub const CAPS: [u32; 3] = [0, 30, 60];
 
+/// Every key the launcher owns in `victory.toml`, including the ones it writes only in some
+/// states. [`merge_toml`] drops the managed keys it is not asked to write, so turning a feature
+/// back off cannot leave its old value in the file for a runtime that reads these sections.
+pub const MANAGED: [(&str, &str); 10] = [
+    ("display", "hdr"),
+    ("game", "rumble"),
+    ("game", "rumble_strength"),
+    ("game", "kbm_hints"),
+    ("pace", "pace"),
+    ("pace", "fps"),
+    ("upscale", "upscaler"),
+    ("upscale", "quality"),
+    ("upscale", "sharpness"),
+    ("upscale", "framegen"),
+];
+
 /// FidelityFX DLLs the runtime loads for FSR (either the loader or an MIT-built API DLL).
 pub const FSR_DLLS: [&str; 2] = ["amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_dx12.dll"];
 
@@ -103,8 +119,8 @@ impl Tuning {
         v
     }
 
-    /// `(section, key, TOML value)` for `victory.toml`; every managed key is written, so a
-    /// setting turned back to its default is written back too.
+    /// `(section, key, TOML value)` for `victory.toml`. Managed keys not returned here are
+    /// removed by [`merge_toml`], so a setting turned back to its default is reset in the file too.
     pub fn toml_keys(&self, fsr: bool) -> Vec<(&'static str, &'static str, String)> {
         let q = |s: &str| format!("\"{s}\"");
         let mut v = vec![
@@ -136,6 +152,34 @@ pub fn merge_toml(text: &str, keys: &[(&str, &str, String)]) -> String {
         let t = l.trim();
         (t.starts_with('[') && !t.starts_with("[[")).then(|| t.trim_start_matches('[').split(']').next().unwrap_or("").trim().to_string())
     };
+    // A managed key that is absent from `keys` has been turned off (or its DLL is gone): remove
+    // it rather than leaving a stale value the UI no longer shows. Everything else is kept.
+    let wanted: Vec<(&str, &str)> = keys.iter().map(|(s, k, _)| (*s, *k)).collect();
+    let mut kept: Vec<(String, String)> = Vec::new();
+    let mut section = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim_start().starts_with("[[") {
+            section.clear(); // an array of tables is not a section this launcher manages
+        } else if let Some(s) = header(&lines[i]) {
+            section = s;
+        } else if let Some(k) = lines[i].trim_start().split('=').next() {
+            let k = k.trim().trim_matches(['"', '\'']).to_string();
+            if MANAGED.iter().any(|(s, m)| *s == section.as_str() && *m == k.as_str()) {
+                // Keep the first line of a key that is still managed; drop the rest, and every
+                // line of one that has been turned off.
+                let keep = wanted.iter().any(|(s, w)| *s == section.as_str() && *w == k.as_str())
+                    && !kept.iter().any(|(s, w)| s == &section && w == &k);
+                if keep {
+                    kept.push((section.clone(), k));
+                } else {
+                    lines.remove(i);
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
     for (section, key, value) in keys {
         let start = lines.iter().position(|l| header(l).as_deref() == Some(*section));
         let line = format!("{key} = {value}");
@@ -222,5 +266,57 @@ mod tests {
         assert!(out.contains("[display]\nhdr = false"));
         // idempotent
         assert_eq!(merge_toml(&out, &keys), out);
+    }
+
+    #[test]
+    fn toml_merge_removes_keys_when_a_feature_is_turned_off() {
+        let text = "[paths]\ngame_dir = 'D:\\g'\n\n[controls]\nmouse_sensitivity = 2.0\n";
+        let on = Tuning { frame_cap: 60, upscaler: "fsr".into(), framegen: true, ..Tuning::default() }.toml_keys(true);
+        let enabled = merge_toml(text, &on);
+        assert!(enabled.contains("[upscale]\nupscaler = \"fsr\"\nquality = \"quality\"\nsharpness = 0.2\nframegen = true"));
+        assert!(enabled.contains("[pace]\npace = true\nfps = 60"));
+
+        let off = Tuning::default().toml_keys(true);
+        let disabled = merge_toml(&enabled, &off);
+        for key in ["upscaler", "quality", "sharpness", "framegen"] {
+            assert!(!disabled.contains(&format!("{key} =")), "{key} was left behind:\n{disabled}");
+        }
+        assert!(!disabled.contains("fps ="), "pace.fps was left behind:\n{disabled}");
+        assert!(disabled.contains("pace = false"));
+        assert!(disabled.contains("game_dir = 'D:\\g'"));
+        assert!(disabled.contains("mouse_sensitivity = 2.0"));
+        // no stale keys to remove on a second pass
+        assert_eq!(merge_toml(&disabled, &off), disabled);
+    }
+
+    #[test]
+    fn toml_merge_removes_fsr_keys_when_the_dll_is_gone() {
+        let on = Tuning { upscaler: "fsr".into(), ..Tuning::default() }.toml_keys(true);
+        let enabled = merge_toml("[game]\nrumble = true\n", &on);
+        // The launcher stops asking for FSR without the DLL; its old settings must go too.
+        let without_dll = Tuning { upscaler: "fsr".into(), ..Tuning::default() }.toml_keys(false);
+        let disabled = merge_toml(&enabled, &without_dll);
+        assert!(!disabled.contains("upscaler ="));
+        assert!(!disabled.contains("framegen ="));
+        assert!(disabled.contains("rumble = true"));
+    }
+
+    #[test]
+    fn toml_merge_is_section_scoped_and_deduplicates() {
+        // `[controls] fps` is not the launcher's `pace.fps`; it must survive. A stale quoted
+        // key and duplicate lines of a managed key must not survive.
+        let text = "[pace]\npace = true # a comment\nfps = 30\n\"fps\" = 60\n\n[controls]\nfps = 30\n";
+        let off = Tuning::default().toml_keys(true);
+        let out = merge_toml(text, &off);
+        let pace = out.split("[pace]\n").nth(1).unwrap().split("\n[").next().unwrap();
+        assert!(pace.contains("pace = false"));
+        assert!(!pace.contains("fps"), "{pace}");
+        assert!(out.contains("[controls]\nfps = 30"));
+        assert_eq!(merge_toml(&out, &off), out);
+
+        let on = Tuning { frame_cap: 60, ..Tuning::default() }.toml_keys(true);
+        let deduped = merge_toml("[pace]\nfps = 30\nfps = 45\nfps = 60\n", &on);
+        assert_eq!(deduped.matches("fps = ").count(), 1, "{deduped}");
+        assert!(deduped.contains("fps = 60"));
     }
 }

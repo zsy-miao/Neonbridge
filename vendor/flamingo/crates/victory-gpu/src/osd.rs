@@ -37,6 +37,12 @@ pub(crate) struct Second {
     pub cpu: f64,
     pub gpu: f64,
     pub back: f64,
+    /// Shaders from the cache, translated in this run, that do not translate.
+    pub shaders: [u64; 3],
+    /// Pipelines made, being made, without a host pipeline.
+    pub pipelines: [u64; 3],
+    /// Draws and dispatches dropped per frame (no host pipeline).
+    pub dropped: f64,
 }
 
 static SECOND: Mutex<Option<Second>> = Mutex::new(None);
@@ -55,7 +61,7 @@ struct Times {
 static TIMES: Mutex<Times> = Mutex::new(Times { ms: [0.0; GRAPH], next: 0, last: None });
 
 const W: i32 = 330;
-const H: i32 = 190;
+const H: i32 = 246;
 const KEY_F9: i32 = 0x78;
 
 /// A presented frame of the game's window `hwnd`.
@@ -294,6 +300,20 @@ fn paint(target: HDC) {
         text(hdc, 55, y, white, &vram);
         text(hdc, 190, y, dim, "RAM");
         text(hdc, 230, y, white, &format!("{:.1} GB", private_bytes() as f64 / 1e9));
+        y += row;
+        let red = rgb(255, 90, 90);
+        let [cached, translated, failed] = s.shaders;
+        text(hdc, 10, y, dim, "Shaders");
+        text(hdc, 85, y, white, &format!("{cached} + {translated} new"));
+        text(hdc, 255, y, if failed > 0 { red } else { dim }, &format!("{failed} fail"));
+        y += row;
+        let [made, making, unmade] = s.pipelines;
+        text(hdc, 10, y, dim, "Pipelines");
+        text(hdc, 100, y, white, &format!("{made} ok {making} wait"));
+        text(hdc, 255, y, if unmade > 0 { red } else { dim }, &format!("{unmade} fail"));
+        y += row;
+        text(hdc, 10, y, dim, "Dropped");
+        text(hdc, 85, y, if s.dropped >= 1.0 { red } else { white }, &format!("{:.0} draws/frame", s.dropped));
         y += row + 6;
         // The frame-time graph, newest on the right; lines at 66.7 ms (15
         // fps) and 33.3 ms (30 fps).
@@ -340,7 +360,17 @@ mod tests {
     /// background. `FLAMINGO_OSD_SAVE=<file.bmp>` keeps the picture.
     #[test]
     fn draws_text_and_graph() {
-        second(Second { fps: 11.2, ms: 89.3, draws: 4554.0, cpu: 57.8, gpu: 21.5, back: 30.5 });
+        second(Second {
+            fps: 11.2,
+            ms: 89.3,
+            draws: 4554.0,
+            cpu: 57.8,
+            gpu: 21.5,
+            back: 30.5,
+            shaders: [25890, 12, 0],
+            pipelines: [2512, 3, 1],
+            dropped: 269.0,
+        });
         {
             let mut t = TIMES.lock().unwrap();
             for k in 0..GRAPH {

@@ -166,3 +166,20 @@ fn gpu_geometry_direct_records() {
         check(&format!("HLSL, split {split}"), &got);
     }
 }
+
+/// The GS epilogue coalesces the 2-dword header store and each 4-dword vertex attribute store
+/// into wide `rawBufferStore` calls (mask 3 and mask 15) instead of per-dword scalar stores.
+#[test]
+fn geometry_epilogue_coalesces_header_and_vertex_stores() {
+    let (code, g) = branchy_program();
+    let k = translate_geometry(&code, opts(true, 1), &g).expect("translate geometry");
+    super::validate::validate(&k.dxil).expect("validate geometry");
+    let dis = super::validate::disassemble(&k.dxil).expect("disassemble geometry");
+    let stores: Vec<&str> = dis.lines().filter(|l| l.contains("call void @dx.op.rawBufferStore.i32(")).collect();
+    // 1 two-dword header store (mask 3), 2 four-dword vertex register stores (mask 15), 1 triangle store (mask 1).
+    let mask_count = |mask: u8| stores.iter().filter(|l| l.contains(&format!(", i8 {mask}, i32 4)"))).count();
+    assert_eq!(mask_count(3), 1, "expected 1 coalesced 2-dword header store:\n{}", stores.join("\n"));
+    assert_eq!(mask_count(15), 2, "expected 2 coalesced 4-dword vertex stores:\n{}", stores.join("\n"));
+    assert_eq!(mask_count(1), 1, "expected only 1 scalar store (triangle index):\n{}", stores.join("\n"));
+    assert_eq!(stores.len(), 4, "expected 4 total rawBufferStore calls:\n{}", stores.join("\n"));
+}

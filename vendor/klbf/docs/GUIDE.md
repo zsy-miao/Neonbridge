@@ -106,6 +106,8 @@ Then step 6, step 7 again, and step 8.
 | Crash about 3 seconds after start, black window | Not enough memory: step 2 (page file), close other programs |
 | `X3506` or `vs_5_1` in the log, black window | Old Windows shader compiler: copy the x64 `d3dcompiler_47.dll` from a recent Windows SDK (`Redist\D3D\x64`) next to `victory.exe` |
 | `error: unexpected argument '--cache'` | You built an old copy: redo step 4 |
+| Pre-build says everything is already built but the game still crashes in `amdxc64.dll` | A cache from another VIctory-based build is in the way: delete `%LOCALAPPDATA%\victory\cache\pipelines`, then redo step 7 (thanks @Ethan-Hill) |
+| Black screen with sound, log says `amd_fidelityfx_loader_dx12.dll not found` with `<FidelityFX SDK>` in the path | `VICTORY_FFX_DIR` still holds the example path: set it to the folder where you unzipped the SDK (step 5/6) (thanks @Ethan-Hill) |
 | Graphics card stops responding after ~1 min | `$env:VICTORY_LATE_WAIT = '0'` |
 
 Still stuck? Open an [issue](https://github.com/PastiiJay/klbf-lab/issues) with your graphics card, driver version, Windows version and the last lines PowerShell printed.

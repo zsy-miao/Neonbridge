@@ -388,11 +388,56 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
         let first = description
             .as_ref()
             .and_then(|w| words(w[0] as usize));
+        // Flamingo: what each of the description's first twelve words
+        // points at, where it is readable memory: its first 32 bytes, as
+        // text where they are text (a container begins "DXBC").
+        let pointed: Vec<String> = description
+            .iter()
+            .flatten()
+            .take(12)
+            .map(|&w| match words(w as usize) {
+                Some(v) => {
+                    let bytes: Vec<u8> = v.iter().take(4).flat_map(|x| x.to_le_bytes()).collect();
+                    let text: String =
+                        bytes.iter().map(|&b| if b.is_ascii_graphic() { b as char } else { '.' }).collect();
+                    format!("{w:x}->{:x?} '{text}'", &v[..4])
+                }
+                None => format!("{w:x}"),
+            })
+            .collect();
+        // Flamingo: the description's words 5 and 6 (and 17 and 18, a
+        // second stage's, if the layout repeats every 12 words) are a code
+        // address and its length in bytes: the machine code decoded, for
+        // what kind of program it is (its exports say).
+        #[cfg(windows)]
+        let code: Vec<String> = description
+            .iter()
+            .flat_map(|w| [(w.get(5), w.get(6)), (w.get(17), w.get(18))])
+            .filter_map(|(at, len)| {
+                let (at, len) = (*at? as usize, *len? as usize);
+                if at == 0 || len == 0 || len > 1 << 16 {
+                    return None;
+                }
+                let mut bytes = vec![0u8; len];
+                if !crate::host::read_into(at as *const u8, &mut bytes) {
+                    return None;
+                }
+                let names: Vec<&str> = victory_shader::gfx10::decode(&bytes)
+                    .map(|v| v.iter().filter_map(|i| i.name()).collect())
+                    .unwrap_or_default();
+                let exports: Vec<&str> = names.iter().copied().filter(|n| n.starts_with("exp") || n.contains("store") || n.contains("image_")).collect();
+                Some(format!("{len:#x} bytes, {} instructions, effects {exports:?}, first {:?}", names.len(), &names[..names.len().min(24)]))
+            })
+            .collect();
+        #[cfg(not(windows))]
+        let code: Vec<String> = Vec::new();
         tracing::warn!(
             slot = format_args!("{:#x}", SLOT),
             calls,
             description = format_args!("{description:x?}"),
             first_points_at = format_args!("{first:x?}"),
+            pointed = format_args!("{pointed:?}"),
+            code = format_args!("{code:?}"),
             "a pipeline creation method that is not implemented: the title goes without this pipeline"
         );
     }

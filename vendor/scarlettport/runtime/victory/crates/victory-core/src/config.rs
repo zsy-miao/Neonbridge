@@ -34,6 +34,16 @@ struct FileConfig {
     #[serde(default)]
     paths: FilePaths,
     controls: Option<toml::Table>,
+    // Sections the ScarlettPort launcher writes for runtime features this build does not have
+    // yet (its environment variables carry the same settings). Accepted so the file still parses.
+    #[serde(default, rename = "display")]
+    _display: Option<toml::Table>,
+    #[serde(default, rename = "game")]
+    _game: Option<toml::Table>,
+    #[serde(default, rename = "pace")]
+    _pace: Option<toml::Table>,
+    #[serde(default, rename = "upscale")]
+    _upscale: Option<toml::Table>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -199,6 +209,15 @@ mod tests {
         let text = include_str!("../../../victory.example.toml");
         let parsed: FileConfig = toml::from_str(text).unwrap();
         assert!(parsed.paths.game_dir.is_some());
+    }
+
+    #[test]
+    fn launcher_sections_parse() {
+        // What the ScarlettPort launcher's Settings, Features page writes.
+        let text = "[display]\nhdr = false\n\n[game]\nrumble = true\nrumble_strength = 1.0\nkbm_hints = \"auto\"\n\n[pace]\npace = true\nfps = 30\n\n[upscale]\nupscaler = \"fsr\"\nquality = \"quality\"\nsharpness = 0.2\nframegen = false\n";
+        assert!(toml::from_str::<FileConfig>(text).is_ok());
+        // Unknown sections are still refused, so typos are caught.
+        assert!(toml::from_str::<FileConfig>("[dispaly]\nhdr = true\n").is_err());
     }
 
     #[test]

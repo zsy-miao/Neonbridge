@@ -2918,10 +2918,25 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
             }
             const BUFFER: u32 = 1;
             if resource[0] != BUFFER {
-                // shortcut: unordered access to a texture the title placed
-                // itself is not mirrored; give it a resource as shader
-                // views of such textures get when a dispatch writes one.
-                once!(dimension = resource[0], "placed unordered texture view not mirrored");
+                // Flamingo: unordered access to a texture the title placed
+                // itself goes to the texture made for that memory, as its
+                // shader views do (`placed_texture`). It was left null, and
+                // what shaders wrote there was dropped (with ray tracing on:
+                // `dimension=3`, a 2D texture).
+                let address = u64::from(desc[10]) | u64::from(desc[11]) << 32;
+                if *unordered
+                    && let Some(texture) = crate::resource::texture_at(address, resource)
+                {
+                    let words: Option<[u32; 10]> = desc[..10].try_into().ok();
+                    return make(&View::Unordered(texture as usize, 0, words), at);
+                }
+                once!(
+                    dimension = resource[0],
+                    address = format_args!("{address:#x}"),
+                    unordered,
+                    resource = format_args!("{resource:x?}"),
+                    "placed unordered texture view not mirrored"
+                );
                 return None;
             }
             // The resource description's width, after the alignment.

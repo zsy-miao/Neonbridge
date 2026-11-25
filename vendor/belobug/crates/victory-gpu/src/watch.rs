@@ -252,6 +252,75 @@ struct Views {
 
 static VIEWS: Mutex<Option<Views>> = Mutex::new(None);
 
+/// The longest stretch of views around `[at, end)` that follow one another
+/// in the address space and in one section alike, within `reach` bytes of
+/// `at` rounded down to it: its start, its end, the section and the offset
+/// in it. `None` if the range is not in one such stretch.
+pub(crate) fn stretch(at: usize, end: usize, reach: usize) -> Option<(usize, usize, usize, u64)> {
+    let views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let views = views.as_ref()?;
+    let (&first, &(n, section, offset)) = views.by_addr.range(..=at).next_back()?;
+    if first + n <= at {
+        return None;
+    }
+    let (low, high) = (at - at % reach, (at - at % reach).checked_add(reach)?);
+    if end > high {
+        return None;
+    }
+    // Up from the view holding `at`.
+    let (mut stop, mut next) = (first + n, offset + n as u64);
+    for (&a, &(n, s, o)) in views.by_addr.range(first + 1..high) {
+        if a != stop || s != section || o != next {
+            break;
+        }
+        (stop, next) = (a + n, o + n as u64);
+    }
+    if stop < end {
+        return None;
+    }
+    // And down from it.
+    let (mut start, mut from) = (first, offset);
+    for (&a, &(n, s, o)) in views.by_addr.range(low..first).rev() {
+        if a + n != start || s != section || o + n as u64 != from {
+            break;
+        }
+        (start, from) = (a, o);
+    }
+    let start_in = start.max(low);
+    Some((start_in, stop.min(high), section, from + (start_in - start) as u64))
+}
+
+/// Diagnostics: how `[at, at + len)` is made of views of physical pages:
+/// the views, their sections, the longest view, and the runs of views that
+/// follow one another in their section too (one run: the range is one
+/// stretch of a section).
+pub(crate) fn layout(at: usize, len: usize) -> (usize, usize, usize, usize) {
+    let views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(views) = views.as_ref() else { return (0, 0, 0, 0) };
+    let end = at.saturating_add(len);
+    let first = views
+        .by_addr
+        .range(..=at)
+        .next_back()
+        .filter(|(a, (n, _, _))| *a + n > at)
+        .map(|(a, _)| *a)
+        .unwrap_or(at);
+    let (mut count, mut longest, mut runs) = (0, 0, 0);
+    let mut sections = std::collections::BTreeSet::new();
+    let mut before: Option<(usize, usize, u64)> = None;
+    for (&a, &(n, section, offset)) in views.by_addr.range(first..end) {
+        count += 1;
+        longest = longest.max(n);
+        sections.insert(section);
+        let follows = before.is_some_and(|(pa, ps, po)| pa == a && ps == section && po == offset);
+        if !follows {
+            runs += 1;
+        }
+        before = Some((a + n, section, offset + n as u64));
+    }
+    (count, sections.len(), longest, runs)
+}
+
 /// Whether all the views of a guarded page are guarded together.
 fn view_guard() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -887,6 +956,36 @@ mod tests {
         assert_eq!(guard(guarded, guarded + 2 * BLOCK), Some(vec![pages(1)]));
         assert_eq!(guard(guarded, guarded + 2 * BLOCK), Some(Vec::new()));
         drop_views(&[guarded, other]);
+    }
+
+    /// Views that follow one another in memory and in their section make a
+    /// stretch; a gap in either ends it.
+    #[test]
+    fn a_stretch_is_views_that_follow_in_memory_and_in_the_section() {
+        let base = 0x7a00_0000_0000usize;
+        let (section, other) = (0x51, 0x52);
+        for k in 0..3 {
+            title_memory_view(base + k * BLOCK, BLOCK, section, (k * BLOCK) as u64);
+        }
+        // Next in memory, not in the section.
+        title_memory_view(base + 3 * BLOCK, BLOCK, section, (9 * BLOCK) as u64);
+        // Next in the section's offsets, of another section.
+        title_memory_view(base + 4 * BLOCK, BLOCK, other, (10 * BLOCK) as u64);
+        let reach = 1 << 30;
+        assert_eq!(
+            stretch(base + BLOCK + 8, base + BLOCK + 16, reach),
+            Some((base, base + 3 * BLOCK, section, 0))
+        );
+        assert_eq!(
+            stretch(base + 3 * BLOCK, base + 3 * BLOCK + 1, reach),
+            Some((base + 3 * BLOCK, base + 4 * BLOCK, section, (9 * BLOCK) as u64))
+        );
+        // Across the gap: no stretch holds it.
+        assert_eq!(stretch(base + 2 * BLOCK, base + 3 * BLOCK + 1, reach), None);
+        // Outside every view.
+        assert_eq!(stretch(base + 6 * BLOCK, base + 6 * BLOCK + 1, reach), None);
+        title_memory_view_gone(base, 5 * BLOCK);
+        assert_eq!(stretch(base, base + 1, reach), None);
     }
 
     /// Both views have copies: a write through either is reported at both.

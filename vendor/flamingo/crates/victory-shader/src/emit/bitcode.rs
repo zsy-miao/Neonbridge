@@ -31,6 +31,7 @@ enum TypeDef {
     Void,
     Int(u32),
     Float,
+    /// A 64-bit float.
     Double,
     /// Pointee and address space.
     Ptr(Ty, u32),
@@ -112,6 +113,7 @@ pub(crate) enum Cast {
     FpToSi = 4,
     UiToFp = 5,
     SiToFp = 6,
+    FpExt = 8,
     Bitcast = 11,
 }
 
@@ -326,6 +328,15 @@ impl Module {
                 Const::Int(x) => Some(x),
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// `x` where `v` is the integer negation `0 - x` of a value `x` that is no constant.
+    pub fn negation_of(&self, v: V) -> Option<V> {
+        let V::Inst(i) = v else { return None };
+        match self.insts[i as usize].op {
+            Op::Bin(Bin::Sub, a, x) if self.int_value(a) == Some(0) && !matches!(x, V::Const(_)) => Some(x),
             _ => None,
         }
     }

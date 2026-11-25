@@ -82,6 +82,12 @@ pub const USER_VIEW_ADDRESS: u32 = 0x101;
 /// view. Asked for every root UAV, and for the root SRVs of programs with
 /// a spilled user-data table.
 pub const USER_VIEW_BIAS: u32 = 0x103;
+/// `RootType::Other` code of a user-data dword the host computes: the
+/// actual X thread count of a one-dimensional partial dispatch. Zero keeps
+/// every thread of every dispatched group active; otherwise threads whose
+/// global X index is at or past it do nothing. The metadata `dword` holds
+/// the group's X width.
+pub const USER_DISPATCH_THREADS_X: u32 = 0x104;
 
 /// `ShaderFlags` bits (metadata) and their `SFI0` feature bits.
 pub(crate) mod flags {
@@ -167,6 +173,10 @@ pub(crate) struct Shader {
     pub root_srvs: Vec<(u8, V)>,
     /// Root UAVs (raw buffers) read or written, likewise.
     pub root_uavs: Vec<(u8, V)>,
+    /// Root UAV slots through which an emitted operation may write.
+    pub written_root_uavs: Vec<u8>,
+    /// A translated store or atomic can write through the guest page directory.
+    pub writes_guest_memory: bool,
     pub flags: u64,
     /// Heap handles made with a non-uniform index.
     pub nonuniform_handles: u32,
@@ -224,6 +234,8 @@ impl Shader {
             root_cbvs: Vec::new(),
             root_srvs: Vec::new(),
             root_uavs: Vec::new(),
+            written_root_uavs: Vec::new(),
+            writes_guest_memory: false,
             flags: 0,
             nonuniform_handles: 0,
             threads: None,
@@ -257,6 +269,16 @@ impl Shader {
         opcode: u32,
         args: &[V],
     ) -> V {
+        // Raw root UAVs are also legal inputs. Only a read through a handle
+        // is known to leave it unchanged; any other use, including atomics,
+        // is treated conservatively.
+        if !matches!(opcode, 68 | 72 | 139) // BufferLoad, GetDimensions, RawBufferLoad
+            && let Some(first) = args.first()
+            && let Some(&(slot, _)) = self.root_uavs.iter().find(|(_, h)| h == first)
+            && !self.written_root_uavs.contains(&slot)
+        {
+            self.written_root_uavs.push(slot);
+        }
         let mut params = vec![self.t.i32];
         params.extend(args.iter().map(|&a| self.m.type_of(a)));
         let fty = self.m.func_ty(ret, params);
@@ -1055,6 +1077,8 @@ mod tests {
             static_samplers: Vec::new(),
             root_cbvs: Vec::new(),
             root_uavs: Vec::new(),
+            written_root_uavs: Vec::new(),
+            writes_guest_memory: false,
             root_indexed_views: Vec::new(),
         };
         let data = [0x1020_3040, 0x100, 320, 20, 0x5060_7080, 0x200, 768, 24];
@@ -1087,6 +1111,50 @@ mod tests {
             usage,
             half: false,
         }
+    }
+    #[test]
+    fn only_the_written_root_uavs_need_a_guest_writeback() {
+        let mut s = Shader::new(false);
+        let input = s.root_uav_handle(1);
+        let output = s.root_uav_handle(2);
+        let counter = s.root_uav_handle(3);
+        let (zero, one, mask, align) = (s.m.i32(0), s.m.i32(1), s.m.i8(1), s.m.i32(4));
+        let undef = s.m.undef(s.t.i32);
+        for handle in [input, output] {
+            s.op(
+                s.entry,
+                "rawBufferLoad.f32",
+                Attr::ReadOnly,
+                s.t.res_ret,
+                139,
+                &[handle, zero, undef, mask, align],
+            );
+        }
+        s.op(
+            s.entry,
+            "rawBufferStore.i32",
+            Attr::NoUnwind,
+            s.t.void,
+            140,
+            &[output, zero, undef, one, undef, undef, undef, mask, align],
+        );
+        s.op(
+            s.entry,
+            "atomicBinOp.i32",
+            Attr::NoUnwind,
+            s.t.i32,
+            78,
+            &[counter, zero, zero, undef, undef, one],
+        );
+        s.op(
+            s.entry,
+            "atomicCompareExchange.i32",
+            Attr::NoUnwind,
+            s.t.i32,
+            79,
+            &[counter, zero, undef, undef, zero, one],
+        );
+        assert_eq!(s.written_root_uavs, [2, 3]);
     }
 
     #[test]

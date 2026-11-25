@@ -62,8 +62,12 @@ impl Pending {
     }
 
     fn make(&self) {
-        self.made
-            .get_or_init(|| HostPipeline::new(&self.shaders, self.graphics.as_deref()));
+        self.made.get_or_init(|| {
+            let made = HostPipeline::new(&self.shaders, self.graphics.as_deref());
+            // Flamingo: for the stats overlay.
+            MADE[usize::from(made.is_none())].fetch_add(1, Ordering::Relaxed);
+            made
+        });
         let (lock, done) = &self.completion;
         let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
         done.notify_all();
@@ -108,6 +112,15 @@ fn wait_budget() -> Duration {
 
 /// Pipelines queued and not made yet.
 static WAITING: AtomicU64 = AtomicU64::new(0);
+
+/// Flamingo: pipelines made since the start, and those that got no host
+/// pipeline (the host refused it, or a shader does not translate).
+static MADE: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+
+/// [`MADE`]: (made, without a host pipeline).
+pub(crate) fn made() -> (u64, u64) {
+    (MADE[0].load(Ordering::Relaxed), MADE[1].load(Ordering::Relaxed))
+}
 
 /// Pipelines queued and not made yet (for the frame line).
 pub(crate) fn waiting() -> u64 {

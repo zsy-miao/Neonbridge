@@ -204,6 +204,14 @@ fn cpu_sets() -> Vec<(u32, u8, u8)> {
     sets
 }
 
+/// The slow logical processors of group 0 as a mask (a lower efficiency
+/// class than the best): 0 where all cores are alike.
+pub fn slow_processors() -> usize {
+    let sets = cpu_sets();
+    let best = sets.iter().map(|c| c.2).max().unwrap_or(0);
+    sets.iter().filter(|c| c.2 < best && c.1 < usize::BITS as u8).fold(0, |mask, c| mask | 1usize << c.1)
+}
+
 /// Asks the system to run the calling thread on the fast cores only, where
 /// the processor has two kinds (`VICTORY_FAST_CORES=0`: not asked).
 ///

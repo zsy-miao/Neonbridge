@@ -612,3 +612,23 @@ fn window_at_lowers_to_32bit_carry_without_int64() {
         assert!(!body0.contains("icmp ult"), "zero-offset window_at must not emit carry compare:\n{dis0}");
     }
 }
+
+#[test]
+fn dot8_u32_u4_unclamped_lowers_to_dot4_add_u8_packed() {
+    use crate::gpu::recomp::{dxc, runner};
+    const V: u64 = 256;
+    let unclamped = prog(&[("V_DOT8_U32_U4", "ENC_VOP3P", &[("VDST", 3), ("SRC0", V), ("SRC1", V + 1), ("SRC2", V + 2)], None)]);
+    let clamped = prog(&[("V_DOT8_U32_U4", "ENC_VOP3P", &[("VDST", 3), ("SRC0", V), ("SRC1", V + 1), ("SRC2", V + 2), ("CLAMP", 1)], None)]);
+    let ko = KernelOptions { wave64: false, split: false, mem_windows: 1, sampler_base: 0 };
+    let dxil = translate(&unclamped, ko).unwrap_or_else(|e| panic!("unclamped translation: {e}"));
+    let dxil_clamped = translate(&clamped, ko).unwrap_or_else(|e| panic!("clamped translation: {e}"));
+    super::validate::validate(&dxil).unwrap_or_else(|e| panic!("validator (unclamped): {e}"));
+    super::validate::validate(&dxil_clamped).unwrap_or_else(|e| panic!("validator (clamped): {e}"));
+    if dxc::location().is_err() {
+        return runner::skip_test("no DXC");
+    }
+    let dis = super::validate::disassemble(&dxil).unwrap();
+    assert_eq!(dis.matches("dx.op.dot4AddPacked.i32(i32 164,").count(), 2, "expected 2 Dot4AddU8Packed calls:\n{dis}");
+    let dis_clamped = super::validate::disassemble(&dxil_clamped).unwrap();
+    assert!(!dis_clamped.contains("dot4AddPacked"), "clamped dot8 should stay 64-bit saturating:\n{dis_clamped}");
+}

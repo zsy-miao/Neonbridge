@@ -123,6 +123,27 @@ impl Inst {
     }
 }
 
+thread_local! {
+    /// See [`with_shared_slots`].
+    static SHARED_SLOTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with programs built so that a register pair parked in two lanes of a VGPR moves
+/// as a pair wherever its save or restore comes together, also where the lower lane holds a
+/// single scalar at other times ([`unspill`] otherwise moves every half alone then). Each
+/// save and restore keeps its meaning either way (a pair move is the two moves at once, where
+/// nothing in between sees the difference); what changes is that a parked lane mask then comes
+/// back as the mask it is. `PS_VoxelizeVisiblity` parks a lane mask in lanes 3 and 4 of v56 and
+/// later a single scalar in lane 3: its mask came back as two scalars, a mask the
+/// structurisation cannot see into ("an opaque lane mask"). A retry ([`crate::emit::emit`]),
+/// so that the programs that translate as they are keep their form.
+pub fn with_shared_slots<R>(f: impl FnOnce() -> R) -> R {
+    let was = SHARED_SLOTS.replace(true);
+    let r = f();
+    SHARED_SLOTS.set(was);
+    r
+}
+
 /// Decodes `code` and builds its SSA form; `vgprs` is the program's VGPR
 /// count. Fails on instructions the IR cannot express yet
 /// ([`ShaderError::Unsupported`]).
@@ -245,7 +266,9 @@ pub fn build(code: &[u8], wave64: bool, vgprs: u16) -> Result<Program, ShaderErr
 /// A register pair parked in two neighbouring lanes (a lane mask, a 64-bit
 /// address) moves as a pair (`s_mov_b64`) when every save and every restore
 /// of the two lanes come together, so a parked lane mask comes back as the
-/// mask it is; otherwise its halves come back as two scalars.
+/// mask it is; otherwise its halves come back as two scalars (with
+/// [`with_shared_slots`], the saves and restores that come together still
+/// move as pairs).
 fn unspill(
     list: &mut [gfx10::Instruction],
     leaders: &[usize],
@@ -392,6 +415,9 @@ fn unspill(
         }
     };
     let mut pairs: Vec<(u8, u32)> = Vec::new();
+    // ([`with_shared_slots`]) the upper lanes' parks that move with a lower one
+    let mut taken: Vec<usize> = Vec::new();
+    let shared = SHARED_SLOTS.get();
     for &(reg, lane) in &slots {
         if !wave64 || pairs.iter().any(|&(r, l)| r == reg && l + 1 == lane) || !slots.contains(&(reg, lane + 1)) {
             continue;
@@ -402,8 +428,12 @@ fn unspill(
         let mut distinct: Vec<usize> = partners.iter().flatten().copied().collect();
         distinct.sort_unstable();
         distinct.dedup();
-        if partners.iter().all(Option::is_some) && distinct.len() == lower.len() && upper == lower.len() {
+        let found = partners.iter().flatten().count();
+        if partners.iter().all(Option::is_some) && distinct.len() == lower.len() && upper == lower.len()
+            || shared && found > 0 && distinct.len() == found
+        {
             pairs.push((reg, lane));
+            taken.extend(distinct);
         }
     }
     // Codes for the parked scalars: the trap temporaries (108..=123), then
@@ -456,7 +486,8 @@ fn unspill(
             continue;
         };
         let Some(slot) = code_of(reg, lane) else { return Vec::new() };
-        if pairs.contains(&(reg, lane)) {
+        let alone = shared && (pairs.contains(&(reg, lane)) && partner(i).is_none() || lane > 0 && pairs.contains(&(reg, lane - 1)) && !taken.contains(&i));
+        if pairs.contains(&(reg, lane)) && !alone {
             let Some(j) = partner(i) else { return Vec::new() };
             // A save moves the pair where its second half is saved; a
             // restore where its first half is restored.
@@ -464,7 +495,7 @@ fn unspill(
             let (dst, src) = if save { (slot, code) } else { (code, slot) };
             edits.push((at, Some((true, dst, src))));
             edits.push((gone, None));
-        } else if lane > 0 && pairs.contains(&(reg, lane - 1)) {
+        } else if lane > 0 && pairs.contains(&(reg, lane - 1)) && !alone {
             // the upper half of a pair: moved with the lower
         } else {
             let (dst, src) = if save { (slot, code) } else { (code, slot) };
@@ -584,6 +615,258 @@ pub(crate) fn thread_edges(
     link(&mut blocks);
     split_irreducible(&mut blocks)?;
     Ok(rename(blocks, p.wave64, p.vgprs))
+}
+
+/// A pixel program without its waits for the waves it overlaps: POPS, the console's
+/// rasterizer-ordered views. Before the accesses it wants in primitive order, the program
+/// loops (`s_sleep`) until `src_pops_exiting_wave_id` says the overlapping waves have left
+/// that section. On the host the views themselves are ordered (the lowering makes them
+/// rasterizer-ordered views), so every way into such a loop goes past it instead. Only a
+/// loop of scalar instructions of which nothing is read after it. `None` if the program has
+/// no such loop.
+pub(crate) fn without_pops_wait(p: &Program) -> Option<Program> {
+    use crate::gfx10::{Fields, Operand};
+    /// `src_pops_exiting_wave_id`, a scalar source.
+    const EXITING: u8 = 239;
+    let reads_exiting = |i: &Inst| {
+        matches!(&i.fields, Fields::Sop { src, .. }
+            if src.iter().any(|o| matches!(o, Operand::Const(EXITING))))
+    };
+    let scalar = |i: &Inst| matches!(i.fields, Fields::Sop { .. } | Fields::Sopp { .. });
+    // values read outside block `l`, directly or through joins outside it
+    let read_outside = |l: usize| {
+        let others = || {
+            p.blocks
+                .iter()
+                .enumerate()
+                .filter(move |&(b, _)| b != l)
+                .map(|(_, block)| block)
+        };
+        let mut read: std::collections::HashSet<Value> = others()
+            .flat_map(|block| &block.insts)
+            .flat_map(|inst| &inst.reads)
+            .map(|r| r.1)
+            .collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for phi in others().flat_map(|block| &block.phis) {
+                if read.contains(&phi.value) {
+                    for &a in &phi.args {
+                        changed |= read.insert(a);
+                    }
+                }
+            }
+        }
+        read
+    };
+    let mut blocks = p.blocks.clone();
+    let mut any = false;
+    for (l, block) in p.blocks.iter().enumerate() {
+        let Exit::Branch { taken, not_taken } = block.exit else {
+            continue;
+        };
+        let past = match (taken == l, not_taken == l) {
+            (true, false) => not_taken,
+            (false, true) => taken,
+            _ => continue,
+        };
+        if !block.insts.iter().any(reads_exiting) || !block.insts.iter().all(scalar) {
+            continue;
+        }
+        let read = read_outside(l);
+        let written = block.insts.iter().flat_map(|i| &i.writes).map(|w| w.1);
+        if written.chain(block.phis.iter().map(|phi| phi.value)).any(|v| read.contains(&v)) {
+            continue;
+        }
+        for &q in block.preds.iter().filter(|&&q| q != l) {
+            let before = &mut blocks[q];
+            match before.exit {
+                Exit::Jump(_) => before.exit = Exit::Jump(past),
+                // a branch around the wait (taken when no wave is to be waited for) has
+                // nothing left to decide
+                Exit::Branch { taken, not_taken } => {
+                    let to = |t: usize| if t == l { past } else { t };
+                    before.exit = match (to(taken), to(not_taken)) {
+                        (t, n) if t == n => {
+                            before.insts.pop();
+                            Exit::Jump(t)
+                        }
+                        (taken, not_taken) => Exit::Branch { taken, not_taken },
+                    };
+                }
+                _ => unreachable!("a way into a loop"),
+            }
+        }
+        // (no way in is left; it leads nowhere either)
+        blocks[l].insts.clear();
+        blocks[l].exit = Exit::End;
+        any = true;
+    }
+    if !any {
+        return None;
+    }
+    for block in &mut blocks {
+        block.phis.clear();
+    }
+    link(&mut blocks);
+    split_irreducible(&mut blocks).ok()?;
+    Some(rename(blocks, p.wave64, p.vgprs))
+}
+
+/// Each of `joins` copied for every way into it but the first, each copy entered from its own
+/// predecessor and left as the join is: a value the join merged from its ways in is one
+/// value in each copy. Every instruction still runs once on each path. A loop header (a
+/// block with a way in from later in reverse postorder) is left as it is. `None` if nothing
+/// changes.
+pub(crate) fn split_joins(p: &Program, joins: &[usize]) -> Option<Program> {
+    let order = reverse_postorder(&p.blocks);
+    let mut index = vec![usize::MAX; p.blocks.len()];
+    for (n, &b) in order.iter().enumerate() {
+        index[b] = n;
+    }
+    let mut blocks = p.blocks.clone();
+    for block in &mut blocks {
+        block.phis.clear();
+    }
+    let mut any = false;
+    for &join in joins {
+        let mut preds = p.blocks[join].preds.clone();
+        preds.dedup();
+        if preds.len() < 2 || preds.iter().any(|&q| index[q] >= index[join]) {
+            continue;
+        }
+        for &pred in &preds[1..] {
+            let target = blocks.len();
+            blocks.push(blocks[join].clone());
+            match &mut blocks[pred].exit {
+                Exit::Jump(t) => *t = target,
+                Exit::Branch { taken, not_taken } => {
+                    if *taken == join {
+                        *taken = target;
+                    }
+                    if *not_taken == join {
+                        *not_taken = target;
+                    }
+                }
+                _ => unreachable!("a way into a join"),
+            }
+        }
+        any = true;
+    }
+    if !any {
+        return None;
+    }
+    link(&mut blocks);
+    split_irreducible(&mut blocks).ok()?;
+    Some(rename(blocks, p.wave64, p.vgprs))
+}
+
+/// The program with each whole-wave section (`s_or_saveexec -1` up to the restore of the
+/// saved mask, `emit::wave`) that a jump splits in one block: the block the section starts
+/// in, when it jumps to the block that restores the mask, takes that block's code and exit
+/// (a copy where other ways lead there too). The compiler shares the end of two sections
+/// whose start a branch chooses (`cond ? WaveActiveMax(x) : WaveActiveMin(x)` in the title's
+/// water optical depth: each arm reduces up to the read of lane 32, the join reads lane 0
+/// and restores), and a section is followed within one block. Every instruction still runs
+/// once on each path. A join that is a loop header is left as it is. `None` if nothing
+/// changes.
+pub(crate) fn whole_sections(p: &Program) -> Option<Program> {
+    use crate::gfx10::{Fields, Operand};
+    /// The saved mask's scalar code if `inst` starts a section: EXEC becomes every lane
+    /// (`s_or_saveexec -1`, `s_nand_saveexec 0`).
+    fn start(inst: &Inst) -> Option<u8> {
+        let all = match inst.name() {
+            "s_or_saveexec_b64" | "s_or_saveexec_b32" => Operand::Const(193),
+            "s_nand_saveexec_b64" | "s_nand_saveexec_b32" => Operand::Const(128),
+            _ => return None,
+        };
+        match &inst.fields {
+            Fields::Sop {
+                dst: Some(Operand::Scalar { code, .. }),
+                src,
+                ..
+            } if src.first() == Some(&all) => Some(*code),
+            _ => None,
+        }
+    }
+    let order = reverse_postorder(&p.blocks);
+    let mut index = vec![usize::MAX; p.blocks.len()];
+    for (n, &b) in order.iter().enumerate() {
+        index[b] = n;
+    }
+    // (block, the join whose code it takes)
+    let mut fuse = Vec::new();
+    for &b in &order {
+        let block = &p.blocks[b];
+        let Exit::Jump(join) = block.exit else { continue };
+        // the last section start of the block, unless its restore is in the block too
+        let Some((at, code)) = block
+            .insts
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, inst)| start(inst).map(|c| (i, c)))
+        else {
+            continue;
+        };
+        let saved = block.insts[at].write(Reg::S(code));
+        let restores = |i: &Inst, held: Option<Value>| {
+            i.write(Reg::S(EXEC)).is_some() && i.read(Reg::S(code)).is_some_and(|v| Some(v) == held)
+        };
+        if block.insts[at + 1..].iter().any(|i| restores(i, saved)) {
+            continue;
+        }
+        let z = &p.blocks[join];
+        if join == b || z.preds.iter().any(|&q| index[q] >= index[join]) {
+            continue;
+        }
+        // what the saved register holds in the join: the value itself, or a join of it
+        let held = match z.phis.iter().find(|phi| phi.reg == Reg::S(code)) {
+            Some(phi) => {
+                let from_b = z.preds.iter().position(|&q| q == b).map(|k| phi.args[k]);
+                if from_b != saved {
+                    continue;
+                }
+                Some(phi.value)
+            }
+            None => saved,
+        };
+        // the join's first write of EXEC is the restore, and nothing before it writes the
+        // saved register
+        let first = z
+            .insts
+            .iter()
+            .position(|i| i.write(Reg::S(EXEC)).is_some() || i.write(Reg::S(code)).is_some());
+        if first.is_some_and(|k| restores(&z.insts[k], held)) {
+            fuse.push((b, join));
+        }
+    }
+    if fuse.is_empty() {
+        return None;
+    }
+    let mut blocks = p.blocks.clone();
+    for block in &mut blocks {
+        block.phis.clear();
+    }
+    for &(b, join) in &fuse {
+        if blocks[b].insts.last().is_some_and(|i| i.name() == "s_branch") {
+            blocks[b].insts.pop();
+        }
+        let tail = p.blocks[join].insts.clone();
+        blocks[b].insts.extend(tail);
+        blocks[b].exit = p.blocks[join].exit;
+    }
+    // a join whose every way in took its code is left: nothing reaches it
+    for &(_, join) in &fuse {
+        if p.blocks[join].preds.iter().all(|q| fuse.contains(&(*q, join))) {
+            blocks[join].insts.clear();
+            blocks[join].exit = Exit::End;
+        }
+    }
+    link(&mut blocks);
+    split_irreducible(&mut blocks).ok()?;
+    Some(rename(blocks, p.wave64, p.vgprs))
 }
 
 /// The program without its early-outs: an `s_cbranch_execz` to a block that
@@ -1638,6 +1921,70 @@ mod tests {
         assert_eq!(skips(&without_skips(&idle, true).expect("left out")), 0);
     }
 
+    /// A POPS wait: past it when SCC says so (`s_cbranch_scc1`), else a loop that sleeps
+    /// until `src_pops_exiting_wave_id` passes s1; `after` follows.
+    fn pops_wait(after: &[u32]) -> Program {
+        let mut w = vec![
+            0xBF06_8000, // s_cmp_eq_u32 s0, 0
+            0xBF85_0004, // s_cbranch_scc1 -> past the loop
+            0xBF8E_FFFF, // s_sleep 0xffff
+            0x810C_01EF, // s_add_i32 s12, src_pops_exiting_wave_id, s1
+            0xBF0A_0C01, // s_cmp_lt_u32 s1, s12
+            0xBF84_FFFC, // s_cbranch_scc0 -> s_sleep
+        ];
+        w.extend_from_slice(after);
+        w.push(S_ENDPGM);
+        build_words(&w, false)
+    }
+
+    #[test]
+    fn a_pops_wait_is_left_out_when_nothing_after_it_reads_what_it_wrote() {
+        let loops = |p: &Program| {
+            let order = reverse_postorder(&p.blocks);
+            order.iter().filter(|&&b| p.blocks[b].exit.successors().contains(&b)).count()
+        };
+        // v_mov_b32 v1, s2: the wait wrote nothing read after it
+        let p = pops_wait(&[0x7E02_0202]);
+        assert_eq!(loops(&p), 1);
+        let q = without_pops_wait(&p).expect("left out");
+        assert_eq!(loops(&q), 0);
+        // the branch around the wait has nothing left to decide
+        let entry = &q.blocks[0];
+        assert!(matches!(entry.exit, Exit::Jump(_)), "{:?}", entry.exit);
+        assert!(entry.insts.iter().all(|i| !i.name().starts_with("s_cbranch")));
+        // v_mov_b32 v1, s12: the sum the wait made is read after it: it stays
+        assert!(without_pops_wait(&pops_wait(&[0x7E02_020C])).is_none());
+        // no wait, nothing to leave out
+        assert!(without_pops_wait(&build_words(&[0x7E02_0202, S_ENDPGM], false)).is_none());
+    }
+
+    #[test]
+    fn a_split_join_gives_each_way_in_its_own_copy() {
+        let code = [
+            0xBF06_0100, // s_cmp_eq_u32 s0, s1
+            0xBF85_0002, // s_cbranch_scc1 -> s_mov_b32 s2, 0
+            0xB002_0092, // s_movk_i32 s2, 0x92
+            0xBF82_0001, // s_branch -> the join
+            0xBE82_0380, // s_mov_b32 s2, 0
+            0x7E02_0202, // v_mov_b32 v1, s2 (the join)
+            S_ENDPGM,
+        ];
+        let p = build_words(&code, false);
+        let join = p.blocks.iter().position(|b| b.preds.len() == 2).expect("a join");
+        assert_eq!(p.blocks[join].phis.len(), 1, "s2 differs by the way in");
+        let q = split_joins(&p, &[join]).expect("split");
+        // two blocks read s2 into v1, neither through a phi
+        let reads: Vec<&Block> = q
+            .blocks
+            .iter()
+            .filter(|b| b.insts.first().is_some_and(|i| i.name() == "v_mov_b32"))
+            .collect();
+        assert_eq!(reads.len(), 2);
+        assert!(reads.iter().all(|b| b.preds.len() == 1 && b.phis.is_empty()));
+        // a block with one way in is left as it is
+        assert!(split_joins(&q, &[0]).is_none());
+    }
+
     #[test]
     fn joins_get_phis_only_where_values_differ() {
         let code = [
@@ -1818,5 +2165,53 @@ mod tests {
         assert_eq!(vgprs(&movrels.reads), [4, 5, 0]);
         assert_eq!(movrels.read(Reg::V(4)), movreld.write(Reg::V(4)));
         assert!(build(&code, false, 4).is_err(), "v4 is past 4 VGPRs");
+    }
+
+    /// `PS_VoxelizeVisiblity`'s parking (0xa18-0xa38, 0xe44-0xe4c, 0x2df8, 0x3184): a lane
+    /// mask parked in lanes 3 and 4 of v56 and taken back to make EXEC, later a single scalar
+    /// parked in lane 3. Built as it is, the mask comes back as two scalars, which the
+    /// structurisation cannot see into; with [`with_shared_slots`] it comes back as the pair
+    /// it is, and EXEC as the compare's lanes.
+    #[test]
+    fn a_mask_parked_in_lanes_another_scalar_shares_comes_back_whole_with_shared_slots() {
+        let writelane = |lane: u32, s: u32| [0xD761_0038, s | (128 + lane) << 9]; // v_writelane_b32 v56, s, lane
+        let readlane = |s: u32, lane: u32| [0xD760_0000 | s, (256 + 56) | (128 + lane) << 9]; // v_readlane_b32 s, v56, lane
+        let mut w = vec![
+            0x7D88_0000, // v_cmp_gt_u32 vcc, s0, v0
+            0xBEA2_046A, // s_mov_b64 s[34:35], vcc
+        ];
+        w.extend(writelane(3, 34));
+        w.extend(writelane(4, 35));
+        w.push(0xBEA2_0480); // s_mov_b64 s[34:35], 0
+        w.extend(readlane(34, 3));
+        w.extend(readlane(35, 4));
+        let restore = 4 * (w.len() - 4) as u64; // (the first restore's offset)
+        w.extend([
+            0xBE82_2422, // s_and_saveexec_b64 s[2:3], s[34:35]
+            0x7E02_0281, // v_mov_b32 v1, 1
+            0xBEFE_0402, // s_mov_b64 exec, s[2:3]
+        ]);
+        w.extend(writelane(3, 1));
+        w.push(0xBE81_0380); // s_mov_b32 s1, 0
+        w.extend(readlane(1, 3));
+        w.push(S_ENDPGM);
+        let code: Vec<u8> = w.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let at = |p: &Program| {
+            let i = p.blocks.iter().flat_map(|b| &b.insts).find(|i| i.machine.offset as u64 == restore).expect("the restore");
+            i.name()
+        };
+        let alone = build(&code, true, 64).unwrap();
+        assert_eq!(at(&alone), "s_mov_b32");
+        let shared = with_shared_slots(|| build(&code, true, 64)).unwrap();
+        assert_eq!(at(&shared), "s_mov_b64");
+        let opaque = |p: &Program| {
+            let st = crate::structure::structure(p).unwrap();
+            let v1 = p.blocks.iter().enumerate().flat_map(|(b, blk)| blk.insts.iter().enumerate().map(move |(i, inst)| (b, i, inst)));
+            let (b, i, _) = v1.into_iter().find(|(_, _, inst)| inst.name() == "v_mov_b32").expect("the guarded move");
+            let guard = st.guards[b][i].expect("a guard");
+            st.bools.support(guard).iter().any(|a| matches!(a, crate::structure::Atom::Opaque(_)))
+        };
+        assert!(opaque(&alone), "two scalars make an opaque mask");
+        assert!(!opaque(&shared), "the pair is the compare's mask");
     }
 }

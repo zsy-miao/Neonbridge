@@ -3722,12 +3722,15 @@ impl Host {
         })
     }
 
-    /// Whether the device runs on a software adapter (WARP).
+    /// Whether the device runs on a software adapter (WARP) or no DXGI adapter
+    /// handle was retained (e.g. headless CI WARP runners).
     #[cfg(test)]
     pub(crate) fn is_software_adapter(&self) -> bool {
-        self.adapter.as_ref().is_some_and(|a| {
+        self.adapter.as_ref().is_none_or(|a| {
             // SAFETY: live DXGI adapter.
-            unsafe { a.GetDesc1() }.is_ok_and(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0)
+            unsafe { a.GetDesc1() }.is_ok_and(|d| {
+                d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 || d.VendorId == 0x1414
+            })
         })
     }
 

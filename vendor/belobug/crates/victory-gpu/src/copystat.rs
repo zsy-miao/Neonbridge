@@ -138,10 +138,11 @@ pub(crate) fn log(frames: f64) {
         unsafe { VirtualQuery(src as *const _, &mut info, size_of_val(&info)) };
         let kind = info.Type;
         tracing::info!(
-            "  copied from {src:#x}+{len:#x} (memory {kind:#x}): {:.1}x/frame, {:.2} MB/frame, {:.2} ms/frame",
+            "  copied from {src:#x}+{len:#x} (memory {kind:#x}): {:.1}x/frame, {:.2} MB/frame, {:.2} ms/frame; views {:?}",
             n as f64 / frames,
             bytes as f64 / 1e6 / frames,
-            us as f64 / 1e3 / frames
+            us as f64 / 1e3 / frames,
+            crate::watch::layout(src as usize, len as usize)
         );
     }
 }

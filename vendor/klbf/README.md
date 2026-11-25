@@ -25,9 +25,11 @@ Tested on one machine: AMD Radeon RX 9070 XT 16 GB (Adrenalin 32.0.32029.2010), 
 | Frame rate, Jason's first mission ("Gone Fishing", on the boat) | 🟡 ~6.3 fps | average 6.3, median 6.5, peak 9.8 |
 | Settings | — | renders at 1280×720 (`--console series-s`), upscaled to 1920×1080 with AMD FSR; dips to ~0.5–1 fps while a new area loads |
 | Frame rate in game, native resolution | 🟡 ~5 fps | about 200 ms per frame |
-| Stability | ✅ 74 min in one session without a crash (this version) | recommended settings, still camera; 77 min of play without a crash on test build Lab 39 |
+| Stability | ✅ Record: 77 min of play without a crash | on test build Lab 39, stopped by choice to get back to work on the project, not by a crash. This version has never crashed in our tests; we haven't pushed it that far yet |
 | Rendering | 🟡 Mostly right | walls, lighting, hair and outfits drawn; purple tint on small flat objects (posters, stickers, towels), some faces deformed (guards, bank), faint diagonal lines on surfaces, the boat sits on the seabed (water physics fixed in test build Lab 39); the HUD (subtitles, objectives, prompts) stays hidden with the recommended settings in this version; fixed in test build Lab 38 (KLBF Lab Beta); at night the vegetation turns magenta and the ground stays very dark |
 | Story progress | ✅ Open world reached: prologue and Jason's first mission ("Gone Fishing") completed, 3% of the story | played from a new game on our own build, with our own saves (no save file from anyone else): Lucia's prologue, then all of "Gone Fishing", then free roam from Jason's house, in a 77 min session without a crash (test build Lab 39); autosave and manual saves work, and the bed moves the time between day and night |
+
+> **Stability policy:** we never publish a build that crashed in our tests. Every session length shown here is when **we** stopped, to get back to work on the project or because a test run reached its planned end, not a crash.
 
 ### Why AMD FSR
 
@@ -63,7 +65,7 @@ How far the project gets in the story, scene by scene (one machine: AMD Radeon R
 | 25 Nov 2026 | Lab 35 | 74 min in one session without a crash; prologue ~7.3 fps in the cell |
 | 25 Nov 2026 | Lab 37 | played from the prologue to the start of Jason's first mission ("Gone Fishing"), peak 9.8 fps |
 | 25 Nov 2026 | Lab 38 (test) | menus, map, HUD, subtitles and button prompts show in Series S mode; 41 min of play without a crash; "Gone Fishing" played up to the seaplane, peak 12.9 fps |
-| 25 Nov 2026 | Lab 39 (test) | water physics fixed: "Gone Fishing" completed, 3% of the story, first manual save, 77 min of play without a crash; open world reached from a new game |
+| 25 Nov 2026 | Lab 39 (test) | water physics fixed: "Gone Fishing" completed, 3% of the story, first manual save, 77 min of play without a crash (stopped by choice, not by a crash); open world reached from a new game |
 
 How we measure: the frame rate the layer logs about every 5 s, in the world only (loading screens and the first 2 minutes of shader compiling left out). Numbers are given per scene: standing in the prison cell, and while actually playing through the prologue and Jason's first mission (18 min session, test build Lab 37). Lows are taken from those 5 s averages, so single-frame dips may go lower.
 

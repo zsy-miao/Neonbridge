@@ -348,6 +348,42 @@ mod tests {
         assert_eq!(regs, [Reg::S(16), Reg::S(17), Reg::S(20)]);
     }
 
+    /// Flamingo: a spilled program (the structure builder's kind) in groups of 64 asks the
+    /// host for a partial `DispatchX`'s thread count along x, the one axis with more than
+    /// one thread, and only there (`emit::USER_DISPATCH_THREADS`).
+    #[test]
+    fn a_spilled_program_asks_for_its_dispatch_thread_count() {
+        use crate::emit::USER_DISPATCH_THREADS;
+        let mut n = native(
+            &TABLE,
+            4,
+            vec![
+                param(RootType::Descriptor, 16, 2, 0),
+                param(RootType::Descriptor, 18, 2, 1),
+                param(RootType::Constants, 20, 16, 2),
+            ],
+        );
+        n.io = StageIo::Cs(ComputeIo {
+            rsrc2: 4 << 1 | 1 << 7,
+            threads: [64, 1, 1],
+        });
+        assert!(is_spilled(&n));
+        let p = build(&n).unwrap();
+        let st = crate::structure::structure(&p).unwrap();
+        let res = crate::resource::track(&p, &n.layout, n.stage, Some(&st)).unwrap();
+        let io = crate::io::raise(&p, &n).unwrap();
+        let container = crate::dxbc::build(&[]);
+        let c = crate::Container::parse(&container).unwrap();
+        let shader = crate::emit::emit(&c, &n, &p, &st, &io, &res).unwrap();
+        let asked: Vec<u32> = shader
+            .user_data
+            .iter()
+            .filter(|u| u.root == RootType::Other(USER_DISPATCH_THREADS))
+            .map(|u| u.dword)
+            .collect();
+        assert_eq!(asked, [0]);
+    }
+
     #[test]
     fn parameters_in_registers_are_left_alone() {
         // The same code where s0 and s1 are a root view the layout declares.
