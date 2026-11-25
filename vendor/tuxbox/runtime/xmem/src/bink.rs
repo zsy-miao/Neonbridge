@@ -131,8 +131,8 @@ fn record(index: usize, movie: u64, result: u64, us: u64) {
             c.total_us as f64 / 1e3 / f64::from(c.count), c.max_us as f64 / 1e3, c.nonzero)
     }).collect();
     let movie_line = match (header(window.movie), window.first_frame) {
-        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, TUXBOX_BINK_CATCHUP; smallest lead over the clock {}, TUXBOX_BINK_LEAD) against {:.2} nominal",
-            h[0], h[1], h[3], h[2], f64::from(window.last_frame.wrapping_sub(first)) / seconds, window.caught_up,
+        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, {:.1}/s, TUXBOX_BINK_CATCHUP; smallest lead over the clock {}, TUXBOX_BINK_LEAD) against {:.2} nominal",
+            h[0], h[1], h[3], h[2], f64::from(window.last_frame.wrapping_sub(first)) / seconds, window.caught_up, f64::from(window.caught_up) / seconds,
             MIN_LEAD.lock().unwrap_or_else(|e| e.into_inner()).take().map_or("-".into(), |ms| format!("{ms:.0} ms")),
             if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) }),
         _ => String::new(),
@@ -161,8 +161,11 @@ static CLOCK: Mutex<Option<Clock>> = Mutex::new(None);
 /// title's own BinkWait/BinkShouldSkip pace a slow title. Our extra decodes
 /// ran between the title's decode and its use of the planes (test146: 166
 /// catch-up frames, garbled intros 2 and 3). TUXBOX_BINK_CATCHUP=4 restores
-/// the old catch-up.
-/// Where the opt-in catch-up decodes. After the title's BinkNextFrame (the
+/// the old catch-up. Now default 4 again, at the before-decode site that
+/// fixed the garble: a movie keeps its real-time rate (and Bink's soundtrack,
+/// fed per decoded frame, its rate: test152 played the 4K intro at 12 of 30
+/// frames/s, 3 s audio gaps) whatever the title's fps. TUXBOX_BINK_CATCHUP=0 off.
+/// Where the catch-up decodes. After the title's BinkNextFrame (the
 /// old place) its extra decodes land in the registered plane ring while the
 /// frame just decoded has not yet been submitted, so d3d12's read of that
 /// frame's planes (at submission, from title memory) took a later frame's
@@ -181,7 +184,7 @@ fn catch_up_before_decode() -> bool {
 fn catch_up_cap() -> u32 {
     use std::sync::OnceLock;
     static CAP: OnceLock<u32> = OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
+    *CAP.get_or_init(|| std::env::var("TUXBOX_BINK_CATCHUP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(4))
 }
 
 /// Frames ahead of its clock a movie is decoded to: TUXBOX_BINK_LEAD (default 1).
