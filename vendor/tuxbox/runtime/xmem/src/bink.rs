@@ -600,23 +600,27 @@ unsafe fn trace_waits(module: *mut c_void) {
     log(&format!("bink: {n} of Bink2Scarlett's wait imports traced; QPC frequency {qpf} Hz"));
 }
 
-/// Bink sound fill counters: the title's BINKSND Lock (+0x178, 0 when no
-/// buffer is free: [+0x84] == -1) and Unlock (+0x180, adds the bytes to
-/// [+0x8c]) are wrapped after its open, and every 10 s the refused locks and
-/// bytes committed are logged, to show whether the mixer starves between
-/// catch-up bursts. TUXBOX_BINK_SOUND_STATS=0 off.
+/// Bink sound counters: every BINKSND callback the title's open fills
+/// (+0x170..+0x1b0: +0x178 Lock-like, 0 when no buffer is free; +0x180
+/// Unlock-like, adds the bytes to [+0x8c]) is wrapped after the open, the
+/// first call of each is logged, and every 10 s each slot's calls/s and
+/// zero results plus the bytes committed, so a silent movie shows which
+/// callback Bink never reaches. TUXBOX_BINK_SOUND_STATS=0 off.
 mod sound {
     use super::*;
 
+    const SLOTS: usize = 9;
+    const FIRST: u64 = 0x170;
+    const UNLOCK: usize = 2;
     static PROVIDER: AtomicUsize = AtomicUsize::new(0);
     static OPEN: AtomicUsize = AtomicUsize::new(0);
-    static LOCK: AtomicUsize = AtomicUsize::new(0);
-    static UNLOCK: AtomicUsize = AtomicUsize::new(0);
-    static LOCKS: AtomicU64 = AtomicU64::new(0);
-    static REFUSED: AtomicU64 = AtomicU64::new(0);
+    static ORIG: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
+    static CALLS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+    static ZERO: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+    static SEEN: [std::sync::atomic::AtomicBool; SLOTS] = [const { std::sync::atomic::AtomicBool::new(false) }; SLOTS];
     static BYTES: AtomicU64 = AtomicU64::new(0);
     static MAX_GAP_US: AtomicU64 = AtomicU64::new(0);
-    static STATE: Mutex<Option<(Instant, Instant)>> = Mutex::new(None);
+    static STATE: Mutex<Option<(Instant, Option<Instant>)>> = Mutex::new(None);
 
     fn on() -> bool {
         std::env::var_os("TUXBOX_BINK_SOUND_STATS").is_none_or(|v| v != "0")
@@ -644,52 +648,74 @@ mod sound {
         let real: F4 = unsafe { std::mem::transmute(OPEN.load(Ordering::Acquire)) };
         let result = unsafe { real(snd, b, c, d) };
         if snd != 0 {
-            let slot = |off: u64| (snd + off) as *mut usize;
-            unsafe {
-                for (off, store, wrapper) in [(0x178, &LOCK, lock_wrapper as F4 as usize), (0x180, &UNLOCK, unlock_wrapper as F4 as usize)] {
-                    let old = slot(off).read_unaligned();
-                    if old != 0 && old != wrapper {
-                        store.store(old, Ordering::Release);
-                        slot(off).write_unaligned(wrapper);
-                    }
+            let mut names = Vec::new();
+            for (i, wrapper) in WRAPPERS.iter().enumerate() {
+                let slot = (snd + FIRST + 8 * i as u64) as *mut usize;
+                let old = unsafe { slot.read_unaligned() };
+                let wrapper = *wrapper as usize;
+                if old != 0 && old != wrapper {
+                    ORIG[i].store(old, Ordering::Release);
+                    unsafe { slot.write_unaligned(wrapper) };
                 }
+                names.push(format!("+{:#x} {}", FIRST + 8 * i as u64, module_of(ORIG[i].load(Ordering::Relaxed) as u64)));
             }
-            log(&format!("bink: sound open {snd:#x} = {result:#x}; Lock {} and Unlock {} counted (TUXBOX_BINK_SOUND_STATS=0 off)",
-                module_of(LOCK.load(Ordering::Relaxed) as u64), module_of(UNLOCK.load(Ordering::Relaxed) as u64)));
+            log(&format!("bink: sound open {snd:#x}({b:#x}, {c:#x}) = {result:#x}; callbacks {} counted (TUXBOX_BINK_SOUND_STATS=0 off)", names.join(", ")));
         }
         result
     }
 
-    unsafe extern "system" fn lock_wrapper(a: u64, b: u64, c: u64, d: u64) -> u64 {
-        let real: F4 = unsafe { std::mem::transmute(LOCK.load(Ordering::Acquire)) };
-        let result = unsafe { real(a, b, c, d) };
-        LOCKS.fetch_add(1, Ordering::Relaxed);
-        if result == 0 {
-            REFUSED.fetch_add(1, Ordering::Relaxed);
-        }
-        result
-    }
-
-    unsafe extern "system" fn unlock_wrapper(snd: u64, b: u64, c: u64, d: u64) -> u64 {
-        let real: F4 = unsafe { std::mem::transmute(UNLOCK.load(Ordering::Acquire)) };
+    unsafe fn call(i: usize, snd: u64, b: u64, c: u64, d: u64) -> u64 {
+        let real: F4 = unsafe { std::mem::transmute(ORIG[i].load(Ordering::Acquire)) };
         let total = || unsafe { ((snd + 0x8c) as *const u32).read_unaligned() };
-        let before = if snd != 0 { total() } else { 0 };
+        let before = if i == UNLOCK && snd != 0 { total() } else { 0 };
         let result = unsafe { real(snd, b, c, d) };
-        if snd != 0 {
-            BYTES.fetch_add(u64::from(total().wrapping_sub(before)), Ordering::Relaxed);
+        CALLS[i].fetch_add(1, Ordering::Relaxed);
+        if result == 0 {
+            ZERO[i].fetch_add(1, Ordering::Relaxed);
+        }
+        if !SEEN[i].swap(true, Ordering::Relaxed) {
+            log(&format!("bink: sound callback +{:#x} first call ({snd:#x}, {b:#x}, {c:#x}, {d:#x}) = {result:#x} on thread {}",
+                FIRST + 8 * i as u64, unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() }));
         }
         let now = Instant::now();
         let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
-        let (started, last) = state.get_or_insert((now, now));
-        MAX_GAP_US.fetch_max(now.duration_since(*last).as_micros() as u64, Ordering::Relaxed);
-        *last = now;
+        let (started, last) = state.get_or_insert((now, None));
+        if i == UNLOCK && snd != 0 {
+            BYTES.fetch_add(u64::from(total().wrapping_sub(before)), Ordering::Relaxed);
+            if let Some(last) = *last {
+                MAX_GAP_US.fetch_max(now.duration_since(last).as_micros() as u64, Ordering::Relaxed);
+            }
+            *last = Some(now);
+        }
         let seconds = now.duration_since(*started).as_secs_f64();
         if seconds >= 10.0 {
             *started = now;
-            log(&format!("bink: sound last {seconds:.1} s: {:.1} locks/s, {} refused (no free buffer), {:.0} bytes/s committed, longest gap between commits {:.0} ms",
-                LOCKS.swap(0, Ordering::Relaxed) as f64 / seconds, REFUSED.swap(0, Ordering::Relaxed),
-                BYTES.swap(0, Ordering::Relaxed) as f64 / seconds, MAX_GAP_US.swap(0, Ordering::Relaxed) as f64 / 1e3));
+            let slots: Vec<String> = (0..SLOTS).filter_map(|i| {
+                let n = CALLS[i].swap(0, Ordering::Relaxed);
+                let z = ZERO[i].swap(0, Ordering::Relaxed);
+                (n != 0).then(|| format!("+{:#x} {:.1}/s ({z} returned 0)", FIRST + 8 * i as u64, n as f64 / seconds))
+            }).collect();
+            log(&format!("bink: sound last {seconds:.1} s: {}; {:.0} bytes/s committed, longest gap between commits {:.0} ms",
+                slots.join(", "), BYTES.swap(0, Ordering::Relaxed) as f64 / seconds, MAX_GAP_US.swap(0, Ordering::Relaxed) as f64 / 1e3));
         }
         result
     }
+
+    macro_rules! slot {
+        ($name:ident, $i:expr) => {
+            unsafe extern "system" fn $name(a: u64, b: u64, c: u64, d: u64) -> u64 {
+                unsafe { call($i, a, b, c, d) }
+            }
+        };
+    }
+    slot!(s0, 0);
+    slot!(s1, 1);
+    slot!(s2, 2);
+    slot!(s3, 3);
+    slot!(s4, 4);
+    slot!(s5, 5);
+    slot!(s6, 6);
+    slot!(s7, 7);
+    slot!(s8, 8);
+    static WRAPPERS: [F4; SLOTS] = [s0, s1, s2, s3, s4, s5, s6, s7, s8];
 }
