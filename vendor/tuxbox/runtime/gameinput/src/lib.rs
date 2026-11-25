@@ -256,6 +256,19 @@ impl Pool {
     fn refresh(&mut self, mask: u32) {
         let now = gi_time();
         let (active, desktop_slot) = self.update_devices(now, mask & PAD != 0);
+        // Input (the auto A press included) only advances while the title's
+        // window is foreground: say once, 20 s into the pad polls, if it never was.
+        if !active && mask & PAD != 0 && !matches!(self.auto_start, AutoStart::Off | AutoStart::Done) {
+            static FIRST_BG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static TOLD_BG: std::sync::Once = std::sync::Once::new();
+            let first = match FIRST_BG.compare_exchange(0, now.max(1), std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed) {
+                Ok(_) => now.max(1),
+                Err(f) => f,
+            };
+            if now.saturating_sub(first) >= 20_000_000 {
+                TOLD_BG.call_once(|| eprintln!("TuxBox gameinput: auto start: no A pressed 20 s into the pad polls: the title's window is not foreground (input is ignored until it is)"));
+            }
+        }
         if !active {
             self.mouse.previous = None;
             return;
