@@ -40,6 +40,7 @@ Open work. Everything is paused until the port audit (bad ports, upstream revert
 - BVH intersection (7 refusals). Needs console BVH nodes from the runtime.
 
 ## Launcher
+- Key the shader cache on the shader-compiler source (git tree hash of `vendor/tuxbox/tools/shader-compiler`), not the xshader.exe hash (src/shaders.rs ~393). A reverted edit still rebuilt xshader into a non-identical exe, and test146 then re-translated all 1,308 programs cold even though the source hadn't changed.
 - Log every failed shader by hash: remove the `if m.contains("timed out")` gate at src/shaders.rs:1112, so every Failed prints `Xbox shader {key}: {m}`. The next prewarm then names all 7.
 
 ## Research
