@@ -93,10 +93,43 @@ fn is_view(start: usize) -> bool {
 
 /// Written 4 KiB pages of `[start, end)` since the last query, up to `cap`;
 /// the blocks reported are guarded again. None when the range is no view.
+/// Census (sampled at queries #1,2,4,... and every 4096): why blocks are
+/// reported written or left unguarded, for test176's "guards skip nothing".
+mod census {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    pub(super) static NOT_VIEW: AtomicU64 = AtomicU64::new(0);
+    pub(super) static QUERIES: AtomicU64 = AtomicU64::new(0);
+    pub(super) static CLEAN: AtomicU64 = AtomicU64::new(0);
+    pub(super) static REPORTED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static GUARDED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static PINNED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static DEVICE: AtomicU64 = AtomicU64::new(0);
+    pub(super) static NOT_COMMITTED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static NOT_RW: AtomicU64 = AtomicU64::new(0);
+    pub(super) static LAST_PROTECT: AtomicU64 = AtomicU64::new(0);
+    pub(super) static PROTECT_FAILED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static OPENED: AtomicU64 = AtomicU64::new(0);
+    pub(super) fn add(c: &AtomicU64) { c.fetch_add(1, Relaxed); }
+    pub(super) fn log() {
+        let n = QUERIES.load(Relaxed);
+        if !(n.is_power_of_two() || n % 4096 == 0) {
+            return;
+        }
+        let g = |c: &AtomicU64| c.load(Relaxed);
+        crate::loader::log(&format!(
+            "section watch census: {n} queries ({} not a view), blocks {} clean (skipped) / {} reported; reported blocks {} guarded, unguarded: {} pinned, {} device pages, {} not committed, {} not read-write (last protect {:#x}), {} VirtualProtect failed; {} opened by a write",
+            g(&NOT_VIEW), g(&CLEAN), g(&REPORTED), g(&GUARDED), g(&PINNED), g(&DEVICE), g(&NOT_COMMITTED), g(&NOT_RW), g(&LAST_PROTECT), g(&PROTECT_FAILED), g(&OPENED)));
+    }
+}
+
 pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> {
+    if enabled() && start < end && !is_view(start) {
+        census::add(&census::NOT_VIEW);
+    }
     if !enabled() || start >= end || !is_view(start) {
         return None;
     }
+    census::add(&census::QUERIES);
     install();
     let mut out = Vec::new();
     // Blocks to report and guard, picked under a short hold.
@@ -106,7 +139,10 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
         let g = slot.get_or_insert_with(Guards::default);
         let mut block = start & !(BLOCK - 1);
         while block < end {
-            if !g.clean.contains_key(&block) {
+            if g.clean.contains_key(&block) {
+                census::add(&census::CLEAN);
+            } else {
+                census::add(&census::REPORTED);
                 let from = block.max(start & !0xfff);
                 let to = (block + BLOCK).min(end);
                 let pages = (to - from).div_ceil(0x1000);
@@ -124,7 +160,12 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
     // filtered without it. A write between the report and the guard was
     // made before the caller reads the block, so it is not lost.
     for block in taken {
-        if crate::device_pages::covers(block) || pinned(block) {
+        if crate::device_pages::covers(block) {
+            census::add(&census::DEVICE);
+            continue;
+        }
+        if pinned(block) {
+            census::add(&census::PINNED);
             continue;
         }
         let aliases: Vec<usize> = crate::physical_pages::aliases(block).into_iter()
@@ -137,6 +178,7 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
             protect(g, block, &aliases);
         }
     }
+    census::log();
     Some(out)
 }
 
@@ -155,6 +197,12 @@ fn protect(g: &mut Guards, block: usize, aliases: &[usize]) {
             || info.Protect & 0xff != PAGE_READWRITE
         {
             if a == block {
+                if info.State != MEM_COMMIT {
+                    census::add(&census::NOT_COMMITTED);
+                } else {
+                    census::add(&census::NOT_RW);
+                    census::LAST_PROTECT.store(u64::from(info.Protect), std::sync::atomic::Ordering::Relaxed);
+                }
                 break;
             }
             continue;
@@ -163,6 +211,7 @@ fn protect(g: &mut Guards, block: usize, aliases: &[usize]) {
         if unsafe { VirtualProtect(a as *const c_void, BLOCK, (info.Protect & !0xff) | PAGE_READONLY, &mut old) } != 0 {
             done.push((a, old));
         } else if a == block {
+            census::add(&census::PROTECT_FAILED);
             break;
         }
     }
@@ -171,6 +220,7 @@ fn protect(g: &mut Guards, block: usize, aliases: &[usize]) {
             g.alias_of.insert(a, block);
         }
         g.clean.insert(block, done);
+        census::add(&census::GUARDED);
     } else {
         for (a, old) in done {
             let mut was = 0;
@@ -271,6 +321,9 @@ fn install() {
         let mut slot = lock();
         let ours = slot.as_mut().is_some_and(|g| open(g, at));
         drop(slot);
+        if ours {
+            census::add(&census::OPENED);
+        }
         if !ours && enabled() && is_view(at) {
             // A write AV on a view page we do not guard: log the first few.
             static LOST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
