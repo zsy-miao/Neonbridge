@@ -1,0 +1,48 @@
+# Neonbridge launcher spec for vendor/belobug: Belobug's VIctory-Belobug-AMD, a
+# victory fork vendored clean (README.md:202-203 build and run). Its claim:
+# the world renders lit with textures, people, vehicles, water and sky at 3-5 fps
+# on an RX 9070 XT; the depth-shaded ambient light most forks copy starts here.
+# No rt patch: rt-victory.patch does not apply to this tree (draw.rs, list.rs,
+# pipeline/library.rs moved) and the tree runs rays off, as its README says.
+name = "belobug"
+about = "VIctory-Belobug-AMD 01aadd1 (GPL-3.0), unverified here: claims a lit world with vehicles at 3-5 fps (AMD)"
+upstream = "https://github.com/Belobug/VIctory-Belobug-AMD"
+build = ["cargo", "build", "--release", "-p", "victory", "--features", "diagnostics", "--locked"]
+watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
+exe = "target/release/victory.exe"
+run = ["run", "{game_exe}", "--execute", "--console", "series-x"]
+prewarm = ["translate", "{game}", "--jobs", "{jobs}"]
+game_env = "VICTORY_GAME_DIR"
+cache_env = "VICTORY_CACHE_DIR"
+agility = false
+
+options = [
+  "VICTORY_AMBIENT=<level>|off (default 0.6): README.md:40",
+  "VICTORY_AMBIENT_TINT=r,g,b: README.md:41",
+  "VICTORY_AMBIENT_SHADE=strength,radius: depth-based ambient shade, README.md:43",
+  "VICTORY_ASYNC_SUBMIT=1: README.md:68",
+  "VICTORY_RAYS=1: ray-tracing builders translate and run (unstable), README.md:125",
+]
+[env]
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family (storage/settings identical across trees)
+VICTORY_PRESS_FILE = "{press}"
+
+# Keyboard as the gamepad, shown by the controls overlay (F1). From
+# crates/victory-hle/src/modules/gameinput.rs FALLBACK_BUTTONS and fallback();
+# a real controller plays as well.
+[controls]
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter"
+b = "Backspace"
+x = "X"
+y = "Y"
+lb = "Q"
+rb = "E"
+lt = "Z"
+rt = "C"
+ls = "F"
+rs = "H"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

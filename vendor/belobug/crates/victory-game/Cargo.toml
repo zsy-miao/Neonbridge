@@ -1,0 +1,15 @@
+[package]
+name = "victory-game"
+description = "Everything specific to Grand Theft Auto VI: its containers, build identities, patches."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+memchr.workspace = true
+miniz_oxide.workspace = true
+
+[lints]
+workspace = true
