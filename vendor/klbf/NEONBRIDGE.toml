@@ -19,14 +19,14 @@ cache_env = "VICTORY_CACHE_DIR"
 agility = false
 
 options = [
-  "VICTORY_FFX_DIR=<FidelityFX SDK>\Kits\FidelityFX\signedbin: AMD FSR DLLs, README.md:119",
+  "VICTORY_FFX_DIR=<FidelityFX SDK>\\Kits\\FidelityFX\\signedbin: AMD FSR DLLs, README.md:119",
   "VICTORY_LATE_WAIT=0: if the device is lost after the world loads, README.md:158",
   "VICTORY_PAGE_LIST=enqueue|submit|late, README.md:98",
 ]
-preset_fsr = ["--console=series-s"]   # README.md:150; set VICTORY_FFX_DIR first (README.md:119)
+preset_fsr = ["--console=series-s", "VICTORY_FFX_DIR=%LOCALAPPDATA%\\6ixpack\\ffx"]   # README.md:150, :119; AMD FidelityFX SDK v2.4.0 signedbin DLLs (loader, upscaler, framegeneration)
 
 [env]
-VICTORY_DATA_DIR = "%LOCALAPPDATA%\6ixpack\save"   # Neonbridge: one save/settings folder for the victory family
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family
 VICTORY_SHADER_OPT = "0"   # README.md:141-148, its play settings
 VICTORY_SKIP_PIPELINES = "39f0e9aeb156a61c"   # docs/klbf/skip-amd.txt
 VICTORY_LATE_WAIT = "1"
