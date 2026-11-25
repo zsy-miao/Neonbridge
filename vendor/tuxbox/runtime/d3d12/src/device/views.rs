@@ -4,6 +4,7 @@ mod cbv_snapshot;
 mod shadow;
 pub(super) use byte_offset::AddressViews;
 pub(crate) use shadow::Shadows;
+pub(crate) use shadow::{uav_remark, uav_submitted, uav_view, uav_copy};
 
 use super::{Device, identity, resource};
 use crate::proxy::fail_call;
@@ -1121,6 +1122,7 @@ pub(super) unsafe extern "system" fn uav(
     let buffer = unsafe { view_resource(device, object, desc, handle) };
     let buffer = uav_alias.as_ref().map(|(alias, _)| alias).or(buffer);
     if let Some(resource) = buffer { shadow::mark_written(device, resource.as_raw()); }
+    shadow::uav_view(handle.ptr, buffer.map(|r| r.as_raw()));
     // View marks (view_marks.rs): a UAV of a writable shadow's copy marks
     // the pages it writes; its byte offset in the copy is known for raw and
     // structured views (a typed one gives the shadow's marks up).
@@ -1795,6 +1797,7 @@ pub(super) unsafe extern "system" fn address_uav(
         }
     }
     shadow::mark_written(device, entry.native.as_raw());
+    shadow::uav_view(handle.ptr, Some(entry.native.as_raw()));
     super::view_marks::write(handle.ptr, shadow::marks_entry(device, entry.native.as_raw(), Some(unsafe { view.Anonymous.Buffer.FirstElement } * element)));
     super::raw_views::uav(&mut view, false);
     unsafe { device.native.CreateUnorderedAccessView(Some(&entry.native), None, Some(&view), handle) };

@@ -90,6 +90,9 @@ pub(crate) struct RootSource {
     pub(crate) paged_tables: Option<Arc<[Option<u32>]>>,
     inline_ranges: Arc<[Vec<Range<u32>>]>,
     pub(crate) placed_tables: Option<Arc<[(u32, Range<u32>)]>>,
+    /// Finite UAV ranges of each descriptor table (slot, offsets in table):
+    /// the heap descriptors a draw or dispatch may write (shadow::mark_views).
+    pub(crate) uav_tables: Arc<[(u32, Range<u32>)]>,
 }
 
 impl RootSource {
@@ -114,6 +117,15 @@ impl RootSource {
                 (range.range_type <= 2 && range.num != u32::MAX).then_some(start..next)
             }).collect()
         }).collect::<Arc<[_]>>()).unwrap_or_default();
+        let uav_tables = root.as_ref().map(|signature| signature.params.iter().enumerate().flat_map(|(slot, param)| {
+            let RootParamKind::Table(ranges) = &param.kind else { return Vec::new(); };
+            let mut next = 0u32;
+            ranges.iter().filter_map(|range| {
+                let start = if range.offset_in_table == u32::MAX { next } else { range.offset_in_table };
+                next = start.checked_add(range.num)?;
+                (range.range_type == 1 && range.num != u32::MAX).then_some((slot as u32, start..next))
+            }).collect()
+        }).collect::<Arc<[_]>>()).unwrap_or_default();
         let paged_tables = root
             .map(|root| root.params.iter().map(|param| {
                 let RootParamKind::Table(ranges) = &param.kind else { return None };
@@ -132,6 +144,7 @@ impl RootSource {
             paged_tables,
             inline_ranges,
             placed_tables: placed_tables.map(Arc::from),
+            uav_tables,
             bytes: Arc::from(bytes),
             payload,
         }

@@ -16,7 +16,6 @@ Open work. Each item is tested in a run of its own.
 - `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
 
 ## d3d12
-- Exact shadow write-back per command list (parked): commands.rs records each list's descriptor-table ranges, root UAVs and copy/clear targets; shadow.rs writes back only the shadows whose UAV handles fall in them. 5c45bf2 made 55ecc4b's window opt-in (TUXBOX_SHADOW_RECENT=N).
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
 
 ## xshader

@@ -1012,6 +1012,76 @@ pub(crate) fn mark_written(device: &Device, resource: *mut core::ffi::c_void) {
 }
 
 /// TUXBOX_ROOT_UAV_MARK=0 leaves root UAV writes to the predicated write-back.
+/// TUXBOX_SHADOW_UAV_REMARK (default on, =0 off): a submitted draw or
+/// dispatch re-marks the shadow copies behind the UAV table ranges its bound
+/// root signature declares, so a heap UAV made once and bound every frame
+/// keeps being written back. Before, only creating the view (or a copy,
+/// clear or root UAV bind) marked it, and its write-backs stopped after
+/// TUXBOX_SHADOW_RECENT of them (test173). Exact per-list write-back as in
+/// ztrx victory-gpu (per-dispatch written-resource set; GPL-3.0, credit to
+/// its authors).
+pub(crate) fn uav_remark() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_SHADOW_UAV_REMARK") != Some("0"))
+}
+
+/// CPU descriptor handle -> the shadow copy its UAV views.
+static UAV_VIEWS: Mutex<std::collections::BTreeMap<usize, usize>> = Mutex::new(std::collections::BTreeMap::new());
+/// Copies submitted lists' UAVs reach, marked at the next write-back.
+static UAV_PENDING: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// A view was made at `handle`: a UAV of `resource`, or anything else (None).
+pub(crate) fn uav_view(handle: usize, resource: Option<*mut core::ffi::c_void>) {
+    if !uav_remark() {
+        return;
+    }
+    let mut views = lock(&UAV_VIEWS);
+    match resource {
+        Some(r) => { views.insert(handle, r as usize); }
+        None => { views.remove(&handle); }
+    }
+}
+
+/// `count` descriptors were copied from `src` to `dst`.
+pub(crate) fn uav_copy(dst: usize, src: usize, count: usize, stride: usize) {
+    if !uav_remark() || count == 0 || stride == 0 || dst == src {
+        return;
+    }
+    let mut views = lock(&UAV_VIEWS);
+    if views.is_empty() {
+        return;
+    }
+    let found: Vec<(usize, usize)> = views.range(src..src + count * stride)
+        .filter(|(h, _)| (*h - src).is_multiple_of(stride)).map(|(&h, &r)| (h - src, r)).collect();
+    let stale: Vec<usize> = views.range(dst..dst + count * stride).map(|(&h, _)| h).collect();
+    for h in stale {
+        views.remove(&h);
+    }
+    for (offset, r) in found {
+        views.insert(dst + offset, r);
+    }
+}
+
+/// A list bound UAV descriptors `ranges` (CPU handles): their copies are
+/// marked written before the next write-back.
+pub(crate) fn uav_submitted(ranges: &[std::ops::Range<usize>]) {
+    if !uav_remark() || ranges.is_empty() {
+        return;
+    }
+    let views = lock(&UAV_VIEWS);
+    if views.is_empty() {
+        return;
+    }
+    let mut pending = lock(&UAV_PENDING);
+    for range in ranges {
+        for (_, &r) in views.range(range.clone()) {
+            if pending.len() < 1 << 16 && !pending.contains(&r) {
+                pending.push(r);
+            }
+        }
+    }
+}
+
 fn root_uav_mark() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_UAV_MARK") != Some("0"))
@@ -1153,6 +1223,12 @@ fn hash_dirty_only() -> bool {
 
 unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> Result<()> {
     let shadows = &device.state.shadows;
+    if back && uav_remark() {
+        let pending = std::mem::take(&mut *lock(&UAV_PENDING));
+        for r in pending {
+            mark_written(device, r as *mut core::ffi::c_void);
+        }
+    }
     let kind = unsafe { queue.GetDesc() }.Type;
     if kind != D3D12_COMMAND_LIST_TYPE_DIRECT && kind != D3D12_COMMAND_LIST_TYPE_COMPUTE {
         return Ok(());

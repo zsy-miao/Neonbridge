@@ -829,6 +829,28 @@ impl Bindings {
         Some(())
     }
 
+    /// CPU descriptor ranges of the UAV table ranges the bound layout declares
+    /// (TUXBOX_SHADOW_UAV_REMARK): the views this draw or dispatch may write.
+    pub(super) fn uav_tables<const COMPUTE: bool>(
+        &self,
+        heap: &super::descriptors::ResourceHeap,
+        written: &mut Vec<std::ops::Range<usize>>,
+    ) {
+        let Some(layout) = (if COMPUTE { self.layout.as_ref() } else { self.graphics_layout.as_ref() }) else { return };
+        for (slot, range) in layout.uav_tables.iter() {
+            let base = if COMPUTE {
+                let Some(Argument::Table(base)) = self.compute_args.get(slot) else { continue };
+                base
+            } else {
+                let Some(base) = self.graphics_tables.get(slot) else { continue };
+                base
+            };
+            if let Some(cpu) = heap.table(base.native.ptr, range) {
+                super::descriptors::include_range(written, cpu);
+            }
+        }
+    }
+
     fn table_entry(&self, slot: u32, table_offset: u32) -> Result<D3D12_CPU_DESCRIPTOR_HANDLE> {
         let Some(Argument::Table(base)) = self.compute_args.get(&slot) else {
             return Err(E_INVALIDARG.into());
