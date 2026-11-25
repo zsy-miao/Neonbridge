@@ -1428,7 +1428,7 @@ impl Pool {
             if joined.is_err() || n <= 16 || n.is_power_of_two() {
                 // The OS call that failed (unmap, coalesce, map or commit), so
                 // an Err(87) names its step instead of only its code.
-                let step = if joined.is_err() { format!(", last failed OS step {:?}", shared_pages::take_os_error()) } else { String::new() };
+                let step = if joined.is_err() { format!(", last failed OS step {:?}{}", shared_pages::take_os_error(), imports::describe(lo, hi)) } else { String::new() };
                 crate::loader::log(&format!("join range {lo:#x}..{hi:#x} ({} views): {joined:?}{step} ({n} joins so far)", pieces.len()));
             }
         }
@@ -1468,6 +1468,22 @@ mod imports {
 
     /// Whether a live GPU heap import overlaps [lo, hi): its views are
     /// pinned, and Windows refuses to unmap them (error 87).
+    /// Imports whose last pin went, and when (for `describe`).
+    static GONE: Mutex<BTreeMap<(usize, usize), std::time::Instant>> = Mutex::new(BTreeMap::new());
+
+    /// test152 diagnostic: the live and recently released GPU imports over
+    /// [lo, hi), so a join whose unmap fails 87 names what may still pin it.
+    /// TUXBOX_JOIN87_DETAIL=0 off.
+    pub(super) fn describe(lo: usize, hi: usize) -> String {
+        if std::env::var("TUXBOX_JOIN87_DETAIL").is_ok_and(|v| v.trim() == "0") { return String::new(); }
+        let live: Vec<String> = RANGES.lock().unwrap_or_else(|e| e.into_inner()).iter()
+            .filter(|(k, _)| k.0 < hi && lo < k.1).take(4).map(|(k, v)| format!("{:#x}..{:#x} x{}", k.0, k.1, v.0)).collect();
+        let gone: Vec<String> = GONE.lock().unwrap_or_else(|e| e.into_inner()).iter()
+            .filter(|(k, _)| k.0 < hi && lo < k.1).take(4)
+            .map(|(k, t)| format!("{:#x}..{:#x} {} ms ago", k.0, k.1, t.elapsed().as_millis())).collect();
+        format!("; imports live over it [{}], released [{}] (TUXBOX_JOIN87_DETAIL=0 off)", live.join(", "), gone.join(", "))
+    }
+
     pub(super) fn live_over(lo: usize, hi: usize) -> bool {
         let ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner());
         ranges.range(..(hi, 0)).any(|(&(a, b), &(n, _))| n != 0 && a < hi && lo < b)
@@ -1486,6 +1502,10 @@ mod imports {
             if entry.0 == 0 {
                 ranges.remove(&key);
                 drop(ranges);
+                let mut gone = GONE.lock().unwrap_or_else(|e| e.into_inner());
+                if gone.len() >= 4096 { gone.clear(); }
+                gone.insert(key, std::time::Instant::now());
+                drop(gone);
                 stale::released(key);
             }
         }
