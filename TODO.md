@@ -28,7 +28,6 @@ Open work. Each item is tested in a run of its own.
 
 ## xshader
 - Five programs fail DXC with "^". Name them from the next prewarm's failure log (9a70469).
-- Partition classifier (3d8ad77) records tb_partition; nothing translates by it yet.
 - xcl 7bea019 (split-wave64 mask liveness per block).
 - Gaps:
   - descriptors read as data (at least refuse them)
@@ -43,6 +42,7 @@ Open work. Each item is tested in a run of its own.
 - BVH intersection (7 refusals). Needs console BVH nodes from the runtime.
 
 ## Research
+- Partition classifier (3d8ad77) records tb_partition; no ref translates by it (xcl declares the module, never calls it). Parked until one does.
 - xcl b4019c4 + 7bea019: split-wave64 mask liveness (masks read only lane by lane stay in their half; 7bea019 is that solver's per-block speed-up). Ours exchanges every mask (split_wave64.rs:12). A port of x64_masks.rs (1.2k lines, x64-recompiler IR) to hlsl is worth it only if exchange cost shows in a wave64 profile.
 - The master runs the ref watch.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
