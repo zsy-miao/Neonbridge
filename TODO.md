@@ -7,7 +7,6 @@ Open work. Each item is tested in a run of its own.
 - xmem page join fails with Err(87) (71ac658 logs the failing OS step).
 - CopyPageMappingsBatchX and unmap/split failures (838c433, 3df971b narrowed the imports; leonida slot-31 CPU-view mirror is the ref model).
 - Presents stop at #1959 / #1600, at game+0x23cf735. Needs a d3d12_xs pdb.
-- VItoriaBr b62bbc0 (descriptor addresses by computed heap index, SLOT_VIEWS): waits on a runtime per-slot view-address table.
 - Pending A/B runs: `TUXBOX_DEPTH_TWINS=1` (close-time pass landed, 86f630f late_pass); `TUXBOX_ROOT_VIEW_TABLES=1` (bind half landed, 92da1f3; default-on after its run); `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_WAIT_HOIST` vs ad8e641; `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_PRESENT_RELEASE_ALL=1` (five-star b828157); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
@@ -22,7 +21,6 @@ Open work. Each item is tested in a run of its own.
 - Exact shadow write-back per command list (parked): commands.rs records each list's descriptor-table ranges, root UAVs and copy/clear targets; shadow.rs writes back only the shadows whose UAV handles fall in them. 5c45bf2 made 55ecc4b's window opt-in (TUXBOX_SHADOW_RECENT=N).
 - fxceless alias remainder (gaps file item 2): an R9G9B9E5 view over a UAV-only R32_UINT texture that compute writes. 5e3a1ee covers only render-target owners, and UAV-only images cannot be castable (allocation.rs:37). Port VIctory-fxceless resource.rs:1187-1237: per-subresource GPU copies through a buffer when the alias is read after the owner was written.
 - Device memory went over budget in test145 (7913 of 6994 MiB) and free commit fell to 356 MiB.
-- VIctory cd94d35 and 940d32f view_marks page marks: the d3d12 bitmap contract first, then the xshader half.
 
 ## xshader
 - Five programs fail DXC with "^". Name them from the next prewarm's failure log (9a70469).
