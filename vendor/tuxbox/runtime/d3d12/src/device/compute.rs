@@ -596,14 +596,14 @@ unsafe fn make_compute(
     // A stage that reads typed buffer formats gets the view_formats root SRV.
     let reflected = match (&translation, root) {
         (Some(code), Some(root)) if scene_root.is_none()
-            && (super::desc_table::declared(code) || super::view_formats::declared(code)) =>
+            && (super::desc_table::declared(code) || super::view_formats::declared(code) || super::slot_views::declared(code)) =>
         {
             let samplers = super::desc_table::declared(code);
             if samplers {
                 this.state.desc_table.literals(&this.native, &tuxbox_dxbc::inline_sampler::literal_words(bytes));
             }
             match super::compute_table::with_runtime_tables(
-                &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code),
+                &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code), super::slot_views::declared(code),
             ) {
                 Ok(table) => Some(table),
                 Err(error) => return error.code(),

@@ -642,13 +642,17 @@ unsafe fn create(
         .filter(|(i, _)| *i != 5)
         .filter_map(|(_, stage)| match *stage { Some((_, Some(index))) => Some(index), _ => None })
         .any(|index| super::view_formats::declared(&stages[index]));
-    if let (true, Some(root), Some(field)) = (!declaring.is_empty() || reads_formats, guest_root, root_record) {
+    let reads_slots = original.iter().enumerate()
+        .filter(|(i, _)| *i != 5)
+        .filter_map(|(_, stage)| match *stage { Some((_, Some(index))) => Some(index), _ => None })
+        .any(|index| super::slot_views::declared(&stages[index]));
+    if let (true, Some(root), Some(field)) = (!declaring.is_empty() || reads_formats || reads_slots, guest_root, root_record) {
         let words: Vec<_> = declaring.iter().flat_map(|code| tuxbox_dxbc::inline_sampler::literal_words(code)).collect();
         if !words.is_empty() {
             device.state.desc_table.literals(&device.native, &words);
         }
         let table = super::compute_table::with_runtime_tables(
-            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats)?;
+            &device.native, pipeline.raster_table.as_ref(), root, node_mask, !declaring.is_empty(), reads_formats, reads_slots)?;
         unsafe { field.write(table.native.as_raw()) };
         binding_root = Some(table.layout.payload().to_vec());
         pipeline.raster_table = Some(table);

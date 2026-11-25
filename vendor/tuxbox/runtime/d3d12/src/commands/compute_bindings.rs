@@ -402,6 +402,29 @@ impl Bindings {
             }
             None => None,
         };
+        // The buffer view address table of the same heap (slot_views).
+        let slot_views = match table.slot_views {
+            Some(slot) => {
+                let owner = guest.parent.as_ref().ok_or(E_INVALIDARG)?;
+                let stride = heap.table_stride();
+                let (start, count) = match arena {
+                    Some(arena) => {
+                        let visible = arena.visible();
+                        (unsafe { visible.GetCPUDescriptorHandleForHeapStart() }.ptr, unsafe { visible.GetDesc() }.NumDescriptors)
+                    }
+                    None => (heap.cpu.start, (heap.cpu.len() / stride.max(1)) as u32),
+                };
+                let (buffer, address) = unsafe { crate::device::slot_views_address(owner, start, count, stride)? };
+                let held_buffer = ID3D12Pageable::from(buffer);
+                let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+                if !held.contains(&held_buffer) {
+                    held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                    held.push(held_buffer);
+                }
+                Some((slot, address))
+            }
+            None => None,
+        };
         let list = &guest.native;
         unsafe {
             if COMPUTE {
@@ -418,6 +441,9 @@ impl Bindings {
                     list.SetComputeRootShaderResourceView(slot, address);
                 }
                 if let Some((slot, address)) = view_formats {
+                    list.SetComputeRootShaderResourceView(slot, address);
+                }
+                if let Some((slot, address)) = slot_views {
                     list.SetComputeRootShaderResourceView(slot, address);
                 }
                 dispatch();
@@ -443,6 +469,9 @@ impl Bindings {
                     list.SetGraphicsRootShaderResourceView(slot, address);
                 }
                 if let Some((slot, address)) = view_formats {
+                    list.SetGraphicsRootShaderResourceView(slot, address);
+                }
+                if let Some((slot, address)) = slot_views {
                     list.SetGraphicsRootShaderResourceView(slot, address);
                 }
                 dispatch();

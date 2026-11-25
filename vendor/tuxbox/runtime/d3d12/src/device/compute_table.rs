@@ -19,6 +19,9 @@ pub(crate) struct ComputeTable {
     /// Root slot of the root SRV holding typed view formats per heap slot
     /// (t2, space32766; see view_formats).
     pub(crate) view_formats: Option<u32>,
+    /// Root slot of the root SRV holding buffer view addresses per heap slot
+    /// (t3, space32766; see slot_views).
+    pub(crate) slot_views: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -324,6 +327,7 @@ fn reflected_tables(
             index_map,
             desc_table: None,
             view_formats: None,
+            slot_views: None,
         })))
     }
 }
@@ -424,6 +428,7 @@ fn extend_root_from(
             index_map: index_map.then_some(IndexMapBinding { slot: source.NumParameters, scalar_word: 0, scalar_mask: 0 }),
             desc_table: None,
             view_formats: None,
+            slot_views: None,
         })))
     }
 }
@@ -434,11 +439,12 @@ fn extend_root_from(
 /// (`formats`). Existing parameters keep their slots.
 pub(super) fn with_runtime_tables(
     device: &ID3D12Device, table: Option<&Arc<ComputeTable>>, guest: &RootSource, node: u32,
-    desc: bool, formats: bool,
+    desc: bool, formats: bool, slots: bool,
 ) -> Result<Arc<ComputeTable>> {
     let add_desc = desc && !table.is_some_and(|t| t.desc_table.is_some());
     let add_formats = formats && !table.is_some_and(|t| t.view_formats.is_some());
-    if let Some(table) = table.filter(|_| !add_desc && !add_formats) {
+    let add_slots = slots && !table.is_some_and(|t| t.slot_views.is_some());
+    if let Some(table) = table.filter(|_| !add_desc && !add_formats && !add_slots) {
         return Ok(table.clone());
     }
     let root_srv = |register: u32, space: u32| D3D12_ROOT_PARAMETER1 {
@@ -474,6 +480,10 @@ pub(super) fn with_runtime_tables(
             parameters.push(root_srv(super::view_formats::REGISTER, super::view_formats::SPACE));
             Some(parameters.len() as u32 - 1)
         } else { table.and_then(|t| t.view_formats) };
+        let slots_slot = if add_slots {
+            parameters.push(root_srv(super::slot_views::REGISTER, super::slot_views::SPACE));
+            Some(parameters.len() as u32 - 1)
+        } else { table.and_then(|t| t.slot_views) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
         let mut blob = None;
@@ -490,6 +500,7 @@ pub(super) fn with_runtime_tables(
             index_map: table.and_then(|t| t.index_map),
             desc_table: desc_slot,
             view_formats: formats_slot,
+            slot_views: slots_slot,
         }))
     }
 }
@@ -592,6 +603,7 @@ fn append_corroborated_ranges(
             index_map: None,
             desc_table: None,
             view_formats: None,
+            slot_views: None,
         })))
     }
 }

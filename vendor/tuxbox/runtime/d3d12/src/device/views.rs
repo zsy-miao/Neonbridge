@@ -390,6 +390,15 @@ pub(crate) unsafe fn desc_table_address(owner: &windows::core::IUnknown) -> wind
     device.state.desc_table.address(&device.native)
 }
 
+/// The slot view address table of the shader-visible heap at `start` and its
+/// GPU address, for a draw being recorded (slot_views).
+pub(crate) unsafe fn slot_views_address(
+    owner: &windows::core::IUnknown, start: usize, count: u32, stride: usize,
+) -> windows::core::Result<(ID3D12Resource, u64)> {
+    let device = unsafe { &*owner.as_raw().cast::<Device>() };
+    super::slot_views::address(&device.native, start, count, stride)
+}
+
 /// The typed view format table of the shader-visible heap at `start` and its
 /// GPU address, for a draw being recorded (view_formats).
 pub(crate) unsafe fn view_formats_address(
@@ -551,7 +560,7 @@ fn buffer_stride(view: &D3D12_SHADER_RESOURCE_VIEW_DESC) -> Option<u32> {
     element_stride(view.Format.0, buffer.StructureByteStride)
 }
 
-fn element_stride(format: i32, structure_stride: u32) -> Option<u32> {
+pub(super) fn element_stride(format: i32, structure_stride: u32) -> Option<u32> {
     if structure_stride != 0 {
         return (structure_stride <= 2048).then_some(structure_stride);
     }
@@ -768,6 +777,7 @@ pub(super) unsafe extern "system" fn address_srv(
     let native = existing.as_ref().map(|e| &e.native).or_else(|| placed.as_ref().map(|p| &p.native)).or_else(|| imported.as_ref().map(|e| &e.native));
     crate::diagnostics::display::texture_view(handle.ptr, native, Some(view.Format.0));
     super::view_formats::write(handle.ptr, super::view_formats::srv_code(Some(&view)));
+    super::slot_views::write(handle.ptr, super::slot_views::srv_entry(desc.address, Some(&desc.view)));
     if let Some((mode, offset, stride)) = byte_view {
         mode.create_srv(device, native.expect("buffer import retained"), view, offset, stride, handle)
             .unwrap_or_else(|e| fail_call(format_args!("byte-offset SRV at {:#x} offset={offset} stride={stride}: {:?}", desc.address, e.code())));
@@ -874,6 +884,7 @@ pub(super) unsafe extern "system" fn srv(
     let mut alias = None;
     let mut byte_view = None;
     let mut adjusted;
+    let title_view = unsafe { desc.as_ref() }.copied();
     let desc = if let Some(super::Backing::Addressed(address, original)) = proxy.map(|p| &p.state.backing)
         && address.buffer_offset != 0
     {
@@ -917,6 +928,7 @@ pub(super) unsafe extern "system" fn srv(
     crate::diagnostics::a8::srv(original_view.as_ref(), resource, unsafe { desc.as_ref() }.map_or(0, |view| view.Format.0 as u32));
     crate::diagnostics::display::texture_view(handle.ptr, resource, unsafe { desc.as_ref() }.map(|view| view.Format.0));
     super::view_formats::write(handle.ptr, super::view_formats::srv_code(unsafe { desc.as_ref() }));
+    super::slot_views::write(handle.ptr, super::slot_views::srv_entry(super::slot_views::title_base(proxy), title_view.as_ref()));
     let texture = proxy.and_then(|resource| resource.state.placed());
     let scene = device.state.blas.scene_view(proxy, unsafe { desc.as_ref() });
     device.state.blas.views.store(handle.ptr, scene);
@@ -967,6 +979,7 @@ pub(super) unsafe extern "system" fn uav(
     super::view_formats::write(handle.ptr, super::view_formats::uav_code(unsafe { desc.as_ref() }));
     let owner = identity(device).as_raw();
     let proxy = unsafe { super::resource_proxy(object, owner) };
+    super::slot_views::write(handle.ptr, super::slot_views::uav_entry(super::slot_views::title_base(proxy), unsafe { desc.as_ref() }));
     let placed = proxy.and_then(|p| p.state.placed());
     let window = proxy.and_then(|p| p.state.buffer_window());
     let counter_window = unsafe { super::resource_proxy(counter, owner) }.and_then(|p| p.state.buffer_window());
@@ -1564,6 +1577,7 @@ pub(super) unsafe extern "system" fn address_uav(
     let mut view = desc.view;
     crate::diagnostics::display::texture_view(handle.ptr, None, None);
     super::view_formats::write(handle.ptr, super::view_formats::uav_code(Some(&view)));
+    super::slot_views::write(handle.ptr, super::slot_views::uav_entry(desc.address, Some(&desc.view)));
     device.state.blas.views.store(handle.ptr, None);
     device.state.placements.views.set(handle.ptr, None, true);
     if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
