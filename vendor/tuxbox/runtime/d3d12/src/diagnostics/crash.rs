@@ -446,6 +446,19 @@ fn subrender_lines(base: usize, read: &dyn Fn(usize, usize) -> Option<u64>) -> V
         "subrender: channel 0: fence {}, token {}, indices {}/{}, ring credits {}, ring index {}",
         f(read(channel + 0x10, 8)), f(read(channel + 0x20, 8)), f(read(channel + 0x5038, 4)),
         f(read(channel + 0x503c, 4)), f(read(base + 0x75e_5ed8, 8)), f(read(base + 0x75e_5ed4, 4))));
+    // The deferred submitter (0x2481e90) sleeps at 0x2481f73 on its record
+    // count [this+0x1b38] (high dword: records posted) and returns the
+    // ring credits above after each batch; r14b there is only "the batch
+    // reached the queue end" (rbp == rsi), title data. Credits 0 with
+    // records 0 here is a record taken but never posted.
+    let submitter = super::memwatch::SUBMITTER.load(Ordering::Relaxed);
+    if submitter != 0 {
+        out.push(format!(
+            "subrender: submitter {submitter:#x}: records word {} (+0x1b38), lock {} (+0x1b10)",
+            f(read(submitter + 0x1b38, 8)), f(read(submitter + 0x1b10, 8))));
+    } else {
+        out.push("subrender: submitter not seen yet (the credit watch records it at its first return)".into());
+    }
     for i in 0..8usize {
         let g = base + 0x9c3_be78 + i * 0x30;
         out.push(format!(

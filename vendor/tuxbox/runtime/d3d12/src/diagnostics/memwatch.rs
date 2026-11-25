@@ -32,6 +32,9 @@ static HIT_CAP: AtomicU32 = AtomicU32::new(64);
 static CREDITS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static WRITERS: std::sync::Mutex<Vec<(usize, u32)>> = std::sync::Mutex::new(Vec::new());
 static TAKES: AtomicU32 = AtomicU32::new(0);
+/// The deferred submitter (game+0x2481e90's `this`, in rbx at the credit
+/// return 0x24825a7), for the stall dump's record-count line.
+pub(crate) static SUBMITTER: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn start() {
     let base = unsafe { GetModuleHandleW(None) }.map_or(0, |m| m.0 as usize);
@@ -200,6 +203,9 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
             TAKES.fetch_add(1, Ordering::Relaxed);
             c.Dr6 = 0;
             return CONTINUE_EXECUTION;
+        }
+        if rva == 0x248_25a7 {
+            SUBMITTER.store(c.Rbx as usize, Ordering::Relaxed);
         }
         // try_lock: a writer interrupted while logging must not deadlock.
         let Ok(mut writers) = WRITERS.try_lock() else {
