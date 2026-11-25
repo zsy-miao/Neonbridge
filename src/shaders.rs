@@ -1443,7 +1443,23 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                     }
                     running.fetch_add(1, Ordering::AcqRel);
                     prewarm_job(Some(key));
-                    let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail));
+                    // A panic inside one compile used to end its worker thread
+                    // without counting the job or the worker: the progress loop
+                    // then waited for `finished` forever (the last --prewarm sat
+                    // at 1704/1705 with fe9c9850's work dir left behind). It is a
+                    // failure of that program now. NEONBRIDGE_PREWARM_CATCH_PANIC=0
+                    // lets it unwind as before.
+                    let outcome = if std::env::var("NEONBRIDGE_PREWARM_CATCH_PANIC").as_deref() == Ok("0") {
+                        compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail))
+                    } else {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail))))
+                            .unwrap_or_else(|panic| {
+                                let msg = panic.downcast_ref::<String>().cloned()
+                                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                                    .unwrap_or_else(|| "unknown panic".into());
+                                Outcome::Failed(format!("the launcher panicked compiling it: {msg}"))
+                            })
+                    };
                     prewarm_job(None);
                     note_times(&outcome, &key);
                     running.fetch_sub(1, Ordering::AcqRel);
