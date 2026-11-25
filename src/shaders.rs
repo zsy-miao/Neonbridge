@@ -1029,10 +1029,11 @@ fn remove_request(path: &Path) {
 fn archive_request(path: &Path, name: &str, archive: &Path) {
     // The title asked for it: mark it for the next launch's seen prewarm.
     if let Some(seen) = archive.parent().map(|r| r.join("seen")) {
-        let _ = fs::create_dir_all(&seen).and_then(|_| fs::write(seen.join(name), b""));
+        let _ = fs::create_dir_all(&seen);
     }
     let dest = archive.join(name);
     if fs::symlink_metadata(&dest).is_ok() {
+        mark_seen(archive, name);
         return;
     }
     let tmp = archive.join(format!("{name}.{}.tmp", std::process::id()));
@@ -1048,6 +1049,26 @@ fn archive_request(path: &Path, name: &str, archive: &Path) {
     };
     if copied.and_then(|_| fs::rename(&tmp, &dest)).is_err() {
         remove_request(&tmp);
+    }
+    mark_seen(archive, name);
+}
+
+/// `seen/<name>` for an archived request: a hard link to its archive copy, so
+/// census and offline traces reading seen/ get the request's bytes (they were
+/// 0-byte name markers; only the name was ever read here). A directory
+/// request (a link pair) or a failed link keeps the empty marker.
+/// NEONBRIDGE_SEEN_LINKS=0 writes empty markers only.
+fn mark_seen(archive: &Path, name: &str) {
+    let Some(seen) = archive.parent().map(|r| r.join("seen")) else { return };
+    let (src, dst) = (archive.join(name), seen.join(name));
+    if fs::metadata(&dst).is_ok_and(|m| m.len() > 0) {
+        return;
+    }
+    let linked = std::env::var("NEONBRIDGE_SEEN_LINKS").as_deref() != Ok("0")
+        && fs::metadata(&src).is_ok_and(|m| m.is_file())
+        && { let _ = fs::remove_file(&dst); fs::hard_link(&src, &dst).is_ok() };
+    if !linked && fs::symlink_metadata(&dst).is_err() {
+        let _ = fs::write(&dst, b"");
     }
 }
 
@@ -1210,6 +1231,9 @@ fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet
     let names = |dir: &Path| fs::read_dir(dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
     let marked: std::collections::HashSet<String> = names(&seen).into_iter().filter(|n| valid_request(n).is_some()).collect();
     if !marked.is_empty() {
+        for n in &marked {
+            mark_seen(archive, n);
+        }
         return marked;
     }
     // The four newest toolchain dirs: older ones include whole-archive
@@ -1230,7 +1254,7 @@ fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet
         .filter(|n| valid_request(n).is_some_and(|(k, _)| keys.contains(k))).collect();
     if fs::create_dir_all(&seen).is_ok() {
         for n in &found {
-            let _ = fs::write(seen.join(n), b"");
+            mark_seen(archive, n);
         }
     }
     found
