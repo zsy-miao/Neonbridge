@@ -246,10 +246,11 @@ impl Stream {
             super::stats::dsp::SHORTCUT.fetch_add(1, Ordering::Relaxed);
             // Zero the output where it lies inside the workspace; complete either way.
             let n = if inside(command.output, words) { words } else if inside(command.output, self.block) { self.block } else { 0 };
-            unsafe { (command.output as *mut f32).write_bytes(0, n) };
+            // Byte-wise: the title's output need not be f32-aligned (VIctory 643fc6d, GPL-3.0).
+            unsafe { (command.output as *mut u8).write_bytes(0, n * 4) };
             return unsafe { self.complete(seq) };
         }
-        unsafe { (command.output as *mut f32).write_bytes(0, self.block) };
+        unsafe { (command.output as *mut u8).write_bytes(0, self.block * 4) };
         unsafe { self.complete(seq) }
     }
 
