@@ -319,6 +319,7 @@ fn reflected_tables(
             desc.Anonymous.Desc_1_1.NumStaticSamplers = samplers.len() as u32;
         }
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let _padded = pad_root_constants(&mut desc);
         let mut blob = None;
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
@@ -423,6 +424,7 @@ fn extend_root_from(
             desc.Anonymous.Desc_1_1.pStaticSamplers = samplers.as_ptr();
             desc.Anonymous.Desc_1_1.NumStaticSamplers = samplers.len() as u32;
         }
+        let _padded = pad_root_constants(&mut desc);
         let mut blob = None;
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
@@ -518,6 +520,7 @@ pub(super) fn with_runtime_tables(
         } else { table.and_then(|t| t.quad_mask) };
         desc.Anonymous.Desc_1_1.NumParameters = parameters.len() as u32;
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let _padded = pad_root_constants(&mut desc);
         let mut blob = None;
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
@@ -623,6 +626,7 @@ fn append_corroborated_ranges(
             accessed_views.extend(views.into_iter().map(|range| (index, range)));
         }
         desc.Anonymous.Desc_1_1.pParameters = parameters.as_ptr();
+        let _padded = pad_root_constants(&mut desc);
         let mut blob = None;
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
@@ -690,4 +694,49 @@ pub(super) fn capture_stage_root(stage: &[u8], root: &RootSource) {
     if let Some(directory) = INPUTS.as_ref() {
         write(directory.join(format!("{shader}.dxbc")), stage);
     }
+}
+
+/// TUXBOX_ROOTCONST_PAD4=1 rounds every root-constant parameter of a host
+/// compute root up to whole 16-byte rows while the root stays within 64
+/// DWORDs. test140-153: four compute PSOs failed E_INVALIDARG on title roots
+/// whose b500 constants hold 1-3 DWORDs, while the translated cbuffer is at
+/// least one uint4; D3D12 refuses a root constant smaller than the shader's
+/// cbuffer. The title sets only its first N; the padding is never written.
+/// Opt-in (it changes root digests, so warm pipeline caches miss).
+/// Returns the parameter copy the description points at, kept alive until
+/// serialization.
+unsafe fn pad_root_constants(desc: &mut D3D12_VERSIONED_ROOT_SIGNATURE_DESC) -> Option<Vec<D3D12_ROOT_PARAMETER1>> {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOTCONST_PAD4") == Some("1")) || desc.Version != D3D_ROOT_SIGNATURE_VERSION_1_1 {
+        return None;
+    }
+    let d = unsafe { &mut desc.Anonymous.Desc_1_1 };
+    if d.pParameters.is_null() || d.NumParameters == 0 {
+        return None;
+    }
+    let mut params = unsafe { core::slice::from_raw_parts(d.pParameters, d.NumParameters as usize) }.to_vec();
+    let cost = |p: &D3D12_ROOT_PARAMETER1| match p.ParameterType {
+        D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS => unsafe { p.Anonymous.Constants.Num32BitValues },
+        D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE => 1,
+        _ => 2,
+    };
+    let mut total: u32 = params.iter().map(cost).sum();
+    let mut changed = false;
+    for p in params.iter_mut() {
+        if p.ParameterType != D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS {
+            continue;
+        }
+        let n = unsafe { p.Anonymous.Constants.Num32BitValues };
+        let padded = n.next_multiple_of(4);
+        if padded != n && total + (padded - n) <= 64 {
+            total += padded - n;
+            unsafe { p.Anonymous.Constants.Num32BitValues = padded };
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    d.pParameters = params.as_ptr();
+    Some(params)
 }
