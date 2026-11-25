@@ -12,13 +12,13 @@ const DEINTERLEAVED: u32 = 4;
 /// frames from first_frame on, deinterleaved when the connection asks, and a
 /// packet that cannot be decoded gives silence of the length asked for, not
 /// an error that may make the title stop the stream.
-/// Opt-in (TUXBOX_XAPU_EAGER=1) until a run proves it: audio is starved and
-/// the default stays the old strict answers (TOO_SMALL when the packet holds
-/// more than frame_count frames, BAD_PACKET with no output, always
-/// interleaved). Decoding already happens when the command is queued.
+/// Default-on (user order: fixes ship on); TUXBOX_XAPU_EAGER=0 keeps the old
+/// strict answers (TOO_SMALL when the packet holds more than frame_count
+/// frames, BAD_PACKET with no output, always interleaved). Decoding already
+/// happens when the command is queued.
 fn lenient() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_EAGER").is_ok_and(|v| v.trim() == "1"))
+    *ON.get_or_init(|| std::env::var("TUXBOX_XAPU_EAGER").map_or(true, |v| v.trim() != "0"))
 }
 
 /// TUXBOX_XAPU_STRICT=1: the old strict decode (TOO_SMALL past frame_count
