@@ -759,7 +759,18 @@ pub(super) unsafe extern "system" fn address_srv(
             (r.AllocationBase.addr(), r.BaseAddress.addr(), r.RegionSize, r.State.0, r.Protect.0)
         };
         let entry = match buffer_at(device, desc.address, resource_desc.Width, placement_stride, true, false) {
-            Ok(entry) => entry.expect("required buffer import"),
+            Ok(Some(entry)) => entry,
+            // A low V# none of ours (rebox 18c049c, TUXBOX_LOW_VSHARP_EMPTY)
+            // reads as empty: a null view, not the expect's fail-fast.
+            Ok(None) => {
+                device.state.imported_views.store(handle.ptr, None);
+                device.state.blas.views.store(handle.ptr, None);
+                device.state.placements.views.set(handle.ptr, None, false);
+                if super::heap::residency::tracking() { device.state.placements.render_views.set(handle.ptr, None); }
+                super::view_formats::write(handle.ptr, 0);
+                unsafe { device.native.CreateShaderResourceView(None, Some(&view), handle) };
+                return;
+            }
             Err(e) if !cbv_fallback() => fail_call(format_args!("import SRV at {:#x}, {} bytes stride={stride} fmt={} first={} count={} failed {:?} ({}; region {:#x?}, placement stride {})",
                 desc.address, resource_desc.Width, view.Format.0, buffer.FirstElement, buffer.NumElements, e.code(), mode.name(), region(), placement_stride)),
             // Title pages no heap opens (views that would not join): read the

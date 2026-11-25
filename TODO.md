@@ -39,7 +39,6 @@ Open work. Each item is tested in a run of its own.
 - The master runs the ref watch.
 - Open items to port (verdicts: side-session-notes refwatch-verify-verdicts.md):
   - ref watch (storage) to port:
-    - d3d12 (runtime, not xshader): rebox 18c049c (a guest buffer V# below 4 GiB that is not runtime GPU memory maps as empty: a float base word, 0x3f800000, faulted the GPU); our runtime has no such check.
     - d3d12 (Coder5): leonida d16eb1ff0 (a depth placement inside another one's extent gets its own image), 89fdb83e0 (a console DS texture with UAV is created without it); ScarlettCompat 93c0f96 (map the console layout word before CreatePlacedResourceX).
 
 ## Housekeeping
