@@ -2668,10 +2668,15 @@ fn prune_helpers(hlsl: &str) -> String {
     let mut live: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut todo: Vec<usize> = (0..chunks.len()).filter(|&c| chunks[c].0.is_none()).collect();
     let mut done = vec![false; chunks.len()];
+    // A chunk can define several helpers on one line (`HALF_HELPERS`
+    // joins them: `...}uint tb_bfe_i32(...) {...}uint tb_mulhi_u32(...)`):
+    // every `tb_*(` at brace depth 0 names the chunk.
     let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (c, (n, _)) in chunks.iter().enumerate() {
-        if let Some(n) = n {
-            by_name.entry(n).or_default().push(c);
+    for (c, (n, text)) in chunks.iter().enumerate() {
+        if n.is_some() {
+            for d in top_level_defs(text) {
+                by_name.entry(d).or_default().push(c);
+            }
         }
     }
     while let Some(c) = todo.pop() {
@@ -2689,6 +2694,36 @@ fn prune_helpers(hlsl: &str) -> String {
         if n.is_none() || done[c] {
             out.push_str(text);
         }
+    }
+    out
+}
+
+/// The `tb_*` names followed by `(` at brace depth 0 in `text`.
+fn top_level_defs(text: &str) -> Vec<&str> {
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    let (mut depth, mut i) = (0i64, 0);
+    while i < b.len() {
+        match b[i] {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b't' if depth == 0 && b[i..].starts_with(b"tb_") && (i == 0 || !is_ident(b[i - 1])) => {
+                let s = i;
+                while i < b.len() && is_ident(b[i]) {
+                    i += 1;
+                }
+                let mut j = i;
+                while j < b.len() && b[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if b.get(j) == Some(&b'(') {
+                    out.push(&text[s..i]);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
     }
     out
 }
