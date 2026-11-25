@@ -625,6 +625,15 @@ fn signed_add_overflow(a: &str, b: &str, sum: &str) -> String {
     format!("((~({a} ^ {b}) & ({a} ^ {sum})) >> 31)")
 }
 
+/// image_bvh_intersect_ray / image_bvh64_intersect_ray read BVH nodes from a raw
+/// guest address, which no binding reaches yet. Until the runtime binds BVH memory
+/// for five-star-recomp's rdna_bvh.hlsli (GPL-3.0, GPURT IntersectCommon model) to
+/// be copied, each test returns the no-hit result so the program translates (test153:
+/// 13 refusals). Rays then miss everything. TB_BVH_NO_HIT=0 refuses as before.
+fn bvh_no_hit() -> bool {
+    std::env::var("TB_BVH_NO_HIT").map_or(true, |v| v.trim() != "0")
+}
+
 /// Address dwords of a non-NSA MIMG instruction (RDNA2 ISA 8.2.1, image
 /// opcodes): offset, bias, compare, gradients, coordinates (DIM, with the
 /// slice and sample index), then LOD, clamp or mip. None where it is not
@@ -5724,6 +5733,7 @@ impl<'a> Emitter<'a> {
                         self.bsel.insert(idx, (rs, out));
                     }
                 }
+                Enc::Mimg if matches!(ins.op, 230 | 231) && bvh_no_hit() => continue,
                 Enc::Mimg if matches!(ins.op, 230 | 231) => {
                     return Err(format!(
                         "raw BVH node intersection requires traversal translation at {:#x}",
@@ -11674,6 +11684,16 @@ uint tb_fmac_half(uint a, uint b, uint c) {
     }
 
     fn emit_mimg(&mut self, idx: usize, ins: &Insn) -> Result<(), String> {
+        if matches!(ins.op, 230 | 231) && bvh_no_hit() {
+            // No-hit fallback: every node test returns 0xffffffff x4 (a missed box
+            // child / an instance node, five-star-recomp docs/ray-intersection.md), so
+            // traversal pops its stack and the ray misses.
+            let Some(Opnd::Vgpr(v)) = ins.dst.first().cloned() else { return Err("bvh: bad vdata".into()) };
+            for k in 0..4u8 {
+                self.wv(&Opnd::Vgpr(v + k), "0xffffffffu")?;
+            }
+            return Ok(());
+        }
         // gather4h / gather4h_pck / gather8h_pck fetch a horizontal row of texels,
         // not Gather's 2x2 footprint; refused until the row's position and rounding
         // are measured (xcl 61ce2f9, sennecools, PR #437, GPL-2, copied with credit).
