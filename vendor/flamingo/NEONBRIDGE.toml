@@ -24,6 +24,10 @@ options = [
   "VICTORY_AMBIENT_STUB=1, VICTORY_SHADOWMASK_STUB=1: ray-traced lighting stand-ins, README.md:79",
   "VICTORY_WIDE_TEXTURES=1 (victory-fork #768), README.md:74",
 ]
+# "visible": its ray-traced lighting stand-ins (README.md:79, crates/victory-gpu/src/shader_cache.rs:87); the
+# shadowed and indirect-lit passes write constants instead of the black left by rays not running.
+preset_visible = ["VICTORY_AMBIENT_STUB=1", "VICTORY_SHADOWMASK_STUB=1"]
+
 [env]
 VICTORY_RAYTRACING = "0"   # Neonbridge rt patch off, as in the leader
 VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family (storage/settings identical across trees)
