@@ -1061,6 +1061,10 @@ struct Emitter<'a> {
     /// ALU instructions reading a statically resolved descriptor's words as
     /// data (see `desc_as_data`).
     desc_data: BTreeSet<usize>,
+    /// During the descriptor dataflow: SGPRs whose descriptor tag at this point
+    /// survived a join only optimistically (another path had nothing known), with
+    /// that tag. A read of one is not counted in `desc_data` (`desc_data_exact`).
+    df_maybe: HashMap<u16, Sym>,
     /// S_BARRIERs reached inside a per-thread guard: a group sync there is
     /// non-uniform on the host, so they lower to a memory fence only.
     fence_only: BTreeSet<usize>,
@@ -1792,6 +1796,14 @@ fn heap_clamp_all() -> bool {
 /// refused ~630 programs whose reads are float VALU math, so the dataflow's
 /// optimistic descriptor tags reach SGPRs holding data; translated as before
 /// until that is told apart.
+/// Only descriptor tags known on every path into a read count as a descriptor
+/// read as data (`df_maybe`): the ~630 false refusals were tags the optimistic
+/// join kept for SGPRs that hold data on the other path. TB_DESC_DATA_EXACT=0
+/// counts every tag as before.
+fn desc_data_exact() -> bool {
+    std::env::var("TB_DESC_DATA_EXACT").map_or(true, |v| v.trim() != "0")
+}
+
 fn desc_as_data_refused() -> bool {
     std::env::var("TB_DESC_AS_DATA").is_ok_and(|v| v.trim() == "0")
 }
@@ -3923,6 +3935,7 @@ impl<'a> Emitter<'a> {
             hoisted_swizzle: None,
             loop_swizzles: BTreeSet::new(),
             desc_data: BTreeSet::new(),
+            df_maybe: HashMap::new(),
             fence_only: BTreeSet::new(),
             indexed_lane: false,
             single_wave32: false,
@@ -4356,6 +4369,7 @@ impl<'a> Emitter<'a> {
             lane_reads::entry(&mut entry);
         }
         states[0] = Some((entry, BTreeSet::new()));
+        let mut maybe_in: Vec<HashMap<u16, Sym>> = vec![HashMap::new(); ranges.len()];
         let mut work = vec![0usize];
         let mut budget = 20_000usize;
         // Registers whose incoming descriptors disagreed at a block. Without this the
@@ -4390,6 +4404,7 @@ impl<'a> Emitter<'a> {
             }
             budget -= 1;
             let (mut sym, mut written) = states[b].clone().unwrap();
+            self.df_maybe = maybe_in[b].clone();
             if let Err(e) = self.res_block(&program, &mut sym, &mut written, ranges[b].clone(), track_heap_origin) {
                 if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty() && v != "0") {
                     eprintln!("block {b} analysis error: {e}");
@@ -4400,7 +4415,11 @@ impl<'a> Emitter<'a> {
                 sym.clear();
                 written = (0u16..=105).collect();
             }
+            let mut maybe_out = std::mem::take(&mut self.df_maybe);
+            maybe_out.retain(|k, v| sym.get(k) == Some(v));
             for &s in &succs[b] {
+                let maybe_before = maybe_in[s].len();
+                let mut kept: Vec<(u16, Sym)> = maybe_out.iter().map(|(k, v)| (*k, *v)).collect();
                 let changed = match &mut states[s] {
                     slot @ None => {
                         let mut next = sym.clone();
@@ -4433,7 +4452,7 @@ impl<'a> Emitter<'a> {
                                 },
                                 // Known on one path only. A descriptor stays (see below);
                                 // anything else is dropped.
-                                None if optimistic_at(&a, s) => {}
+                                None if optimistic_at(&a, s) => kept.push((k, a)),
                                 None => {
                                     osym.remove(&k);
                                 }
@@ -4449,6 +4468,7 @@ impl<'a> Emitter<'a> {
                         for (k, v) in sym.iter() {
                             if optimistic_at(v, s) && !osym.contains_key(k) && !conflicts[s].contains(k) {
                                 osym.insert(*k, *v);
+                                kept.push((*k, *v));
                             }
                         }
                         if let Some(heap) = heap {
@@ -4458,6 +4478,11 @@ impl<'a> Emitter<'a> {
                         before != (osym.clone(), owr.len())
                     }
                 };
+                let osym = &states[s].as_ref().unwrap().0;
+                let m = &mut maybe_in[s];
+                for (k, v) in kept { m.insert(k, v); }
+                m.retain(|k, v| osym.get(k) == Some(v));
+                let changed = changed || m.len() != maybe_before;
                 if changed && !work.contains(&s) {
                     work.push(s);
                 }
@@ -4482,6 +4507,7 @@ impl<'a> Emitter<'a> {
         // Recording pass with the converged entry states.
         for (b, r) in ranges.iter().enumerate() {
             if let Some((mut sym, mut written)) = states[b].clone() {
+                self.df_maybe = maybe_in[b].clone();
                 self.res_block(&program, &mut sym, &mut written, r.clone(), track_heap_origin).map_err(|e| first_err.clone().unwrap_or(e))?;
             }
         }
@@ -6218,7 +6244,8 @@ impl<'a> Emitter<'a> {
 
                 _ => {
                     if matches!(ins.enc, Enc::Sop1 | Enc::Sop2 | Enc::Sopc | Enc::Sopk | Enc::Vop1 | Enc::Vop2 | Enc::Vop3 | Enc::Vopc)
-                        && ins.src.iter().filter_map(sg).any(|n| matches!(sym.get(&n), Some(Sym::Desc { .. } | Sym::Multi { .. })))
+                        && ins.src.iter().filter_map(sg).any(|n| matches!(sym.get(&n), Some(Sym::Desc { .. } | Sym::Multi { .. }))
+                            && !(desc_data_exact() && self.df_maybe.get(&n) == sym.get(&n)))
                     {
                         self.desc_data.insert(idx);
                     }
