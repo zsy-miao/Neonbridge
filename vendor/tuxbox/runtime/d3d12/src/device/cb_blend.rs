@@ -1,8 +1,9 @@
 //! Console colour-blend register words (CB_BLENDn_CONTROL) to a desktop blend
 //! state. Device slot 57 pipelines carry no D3D12_BLEND_DESC: their state
 //! block A holds the eight words at +0xD0 (Xbox2Windows e0b2e867 /
-//! cb_blend.h, MIT). CB_TARGET_MASK is not located, so every channel is
-//! written. TUXBOX_SLOT57_CB_BLEND=0 leaves slot 57 pipelines unblended.
+//! cb_blend.h, MIT). CB_TARGET_MASK sits at +0x78 of the same block, four
+//! bits per target (OpenScarlett d3d12_xs/device_x.cpp:7725-7737, MIT).
+//! TUXBOX_SLOT57_CB_BLEND=0 leaves slot 57 pipelines unblended.
 use windows::Win32::Foundation::{FALSE, TRUE};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
@@ -167,6 +168,14 @@ pub(super) fn decode(control: u32) -> Result<D3D12_RENDER_TARGET_BLEND_DESC, &'s
     Ok(desc)
 }
 
+/// Where CB_TARGET_MASK sits in state block A.
+const TARGET_MASK: usize = 0x78;
+
+/// TUXBOX_CB_TARGET_MASK=0 writes every channel of every target again.
+fn target_mask_on() -> bool {
+    crate::env_toggle!("TUXBOX_CB_TARGET_MASK") != Some("0")
+}
+
 /// The blend state from state block A's eight words. A refused word on any
 /// target leaves the whole pipeline unblended: Err((target, reason)).
 pub(super) fn state_block_blend(block: &[u8]) -> Result<D3D12_BLEND_DESC, (usize, &'static str)> {
@@ -179,6 +188,15 @@ pub(super) fn state_block_blend(block: &[u8]) -> Result<D3D12_BLEND_DESC, (usize
     for (n, word) in words.chunks_exact(4).enumerate() {
         let control = u32::from_le_bytes(word.try_into().unwrap());
         blend.RenderTarget[n] = decode(control).map_err(|reason| (n, reason))?;
+    }
+    // The console writes only the channels CB_TARGET_MASK enables; writing
+    // all of them overwrote what a pass meant to keep (OpenScarlett
+    // device_x.cpp:7735, RenderTargetWriteMask = mask >> (4 * target) & 0xF).
+    if target_mask_on() && let Some(mask) = block.get(TARGET_MASK..TARGET_MASK + 4) {
+        let mask = u32::from_le_bytes(mask.try_into().unwrap());
+        for (n, target) in blend.RenderTarget.iter_mut().enumerate() {
+            target.RenderTargetWriteMask = ((mask >> (n * 4)) & 0xf) as u8;
+        }
     }
     Ok(blend)
 }
