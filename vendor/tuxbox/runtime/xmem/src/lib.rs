@@ -24,6 +24,7 @@ mod sleep_hold;
 mod virtual_memory;
 mod write_watch;
 mod unmap_trace;
+mod device_pages;
 mod xaudio;
 
 use core::{ffi::c_void, mem::size_of, ptr};

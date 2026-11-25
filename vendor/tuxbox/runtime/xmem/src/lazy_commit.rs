@@ -185,6 +185,16 @@ fn allows_on() -> bool {
     *ON.get_or_init(|| std::env::var("TUXBOX_LAZY_ALLOWS").map_or(true, |v| v.trim() != "0"))
 }
 
+/// commit_page for device_pages: also true for a committed page whatever its
+/// protection (a device-backed page d3d12 protected).
+pub(crate) unsafe fn commit_page_any(page: usize) -> bool {
+    let Some(m) = query(page) else { return false };
+    if m.State == MEM_COMMIT {
+        return true;
+    }
+    unsafe { commit_page(page) }
+}
+
 /// Whether the committed page at `at` permits `access` (ExceptionInformation[0]:
 /// 0 read, 1 write, 8 execute); copied from xcl lazy.rs `allows`.
 unsafe fn allows(access: usize, at: usize) -> bool {
@@ -207,6 +217,9 @@ unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let page = r.ExceptionInformation[1] & !(PAGE - 1);
+    if unsafe { crate::device_pages::fault(page, r.ExceptionInformation[0]) } {
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
     if !unsafe { commit_page(page) } {
         return EXCEPTION_CONTINUE_SEARCH;
     }
