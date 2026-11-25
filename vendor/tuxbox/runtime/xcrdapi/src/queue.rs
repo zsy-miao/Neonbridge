@@ -143,6 +143,28 @@ struct Pages {
     array: usize,
     tokens: Vec<u64>,
     offset: usize,
+    /// The array is not on the enqueuing thread's stack: it is the title's
+    /// own page table, read again in full as the request runs.
+    live: bool,
+}
+
+/// rebox 502959e (MIT, credit to its authors): a page array that isn't on
+/// the enqueuing thread's stack is the title's page table for its streaming
+/// heap, filled (or re-pointed) for the whole batch just before Submit. An
+/// entry snapshotted at enqueue may still hold the page that slot had
+/// before, so the data went into a page already another resource's. Such an
+/// array is read again in full when the request runs; a stack array keeps
+/// its snapshot. TUXBOX_DSTORAGE_PAGES_LIVE=0 keeps every snapshot.
+fn pages_live() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_PAGES_LIVE").map_or(true, |v| v.trim() != "0"))
+}
+
+fn on_own_stack(at: usize) -> bool {
+    let (mut low, mut high) = (0usize, 0usize);
+    // SAFETY: both outputs are valid writable usizes.
+    unsafe { windows::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high) };
+    at >= low && at < high
 }
 
 impl Pages {
@@ -155,7 +177,8 @@ impl Pages {
         tokens.try_reserve_exact(count).map_err(|_| E_OUTOFMEMORY)?;
         // SAFETY: the DirectStorage contract keeps the array readable at enqueue.
         tokens.extend((0..count).map(|i| unsafe { array.cast::<u64>().add(i).read_unaligned() }));
-        Ok(Self { array: array as usize, tokens, offset: offset as usize })
+        let live = pages_live() && !on_own_stack(array as usize);
+        Ok(Self { array: array as usize, tokens, offset: offset as usize, live })
     }
 
     /// The tokens, entries still 0 read again. A queue half full is
@@ -177,7 +200,7 @@ impl Pages {
             let mut now = vec![0u64; tokens.len()];
             if read_own(self.array, &mut now) {
                 for (token, now) in tokens.iter_mut().zip(now) {
-                    if *token == 0 {
+                    if *token == 0 || self.live {
                         *token = now;
                     }
                 }
