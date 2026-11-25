@@ -1712,8 +1712,8 @@ pub(super) unsafe extern "system" fn address_uav(
 
 /// TUXBOX_BVH_RAW_SRV=1: an acceleration-structure SRV becomes a raw buffer
 /// SRV over the title memory of the placed structure buffer holding its
-/// Location, and its slot_views entry gets that buffer's title VA and length
-/// (VA <= the T# base; the translated node test reads
+/// Location, starting at the Location (the T# base), and its slot_views entry
+/// gets that VA and the bytes to the buffer's end ( the translated node test reads
 /// ByteAddressBuffer(ResourceDescriptorHeap[slot]) at node address - VA,
 /// five-star-recomp rdna_bvh.hlsli, GPL-3.0, credit). Off: the native AS SRV
 /// as before. Returns false (native path) when no structure buffer is known.
@@ -1723,8 +1723,11 @@ unsafe fn bvh_raw_srv(device: &Device, desc: *const D3D12_SHADER_RESOURCE_VIEW_D
     let Some(view) = (unsafe { desc.as_ref() }) else { return false };
     if view.ViewDimension != D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE { return false; }
     let location = unsafe { view.Anonymous.RaytracingAccelerationStructure.Location };
-    let Some((start, bytes)) = device.state.blas.structure_extent(location) else { return false };
-    let bytes = bytes & !3;
+    let Some((buffer_start, buffer_bytes)) = device.state.blas.structure_extent(location) else { return false };
+    // The view starts at the T# base (the Location), so node offsets are
+    // (ptr & ~7) << 3 with no base in the shader (Coder3, 7727b6b).
+    let start = location;
+    let bytes = (buffer_bytes - (location - buffer_start)) & !3;
     let entry = match buffer_at(device, start, bytes, 4, true, false) {
         Ok(Some(entry)) => entry,
         _ => return false,
