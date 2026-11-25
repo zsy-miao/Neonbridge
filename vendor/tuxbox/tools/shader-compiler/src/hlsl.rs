@@ -5721,7 +5721,26 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         let mut open = false;
         let mut cur: Vec<usize> = vec![];
         let mut prior_lds_write = None;
+        // A label t is active at i when some forward branch b < i targets it and
+        // t > i. Open each label after its first source and close it at t, so the
+        // set is kept incrementally instead of rescanning every branch per
+        // instruction (quadratic on ~89k-instruction compute programs).
+        let mut first_src: BTreeMap<usize, usize> = BTreeMap::new();
+        for (&b, &t) in &target {
+            if b < t {
+                let e = first_src.entry(t).or_insert(b);
+                if b < *e { *e = b; }
+            }
+        }
+        let mut opens: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (&t, &b) in &first_src { opens.entry(b + 1).or_default().push(t); }
+        let mut live: BTreeSet<usize> = BTreeSet::new();
         for (i, ins) in insns.iter().enumerate() {
+            while let Some(entry) = opens.first_entry() {
+                if *entry.key() > i { break; }
+                for t in entry.remove() { live.insert(t); }
+            }
+            while live.first().is_some_and(|&t| t <= i) { live.pop_first(); }
             // One guest wave exchanges halfwords through LDS in instruction order.
             // Host invocations must finish reading before another lane overwrites
             // the tile, and finish publishing writes before other lanes read.
@@ -5752,8 +5771,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                 self.loop_depth += 1;
                 self.line(&format!("tb_c{b} = false;"));
             }
-            let mut active: Vec<usize> =
-                labels.iter().copied().filter(|&t| t > i && target.iter().any(|(&b, &bt)| bt == t && b < i)).collect();
+            let mut active: Vec<usize> = live.iter().copied().collect();
             if self.page_waves || self.hoist_wave_exchanges {
                 let exchange = if self.page_waves {
                     page_waves::rendezvous(i, ins)?
