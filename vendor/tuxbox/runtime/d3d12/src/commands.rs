@@ -1653,7 +1653,12 @@ unsafe extern "system" fn execute_indirect(
     // reads (VIctory 4e60ea3, GPL-3.0, credit to its authors).
     let compute = usize::from(signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH);
     let mut clamped_now = false;
-    if max_count != 0 && !state.pipeline_pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
+    // Pending is decided at this call, not at the bind: a pipeline made since
+    // SetPipelineState is bound now and its call is clamped (still_pending,
+    // VIctory-fxceless draw.rs:775; VIctory 4e60ea3 asks at the call, GPL-3.0,
+    // credit to its authors). TUXBOX_INDIRECT_CALL_TIME=0 keeps the bind's answer.
+    let pending = if crate::env_toggle!("TUXBOX_INDIRECT_CALL_TIME") == Some("0") { state.pipeline_pending } else { state.still_pending(list) };
+    if max_count != 0 && !pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
         && let Some(host) = list.state.raytracing.as_ref()
     {
         let clamped = indirect_clamp::bound(
