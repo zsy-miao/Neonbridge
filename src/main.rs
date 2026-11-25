@@ -599,7 +599,7 @@ fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
     REV_BUILD.store(true, std::sync::atomic::Ordering::Relaxed);
     if root.join(".complete").is_file() {
         println!("[launch] --rev {rev}: snapshot {commit} (cached) at {}", root.display());
-        return Ok(tuxbox);
+        return rev_build_tree(&tuxbox, &commit);
     }
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root)?;
@@ -614,7 +614,57 @@ fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
     fs::write(tuxbox.join(".neonbridge-source-key"), format!("tree:{key}"))?;
     fs::write(root.join(".complete"), &commit)?;
     println!("[launch] --rev {rev}: snapshot {commit} exported to {}", root.display());
-    Ok(tuxbox)
+    rev_build_tree(&tuxbox, &commit)
+}
+
+/// The tree --rev builds in: `6ixpack/rev-build/vendor/tuxbox`, one path for
+/// every snapshot, made equal to `snapshot` by content. Cargo fingerprints
+/// path crates by their path and file mtimes, so building each snapshot at its
+/// own path, or copying git archive's commit-time mtimes, rebuilt every crate;
+/// here only files whose bytes differ are rewritten (and extras removed), so
+/// unchanged crates stay built. NEONBRIDGE_REV_INCREMENTAL=0 builds in the
+/// snapshot itself.
+fn rev_build_tree(snapshot: &Path, commit: &str) -> Result<PathBuf, Box<dyn Error>> {
+    if std::env::var("NEONBRIDGE_REV_INCREMENTAL").as_deref() == Ok("0") {
+        return Ok(snapshot.to_path_buf());
+    }
+    fn mirror(from: &Path, to: &Path, changed: &mut usize) -> std::io::Result<()> {
+        fs::create_dir_all(to)?;
+        let mut keep = std::collections::HashSet::new();
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let (src, dst) = (entry.path(), to.join(entry.file_name()));
+            keep.insert(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                if dst.is_file() { fs::remove_file(&dst)?; }
+                mirror(&src, &dst, changed)?;
+            } else {
+                let bytes = fs::read(&src)?;
+                if dst.is_dir() { fs::remove_dir_all(&dst)?; }
+                if fs::read(&dst).ok().as_deref() != Some(&bytes[..]) {
+                    fs::write(&dst, &bytes)?;
+                    *changed += 1;
+                }
+            }
+        }
+        for entry in fs::read_dir(to)? {
+            let entry = entry?;
+            if !keep.contains(&entry.file_name()) {
+                *changed += 1;
+                if entry.file_type()?.is_dir() { fs::remove_dir_all(entry.path())?; } else { fs::remove_file(entry.path())?; }
+            }
+        }
+        Ok(())
+    }
+    let build = data_dir().join("rev-build").join("vendor/tuxbox");
+    let mut changed = 0;
+    // Half-mirrored, the tree is no commit: marked so until it matches.
+    let marker = build.with_file_name("vendor.commit");
+    let _ = fs::remove_file(&marker);
+    mirror(snapshot, &build, &mut changed)?;
+    fs::write(&marker, commit)?;
+    println!("[launch] --rev: build tree {} at {commit} ({changed} files changed)", build.display());
+    Ok(build)
 }
 
 /// Content hash of the tracked shader-compiler sources (path + bytes of each
