@@ -569,7 +569,11 @@ static TRANSLATE_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 static DXC_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static DXC_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn note_times(outcome: &Outcome) {
+/// The five slowest dxc compiles (ms, key) of this launcher: where a
+/// prewarm's seconds go, by program.
+static SLOWEST_DXC: std::sync::Mutex<Vec<(u64, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn note_times(outcome: &Outcome, key: &str) {
     let (xs, dxc) = match outcome {
         Outcome::Compiled(xs, dxc) => (Some(*xs), Some(*dxc)),
         Outcome::Reused(xs) => (Some(*xs), None),
@@ -582,6 +586,12 @@ fn note_times(outcome: &Outcome) {
     if let Some(ms) = dxc {
         DXC_MS.fetch_add(ms, Ordering::Relaxed);
         DXC_N.fetch_add(1, Ordering::Relaxed);
+        let mut slow = SLOWEST_DXC.lock().unwrap_or_else(|e| e.into_inner());
+        if slow.len() < 5 || slow.last().is_some_and(|l| ms > l.0) {
+            slow.push((ms, key.to_owned()));
+            slow.sort_by(|a, b| b.0.cmp(&a.0));
+            slow.truncate(5);
+        }
     }
 }
 
@@ -589,6 +599,13 @@ fn job_times(workers: usize) -> String {
     let (xs, xn, dx, dn) = (TRANSLATE_MS.load(Ordering::Relaxed), TRANSLATE_N.load(Ordering::Relaxed), DXC_MS.load(Ordering::Relaxed), DXC_N.load(Ordering::Relaxed));
     format!("time: xshader {:.1} s over {xn} translations ({} ms each), dxc {:.1} s over {dn} compiles ({} ms each); over {workers} workers that is about {:.0} s of xshader and {:.0} s of dxc",
         xs as f64 / 1000.0, xs / xn.max(1), dx as f64 / 1000.0, dx / dn.max(1), xs as f64 / 1000.0 / workers as f64, dx as f64 / 1000.0 / workers as f64)
+        + &{
+            let slow = SLOWEST_DXC.lock().unwrap_or_else(|e| e.into_inner());
+            let top: u64 = slow.iter().map(|s| s.0).sum();
+            format!("; dxc is {:.0}% of the work; slowest dxc compiles ({:.0}% of dxc time): {}", 100.0 * dx as f64 / (dx + xs).max(1) as f64,
+                100.0 * top as f64 / dx.max(1) as f64,
+                slow.iter().map(|(ms, k)| format!("{} {:.1} s", &k[..k.len().min(16)], *ms as f64 / 1000.0)).collect::<Vec<_>>().join(", "))
+        }
 }
 
 fn job_peaks() -> String {
@@ -1352,7 +1369,7 @@ fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers:
                     }
                     running.fetch_add(1, Ordering::AcqRel);
                     let outcome = compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail));
-                    note_times(&outcome);
+                    note_times(&outcome, &key);
                     running.fetch_sub(1, Ordering::AcqRel);
                     let counter = match outcome {
                         Outcome::Compiled(..) => &stats.prewarmed,
