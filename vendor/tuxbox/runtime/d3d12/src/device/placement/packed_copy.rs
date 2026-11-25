@@ -57,14 +57,28 @@ pub(super) fn on() -> bool {
 /// The live UAV-only R32_UINT texture of the same shape at `address`, for an
 /// R9G9B9E5 placement there.
 pub(super) fn owner_of(images: &BTreeMap<u64, Vec<Alias>>, address: u64, desc: &D3D12_RESOURCE_DESC) -> Option<Arc<Texture>> {
-    if desc.Format != DXGI_FORMAT_R9G9B9E5_SHAREDEXP || desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
-        || desc.SampleDesc.Count > 1 || !on() {
+    if desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER || desc.SampleDesc.Count > 1 || !on() {
+        return None;
+    }
+    // TUXBOX_PACKED_ALIAS_ANY (default on, =0 only R9G9B9E5 over R32_UINT):
+    // any GPU-written (UAV or render target), non-depth owner of the same
+    // shape in another format, as fxceless alias_of matches (578d459); the
+    // texel width is checked by register's identical copy footprints.
+    let any = crate::env_toggle!("TUXBOX_PACKED_ALIAS_ANY") != Some("0");
+    if !any && desc.Format != DXGI_FORMAT_R9G9B9E5_SHAREDEXP {
         return None;
     }
     images.get(&address)?.iter().filter(|a| {
         let d = &a.desc;
-        d.Format == DXGI_FORMAT_R32_UINT && d.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
-            && !d.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
+        let kind = if any {
+            d.Format != desc.Format
+                && (d.Flags.0 & (D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS.0 | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0)) != 0
+                && !d.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
+        } else {
+            d.Format == DXGI_FORMAT_R32_UINT && d.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
+                && !d.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
+        };
+        kind
             && d.Dimension == desc.Dimension && d.Width == desc.Width && d.Height == desc.Height
             && d.DepthOrArraySize == desc.DepthOrArraySize && d.MipLevels == desc.MipLevels && d.SampleDesc.Count <= 1
     }).find_map(|a| a.texture.upgrade())
