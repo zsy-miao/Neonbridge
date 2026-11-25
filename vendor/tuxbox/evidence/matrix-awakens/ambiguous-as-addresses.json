@@ -1,0 +1,33 @@
+{
+  "scope": "D3D12 provider AS address ownership: identical GPU VAs from overlapping placed buffers are rejected for build destinations, update sources and copy endpoints until one registration is released. Ordinary and late-relocated BLAS paths are checked separately. This does not implement GPU FLAT provenance or shader 219.",
+  "adapters": {
+    "radeon": {
+      "adapter": "1002:13c0",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "alias_test_guest_sha256": "34df38a8e9ac392ac1ac19c0e5370e84bbf36b3a89a5c0768235647389cd00ad",
+      "relocation_test_guest_sha256": "76397144436b7ef52c43425a1ce1f9d99527b40a8fe98b1623f492a079bbe28e",
+      "equal_va": true,
+      "ambiguous_rejections": 4,
+      "unique_after_release": true,
+      "ordinary_ray_results": "70010,70120,80010,80120,dead",
+      "late_relocation_ray_results": "11/0/1/1,11/0/0/1,miss",
+      "replayed_list_executions": 2,
+      "guest_as_bytes": 192,
+      "native_as_bytes": 448
+    },
+    "geforce": {
+      "adapter": "10de:2705",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "alias_test_guest_sha256": "34df38a8e9ac392ac1ac19c0e5370e84bbf36b3a89a5c0768235647389cd00ad",
+      "relocation_test_guest_sha256": "76397144436b7ef52c43425a1ce1f9d99527b40a8fe98b1623f492a079bbe28e",
+      "equal_va": true,
+      "ambiguous_rejections": 4,
+      "unique_after_release": true,
+      "ordinary_ray_results": "70010,70120,80010,80120,dead",
+      "late_relocation_ray_results": "11/0/1/1,11/0/0/1,miss",
+      "replayed_list_executions": 2,
+      "guest_as_bytes": 192,
+      "native_as_bytes": 1152
+    }
+  }
+}

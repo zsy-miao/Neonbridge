@@ -1,0 +1,40 @@
+{
+  "scope": "Xbox XDXR factory construction, COM identity and caller allocator only; no compilation methods were called. This does not implement or establish ray-compiler coverage.",
+  "reference_sha256": "40c0d27a4c8e580975b64b386a5decee083aa1465317d4f62bc16445f63681db",
+  "guest_sha256": "f751b9a40cf301c8bc2566673ed42d720b2e1e413fbdb53589be5058c8753a84",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "class_guid": "16bb3c85-006d-4b72-9e10-63cd97df57f0",
+  "ino_marshal_guid": "ecc8691b-c1db-4dc0-855e-65f6c551af49",
+  "function_table_rvas": [
+    "0xcbaff4",
+    "0xc158",
+    "0xda44",
+    "0xcbb0f4",
+    "0xcbb0fc",
+    "0xcbb0d8",
+    "0xcb1d5c",
+    "0xcb12d0",
+    "0xcb375c",
+    "0xcb53d0",
+    "0xcbb104",
+    "0xcb6c9c",
+    "0xcb9198"
+  ],
+  "observations": {
+    "bad_class": "80040154",
+    "bad_iid": "80004002",
+    "no_marshal_qi": "00000000",
+    "class_qi": "00000000",
+    "identity": "00000000",
+    "bad_query": "80004002",
+    "bad_query_output_unchanged": "1",
+    "allocator_allocations": "2",
+    "allocator_frees": "2",
+    "last_release": "0"
+  },
+  "limits": [
+    "Slots after IUnknown are not named or called by this probe.",
+    "The original DLL is only used in this local control, not by TuxBox at runtime.",
+    "Observations apply to the identified Xbox compiler binary only."
+  ]
+}

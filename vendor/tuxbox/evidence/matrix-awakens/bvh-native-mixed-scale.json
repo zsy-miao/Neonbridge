@@ -1,0 +1,113 @@
+{
+  "scope": "Dynamic seeded-UAV mixed-exponent triangle scales: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+  "native_dump_sha256": "4774a8decbea911a10c0a50f7876b3ab8abe29fa0efa37e9d9366b07982ef11d",
+  "offset": 0,
+  "cases": 10,
+  "hlsl_sha256": "9e2b74313dfdbd9088f28fde4d6e2c83dd8c61e4c2c97cf635eaf026632dd2df",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": 10,
+      "mismatches": [
+        {
+          "case": 1,
+          "actual": [
+            "bf800003",
+            "bf800003",
+            "be800004",
+            "be800004"
+          ],
+          "native": [
+            "bf800002",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ]
+        },
+        {
+          "case": 6,
+          "actual": [
+            "bf800004",
+            "bf800004",
+            "be800004",
+            "be800004"
+          ],
+          "native": [
+            "bf800002",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ]
+        },
+        {
+          "case": 8,
+          "actual": [
+            "83800003",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ],
+          "native": [
+            "83800002",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ]
+        }
+      ]
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": 10,
+      "mismatches": [
+        {
+          "case": 1,
+          "actual": [
+            "bf800003",
+            "bf800003",
+            "be800004",
+            "be800004"
+          ],
+          "native": [
+            "bf800002",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ]
+        },
+        {
+          "case": 6,
+          "actual": [
+            "bf800004",
+            "bf800004",
+            "be800004",
+            "be800004"
+          ],
+          "native": [
+            "bf800002",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ]
+        },
+        {
+          "case": 8,
+          "actual": [
+            "83800003",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ],
+          "native": [
+            "83800002",
+            "bf800002",
+            "be800003",
+            "be800003"
+          ]
+        }
+      ]
+    }
+  },
+  "dxil_sha256": "b2606223dcc329d591b8219c78a330902c68f1693bb0825af56e876e33ae5fb1",
+  "note": "Ten synthetic mixed-exponent triangles; the current float32 candidate differs on three cases per adapter. This control records counterexamples rather than a passing gate."
+}

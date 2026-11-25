@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-22",
+  "call_sites": {
+    "117": "FD3D12RayTracingScene::BuildAccelerationStructure at RVA 0x57b5e88",
+    "59": "Indirect ray dispatch at RVA 0x57b8174"
+  },
+  "controls": {
+    "direct_build": {
+      "1002:13c0": {
+        "guest_sha256": "ffd96ed10af79f503f096ef11c5712d8f6b205fd0d188f3cad0addcee61afe63",
+        "d3d12_xs_sha256": "d1a5f56edd0bde38b8f381712914d165ab27155378fd4c385a22d0f4b93a1283",
+        "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+        "instances": 2,
+        "tested_invalid_inputs": 2,
+        "ray_results": "70010,70120,80010,80120,dead"
+      },
+      "10de:2705": {
+        "guest_sha256": "ffd96ed10af79f503f096ef11c5712d8f6b205fd0d188f3cad0addcee61afe63",
+        "d3d12_xs_sha256": "d1a5f56edd0bde38b8f381712914d165ab27155378fd4c385a22d0f4b93a1283",
+        "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+        "instances": 2,
+        "tested_invalid_inputs": 2,
+        "ray_results": "70010,70120,80010,80120,dead"
+      }
+    },
+    "indirect_dispatch": {
+      "1002:13c0": {
+        "guest_sha256": "89638a9f0c7b088655197424d266ab4ae3bee28ce712ef671550b49732f5813b",
+        "d3d12_xs_sha256": "d1a5f56edd0bde38b8f381712914d165ab27155378fd4c385a22d0f4b93a1283",
+        "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+        "indirect_ray_dispatches": 2,
+        "indirect_ray_hits_per_dispatch": 4,
+        "indirect_ray_misses_per_dispatch": 2,
+        "argument_stride": 104,
+        "argument_offset": 104
+      },
+      "10de:2705": {
+        "guest_sha256": "89638a9f0c7b088655197424d266ab4ae3bee28ce712ef671550b49732f5813b",
+        "d3d12_xs_sha256": "d1a5f56edd0bde38b8f381712914d165ab27155378fd4c385a22d0f4b93a1283",
+        "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+        "indirect_ray_dispatches": 2,
+        "indirect_ray_hits_per_dispatch": 4,
+        "indirect_ray_misses_per_dispatch": 2,
+        "argument_stride": 104,
+        "argument_offset": 104
+      }
+    },
+    "inline_build_sizes": {
+      "date": "2026-11-23",
+      "scope": "Two synthetic two-geometry BLAS builds through the slot 117 used by Frosty. Each build requests current and compacted sizes. The GPU readback is compared against separate slot 118 queries of the same structures.",
+      "command": "python tools/check_frosty_blas.py --single-build --provider PROVIDER --proton PROTON --output RESULT",
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "provider_sha256": "08ffeb035220c40445858966448ea60c5746856de4a93c8de96d5f6fd6dc8ec9",
+      "guest_sha256": "9a0e4db346637f0ceee0e3a9f58a24ef3c32cdbf1bcd4c78c1efe94f0a4fb2e0",
+      "previous_provider_sha256": "50bf45863da3bd36b8573ea84266f3063b539a32ef4a033d0e176d6935fb562e",
+      "previous_result": "close guest build list failed: 0x80004001",
+      "adapters": {
+        "1002:13c0": {
+          "matching_size_words": 4,
+          "blas_current_bytes": 520,
+          "blas_compacted_bytes": 448,
+          "ray_results": "70010,70120,80010,80120,dead"
+        },
+        "10de:2705": {
+          "matching_size_words": 4,
+          "blas_current_bytes": 2816,
+          "blas_compacted_bytes": 1152,
+          "ray_results": "70010,70120,80010,80120,dead"
+        }
+      }
+    }
+  }
+}

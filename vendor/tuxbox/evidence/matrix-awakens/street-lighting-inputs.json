@@ -1,0 +1,485 @@
+{
+  "scene": "The Matrix Awakens, authored Sandbox after the on-foot intro, stock Proton Experimental on RTX 4070 Ti SUPER",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "shader_cache": "2774c8127ae77d0fc9945ee8767077d105d594e20663eccd09f0eabf7adea352",
+  "window_seconds_after_SandboxIntroFinished": [
+    15,
+    29
+  ],
+  "method": "The GPU debug ring sampled shader invocations at sparse screen coordinates. The counts include repeated coordinates across frames. RGB is measured before blending or tone mapping. The normal probes record the first exceptional square root, reciprocal square root or divide among the instrumented operations on invocations with a NaN in the exported normal.",
+  "image": "street-lighting.jpg",
+  "image_sha256": "496b067297de99e6e6108c21a3744be164320bac9d976955d010ba388603a3c6",
+  "lighting_composite": {
+    "shader": "global/2217 DiffuseIndirectComposite",
+    "original_vkd3d_hash": "7d4ed32e2bdb134b",
+    "observation_shader_sha256": "b3a50ff10f432c088794c8d636b79ced75cfcb56391c8398538690ad5bc70279",
+    "inputs": {
+      "t9": {
+        "samples": 4171,
+        "nonfinite_rgb": 4,
+        "maximum_finite_rgb_per_channel": [
+          4120.0,
+          20688.0,
+          3128.0
+        ]
+      },
+      "t10": {
+        "samples": 4171,
+        "nonfinite_rgb": 2,
+        "maximum_finite_rgb_per_channel": [
+          4096.0,
+          2272.0,
+          3072.0
+        ]
+      },
+      "t11": {
+        "samples": 4171,
+        "nonfinite_rgb": 648,
+        "maximum_finite_rgb_per_channel": [
+          415.5,
+          1.745117,
+          20928.0
+        ]
+      }
+    },
+    "paired_input_output": {
+      "method": "At each sampled pixel, pair texture reads with the next target-0 export in the same dispatch sequence. Require all three tags, no duplicates, and less than 50 ms between the first read message and export message. Exclude the debug probe at the screen edge. Each row represents one invocation before blending.",
+      "matched_invocations": 4171,
+      "finite_outputs_with_any_rgb_above_one": 156,
+      "of_those_with_t9_above_one": 155,
+      "of_those_with_t9_above_one_and_same_largest_channel": 154,
+      "of_those_with_t10_above_one_and_same_largest_channel": 138,
+      "of_those_with_t11_above_one_and_same_largest_channel": 31,
+      "nonfinite_t11_with_finite_output_and_no_rgb_above_one": 648,
+      "nonfinite_outputs": 4,
+      "nonfinite_outputs_with_nonfinite_t9": 4
+    }
+  },
+  "normal_observations": {
+    "material/2035": {
+      "samples_with_nan_normal": 412,
+      "original_vkd3d_hash": "15cefc58a53822bb",
+      "first_exceptional_root": {
+        "spirv_id": 6920,
+        "operation": "InverseSqrt",
+        "input": 0,
+        "result": "+infinity"
+      },
+      "first_exceptional_divide": {
+        "spirv_id": 15717,
+        "numerator": 1,
+        "denominator": "NaN",
+        "result": "NaN"
+      },
+      "probed_texture_operations_returning_nan_in_these_samples": false
+    },
+    "material/2555": {
+      "samples_with_nan_normal": 1,
+      "original_vkd3d_hash": "0ce4e2ff4f12467a",
+      "first_exceptional_root": {
+        "spirv_id": 6978,
+        "operation": "InverseSqrt",
+        "input": 0,
+        "result": "+infinity"
+      },
+      "first_exceptional_divide": {
+        "spirv_id": 15424,
+        "numerator": 1,
+        "denominator": "NaN",
+        "result": "NaN"
+      },
+      "probed_texture_operations_returning_nan_in_these_samples": false
+    }
+  },
+  "interpretation": "The diffuse-light texture at t9 already carried the dominant colour of 154 of the 156 bright output samples. All 648 invalid t11 samples in this window produced finite output with RGB at or below one. The upstream diffuse-light writer is the priority for the coloured facade defect.",
+  "tile_list_control": {
+    "shader": "global/667 ScreenProbeTileClassificationBuildListsCS",
+    "dxil_sha256": "63f4a621ac6c4ababbd0af5ef5fb1a3f6c2c0dbb0b09fb8552b88d96c017dcfa",
+    "adapters": [
+      "10de:2705",
+      "1002:13c0"
+    ],
+    "formats": [
+      "R8_UINT",
+      "R32_UINT"
+    ],
+    "input_dimensions": [
+      11,
+      9
+    ],
+    "expected_counts": [
+      25,
+      25,
+      25
+    ],
+    "result": "On both adapters, all 75 included tile coordinates and the dispatch counts matched the CPU reference, all 24 excluded tiles were skipped, and guard words were preserved. The bound tile-classification texture and constants in the city remain unverified."
+  },
+  "city_intro_producer_trace": {
+    "scene": "ChaseSection-CityIntro, separate retail playthrough on RTX 4070 Ti SUPER with stock Proton Experimental",
+    "anchor_utc": "2026-11-23T12:59:08.399Z",
+    "compiler_cache": "cbd6c88f951c7e18e8a6f27cc5a36bb29d5f499a0884ef467050def8d5f48a2b",
+    "method": "The GPU recorded the tile class, the RGB value each shader wrote at its actual image coordinates, and the current and history reads and output of global/662 at the same pixel. A current read matches its writer when each RGB channel agrees within a relative tolerance of 0.001 or absolute tolerance of 0.0001 after the RGBA16F store. An exceptional sample has a nonfinite channel or a channel above 5.",
+    "physical_path": "The tile classifier global/636 clears class 255. Global/631 shades class 1 and global/642 shades class 0. Global/662 reads the current diffuse result from t3 and the previous diffuse history from t5, then writes the temporal diffuse result to u0.",
+    "observed_modules": {
+      "global/631": {
+        "stock_vkd3d_hash": "cff86707e39ac1c8",
+        "observation_spirv_sha256": "e1dcb88e9761721d6119cb7679fd866690ba72131840e889f2e7cc95d834191f"
+      },
+      "global/642": {
+        "stock_vkd3d_hash": "3ca8945061b1b14c",
+        "observation_spirv_sha256": "441b4005891dacdc6933c6f33cb8729dc23a616ccf6901b26f81670d0fdb48fa"
+      },
+      "global/636": {
+        "stock_vkd3d_hash": "c1fe2536a9e2e517",
+        "observation_spirv_sha256": "4be88a93bf30c2761b558a526d6c634981b6d8d6a72c99493d62cb54fbdbffa4"
+      },
+      "global/662": {
+        "stock_vkd3d_hash": "e488a4ecc088632f",
+        "observation_spirv_sha256": "c95beb08d95538cc32eca380698f23a49cda064dc0c5a91a241de4d87d429622"
+      }
+    },
+    "windows": [
+      {
+        "seconds_after_anchor": [
+          4.135,
+          10.135
+        ],
+        "matched_current_reads": 756,
+        "sampled_current_reads": 756,
+        "current_rgb_by_writer": {
+          "global/631": {
+            "writes": 683,
+            "over_threshold_finite": 4,
+            "nonfinite": 1,
+            "largest_finite_channel": 16328.023438
+          },
+          "global/642": {
+            "writes": 45,
+            "over_threshold_finite": 0,
+            "nonfinite": 0
+          },
+          "global/636": {
+            "clears": 28
+          }
+        },
+        "exceptional_temporal_outputs": 21,
+        "exceptional_current_only": 4,
+        "exceptional_history_only": 17,
+        "example": {
+          "screen_xy": [
+            1183,
+            31
+          ],
+          "writer": "global/631",
+          "written_rgb": [
+            0,
+            0,
+            2071.560547
+          ],
+          "global_662_t3_rgb": [
+            0,
+            0,
+            2070
+          ],
+          "global_662_u0_rgb": [
+            0,
+            0,
+            2070
+          ]
+        }
+      },
+      {
+        "seconds_after_anchor": [
+          39.135,
+          42.135
+        ],
+        "matched_current_reads": 180,
+        "sampled_current_reads": 180,
+        "current_rgb_by_writer": {
+          "global/631": {
+            "writes": 148,
+            "over_threshold_finite": 0,
+            "nonfinite": 0
+          },
+          "global/642": {
+            "writes": 14,
+            "over_threshold_finite": 1,
+            "nonfinite": 0
+          },
+          "global/636": {
+            "clears": 18
+          }
+        },
+        "exceptional_temporal_outputs": 10,
+        "exceptional_current_only": 1,
+        "exceptional_history_only": 9,
+        "example": {
+          "screen_xy": [
+            415,
+            31
+          ],
+          "writer": "global/642",
+          "written_rgb": [
+            0.004617,
+            234.912689,
+            0.005824
+          ],
+          "global_662_t3_rgb": [
+            0.004616,
+            234.875,
+            0.005821
+          ],
+          "global_662_u0_rgb": [
+            0.004059,
+            21.36264,
+            0.002039
+          ]
+        }
+      }
+    ],
+    "scope": "Both integration shaders can supply extreme fresh lighting in CityIntro. The temporal stage also carries contaminated history into later pixels. These samples measure the integrator outputs and leave the earlier source of the extreme lighting open."
+  },
+  "irradiance_reduction": {
+    "program": "global/481, screen probe irradiance",
+    "source_sha256": "132e1dc4de5d3d5682ed436ed7d19fda09c8930180c462f73630dc828ec30309",
+    "original_dxil_sha256": "f8e3c612e8f13339e51e35f8b6fd43599116123c8ac4630dcf0612946503a5cc",
+    "fixed_dxil_sha256": "c151cf41eed634477de8ad9db3d2588be4502c94f1b23efa205a021088c9c6d6",
+    "cause": "A single guest wave publishes masked LDS writes before the coefficient reduction loop and before its final readers. Distinct host subgroups could access those locations out of order. TuxBox now issues a workgroup barrier at each draining wait after EXEC restoration. All host lanes reach it outside emulated branch guards and loops.",
+    "native_wait_offsets": [
+      "0x02d8",
+      "0x0390"
+    ],
+    "retail_before": {
+      "scene": "ChaseSection-CityIntro on RTX 4070 Ti SUPER",
+      "anchor_utc": "2026-11-23T13:14:36.464Z",
+      "method": "Sparse GPU samples record actual input fetches and writes. Atlas probes additionally record exceptional output at one in 1,024 texels. Counts describe the sampled locations.",
+      "radiance_limit_cb0_19_x": 20.0,
+      "sampled_max_channel": {
+        "global/477 output": 19.999989,
+        "global/492 output": 19.5,
+        "global/481 t3 input": 19.5,
+        "global/481 finite output": 3.0178403242495858e+34
+      },
+      "global_481_writes_sampled": 1480,
+      "global_481_nonfinite_writes": 80,
+      "example": {
+        "screen_xy": [
+          1183,
+          31
+        ],
+        "shader": "global/631",
+        "irradiance_srv_t10_rgb": [
+          65024,
+          65024,
+          64512
+        ],
+        "written_diffuse_rgb": [
+          20697.78125,
+          20697.78125,
+          20534.806641
+        ]
+      }
+    },
+    "gpu_control": {
+      "tool": "tools/check_frosty_probe_irradiance.py",
+      "method": "Dispatch 1,024 independent 8-by-8 workgroups over a varying 256-by-256 RGB input. Each texel has a known 1:2:3 channel ratio. Read back the complete floating-point output for three gather resolutions.",
+      "gather_resolutions": [
+        8,
+        6,
+        4
+      ],
+      "pixels_per_resolution": 65536,
+      "prior_nonfinite_pixels": {
+        "NVIDIA": [
+          5376,
+          160,
+          21696
+        ],
+        "AMD": [
+          0,
+          0,
+          0
+        ]
+      },
+      "prior_nonfinite_with_lds_prefilled_with_nan": {
+        "NVIDIA": [
+          28416,
+          4256,
+          65536
+        ],
+        "AMD": [
+          0,
+          0,
+          0
+        ]
+      },
+      "fixed_nonfinite_with_lds_prefilled_with_nan": {
+        "NVIDIA": [
+          0,
+          0,
+          0
+        ],
+        "AMD": [
+          0,
+          0,
+          0
+        ]
+      },
+      "corrected": {
+        "NVIDIA": {
+          "shader": "global/481",
+          "source_sha256": "132e1dc4de5d3d5682ed436ed7d19fda09c8930180c462f73630dc828ec30309",
+          "dxil_sha256": "c151cf41eed634477de8ad9db3d2588be4502c94f1b23efa205a021088c9c6d6",
+          "adapter": "10de:2705",
+          "groups": [
+            32,
+            32,
+            1
+          ],
+          "gather_resolutions": {
+            "8": {
+              "pixels": 65536,
+              "nonfinite_rgb": 0,
+              "unexpected_rgb": 0,
+              "max_channel": 4.075523376464844
+            },
+            "6": {
+              "pixels": 65536,
+              "nonfinite_rgb": 0,
+              "unexpected_rgb": 0,
+              "max_channel": 3.268214225769043
+            },
+            "4": {
+              "pixels": 65536,
+              "nonfinite_rgb": 0,
+              "unexpected_rgb": 0,
+              "max_channel": 2.440985679626465
+            }
+          },
+          "passed": true
+        },
+        "AMD": {
+          "shader": "global/481",
+          "source_sha256": "132e1dc4de5d3d5682ed436ed7d19fda09c8930180c462f73630dc828ec30309",
+          "dxil_sha256": "c151cf41eed634477de8ad9db3d2588be4502c94f1b23efa205a021088c9c6d6",
+          "adapter": "1002:13c0",
+          "groups": [
+            32,
+            32,
+            1
+          ],
+          "gather_resolutions": {
+            "8": {
+              "pixels": 65536,
+              "nonfinite_rgb": 0,
+              "unexpected_rgb": 0,
+              "max_channel": 4.075523376464844
+            },
+            "6": {
+              "pixels": 65536,
+              "nonfinite_rgb": 0,
+              "unexpected_rgb": 0,
+              "max_channel": 3.266068696975708
+            },
+            "4": {
+              "pixels": 65536,
+              "nonfinite_rgb": 0,
+              "unexpected_rgb": 0,
+              "max_channel": 2.440985679626465
+            }
+          },
+          "passed": true
+        }
+      }
+    },
+    "on_foot_sandbox_after": {
+      "anchor": "SandboxIntroFinished",
+      "seconds_after_anchor": [
+        15,
+        29
+      ],
+      "comparison": "Composite shader samples at the intersection of observed screen coordinates, including repeated frames. Camera motion and sample counts vary between runs.",
+      "shared_coordinates": 25,
+      "before_utc": "2026-11-23T12:07:57.807Z",
+      "after_utc": "2026-11-23T13:29:46.723Z",
+      "before": {
+        "t9": {
+          "samples": 1075,
+          "nonfinite_rgb": 4,
+          "above_5": 78,
+          "above_100": 48,
+          "max_rgb": [
+            4120.0,
+            20688.0,
+            3128.0
+          ]
+        },
+        "t10": {
+          "samples": 1075,
+          "nonfinite_rgb": 2,
+          "above_5": 75,
+          "above_100": 46,
+          "max_rgb": [
+            4096.0,
+            2272.0,
+            3072.0
+          ]
+        },
+        "t11": {
+          "samples": 1075,
+          "nonfinite_rgb": 126,
+          "above_5": 2,
+          "above_100": 2,
+          "max_rgb": [
+            415.5,
+            1.129883,
+            0.688477
+          ]
+        }
+      },
+      "after": {
+        "t9": {
+          "samples": 1375,
+          "nonfinite_rgb": 0,
+          "above_5": 0,
+          "above_100": 0,
+          "max_rgb": [
+            1.7138671875,
+            1.267578125,
+            1.4169921875
+          ]
+        },
+        "t10": {
+          "samples": 1375,
+          "nonfinite_rgb": 0,
+          "above_5": 0,
+          "above_100": 0,
+          "max_rgb": [
+            1.140625,
+            1.09375,
+            1.3125
+          ]
+        },
+        "t11": {
+          "samples": 1375,
+          "nonfinite_rgb": 110,
+          "above_5": 0,
+          "above_100": 0,
+          "max_rgb": [
+            1.2138671875,
+            0.8876953125,
+            0.61669921875
+          ]
+        }
+      },
+      "stock_driver_output": {
+        "dxil": "00fbce140313a0cc.dxil",
+        "sha256": "c151cf41eed634477de8ad9db3d2588be4502c94f1b23efa205a021088c9c6d6",
+        "replaced": false
+      },
+      "image": "sandbox-daylight.webp",
+      "image_sha256": "f208402cbef369c3f6bcddac7b8c6b0aa2e52ab600ddbe5f5e34fbde7264390c",
+      "observation": "The visible free-roam street has neutral building facades and the bright green patch on the avatar has cleared. The avatar remains dark. Reflection input t11 still contains nonfinite samples."
+    }
+  }
+}

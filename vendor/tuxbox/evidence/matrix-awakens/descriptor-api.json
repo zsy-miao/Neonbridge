@@ -1,0 +1,23 @@
+{
+  "provider_sha256": "8e3e1579b353a7108c1e3ade48b01c29c4c0f82a56f9fa3f9575e483df259c96",
+  "guest_sha256": "0f081a148e022fbe8e41a0925433f567524074d76febc987b3e3a68011bf7ac1",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "default": {
+      "exit": 0,
+      "api_copy_byte": "1",
+      "step": "32",
+      "src_low5": "10",
+      "dst_low5": "19",
+      "matching_words": "43"
+    },
+    "sets": {
+      "exit": 0,
+      "api_copy_byte": "1",
+      "step": "32",
+      "src_low5": "10",
+      "dst_low5": "19",
+      "matching_words": "43"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "scope": "Assertion-enable state and severity label/color APIs only. Assertion callbacks, reporting, other XTF APIs and underflow diagnostic logging are not implemented.",
+  "reference_sha256": "b5b562b7b9c7366b9f56f7f7956bd38fc9539b22413dd2bb75f924f3ea3cab26",
+  "provider_sha256": "e7aacadd6c825f83a8e94fca7a1e9608242658312893338d585c646487f9f6ae",
+  "guest_sha256": "814d0c93fd0f97896184e53dac93bc1a66d128501484b090cc18ada0790cb5ec",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "reference": {
+      "initial": "1",
+      "underflow": "1",
+      "disable": "0",
+      "nested": "1",
+      "restore1": "0",
+      "thread": "0,1,0",
+      "after_thread": "0",
+      "restore2": "1",
+      "deep": "1,1",
+      "level0": "<null>,0",
+      "level1": "Assertion,124",
+      "level2": "Error,12",
+      "level3": "Warning,14",
+      "level4": "Trace,11",
+      "level5": "Spam,3",
+      "level6": "<null>,0",
+      "level7": "<null>,0",
+      "large": "<null>,0"
+    },
+    "provider": {
+      "initial": "1",
+      "underflow": "1",
+      "disable": "0",
+      "nested": "1",
+      "restore1": "0",
+      "thread": "0,1,0",
+      "after_thread": "0",
+      "restore2": "1",
+      "deep": "1,1",
+      "level0": "<null>,0",
+      "level1": "Assertion,124",
+      "level2": "Error,12",
+      "level3": "Warning,14",
+      "level4": "Trace,11",
+      "level5": "Spam,3",
+      "level6": "<null>,0",
+      "level7": "<null>,0",
+      "large": "<null>,0"
+    }
+  }
+}

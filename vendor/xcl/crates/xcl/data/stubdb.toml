@@ -1,0 +1,61 @@
+# XCL stub database
+#
+# Default return values for automatically generated stubs (functions XCL does not
+# implement yet) and ordinal → name maps for DLLs that export by ordinal.
+# Values: "S_OK"/"0", "E_NOTIMPL", "E_FAIL", hex ("0x80004001"), decimal, "-1".
+# Users can override per title in xcl.toml [stub_returns].
+
+[module_defaults]
+# Almost every GDK API returns HRESULT – failing loudly is safer than a fake success.
+"xgameruntime.dll" = "E_NOTIMPL"
+"d3d12_xs.dll" = "E_NOTIMPL"
+"d3d12_x.dll" = "E_NOTIMPL"
+"xg_xs.dll" = "E_NOTIMPL"
+"acphal.dll" = "E_NOTIMPL"
+# the console's audio decoder and DSP (their HLE in acphal.rs): what XCL does not answer is not there
+"xapu.dll" = "E_NOTIMPL"
+"chad.dll" = "E_NOTIMPL"
+# console DirectStorage (DStorageGetFactory) and the Xbox One texture layout library: a fake S_OK
+# would leave the title's output pointer as it was
+"xcrdapi.dll" = "E_NOTIMPL"
+"xg_x.dll" = "E_NOTIMPL"
+"gameinput.dll" = "E_NOTIMPL"
+
+[functions]
+# GDK / Xbox Live APIs that return HRESULT even when called through other modules
+"*!XblInitialize" = "E_NOTIMPL"
+"*!XblCleanupAsync" = "E_NOTIMPL"
+"*!HCInitialize" = "E_NOTIMPL"
+"*!XNetworkingQueryPreferredLocalUdpMultiplayerPort" = "E_NOTIMPL"
+"*!XGameUiShowErrorDialogAsync" = "E_ABORT"
+"*!XGameUiShowMessageDialogAsync" = "E_ABORT"
+"*!XGameUiShowTextEntryAsync" = "E_ABORT"
+"*!XGameUiShowAchievementsAsync" = "E_ABORT"
+"*!XGameUiShowPlayerProfileCardAsync" = "E_ABORT"
+
+[ordinals."gameinput.dll"]
+# the console's GameInput.dll exports GameInputCreate as #1 (XDefiant imports it by ordinal)
+1 = "GameInputCreate"
+
+[ordinals."xaudio2_9.dll"]
+# Export ordinals of Windows' xaudio2_9.dll (Bink2Scarlett.dll imports #1); assumed the same on the console.
+1 = "XAudio2Create"
+2 = "CreateAudioReverb"
+3 = "CreateAudioVolumeMeter"
+4 = "CreateFX"
+5 = "X3DAudioCalculate"
+6 = "X3DAudioInitialize"
+7 = "CreateAudioReverbV2_8"
+8 = "XAudio2CreateV2_9"
+9 = "XAudio2CreateWithVersionInfo"
+10 = "XAudio2CreateWithSharedContexts"
+
+[ordinals."d3d12_x.dll"]
+# Xbox One D3D12.X export ordinals (facts about the Microsoft DLL; looked up in WinDurango's D3D12X stub).
+7 = "D3D12CreateDevice"
+9 = "D3D12GetDebugInterface"
+10 = "D3D12SerializeRootSignature"
+11 = "D3D12XboxSetProcessDebugFlags"
+16 = "D3DMapEsramMemory"
+18 = "DXGIXPresentArray"
+20 = "DXGIXSetVLineNotification"

@@ -1,0 +1,93 @@
+{
+  "library": "GameInput.dll",
+  "abi": "GameInput v0",
+  "host": "Linux, x86_64",
+  "implementation": "runtime/gameinput",
+  "source_contract": "https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/interfaces/igameinput/methods/igameinput_registerdevicecallback#v0-v1-v2-v3",
+  "frosty_static_call": {
+    "module": "Frosty-XSX-Shipping.exe",
+    "factory_rva": "0x2bc9f35",
+    "factory_import": "GameInput.dll #1",
+    "device_callback_rva": "0x2bce8e2",
+    "method": "RegisterDeviceCallback",
+    "vtable_offset": "0x48",
+    "device_filter": "null",
+    "kind_mask": "0x40030 (keyboard, mouse, gamepad)",
+    "status_filter": "0x1 (connected)",
+    "enumeration": "2 (blocking)",
+    "guest_callback_rva": "0x2bce970"
+  },
+  "checks": [
+    "Enumerate all three input kinds using Frosty’s exact registration arguments before creating a foreground window.",
+    "Register a device callback, stop it from inside the invocation, unregister it and reject its stale token. Verify filtered async enumeration and no-enumeration modes.",
+    "Check key press, mouse click, movement, ordered retained readings, and matching left-trigger/A gamepad values."
+  ],
+  "reproduce": "Build with python build.py gameinput. Run build/gameinput/gameinput-control.exe --private-desktop-report result.txt on a private desktop. Run tools/check_frosty_keyboard_gamepad.py with --proton, --prefix, --work and --output to check desktop mappings. Run tools/check_frosty_xinput.py with the built DLL as --provider to register and remove a Linux virtual Xbox controller.",
+  "device_controls": [
+    {
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "provider_exit_code": 0,
+      "receipt": "gameinput PASS ordinal=1 singleton=1 keys=2 mouse=2 delta=11,7 history=2 retained=2 enumeration=3 desktop_pad=1",
+      "provider_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+      "guest_sha256": "f233760c0e6ec5304efa95bd7ac5b7ad3c0eac55ab13aa45c647f81e49d45a63"
+    },
+    {
+      "host": "1792432585 GE-Proton11-11",
+      "provider_exit_code": 0,
+      "receipt": "gameinput PASS ordinal=1 singleton=1 keys=2 mouse=2 delta=11,7 history=2 retained=2 enumeration=3 desktop_pad=1",
+      "provider_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+      "guest_sha256": "f233760c0e6ec5304efa95bd7ac5b7ad3c0eac55ab13aa45c647f81e49d45a63"
+    }
+  ],
+  "desktop_control": {
+    "host": "1793301796 experimental-11.0-20261027b-x86_64",
+    "provider_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+    "guest_sha256": "13ae9dbb883c374dcbbbd26f2958c107da01186067009bc4de5684af092f7c23",
+    "runs": {
+      "on": {
+        "keyboard_device_id": "7",
+        "buttons": "12",
+        "keyboard_aliases": "2",
+        "bipolar_axes": "4",
+        "triggers": "2",
+        "ordered_edges": "48",
+        "mouse_confirm": "1",
+        "mouse_aim_fire": "1",
+        "mouse_look_signed_axes": "2",
+        "mouse_idle_neutral": "1",
+        "cursor_restored": "1"
+      },
+      "off": {
+        "keyboard_pad_absent": "1"
+      }
+    }
+  },
+  "limitations": [
+    "The desktop test uses an isolated X display and a keyboard-emulated gamepad. A retail menu outcome and physical hardware require separate evidence.",
+    "Reading callbacks, mouse wheels, text translation and haptics remain open."
+  ],
+  "xinput_control": {
+    "host": "1793301796 experimental-11.0-20261027b-x86_64",
+    "provider_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+    "guest_sha256": "a37a79f723d25b998ca8457a50598789fbd81845cfeefef572e56d921153287b",
+    "fixture": "Linux uinput Xbox 360-style USB controller (045e:028e)",
+    "host_input": "XInputGetState",
+    "observed": {
+      "slot": "0",
+      "raw_lx": "24000",
+      "raw_rt": "160",
+      "callback_connected": "3",
+      "callback_disconnected": "2"
+    },
+    "checks": [
+      "connect",
+      "matching GameInput hardware port",
+      "B, left stick X and right trigger",
+      "Z and left-click press/release during held hardware input",
+      "ordered GetNextReading on same physical port",
+      "neutral",
+      "disconnect",
+      "keyboard fallback"
+    ]
+  }
+}

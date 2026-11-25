@@ -1,0 +1,4 @@
+LIBRARY xcrdapi
+EXPORTS
+    DStorageGetFactory @1
+    TuxBoxReadsInFlight

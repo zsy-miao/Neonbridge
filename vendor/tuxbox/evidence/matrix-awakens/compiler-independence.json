@@ -1,0 +1,66 @@
+{
+  "archive_comparison_tool": "tools/compare_frosty_compilers.py",
+  "archives": {
+    "global": 4576,
+    "material": 38831
+  },
+  "distinct_non_ray_programs": 35442,
+  "previous_compiler_sha256": "eecd3706084e5712286c6d2620c87a6c259a65a6a8616f9f33c2177e2f568c3a",
+  "default_compiler_sha256": "898564347975930cd1a4b40085ff6837c192f3542e445e371cf7a966b887099f",
+  "independent_only_compiler_sha256": "0f0c50f31dfc526d2ee2f6ae83a8056148bacd549023dedf441f9b37ed944564",
+  "default_compiler_results": {
+    "same_profile_and_hlsl": 35018,
+    "changed_hlsl_with_identical_dxil": 7,
+    "same_rejection": 415,
+    "same_rejection_with_named_instructions": 2,
+    "changed_acceptance": 0
+  },
+  "independent_pixel_programs": {
+    "dxbc_sha256": [
+      "0e1f419c2186054538be94770f8821abc236ab3079d6d5cbbfce809fc434a279",
+      "6b3e66c0ef1ccca51ebc81cbba889dc65c77749eba944baddf35af200904b4ec",
+      "77d134cffcd68cb35228b5ae4af3feed19ba2065563ea2158ed4265a07c0cee8",
+      "9a3a9e0015df2362d5056a7e88d3597eec14bcec52c7a32bbb3e4064e82fd598",
+      "a80726ef261628b7378af95c0a024c8d41c2303cb978bceb38c38da661a9564f",
+      "c1b3e5ca48ef59dfcd462acac74fbe874f613e52692449920f89b383d61b45f3",
+      "e0ed33c7ead2a071304c3b8cc1cb1c12c0d0a399c43aef228c0cd75d1c618656"
+    ],
+    "identical_default_and_independent_hlsl": true,
+    "dxv_validated": 7,
+    "matching_previous_dxil": 7,
+    "gpu_draw_receipt": "constant-pixels.json"
+  },
+  "updated_diagnostics": [
+    {
+      "dxbc_sha256": "87a924e4eb081dfe7d11049781e6af01ccb5d9cbec8bcb9d3dc936e31f37bfa6",
+      "baseline": {
+        "error": "unresolved image [mimg<0x15> @ 0x7f0]"
+      },
+      "candidate": {
+        "error": "unresolved image [image_atomic_umin @ 0x7f0]"
+      }
+    },
+    {
+      "dxbc_sha256": "d70b38f8ff50ba9f20fd1ecf8c0bcc313ca0c5293e5d9d9a65eb703933c92acf",
+      "baseline": {
+        "error": "unresolved image [mimg<0x19> @ 0x780]"
+      },
+      "candidate": {
+        "error": "unresolved image [image_atomic_or @ 0x780]"
+      }
+    }
+  ],
+  "cold_profile_comparison": {
+    "previous_compiler": "eecd3706084e5712286c6d2620c87a6c259a65a6a8616f9f33c2177e2f568c3a",
+    "candidate_compiler": "15bfaf05b812842abb36dc2f9a913005aea3cf1852dcf3df034db7e924855138",
+    "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "profile_cases": {
+      "direct": 213,
+      "alias": 2,
+      "linked": 8
+    },
+    "cold_dxv_passes": 446,
+    "changed_pinned_outputs": 0
+  }
+}

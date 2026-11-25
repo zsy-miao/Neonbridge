@@ -1,0 +1,101 @@
+{
+  "scope": "Frosty desktop comparison on Valve Proton Experimental and an NVIDIA GeForce RTX 4070 Ti SUPER under x86-64 Linux. Both runs used the same isolated stage, XMem, DXC, D3D12 and warmed shader cache. The packaged-XG control logged descriptors and skipped the preparation pass. The TuxBox-XG run used the normal launcher and preparation pass.",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "xmem_sha256": "504f7ec8e974e2effe8a7f5ca767acac6a644b62227f50dcf5e706b85214f324",
+  "dxcompiler_xs_sha256": "fc4c8ff9cb80e974da87f3e151928e0e683c416878a70a899ff5fa8b22a41bc8",
+  "d3d12_xs_sha256": "0d0204dacb201de737391b73a4393f02d346b5ed5c6789eb6286ff86a287ef0f",
+  "runs": {
+    "tuxbox": {
+      "verified_milestones": [
+        "load_world",
+        "submit_frame"
+      ],
+      "log_sha256": "b21c9a2c95276f643833beeaca8300aa946d4f798933c7b8b1fd278334c4cee3",
+      "xg_sha256": "07576cb2724600e833171ddce6d15fe3a6e392f7eaed2b9acae94b432f12884a",
+      "mangohud_frame_samples": 1,
+      "exit_code": 1
+    },
+    "packaged_xg_control": {
+      "log_sha256": "aa1ecc1e4300b0eb41872ab2452d441187d0fda12fb3f7a7c42dc0ac977c8582",
+      "xg_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "mangohud_frame_samples": 1,
+      "exit_code": 1
+    }
+  },
+  "settings": {
+    "graphics_profile": "packaged",
+    "loose_graphics_overrides_in_package": 0,
+    "matching_logged_cvar_assignments": 293,
+    "ray_tracing": 1,
+    "lumen_hardware_ray_tracing": 1,
+    "audio": "Muted. Wine media enumeration had hung in pulse_probe_settings when the host audio endpoint was unresponsive."
+  },
+  "result": "Both runs loaded P_Construct_WP, entered InProgress and presented at 3840x2160. Neither reached a playable chase or supplied enough frames to measure performance.",
+  "failure": {
+    "stage": "CreateComputePipelineState",
+    "hresult": "0x80004005",
+    "entry": "LumenSceneDirectLightingHardwareRayTracingCS",
+    "global_shader": 219,
+    "source_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+    "guest_container_bytes": 4812,
+    "dxbc_checksum": "0c29890ea4dda8f26ff6847a02063b2f",
+    "gpu_control": "The embedded root signature and a portable compute pipeline using it were accepted on the same GPU. Two image_bvh64_intersect_ray instructions still require complete traversal and shadow-mask output."
+  },
+  "texture_replay": "evidence/providers/xg-frosty-trace-replay.json",
+  "shader_controls": "evidence/matrix-awakens/inline219-bounded-miss.json",
+  "provider_verification": {
+    "valve": {
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "passed": 20,
+      "gates": [
+        "dxc-create-blob",
+        "dxc-allocator",
+        "dxc-compile",
+        "xdxr-link",
+        "xg-dcc",
+        "xg-library",
+        "xg-addresses",
+        "xg-formats",
+        "xmem-heaps",
+        "xmem-heap-profiles",
+        "xmem-virtual-cpu",
+        "xmem-scatter",
+        "xmem-watch",
+        "xmem-hooks",
+        "xmem-tags",
+        "xmem-http",
+        "xmem-query",
+        "xmem-default",
+        "xmem-partitions",
+        "xmem-pages"
+      ]
+    },
+    "ge": {
+      "proton": "1792432585 GE-Proton11-11",
+      "passed": 20,
+      "gates": [
+        "dxc-create-blob",
+        "dxc-allocator",
+        "dxc-compile",
+        "xdxr-link",
+        "xg-dcc",
+        "xg-library",
+        "xg-addresses",
+        "xg-formats",
+        "xmem-heaps",
+        "xmem-heap-profiles",
+        "xmem-virtual-cpu",
+        "xmem-scatter",
+        "xmem-watch",
+        "xmem-hooks",
+        "xmem-tags",
+        "xmem-http",
+        "xmem-query",
+        "xmem-default",
+        "xmem-partitions",
+        "xmem-pages"
+      ]
+    }
+  },
+  "provider_verification_scope": "Retained Series XMem, XG and DXC checks from the recorded provider runs."
+}

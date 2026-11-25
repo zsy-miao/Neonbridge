@@ -1,0 +1,41 @@
+{
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "inputs": [
+    {
+      "index": 402,
+      "fnv1a64": "967bc3a70a86c7f4",
+      "cooked_sha256": "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e",
+      "hlsl_sha256": "bce00f006e43479526eacbb97d31026a325030a32a2e87a51ae14ce31b6026e7"
+    },
+    {
+      "index": 379,
+      "fnv1a64": "97a201d874e27271",
+      "cooked_sha256": "6f11d6dca919fc549840903f908a47520a58be5aa681082055c1681a9d660d1f",
+      "hlsl_sha256": "bce00f006e43479526eacbb97d31026a325030a32a2e87a51ae14ce31b6026e7"
+    }
+  ],
+  "cache_name": "268dfce413c63fa3.cso",
+  "dxil_sha256": "7f911c22446f15c4dba38e6e6912dd1946f18403ea645b6b27e52c782b41c518",
+  "numthreads": [
+    64,
+    1,
+    1
+  ],
+  "cbv_table": 1,
+  "uav_table": 3,
+  "start": 5,
+  "end_exclusive": 102,
+  "unsigned_view_control": "Observed behavior of the cached float-typed DXIL on UINT views",
+  "elements_per_buffer": 140,
+  "dispatch_groups": 2,
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "93f8f2e441af12d69bd1b6482e665271a47eff8750a1583cc94d212f6f52280a",
+  "readback": {
+    "adapter": "10de:2705",
+    "float_view_4_matched_words": "560",
+    "float_view_1_matched_words": "140",
+    "uint_view_4_matched_words": "560",
+    "uint_view_1_matched_words": "140"
+  },
+  "exit": 0
+}

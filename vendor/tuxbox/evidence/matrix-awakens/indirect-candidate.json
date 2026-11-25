@@ -1,0 +1,29 @@
+{
+  "guest_sha256": "79f69928dac2c1ccf3c22bad78fab472805838f06480ac719bbf89ed16efd5c5",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "desktop": {
+      "exit": 0,
+      "compute_hr": "0x00000000",
+      "mesh_hr": "0x00000000",
+      "raytracing_tier": "12",
+      "ray_null_root_hr": "0x00000000",
+      "ray_nonnull_root_hr": "0x80070057",
+      "ray_nonnull_root_112_hr": "0x80070057",
+      "adapter": "10de:2705",
+      "verified_words": "81"
+    },
+    "xbox": {
+      "exit": 0,
+      "compute_hr": "0x00000000",
+      "mesh_hr": "0x00000000",
+      "raytracing_tier": "12",
+      "ray_null_root_hr": "0x00000000",
+      "ray_nonnull_root_hr": "0x00000000",
+      "ray_nonnull_root_112_hr": "0x80070057",
+      "adapter": "10de:2705",
+      "verified_words": "81"
+    }
+  },
+  "d3d12_xs_sha256": "1fb003ce0160ce7eaf2bfccdf283ab997d7de50f5b4d525bc426fff131114ad6"
+}

@@ -1,0 +1,98 @@
+{
+  "package_sha256": "faff02f294a7e9149ce079dffe3dedbcabe99b1f180ab14222aa8689e00a75fa",
+  "reference": "Packaged wave32 or wave64 machine code dispatched directly on gfx1036, with group ID (0,0,0). SHA-256 covers the entire 32 MiB output tensor including data outside the writes.",
+  "cases": {
+    "72b30": {
+      "container_bytes": 11512,
+      "source_sha256": "3e1c765c4c47ea15173a621250cb6d757330fb354d0f63e9093afb499a119614",
+      "tensor_sha256": "a5dc569797ccd8347e9d609a8a347b221549b46dd986d28abb154343394552b2",
+      "changed_words": 768,
+      "dxil_sha256": "cdd68eb878fe7b0da220e0fa7cef5bbea47fec290a15b2f3c1f3dea355d694f6"
+    },
+    "75830": {
+      "container_bytes": 18040,
+      "source_sha256": "6c102ff3a416d64c6a41dfef682a5d645bb25211e54f15c86b4f9816ba80445c",
+      "tensor_sha256": "e94e33dbeaba9ff5592ceee23566f84ef301a86f1bc53535f82a3ec7f768ed20",
+      "changed_words": 256,
+      "dxil_sha256": "03e951b809429dd71c8cb4bc547d32ffb64352cfee4a298534fde955adf3a806"
+    },
+    "79eb0": {
+      "container_bytes": 18360,
+      "source_sha256": "20b744d5141f1a041047d052f62c8ecf1e4c9acb658dceacbcd10a98ff7e3a02",
+      "tensor_sha256": "b16214fdf480dda521c09ce5ab5ff5118b1fd3f2a264da2844bc563c24376713",
+      "changed_words": 512,
+      "dxil_sha256": "8d93adc9f313ce56c7b9507da0a096f8d466b8bd92893e03d1268b8e1ba7f939"
+    },
+    "7e680": {
+      "container_bytes": 42616,
+      "source_sha256": "6da9859f88dbcc538cd1ec54f0fa29a607e71d8f99d66aa250256468291d23f6",
+      "tensor_sha256": "0c2ed6741a45e58b88af8a8446b800ce63d2e81a9f940de1765edab7ec1be8a3",
+      "changed_words": 2048,
+      "dxil_sha256": "70a853534fd5a0b4b9a03ed64b50045b5479fe51e1180fa43da9e3a30a6be1fc"
+    },
+    "88d00": {
+      "container_bytes": 22968,
+      "source_sha256": "17b127af307198e573c2860b20f30bbb3aa5c224c4556ad4f2eaed97d9852d90",
+      "tensor_sha256": "209f9d90715369343aba743254aad944890612841f807712bf946b6d50d7331d",
+      "changed_words": 5633,
+      "dxil_sha256": "263954078270c4efb0cae4884feeba785b48036ac97f2657bea711cd29223116"
+    },
+    "8e6e0": {
+      "container_bytes": 26872,
+      "source_sha256": "7baa6a354aae296410cd40ae7d672efebea4d90b0b01327fffbba183dca10686",
+      "tensor_sha256": "7002319eb3a1cd993851e21a776e5e91cbf5c084541c5cfde8639fa62a854274",
+      "changed_words": 1026,
+      "dxil_sha256": "477963ebfd4beac4f3ed952acadf8dd08980614f40c797768e1f7e08d15234d6"
+    },
+    "95020": {
+      "container_bytes": 27320,
+      "source_sha256": "1d52e9cfa58dee5a71bb0e6a62294933d2df09e48394a41938d9097bbb0885d2",
+      "tensor_sha256": "32a71b7fb5941954084f8d189dc883c6e41d6772daddf352a9d67776bee3af4e",
+      "changed_words": 1024,
+      "dxil_sha256": "ae6849f7b3b3457dddc25c0e6f7c1ae5d1a74c96ea1e5d15d88f469a007797c0"
+    },
+    "a64a0": {
+      "container_bytes": 17912,
+      "source_sha256": "7cc4cb47465d96a2d82940c25e38f9ff655b8599fd72b16d371b909899913f61",
+      "tensor_sha256": "82c31efd38cdffa2f028d28171ec8cc24f0d83e54615133dddb92d9076178d97",
+      "changed_words": 576,
+      "dxil_sha256": "e51497b67ad0dcd6272403942db7d2b356043d200565fcb49c361cf7f6180448"
+    },
+    "b2e80": {
+      "container_bytes": 15032,
+      "source_sha256": "24d2707c2e3e620143901ffb2c50e74205b07e1bd74bd2fab64d0564cd497929",
+      "tensor_sha256": "be95a9031e9ac60e0fad74d3581df406773b4ac1c217992ced07cfc1c2a3f80b",
+      "changed_words": 3072,
+      "dxil_sha256": "d510082caba31b94be65696243113306c9a63ce81196b17f6327dde45ec0b0b4"
+    }
+  },
+  "standalone": {
+    "packaged_shaders": 29,
+    "validated_dxil": 28,
+    "remaining_offset": "9fe90",
+    "diagnostic": "v_readlane at 0x2358: v1 lane 31 read before any v_writelane"
+  },
+  "translated_dispatch": {
+    "compiler_sha256": "404e6cfe4a17427405e087bb807f1ebadabb0603c5dec0890cb37c8419198ed3",
+    "adapters": [
+      "1002:13c0",
+      "10de:2705"
+    ],
+    "cases_per_adapter": 9,
+    "source": "tools/check_fidelityfx_tensors.py",
+    "dimensions": [
+      128,
+      4
+    ],
+    "groups": [
+      1,
+      1,
+      1
+    ],
+    "result": "Both adapters reproduced all nine native tensor hashes with the packaged root signatures."
+  },
+  "cold_dxc_seconds": {
+    "95020": 0.93,
+    "7e680": 2.17
+  }
+}

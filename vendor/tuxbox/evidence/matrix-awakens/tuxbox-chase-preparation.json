@@ -1,0 +1,70 @@
+{
+  "title": "The Matrix Awakens",
+  "version": "1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider": "TuxBox D3D12",
+  "compiler": "Checkout tools/shader-compiler, Linux DXC and DXV",
+  "profile": {
+    "sources": 206,
+    "linked": 6,
+    "outputs": 212,
+    "base_sha256": "3816ee55b20733cc72aada6a5c4f397fee0701be2f01d27136b515ca5f5d7854",
+    "menu_sha256": "e7bdae26776ac88eed97447a9b09f938a582a1c858621ac840e7422a05daa004"
+  },
+  "retail_missing_sources": [
+    {
+      "archive": "material",
+      "entry": 35914,
+      "profile": "ps_6_0",
+      "dxbc_sha256": "65aad0f8081beeab3fb758bc8413bf7bf5939e3a9145e7466e73728e2ccda496",
+      "compiled_dxil_sha256": "8217ad21a45b2083f5414e818d41a1118d38a236917ca15fc18355a57d8a0f74"
+    },
+    {
+      "archive": "global",
+      "entry": 3515,
+      "profile": "vs_6_0",
+      "dxbc_sha256": "bb751396a2a91f21bab21f49c4d2bc4085224ff3874c039303ee81c5e5abbdb3",
+      "compiled_dxil_sha256": "51da77cb05cb00746b4446e30d8ed804e4b59bb3a29673fbaf1c3a10d38d05b1"
+    },
+    {
+      "archive": "global",
+      "entry": 1268,
+      "profile": "ps_6_1",
+      "dxbc_sha256": "cc87d287fa3adacff94e6056313ba418fa8cd1e7d21a8fe3116567830eb6a10d",
+      "compiled_dxil_sha256": "b0c8993f4476f8e4599fff49da0b9fbcafdcd009104a3553494a8dff2e007d92"
+    },
+    {
+      "archive": "global",
+      "entry": 3358,
+      "profile": "cs_6_0",
+      "dxbc_sha256": "14e8765062ebc9e18afe853301006f51b028e59273118c50a06ac91ffec41aee",
+      "compiled_dxil_sha256": "0408de1f394fafc81e04c60c3ba648dd4a233787880dfaaf42434036f902420b"
+    },
+    {
+      "archive": "global",
+      "entry": 973,
+      "profile": "cs_6_0",
+      "dxbc_sha256": "47eb7fd9cd1412ab21ec37769fdceedf04c4de76cbdf27699b95c3f1bd672b3c",
+      "compiled_dxil_sha256": "360011fa8272b4da10d9e068d810b8f499e2cd44b68438d501a7401768a94ba4"
+    }
+  ],
+  "earlier_captures": {
+    "unprofiled_graphics_sources_recovered": 37,
+    "method": "Matched full SHA-256 of each captured Xbox program to a cooked archive record, checked the capture-era HLSL-keyed DXIL hash and reproduced the Linux DXIL hash through the normal compiler and validator. This count includes the bb751396 and cc87d287 stages requested again by the independent run."
+  },
+  "depth_pairs": [
+    {
+      "producer": "4952ebb81b8868e66c39f8f1323501d9c9affec2f54fb6fcec21472933b46035",
+      "pixel": "ff94f1d5a7f37f24346ef9bfa15cad12e2504b43b3176b535e4b56937204e614",
+      "compiled_dxil_sha256": "d0f4aa3dc1071db433c0b457f8d04965cb8577ea3431a28e26f8bcf8c5ac44b2"
+    },
+    {
+      "producer": "bfee6e102ab504ca659652189db6ad1d4e0790971745c3919dc2111076ef35cd",
+      "pixel": "3ca45139817062553ab3bb8cb6f429211dc7c944458312cce8b64c872959f33d",
+      "compiled_dxil_sha256": "0ef90f5a9fc0913414c663819b79f308f79b8daca8f8d5b87ca6b5329ab73f03"
+    }
+  ],
+  "gpu_pair_control": "evidence/matrix-awakens/tuxbox-linked-materials.json",
+  "warm_control": "Frosty shaders ready: 0 compiled, 212 cached.",
+  "scope": "This verifies shader extraction, translation, validation and warm reuse. Runtime progression is recorded separately in evidence/matrix-awakens/independent-menu.json."
+}

@@ -1,0 +1,147 @@
+{
+  "scope": "Guest CBV creation, guest descriptor range copy, shader-visible heap fetch, post-recording upload update, all 48 registers read by a compute control.",
+  "probe": "tools/check_frosty_film_cbv.py",
+  "execution": "Isolated copied Wine prefix, stock Proton Wine, installed vkd3d-proton and DXVK, physical Vulkan GPU, offscreen compute and readback. Timings include harness setup.",
+  "proton": {
+    "steam_name": "Proton - Experimental",
+    "steam_app_id": 1493710,
+    "steam_build_id": 26306234,
+    "version": "1793301796 experimental-11.0-20261027b-x86_64",
+    "tuxbox_features_marker": false
+  },
+  "d3d12_xs": {
+    "origin": "TuxBox d3d12",
+    "sha256": "332f2f9b4fb85d04f7a7dfca3180c63b6d005db1381e24b6f03fd5d359dd10db"
+  },
+  "probe_guest_sha256": "4fc3a5271d5d4ecf96022cb4a5430afd9a00b1954606d7397e59423ed3863d3f",
+  "vkd3d_proton_sha256": {
+    "d3d12.dll": "f728f7f04364b5761863428131317008f61b627d8335fcd8db9fd75715fc1278",
+    "d3d12core.dll": "5edbb1df81ce270e2263e4472e1dcddaeaccdd8624af561a00eea865926f3c40"
+  },
+  "dxgi_sha256": "9cbcb3cf808eaddf6a590922c7ed251b4a1355fc3dec83f1cfe9343a85156ea0",
+  "cbv_layer": {
+    "name": "VK_LAYER_TUXBOX_console_cbv",
+    "library_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "same_as_fresh_build": true,
+    "source": "tools/reference/cbv-layer/layer.c",
+    "source_sha256": "417f3c130762ade2093ba7e4250b1ed0c800fb2a76cc6dbda1655942bd55bd7f"
+  },
+  "config": {
+    "VKD3D_CONFIG": "",
+    "VKD3D_DISABLE_EXTENSIONS": "VK_EXT_descriptor_buffer"
+  },
+  "radv_driver": {
+    "package": "vulkan-radeon",
+    "version": "3:26.2.6-1",
+    "architecture": "x86_64_v4",
+    "library_sha256": "141127425d20613ad9dfb6231ebaefc923543ddfa31278ab7fa7a45f74bd1530"
+  },
+  "offsets_bytes": [0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240],
+  "expected_words_per_offset": 192,
+  "view_size_bytes": 768,
+  "adapters": {
+    "NVIDIA": {
+      "device": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+      "layer_enabled": {
+        "passed": true,
+        "guest_exit_code": 0,
+        "harness_exit_code": 0,
+        "words_matching_by_offset": [192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192],
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "fully_matching_offsets": 16,
+        "vulkan_loader_observed_tuxbox_layer": true,
+        "harness_wall_seconds": 5.092
+      },
+      "layer_disabled": {
+        "passed": false,
+        "guest_exit_code": 1,
+        "harness_exit_code": 1,
+        "words_matching_by_offset": [192, 0, 0, 0, 192, 0, 0, 0, 192, 0, 0, 0, 192, 0, 0, 0],
+        "words_matching": 768,
+        "words_tested": 3072,
+        "fully_matching_offsets": 4,
+        "vulkan_loader_observed_tuxbox_layer": false,
+        "harness_wall_seconds": 5.011,
+        "guest_error": "CBV data mismatch"
+      },
+      "normal_launcher": {
+        "passed": true,
+        "launcher_exit_code": 0,
+        "fully_matching_offsets": 16,
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "vulkan_loader_observed_tuxbox_layer": true,
+        "system_dlls_match_stock": true,
+        "launcher_wall_seconds": 2.877
+      },
+      "automatic_selection": {
+        "passed": true,
+        "launcher_exit_code": 0,
+        "fully_matching_offsets": 16,
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "vulkan_loader_observed_tuxbox_layer": true,
+        "system_dlls_match_selected_installation": true,
+        "launcher_wall_seconds": 2.633
+      }
+    },
+    "AMD": {
+      "device": "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+      "layer_enabled": {
+        "passed": true,
+        "guest_exit_code": 0,
+        "harness_exit_code": 0,
+        "words_matching_by_offset": [192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192],
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "fully_matching_offsets": 16,
+        "vulkan_loader_observed_tuxbox_layer": true,
+        "harness_wall_seconds": 5.364
+      },
+      "layer_disabled": {
+        "passed": true,
+        "guest_exit_code": 0,
+        "harness_exit_code": 0,
+        "words_matching_by_offset": [192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192, 192],
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "fully_matching_offsets": 16,
+        "vulkan_loader_observed_tuxbox_layer": false,
+        "harness_wall_seconds": 4.673
+      },
+      "normal_launcher": {
+        "passed": true,
+        "launcher_exit_code": 0,
+        "fully_matching_offsets": 16,
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "vulkan_loader_observed_tuxbox_layer": true,
+        "system_dlls_match_stock": true,
+        "launcher_wall_seconds": 1.694
+      },
+      "automatic_selection": {
+        "passed": true,
+        "launcher_exit_code": 0,
+        "fully_matching_offsets": 16,
+        "words_matching": 3072,
+        "words_tested": 3072,
+        "vulkan_loader_observed_tuxbox_layer": true,
+        "system_dlls_match_selected_installation": true,
+        "launcher_wall_seconds": 1.763
+      }
+    }
+  },
+  "launcher_method": "Host.run_game launched the same compute guest through umu-run, stock Proton Experimental and Steam Runtime 4. The TuxBox provider was app-local. The D3D12 and DXGI libraries were supplied by Proton through the prefix. The RADV run selected the cached Vulkan driver identified above.",
+  "automatically_selected_proton": {
+    "selection": "Host automatic detection with PROTONPATH unset and a new empty prefix for each adapter.",
+    "installation_directory": "compatibilitytools.d/Proton - Experimental",
+    "version": "1789159601 experimental-11.0-20260910b-x86_64",
+    "tuxbox_features_marker": false,
+    "system_dll_sha256": {
+      "d3d12.dll": "0b21eec25a2b82de7dd00430cfd7336f91872fb93659340d8e892af0bcd0dd83",
+      "d3d12core.dll": "18015e7d364838eca7aaaa1d983609fadf656db90cbd602ec170524ed6af33f0",
+      "dxgi.dll": "7f263ec5180055ec3bf545e7af93851ea2b5c63d791dfd9d91759f7f17d5502b"
+    }
+  }
+}

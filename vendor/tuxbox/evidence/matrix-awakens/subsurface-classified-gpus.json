@@ -1,0 +1,117 @@
+{
+  "scope": "Global shaders 824 and 828 subsurface tile classification through TuxBox\u2019s provider and runtime shader compiler. Four CPU-modeled cases per shader check both indirect lists, list capacity and all 1,024 image channels on both GPUs. This does not validate full skin rendering.",
+  "results": {
+    "amd": {
+      "scope": "Two packaged subsurface tile-classification shaders through TuxBox\u2019s provider and runtime shader worker. Both indirect lists and capacities are checked against CPU expectations; this does not validate complete skin rendering.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "b49c0d57cf7da69f7dc3436dfe19e59e50fb8f07b034f6ec9e97f15673d52c89",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "guest_sha256": "8e5fc721f574bef6e751ff85313a728f364d8e808d90304b3966313a96b2d8b8",
+      "shaders": {
+        "824": {
+          "cooked_sha256": "d74826fb0054b57193e687148b6ab2c0dbe576a9312505e916bc25b79a37d078",
+          "readback": {
+            "capacity_5_channels": "1024",
+            "capacity_5_counter": "4",
+            "capacity_5_other": "0",
+            "capacity_5_valid_records": "1",
+            "capacity_1_channels": "1024",
+            "capacity_1_counter": "4",
+            "capacity_1_other": "0",
+            "capacity_1_valid_records": "1",
+            "second_capacity_5_channels": "1024",
+            "second_capacity_5_counter": "1",
+            "second_capacity_5_other": "3",
+            "second_capacity_5_valid_records": "1",
+            "second_capacity_1_channels": "1024",
+            "second_capacity_1_counter": "1",
+            "second_capacity_1_other": "3",
+            "second_capacity_1_valid_records": "1"
+          }
+        },
+        "828": {
+          "cooked_sha256": "312ef909f0c66a7b66a2e2d45b4299506c56aa333198bfb046af187b1bb8d1a5",
+          "readback": {
+            "capacity_5_channels": "1024",
+            "capacity_5_counter": "4",
+            "capacity_5_other": "0",
+            "capacity_5_valid_records": "1",
+            "capacity_1_channels": "1024",
+            "capacity_1_counter": "4",
+            "capacity_1_other": "0",
+            "capacity_1_valid_records": "1",
+            "second_capacity_5_channels": "1024",
+            "second_capacity_5_counter": "1",
+            "second_capacity_5_other": "3",
+            "second_capacity_5_valid_records": "1",
+            "second_capacity_1_channels": "1024",
+            "second_capacity_1_counter": "1",
+            "second_capacity_1_other": "3",
+            "second_capacity_1_valid_records": "1"
+          }
+        }
+      }
+    },
+    "nvidia": {
+      "scope": "Two packaged subsurface tile-classification shaders through TuxBox\u2019s provider and runtime shader worker. Both indirect lists and capacities are checked against CPU expectations; this does not validate complete skin rendering.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "b49c0d57cf7da69f7dc3436dfe19e59e50fb8f07b034f6ec9e97f15673d52c89",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "guest_sha256": "8e5fc721f574bef6e751ff85313a728f364d8e808d90304b3966313a96b2d8b8",
+      "shaders": {
+        "824": {
+          "cooked_sha256": "d74826fb0054b57193e687148b6ab2c0dbe576a9312505e916bc25b79a37d078",
+          "readback": {
+            "capacity_5_channels": "1024",
+            "capacity_5_counter": "4",
+            "capacity_5_other": "0",
+            "capacity_5_valid_records": "1",
+            "capacity_1_channels": "1024",
+            "capacity_1_counter": "4",
+            "capacity_1_other": "0",
+            "capacity_1_valid_records": "1",
+            "second_capacity_5_channels": "1024",
+            "second_capacity_5_counter": "1",
+            "second_capacity_5_other": "3",
+            "second_capacity_5_valid_records": "1",
+            "second_capacity_1_channels": "1024",
+            "second_capacity_1_counter": "1",
+            "second_capacity_1_other": "3",
+            "second_capacity_1_valid_records": "1"
+          }
+        },
+        "828": {
+          "cooked_sha256": "312ef909f0c66a7b66a2e2d45b4299506c56aa333198bfb046af187b1bb8d1a5",
+          "readback": {
+            "capacity_5_channels": "1024",
+            "capacity_5_counter": "4",
+            "capacity_5_other": "0",
+            "capacity_5_valid_records": "1",
+            "capacity_1_channels": "1024",
+            "capacity_1_counter": "4",
+            "capacity_1_other": "0",
+            "capacity_1_valid_records": "1",
+            "second_capacity_5_channels": "1024",
+            "second_capacity_5_counter": "1",
+            "second_capacity_5_other": "3",
+            "second_capacity_5_valid_records": "1",
+            "second_capacity_1_channels": "1024",
+            "second_capacity_1_counter": "1",
+            "second_capacity_1_other": "3",
+            "second_capacity_1_valid_records": "1"
+          }
+        }
+      }
+    }
+  },
+  "negative_control": "Changing one ISA bit causes both variants to reject the unknown election at 0x3bc or 0x35c.",
+  "regression": "Previously supported globals 847 and 856 emit byte-identical HLSL with the updated compiler."
+}

@@ -1,0 +1,43 @@
+{
+  "scope": "GameInput v0 factory and polling through a TuxBox provider. A private X display supplies real key and mouse transitions. Controller and retail-title evidence are recorded separately.",
+  "source": "runtime/gameinput/guest.cpp",
+  "host_kernel": "7.3.4-1-cachyos",
+  "exports": {
+    "GameInputCreate": 1
+  },
+  "guest_imports": [
+    "#1"
+  ],
+  "guest_sha256": "37b81790697bb5ae547bac86d919790213cbe60a8d4542b8e8673321d359c777",
+  "provider_sha256": "54ed6429d071c9893ca712852e4c6aa757a6985813a8c1aecf6b7ff8e6c86903",
+  "package_reference": "EmbeddedXvd/Windows/System32/GameInput.dll",
+  "package_sha256": "25ee044071bbba405a026eaad7e1bf106b72a4f2f0b968f6855ecee5e390f6e9",
+  "reproduction": "Build with python build.py gameinput. On a private desktop, launch gameinput-control.exe --private-desktop-report result.txt through the selected host and focus the TuxBox GameInput control window. The guest injects a key and a mouse click. For the original control place the same guest beside the packaged DLL in a separate directory.",
+  "checks": [
+    "matching factory name and ordinal",
+    "per-process singleton identity",
+    "R press and release with virtual key and scan code",
+    "forward and backward reading ordering filtered by the keyboard device",
+    "retained snapshots after live state changes",
+    "relative mouse movement by 11 and 7 counts, left press and release"
+  ],
+  "runs": [
+    {
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "provider_exit_code": 0,
+      "receipt": "gameinput PASS ordinal=1 singleton=1 keys=2 mouse=2 delta=11,7 history=2 retained=2",
+      "package_exit_code": 66,
+      "package_loader_ntstatus": "0xc0000142",
+      "package_loaded_before_guest_entry": false
+    },
+    {
+      "host": "1792432585 GE-Proton11-11",
+      "provider_exit_code": 0,
+      "receipt": "gameinput PASS ordinal=1 singleton=1 keys=2 mouse=2 delta=11,7 history=2 retained=2",
+      "package_exit_code": 66,
+      "package_loader_ntstatus": "0xc0000142",
+      "package_loaded_before_guest_entry": false
+    }
+  ],
+  "remaining": "This original polling run did not cover callbacks, text translation, mouse wheels, rumble or additional device kinds. Later device callback and desktop mapping checks are in evidence/providers/gameinput-devices.json. The packaged DLL could not initialize in either isolated desktop process."
+}

@@ -1,0 +1,88 @@
+{
+  "scope": "D3D12 placed four-sample depth and stencil readback through TuxBox on stock Proton Experimental. Guest requested default alignment on a mixed-resource heap at a 64 KiB offset. The draw-independent control cleared the depth/stencil view and sampled both planes through typed Texture2DMS shader resource views.",
+  "provider_sha256": "c79dcc2fba913b1a58e4760eaa3cbb65bad47f4ad1aa869fcaea6b6360c33e0a",
+  "guest_sha256": "f493fe0f4ae417460a75dfe054612b0b9fe6f5392cf714acd5d4335b0e117df9",
+  "existing_heap_guest_sha256": "d57f22c239208db8666002e233104014d6af822c28e83901ae1342ab73923d68",
+  "resource": {
+    "width": 2976,
+    "height": 1676,
+    "format": "R24G8_TYPELESS",
+    "view": "D24_UNORM_S8_UINT",
+    "srv": [
+      "R24_UNORM_X8_TYPELESS",
+      "X24_TYPELESS_G8_UINT"
+    ],
+    "mip_levels": 1,
+    "array_size": 1,
+    "sample_count": 4,
+    "sample_quality": 0,
+    "flags": "0x01000002",
+    "offset": 65536,
+    "guest_alignment": 0,
+    "heap_type": "DEFAULT",
+    "heap_flags": 0
+  },
+  "readback": {
+    "depth_clear": 0.5,
+    "stencil_clear": 73,
+    "coordinate": [
+      1488,
+      838
+    ]
+  },
+  "adapters": {
+    "1002:13c0": {
+      "default_size": 109051904,
+      "default_alignment": 4194304,
+      "small_size": 105578496,
+      "small_alignment": 65536,
+      "heap_size": 105644032,
+      "samples": [
+        {
+          "depth_f32_bits": "0x3f000000",
+          "stencil": 73
+        },
+        {
+          "depth_f32_bits": "0x3f000000",
+          "stencil": 73
+        },
+        {
+          "depth_f32_bits": "0x3f000000",
+          "stencil": 73
+        },
+        {
+          "depth_f32_bits": "0x3f000000",
+          "stencil": 73
+        }
+      ],
+      "existing_heap_guest": "d3d12-heaps PASS pci=1002:13c0 heap=32MiB offsets=0,65536 words=256/256 invalid=4 display=3840x2160/RGB10A2 pixel=c00ffc00 volume=45/45 priorities=4/4 invalid_priority_calls=4"
+    },
+    "10de:2705": {
+      "default_size": 83886080,
+      "default_alignment": 4194304,
+      "small_size": 82313216,
+      "small_alignment": 65536,
+      "heap_size": 82378752,
+      "samples": [
+        {
+          "depth_f32_bits": "0x3f000001",
+          "stencil": 73
+        },
+        {
+          "depth_f32_bits": "0x3f000001",
+          "stencil": 73
+        },
+        {
+          "depth_f32_bits": "0x3f000001",
+          "stencil": 73
+        },
+        {
+          "depth_f32_bits": "0x3f000001",
+          "stencil": 73
+        }
+      ],
+      "existing_heap_guest": "d3d12-heaps PASS pci=10de:2705 heap=32MiB offsets=0,65536 words=256/256 invalid=4 display=3840x2160/RGB10A2 pixel=c00ffc00 volume=45/45 priorities=4/4 invalid_priority_calls=4"
+    }
+  },
+  "limits": "The retail allocation offsets and heap size from the earlier failing run were unavailable. A later retail run passed resource creation before this placement change."
+}

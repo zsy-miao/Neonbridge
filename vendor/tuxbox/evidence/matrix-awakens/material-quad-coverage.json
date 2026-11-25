@@ -1,0 +1,52 @@
+{
+  "stage": "Pixel",
+  "scope": "Saved Xbox EXEC masks expanded by S_WQM_B64 in translated material shaders.",
+  "requested_material_archive_entries_surveyed": 216,
+  "distinct_affected_requested_programs": 58,
+  "draw_control": {
+    "source": "material/19479",
+    "source_sha256": "beba1bb02c5848cf8c682bf6f20f18eca4de594cb9d73fd1e1fc2f4ab7426a40",
+    "isa_start": "0x05ec",
+    "isa_end_exclusive": "0x0600",
+    "setup": "Render a 32 by 32 full-screen triangle. Select each of the 16 four-pixel coverage masks in repeating 2 by 2 pixel blocks. Execute the HLSL emitted for the packaged mask instructions. Only the resulting active lanes write their X coordinate, then each lane reads the value from its horizontal neighbour. Read back each coordinate and its activation bit from the GPU.",
+    "expected": "A nonempty mask enables all four pixels. An empty mask enables none.",
+    "results": [
+      {
+        "adapter": "AMD",
+        "pixels": 1024,
+        "version": "previous",
+        "activation_mismatches": 448,
+        "coordinate_mismatches": 448,
+        "neighbour_coordinate_mismatches": 448
+      },
+      {
+        "adapter": "AMD",
+        "pixels": 1024,
+        "version": "corrected",
+        "activation_mismatches": 0,
+        "coordinate_mismatches": 0,
+        "neighbour_coordinate_mismatches": 0
+      },
+      {
+        "adapter": "NVIDIA",
+        "pixels": 1024,
+        "version": "previous",
+        "activation_mismatches": 448,
+        "coordinate_mismatches": 448,
+        "neighbour_coordinate_mismatches": 448
+      },
+      {
+        "adapter": "NVIDIA",
+        "pixels": 1024,
+        "version": "corrected",
+        "activation_mismatches": 0,
+        "coordinate_mismatches": 0,
+        "neighbour_coordinate_mismatches": 0
+      }
+    ],
+    "hlsl_sha256": {
+      "previous": "d188bf87055b40e0ad564d9ea1bea393070daf14d7b23e4fa817d5bb4ae6ac67",
+      "corrected": "44311d6dc64670bdc268f465658c197b748834c66761473fa1ce11b8f6e60456"
+    }
+  }
+}

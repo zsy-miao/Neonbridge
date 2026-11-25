@@ -1,0 +1,40 @@
+{
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "guest_sha256": "7754cb426e9d2ec32de38a62bb0e4de492d0bb77a61d94c8670c4f976ace4726",
+  "source_shaders": {
+    "vertex": "a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e",
+    "geometry": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+    "pixel0": "bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+    "pixel1": "dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc",
+    "bridge_vertex": "b331bc67f92ea2c1daaf26418e8ed09c55179a36b529340fe8bd60ec9d4fd75c",
+    "bridge_pixel": "ccdd625c97ef08eb7adfa5e2c029827fe389a64c69f4095ef2e229f47c40ff34"
+  },
+  "bridge_portable_pixel_sha256": "e08272f47646a29d3bfd672e87843fb00c41745748445472939e132ce0e08b24",
+  "links": [
+    {
+      "pair": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33_bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+      "compiled_sha256": "441726aa009c995a41e5d11c5c4f7a8d1c017539d2ec587dbdf3c4bd1a26445b"
+    },
+    {
+      "pair": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33_dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc",
+      "compiled_sha256": "441726aa009c995a41e5d11c5c4f7a8d1c017539d2ec587dbdf3c4bd1a26445b"
+    },
+    {
+      "pair": "b331bc67f92ea2c1daaf26418e8ed09c55179a36b529340fe8bd60ec9d4fd75c_ccdd625c97ef08eb7adfa5e2c029827fe389a64c69f4095ef2e229f47c40ff34",
+      "compiled_sha256": "05af648e4a8c6645ad9b833058626f68eb0ed6aa6ffdcc289b5b8881da0977f8"
+    }
+  ],
+  "checks": {
+    "pci": "10de:2705",
+    "linked": "2",
+    "absent": "1",
+    "wrong_consumer": "1",
+    "wrong_stage": "1",
+    "vertex_linked": "1",
+    "vertex_absent": "1",
+    "vertex_wrong_consumer": "1",
+    "vertex_wrong_stage": "1",
+    "bridge_pixel_absent": "1"
+  }
+}

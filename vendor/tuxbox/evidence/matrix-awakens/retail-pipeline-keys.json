@@ -1,0 +1,154 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "root_sha256": "eb7ded3dc8184c8ff40291f647c3df26a17e3a4d8bd03edfdc91ea3c28b9648b",
+  "root_vkd3d_fnv1": "005e28bf2a30eb01",
+  "root_bytes": 200,
+  "compute_node_mask": 1,
+  "compute_flags": 0,
+  "state_descriptor_hash": "08328707b4eb6e3a",
+  "root_signature_version": "1.1",
+  "table_range_flags_in_srv_cbv_sampler_uav_order": [
+    5,
+    5,
+    1,
+    3
+  ],
+  "vkd3d_proton_commit": "cae2e003bb8251627ff93c0f471ae18a28234490",
+  "archive_format_reference": "https://github.com/HansKristian-Work/vkd3d-proton/blob/cae2e003bb8251627ff93c0f471ae18a28234490/libs/vkd3d/cache.c",
+  "method": "Read the pre-warmup title caches as VKS4 streams, including complete type-2 VKB4 pipeline entries. For each staged CSO, apply vkd3d FNV-1 to its bytes, then one more iteration with stage ordinal 7 (compute), and locate that value inside the PSO compatibility chunk. A positive match requires the title root and node-mask/flags state hash. Pixel and vertex programs are outside this compute check.",
+  "historical_archives": {
+    "film": {
+      "file": "film-capture.AFIx4MGw/Frosty/Binaries/XSX/vkd3d-proton.cache",
+      "sha256": "a2c43d62595055a63c95bcfbc8e1ae2e8f0ef0144e36b7ffbbed3d1e17ef5819",
+      "bytes": 101224,
+      "pipeline_records": 424
+    },
+    "film_write": {
+      "file": "film-capture.AFIx4MGw/Frosty/Binaries/XSX/vkd3d-proton.cache.write",
+      "sha256": "37484b7464bb5146ad264ff53e48fffc049a34430d44275ca0b9711c1c0c30e5",
+      "bytes": 64344,
+      "pipeline_records": 264
+    },
+    "binding_write": {
+      "file": "binding-test.qDFDqZ/Frosty/Binaries/XSX/vkd3d-proton.cache.write",
+      "sha256": "3433bc77952490cda2e9e851b25246c52e62aed1aab71cb87abd35e63418be73",
+      "bytes": 4096,
+      "pipeline_records": 16
+    },
+    "radeon": {
+      "file": "radeon-trial.V6gmPH/Frosty/Binaries/XSX/vkd3d-proton.cache",
+      "sha256": "916c67863e2fed1083809e68364226d388f27cd5026e25ad9ab9e2a13d942459",
+      "bytes": 64232,
+      "pipeline_records": 271
+    }
+  },
+  "compute": [
+    {
+      "archive": "global",
+      "entry": 379,
+      "dxil_sha256": "7f911c22446f15c4dba38e6e6912dd1946f18403ea645b6b27e52c782b41c518",
+      "dxil_cache_file": "268dfce413c63fa3.cso",
+      "vkd3d_shader_hash": "90337494ea0e13ae",
+      "compat_shader_hash": "1582c709b5eb70ad",
+      "historical_pso_records": {
+        "film": [
+          "f35045efae4e54ca"
+        ],
+        "radeon": [
+          "f35045efae4e54ca"
+        ]
+      },
+      "menu_dump_byte_match": true
+    },
+    {
+      "archive": "global",
+      "entry": 2227,
+      "dxil_sha256": "ef378ee733aee96305b54fe9a5db5dbb448f495fff1a6110b7d44e0c626d638b",
+      "dxil_cache_file": "cd212d3ca9b64f27.cso",
+      "vkd3d_shader_hash": "72d87efa8482546e",
+      "compat_shader_hash": "a83431af297576ed",
+      "historical_pso_records": {
+        "film": [
+          "fa22c60c026499ec"
+        ]
+      },
+      "menu_dump_byte_match": false
+    },
+    {
+      "archive": "global",
+      "entry": 3333,
+      "dxil_sha256": "c76a6e46786eb7007b5676bde8398cc92d9cc75a79f12ba6914d34bd80c69137",
+      "dxil_cache_file": "3a670d30b3c9baf6.cso",
+      "vkd3d_shader_hash": "0e66dab0a49924a5",
+      "compat_shader_hash": "11ea3f27b0394458",
+      "historical_pso_records": {
+        "film_write": [
+          "f11088fd594ce24b"
+        ]
+      },
+      "menu_dump_byte_match": false
+    },
+    {
+      "archive": "global",
+      "entry": 2696,
+      "dxil_sha256": "7afccfd6240eb9f853caaeb2865577408bd7b1459316ed8069b5e81f3ca22449",
+      "dxil_cache_file": "1a9afce1ceb13d8a.cso",
+      "vkd3d_shader_hash": "8596bf1915fe312a",
+      "compat_shader_hash": "fd57e1a05eed8a59",
+      "historical_pso_records": {
+        "binding_write": [
+          "24b602ef753766bf"
+        ],
+        "radeon": [
+          "24b602ef753766bf"
+        ]
+      },
+      "menu_dump_byte_match": false
+    },
+    {
+      "archive": "global",
+      "entry": 856,
+      "dxil_sha256": "5bfdb781a7b7d76c848fb72daa23587ab4ea9a0333cf647f9149372dca3f44f1",
+      "dxil_cache_file": "a4a920fc149b2cb5.cso",
+      "vkd3d_shader_hash": "8f03d6eb453e1457",
+      "compat_shader_hash": "419a88c6a87c8fd2",
+      "historical_pso_records": {
+        "radeon": [
+          "03685e8d6eb0010c"
+        ]
+      },
+      "menu_dump_byte_match": false
+    },
+    {
+      "archive": "global",
+      "entry": 506,
+      "dxil_sha256": "5280d197bcec064749b34d97f766ffd9605cd88500356dcb79260f6efc434549",
+      "dxil_cache_file": "4a15194f65d2d3b3.cso",
+      "vkd3d_shader_hash": "67a1053fb174607d",
+      "compat_shader_hash": "8afc683a88bff460",
+      "historical_pso_records": {},
+      "menu_dump_byte_match": false
+    },
+    {
+      "archive": "material",
+      "entry": 37635,
+      "dxil_sha256": "956b32ea59b0f4396c80cb0ba20b4f66ec53e0a7be1299ac0bf8755b6a961353",
+      "dxil_cache_file": "ae317f994ffc8199.cso",
+      "vkd3d_shader_hash": "402572e24e930fae",
+      "compat_shader_hash": "92b1e48b83e3a4ad",
+      "historical_pso_records": {},
+      "menu_dump_byte_match": false
+    },
+    {
+      "archive": "material",
+      "entry": 15458,
+      "dxil_sha256": "74a56601351fee1fe03c48bb514244f1752ebae6a006b33ea8490491a4b865fa",
+      "dxil_cache_file": "48a0179e7527a748.cso",
+      "vkd3d_shader_hash": "49ed10b5d403159b",
+      "compat_shader_hash": "a0e8fff7413db666",
+      "historical_pso_records": {},
+      "menu_dump_byte_match": false
+    }
+  ],
+  "scope": "Five profiled compute programs matched retail PSO records. The saved reduced-effects retail archives had no matching grouped particle or strand-culling PSO. Conditional shader use and archive coverage limit conclusions from absence. The current desktop archive received helper entries after these historical runs and was excluded."
+}

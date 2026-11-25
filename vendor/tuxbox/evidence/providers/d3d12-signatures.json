@@ -1,0 +1,60 @@
+{
+  "provider_sha256": "9d90d60b064ebd16a6a45dec36abfbb97167310d9a5a6dc5b4276658342d33fa",
+  "guest_sha256": "510eb3985a9004ffd81ff8b0b8034eab81f24924df1d2faa6ceee261e430d408",
+  "exports": {
+    "D3D12CreateRootSignatureDeserializer": 7,
+    "D3D12CreateVersionedRootSignatureDeserializer": 8,
+    "D3D12SerializeVersionedRootSignature": 11
+  },
+  "method": "Same named imports as the reviewed console DLL. Checks 1.0 root constants and a 1.1 descriptor range, shader visibility, spaces, flags and COM lifetime after releasing the serialized blob. Both deserializers reject truncated bytecode. The compute fixture also uses the 1.0 deserializer before constructing and dispatching a GPU pipeline.",
+  "runs": [
+    {
+      "provider": "1789159601 experimental-11.0-20260910b-x86_64",
+      "checks": [
+        {
+          "gate": "d3d12-signatures",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-signatures PASS versions=1.0,1.1 ranges=1 invalid=2"
+        },
+        {
+          "gate": "root-signature",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=10de:2705 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+        },
+        {
+          "gate": "guest-command-list",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+        },
+        {
+          "gate": "guest-command-errors",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame-negative PASS pci=10de:2705 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+        }
+      ]
+    },
+    {
+      "provider": "1792432585 GE-Proton11-11",
+      "checks": [
+        {
+          "gate": "d3d12-signatures",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-signatures PASS versions=1.0,1.1 ranges=1 invalid=2"
+        }
+      ]
+    }
+  ],
+  "supplied_control": {
+    "sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+    "proton": "1789159601 experimental-11.0-20260910b-x86_64",
+    "xmem_sha256": "b8dd12c7fb279d582a3839ee19517c5f6356908267fbbcab4bb6ea17131e71f1",
+    "app_local_dll_load_observed": true,
+    "exit_code": 1,
+    "receipt": "d3d12-signatures failed: serialize failed with 0x80004002"
+  }
+}

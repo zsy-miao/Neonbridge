@@ -1,0 +1,54 @@
+name: Bug report
+description: Crash, hang, wrong output or a script/launcher failure
+labels: [bug]
+body:
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: [XCL, VIctory-based runtime, Launcher, Scripts, Other]
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver version
+      placeholder: RTX 3060 12 GB, 566.36
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows build
+      placeholder: Windows 10 22H2 (19045)
+    validations:
+      required: true
+  - type: input
+    id: ram
+    attributes:
+      label: RAM and page file
+      placeholder: 32 GB, system managed
+    validations:
+      required: true
+  - type: textarea
+    id: progress
+    attributes:
+      label: How far did it get
+      description: Intro, menus, world load, in the world, tutorial, and for how long.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: What you ran
+      description: Command or launcher settings, and any environment variables.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Attach the log file (drag it in). Do not paste game files or dumped shaders.
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash report
+      description: If a crash report zip was written, attach it.

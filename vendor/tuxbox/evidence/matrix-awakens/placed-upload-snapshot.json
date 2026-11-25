@@ -1,0 +1,79 @@
+{
+  "passed": true,
+  "host": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "graphics_sha256": "44268c6e8bb86d1deed6e4ec1c29dd31e7fff71879a02617a22436aba8fdb12a",
+  "xmem_sha256": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f",
+  "xg_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "tests": {
+    "native": {
+      "format": "RGBA8_UNORM: native layout 261",
+      "command": "coin_window.exe --tiled-reference tiling-ref.bin",
+      "fixture_sha256": "5f852cdf21f496d065e1270006fbc45648872642c7f853db838afabde505f584",
+      "readback_pixels_checked": 65536,
+      "receipt": "Verified 65536/65536 sampled pixels across 1 RGBA8 mip level(s), 1 slice(s), 256x256 base.",
+      "provider_log_sha256": "6eb85e8d0fc6b26773612ae5e60fe5210a02a43991110794fd5d896e3bdfa216"
+    },
+    "xg": {
+      "format": "BGRA8_UNORM: XG address computer layout 261",
+      "command": "xg-bgra.exe",
+      "fixture_sha256": "13cd1e0dbdf2acbbe64ee190a7d75964bebb131ca55db111b8302316756d6437",
+      "readback_pixels_checked": 65536,
+      "receipt": "Verified 65536/65536 sampled pixels across 1 RGBA8 mip level(s), 1 slice(s), 256x256 base.",
+      "provider_log_sha256": "65dcd7a49faee33208f901dd330c6894a9d07a6d809c23c2d9263826db16cfab",
+      "guest_sha256": "85f81608dddf620dc93f8b34f4bc66ce9ec5bd9a214702b223a9e7d2e1a8728b",
+      "fixture": "Reuse the sibling TomBox check_reference case with DXGI_FORMAT_B8G8R8A8_UNORM, 256x256, 1 mip, 262144 placed bytes. Keep the tiled half of tiling-ref.bin and exchange red/blue bytes of each expected pixel in its linear half. The original guest prints RGBA8 for every uncompressed case."
+    },
+    "stream": {
+      "format": "RGBA8_UNORM: native layout 261, two levels",
+      "command": "coin_window.exe --stream-test stream.bin",
+      "fixture_sha256": "8459b91d75e129688da8344ae85f90e0139f322a4f7292830b4a16341e8197a1",
+      "readback_pixels_checked": 212992,
+      "receipt": "Verified coarse rendering, a partially mapped mip, full detail, eviction and replacement at the same address.",
+      "provider_log_sha256": "a6ffe8c1222328a1110cb0415e261200306b421f36a1c3ac993c65d732565b20",
+      "fixture": "TomBox tools/homebrew/rectangle_fixture.py --stream",
+      "map_and_copy_events": [
+        "map pages=1",
+        "upload sub=1",
+        "map pages=1",
+        "map pages=1",
+        "map pages=2",
+        "upload sub=0",
+        "unmap pages=4",
+        "map pages=4",
+        "upload sub=0"
+      ],
+      "readback_counts": {
+        "256x256_mip": 2,
+        "128x128_mip": 5
+      },
+      "scope": "Sequential page commit, partial mapping, eviction and remapping at the same address. A concurrent decommit race was not measured."
+    },
+    "xg-packed-tail": {
+      "format": "BGRA8_UNORM: XG address computer, layout 261, packed mip tail",
+      "guest_sha256": "df8617ee20a7c286b197b1b884cf68122b62afa169f855ca31b0784d200e839a",
+      "command": "xg-bgra-mips.exe",
+      "fixture_sha256": "509d437f680678086a006032a7cf08ac24b6f2bf059f2cf3b270ad66e75d03fe",
+      "fixture": "Use rectangle_fixture.py rgba-wide.bin. Adapt the --rect-rgba-wide reference case to BGRA8 format, exchange red and blue in each expected linear pixel, and compare blue after modifying byte zero of the packed 1x1 mip.",
+      "readback_pixels_checked": 43694,
+      "subresources_uploaded": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        8
+      ],
+      "receipt": [
+        "Verified 21847/21847 sampled pixels across 9 RGBA8 mip level(s), 1 slice(s), 256x64 base.",
+        "Verified the 1x1 CPU update in slice 0 and all 8 neighboring subresources."
+      ],
+      "provider_log_sha256": "38264a791450485d55df1afb0b0a3c56a4ac68172f58b969bafd248c7a46c35b"
+    }
+  },
+  "tombox_guest_sha256": "d5b722eaf598829391cf9a3c25f59d72c0801dda8a67773ddf7fbe412ac153ac"
+}

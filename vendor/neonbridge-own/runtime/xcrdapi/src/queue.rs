@@ -1,0 +1,1442 @@
+use super::*;
+mod pool;
+use std::collections::VecDeque;
+use std::ffi::{CStr, CString};
+use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
+use std::sync::Condvar;
+use std::thread::{self, JoinHandle};
+use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
+use windows::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent};
+
+#[implement(IQueue2)]
+struct Queue {
+    shared: Arc<Shared>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+    name: Option<CString>,
+    source_type: u64,
+    priority: i8,
+    manual: bool,
+}
+
+struct Shared {
+    state: Mutex<State>,
+    changed: Condvar,
+    capacity: usize,
+    priority: usize,
+    error_event: OwnedHandle,
+    /// Inflated chunked zlib streams of this queue's file reads.
+    streams: Streams,
+}
+
+/// Chunked zlib streams (Xbox2Windows 738bfc48, 50f56203, 5ad75b5c; MIT,
+/// re-derived): a title reads one zlib stream through several requests with
+/// the same file and compressed size, each request's offset stepped by its
+/// destination size. The first request inflates the whole stream and writes
+/// its first destination's worth; the others take their slice.
+/// - The cache belongs to the queue, holds the file it read (a live source)
+///   and keeps the last 16 streams. Memory sources always decode alone.
+/// - A request with no zlib header at its own offset looks back up to 16
+///   destination steps for the stream's start, since batched requests run in
+///   parallel and its first piece may not have run yet.
+/// - TUXBOX_ZLIB_CHUNKS=0 fails a stream that outgrows its destination, as
+///   before.
+type Streams = Mutex<VecDeque<Stream>>;
+
+struct Stream {
+    file: Arc<File>,
+    base: u64,
+    compressed: usize,
+    /// Piece 0's destination size: continuations step by it.
+    chunk: usize,
+    /// The Submit that inflated it: only its own requests are served.
+    submission: u64,
+    data: Vec<u8>,
+}
+
+/// Xbox2Windows bb35f045 + 4f67e704 (credit to its authors): a chunked zlib
+/// stream's continuations step by piece 0's destination size, not the
+/// asking request's (a short last piece has a smaller one and was never
+/// found), a short last piece gets its slice, and a cached stream serves
+/// only requests made ready by the same Submit, so an unrelated later read
+/// with the same source and size is not handed stale stream bytes.
+/// TUXBOX_ZLIB_CHUNK_STEP=0 steps by each request's own size, unscoped.
+fn chunk_step() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_ZLIB_CHUNK_STEP").map_or(true, |v| v.trim() != "0"))
+}
+
+const CACHED_STREAMS: usize = 16;
+const LOOK_BACK: u64 = 16;
+
+/// TUXBOX_DSTORAGE_IGNORE_FAILURES=1 (rebox d9dc7cb, re-derived): a failed
+/// read stays out of the next status entry, which reports success; the error
+/// record and event still report it. Off by default.
+fn ignore_failures() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_IGNORE_FAILURES").is_ok_and(|v| v.trim() == "1"))
+}
+
+fn zlib_chunks() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_ZLIB_CHUNKS").map_or(true, |v| v.trim() != "0"))
+}
+
+fn has_zlib_header(bytes: &[u8]) -> bool {
+    let [cmf, flg, ..] = *bytes else { return false };
+    cmf & 0x0f == 8 && cmf >> 4 <= 7 && (u32::from(cmf) * 256 + u32::from(flg)) % 31 == 0
+}
+
+/// The `capacity` bytes of a stream inflated from `base` that a request at
+/// `offset` reads, with every bound checked (no wrap near u64::MAX).
+fn slice_at(data: &[u8], base: u64, offset: u64, step: usize, capacity: usize) -> Option<&[u8]> {
+    let delta = offset.checked_sub(base).filter(|&d| d > 0)?;
+    if capacity == 0 || step == 0 || !delta.is_multiple_of(step as u64) {
+        return None;
+    }
+    let start = usize::try_from(delta).ok()?;
+    data.get(start..start.checked_add(capacity)?)
+}
+
+/// The inflate limit for a stream that outgrew its destination.
+fn chunked_limit(capacity: usize) -> usize {
+    capacity.saturating_mul(8).saturating_add(0x4_0000).clamp(0x8_0000, 64 << 20)
+}
+
+fn remember(streams: &Streams, stream: Stream) {
+    let mut streams = lock(streams);
+    streams.retain(|s| !(Arc::ptr_eq(&s.file, &stream.file) && s.base == stream.base && s.compressed == stream.compressed));
+    if streams.len() >= CACHED_STREAMS {
+        streams.pop_front();
+    }
+    streams.push_back(stream);
+}
+
+struct State {
+    entries: VecDeque<Entry>,
+    ready: usize,
+    processing: bool,
+    closed: bool,
+    error_count: u32,
+    first_error: Option<Box<ErrorRecord>>,
+    /// Submits so far; each read made ready is stamped with it.
+    submissions: u64,
+}
+
+/// Every waiting entry becomes ready, as one submission.
+fn release(state: &mut State) {
+    state.submissions += 1;
+    let n = state.submissions;
+    let ready = state.ready;
+    for entry in state.entries.iter_mut().skip(ready) {
+        if let Entry::Read(read) = entry {
+            read.submission = n;
+        }
+    }
+    state.ready = state.entries.len();
+}
+
+enum Entry {
+    Read(Read),
+    Status(Arc<[AtomicI32]>, usize),
+    Signal(ID3D12Fence, u64),
+    Event(OwnedHandle),
+    Invalid(HRESULT, u32),
+    /// A read request refused at enqueue, with what the title asked for.
+    Refused(HRESULT, Box<Refused>),
+}
+
+/// xcl's idea (re-derived from 66660bd/2e17d3d): a read refused at enqueue
+/// keeps its request so the error record names its offset, size and tag, and
+/// CancelRequestsWithTag cancels it like any read: a cancelled refused
+/// request is not a failure. TUXBOX_XCRD_REFUSED_RECORD=0 records only the
+/// error as before.
+struct Refused {
+    options: u64,
+    dest: usize,
+    capacity: u32,
+    source: usize,
+    offset: u64,
+    size: u32,
+    tag: u64,
+    cancelled: bool,
+}
+
+enum Source {
+    File(FileRead, u64),
+    Memory(usize),
+    /// A physical page array (bit 23).
+    Pages(Pages),
+}
+
+/// A `PULONG_PTR` array of xmem physical-page tokens, snapshotted at enqueue
+/// (titles pass arrays on the stack). An entry still 0 is read again when the
+/// request runs: titles fill their own page tables after EnqueueRequest.
+struct Pages {
+    array: usize,
+    tokens: Vec<u64>,
+    offset: usize,
+    /// The array is not on the enqueuing thread's stack: it is the title's
+    /// own page table, read again in full as the request runs.
+    live: bool,
+}
+
+/// rebox 502959e (MIT, credit to its authors): a page array that isn't on
+/// the enqueuing thread's stack is the title's page table for its streaming
+/// heap, filled (or re-pointed) for the whole batch just before Submit. An
+/// entry snapshotted at enqueue may still hold the page that slot had
+/// before, so the data went into a page already another resource's. Such an
+/// array is read again in full when the request runs; a stack array keeps
+/// its snapshot. TUXBOX_DSTORAGE_PAGES_LIVE=0 keeps every snapshot.
+fn pages_live() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_PAGES_LIVE").map_or(true, |v| v.trim() != "0"))
+}
+
+fn on_own_stack(at: usize) -> bool {
+    let (mut low, mut high) = (0usize, 0usize);
+    // SAFETY: both outputs are valid writable usizes.
+    unsafe { windows::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high) };
+    at >= low && at < high
+}
+
+impl Pages {
+    unsafe fn capture(array: *const c_void, offset: u16, bytes: usize) -> Result<Self, HRESULT> {
+        if array.is_null() {
+            return Err(E_INVALIDARG);
+        }
+        let count = (offset as usize + bytes).div_ceil(PHYSICAL_PAGE);
+        let mut tokens = Vec::new();
+        tokens.try_reserve_exact(count).map_err(|_| E_OUTOFMEMORY)?;
+        // SAFETY: the DirectStorage contract keeps the array readable at enqueue.
+        tokens.extend((0..count).map(|i| unsafe { array.cast::<u64>().add(i).read_unaligned() }));
+        let live = pages_live() && !on_own_stack(array as usize);
+        Ok(Self { array: array as usize, tokens, offset: offset as usize, live })
+    }
+
+    /// The tokens, entries still 0 read again. A queue half full is
+    /// submitted on its own, so a request can run before the title filled
+    /// its list: those entries are read again for up to
+    /// TUXBOX_DSTORAGE_PAGE_WAIT_MS (8; 0 reads once) before the request
+    /// fails (VIctory d09f3aa, GPL-3.0, credit to its authors).
+    fn resolved(&self) -> Vec<u64> {
+        static WAIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let wait = *WAIT.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_PAGE_WAIT_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(8));
+        let started = std::time::Instant::now();
+        let mut tokens = self.tokens.clone();
+        loop {
+            // Read without dereferencing (xcl db6d692, PR #509, credit to
+            // its authors): this runs on the queue worker, and a title that
+            // decommitted its array since enqueue faulted here and ended
+            // the process. An unreadable array leaves the entries 0, which
+            // fails the request.
+            let mut now = vec![0u64; tokens.len()];
+            if read_own(self.array, &mut now) {
+                for (token, now) in tokens.iter_mut().zip(now) {
+                    if *token == 0 || self.live {
+                        *token = now;
+                    }
+                }
+            }
+            if !tokens.contains(&0) || started.elapsed() >= std::time::Duration::from_millis(wait) {
+                return tokens;
+            }
+            std::thread::yield_now();
+        }
+    }
+}
+
+const PHYSICAL_PAGE: usize = 0x10000;
+const ZLIB: u64 = 1;
+const BCPACK_SHIFT: u64 = 1;
+const SWIZZLE: u64 = 0xFFFF << 5;
+const DEST_PAGES: u64 = 1 << 21;
+const FROM_MEMORY: u64 = 1 << 22;
+const SOURCE_PAGES: u64 = 1 << 23;
+const KNOWN: u64 = (1 << 24) - 1;
+
+struct Read {
+    source: Source,
+    dest: usize,
+    /// Destination physical pages (bit 21); `dest` is then the array.
+    dest_pages: Option<Pages>,
+    capacity: usize,
+    size: usize,
+    options: u64,
+    tag: u64,
+    cancelled: bool,
+    /// The submission that made it ready (`release`).
+    submission: u64,
+}
+
+fn eof_partial() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_EOF_PARTIAL").is_ok_and(|v| v.trim() == "1"))
+}
+
+/// Whether `size` bytes at `offset` lie inside a file of `length` bytes.
+fn within_file(offset: u64, size: usize, length: u64) -> bool {
+    offset.checked_add(size as u64).is_some_and(|end| end <= length)
+}
+
+fn log(message: std::fmt::Arguments) {
+    if std::env::var_os("TUXBOX_LOG").is_some_and(|v| !v.is_empty()) {
+        eprintln!("TuxBox xcrdapi: {message}{}", stamp());
+    }
+}
+
+/// TUXBOX_LOG_TIME (default on, =0 off): seconds since process creation at
+/// the end of each line, as d3d12 and xmem stamp theirs, so the boot
+/// timeline places xcrdapi's reads (test168's 14-29 s gap had no times).
+pub(crate) fn stamp() -> String {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    if std::env::var("TUXBOX_LOG_TIME").as_deref() == Ok("0") {
+        return String::new();
+    }
+    let ticks = |f: FILETIME| u64::from(f.dwHighDateTime) << 32 | u64::from(f.dwLowDateTime);
+    let (mut created, mut exited, mut kernel, mut user) = Default::default();
+    let now = unsafe {
+        let _ = GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user);
+        GetSystemTimePreciseAsFileTime()
+    };
+    format!(" [t={:.3} s]", ticks(now).saturating_sub(ticks(created)) as f64 / 1e7)
+}
+
+fn once(what: &'static str, message: std::fmt::Arguments) {
+    static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut seen = lock(&SEEN);
+    if !seen.contains(&what) {
+        seen.push(what);
+        log(message);
+    }
+}
+
+/// Each request kind (source, page lists, compression) once, with one example
+/// (re-derived from rebox cb17013; TUXBOX_STORAGE_KINDS=0 off).
+fn kind_once(queue_type: u64, req: &Request, bcpack: u8) {
+    if std::env::var_os("TUXBOX_STORAGE_KINDS").is_some_and(|v| v == "0") {
+        return;
+    }
+    let memory = req.options & FROM_MEMORY != 0;
+    let key = (queue_type as u32) << 16
+        | u32::from(memory)
+        | u32::from(req.options & SOURCE_PAGES != 0) << 1
+        | u32::from(req.options & DEST_PAGES != 0) << 2
+        | u32::from(req.options & ZLIB != 0) << 3
+        | u32::from(bcpack) << 4;
+    static SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    {
+        let mut seen = lock(&SEEN);
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+    }
+    log(format_args!(
+        "request kind: queue type {queue_type} from {}{}{} {}; example size {:#x} into {:#x} at offset {:#x} options {:#x} tag {:#x}",
+        if memory { "memory" } else { "file" },
+        if req.options & SOURCE_PAGES != 0 { " (source page list)" } else { "" },
+        if req.options & DEST_PAGES != 0 { " to destination page list" } else { "" },
+        if req.options & ZLIB != 0 { "zlib".to_string() } else if bcpack != 0 { format!("bcpack mode {bcpack}") } else { "uncompressed".to_string() },
+        req.size, req.destination_size, req.offset, req.options, req.tag,
+    ));
+}
+
+fn bcpack_mode(options: u64) -> u8 {
+    ((options >> BCPACK_SHIFT) & 0xF) as u8
+}
+
+// Borrowed process buffer addresses are valid until queue completion by the
+// DirectStorage contract. The file is retained independently of its COM object.
+unsafe fn capture(queue_type: u64, req: *const Request) -> Result<Read, HRESULT> {
+    let req = unsafe { req.as_ref() }.ok_or(E_POINTER)?;
+    if req.options & !KNOWN != 0 {
+        once("unknown", format_args!("unknown request option bits {:#x} ignored", req.options & !KNOWN));
+    }
+    if req.options & SWIZZLE != 0 {
+        // The console's hardware swizzle; the bytes are stored as read.
+        once("swizzle", format_args!("swizzle mode {:#x} not applied; data stored linear", (req.options & SWIZZLE) >> 5));
+    }
+    let bcpack = bcpack_mode(req.options);
+    if bcpack != 0 && std::env::var("TUXBOX_BCPACK").is_ok_and(|v| v.trim() == "refuse") {
+        return Err(E_NOTIMPL);
+    }
+    let memory = req.options & FROM_MEMORY != 0;
+    if memory != (queue_type == 1)
+        || (req.options & SOURCE_PAGES != 0 && !memory)
+        || req.destination.is_null()
+        || req.source.is_null()
+        || req.size == 0
+        || req.destination_size == 0
+        || (req.options & ZLIB == 0 && bcpack == 0 && req.size > req.destination_size)
+    {
+        return Err(E_INVALIDARG);
+    }
+    kind_once(queue_type, req, bcpack);
+    let source = if memory && req.options & SOURCE_PAGES != 0 {
+        Source::Pages(unsafe { Pages::capture(req.source, req.offset as u16, req.size as usize)? })
+    } else if memory {
+        Source::Memory(req.source as usize)
+    } else {
+        let file = unsafe { IUnknown::from_raw_borrowed(&req.source) }.ok_or(E_POINTER)?;
+        let object = file
+            .cast_object_ref::<StorageFile>()
+            .map_err(|e| e.code())?;
+        Source::File(object.backing.capture()?, req.offset)
+    };
+    let dest_pages = if req.options & DEST_PAGES != 0 {
+        Some(unsafe { Pages::capture(req.destination.cast(), req.page_offset, req.destination_size as usize)? })
+    } else {
+        None
+    };
+    Ok(Read {
+        source,
+        dest: req.destination as usize,
+        dest_pages,
+        capacity: req.destination_size as usize,
+        size: req.size as usize,
+        options: req.options,
+        tag: req.tag,
+        cancelled: false,
+        submission: 0,
+    })
+}
+
+unsafe extern "system" {
+    fn ReadFile(
+        file: *mut c_void,
+        output: *mut u8,
+        size: u32,
+        got: *mut u32,
+        overlapped: *mut Overlapped,
+    ) -> i32;
+    fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *const c_void;
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct Overlapped {
+    internal: usize,
+    bytes: usize,
+    offset: u64,
+    event: usize,
+}
+
+type PageCopy = unsafe extern "system" fn(*const u64, usize, usize, *mut u8, usize) -> i32;
+
+/// xmem's TuxBoxCommitRange: commits title pages mapped without commit (xmem
+/// lazy_commit.rs, from xcl 38b05b7) before ReadFile writes them from the
+/// kernel, which fails on reserved pages instead of faulting them in.
+fn commit_title_range(address: *mut u8, bytes: usize) {
+    type Commit = unsafe extern "system" fn(usize, usize) -> usize;
+    static COMMIT: OnceLock<Option<Commit>> = OnceLock::new();
+    let commit = COMMIT.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, b"TuxBoxCommitRange\0".as_ptr()) };
+        (!f.is_null()).then(|| core::mem::transmute::<*const c_void, Commit>(f))
+    });
+    if let Some(commit) = commit {
+        unsafe { commit(address as usize, bytes) };
+    }
+}
+
+/// Whether xmem knows every page of the range committed in its lazy
+/// read-write views (TuxBoxViewState), so no VirtualQuery walk is needed: one
+/// scans the whole region, 16 ms per GiB of view (test137).
+fn known_committed(address: usize, bytes: usize) -> bool {
+    type State = unsafe extern "system" fn(usize, usize, *mut usize, *mut usize) -> u32;
+    static STATE: OnceLock<Option<State>> = OnceLock::new();
+    let state = STATE.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, b"TuxBoxViewState\0".as_ptr()) };
+        (!f.is_null()).then(|| core::mem::transmute::<*const c_void, State>(f))
+    });
+    state.is_some_and(|state| unsafe { state(address, bytes, core::ptr::null_mut(), core::ptr::null_mut()) } & 3 == 3)
+}
+
+/// xmem's TuxBoxReadPhysicalPages / TuxBoxWritePhysicalPages.
+fn xmem_pages(write: bool) -> Option<PageCopy> {
+    static FUNCTIONS: OnceLock<[Option<PageCopy>; 2]> = OnceLock::new();
+    FUNCTIONS.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let find = |n: &[u8]| -> Option<PageCopy> {
+            let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, n.as_ptr()) };
+            (!f.is_null()).then(|| core::mem::transmute::<*const c_void, PageCopy>(f))
+        };
+        [find(b"TuxBoxReadPhysicalPages\0"), find(b"TuxBoxWritePhysicalPages\0")]
+    })[usize::from(write)]
+}
+
+fn page_copy(write: bool, pages: &Pages, buffer: *mut u8, bytes: usize) -> Result<(), HRESULT> {
+    let copy = xmem_pages(write).ok_or_else(|| {
+        once("xmem pages", format_args!("xmem has no physical-page copy exports; page-array requests fail"));
+        E_NOTIMPL
+    })?;
+    let tokens = pages.resolved();
+    let result = unsafe { copy(tokens.as_ptr(), tokens.len(), pages.offset, buffer, bytes) };
+    if result == 1 { Ok(()) } else { Err(HRESULT::from_win32(ERROR_INVALID_ADDRESS.0)) }
+}
+
+/// One block of each BCPack mode's BCn format in a neutral grey (normal maps
+/// flat): BC1, BC2, BC3, BC4, BC5, BC6H, BC7. Bit layouts from the BCn specs.
+fn bcpack_block(mode: u8) -> Option<Vec<u8>> {
+    // RGB565 grey 0x8410 in both endpoints, all indices 0.
+    const BC1: [u8; 8] = [0x10, 0x84, 0x10, 0x84, 0, 0, 0, 0];
+    const BC4_GREY: [u8; 8] = [0x80, 0x80, 0, 0, 0, 0, 0, 0];
+    const BC4_OPAQUE: [u8; 8] = [0xFF, 0xFF, 0, 0, 0, 0, 0, 0];
+    let join = |a: &[u8], b: &[u8]| [a, b].concat();
+    Some(match mode {
+        1 => BC1.to_vec(),
+        2 => join(&[0xFF; 8], &BC1),
+        3 => join(&BC4_OPAQUE, &BC1),
+        4 => BC4_GREY.to_vec(),
+        5 => join(&BC4_GREY, &BC4_GREY),
+        // BC6H mode 11 (00011): one region, 10-bit endpoints; 462 is 0.5 as
+        // unsigned half after unquantization. All indices 0.
+        6 => {
+            let v: u128 = 462;
+            (3 | v << 5 | v << 15 | v << 25 | v << 35 | v << 45 | v << 55).to_le_bytes().to_vec()
+        }
+        // BC7 mode 6 (bit 6): 7-bit RGBA endpoints plus p-bits; rgb 64 and
+        // a 127 with p = 1 give (129, 129, 129, 255). All indices 0.
+        7 => {
+            let (c, a): (u128, u128) = (64, 127);
+            (1 << 6 | c << 7 | c << 14 | c << 21 | c << 28 | c << 35 | c << 42 | a << 49 | a << 56 | 1 << 63 | 1 << 64)
+                .to_le_bytes()
+                .to_vec()
+        }
+        _ => return None,
+    })
+}
+
+fn read_beside() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_READ_BESIDE").map_or(true, |v| v.trim() != "0"))
+}
+
+/// Title ranges a ReadFile is writing into right now. xmem asks
+/// (TuxBoxReadsInFlight) when unmapping a view fails 87 at unmap:256: the
+/// kernel's I/O locks the pages under an in-flight read.
+static IN_FLIGHT: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
+struct InFlight(usize, usize);
+
+impl InFlight {
+    fn new(at: usize, bytes: usize) -> Self {
+        IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).push((at, at + bytes));
+        Self(at, at + bytes)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut v = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = v.iter().position(|&r| r == (self.0, self.1)) {
+            v.swap_remove(i);
+        }
+    }
+}
+
+/// How many file reads are writing into [lo, hi) now (TUXBOX_UNMAP87_REGION).
+#[unsafe(no_mangle)]
+pub extern "system" fn TuxBoxReadsInFlight(lo: usize, hi: usize) -> u32 {
+    IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|&&(a, b)| a < hi && lo < b).count() as u32
+}
+
+impl Read {
+    fn read_source(&self, target: *mut u8) -> Result<(), HRESULT> {
+        match &self.source {
+            Source::File(file, offset) => {
+                // A synchronous Win32 handle with an explicit 64-bit OVERLAPPED
+                // offset makes each read atomic w.r.t. concurrent offset reads.
+                let mut ov = Overlapped {
+                    offset: *offset,
+                    ..Default::default()
+                };
+                let mut got = 0;
+                {
+                    let mut stats = storage_stats();
+                    stats.pending_reads += 1;
+                    stats.total_reads = stats.total_reads.saturating_add(1);
+                }
+                commit_title_range(target, self.size);
+                let _flight = InFlight::new(target as usize, self.size);
+                let success = unsafe {
+                    ReadFile(
+                        file.file.as_raw_handle(),
+                        target,
+                        self.size as u32,
+                        &mut got,
+                        &mut ov,
+                    )
+                };
+                let result = if success == 0 {
+                    Err(HRESULT::from_win32(unsafe { GetLastError() }.0))
+                } else if got as usize != self.size {
+                    Err(HRESULT::from_win32(ERROR_HANDLE_EOF.0))
+                } else {
+                    Ok(())
+                };
+                let mut stats = storage_stats();
+                stats.pending_reads -= 1;
+                stats.read_errors = stats.read_errors.saturating_add(u32::from(result.is_err()));
+                result
+            }
+            Source::Memory(p) => {
+                unsafe { core::ptr::copy(*p as *const u8, target, self.size) };
+                Ok(())
+            }
+            Source::Pages(pages) => page_copy(false, pages, target, self.size),
+        }
+    }
+
+    /// `self.size` bytes of `file` at `offset`, or None.
+    fn read_at(file: &FileRead, offset: u64, size: usize) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(size).ok()?;
+        let mut ov = Overlapped { offset, ..Default::default() };
+        let mut got = 0;
+        let ok = unsafe { ReadFile(file.file.as_raw_handle(), bytes.as_mut_ptr(), size as u32, &mut got, &mut ov) };
+        if ok == 0 || got as usize != size {
+            return None;
+        }
+        // ReadFile initialized `size` bytes.
+        unsafe { bytes.set_len(size) };
+        Some(bytes)
+    }
+
+    /// A piece of a chunked stream: from the queue's cache, else inflated
+    /// from the stream's start up to LOOK_BACK destinations back.
+    fn chunk_piece(&self, streams: &Streams) -> Option<Vec<u8>> {
+        let Source::File(file, offset) = &self.source else { return None };
+        let offset = *offset;
+        {
+            let streams = lock(streams);
+            for s in streams.iter().rev() {
+                let (step, same) = if chunk_step() { (s.chunk, s.submission == self.submission) } else { (self.capacity, true) };
+                if Arc::ptr_eq(&s.file, &file.file) && s.compressed == self.size && same
+                    && let Some(piece) = slice_at(&s.data, s.base, offset, step, self.capacity)
+                {
+                    return Some(piece.to_vec());
+                }
+            }
+        }
+        for step in 1..=LOOK_BACK {
+            let Some(base) = (self.capacity as u64).checked_mul(step).and_then(|back| offset.checked_sub(back)) else { break };
+            let Some(input) = Self::read_at(file, base, self.size) else { continue };
+            if !has_zlib_header(&input) {
+                continue;
+            }
+            let Ok(data) = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&input, chunked_limit(self.capacity)) else { continue };
+            let piece = slice_at(&data, base, offset, self.capacity, self.capacity).map(<[u8]>::to_vec);
+            remember(streams, Stream { file: file.file.clone(), base, compressed: self.size, chunk: self.capacity, submission: self.submission, data });
+            if piece.is_some() {
+                return piece;
+            }
+        }
+        None
+    }
+
+    /// A BC1 or BC7 BCPack request decoded (Xbox2Windows 3795037e,
+    /// 90e84561; bcpack.rs), after zlib when the request has both. The
+    /// stream is atomic: never served as chunks of a longer stream. None:
+    /// another mode, TUXBOX_BCPACK_DECODE=0, or a source or stream that did
+    /// not read, inflate or decode exactly; the caller fills grey.
+    fn bcpack_decoded(&self, mode: u8) -> Option<Vec<u8>> {
+        use std::sync::atomic::AtomicU64;
+        static DECODED: AtomicU64 = AtomicU64::new(0);
+        static REFUSED: AtomicU64 = AtomicU64::new(0);
+        if !crate::bcpack::enabled() || !crate::bcpack::decodes(mode) {
+            return None;
+        }
+        let mut input = Vec::new();
+        input.try_reserve_exact(self.size).ok()?;
+        let read = self.read_source(input.spare_capacity_mut().as_mut_ptr().cast::<u8>());
+        let result = read.ok().and_then(|()| {
+            // The read above initialized every reported input byte.
+            unsafe { input.set_len(self.size) };
+            let packed = if self.options & ZLIB != 0 {
+                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&input, chunked_limit(self.capacity)).ok()?
+            } else {
+                input
+            };
+            let mut output = Vec::new();
+            output.try_reserve_exact(self.capacity).ok()?;
+            output.resize(self.capacity, 0u8);
+            crate::bcpack::decode(&packed, mode, &mut output).then_some(output)
+        });
+        let (counter, what) = if result.is_some() { (&DECODED, "decoded") } else { (&REFUSED, "refused by the decoder (grey blocks instead)") };
+        let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            log(format_args!("BCPack BC{mode}{} request #{n} {what}: {} source bytes, {} destination bytes (TUXBOX_BCPACK_DECODE=0 fills grey)",
+                if self.options & ZLIB != 0 { " after zlib" } else { "" }, self.size, self.capacity));
+        }
+        result
+    }
+
+    /// Write the request's output to its destination. A destination that is not
+    /// committed and writable fails the request like a failed read.
+    fn store(&self, bytes: &[u8]) -> Result<(), HRESULT> {
+        // A destination the title has not committed or mapped yet is tried
+        // again up to TUXBOX_DSTORAGE_RETRIES times (12; 0 fails at once),
+        // waiting 2 ms doubling to 128 ms: the title never reads a request's
+        // result, so a failed store left its model or texture stale for good
+        // (VIctory-fxceless 578d459, GPL-3.0, credit to its authors).
+        static RETRIES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let retries = *RETRIES.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_RETRIES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(12));
+        // fxceless scopes the ladder to physical-page destinations only
+        // (VIctory-fxceless dstorage.rs write_physical): a page the title
+        // just made can come right a moment later, but a plain destination
+        // that fails writable() is unmapped title memory, and sleeping up to
+        // ~1.5 s on it stalled the queue worker for every later request.
+        // TUXBOX_DSTORAGE_RETRY_PLAIN=1 retries plain destinations as before.
+        static RETRY_PLAIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let retry_plain = *RETRY_PLAIN.get_or_init(|| std::env::var("TUXBOX_DSTORAGE_RETRY_PLAIN").is_ok_and(|v| v.trim() == "1"));
+        let retries = if self.dest_pages.is_some() || retry_plain { retries } else { 0 };
+        let mut result = self.store_once(bytes);
+        let mut pause = 2u64;
+        for _ in 0..retries {
+            if result.is_ok() || self.cancelled {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(pause));
+            pause = (pause * 2).min(128);
+            result = self.store_once(bytes);
+        }
+        if result.is_err() {
+            static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                log(format_args!("request store #{n} failed after {retries} retries: destination unwritable"));
+            }
+        }
+        result
+    }
+
+    fn store_once(&self, bytes: &[u8]) -> Result<(), HRESULT> {
+        let bytes = &bytes[..bytes.len().min(self.capacity)];
+        match &self.dest_pages {
+            Some(pages) => page_copy(true, pages, bytes.as_ptr().cast_mut(), bytes.len()),
+            None => {
+                if !writable(self.dest as usize, bytes.len()) {
+                    return Err(HRESULT::from_win32(windows::Win32::Foundation::ERROR_NOACCESS.0));
+                }
+                unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.dest as *mut u8, bytes.len()) };
+                Ok(())
+            }
+        }
+    }
+
+    fn execute(&self, streams: &Streams) -> Result<(), HRESULT> {
+        if self.cancelled {
+            return Ok(());
+        }
+        let bcpack = bcpack_mode(self.options);
+        if bcpack != 0 && let Some(decoded) = self.bcpack_decoded(bcpack) {
+            return self.store(&decoded);
+        }
+        if bcpack != 0 {
+            // BC2-BC6 (no decoder) or a stream the decoder refused: the
+            // destination gets solid blocks of the mode's format, so the
+            // texture shows flat grey instead of stale memory and the
+            // title's request succeeds (TUXBOX_BCPACK=refuse fails it).
+            let block = bcpack_block(bcpack).ok_or(HRESULT::from_win32(ERROR_INVALID_DATA.0))?;
+            let mut fill = Vec::new();
+            fill.try_reserve_exact(self.capacity).map_err(|_| E_OUTOFMEMORY)?;
+            fill.extend(block.iter().copied().cycle().take(self.capacity));
+            static FILLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = FILLED.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                log(format_args!("BCPack mode {bcpack}{} request #{n}: {} bytes filled with solid blocks (no decoder)",
+                    if self.options & ZLIB != 0 { " after zlib" } else { "" }, self.capacity));
+            }
+            return self.store(&fill);
+        }
+        if self.options & ZLIB == 0 && self.dest_pages.is_none() {
+            // A read running past the end of its file fails before touching
+            // the destination, as a staged (compressed) read does
+            // (Xbox2Windows 29757986). TUXBOX_EOF_PARTIAL=1 reads the part
+            // that exists into the destination first, as before.
+            if !eof_partial()
+                && let Source::File(file, offset) = &self.source
+                && let Ok(meta) = file.file.metadata()
+                && !within_file(*offset, self.size, meta.len())
+            {
+                { let mut stats = storage_stats(); stats.read_errors = stats.read_errors.saturating_add(1); }
+                return Err(HRESULT::from_win32(ERROR_HANDLE_EOF.0));
+            }
+            let direct = self.read_source(self.dest as *mut u8);
+            if direct == Err(HRESULT::from_win32(windows::Win32::Foundation::ERROR_NOACCESS.0)) && read_beside()
+                && let Source::File(file, offset) = &self.source
+            {
+                // TUXBOX_READ_BESIDE (default on, =0 fails as before): the
+                // kernel's write fails on a block a write guard made read-only
+                // (section_watch, at this view or another view of its pages)
+                // instead of faulting into the guard. Read beside, then copy
+                // in from user mode, where a guarded block faults like the
+                // title's own writes. VIctory-fxceless 8dd30ab files.rs fread
+                // (read beside, after Joshua Odom 10ea38e; credit to them).
+                static BESIDE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = BESIDE.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    log(format_args!("request read #{n} into an unwritable destination read beside and copied in (TUXBOX_READ_BESIDE=0 fails it)"));
+                }
+                // writable() refuses a read-only block, which is what a
+                // guard is; a committed read-only or writable range is copied.
+                if !committed_guardable(self.dest as usize, self.size) {
+                    return direct;
+                }
+                let Some(bytes) = Self::read_at(file, *offset, self.size) else { return direct };
+                unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.dest as *mut u8, bytes.len()) };
+                return Ok(());
+            }
+            return direct;
+        }
+        let mut local = Vec::new();
+        let mut staging = (self.options & ZLIB != 0 && matches!(self.source, Source::File(..)))
+            .then(|| lock(&STAGING));
+        let input = match staging.as_deref_mut().and_then(Option::as_mut) {
+            Some((limit, _)) if self.size > *limit => return Err(E_OUTOFMEMORY),
+            Some((_, bytes)) => {
+                bytes.clear();
+                bytes
+            }
+            None => &mut local,
+        };
+        input.try_reserve_exact(self.size).map_err(|_| E_OUTOFMEMORY)?;
+        self.read_source(input.spare_capacity_mut().as_mut_ptr().cast::<u8>())?;
+        // The read or copy above initialized every reported input byte.
+        unsafe { input.set_len(self.size) };
+        if self.options & ZLIB == 0 {
+            return self.store(input);
+        }
+        let file_source = matches!(self.source, Source::File(..));
+        if zlib_chunks() && file_source && !has_zlib_header(input) {
+            // Not a stream start: a later piece of a chunked stream?
+            if let Some(piece) = self.chunk_piece(streams) {
+                static PIECES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = PIECES.fetch_add(1, Ordering::Relaxed) + 1;
+                if n.is_power_of_two() {
+                    log(format_args!("chunked zlib stream piece #{n} ({} bytes) served from the queue's stream", piece.len()));
+                }
+                return self.store(&piece);
+            }
+        }
+        {
+            let mut stats = storage_stats();
+            stats.pending_decodes += 1;
+            stats.total_decodes = stats.total_decodes.saturating_add(1);
+        }
+        let mut output = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, self.capacity);
+        if zlib_chunks() && file_source
+            && let Err(e) = &output
+            && e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput
+            && let Ok(whole) = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(input, chunked_limit(self.capacity))
+            && let Source::File(file, offset) = &self.source
+        {
+            // The stream outgrew this destination: its first piece goes here,
+            // the rest serves the requests stepped after it.
+            once("zlib chunks", format_args!(
+                "zlib stream of {} bytes outgrew its {}-byte destination: served as chunks (TUXBOX_ZLIB_CHUNKS=0 fails it)",
+                whole.len(), self.capacity));
+            let first = whole[..self.capacity.min(whole.len())].to_vec();
+            remember(streams, Stream { file: file.file.clone(), base: *offset, compressed: self.size, chunk: self.capacity, submission: self.submission, data: whole });
+            output = Ok(first);
+        }
+        {
+            let mut stats = storage_stats();
+            stats.pending_decodes -= 1;
+            stats.decode_errors = stats
+                .decode_errors
+                .saturating_add(u32::from(output.is_err()));
+        }
+        let output = output.map_err(|_| HRESULT::from_win32(ERROR_INVALID_DATA.0))?;
+        self.store(&output)
+    }
+}
+
+fn run_read(shared: &Shared, entry: &Entry) -> Result<(), HRESULT> {
+    let Entry::Read(req) = entry else { return Ok(()) };
+    {
+        let mut stats = storage_stats();
+        let p = &mut stats.priorities[shared.priority];
+        p.pending += 1;
+        p.requests = p.requests.saturating_add(1);
+        p.source_bytes = p.source_bytes.saturating_add(req.size as u64);
+        p.destination_bytes = p.destination_bytes.saturating_add(req.capacity as u64);
+    }
+    let result = req.execute(&shared.streams);
+    storage_stats().priorities[shared.priority].pending -= 1;
+    result
+}
+
+/// Failed requests by cause (entry kind and HRESULT), logged with the 1st-4th
+/// failure and then at powers of two, so a stall shows whether streaming is
+/// losing requests and why. Idea from Xbox2Windows #1781 (0ad04b91, 8c77885b,
+/// MasterDomino, MIT). TUXBOX_STORAGE_FAILURE_CAUSES=0 turns it off.
+fn count_failure(entry: &Entry, hr: HRESULT) {
+    if std::env::var_os("TUXBOX_STORAGE_FAILURE_CAUSES").is_some_and(|v| v == "0") {
+        return;
+    }
+    let kind = match entry {
+        Entry::Read(_) => "read",
+        Entry::Status(..) => "status",
+        Entry::Signal(..) => "fence",
+        Entry::Invalid(..) => "invalid",
+        Entry::Refused(..) => "refused",
+        Entry::Event(_) => "event",
+    };
+    static CAUSES: Mutex<Vec<(&'static str, i32, u64)>> = Mutex::new(Vec::new());
+    static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut causes = lock(&CAUSES);
+    match causes.iter_mut().find(|c| c.0 == kind && c.1 == hr.0) {
+        Some(c) => c.2 += 1,
+        None => causes.push((kind, hr.0, 1)),
+    }
+    let n = TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        let name = |code: i32| match HRESULT(code) {
+            c if c == HRESULT::from_win32(ERROR_HANDLE_EOF.0) => "past end of file",
+            c if c == HRESULT::from_win32(windows::Win32::Foundation::ERROR_NOACCESS.0) => "destination not writable",
+            c if c == E_OUTOFMEMORY => "destination too small",
+            c if c == E_INVALIDARG => "invalid request",
+            c if c == E_NOTIMPL => "not implemented",
+            _ => "other",
+        };
+        let list: Vec<String> = causes.iter()
+            .map(|(k, c, count)| format!("{k} {c:#010x} ({}) x{count}", name(*c)))
+            .collect();
+        log(format_args!("storage failures by cause after {n}: {} (TUXBOX_STORAGE_FAILURE_CAUSES=0 off)", list.join(", ")));
+    }
+}
+
+fn signal_error(shared: &Shared, entry: &Entry, hr: HRESULT) {
+    count_failure(entry, hr);
+    let mut state = lock(&shared.state);
+    state.error_count = state.error_count.saturating_add(1);
+    if state.first_error.is_none() {
+        // The documented record consists exclusively of pointers, integers
+        // and fixed-size strings, for which all-zero is an empty record.
+        let mut r: Box<ErrorRecord> = Box::new(unsafe { core::mem::zeroed() });
+        r.hr = hr.0;
+        match entry {
+            Entry::Read(read) => {
+                r.options = read.options;
+                r.destination = read.dest;
+                r.destination_size = read.capacity as u32;
+                r.size = read.size as u32;
+                r.tag = read.tag;
+                match read.source {
+                    Source::File(_, offset) => r.offset = offset,
+                    Source::Memory(p) => r.source = p,
+                    Source::Pages(ref pages) => r.source = pages.array,
+                }
+            }
+            Entry::Invalid(_, kind) => r.kind = *kind,
+            Entry::Refused(_, req) => {
+                r.options = req.options;
+                r.destination = req.dest;
+                r.destination_size = req.capacity;
+                r.source = req.source;
+                r.offset = req.offset;
+                r.size = req.size;
+                r.tag = req.tag;
+            }
+            Entry::Status(..) => r.kind = 1,
+            Entry::Event(_) => r.kind = 3,
+            Entry::Signal(fence, value) => {
+                r.kind = 2;
+                r.options = fence.as_raw() as u64;
+                r.destination = *value as usize;
+            }
+        }
+        state.first_error = Some(r);
+    }
+    let _ = unsafe { SetEvent(HANDLE(shared.error_event.as_raw_handle())) };
+}
+
+/// Reads run this many at a time per queue (TUXBOX_STORAGE_PARALLEL, default
+/// 4; 1 = one by one). Status, signal and event entries still wait for every
+/// read before them, which is all DirectStorage orders.
+fn parallel_reads() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::env::var("TUXBOX_STORAGE_PARALLEL").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(4).clamp(1, 16))
+}
+
+/// The queue's priority (-1 low .. 2 real-time) as its worker's thread
+/// priority, so the title's urgent loads win the CPU (TUXBOX_STORAGE_PRIORITY=0
+/// leaves every worker at normal).
+fn set_worker_priority(priority: usize) {
+    use windows::Win32::System::Threading::*;
+    if std::env::var("TUXBOX_STORAGE_PRIORITY").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let level = match priority {
+        0 => THREAD_PRIORITY_BELOW_NORMAL,
+        1 => THREAD_PRIORITY_NORMAL,
+        2 => THREAD_PRIORITY_ABOVE_NORMAL,
+        _ => THREAD_PRIORITY_HIGHEST,
+    };
+    let _ = unsafe { SetThreadPriority(GetCurrentThread(), level) };
+}
+
+fn consume(shared: &Shared) {
+    set_worker_priority(shared.priority);
+    let mut last_error = S_OK;
+    loop {
+        let mut state = lock(&shared.state);
+        while state.ready == 0 && !state.closed {
+            state = shared
+                .changed
+                .wait(state)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        let Some(entry) = state.entries.pop_front() else {
+            return;
+        };
+        state.ready -= 1;
+        state.processing = true;
+        // Consecutive ready reads after this one join it.
+        let mut batch = Vec::new();
+        if matches!(entry, Entry::Read(_)) {
+            while (pool::on() || batch.len() + 1 < parallel_reads()) && state.ready > 0 && matches!(state.entries.front(), Some(Entry::Read(_))) {
+                batch.push(state.entries.pop_front().unwrap());
+                state.ready -= 1;
+            }
+        }
+        drop(state);
+        // The pool runs every read, alone or not (TUXBOX_DSTORAGE_POOL).
+        if !batch.is_empty() || (pool::on() && matches!(entry, Entry::Read(_))) {
+            batch.insert(0, entry);
+            let results: Vec<Result<(), HRESULT>> = if pool::on() { pool::run(shared, &batch) } else { std::thread::scope(|scope| {
+                let handles: Vec<_> = batch[1..].iter().map(|e| scope.spawn(move || run_read(shared, e))).collect();
+                let mut results = vec![run_read(shared, &batch[0])];
+                results.extend(handles.into_iter().map(|h| h.join().unwrap_or(Err(E_FAIL))));
+                results
+            }) };
+            for (entry, result) in batch.iter().zip(results) {
+                if let Err(hr) = result {
+                    if last_error.is_ok() && !ignore_failures() {
+                        last_error = hr;
+                    }
+                    {
+                        let mut stats = storage_stats();
+                        stats.errors = stats.errors.saturating_add(1);
+                    }
+                    signal_error(shared, entry, hr);
+                }
+            }
+            lock(&shared.state).processing = false;
+            shared.changed.notify_all();
+            continue;
+        }
+        let result = match &entry {
+            Entry::Read(req) => {
+                {
+                    let mut stats = storage_stats();
+                    let p = &mut stats.priorities[shared.priority];
+                    p.pending += 1;
+                    p.requests = p.requests.saturating_add(1);
+                    p.source_bytes = p.source_bytes.saturating_add(req.size as u64);
+                    p.destination_bytes = p.destination_bytes.saturating_add(req.capacity as u64);
+                }
+                let result = req.execute(&shared.streams);
+                storage_stats().priorities[shared.priority].pending -= 1;
+                result
+            }
+            Entry::Status(values, i) => {
+                let mut stats = storage_stats();
+                let p = &mut stats.priorities[shared.priority];
+                p.statuses = p.statuses.saturating_add(1);
+                values[*i].store(last_error.0, Ordering::Release);
+                last_error = S_OK;
+                Ok(())
+            }
+            Entry::Signal(fence, value) => {
+                {
+                    let mut stats = storage_stats();
+                    let p = &mut stats.priorities[shared.priority];
+                    p.fences = p.fences.saturating_add(1);
+                }
+                unsafe { fence.Signal(*value) }.map_err(|e| e.code())
+            }
+            Entry::Invalid(hr, _) => Err(*hr),
+            Entry::Refused(_, r) if r.cancelled => Ok(()),
+            Entry::Refused(hr, _) => Err(*hr),
+            Entry::Event(event) => {
+                unsafe { SetEvent(HANDLE(event.as_raw_handle())) }.map_err(|e| e.code())
+            }
+        };
+        if let Err(hr) = result {
+            if last_error.is_ok() && !(ignore_failures() && matches!(entry, Entry::Read(_))) {
+                last_error = hr;
+            }
+            {
+                let mut stats = storage_stats();
+                stats.errors = stats.errors.saturating_add(1);
+            }
+            signal_error(shared, &entry, hr);
+        }
+        lock(&shared.state).processing = false;
+        shared.changed.notify_all();
+    }
+}
+
+pub(super) unsafe fn create(desc: &QueueDesc, manual: bool) -> Result<IQueue2, HRESULT> {
+    if desc.source_type > 1
+        || (desc.source_type == 1 && desc.priority != 2)
+        || !(-1..=2).contains(&desc.priority)
+        || !(0x80..=0x2000).contains(&desc.capacity)
+    {
+        return Err(E_INVALIDARG);
+    }
+    let handle = unsafe { CreateEventW(None, true, false, None) }.map_err(|e| e.code())?;
+    let shared = Arc::new(Shared {
+        state: Mutex::new(State {
+            entries: VecDeque::new(),
+            ready: 0,
+            submissions: 0,
+            processing: false,
+            closed: false,
+            error_count: 0,
+            first_error: None,
+        }),
+        changed: Condvar::new(),
+        capacity: desc.capacity as usize,
+        priority: (desc.priority + 1) as usize,
+        error_event: unsafe { OwnedHandle::from_raw_handle(handle.0) },
+        streams: Mutex::new(VecDeque::new()),
+    });
+    let run = Arc::clone(&shared);
+    let worker = thread::Builder::new()
+        .name("TuxBox storage".into())
+        .spawn(move || consume(&run))
+        .map_err(|_| E_OUTOFMEMORY)?;
+    let name = if desc.name.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(desc.name) }.to_owned())
+    };
+    {
+        let mut stats = storage_stats();
+        let p = &mut stats.priorities[(desc.priority + 1) as usize];
+        p.queues += 1;
+        p.peak_queues = p.peak_queues.max(p.queues);
+        p.total_queues = p.total_queues.saturating_add(1);
+    }
+    Ok(Queue {
+        manual,
+        shared,
+        worker: Mutex::new(Some(worker)),
+        name,
+        source_type: desc.source_type,
+        priority: desc.priority,
+    }
+    .into())
+}
+
+impl Queue {
+    fn enqueue(&self, entry: Entry) {
+        let mut state = lock(&self.shared.state);
+        while !state.closed
+            && state.entries.len() + usize::from(state.processing) >= self.shared.capacity - 1
+        {
+            if !self.manual {
+                release(&mut state);
+                self.shared.changed.notify_all();
+            }
+            state = self
+                .shared
+                .changed
+                .wait(state)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        if state.closed {
+            return;
+        }
+        if let Entry::Status(v, i) = &entry {
+            v[*i].store(E_PENDING.0, Ordering::Release);
+        }
+        state.entries.push_back(entry);
+        if !self.manual && state.entries.len() - state.ready >= self.shared.capacity / 2 {
+            release(&mut state);
+            self.shared.changed.notify_all();
+        }
+    }
+    fn close(&self) {
+        {
+            let mut state = lock(&self.shared.state);
+            state.closed = true;
+            release(&mut state);
+            self.shared.changed.notify_all();
+        }
+        if let Some(worker) = lock(&self.worker).take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for Queue {
+    fn drop(&mut self) {
+        self.close();
+        storage_stats().priorities[(self.priority + 1) as usize].queues -= 1;
+    }
+}
+
+impl IQueue_Impl for Queue_Impl {
+    unsafe fn EnqueueRequest(&self, req: *const Request) {
+        self.enqueue(
+            unsafe { capture(self.source_type, req) }
+                .map_or_else(|e| match unsafe { req.as_ref() } {
+                    Some(r) if std::env::var("TUXBOX_XCRD_REFUSED_RECORD").map_or(true, |v| v.trim() != "0") => {
+                        Entry::Refused(e, Box::new(Refused {
+                            options: r.options, dest: r.destination as usize, capacity: r.destination_size,
+                            source: r.source as usize, offset: r.offset, size: r.size, tag: r.tag, cancelled: false,
+                        }))
+                    }
+                    _ => Entry::Invalid(e, 0),
+                }, Entry::Read),
+        );
+    }
+    unsafe fn EnqueueStatus(&self, array: *mut c_void, index: u32) {
+        let entry = unsafe { IUnknown::from_raw_borrowed(&array) }
+            .and_then(|u| u.cast_object_ref::<Status>().ok())
+            .filter(|obj| (index as usize) < obj.values.len())
+            .map(|obj| Entry::Status(Arc::clone(&obj.values), index as usize))
+            .unwrap_or(Entry::Invalid(E_INVALIDARG, 1));
+        self.enqueue(entry);
+    }
+    unsafe fn EnqueueSignal(&self, fence: *mut c_void, value: u64) {
+        let entry = unsafe { IUnknown::from_raw_borrowed(&fence) }
+            .and_then(|u| u.cast::<ID3D12Fence>().ok())
+            .map(|f| Entry::Signal(f, value))
+            .unwrap_or(Entry::Invalid(E_INVALIDARG, 2));
+        self.enqueue(entry);
+    }
+    unsafe fn Submit(&self) {
+        let mut s = lock(&self.shared.state);
+        release(&mut s);
+        self.shared.changed.notify_all();
+    }
+    unsafe fn CancelRequestsWithTag(&self, mask: u64, value: u64) {
+        for entry in &mut lock(&self.shared.state).entries {
+            match entry {
+                Entry::Read(r) if (r.tag & mask) == value => r.cancelled = true,
+                Entry::Refused(_, r) if (r.tag & mask) == value => r.cancelled = true,
+                _ => {}
+            }
+        }
+    }
+    unsafe fn Close(&self) {
+        self.close()
+    }
+    unsafe fn GetErrorEvent(&self) -> *mut c_void {
+        self.shared
+            .error_event
+            .try_clone()
+            .map_or(core::ptr::null_mut(), IntoRawHandle::into_raw_handle)
+    }
+    unsafe fn RetrieveErrorRecord(&self, record: *mut ErrorRecord) {
+        if record.is_null() {
+            return;
+        }
+        let mut s = lock(&self.shared.state);
+        if let Some(mut first) = s.first_error.take() {
+            first.count = s.error_count;
+            unsafe { record.write(*first) };
+        } else {
+            unsafe {
+                record.write_bytes(0, 1);
+                (*record).kind = u32::MAX;
+            }
+        }
+        s.error_count = 0;
+        let _ = unsafe { ResetEvent(HANDLE(self.shared.error_event.as_raw_handle())) };
+    }
+    unsafe fn Query(&self, info: *mut QueueInfo) {
+        if info.is_null() {
+            return;
+        }
+        let s = lock(&self.shared.state);
+        let desc = QueueDesc {
+            source_type: self.source_type,
+            priority: self.priority,
+            capacity: self.shared.capacity as u16,
+            name: self.name.as_ref().map_or(core::ptr::null(), |n| n.as_ptr()),
+        };
+        unsafe {
+            info.write(QueueInfo {
+                desc,
+                empty: (self.shared.capacity - 1 - s.entries.len() - usize::from(s.processing))
+                    as u16,
+                until_submit: if self.manual {
+                    u16::MAX
+                } else {
+                    (self.shared.capacity / 2 - (s.entries.len() - s.ready)) as u16
+                },
+            })
+        };
+    }
+}
+
+impl IQueue2_Impl for Queue_Impl {
+    unsafe fn EnqueueSetEvent(&self, event: *mut c_void) {
+        use std::os::windows::io::BorrowedHandle;
+        let entry = if event.is_null() || event as isize == -1 {
+            Entry::Invalid(E_INVALIDARG, 3)
+        } else {
+            unsafe { BorrowedHandle::borrow_raw(event) }
+                .try_clone_to_owned()
+                .map_or_else(
+                    |e| {
+                        Entry::Invalid(HRESULT::from_win32(e.raw_os_error().unwrap_or(1) as u32), 3)
+                    },
+                    Entry::Event,
+                )
+        };
+        self.enqueue(entry);
+    }
+    unsafe fn Query1(&self, info: *mut QueueInfo1) {
+        if info.is_null() {
+            return;
+        }
+        let mut base = std::mem::MaybeUninit::uninit();
+        unsafe {
+            self.Query(base.as_mut_ptr());
+            let base: QueueInfo = base.assume_init();
+            info.write(QueueInfo1 {
+                desc: QueueDesc1 {
+                    desc: base.desc,
+                    options: self.manual as u64,
+                },
+                empty: base.empty,
+                until_submit: base.until_submit,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_chunk_slice_is_bounded_and_stepped_by_its_destination() {
+    let data = vec![7u8; 0x40000];
+    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x10000, 0x10000, 0x10000).map(<[u8]>::len), Some(0x10000));
+    assert_eq!(slice_at(&data, 0x1000, 0x1000 + 0x30000, 0x10000, 0x10000).map(<[u8]>::len), Some(0x10000));
+    assert!(slice_at(&data, 0x1000, 0x1000 + 0x40000, 0x10000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, 0x1000 + 0x8000, 0x10000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, 0x1000, 0x10000, 0x10000).is_none());
+    assert!(slice_at(&data, 0x1000, u64::MAX - 0xffff, 0x10000, 0x10000).is_none());
+    assert!(has_zlib_header(&[0x78, 0x9c]));
+    assert!(!has_zlib_header(&[0x78, 0x9d]));
+}
+
+#[cfg(test)]
+mod eof_tests {
+    use super::within_file;
+
+    #[test]
+    fn reads_must_end_inside_their_file() {
+        assert!(within_file(0, 4096, 4096));
+        assert!(within_file(4092, 4, 4096));
+        assert!(!within_file(4093, 4, 4096)); // straddles EOF
+        assert!(!within_file(8192, 1, 4096)); // past EOF
+        assert!(!within_file(u64::MAX, 2, u64::MAX));
+    }
+}
+
+/// rebox's idea (re-derived from f61bbc8): the title maps and unmaps tile-pool
+/// pages while requests run, and an inflate into a page just unmapped
+/// crashed it. Every region of [at, at + len) must be committed and writable.
+/// TUXBOX_XCRD_CHECK_DEST=0 skips the check.
+/// Copies `out.len()` words at `at` of this process's memory; false when any
+/// of it is unreadable (ReadProcessMemory fails instead of faulting).
+fn read_own(at: usize, out: &mut [u64]) -> bool {
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    let bytes = core::mem::size_of_val(out);
+    let mut read = 0usize;
+    // SAFETY: `out` is a writable buffer of `bytes` bytes.
+    unsafe { ReadProcessMemory(GetCurrentProcess(), at as *const _, out.as_mut_ptr().cast(), bytes, Some(&raw mut read)) }.is_ok()
+        && read == bytes
+}
+
+/// Whether `[at, at + len)` is committed and read-write or plain read-only
+/// (a write guard): a user-mode write there succeeds or faults into the guard.
+fn committed_guardable(at: usize, len: usize) -> bool {
+    use windows::Win32::System::Memory::*;
+    let Some(end) = at.checked_add(len) else { return false };
+    let mut p = at;
+    while p < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(p as *const _), &mut region, core::mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0
+            || region.State != MEM_COMMIT
+            || (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)).0 != 0
+            || (region.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)).0 == 0
+        {
+            return false;
+        }
+        p = region.BaseAddress as usize + region.RegionSize;
+    }
+    true
+}
+
+fn writable(at: usize, len: usize) -> bool {
+    use windows::Win32::System::Memory::*;
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("TUXBOX_XCRD_CHECK_DEST").is_ok_and(|v| v.trim() == "0")) || len == 0 {
+        return true;
+    }
+    let Some(end) = at.checked_add(len) else { return false };
+    // A destination the CPU never touched is still reserved in a lazy title
+    // view (xmem lazy_commit.rs, 49702da): commit it, as the CPU's first touch
+    // would. test136 failed 512+ decompress/BCPack stores here (0x800703e6)
+    // and the title asserted at game+0x4033ca4; only ReadFile committed.
+    commit_title_range(at as *mut u8, len);
+    if known_committed(at, len) {
+        return true;
+    }
+    let mut p = at;
+    while p < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if unsafe { VirtualQuery(Some(p as *const _), &mut region, core::mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0
+            || region.State != MEM_COMMIT
+            || (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)).0 != 0
+            || (region.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)).0 == 0
+        {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                log(format_args!("request destination {at:#x} ({len:#x} bytes) is not committed and writable at {p:#x}: the request fails ({n} so far; TUXBOX_XCRD_CHECK_DEST=0 writes anyway); {}; region state {:#x} protect {:#x} type {:#x} base {:#x}",
+                    unmapped_by(p, end - p), region.State.0, region.Protect.0, region.Type.0, region.AllocationBase as usize));
+            }
+            return false;
+        }
+        p = region.BaseAddress as usize + region.RegionSize;
+    }
+    true
+}
+
+/// Who unmapped `[at, at + len)`, from xmem's unmap ring (TuxBoxUnmapTrace;
+/// TUXBOX_XMEM_UNMAP_TRACE=0 there records nothing).
+fn unmapped_by(at: usize, len: usize) -> String {
+    type Trace = unsafe extern "system" fn(usize, usize, *mut [u64; 4]) -> u32;
+    static TRACE: OnceLock<Option<Trace>> = OnceLock::new();
+    let trace = TRACE.get_or_init(|| unsafe {
+        let name: Vec<u16> = "xmem.dll".encode_utf16().chain([0]).collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        let f = if module.is_null() { core::ptr::null() } else { GetProcAddress(module, b"TuxBoxUnmapTrace ".as_ptr()) };
+        (!f.is_null()).then(|| core::mem::transmute::<*const c_void, Trace>(f))
+    });
+    let Some(trace) = trace else { return "xmem unmap trace unavailable".into() };
+    let mut out = [0u64; 4];
+    if unsafe { trace(at, len, &mut out) } == 0 {
+        return "no xmem unmap recorded over it (never mapped by xmem, or unmapped outside it)".into();
+    }
+    let site = match out[0] { 1 => "XMemFreePhysicalPages unmap", 2 => "view unmap", 3 => "pool block decommit", 4 => "XMemFree release", _ => "?" };
+    format!("unmapped by xmem {site} of {:#x}+{:#x} {} ms ago", out[1], out[2], out[3])
+}

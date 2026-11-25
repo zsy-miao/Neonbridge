@@ -1,0 +1,1014 @@
+//! Wrapped root signatures and the Xbox extended compute pipeline factory.
+use super::{Device, Out, identity, wrap_pageable};
+use crate::proxy::{Proxy, Slots, allocate, check_output, child_slots, unwrap};
+use core::{ffi::c_void, mem::ManuallyDrop, slice};
+use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER};
+use windows::Win32::Graphics::Direct3D12::*;
+use windows::core::{GUID, HRESULT, Interface};
+
+pub(crate) use super::compute_table::ComputeTable;
+pub(crate) use super::compute_scene::{RootSource, SceneRoot, SceneSource};
+
+static ROOT: Slots<8> = child_slots::<ID3D12RootSignature, RootSource, 8>();
+pub(crate) type Root = Proxy<ID3D12RootSignature, RootSource>;
+pub(crate) type Pipeline = Proxy<ID3D12PipelineState, PipelineData>;
+// Inline console SetPipelineState copies 32 bytes starting at +0x10 from
+// this object to the guest command list. Desktop command lists use slot 25
+// with an empty packet buffer, so no Xbox command packets are advertised.
+#[repr(C)]
+#[derive(Default)]
+pub(crate) struct PipelineData {
+    reserved: usize,
+    packets: [u8; 32],
+    pub(crate) stencil_slot: Option<u32>,
+    pub(crate) draw_trace: Option<std::sync::Arc<crate::diagnostics::RasterDraw>>,
+    pub(crate) scene_root: Option<SceneRoot>,
+    pub(crate) reflected: Option<std::sync::Arc<ComputeTable>>,
+    /// TB_ZTRX_SHADER: a ztrx translation's bindings (sidecar) and the root
+    /// signature made for it (ztrx_root); draws fill its user data.
+    /// Stage k's user data is root parameter k, in this order.
+    pub(crate) ztrx: Option<(Vec<std::sync::Arc<super::ztrx_root::ZtrxStage>>, ID3D12RootSignature)>,
+    pub(crate) raster_table: Option<std::sync::Arc<ComputeTable>>,
+    /// The null descriptor each unwritten table slot needs for these shaders.
+    pub(crate) null_kinds: Option<std::sync::Arc<super::null_kinds::NullKinds>>,
+    /// The heap descriptors the program reads and writes (xshader reflection).
+    pub(crate) heap_access: Option<std::sync::Arc<super::shader_cache::HeapAccess>>,
+    /// TUXBOX_HEAP_LATE: the stage digests whose `.heap` was not there at
+    /// creation (test178: 9 programs missed theirs, published later), looked
+    /// up again at binds (`late_heap_access`), at most once a second.
+    pub(crate) heap_pending: Vec<String>,
+    pub(crate) heap_late: std::sync::OnceLock<std::sync::Arc<super::shader_cache::HeapAccess>>,
+    pub(crate) heap_tried_ms: std::sync::atomic::AtomicU64,
+    pub(crate) heap_tries: std::sync::atomic::AtomicU32,
+    /// Filled by a background worker when this pipeline was created without
+    /// its translation (see `stream::background`).
+    pub(crate) upgrade: std::sync::OnceLock<std::sync::Arc<super::stream::Upgrade>>,
+    /// What identifies this pipeline across runs (see `pipeline_cache`), and
+    /// whether a command list has bound it yet.
+    pub(crate) key: Option<std::sync::Arc<str>>,
+    pub(crate) used: std::sync::atomic::AtomicBool,
+    /// A recorded draw or dispatch used it (TUXBOX_EARLY_USED).
+    pub(crate) drew: std::sync::atomic::AtomicBool,
+    /// The native is a shared placeholder until a worker makes the pipeline.
+    pub(crate) lazy: bool,
+    /// A compute pipeline (slot 62): its dispatches wait for it rather than drop
+    /// (see `wait_pending_compute`).
+    pub(crate) compute: bool,
+    /// Made by CreateComputePipelineState, lazy or not (TUXBOX_INDIRECT_KIND).
+    pub(crate) dispatches: bool,
+    /// TUXBOX_RECT_EXPAND: made for the rectangle topology (its geometry stage
+    /// completes rectangles), and its per-vertex inputs.
+    pub(crate) completes_rects: bool,
+    pub(crate) rect_inputs: Option<super::rectangle::rect_expand::Inputs>,
+    /// The guest stream it was made from, for CreateDerivedPipelineStateX.
+    pub(in crate::device) derive_from: Option<std::sync::Arc<super::stream::background::OwnedStream>>,
+    /// The slot 57 record it was made from (TUXBOX_SLOT57_REAL (default on, =0 off)): draws
+    /// pick a variant for the list's targets (slot57::variant).
+    pub(crate) slot57: Option<std::sync::Arc<super::slot57::Bound>>,
+    /// Counts the title's live pipelines (TUXBOX_WC_ATTRIB line).
+    pub(crate) counted: crate::diagnostics::wc_attrib::TitlePipeline,
+}
+
+pub(crate) use super::slot57::{Bound as Slot57, Targets as Slot57Targets, targets as slot57_targets, variant as slot57_variant};
+
+/// The host pipeline and state to bind: a worker's rebuild once it exists.
+/// The flag is set while a lazy pipeline is still being made: the list
+/// drops its draws and dispatches.
+/// The heap access of a pipeline bound now: its creation's, else one whose
+/// `.heap` has appeared since (TUXBOX_HEAP_LATE=0: creation's only).
+pub(crate) fn late_heap_access(data: &PipelineData) -> Option<std::sync::Arc<super::shader_cache::HeapAccess>> {
+    if data.heap_access.is_some() || data.heap_pending.is_empty() {
+        return data.heap_access.clone();
+    }
+    if let Some(found) = data.heap_late.get() {
+        return Some(found.clone());
+    }
+    if crate::env_toggle!("TUXBOX_HEAP_LATE") == Some("0") {
+        return None;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let last = data.heap_tried_ms.load(std::sync::atomic::Ordering::Relaxed);
+    if now.saturating_sub(last) < 1000
+        || data.heap_tried_ms.compare_exchange(last, now, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed).is_err()
+    {
+        return None;
+    }
+    // test179: the programs still missing theirs were untranslated
+    // (unsupported, or no translation in this cache): 30 tries, then none.
+    if data.heap_tries.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 30 {
+        return None;
+    }
+    let mut merged = super::shader_cache::HeapAccess::default();
+    let mut any = false;
+    for digest in &data.heap_pending {
+        if let Some(access) = super::shader_cache::heap_access(digest) {
+            any = true;
+            merged.writes.extend(access.writes.iter().copied());
+            merged.reads.extend(access.reads.iter().copied());
+        }
+    }
+    any.then(|| data.heap_late.get_or_init(|| std::sync::Arc::new(merged)).clone())
+}
+
+/// A recorded draw or dispatch used the pipeline at `host` (a `Pipeline`
+/// pointer a bind took, 0 for none): listed for the next run's early starts
+/// and journalled for the prewarm build. ztrx victory-gpu make.rs `ready` ->
+/// library `note_used` (d279e69, GPL-3.0, credit to its authors).
+pub(crate) fn note_drew(host: usize) {
+    if host == 0 || !super::stream::background::early_used() {
+        return;
+    }
+    // SAFETY: the title keeps a pipeline it bound alive while the list records.
+    let p = unsafe { &*(host as *const Pipeline) };
+    if let Some(key) = &p.state.key
+        && !p.state.drew.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        super::pipeline_cache::note_drew(key);
+        super::stream::background::journal::drew(key);
+    }
+}
+
+pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, bool) {
+    if let Some(key) = &p.state.key
+        && !p.state.used.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        super::pipeline_cache::note_used(key);
+        super::stream::background::journal::used(key);
+    }
+    let Some(slot) = p.state.upgrade.get() else {
+        return (&p.native, &p.state, false);
+    };
+    if p.state.lazy {
+        super::stream::background::release::bound(slot);
+    }
+    let built = if p.state.lazy { super::stream::background::ready(slot) } else { slot.get() };
+    match built {
+        Some(built) => {
+            let p = built.pipeline();
+            (&p.native, &p.state, false)
+        }
+        None => {
+            if p.state.lazy && super::stream::background::failed(slot) {
+                crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BindsUntranslatable);
+                super::stream::background::failed_bind(slot);
+            }
+            (&p.native, &p.state, p.state.lazy)
+        }
+    }
+}
+
+/// test105: the loading screen's Bink movie showed blocky, stale, colour-shifted
+/// tiles (a datamosh) while every dispatch of its pipelines was dropped as
+/// "pipeline still being made" for about 20 s: a decode step that is skipped
+/// leaves the next frames building on a wrong reference. A compute pipeline
+/// still being made at its bind is waited for, outside the frame's budget, up
+/// to TUXBOX_COMPUTE_PENDING_WAIT_MS (3000; 0 drops its dispatches as before).
+/// Returns whether the bind waited; logs each pipeline that waited (first 16,
+/// then powers of two) with its key, the wait and the caller.
+/// test111 hung ("no frame presented for 15 s"): title threads waited on 32+
+/// pending compute pipelines one bind after another, each up to the full
+/// limit. The waits of all binds share TUXBOX_COMPUTE_PENDING_FRAME_MS
+/// (4000; 0 unlimited) per presented frame; past it a bind drops its dispatches
+/// as before, the frame ends and the budget refills.
+static BIND_WAIT_LEFT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MAX);
+
+fn bind_wait_frame_ms() -> i64 {
+    static MS: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| crate::env_toggle!("TUXBOX_COMPUTE_PENDING_FRAME_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(4000))
+}
+
+fn over_budget_ms() -> i64 {
+    static MS: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| crate::env_toggle!("TUXBOX_COMPUTE_OVER_BUDGET_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(750))
+}
+
+/// rebox 8af34bf (idea, re-derived): a draw into a display-sized target is
+/// what the frame shows, so a graphics pipeline still being made when it is
+/// bound with such a target waits up to TUXBOX_DISPLAY_DRAW_WAIT_MS (250; 0
+/// drops its draws as before) outside the frame's budget instead.
+pub(crate) fn wait_pending_display(p: &Pipeline) -> bool {
+    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let limit = *MS.get_or_init(|| crate::env_toggle!("TUXBOX_DISPLAY_DRAW_WAIT_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(250));
+    if limit == 0 || !p.state.lazy || p.state.compute {
+        return false;
+    }
+    let Some(slot) = p.state.upgrade.get() else { return false };
+    if super::stream::background::failed(slot) {
+        return false;
+    }
+    let started = std::time::Instant::now();
+    let built = super::stream::background::wait_for(slot, std::time::Duration::from_millis(limit)).is_some();
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        let key = p.state.key.as_deref().unwrap_or("-");
+        crate::diagnostics::log_line(format_args!(
+            "graphics pipeline {} still being made at a bind with a display-sized target: waited {:.1} ms, {} ({n} so far; TUXBOX_DISPLAY_DRAW_WAIT_MS=0 drops its draws)",
+            &key[..key.len().min(16)], started.elapsed().as_secs_f64() * 1e3, if built { "made" } else { "not made, draws dropped" }));
+    }
+    true
+}
+
+pub(crate) fn refill_bind_wait() {
+    let ms = bind_wait_frame_ms();
+    BIND_WAIT_LEFT_MS.store(if ms == 0 { i64::MAX } else { ms }, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn wait_pending_compute(p: &Pipeline) -> bool {
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| {
+        crate::env_toggle!("TUXBOX_COMPUTE_PENDING_WAIT_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(3000)
+    });
+    // test106: 9186337 tested the key for "compute:", but the key is the digest
+    // of that string, so no bind ever waited. The pipeline is marked instead.
+    if limit == 0 || !p.state.lazy || !p.state.compute {
+        return false;
+    }
+    let key = p.state.key.as_deref().unwrap_or("-");
+    let Some(slot) = p.state.upgrade.get() else { return false };
+    if super::stream::background::failed(slot) {
+        return false;
+    }
+    use std::sync::atomic::Ordering as O;
+    let frame_ms = bind_wait_frame_ms();
+    if frame_ms != 0 && BIND_WAIT_LEFT_MS.load(O::Relaxed) > frame_ms {
+        refill_bind_wait();
+    }
+    let mut left = BIND_WAIT_LEFT_MS.load(O::Relaxed);
+    // test119 hung at the world switch: dispatches were dropped as "still
+    // being made" with this frame's bind waits spent, and a GPU memory
+    // wait later never saw its label (a dropped dispatch can be the one
+    // that writes it). Every DXIL is cached now, so making one is the
+    // driver's compile alone: past the frame budget a bind still makes
+    // its pipeline on this thread (stolen from the queue), up to
+    // TUXBOX_COMPUTE_OVER_BUDGET_MS (750; 0 drops as before).
+    let over = over_budget_ms();
+    if left <= 0 && over > 0 {
+        static OVER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = OVER.fetch_add(1, O::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "compute pipeline {} still being made with this frame's bind waits spent: made at its bind anyway, up to {over} ms ({n} so far; TUXBOX_COMPUTE_OVER_BUDGET_MS=0 drops its dispatches)",
+                &key[..key.len().min(16)]));
+        }
+        left = over;
+    }
+    if left <= 0 {
+        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SKIPPED.fetch_add(1, O::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "compute pipeline {} still being made at its bind: not waited, this frame's bind waits are spent ({n} so far; TUXBOX_COMPUTE_PENDING_FRAME_MS)",
+                &key[..key.len().min(16)]));
+        }
+        return false;
+    }
+    let started = std::time::Instant::now();
+    let wait = limit.min(u64::try_from(left).unwrap_or(u64::MAX));
+    let built = super::stream::background::wait_for(slot, std::time::Duration::from_millis(wait)).is_some();
+    BIND_WAIT_LEFT_MS.fetch_sub(started.elapsed().as_millis() as i64, O::Relaxed);
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 16 || n.is_power_of_two() {
+        let caller = match crate::survey::title_rva() {
+            Some(rva) => format!("title RVA {rva:#x}"),
+            None => "outside the title (a middleware module such as Bink)".into(),
+        };
+        crate::diagnostics::log_line(format_args!(
+            "compute pipeline {} still being made at its bind: waited {:.1} ms, {} ({caller}; {n} so far; TUXBOX_COMPUTE_PENDING_WAIT_MS=0 drops its dispatches)",
+            &key[..key.len().min(16)], started.elapsed().as_secs_f64() * 1e3,
+            if built { "made" }
+            else if super::stream::background::failed(slot) { "not made: its build failed (see the creation failure above), dispatches dropped" }
+            else if wait < limit { "not made: this frame's bind waits ran out, dispatches dropped" }
+            else { "not made in time, dispatches dropped" }));
+    }
+    true
+}
+
+const _: () = assert!(
+    core::mem::offset_of!(Proxy<ID3D12PipelineState, PipelineData>, state)
+        + core::mem::offset_of!(PipelineData, packets)
+        == 0x10
+);
+// GetInformationX is slot 11. Two methods follow it (TuxBox aeed457): a
+// shorter table would read off the end, so those calls fail closed.
+pub(super) static PIPELINE: Slots<14> = {
+    let mut slots = child_slots::<ID3D12PipelineState, PipelineData, 14>();
+    slots[11] = crate::slot!(scratch_info);
+    slots[2] = crate::slot!(release_pipeline);
+    slots
+};
+
+/// Release on a title pipeline, counted for the TUXBOX_WC_ATTRIB line: every
+/// call, those that leave one reference (the title's last let go while one
+/// more holder, often ours, keeps it), and those that free it.
+/// TUXBOX_PIPELINE_RELEASES=0 leaves the counts at 0.
+unsafe extern "system" fn release_pipeline(this: *mut Proxy<ID3D12PipelineState, PipelineData>) -> u32 {
+    let left = unsafe { crate::proxy::release(this) };
+    crate::diagnostics::wc_attrib::pipeline_release(left);
+    left
+}
+
+// FidelityFX queries a blob for the console pipeline's scratch size. Desktop
+// pipelines manage their own scratch. The caller skips the blob on failure.
+unsafe extern "system" fn scratch_info(
+    _this: &Proxy<ID3D12PipelineState, PipelineData>,
+    _arg1: usize,
+    _arg2: usize,
+    blob: Out,
+) -> HRESULT {
+    if blob.is_null() {
+        return E_POINTER;
+    }
+    // SAFETY: the caller provided storage for one COM interface pointer.
+    unsafe { blob.write(core::ptr::null_mut()) };
+    E_NOTIMPL
+}
+
+// A null root signature is valid for a shader with an embedded signature.
+// The caller keeps every non-null guest object alive for the returned borrow.
+pub(crate) unsafe fn root_proxy<'a>(
+    guest: *mut c_void,
+    device: *mut c_void,
+) -> Result<Option<&'a Root>, HRESULT> {
+    if guest.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: unwrap checks both the guest vtable and device identity.
+    unsafe { unwrap::<ID3D12RootSignature, RootSource>(guest, device, &ROOT) }
+        .map(Some)
+        .ok_or(E_INVALIDARG)
+}
+
+pub(crate) unsafe fn root_signature<'a>(
+    guest: *mut c_void,
+    device: *mut c_void,
+) -> Result<Option<&'a ID3D12RootSignature>, HRESULT> {
+    unsafe { root_proxy(guest, device) }.map(|root| root.map(|p| &p.native))
+}
+
+pub(crate) unsafe fn pipeline<'a>(
+    guest: *mut c_void,
+    device: *mut c_void,
+) -> Result<Option<&'a Proxy<ID3D12PipelineState, PipelineData>>, HRESULT> {
+    if guest.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: as with root_signature, the caller owns the live guest reference.
+    unsafe { unwrap::<ID3D12PipelineState, PipelineData>(guest, device, &PIPELINE) }
+        .map(Some)
+        .ok_or(E_INVALIDARG)
+}
+
+pub(super) unsafe extern "system" fn create_root_signature(
+    this: &Device,
+    node: u32,
+    blob: *const u8,
+    length: usize,
+    iid: *const GUID,
+    out: Out,
+) -> HRESULT {
+    // SAFETY: the guest supplies a readable IID and writable output slot.
+    let hr = unsafe { check_output::<ID3D12RootSignature>(iid, out) };
+    if hr.is_err() {
+        return hr;
+    }
+    if blob.is_null() || length == 0 || length > isize::MAX as usize {
+        return E_INVALIDARG;
+    }
+    // SAFETY: serialized signature bytes are borrowed only for this call.
+    let bytes = unsafe { slice::from_raw_parts(blob, length) };
+    crate::diagnostics::rootsig::note(bytes);
+    // Title root SRVs/UAVs as one-view tables (root_tables.rs, opt-in).
+    let rewritten = if super::root_tables::enabled() { super::root_tables::rewrite(bytes) } else { None };
+    let (bytes, tabled) = match &rewritten {
+        Some((b, t)) => (b.as_slice(), Some(t.clone())),
+        None => (bytes, None),
+    };
+    match unsafe {
+        super::root_name::named(this.native
+            .CreateRootSignature::<ID3D12RootSignature>(node, bytes), bytes)
+    } {
+        // SAFETY: the returned guest child owns both its native interface and device.
+        Ok(native) => unsafe {
+            if let Some(tabled) = tabled {
+                super::root_tables::remember(&native, tabled);
+            }
+            allocate(
+                &ROOT,
+                &[ID3D12DeviceChild::IID, ID3D12RootSignature::IID],
+                native,
+                Some(&identity(this)),
+                RootSource::new(bytes),
+                out,
+            )
+        },
+        Err(error) => error.code(),
+    }
+}
+
+// Slot 67 receives a serialized console PSO. FidelityFX retries slot 62 with a
+// shader descriptor if its precompiled ACO pipeline cannot be deserialized.
+/// Device slots 57 and 67 (desc, riid, ppv): a pipeline described by console
+/// state blocks (Xbox2Windows d3d12_xs_device.cpp, MIT). The description's
+/// shader stages are not decoded yet, so the title gets a placeholder
+/// pipeline whose draws and dispatches command lists drop, S_OK instead of
+/// E_NOTIMPL, only with TUXBOX_SLOT57=placeholder (default E_NOTIMPL). The first calls log 96 description bytes, dump 0x300 of them
+/// to %TEMP%\tuxbox-slotN-K.bin, and decode state block A's blend words
+/// (cb_blend). By default it answers E_NOTIMPL.
+pub(super) unsafe extern "system" fn deserialize_pipeline_x<const N: u32>(
+    this: &Device,
+    desc: *const c_void,
+    iid: *const GUID,
+    out: Out,
+) -> HRESULT {
+    // SAFETY: the guest supplies a readable IID and writable output slot.
+    let hr = unsafe { check_output::<ID3D12PipelineState>(iid, out) };
+    static CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // E_NOTIMPL by default: the title then falls back to pipelines it draws
+    // with. The placeholder (S_OK, draws dropped) left the picture black
+    // (test38-45: clears only; test46 with the stub drew).
+    // TUXBOX_SLOT57=placeholder answers the placeholder.
+    // TUXBOX_SLOT57_REAL (default on, =0 off) implies it and attaches a lazy real pipeline.
+    // Slot 67's description is a serialized console PSO, not slot 57's
+    // state-block record: test154 logged 26 "state block A too short" lines
+    // from decoding it as one (its +0x10/+0x20 are 0x1c/0x14). Only slot 57
+    // is decoded or gets a real pipeline; slot 67 answers E_NOTIMPL unless
+    // TUXBOX_SLOT57=placeholder, so FidelityFX retries slot 62.
+    // TUXBOX_SLOT67_AS57=1 treats it as slot 57 as before.
+    let as57 = N == 57 || crate::env_toggle!("TUXBOX_SLOT67_AS57") == Some("1");
+    let real = as57 && super::slot57::real();
+    let stub = !real && crate::env_toggle!("TUXBOX_SLOT57") != Some("placeholder");
+    if call == 0 {
+        let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS13::default();
+        let ok = unsafe { this.native.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS13, (&raw mut options).cast(), size_of_val(&options) as u32) }.is_ok();
+        super::cb_blend::ALPHA_FACTOR.store(ok && options.AlphaBlendFactorSupported.as_bool(), std::sync::atomic::Ordering::Relaxed);
+    }
+    if call < 2 {
+        unsafe { describe_state_blocks(N, call, desc) };
+    }
+    // Decoded depth-stencil, input layout and program heads, once per record (TUXBOX_SLOT57_DSS=0 off).
+    if as57 {
+        super::slot57::log_record(N, desc);
+    }
+    if hr.is_err() {
+        return hr;
+    }
+    // Off by default with SLOT57_REAL (test170; ztrx unknown_pipeline). =1 on.
+    if N == 67 && crate::env_toggle!("TUXBOX_SLOT67_REAL") == Some("1") {
+        return unsafe { slot67_real(this, desc, call, iid, out) };
+    }
+    if stub {
+        return E_NOTIMPL;
+    }
+    let Some(placeholder) = super::stream::background::placeholder(this) else {
+        return E_NOTIMPL;
+    };
+    let (upgrade, slot57) = if real { unsafe { super::slot57::upgrade(this, desc) } } else { (super::stream::background::never(), None) };
+    // test168: 32 of 64 records were refused by build() (their VS is the NGG
+    // stage in slot 2) and their draws dropped, while REAL=0 answers E_NOTIMPL
+    // and the title draws them its own way. A refused record now answers
+    // E_NOTIMPL too. TUXBOX_SLOT57_REFUSED_NOTIMPL=0 keeps the placeholder.
+    if real && slot57.is_none() && crate::env_toggle!("TUXBOX_SLOT57_REFUSED_NOTIMPL") != Some("0") {
+        return E_NOTIMPL;
+    }
+    let state = PipelineData { lazy: true, slot57, ..Default::default() };
+    let _ = state.upgrade.set(upgrade);
+    if call < 4 && !real {
+        crate::diagnostics::log_line(format_args!(
+            "device slot {N} pipeline from state blocks at title RVA {:#x}: placeholder (its draws are dropped; TUXBOX_SLOT57=placeholder chose it)",
+            crate::survey::title_rva().unwrap_or(0)));
+    }
+    unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) }
+}
+
+/// Whether [address, address + bytes) is committed readable memory.
+pub(super) fn readable(address: usize, bytes: usize) -> bool {
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery};
+    let Some(end) = address.checked_add(bytes) else { return false };
+    let mut at = address;
+    while at < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        if address == 0 || unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0
+            || region.State != MEM_COMMIT || region.Protect.0 & (PAGE_NOACCESS.0 | PAGE_GUARD.0) != 0 || region.Protect.0 == 0
+        {
+            return false;
+        }
+        at = region.BaseAddress as usize + region.RegionSize;
+    }
+    true
+}
+
+/// Logs and dumps one slot 57/67 description and its state block A blend.
+unsafe fn describe_state_blocks(slot: u32, call: u32, desc: *const c_void) {
+    let address = desc as usize;
+    let have = [0x300usize, 0x60, 0x28].into_iter().find(|&n| readable(address, n)).unwrap_or(0);
+    let bytes = if have == 0 { &[][..] } else { unsafe { slice::from_raw_parts(desc.cast::<u8>(), have) } };
+    let hex: String = bytes.iter().take(96).map(|b| format!("{b:02x} ")).collect();
+    let dumped = (have == 0x300).then(|| {
+        let path = std::env::temp_dir().join(format!("tuxbox-slot{slot}-{call}.bin"));
+        std::fs::write(&path, bytes).ok().map(|()| path.display().to_string())
+    }).flatten();
+    // words[1], words[2]: state block A and its size.
+    let blend = (bytes.len() >= 0x28).then(|| {
+        let word = |n: usize| u64::from_le_bytes(bytes[n * 8..n * 8 + 8].try_into().unwrap()) as usize;
+        let (block, size) = (word(1), word(2));
+        if size == 0 || size > 0x1000 || !readable(block, size) {
+            return format!("state block A {block:#x}+{size:#x} unreadable");
+        }
+        let block = unsafe { slice::from_raw_parts(block as *const u8, size) };
+        if !super::cb_blend::enabled() {
+            return "blend decode off (TUXBOX_SLOT57_CB_BLEND=0)".into();
+        }
+        match super::cb_blend::state_block_blend(block) {
+            Ok(blend) => format!("blend enabled on targets {:?}",
+                (0..8).filter(|&n| blend.RenderTarget[n].BlendEnable.as_bool()).collect::<Vec<_>>()),
+            Err((target, reason)) => format!("blend refused on target {target}: {reason}; unblended"),
+        }
+    }).unwrap_or_else(|| "no state block words".into());
+    crate::diagnostics::log_line(format_args!(
+        "device slot {slot} call {call}: desc {address:#x} [{hex}] ({have} bytes readable, dump {}); {blend}",
+        dumped.as_deref().unwrap_or("none")));
+}
+
+/// What identifies a guest compute pipeline across runs (see `pipeline_cache`).
+unsafe fn compute_key(this: &Device, desc: *const D3D12_COMPUTE_PIPELINE_STATE_DESC) -> Option<String> {
+    let desc = unsafe { desc.as_ref() }?;
+    if desc.CS.pShaderBytecode.is_null() || desc.CS.BytecodeLength == 0 || desc.CS.BytecodeLength > isize::MAX as usize {
+        return None;
+    }
+    let bytes = unsafe { slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
+    let guest = desc.pRootSignature.as_ref().map_or(core::ptr::null_mut(), Interface::as_raw);
+    let root = unsafe { root_proxy(guest, identity(this).as_raw()) }.ok()?;
+    let root = match root {
+        Some(root) => super::shader_cache::source_digest(root.state.payload())?,
+        None => "-".into(),
+    };
+    let shader = super::shader_cache::source_digest(bytes)?;
+    let canonical = format!("compute:{shader};{root};{};{}", desc.NodeMask, desc.Flags.0);
+    super::shader_cache::source_digest(canonical.as_bytes())
+}
+
+// Slot 62 takes a compute descriptor followed by an array of Xbox extensions.
+// Portable DXIL and a standard serialized root signature work with zero extensions.
+pub(super) unsafe extern "system" fn create_pipeline_x(
+    this: &Device,
+    desc: *const D3D12_COMPUTE_PIPELINE_STATE_DESC,
+    extension_count: u32,
+    extensions: *const c_void,
+    iid: *const GUID,
+    out: Out,
+) -> HRESULT {
+    use super::stream::background;
+    let worker = background::on_worker();
+    let key = if worker { None } else { unsafe { compute_key(this, desc) } };
+    if let Some(key) = key.as_deref()
+        && crate::diagnostics::capture::shaders_on()
+        && let Some(guest) = unsafe { desc.as_ref() }
+        && !guest.CS.pShaderBytecode.is_null()
+        && guest.CS.BytecodeLength != 0
+    {
+        let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
+        crate::diagnostics::capture::pipeline_shaders(key, super::shader_cache::source_digest(bytes).into_iter().collect());
+    }
+    // As for streams: a pipeline no earlier run bound is made on first bind,
+    // one an earlier run bound is handed to the workers now.
+    // test173: compute PSOs no earlier run bound (8404ccf, 69dc9cd) were
+    // first compiled at their bind, 13.5 s of driver compile with the title
+    // waiting. Compute pipelines are few (5,454 of 111,873 journal records),
+    // so each is handed to the workers when the title creates it, behind the
+    // bound ones. TUXBOX_COMPUTE_EAGER=0 makes unnamed ones at first bind.
+    let used_before = key.as_deref().is_some_and(|key| super::pipeline_cache::used_before(key) == Some(true));
+    let queue_now = used_before || crate::env_toggle!("TUXBOX_COMPUTE_EAGER") != Some("0");
+    if !worker
+        && (!used_before || !background::eager_on_title())
+        && extension_count == 0
+        && let Some(guest) = unsafe { desc.as_ref() }
+        && guest.CachedPSO.CachedBlobSizeInBytes == 0
+        && !guest.CS.pShaderBytecode.is_null()
+        && guest.CS.BytecodeLength != 0
+        && guest.CS.BytecodeLength <= isize::MAX as usize
+        && unsafe { check_output::<ID3D12PipelineState>(iid, out) }.is_ok()
+        && let Some(placeholder) = background::placeholder(this)
+    {
+        let bytes = unsafe { slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
+        let mut owned = background::OwnedCompute::copy(guest, bytes);
+        owned.journal = background::journal::compute(this, key.as_deref(), &owned);
+        let work = background::Work::Compute(owned);
+        let early = used_before && key.as_deref().is_some_and(super::pipeline_cache::wanted_early);
+        let state = PipelineData { key: key.map(Into::into), lazy: true, compute: true, dispatches: true, ..Default::default() };
+        let owner = (*identity(this)).clone();
+        let _ = state.upgrade.set(if early { background::queue_early(owner, work) } else if queue_now { background::queue(owner, work) } else { background::lazy(owner, work) });
+        return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
+    }
+    let _ = super::shader_cache::take_missed();
+    let _ = super::shader_cache::take_misses();
+    let status = unsafe { make_compute(this, desc, extension_count, extensions, iid, out) };
+    if status.is_err() {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::PipelinesRefused);
+        // leonida-ce 83bf1f60: no null record for the title to walk (see background::refused).
+        if !worker
+            && background::refused_placeholder_on()
+            && unsafe { check_output::<ID3D12PipelineState>(iid, out) }.is_ok()
+            && let Some(placeholder) = background::placeholder(this)
+        {
+            let state = PipelineData { key: key.map(Into::into), lazy: true, compute: true, dispatches: true, ..Default::default() };
+            let _ = state.upgrade.set(background::refused("compute pipeline", status));
+            return unsafe { wrap_pageable(Ok(placeholder), &PIPELINE, this, state, out) };
+        }
+    }
+    // A worker leaves its miss for build()'s compile-pool hand-off: test178
+    // took it here, so every past-the-wait miss on a ready worker kept its null
+    // stand-in as made (24829 untranslatable binds, 0 hand-offs).
+    let keep = worker && super::shader_cache::worker_keeps_miss();
+    let missed = !keep && super::shader_cache::take_missed();
+    if status.is_err() || worker {
+        return status;
+    }
+    // SAFETY: success wrote a new pipeline proxy that the guest has not seen yet.
+    let Some(pipeline) = (unsafe { (*out).cast::<Pipeline>().as_mut() }) else {
+        return status;
+    };
+    if let Some(key) = key.as_deref()
+        && let Some(guest) = unsafe { desc.as_ref() }
+        && !guest.CS.pShaderBytecode.is_null()
+    {
+        let bytes = unsafe { std::slice::from_raw_parts(guest.CS.pShaderBytecode.cast::<u8>(), guest.CS.BytecodeLength) };
+        crate::dred::log_pipeline(key, &super::shader_cache::source_digest(bytes).into_iter().collect::<Vec<_>>());
+    }
+    pipeline.state.key = key.map(Into::into);
+    pipeline.state.dispatches = true;
+    // A translation missed the wait budget: a worker makes the real pipeline.
+    if missed && let Some(desc) = unsafe { desc.as_ref() } {
+        let bytes = unsafe { slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
+        let work = background::Work::Compute(background::OwnedCompute::copy(desc, bytes));
+        let _ = pipeline.state.upgrade.set(background::queue((*identity(this)).clone(), work));
+        // test110: such a pipeline was not marked lazy, so its binds never
+        // waited for the worker and dropped their dispatches (and label
+        // writes). Now it is waited on as a lazy one is
+        // (TUXBOX_COMPUTE_PENDING_WAIT_MS).
+        pipeline.state.lazy = true;
+        pipeline.state.compute = true;
+    }
+    status
+}
+
+unsafe fn make_compute(
+    this: &Device,
+    desc: *const D3D12_COMPUTE_PIPELINE_STATE_DESC,
+    extension_count: u32,
+    _extensions: *const c_void,
+    iid: *const GUID,
+    out: Out,
+) -> HRESULT {
+    // SAFETY: the guest supplies a readable IID and writable output slot.
+    let hr = unsafe { check_output::<ID3D12PipelineState>(iid, out) };
+    if hr.is_err() {
+        return hr;
+    }
+    let Some(desc) = (unsafe { desc.as_ref() }) else {
+        return E_INVALIDARG;
+    };
+    if extension_count != 0 || desc.CachedPSO.CachedBlobSizeInBytes != 0 {
+        return E_NOTIMPL;
+    }
+    if desc.CS.pShaderBytecode.is_null()
+        || desc.CS.BytecodeLength == 0
+        || desc.CS.BytecodeLength > isize::MAX as usize
+    {
+        return E_INVALIDARG;
+    }
+    let guest = desc
+        .pRootSignature
+        .as_ref()
+        .map_or(core::ptr::null_mut(), Interface::as_raw);
+    // SAFETY: the descriptor borrows its root signature for pipeline creation.
+    let root = match unsafe { root_proxy(guest, identity(this).as_raw()) } {
+        Ok(root) => root,
+        Err(error) => return error,
+    };
+    // SAFETY: the guest retains its shader bytes until this synchronous call returns.
+    let bytes =
+        unsafe { slice::from_raw_parts(desc.CS.pShaderBytecode.cast(), desc.CS.BytecodeLength) };
+    use super::compute_table::{Program, TableLayout};
+    let layout = match root.map(|r| super::compute_table::reflected(
+        &this.native, &r.state, Program::Compute(bytes), desc.NodeMask,
+    )).transpose() {
+        Ok(layout) => layout,
+        Err(error) => return error.code(),
+    };
+    let (translation, reflected) = match layout {
+        Some(TableLayout::Reflected(table)) => {
+            // Embedded RTS0 cannot be replaced. The translator reads that original
+            // root and fills only the slots the appended signature adds.
+            let rooted = super::shader_cache::compute_with_root(bytes, table.layout.payload());
+            let fallback = rooted.is_none();
+            let code = rooted.or_else(|| super::shader_cache::prepared(bytes));
+            // The root-less translation names literal samplers as private
+            // statics (s<n>, space32765); the reflected root carries only the
+            // title's (TUXBOX_PREPARED_SAMPLERS, compute_table).
+            let table = match (&code, fallback) {
+                (Some(_), true) => match super::compute_table::with_literal_samplers(&this.native, &table, desc.NodeMask, bytes) {
+                    Ok(Some(t)) => t,
+                    Ok(None) => table,
+                    Err(error) => return error.code(),
+                },
+                _ => table,
+            };
+            let Some(code) = code else {
+                super::compute_table::capture_stage_root(bytes, &table.original);
+                // A miss on the title's thread goes to the workers (create_pipeline),
+                // so it is not final; say so rather than look like a failure.
+                let why = super::shader_cache::take_reason();
+                let why = if super::shader_cache::missed() { format!("{why}; handed to the pipeline workers, not final") } else { why.to_string() };
+                if super::shader_cache::missed() && crate::env_toggle!("TUXBOX_HANDOFF_TAG") != Some("0") {
+                    // TUXBOX_HANDOFF_TAG: not a failure (test190: 54 such).
+                    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n <= 4 || n.is_power_of_two() {
+                        crate::diagnostics::log_line(format_args!("handoff: compute pipeline waits on its translation ({why}; {n} so far, TUXBOX_HANDOFF_TAG=0 off)"));
+                    }
+                } else {
+                    crate::diagnostics::compute_failure(bytes, E_NOTIMPL.0, &why);
+                }
+                return unsafe { null_compute(this, root.map(|p| &p.native), desc, out) }.unwrap_or(E_NOTIMPL);
+            };
+            (Some(code), Some(table))
+        }
+        Some(TableLayout::Original) => (root.and_then(|r| {
+            super::shader_cache::compute_with_root(bytes, r.state.payload())
+        }), None),
+        _ => (super::shader_cache::prepared(bytes).or_else(|| {
+            super::shader_cache::compute_with_root(bytes, root?.state.payload())
+        }), None),
+    };
+    let scene_root = if let Some(translated) = &translation {
+        match super::compute_scene::private_root(
+            &this.native,
+            bytes,
+            translated,
+            root.map(|p| &p.state),
+            desc.NodeMask,
+        ) {
+            Ok(root) => root,
+            Err(e) => return e.code(),
+        }
+    } else {
+        None
+    };
+    // Literal samplers the translation looks up in tb_desc_table: reserve
+    // their host samplers and add the table's root SRV.
+    // A stage that reads typed buffer formats gets the view_formats root SRV.
+    let reflected = match (&translation, root) {
+        (Some(code), Some(root)) if scene_root.is_none()
+            && (super::desc_table::declared(code) || super::view_formats::declared(code) || super::slot_views::declared(code)
+                || super::slot_words::declared(code)
+                || !super::table_words::declared(code).is_empty()
+                || !super::table_bases::declared(code).is_empty()
+                || super::view_marks::declared(code) || super::bvh_raw::declared(code)
+                || super::root_strides::declared(code) || super::mem_dir::declared(code)) =>
+        {
+            let samplers = super::desc_table::declared(code);
+            if samplers {
+                this.state.desc_table.literals(&this.native, &tuxbox_dxbc::inline_sampler::literal_words(bytes));
+            }
+            match super::compute_table::with_runtime_tables(
+                &this.native, reflected.as_ref(), &root.state, desc.NodeMask, samplers, super::view_formats::declared(code), super::slot_views::declared(code),
+                super::view_marks::declared(code), false, super::bvh_raw::declared(code), super::root_strides::declared(code),
+                super::slot_words::declared(code), &super::table_words::declared(code), super::mem_dir::declared(code),
+                &super::table_bases::declared(code),
+            ) {
+                Ok(table) => Some(table),
+                Err(error) => return error.code(),
+            }
+        }
+        _ => reflected,
+    };
+    // SRV-as-UAV (shader_cache::slots, TUXBOX_SRV_AS_UAV=1): a program that
+    // stores to slots its guest root types SRV gets that root with those
+    // slots as UAVs; the dispatch fills them (srv_uav_tables).
+    let reflected = match (&translation, root, reflected) {
+        (Some(_), Some(root), None) if scene_root.is_none() => match super::shader_cache::slots::for_guest(bytes) {
+            Some(slots) => match super::compute_table::srv_as_uav(&this.native, &root.state, &slots, desc.NodeMask) {
+                Ok(Some(table)) => {
+                    super::srv_views::note_table(&table.native, slots);
+                    Some(table)
+                }
+                Ok(None) => {
+                    crate::diagnostics::log_line(format_args!("srv as uav: slots {slots:?} not in an SRV range of a finite guest table; left as SRVs"));
+                    None
+                }
+                Err(error) => return error.code(),
+            },
+            None => None,
+        },
+        (_, _, reflected) => reflected,
+    };
+    let code = translation.as_deref().unwrap_or(bytes);
+    // TB_ZTRX_SHADER: a ztrx translation takes the root it was made for
+    // (ztrx_root::root_signature_for), not the runtime tables.
+    let ztrx = match translation.as_deref().and_then(super::ztrx_root::for_code) {
+        Some(stage) => match super::ztrx_root::root_signature_for(&this.native, &[(&stage, D3D12_SHADER_VISIBILITY_ALL)]) {
+            Ok(root) => Some((vec![stage], root)),
+            Err(error) => return error.code(),
+        },
+        None => None,
+    };
+    let (reflected, scene_root) = if ztrx.is_some() { (None, None) } else { (reflected, scene_root) };
+    super::view_marks::note_pipeline(super::view_marks::writes(code), super::view_marks::declared(code));
+    let mut host = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        pRootSignature: ManuallyDrop::new(
+            ztrx.as_ref().map(|z| &z.1).or(scene_root
+                .as_ref()
+                .map(|s| &s.native))
+                .or_else(|| reflected.as_ref().map(|t| &t.native))
+                .or(root.map(|p| &p.native))
+                .cloned(),
+        ),
+        CS: D3D12_SHADER_BYTECODE {
+            pShaderBytecode: code.as_ptr().cast(),
+            BytecodeLength: code.len(),
+        },
+        NodeMask: desc.NodeMask,
+        Flags: desc.Flags,
+        ..Default::default()
+    };
+    // SAFETY: native creation consumes the descriptor synchronously. The owned
+    // clone in the C layout must be released explicitly on success and failure.
+    let create = |descriptor: &D3D12_COMPUTE_PIPELINE_STATE_DESC| unsafe {
+        super::pipeline_cache::compute(&this.native, descriptor)
+    };
+    // xcl 79fde18: a failure names how long the host spent on it.
+    let started = std::time::Instant::now();
+    let mut native = create(&host);
+    let first = native.as_ref().err().map(|e| e.code());
+    if translation.is_some() && reflected.is_none() && scene_root.is_none() && native.is_err() {
+        // Structural checks cannot validate DXIL instructions or root bindings.
+        // Let the adapter handle the original guest shader if it rejects the cache.
+        host.CS = desc.CS;
+        native = create(&host);
+    }
+    unsafe { ManuallyDrop::drop(&mut host.pRootSignature) };
+    if let Some(table) = reflected.as_ref().filter(|t| t.lengths.is_empty() && t.index_map.is_some()) {
+        // 6ixpack: heap-indexed compute pipelines on the generated index-map root.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static MADE: AtomicU32 = AtomicU32::new(0);
+        static FAILED: AtomicU32 = AtomicU32::new(0);
+        let _ = table;
+        let (counter, what) = if native.is_ok() { (&MADE, "created") } else { (&FAILED, "failed") };
+        let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            let code = native.as_ref().err().map(|e| e.code().0).unwrap_or(0);
+            crate::diagnostics::log_once(&std::sync::Once::new(), || format!("heap compute pipeline {what} ({n} so far, last {code:#x})"));
+        }
+    }
+    if let Err(error) = &native {
+        if let Some(root) = root { super::compute_table::capture_stage_root(bytes, &root.state); }
+        // test149: two host rejections (E_INVALIDARG) named nothing, so the
+        // DXIL that failed, its root and the source digest the shader worker
+        // logs are given here; the debug layer (TUXBOX_D3D12_SDK) names the
+        // reason. The guest-shader retry used to hide the first failure.
+        // test190: a ztrx root was named "title root" with the guest's root
+        // printed, which hid that the root matched and the DXIL was refused.
+        let root_kind = if ztrx.is_some() { "ztrx root" } else if scene_root.is_some() { "scene root" } else if reflected.is_some() { "runtime tables" } else { "title root" };
+        let digest = super::shader_cache::source_digest(bytes).map(|d| d.to_string()).unwrap_or_default();
+        // test181: 24 E_INVALIDARG on heap roots named neither root; both
+        // are given so a binding the host root lacks shows.
+        let host_root = ztrx.as_ref().map(|_| &[][..]).or_else(|| scene_root.as_ref().map(|_| &[][..])).or_else(|| reflected.as_ref().map(|t| t.layout.serialized()))
+            .or_else(|| root.map(|p| p.state.serialized()));
+        // TUXBOX_ABORT_NOT_REJECT (default on, =0 off): E_ABORT is our own
+        // deferral (pipeline_cache: a heavy compile left to a worker, a child
+        // or a later bind), not the host's answer: test183 logged 26 of them as
+        // host rejects beside the 12 real E_INVALIDARG ones.
+        let ours = error.code() == windows::Win32::Foundation::E_ABORT && crate::env_toggle!("TUXBOX_ABORT_NOT_REJECT") != Some("0");
+        let why = format!(
+            "{} {} ({} bytes) on the {root_kind}, first create {:?}, source SHA-256 {digest}, {:.1} ms in the host create; title root {}; host root {}",
+            if ours { "deferred by us (E_ABORT: heavy compile left to a worker, pso child or later bind; not a host rejection):" } else { "host CreateComputePipelineState rejected it:" },
+            if translation.is_some() { "translated DXIL" } else { "guest shader" }, code.len(), first.map(|c| format!("{:#010x}", c.0)), started.elapsed().as_secs_f64() * 1e3,
+            root.map_or_else(|| "none".to_owned(), |p| crate::diagnostics::rootsig::describe(p.state.serialized())),
+            host_root.map_or_else(|| "none".to_owned(), crate::diagnostics::rootsig::describe));
+        crate::diagnostics::compute_failure(bytes, error.code().0, &why);
+        if let Some(status) = unsafe { null_compute(this, root.map(|p| &p.native), desc, out) } {
+            return status;
+        }
+    } else if let Some(table) = &reflected {
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!(
+            "created compute pipeline with {} reflected FSSM descriptor slots", table.lengths.iter().map(|&v| u64::from(v)).sum::<u64>()
+        ));
+    }
+    // Registers of the translation follow the root it was made for.
+    let null_kinds = translation.as_deref().and_then(|code| {
+        let root = reflected.as_ref().map(|t| &t.layout).or(root.map(|p| &p.state))?;
+        super::null_kinds::reflect(root.payload(), [code])
+    });
+    unsafe {
+        wrap_pageable(
+            native,
+            &PIPELINE,
+            this,
+            PipelineData {
+                scene_root,
+                reflected,
+                ztrx,
+                null_kinds,
+                heap_access: super::views::uav_remark()
+                    .then(|| super::shader_cache::source_digest(bytes).and_then(|d| super::shader_cache::heap_access(&d)))
+                    .flatten(),
+                heap_pending: super::shader_cache::source_digest(bytes).filter(|_| super::views::uav_remark()).into_iter().collect(),
+                ..Default::default()
+            },
+            out,
+        )
+    }
+}
+
+/// Create a resource-free compute pipeline on the guest root (see `fallback`).
+unsafe fn null_compute(
+    this: &Device, root: Option<&ID3D12RootSignature>, desc: &D3D12_COMPUTE_PIPELINE_STATE_DESC, out: Out,
+) -> Option<HRESULT> {
+    use super::fallback::{Stage, bytecode, enabled, shader, substituted};
+    if !enabled() { return None; }
+    let mut host = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        pRootSignature: ManuallyDrop::new(root.cloned()),
+        CS: bytecode(shader(Stage::Compute)?),
+        NodeMask: desc.NodeMask,
+        Flags: desc.Flags,
+        ..Default::default()
+    };
+    let native = crate::big_stack::run(|| unsafe { this.native.CreateComputePipelineState::<ID3D12PipelineState>(&host) });
+    unsafe { ManuallyDrop::drop(&mut host.pRootSignature) };
+    if native.is_err() { return None; }
+    if let Ok(pipeline) = &native {
+        let code = unsafe { std::slice::from_raw_parts(desc.CS.pShaderBytecode.cast::<u8>(), desc.CS.BytecodeLength) };
+        if crate::diagnostics::display::enabled() && let Some(digest) = super::shader_cache::source_digest(code) {
+            crate::diagnostics::display::mark_null_compute(pipeline.as_raw(), digest);
+        }
+    }
+    substituted("compute");
+    super::stream::background::mark_nulled();
+    Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData::default(), out) })
+}
+
+/// TUXBOX_SLOT67_REAL (default on, =0 off): slot 67's description is a deserialized console
+/// compute PSO (leonida d3d12_xs_device.cpp DeserializeComputePipelineStateX
+/// and docs/fspx.md, GPL-3.0, credit): +0x00 root signature, +0x08/+0x10
+/// kind 0 dispatch state (7 words: word 3 NumThreadsX | Y << 16, word 4
+/// NumThreadsZ, bit 20 wave32, word 6 COMPUTE_PGM_RSRC2), +0x28/+0x30 kind 6
+/// RDNA2 code. The code is wrapped as layout-6 FSSM DXBC (slot57
+/// wrap_compute) and built through slot 62's path, so FidelityFX needs no
+/// slot 62 retry. A description that does not decode answers E_INVALIDARG
+/// as leonida does. Wave32 (word 4 bit 20) is not passed on: xshader picks
+/// its own wave size.
+unsafe fn slot67_real(this: &Device, desc: *const c_void, call: u32, iid: *const GUID, out: Out) -> HRESULT {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    let address = desc as usize;
+    if !readable(address, 0x38) {
+        return E_INVALIDARG;
+    }
+    // SAFETY: 0x38 bytes are readable.
+    let word = |n: usize| unsafe { (address as *const u64).add(n).read_unaligned() } as usize;
+    let (root, state, state_len, code, code_len) = (word(0), word(1), word(2), word(5), word(6));
+    if state_len < 28 || state_len > 0x1000 || !readable(state, state_len)
+        || code_len < 36 || code_len > 1 << 20 || code_len % 4 != 0 || !readable(code, code_len)
+    {
+        if call < 8 {
+            crate::diagnostics::log_line(format_args!(
+                "device slot 67: kind 0 {state:#x}+{state_len:#x} or kind 6 {code:#x}+{code_len:#x} unreadable: E_INVALIDARG (TUXBOX_SLOT67_REAL)"));
+        }
+        return E_INVALIDARG;
+    }
+    // SAFETY: both ranges are readable.
+    let state = unsafe { slice::from_raw_parts(state as *const u8, state_len) };
+    let program = unsafe { slice::from_raw_parts(code as *const u8, code_len) };
+    let w = |n: usize| u32::from_le_bytes(state[n * 4..n * 4 + 4].try_into().unwrap());
+    let threads = [w(3) & 0xffff, w(3) >> 16, w(4) & 0xffff];
+    // RSRC2 LDS_SIZE (bits 23..15) in 128-dword granules.
+    let lds = ((w(6) >> 15) & 0x1ff) * 512;
+    if threads.contains(&0) {
+        return E_INVALIDARG;
+    }
+    // The wrapped DXBC stays alive for lazy builds that read it later.
+    static WRAPPED: Mutex<Option<HashMap<(Vec<u8>, [u32; 3], u32), &'static [u8]>>> = Mutex::new(None);
+    let bytes: &'static [u8] = {
+        let mut map = WRAPPED.lock().unwrap_or_else(|e| e.into_inner());
+        let map = map.get_or_insert_with(HashMap::new);
+        *map.entry((program.to_vec(), threads, lds))
+            .or_insert_with(|| Box::leak(super::slot57::wrap_compute(program, threads, lds).into_boxed_slice()))
+    };
+    if call < 8 {
+        crate::diagnostics::log_line(format_args!(
+            "device slot 67: compute PSO root {root:#x}, group {}x{}x{}, LDS {lds} B, wave{}, {code_len} B code -> slot 62 path (TUXBOX_SLOT67_REAL)",
+            threads[0], threads[1], threads[2], if w(4) & 1 << 20 != 0 { 32 } else { 64 }));
+    }
+    let guest = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        // SAFETY: the title's root pointer, borrowed as slot 62 receives it;
+        // ManuallyDrop keeps it unreleased.
+        pRootSignature: ManuallyDrop::new(unsafe { std::mem::transmute::<usize, Option<ID3D12RootSignature>>(root) }),
+        CS: D3D12_SHADER_BYTECODE { pShaderBytecode: bytes.as_ptr().cast(), BytecodeLength: bytes.len() },
+        ..Default::default()
+    };
+    unsafe { create_pipeline_x(this, &guest, 0, std::ptr::null(), iid, out) }
+}

@@ -1,0 +1,11 @@
+[package]
+name = "tuxbox-xmem-http"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+windows-sys = { workspace = true, features = ["Win32_Networking_WinHttp"] }

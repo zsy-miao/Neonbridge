@@ -1,0 +1,119 @@
+{
+  "host": "Proton 1793301796 experimental-11.0-20261027b-x86_64",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "620.73.4",
+  "test": "TuxBox upload_nv12, committed textures versus eight independent non-overlapping placed textures per small-frame heap. GPU readback checks each luma and interleaved chroma byte. The decoder retains initialized staging rows; large surfaces continue using committed textures.",
+  "measurement": "180 standalone uploads, 60 per size. The clear-count trial ran both implementations independently on the same host with VKD3D_CONFIG=log_memory_budget. The timing trial alternated implementations in one process, excluded the first four uploads for each size, and measured upload_nv12 through its completion fence; readbacks ran outside the timer.",
+  "clear_counts": {
+    "committed": {
+      "log_sha256": "2d5cee005c979388f9572f7974ec2cd7297c854e3d82c16a1c263e55c6d57151",
+      "clear_submissions": 120,
+      "cleared_allocations_by_size_bytes": {
+        "131072": 60,
+        "786432": 60
+      }
+    },
+    "batched": {
+      "log_sha256": "540301eac18c02792de7c63a01e1061732c35d25418f511afd5a9fffcf61b349",
+      "clear_submissions": 0,
+      "cleared_allocations_by_size_bytes": {}
+    }
+  },
+  "alternating_upload_fence_ms": {
+    "94x38": {
+      "committed": {
+        "samples": 28,
+        "p50": 0.5832,
+        "mean": 0.6022
+      },
+      "batched": {
+        "samples": 28,
+        "p50": 0.5283,
+        "mean": 0.5427
+      }
+    },
+    "1024x512": {
+      "committed": {
+        "samples": 28,
+        "p50": 0.6846,
+        "mean": 0.6915
+      },
+      "batched": {
+        "samples": 28,
+        "p50": 0.6464,
+        "mean": 0.6592
+      }
+    },
+    "3840x2160": {
+      "committed": {
+        "samples": 28,
+        "p50": 1.6089,
+        "mean": 1.6244
+      },
+      "batched": {
+        "samples": 28,
+        "p50": 1.6057,
+        "mean": 1.6184
+      }
+    }
+  },
+  "packaged_decoders": {
+    "h264": {
+      "video": "Chase.mp4",
+      "video_sha256": "127b8ebd0fb530a2b7a782eba325ac34894670554350f1b0171d0c484cb42cb5",
+      "shape": [
+        1024,
+        512
+      ],
+      "adapter_sha256": "780ac791c3322a73637d8b1d4b0bad4f4a41495ce1b6f0116daf833d34378506",
+      "retained_original_native_frame_after_decoder_and_sample_release": 0,
+      "frames": {
+        "0": {
+          "ffmpeg_sha256": "091e7ea5c528f8966cacc7960f4c0799e658c2d23f1a5200225bb712b45f2294",
+          "ffmpeg_y_sha256": "9e2eb77d952b6f4df737b8a844e170e54fd83c84f748c5d14ff73b1e987c361c",
+          "ffmpeg_uv_sha256": "28c907d62896a71c60f823fba1bdec4f72222db32d27f7915e476eea484bc431"
+        },
+        "12": {
+          "ffmpeg_sha256": "694e903e4e397c04b60b1d8e3a64c795401d39a235bdce6ba33a4b36803c61d0",
+          "ffmpeg_y_sha256": "c6d8e454cd6f297aeb1ed6418611e49691dfe8aed6e90624872ab8ae7c401bb7",
+          "ffmpeg_uv_sha256": "9832dec2a648489218f1f4747ab8083bd4772b3fad15d866d98667ae7fea7c80"
+        },
+        "14": {
+          "ffmpeg_sha256": "bad77ac918c7e768f0788b13c56c9de3545d384e86c6c0dda57fb3f1d8c28c04",
+          "ffmpeg_y_sha256": "2c7bedd38d94e1c9886a28be0c329d761fffa4fc92aac40b7952839f2585add4",
+          "ffmpeg_uv_sha256": "0bb9f0b18d1e988b5de2f100fb14719ab70f3f82385bff4da3e8b284e143fc4b"
+        }
+      },
+      "oracle": "CPU and GPU outputs both matched FFmpeg byte-for-byte."
+    },
+    "hevc": {
+      "video": "LOGO_VID_HEVC.mp4",
+      "video_sha256": "bac74a082a9baf114564df5db4b7bd4541087a11d3131989e3fffe674ec32a53",
+      "shape": [
+        3840,
+        2160
+      ],
+      "adapter_sha256": "41c973bd62b4cab7b05f07a27acdbc7ff7450dc5580257377309f8be8de40f66",
+      "retained_original_native_frame_after_decoder_and_sample_release": 0,
+      "frames": {
+        "0": {
+          "ffmpeg_sha256": "cbf4921aa347ee2d3b3bc9b4dc81e30f914948a5a19210736bc048df7d43906e",
+          "ffmpeg_y_sha256": "b3c6077b5b06a99403125b05c5963a07efa1b119a01b86702107b3de67bdb317",
+          "ffmpeg_uv_sha256": "acbbceef81ae2ab47d2a69bb1ea004e12ab48fe419933cb569c10c54dae412ab"
+        },
+        "12": {
+          "ffmpeg_sha256": "e00a18d0e72641d9eb094a61489f933e3a105d6cdc8476425466e049a6cc0c6d",
+          "ffmpeg_y_sha256": "8bd7771e835565840c1866a057b16572f9cf1107df253b7cd9beefa7c09356fb",
+          "ffmpeg_uv_sha256": "6b1888d40c390c9cb056b4a25fbadac076cfa6bc5aa2ce4baa73fddde3d2278e"
+        },
+        "14": {
+          "ffmpeg_sha256": "e03a056eed165cc9de02632afeae4d8d36edffbb1753ae7c20f24028cc66baaf",
+          "ffmpeg_y_sha256": "41d69486105c1a0917658485daef037e6f092e54c080acb5debcfa1e066cd924",
+          "ffmpeg_uv_sha256": "d74502104ccf1f233ba55adfb5f8f5d83fc61eea8eb78a64fd7fa1a3a1194002"
+        }
+      },
+      "oracle": "CPU and GPU outputs both matched FFmpeg byte-for-byte."
+    }
+  },
+  "full_nv12_readbacks": 180
+}

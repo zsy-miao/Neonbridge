@@ -1,0 +1,21 @@
+diff --git a/Makefile.in b/Makefile.in
+index 8b6d1b8d77757d9a5dc956fd5d8d88220606cfdb..46dfa3f636fcf2232673757e70b2fb96aac84ce6 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -1485,6 +1485,9 @@ $(USER_SETTINGS_PY_TARGET): $(addprefix $(SRCDIR)/,user_settings.sample.py)
+ DIST_COPY_TARGETS := $(FILELOCK_TARGET) $(PROTON_PY_TARGET) \
+                      $(PROTON37_TRACKED_FILES_TARGET) $(USER_SETTINGS_PY_TARGET)
+ 
++DIST_COPY_TARGETS += $(DST_BASE)/tuxbox-features
++$(DST_BASE)/tuxbox-features: $(SRCDIR)/tuxbox-features
++
+ $(DIST_COPY_TARGETS): | $(DST_DIR)
+ 	cp -a $(SRCDIR)/$(notdir $@) $@
+ 
+diff --git a/tuxbox-features b/tuxbox-features
+new file mode 100644
+index 0000000000000000000000000000000000000000..1173243fa517c430cb6ef24eefa027c325cc9fa5
+--- /dev/null
++++ b/tuxbox-features
+@@ -0,0 +1 @@
++cbv_16_byte_alignment

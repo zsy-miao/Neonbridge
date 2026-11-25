@@ -1,0 +1,163 @@
+{
+  "scope": "Global 1865 MainHairMeshesCS, translated from the packaged shader and dispatched using its root signature. CPU-modeled positions, control-point deformation and affine terms are checked on Radeon and GeForce for 0, 1, 3 and 7 control points, inactive vertices and two groups. Binary-exact cases require exact bits; an irrational-distance case allows absolute error 2e-6 for floating-point rounding. This checks this deformation stage only and does not establish end-to-end hair rendering.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 1865,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1865": {
+          "source_sha256": "06f8ac614ef628ecee98329ee6dd1008e29eadca6c99e03d8b38d4df1fe16ebd",
+          "dxil_sha256": "0a19deae749448e5750021330f85ceb2dbe9bddaa5d830c9cd6c614b48f80308"
+        }
+      },
+      "cases": {
+        "hair_mesh_empty": {
+          "count": 0,
+          "control_points": 0,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_no_points": {
+          "count": 128,
+          "control_points": 0,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_one": {
+          "count": 37,
+          "control_points": 1,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_three": {
+          "count": 128,
+          "control_points": 3,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_seven": {
+          "count": 128,
+          "control_points": 7,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_two_groups": {
+          "count": 193,
+          "control_points": 3,
+          "groups": 2,
+          "irregular": false,
+          "checked_words": 1024,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_irrational": {
+          "count": 128,
+          "control_points": 3,
+          "groups": 1,
+          "irregular": true,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1865": {
+          "source_sha256": "06f8ac614ef628ecee98329ee6dd1008e29eadca6c99e03d8b38d4df1fe16ebd",
+          "dxil_sha256": "0a19deae749448e5750021330f85ceb2dbe9bddaa5d830c9cd6c614b48f80308"
+        }
+      },
+      "cases": {
+        "hair_mesh_empty": {
+          "count": 0,
+          "control_points": 0,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_no_points": {
+          "count": 128,
+          "control_points": 0,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_one": {
+          "count": 37,
+          "control_points": 1,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_three": {
+          "count": 128,
+          "control_points": 3,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_seven": {
+          "count": 128,
+          "control_points": 7,
+          "groups": 1,
+          "irregular": false,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_two_groups": {
+          "count": 193,
+          "control_points": 3,
+          "groups": 2,
+          "irregular": false,
+          "checked_words": 1024,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "hair_mesh_irrational": {
+          "count": 128,
+          "control_points": 3,
+          "groups": 1,
+          "irregular": true,
+          "checked_words": 512,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

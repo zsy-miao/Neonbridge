@@ -1,0 +1,32 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "0876314c19a7e2630ac32c80cee5fe45310ab27b2af943727bb3c624a2ed9cee",
+  "guest_sha256": "6c04aebce9d1b404f84aea0c869692433f5a223b49de507f29ba0fd22eb19f92",
+  "patch_sha256": "edcfe52a496d6d0c6c4e773bc8c31daf8ffa5d644f14b0b603df1a3a5efe4b22",
+  "runs": {
+    "on": {
+      "keyboard_port": "5",
+      "buttons": "10",
+      "ordered_edges": "20"
+    },
+    "off": {
+      "keyboard_pad_absent": "1"
+    }
+  },
+  "independent_rebuild": {
+    "host": "1793301796 experimental-11.0-20261027b-x86_64",
+    "provider_sha256": "9619c9bc1fac26b29c1df283b28371295f6c7578b34ba559bb94eb0532cca11c",
+    "guest_sha256": "6c04aebce9d1b404f84aea0c869692433f5a223b49de507f29ba0fd22eb19f92",
+    "patch_sha256": "edcfe52a496d6d0c6c4e773bc8c31daf8ffa5d644f14b0b603df1a3a5efe4b22",
+    "runs": {
+      "on": {
+        "keyboard_port": "5",
+        "buttons": "10",
+        "ordered_edges": "20"
+      },
+      "off": {
+        "keyboard_pad_absent": "1"
+      }
+    }
+  }
+}

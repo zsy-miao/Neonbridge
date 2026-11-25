@@ -1,0 +1,55 @@
+{
+  "analysis_type": "Static review of the packaged library and title call site, with TuxBox factory and flag controls",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "reference_library": "EmbeddedXvd/Windows/System32/d3d12_xs.dll",
+  "reference_library_sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+  "reference_exports": {
+    "D3D12CreateDevice": {
+      "ordinal": 6,
+      "kind": "code",
+      "rva": "0x1800"
+    },
+    "D3D12XboxGetProcessDebugFlags": {
+      "ordinal": 15,
+      "rva": "0x1290",
+      "return": "UINT32"
+    },
+    "D3D12XboxSetProcessDebugFlags": {
+      "ordinal": 16,
+      "rva": "0x1280",
+      "return": "HRESULT"
+    }
+  },
+  "title_import": {
+    "name": "D3D12XboxSetProcessDebugFlags",
+    "iat_rva": "0x60d71f8",
+    "call_site_rvas": [
+      "0x5752ac9"
+    ],
+    "caller_observation": "Passes either 1 or the value in a title field, then checks the returned HRESULT sign."
+  },
+  "reference_behavior": {
+    "set": "Masks flags with 0x83f00001, stores the result in process-global state, and returns 0.",
+    "get": "Returns the process-global flags value.",
+    "d3d12_create_device": "Builds a zeroed 72-byte 0x20004 creation record. It fills DWORD 1 with the process debug flags and DWORDs 2, 6, and 7 with UINT32_MAX, then calls D3D12XboxCreateDevice at RVA 0x1570."
+  },
+  "tuxbox_provider": {
+    "source": "runtime/d3d12/src/lib.rs and runtime/d3d12/d3d12_xs.def",
+    "built_exports": [
+      "D3D12CreateDevice",
+      "D3D12XboxGetProcessDebugFlags",
+      "D3D12XboxSetProcessDebugFlags"
+    ],
+    "behaviorally_verified_exports": [
+      "D3D12CreateDevice",
+      "D3D12XboxGetProcessDebugFlags",
+      "D3D12XboxSetProcessDebugFlags"
+    ],
+    "implementation": "The standard-named factory returns a guest device through the 0x20004 Xbox creation path. The getter and setter use masked process-local atomic state. Factory tests exercise default release flags.",
+    "evidence": [
+      "evidence/providers/d3d12-factories-valve.json",
+      "evidence/providers/d3d12-factories-ge.json",
+      "evidence/matrix-awakens/tuxbox-device-factory.json"
+    ]
+  }
+}

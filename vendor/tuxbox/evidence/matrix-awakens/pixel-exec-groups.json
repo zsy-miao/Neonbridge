@@ -1,0 +1,388 @@
+{
+  "scope": "Stock Proton DXIL-to-SPIR-V conversion timings for three chase materials, an isolated D3D12 draw comparison for each and a captured retail menu draw comparison. CPU timings cover DXIL parsing, converter construction and SPIR-V generation with default resource mappings. They exclude graphics device creation, pipeline creation and GPU execution.",
+  "stock_vkd3d_build": "cae2e003bb8251627ff93c0f471ae18a28234490",
+  "stock_d3d12core_sha256": "5edbb1df81ce270e2263e4472e1dcddaeaccdd8624af561a00eea865926f3c40",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+  "baseline_compiler_sha256": "e4d2f24b6acb9c12dc6d4da2c8f3b4bf0f6ee3991dac671e3cfd12783b76e0e1",
+  "candidate_compiler_sha256": "0522660b8f1fadadb2513f216f4c9f092edcf834889b31a79acfe32ab9f4be31",
+  "cases": [
+    {
+      "archive_entry": "material/18160",
+      "raw_source_sha256": "0df97da20e81235c600d9e47a2477b5f589ca6c18218d11680b86640d190aa26",
+      "grouped_regions": 521,
+      "grouped_writes": 2678,
+      "baseline": {
+        "dxil_sha256": "3616a9a2706b82585f34dc9a98f8f30c20bd0f9028ceeffb861fa5ce8df02cd7",
+        "dxil_bytes": 115632,
+        "conditional_branches": 1821,
+        "basic_blocks": 3617,
+        "spirv_bytes": 422920,
+        "compile_ms": [
+          11228.0,
+          10305.9,
+          10935.2
+        ],
+        "median_ms": 10935.2
+      },
+      "candidate": {
+        "dxil_sha256": "b1306f4a454b90cf73fcd319712a7adf782b996af09af19ca8f66c27c04b8f52",
+        "dxil_bytes": 86500,
+        "conditional_branches": 618,
+        "basic_blocks": 1208,
+        "spirv_bytes": 307396,
+        "compile_ms": [
+          461.027,
+          334.879,
+          335.576
+        ],
+        "median_ms": 335.576
+      },
+      "draw_comparison": [
+        {
+          "seed": 0,
+          "target_count": 4,
+          "rasterized_texels_across_targets": 360,
+          "compared_texels_across_targets": 1024,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            1,
+            1
+          ],
+          "differing_texels": 0,
+          "differing_channels_rgba": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "max_absolute_channel_error": 0.0,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "c8ff09347eb77d5a5505886ce973e8f0a5e54c43d82c8d3670a46226b63363b4",
+          "after_sha256": "c8ff09347eb77d5a5505886ce973e8f0a5e54c43d82c8d3670a46226b63363b4"
+        },
+        {
+          "seed": 1,
+          "target_count": 4,
+          "rasterized_texels_across_targets": 360,
+          "compared_texels_across_targets": 1024,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            89,
+            31
+          ],
+          "differing_texels": 31,
+          "differing_channels_rgba": [
+            15,
+            13,
+            11,
+            0
+          ],
+          "max_absolute_channel_error": 1.1920928955078125e-07,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "83f41b22e38b05b8fb5056e995fc44aff71b2a005936efe3cf3a2ddfb74bc663",
+          "after_sha256": "9292db6a7b1272fedc7169a415fdca4a640381fe173ecf8deb5e5ad607822db8"
+        },
+        {
+          "seed": 2,
+          "target_count": 4,
+          "rasterized_texels_across_targets": 360,
+          "compared_texels_across_targets": 1024,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            3,
+            44
+          ],
+          "differing_texels": 31,
+          "differing_channels_rgba": [
+            13,
+            18,
+            8,
+            0
+          ],
+          "max_absolute_channel_error": 5.960464477539063e-08,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "d171b7212fcfb3c89ce44dd5299666c31639496edaa4744e02f0378f568d0f8c",
+          "after_sha256": "f6b723d61b22f5b23a6d54ae81f4ddcccbb5c3af9e870ce1c2112d3b6ca64c1c"
+        }
+      ]
+    },
+    {
+      "archive_entry": "material/18414",
+      "raw_source_sha256": "7d71125aabeae09ae9ec0834b8115f48ed954e9fc4681546e7b8c73788786a2a",
+      "grouped_regions": 277,
+      "grouped_writes": 1330,
+      "baseline": {
+        "dxil_sha256": "f89b127a843c908f8902fb735cbd9f69cfab32e80823bdc40a11940e2400373b",
+        "dxil_bytes": 75164,
+        "conditional_branches": 1207,
+        "basic_blocks": 2334,
+        "spirv_bytes": 277564,
+        "compile_ms": [
+          2186.54,
+          1667.68,
+          2145.04
+        ],
+        "median_ms": 2145.04
+      },
+      "candidate": {
+        "dxil_sha256": "80e8afd6f358acb91d4a02a65b017e2b82674957628eca8729ce51364111d989",
+        "dxil_bytes": 60112,
+        "conditional_branches": 554,
+        "basic_blocks": 1027,
+        "spirv_bytes": 218224,
+        "compile_ms": [
+          158.791,
+          101.503,
+          157.666
+        ],
+        "median_ms": 157.666
+      },
+      "draw_comparison": [
+        {
+          "seed": 0,
+          "target_count": 5,
+          "rasterized_texels_across_targets": 450,
+          "compared_texels_across_targets": 1280,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            1,
+            1,
+            90
+          ],
+          "differing_texels": 46,
+          "differing_channels_rgba": [
+            0,
+            0,
+            28,
+            27
+          ],
+          "max_absolute_channel_error": 1.1920928955078125e-07,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "76342613229b7edcd75ee5e0b6b9626cf176b93d56862cce1f2a5bd6600cdc88",
+          "after_sha256": "dc0e7bb575003d08a845b9fa98052d17830717e79e5141be82e3631ec7b46798"
+        },
+        {
+          "seed": 1,
+          "target_count": 5,
+          "rasterized_texels_across_targets": 450,
+          "compared_texels_across_targets": 1280,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            90,
+            90,
+            90
+          ],
+          "differing_texels": 139,
+          "differing_channels_rgba": [
+            4,
+            77,
+            45,
+            19
+          ],
+          "max_absolute_channel_error": 1.1920928955078125e-07,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "b672a1cd64bed7152e0a3eab8bd15005c28aa8a8ed7f2a3824c4a51793d6d751",
+          "after_sha256": "22c2b423ac1c9c8363193af6bcd6534cd67e1207b275f1ad96969c6d48857459"
+        },
+        {
+          "seed": 2,
+          "target_count": 5,
+          "rasterized_texels_across_targets": 450,
+          "compared_texels_across_targets": 1280,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            1,
+            90,
+            90
+          ],
+          "differing_texels": 82,
+          "differing_channels_rgba": [
+            9,
+            57,
+            10,
+            12
+          ],
+          "max_absolute_channel_error": 5.960464477539063e-08,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "7abac5c545edbd2d1f420d51841f7c639a3c8d49b86ca1647379fb39ed0df222",
+          "after_sha256": "93a9530bdda72b2d97f9285534c9246c4a99baab2ef5160d9d1b5c36ab3d1b4d"
+        }
+      ]
+    },
+    {
+      "archive_entry": "material/18386",
+      "raw_source_sha256": "75a4fe0bb893740bdc28324c53cde0c7acec77d85d6cf3c47e0eae04125546ca",
+      "grouped_regions": 197,
+      "grouped_writes": 1096,
+      "baseline": {
+        "dxil_sha256": "e0c882cc9be439f50f8fe2239cf635a71a7e571a641bb4f7c4b26cad52a45468",
+        "dxil_bytes": 61844,
+        "conditional_branches": 973,
+        "basic_blocks": 1904,
+        "spirv_bytes": 221676,
+        "compile_ms": [
+          1215.76,
+          905.182,
+          1181.36
+        ],
+        "median_ms": 1181.36
+      },
+      "candidate": {
+        "dxil_sha256": "645181a64e6685be68fee9589a1541918abc57553886822c4f586b333c17d658",
+        "dxil_bytes": 48248,
+        "conditional_branches": 379,
+        "basic_blocks": 715,
+        "spirv_bytes": 165840,
+        "compile_ms": [
+          53.517,
+          35.0156,
+          47.8663
+        ],
+        "median_ms": 47.8663
+      },
+      "draw_comparison": [
+        {
+          "seed": 0,
+          "target_count": 5,
+          "rasterized_texels_across_targets": 450,
+          "compared_texels_across_targets": 1280,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            1,
+            1,
+            90
+          ],
+          "differing_texels": 46,
+          "differing_channels_rgba": [
+            0,
+            0,
+            28,
+            27
+          ],
+          "max_absolute_channel_error": 1.1920928955078125e-07,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "76342613229b7edcd75ee5e0b6b9626cf176b93d56862cce1f2a5bd6600cdc88",
+          "after_sha256": "dc0e7bb575003d08a845b9fa98052d17830717e79e5141be82e3631ec7b46798"
+        },
+        {
+          "seed": 1,
+          "target_count": 5,
+          "rasterized_texels_across_targets": 450,
+          "compared_texels_across_targets": 1280,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            23,
+            90,
+            90
+          ],
+          "differing_texels": 83,
+          "differing_channels_rgba": [
+            17,
+            25,
+            40,
+            16
+          ],
+          "max_absolute_channel_error": 5.960464477539063e-08,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "a76158be96bc2888bd488f9b324cc27796c897f9c5fd90bb59fed49450035f83",
+          "after_sha256": "5ba5a3a8ab2dc23d0895de01ea77630f07dbdd9af12c9b80fa29b022ecd59abb"
+        },
+        {
+          "seed": 2,
+          "target_count": 5,
+          "rasterized_texels_across_targets": 450,
+          "compared_texels_across_targets": 1280,
+          "unique_written_rgba_per_target": [
+            1,
+            90,
+            76,
+            90,
+            90
+          ],
+          "differing_texels": 108,
+          "differing_channels_rgba": [
+            17,
+            55,
+            27,
+            19
+          ],
+          "max_absolute_channel_error": 1.1920928955078125e-07,
+          "matching_nonfinite_channels": 0,
+          "before_sha256": "700db6d876af8a6f95bd1cf0a5a8f59aa8498a47943dad8f2fc807a719fcde5e",
+          "after_sha256": "1e8a2c94fc1d61f63365956f369e6fb5bf5593eea03c56dfd886da0813a44925"
+        }
+      ]
+    }
+  ],
+  "gpu_comparison": {
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "620.70.6",
+    "title_version": "1.20.1831.3754",
+    "proton_version": "1793301796 experimental-11.0-20261027b-x86_64",
+    "chase_materials": {
+      "method": "Create paired D3D12 pipelines with each retail pixel shader and an interpolated vertex fixture. Draw the same triangle for each version using patterned 2D, 2D-array, 3D, integer and structured resources. Three input sets exercise zero, patterned and identity-like view constants. Read back all RGBA32_FLOAT targets, including untouched clear pixels. These draws exercise the exact timed shaders with synthetic inputs.",
+      "target_size": [
+        16,
+        16
+      ],
+      "pairs": 9,
+      "compared_texels_across_targets": 10752,
+      "differing_texels": 566,
+      "rasterized_texels_across_targets": 3780,
+      "coverage_mismatches": 0,
+      "changed_nonfinite_classifications": 0,
+      "max_absolute_channel_error": 1.1920928955078125e-07,
+      "median_absolute_error_among_changed_channels": 2.9802322387695312e-08
+    },
+    "menu_material": {
+      "capture_frame": 1330,
+      "draw_event": 10076,
+      "captured_module_sha256": "24a922330b91d8207e60bdd624ec1352e484e189d0bb2e1e814d51c2dafe2759",
+      "archive_entry": "material/3530",
+      "source_sha256": "66582875b1cc75c3429a6fa0efcf878affb89d5ca52fbc33e68aa0690e018c99",
+      "width": 2560,
+      "height": 1440,
+      "format": "R16G16B16A16_FLOAT",
+      "bytes_compared": 29491200,
+      "unique_rgba_pixels": 3196692,
+      "baseline": {
+        "module_sha256": "46c6125b29eade00d440728a0473ca5b3ae37283575cbcb781db42ab58cefdbe",
+        "readback_sha256": "c98a7f60b5a1fd0f3df405ee5942ba6be1eaca5d64116bbc229e8ead24ef28d6",
+        "dxil_sha256": "e70ad7e1342cefc87d7ded0ec5242c1a79abb1d289a11aa4f342eb5a531a0338"
+      },
+      "candidate": {
+        "module_sha256": "46a5ded7bcd7bae1d9dcaac5f1b7a0f4ebaedf8e3000e6feda26e818e6974041",
+        "readback_sha256": "9c6602cbffa0d90eef257bbbaa67231bc066702e87afeb78ef943a2584413307",
+        "dxil_sha256": "242d3c10fb270f7034f88e72236d8553397b4d03920a17327f3354b6bd38a6e5"
+      },
+      "capture_tool": "RenderDoc 1.46",
+      "replay_order": [
+        "baseline",
+        "candidate",
+        "candidate",
+        "baseline"
+      ],
+      "control": "Each replay used the captured textures, descriptors, constants and geometry. Both repeats for each shader returned identical HDR bytes. Replacing the captured original with the baseline returned the original bytes. The eventual presented image varied on same-shader repeats, so the comparison ends at the draw target.",
+      "differing_texels": 5,
+      "differing_channels_rgba": [
+        2,
+        3,
+        0,
+        0
+      ],
+      "total_texels": 3686400,
+      "max_ulp_fp16": 1,
+      "max_absolute_channel_error": 0.000244140625
+    }
+  },
+  "production_compiler_sha256": "14bf0bb7659602d596c87a26a6716878a5af181638361fda457e2f115f6a88b3"
+}

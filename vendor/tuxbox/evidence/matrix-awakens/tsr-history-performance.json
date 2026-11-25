@@ -1,0 +1,68 @@
+{
+  "shader": "Frosty global 3385, FTSRUpdateHistoryCS",
+  "source_sha256": "76fb3b539aeeab93ca3bc9a935df2d0497047164c6b7902dc51c309f79e3c086",
+  "dxil_sha256": {
+    "before": "1f5feb33c03ec4c1e6e8eb98690ed2fe80d85adb5dde915d4eada524addb8d67",
+    "after": "0ad8f7e078bf6c13ca19aadf8ab0bead9fac29edca726a70a284bf21dbc9d1f0"
+  },
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (10de:2705)",
+  "backend": "D3D12 under stock Proton Experimental and VKD3D-Proton",
+  "workload": "Offscreen 3840x2160 dispatch, 480x270 groups of 8x4 threads. The synthetic fixture supplies 17 input textures and eight RGBA32 output textures with distinct spatially varying current and history inputs. Camera-cut flag tested both ways, with a zero b1 buffer and point sampling.",
+  "timing_method": "GPU timestamps around a single dispatch. Five interleaved samples per variant and mode. The median excludes the first sample for each. Resource setup, readback and pipeline creation are outside the timestamps.",
+  "warm_median_ms": {
+    "camera-cut": {
+      "before": 91.7986,
+      "after": 40.6999
+    },
+    "history": {
+      "before": 91.9982,
+      "after": 40.8136
+    }
+  },
+  "readback": {
+    "matching_full_surface_pairs": 16,
+    "bytes_compared_per_shader_version": 2123366400,
+    "method": "Compared SHA-256 of all eight output surfaces under both camera-cut flags. On this input, both flags produced the same set of output hashes.",
+    "sha256_by_uav_index": [
+      "bc55986bc1e0b6167d81b156209ada73e18c68dcb9d8b34e91936c76777dccf1",
+      "4024e42b646756bf049932cf2b97b555511880ac8c569ce3be22d620947cb1cf",
+      "47a57889004a0db61246ac84edfa6614cb98764aee58ba66ff4b08c7f481e21d",
+      "d6faab0c3d253f4255e646473bdb5befcf5156fc72ccef823d01fb7d580d5935",
+      "65fb7083790f0f4e30a792923f47dc741547eccd04e7b1d36251e192a06e8b8a",
+      "d6faab0c3d253f4255e646473bdb5befcf5156fc72ccef823d01fb7d580d5935",
+      "865e6258f713e13a328b1509b55b70fefce288f7dfc859de28ba9b852fb9c990",
+      "518f06d8821824582af5ab07d71aeb457e9b2c9395d7c43ce15af284368588b3"
+    ]
+  },
+  "half_conversion_control": {
+    "reference": "Previous software round-to-nearest-even conversion, including signed zero and NaN payload handling.",
+    "inputs_per_gpu": 288802,
+    "counts": {
+      "all_half": 65536,
+      "signed_midpoints_and_neighbors": 190464,
+      "special": 34,
+      "random_f32": 32768
+    },
+    "mismatches": {
+      "NVIDIA": {
+        "general_round_to_nearest_even": 0,
+        "repack_half_inputs": 0,
+        "native_repack_outside_half_domain": {
+          "signed_midpoints_and_neighbors": 0,
+          "special": 0,
+          "random_f32": 0
+        }
+      },
+      "AMD": {
+        "general_round_to_nearest_even": 0,
+        "repack_half_inputs": 0,
+        "native_repack_outside_half_domain": {
+          "signed_midpoints_and_neighbors": 95232,
+          "special": 4,
+          "random_f32": 17008
+        }
+      }
+    },
+    "repack_domain": "The translator uses the native repack path only for values known to have been expanded from half. Other float32 inputs use the general conversion."
+  }
+}

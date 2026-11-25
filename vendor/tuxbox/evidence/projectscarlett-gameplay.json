@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "date_utc": "2026-11-25",
+  "title": "ProjectScarlett",
+  "package_version": "1.0.2.1",
+  "executable_sha256": "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
+  "host": {
+    "gpu": "GeForce RTX 4070 Ti SUPER",
+    "driver": "620.73.04",
+    "backend": "stock Proton Experimental",
+    "version": "1793301796 experimental-11.0-20261027b-x86_64"
+  },
+  "launch": {
+    "network": "disabled",
+    "memory_limit": "MemoryHigh=19G, MemoryMax=21G, MemorySwapMax=16G",
+    "environment": {
+      "TUXBOX_LARGE_COMPILES": "2"
+    },
+    "source": "main at 53bb4d6 with uncommitted fixes committed with this record, before queue tracking",
+    "log_sha256": "292ae3bb9dedba57f97604ad1a75144c473472ac9ff7bd12a90a52d1b776ea8a"
+  },
+  "title_crash_report": {
+    "sha256": "c350529a3d613f123175fd75528bc2cbc72af8e1691b26a9558595ba5d1b122d",
+    "game_state": "Game Running",
+    "running_time": "0h:18m:11s",
+    "frame": 32534,
+    "streaming_script": "fbk_stry000_FBK_STRY000_INTRO"
+  },
+  "result": {
+    "exit_code": 3,
+    "seconds": 1107.6,
+    "memory_waits_released_after_5s_at_least": 16,
+    "command_list_rejected": "descriptor memory exhausted",
+    "prologue_cutscene_seen": false,
+    "crash_cause_established": false
+  },
+  "not_verified": [
+    "image correctness",
+    "input and audio",
+    "frame times",
+    "play beyond this run"
+  ]
+}

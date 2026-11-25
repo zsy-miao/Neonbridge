@@ -1,0 +1,267 @@
+{
+  "scope": "synthetic triangle precision cases: native gfx1036 instruction output versus HLSL, not a general opcode equivalence proof",
+  "cases": 16,
+  "native_dump_sha256": "b2252dae169c58f94b0410a959fe72ec636f97782484818ef373312ff1644525",
+  "hlsl_sha256": "86ead831d3fd08284be41c849806ec3c3343aacf8cdbcae55e0c42a7be564478",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": 16,
+      "guard_words": 320,
+      "mismatches": [
+        {
+          "case": 1,
+          "actual": [
+            "bf800001",
+            "bf800001",
+            "be800000",
+            "be800001"
+          ],
+          "native": [
+            "bf800000",
+            "bf800000",
+            "be800000",
+            "be800001"
+          ]
+        },
+        {
+          "case": 3,
+          "actual": [
+            "bf800003",
+            "bf800003",
+            "be800000",
+            "be800003"
+          ],
+          "native": [
+            "bf800002",
+            "bf800002",
+            "be800000",
+            "be800003"
+          ]
+        },
+        {
+          "case": 5,
+          "actual": [
+            "bf800005",
+            "bf800005",
+            "be800000",
+            "be800005"
+          ],
+          "native": [
+            "bf800004",
+            "bf800004",
+            "be800000",
+            "be800005"
+          ]
+        },
+        {
+          "case": 7,
+          "actual": [
+            "bf800007",
+            "bf800007",
+            "be800000",
+            "be800007"
+          ],
+          "native": [
+            "bf800006",
+            "bf800006",
+            "be800000",
+            "be800007"
+          ]
+        },
+        {
+          "case": 9,
+          "actual": [
+            "bf800009",
+            "bf800009",
+            "be800000",
+            "be800009"
+          ],
+          "native": [
+            "bf800008",
+            "bf800008",
+            "be800000",
+            "be800009"
+          ]
+        },
+        {
+          "case": 11,
+          "actual": [
+            "bf80000b",
+            "bf80000b",
+            "be800000",
+            "be80000b"
+          ],
+          "native": [
+            "bf80000a",
+            "bf80000a",
+            "be800000",
+            "be80000b"
+          ]
+        },
+        {
+          "case": 13,
+          "actual": [
+            "bf80000d",
+            "bf80000d",
+            "be800000",
+            "be80000d"
+          ],
+          "native": [
+            "bf80000c",
+            "bf80000c",
+            "be800000",
+            "be80000d"
+          ]
+        },
+        {
+          "case": 15,
+          "actual": [
+            "bf80000f",
+            "bf80000f",
+            "be800000",
+            "be80000f"
+          ],
+          "native": [
+            "bf80000e",
+            "bf80000e",
+            "be800000",
+            "be80000f"
+          ]
+        }
+      ]
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": 16,
+      "guard_words": 320,
+      "mismatches": [
+        {
+          "case": 1,
+          "actual": [
+            "bf800001",
+            "bf800001",
+            "be800000",
+            "be800001"
+          ],
+          "native": [
+            "bf800000",
+            "bf800000",
+            "be800000",
+            "be800001"
+          ]
+        },
+        {
+          "case": 3,
+          "actual": [
+            "bf800003",
+            "bf800003",
+            "be800000",
+            "be800003"
+          ],
+          "native": [
+            "bf800002",
+            "bf800002",
+            "be800000",
+            "be800003"
+          ]
+        },
+        {
+          "case": 5,
+          "actual": [
+            "bf800005",
+            "bf800005",
+            "be800000",
+            "be800005"
+          ],
+          "native": [
+            "bf800004",
+            "bf800004",
+            "be800000",
+            "be800005"
+          ]
+        },
+        {
+          "case": 7,
+          "actual": [
+            "bf800007",
+            "bf800007",
+            "be800000",
+            "be800007"
+          ],
+          "native": [
+            "bf800006",
+            "bf800006",
+            "be800000",
+            "be800007"
+          ]
+        },
+        {
+          "case": 9,
+          "actual": [
+            "bf800009",
+            "bf800009",
+            "be800000",
+            "be800009"
+          ],
+          "native": [
+            "bf800008",
+            "bf800008",
+            "be800000",
+            "be800009"
+          ]
+        },
+        {
+          "case": 11,
+          "actual": [
+            "bf80000b",
+            "bf80000b",
+            "be800000",
+            "be80000b"
+          ],
+          "native": [
+            "bf80000a",
+            "bf80000a",
+            "be800000",
+            "be80000b"
+          ]
+        },
+        {
+          "case": 13,
+          "actual": [
+            "bf80000d",
+            "bf80000d",
+            "be800000",
+            "be80000d"
+          ],
+          "native": [
+            "bf80000c",
+            "bf80000c",
+            "be800000",
+            "be80000d"
+          ]
+        },
+        {
+          "case": 15,
+          "actual": [
+            "bf80000f",
+            "bf80000f",
+            "be800000",
+            "be80000f"
+          ],
+          "native": [
+            "bf80000e",
+            "bf80000e",
+            "be800000",
+            "be80000f"
+          ]
+        }
+      ]
+    }
+  },
+  "dxil_sha256": "7f36203797b139b2c709f7c2ff9c09d46ea7cebc0367315f59195b1ee8a9db24",
+  "result": "mismatch",
+  "note": "Eight odd-coordinate ULP cases differ in determinant and distance numerator; native also validates 64 origin/coordinate combinations. This is synthetic data and not a full opcode equivalence test.",
+  "native_origin_cases": 64,
+  "constant_folded_limitation": "HLSL node and ray inputs were compiled as constants and DXC may have folded arithmetic. These results do not establish dynamic GPU arithmetic equivalence; use controls with dynamic inputs."
+}

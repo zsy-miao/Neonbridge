@@ -1,0 +1,103 @@
+{
+  "scope": "Write-watch reservations and queries, write-watch suspension and the XMemSetOption allocator policies in the supplied Scarlett DLL.",
+  "reference_dll_sha256": "adc182acae5340b0618a3d57a239ed2e8deb305dbefc49439cb8a2d06c7ce812",
+  "native_control": "python tools/check_xmem_watch_native.py /path/to/xmem.dll",
+  "native_method": "Runs the hash-pinned console query, option and resume routines in a temporary mapped PE. Its imported GetWriteWatch is replaced with a native six-argument stub, and the harness checks the paused and resumed transitions.",
+  "native_result": "xmem-native-watch PASS forwarded=6 paused=1003 output=untouched option=2 resume=3",
+  "guest_checks": [
+    "Reserve and commit four Windows write-watch pages, write two and compare the XMem query against the host GetWriteWatch result and surrounding guards.",
+    "Reset through XMemGetWriteWatch, modify a different page, check the new result and compare invalid flag behavior with the host. Verify name and ordinal 17 identity.",
+    "Set suspension option 0x10000: paused queries return 1003 without writes, resume fails while suspension is requested, clearing the low 32-bit option value leaves queries paused until successful resume. Verify ordinals 24 and 27 and check that unknown option IDs preserve the caller\u2019s last error.",
+    "Allocate write-watch regions via XMemVirtualAlloc in both reserve+commit and reserve-then-commit modes; modify pages and check the dirty-page result.",
+    "Toggle direct CPU allocation tags, write into a 0x21003-byte block, query an interior address and compare the exported tag record and rounded region length.",
+    "Toggle automatic watching for translated graphics reservations on the default desktop retail profile. Access remains writable and the two reservations have no dirty-page tracking."
+  ],
+  "limits": [
+    "Validation covers CPU protection, commitment, alignment, size, page class and pointer bounds. Exact hardware GPU protection reports and a native strict large-page pool require separate backing support.",
+    "Option 3 delegates to a heap notification service when already present. Global desktop HeapReAlloc interception remains open. The retail desktop profile reports no tools partition. Xbox driver support for implicit GPU write watch is unavailable.",
+    "Direct allocation tags cover the supported CPU allocator. Arbitrary tagged guest virtual allocations, graphics tags, console OS allocation and GPU access are outside this run."
+  ],
+  "source_sha256": {
+    "tools/check_xmem_watch_native.py": "c6cbb5bff68b6009f77112c117e57a68cecb22e1f8c4e95d2843541568e503e2",
+    "tools/reference/xmem-tag/watch_native.c": "1a795453d2b1a393001070274af3cc517ff8ae4ef4e94f062200860c589413ba",
+    "tools/check_xmem_virtual_watch_native.py": "0cf60bf7f1cdf6172b06ee08c4399390faa4216bed38838994c92de353b93695",
+    "tools/reference/xmem-tag/virtual_watch_native.c": "d87bde04f5bf44c31c1b70c55e3e7acb494849fcd5d6661616148765266d3715",
+    "runtime/xmem/guest.c": "ffd19d5054abc35304fda7de61e7aa9e182070d9471b71ce23727ddbd13fafdb",
+    "runtime/xmem/src/virtual_memory.rs": "ba1b0d76617ed4500ef76e40eb5c79214772723ea8f3475211dad3c9bb07755e",
+    "runtime/xmem/src/options.rs": "46809e5a7cbcc02eab3c6722dea80ff12b31f15c6701f51f046f62f52e176345"
+  },
+  "run": {
+    "schema": 1,
+    "type": "homebrew",
+    "date_utc": "2026-11-23",
+    "host": "Linux",
+    "os_release": "7.3.5-2-cachyos-bore",
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "machine": "x86_64",
+    "backend": "proton",
+    "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+    "binaries_sha256": {
+      "xmem-smoke/xmem-smoke.exe": "9ccffdcd4d7fde69378e54d8bba29afa3b07611952f54f95739a6dc2e078615c",
+      "xmem-smoke/xmem.dll": "8074927ad742359a998b80f370d4851d26f3dcaced913e4a303e161a32193610",
+      "xmem-smoke/xmem-http.exe": "e54dfac0855e7e4e8c85f2b0ef95dd43e84fdf0c1fa57e50cc2dd05e44b5654b",
+      "xmem-smoke/tuxbox_xhttp.dll": "4a51d32c7c9c85cb8347baf40c0c94b611fa42e038531bec6b958dba3575533c",
+      "xmem-smoke/xmem-partitions.exe": "4b88ec4a988a5eecea99c2bccefb9f7f818bb7620588fdf532f6cd71af43c23d"
+    },
+    "checks": [
+      {
+        "gate": "xmem-heaps",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-heaps PASS title=1 private=4 invalid=2 pool-commits=2 pool-decommits=2 heap-callbacks=2 stats=1 dump=1 history=2 page-classes=3"
+      },
+      {
+        "gate": "xmem-watch",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-watch PASS initial=2 reset=2 next=1 guards=2 invalid=1 pause=2 resume=3 allocations=2 direct-tags=2 retail-apertures=2"
+      },
+      {
+        "gate": "xmem-hooks",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-hooks PASS calls=2/2 zero-size=1 null-free=1 restore=1 reentrant=1"
+      },
+      {
+        "gate": "xmem-tags",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-tags PASS count=5120 hash=d4bf30c57509b176"
+      },
+      {
+        "gate": "xmem-query",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-query PASS cpu=5 released=1 unsupported=3 guards=2 null=1"
+      },
+      {
+        "gate": "xmem-default",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-default: PASS (allocator pairs 1/6 and 2/7, ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+      },
+      {
+        "gate": "xmem-pages",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-pages PASS cpu-pages=2 remapped-bytes=131072 stale-and-foreign-rejected=1"
+      }
+    ]
+  },
+  "native_allocation_control": "python tools/check_xmem_virtual_watch_native.py /path/to/xmem.dll",
+  "native_allocation_result": "xmem-native-virtual-watch PASS profiles=4 flags=preserved",
+  "native_allocation_method": "Invokes the hash-pinned supplied allocator with standard NT mode and controlled NtAllocateVirtualMemoryEx and memset callbacks. For reserve plus commit with PAGE_READWRITE, and reserve only with PAGE_NOACCESS, MEM_WRITE_WATCH passes through unchanged both with and without MEM_TOP_DOWN. The NT callback is a stub; native success-path OS allocation was not executed.",
+  "option_control": {
+    "method": "The normal PE loader ran each xmem.dll on stock Proton. A test xbthunk.dll supplied the process heap, observed the reallocation switch and optionally indicated access to a tools partition. A test xgameruntime.dll received error reports. Neither test service is used by TuxBox during normal desktop testing.",
+    "allocator_validation": "Option 1 disabled permitted a null-returning allocation hook without a report. Enabling it delivered HRESULT 0x8007000e on both DLLs. The pointer result stayed null in both cases.",
+    "direct_tags": "Option 2 off/on returned a query tag of 0/0x41566d5800c4cbda on both DLLs for a direct CPU allocation of 0x21000 bytes with attributes 0x05000000. The original obtained its internal tag table from a guest allocation hook. PAGE_NOACCESS avoided an unsupported Wine extended-region query.",
+    "reallocation_notification": "Option 3 forwarded 0x55667788 from payload 0x1122334455667788 to the already-loaded heap service on both DLLs.",
+    "page_size_demotion": "Option 4 before initial pool access was accepted. After the first hysteresis read, both DLLs reported HRESULT 0x80004001 and retained the earlier policy.",
+    "auto_watch": "For 0x10001 with a test tools partition, turning automatic watching off/on produced a rejected GetWriteWatch query followed by one dirty CPU page on TuxBox. The Xbox DLL rejected both GPU reservations on stock Proton with error 87 before a positive watch result could be obtained.",
+    "unknown": "Both DLLs preserved last error 0xbee7 for unused option ID 0xfedc."
+  }
+}

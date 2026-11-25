@@ -1,0 +1,738 @@
+//! Fence a private copy queue against the guest queues that read these textures.
+use super::{Texture, committed, lock};
+use core::mem::ManuallyDrop;
+use std::{collections::VecDeque, sync::Arc};
+use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, E_OUTOFMEMORY, HANDLE};
+use windows::Win32::Graphics::{Direct3D12::*, Dxgi::Common::DXGI_SAMPLE_DESC};
+use windows::core::{HRESULT, Interface, Result};
+
+pub(super) struct Change {
+    pub(super) texture: Arc<Texture>,
+    pub(super) level: usize,
+    pub(super) bytes: Vec<u8>,
+    /// `level_hash` of `bytes`
+    pub(super) hash: u64,
+}
+
+// These COM objects must survive the asynchronous copy, even if the guest
+// drops all associated resource and queue references immediately after Submit.
+struct Upload {
+    buffer: ID3D12Resource,
+    /// The buffer's pool bucket (0: not pooled).
+    bucket: u64,
+    allocator: ID3D12CommandAllocator,
+    list: ID3D12CommandList,
+    /// The same list as recorded, for the list pool (`Transfer::lists`).
+    graphics: ID3D12GraphicsCommandList,
+    _textures: Vec<ID3D12Resource>,
+}
+
+/// Copy allocators and lists of finished uploads, reset for the next refresh
+/// instead of one CreateCommandAllocator + CreateCommandList per refresh.
+/// TUXBOX_UPLOAD_LIST_POOL=0 makes new ones each time.
+fn list_pool() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_LIST_POOL") != Some("0"))
+}
+const LIST_POOL_MAX: usize = 8;
+
+/// Threads detiling one refresh's changed levels into disjoint parts of its
+/// upload buffer (TUXBOX_UPLOAD_WORKERS, default 1 = inline; at most 16).
+fn upload_workers() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_WORKERS").and_then(|v| v.trim().parse().ok()).unwrap_or(1usize).clamp(1, 16))
+}
+
+pub(super) struct Transfer {
+    queue: ID3D12CommandQueue,
+    pub(super) fence: ID3D12Fence,
+    next: u64,
+    pub(super) failed: Option<HRESULT>,
+    pending: VecDeque<(u64, Upload)>,
+    scratch: Vec<u8>,
+    /// Snapshot buffers given back by uploads, for the next refresh (at most
+    /// SPARE_BYTES of capacity): test69's refresh allocated one per changed level.
+    spare: Vec<Vec<u8>>,
+    watch: super::watch::Watch,
+    refreshes: u64,
+    /// Where the next refresh starts in its texture list (see `refresh`).
+    cursor: usize,
+    /// (bucket, (buffer, refresh it was pooled at)).
+    pool: Vec<(u64, (ID3D12Resource, u64))>,
+    pool_bytes: u64,
+    lists: Vec<(ID3D12CommandAllocator, ID3D12GraphicsCommandList)>,
+}
+
+// Upload buffer recycling, from omonkeyz/xbox-emulator
+// crates/compat/d3d12_xs/src/upload.rs (de1e1da, GPL-3.0-or-later):
+// sizes round up to a power of two of at least 64 KiB, a buffer goes back to
+// the pool when its copy's fence completes, and the pool holds at most
+// 256 MiB. test49 created 5639 MiB of upload buffers, one per batch.
+// TUXBOX_UPLOAD_POOL=0 makes a buffer of the exact size per batch as before.
+const POOL_CAP_BYTES: u64 = 256 << 20;
+const POOL_MIN_BUCKET: u64 = 64 << 10;
+/// Capacity of snapshot buffers kept between refreshes (`Transfer::spare`).
+const SPARE_BYTES: usize = 128 << 20;
+
+/// TUXBOX_UPLOAD_POOL_IDLE (refreshes, default 600; =0 keeps pooled buffers
+/// for good): a pooled upload buffer no batch took for that many refreshes
+/// is freed. Pooled buffers are past their copy's fence, so none is in use.
+/// test181 held 23 placed upload buffers (261 MiB, the 256 MiB pool full)
+/// at private 28.9 GiB on a 15.8 GiB machine; the pool only ever grew.
+fn pool_idle() -> u64 {
+    static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *N.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_POOL_IDLE").and_then(|v| v.trim().parse().ok()).unwrap_or(600))
+}
+
+fn upload_pool() -> bool {
+    crate::env_toggle!("TUXBOX_UPLOAD_POOL") != Some("0")
+}
+
+fn pool_bucket(bytes: u64) -> u64 {
+    bytes.max(POOL_MIN_BUCKET).next_power_of_two()
+}
+
+fn pool_take<T>(pool: &mut Vec<(u64, T)>, pool_bytes: &mut u64, size: u64) -> Option<T> {
+    let i = pool.iter().rposition(|(s, _)| *s == size)?;
+    let (s, b) = pool.swap_remove(i);
+    *pool_bytes -= s;
+    Some(b)
+}
+
+fn pool_give<T>(pool: &mut Vec<(u64, T)>, pool_bytes: &mut u64, size: u64, buf: T, cap: u64) -> bool {
+    if *pool_bytes + size > cap {
+        return false;
+    }
+    pool.push((size, buf));
+    *pool_bytes += size;
+    true
+}
+
+#[cfg(test)]
+#[test]
+fn upload_buckets_are_pooled_by_size_under_the_cap() {
+    assert_eq!(pool_bucket(1), 64 << 10);
+    assert_eq!(pool_bucket((64 << 10) + 1), 128 << 10);
+    let (mut pool, mut bytes) = (Vec::new(), 0);
+    assert!(pool_give(&mut pool, &mut bytes, 64, 'a', 128));
+    assert!(pool_give(&mut pool, &mut bytes, 64, 'b', 128));
+    assert!(!pool_give(&mut pool, &mut bytes, 64, 'c', 128));
+    assert_eq!(pool_take(&mut pool, &mut bytes, 128), None);
+    assert_eq!(pool_take(&mut pool, &mut bytes, 64), Some('b'));
+    assert_eq!(bytes, 64);
+}
+
+/// test105: the loading screen's Bink movie came out datamoshed. Its frames are
+/// 8-bit planes (Y, and Cr/Cb or CrCb) the CPU writes into placed textures, so
+/// a plane left unread by this refresh keeps an old frame under the new ones.
+/// Logs, for placed R8/R8G8 textures 256 wide or more, whether each refresh
+/// read every mip, skipped some (unwritten per the write watch, or deferred by
+/// the read budget) and how many changed: the first 64 lines, then every
+/// 1024th, and again the first 64 once Bink has finished a decode (test142's
+/// 64 all came before the movie's first frame). TUXBOX_PLANE_TRACE=0 is quiet.
+fn plane_trace(texture: &Texture, skipped: usize, changed: usize, out_of_budget: bool) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let desc = &texture.desc;
+    if !matches!(desc.Format.0, 49 | 61) || desc.Width < 256 || crate::env_toggle!("TUXBOX_PLANE_TRACE") == Some("0") {
+        return;
+    }
+    static N: AtomicU64 = AtomicU64::new(0);
+    static DECODING: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let after_decode = super::bink_state().is_some_and(|(_, done)| done != 0)
+        && DECODING.fetch_add(1, Ordering::Relaxed) < 64;
+    if n >= 64 && n % 1024 != 0 && !after_decode {
+        return;
+    }
+    let mips = texture.mips.len();
+    let read = if skipped == 0 { "full".to_string() } else { format!("{skipped} of {mips} mips skipped") };
+    crate::diagnostics::log_line(format_args!(
+        "plane texture at title {:#x} ({}x{} format {}): refresh {read}, {changed} changed{}{} (line {})",
+        texture.address, desc.Width, desc.Height, desc.Format.0,
+        if out_of_budget { ", read budget spent" } else { "" }, super::bink_note(), n + 1));
+}
+
+fn is_plane(texture: &Texture) -> bool {
+    matches!(texture.desc.Format.0, 49 | 61) && texture.desc.Width >= 256
+}
+
+/// Tells xmem a decode's video planes were read in full while Bink was idle
+/// (TuxBoxBinkPlanesRead), so its catch-up fence may decode over that ring
+/// slot. TUXBOX_BINK_PLANES_READ=0 never reports (the fence stays off).
+fn planes_read(decoded: u64) {
+    type PlanesRead = unsafe extern "system" fn(u64);
+    if crate::env_toggle!("TUXBOX_BINK_PLANES_READ") == Some("0") {
+        return;
+    }
+    static F: std::sync::OnceLock<Option<PlanesRead>> = std::sync::OnceLock::new();
+    let f = *F.get_or_init(|| unsafe {
+        use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+        let module = GetModuleHandleW(windows::core::w!("xmem.dll")).ok()?;
+        GetProcAddress(module, windows::core::s!("TuxBoxBinkPlanesRead")).map(|f| core::mem::transmute::<_, PlanesRead>(f))
+    });
+    if let Some(f) = f {
+        unsafe { f(decoded) };
+    }
+}
+
+impl Transfer {
+    pub(super) fn new(device: &ID3D12Device) -> Result<Self> {
+        let desc = D3D12_COMMAND_QUEUE_DESC {
+            Type: D3D12_COMMAND_LIST_TYPE_COPY,
+            ..Default::default()
+        };
+        Ok(Self {
+            queue: unsafe { device.CreateCommandQueue(&desc)? },
+            fence: unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE)? },
+            next: 0,
+            failed: None,
+            pending: VecDeque::new(),
+            scratch: Vec::new(),
+            spare: Vec::new(),
+            watch: Default::default(),
+            refreshes: 0,
+            cursor: 0,
+            pool: Vec::new(),
+            pool_bytes: 0,
+            lists: Vec::new(),
+        })
+    }
+
+    pub(super) fn tick(&mut self) -> Result<u64> {
+        self.next = self.next.checked_add(1).ok_or(E_FAIL)?;
+        Ok(self.next)
+    }
+
+    /// Pools or frees the uploads whose copies the GPU finished. The owning
+    /// queue's refresh used to be the only drain, so a queue that stopped
+    /// refreshing (or a failed Transfer) kept its upload buffers forever:
+    /// test152 held 6.4 GiB of write-combined host-private commit. Every
+    /// refresh now drains every queue's Transfer (placement.rs), and a failed
+    /// one still drains. TUXBOX_UPLOAD_DRAIN_ANY=0 drains only the own queue.
+    pub(super) fn drain(&mut self) {
+        let completed = unsafe { self.fence.GetCompletedValue() };
+        while self
+            .pending
+            .front()
+            .is_some_and(|(tick, _)| *tick <= completed)
+        {
+            if let Some((_, upload)) = self.pending.pop_front() {
+                if list_pool() && self.lists.len() < LIST_POOL_MAX {
+                    self.lists.push((upload.allocator.clone(), upload.graphics.clone()));
+                }
+                if upload.bucket != 0 {
+                    pool_give(&mut self.pool, &mut self.pool_bytes, upload.bucket, (upload.buffer, self.refreshes), POOL_CAP_BYTES);
+                }
+            }
+        }
+        let idle = pool_idle();
+        if idle != 0 && !self.pool.is_empty() {
+            let (now, before) = (self.refreshes, self.pool_bytes);
+            let mut freed = 0u64;
+            self.pool.retain(|(size, (_, at))| {
+                let keep = now.saturating_sub(*at) < idle;
+                if !keep { freed += size; }
+                keep
+            });
+            self.pool_bytes -= freed;
+            if freed > 0 {
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n < 4 || (n + 1).is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "placed upload pool: freed {} MiB of buffers idle {idle}+ refreshes ({} MiB pooled before; TUXBOX_UPLOAD_POOL_IDLE=0 keeps them)",
+                        freed >> 20, before >> 20));
+                }
+            }
+        }
+    }
+
+    /// `own`: the submitting queue's reader fence, when a submission refreshes.
+    pub(super) fn refresh(
+        &mut self,
+        device: &ID3D12Device,
+        textures: &[Arc<Texture>],
+        own: Option<&ID3D12Fence>,
+    ) -> Result<()> {
+        if let Some(error) = self.failed {
+            if drain_any() { self.drain(); }
+            return Err(error.into());
+        }
+        self.drain();
+        let mut changes = Vec::new();
+        let watch_site = crate::diagnostics::cost::site();
+        let watch = super::watch::enabled().then(|| {
+            self.watch.refresh(textures.iter().map(|t| t.watched_range()).collect());
+            &self.watch
+        });
+        drop(watch_site);
+        let read_site = crate::diagnostics::cost::site();
+        let (mut skipped, mut mips) = (0, 0);
+        let mut budget = super::refresh_read_budget();
+        // The default read budget scales with the adapter's device-local
+        // budget, as ScarlettPort f14d3ff staging_budget_per_frame (draw.rs:
+        // 3279, MIT, credit to its authors) scales its 192 MiB 12 GiB
+        // baseline: x1/2 at 6 GiB or less, x4/3 over 12 GiB, x2 at 20 GiB or
+        // more. An explicit TUXBOX_REFRESH_READ_MB is kept as given.
+        // TUXBOX_REFRESH_VRAM_SCALE=0 keeps the fixed budget.
+        if crate::env_toggle!("TUXBOX_REFRESH_READ_MB").is_none()
+            && crate::env_toggle!("TUXBOX_REFRESH_VRAM_SCALE") != Some("0")
+        {
+            const GIB: u64 = 1 << 30;
+            budget = match super::alias::segment(device, true).map(|(_, b)| b) {
+                Some(b) if b <= 6 * GIB => budget / 2,
+                Some(b) if b >= 20 * GIB => budget * 2,
+                Some(b) if b > 12 * GIB => budget * 4 / 3,
+                _ => budget,
+            };
+        }
+        // test72 deferred 524288 levels: each refresh walked its textures in
+        // the same order and spent the budget on the same leading ones, so
+        // the tail never read. A refresh now starts where the last one ran
+        // out, and stops reading after TUXBOX_REFRESH_READ_MS (4; 0: no time
+        // limit) as well as at the byte budget. TUXBOX_REFRESH_ROTATE=0
+        // always starts at the first texture.
+        let rotate = crate::env_toggle!("TUXBOX_REFRESH_ROTATE") != Some("0");
+        static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let ms = *MS.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_READ_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(4));
+        let count = textures.len();
+        // A refresh over 1024 or more textures (a world load, a camera cut)
+        // gets three times the bytes and time: at the fixed budget such a
+        // batch took dozens of refreshes to catch up, drawing stale levels
+        // meanwhile. VIctory-fxceless draw.rs:1528-1531 (GPL-3.0, credit to
+        // its authors). TUXBOX_REFRESH_BUSY_SCALE=1 keeps the fixed budget.
+        static SCALE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let scale: u64 = *SCALE.get_or_init(|| crate::env_toggle!("TUXBOX_REFRESH_BUSY_SCALE").and_then(|v| v.trim().parse().ok()).unwrap_or(3_u64).max(1));
+        let (budget_scale, ms) = if count >= 1024 { (scale, ms.saturating_mul(scale)) } else { (1, ms) };
+        budget = budget.saturating_mul(budget_scale);
+        let framed = super::frame_upload_budget() && budget != 0;
+        let ms = if framed {
+            let (bytes, left_ms) = super::frame_left(budget_scale);
+            // Spent for the frame: the first level still reads (progress).
+            budget = bytes.max(1);
+            left_ms.max(1)
+        } else { ms };
+        let budget_full = budget;
+        super::REFRESH_FULL.store(budget, std::sync::atomic::Ordering::Relaxed);
+        super::FIRST_LEFT.store(super::first_upload_budget(), std::sync::atomic::Ordering::Relaxed);
+        let limited = budget != 0;
+        let started = std::time::Instant::now();
+        let start = if rotate && count != 0 { self.cursor % count } else { 0 };
+        let mut stopped = None;
+        // coder-audio's plane fence (xmem TUXBOX_BINK_PLANE_FENCE_MS): the
+        // completed-decode count seen while Bink was idle before this pass.
+        let bink_before = super::bink_state().filter(|&(busy, _)| busy == 0).map(|(_, done)| done);
+        let mut planes_whole = false;
+        super::begin_plane_pass();
+        for k in 0..count {
+            let i = (start + k) % count;
+            if limited && budget != 0 && ms != 0 && k != 0 && started.elapsed() >= std::time::Duration::from_millis(ms) {
+                budget = 0;
+            }
+            let before = changes.len();
+            let skip = textures[i].changed(&mut changes, &mut self.scratch, watch, &mut budget, &mut self.spare)?;
+            skipped += skip;
+            mips += textures[i].mips.len();
+            plane_trace(&textures[i], skip, changes.len() - before, budget == 0 && limited);
+            planes_whole |= skip == 0 && is_plane(&textures[i]);
+            if limited && stopped.is_none() && budget == 0 {
+                stopped = Some(i);
+            }
+        }
+        if planes_whole && let Some(done) = bink_before
+            && super::bink_state() == Some((0, done))
+        {
+            planes_read(done);
+        }
+        drop(read_site);
+        if framed {
+            super::frame_spent(budget_full - budget.min(budget_full), started.elapsed().as_millis() as u64);
+        }
+        super::note_missing_levels(textures, &changes);
+        self.cursor = stopped.unwrap_or(start);
+        self.refreshes += 1;
+        if matches!(self.refreshes, 1 | 100 | 1000 | 10000 | 100000) {
+            crate::diagnostics::log_line(format_args!(
+                "placed textures refresh #{}: {skipped} of {mips} mips skipped by write watch (unwritten) or deferred, {} changed, {} textures so far re-read after another claimed their pages; video planes so far: {} read while Bink decodes (expected 0), {} put off by the Bink gate{}",
+                self.refreshes, changes.len(), super::LOST_CLAIMS.load(std::sync::atomic::Ordering::Relaxed),
+                super::PLANE_READ_DURING_DECODE.load(std::sync::atomic::Ordering::Relaxed),
+                super::PLANE_GATED.load(std::sync::atomic::Ordering::Relaxed), if watch.is_none() { "; no write watch (TUXBOX_PLACED_WATCH=0 or xmem without TuxBoxTakeWriteWatch)" } else { "" }));
+        }
+        if changes.is_empty() {
+            return Ok(());
+        }
+        if crate::diagnostics::display::trace_views() {
+            for change in &changes {
+                let desc = change.texture.desc;
+                if desc.Height == 1 && desc.Width <= 1024 {
+                    use windows::core::Interface;
+                    crate::diagnostics::recording_error(format_args!(
+                        "uploading changed narrow texture {:p}, guest {:#x}, {}x{} format {} subresource {}",
+                        change.texture.native.as_raw(), change.texture.address, desc.Width,
+                        desc.Height, desc.Format.0, change.level,
+                    ));
+                }
+            }
+        }
+        let record_site = crate::diagnostics::cost::site();
+        let upload = Upload::record(device, &changes, &mut self.pool, &mut self.pool_bytes, &mut self.lists)?;
+        drop(record_site);
+        for mips in changes.chunk_by(|a, b| Arc::ptr_eq(&a.texture, &b.texture)) {
+            // A guest may use a different queue on each submission. Order
+            // replacement writes after every outstanding reader of this texture.
+            // test77: queues stalled 2 s behind an upload whose copy queue
+            // waited on another queue's reader, itself waiting on the title's
+            // GPU memory wait. The title orders other queues' reads before its
+            // CPU writes itself, so a submission's upload waits only for its
+            // own queue's readers (all unless TUXBOX_PLACED_CROSS_WAITS=0).
+            let contents = lock(&mips[0].texture.contents);
+            for (fence, value) in &contents.readers {
+                if own.is_some_and(|own| own != fence) && !super::cross_waits() {
+                    continue;
+                }
+                if unsafe { fence.GetCompletedValue() } < *value {
+                    unsafe {
+                        self.queue.Wait(fence, *value)?;
+                    }
+                    crate::diagnostics::queue_waits::note(windows::core::Interface::as_raw(&self.queue) as usize, "placed upload copy queue: texture reader", fence, *value);
+                }
+            }
+        }
+        let tick = self.tick()?;
+        self.pending.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+        // Pages mapped since (pages.rs) before the upload writes them.
+        unsafe { super::pages::before_execute(&self.queue) };
+        unsafe {
+            self.queue.ExecuteCommandLists(&[Some(upload.list.clone())]);
+            crate::dred::check(&self.queue, "placement upload");
+        }
+        self.pending.push_back((tick, upload));
+        crate::diagnostics::queue_waits::signaller(&self.fence, windows::core::Interface::as_raw(&self.queue) as usize);
+        if let Err(error) = unsafe { self.queue.Signal(&self.fence, tick) } {
+            self.failed = Some(error.code());
+            return Err(error);
+        }
+        for change in changes {
+            let mut state = lock(&change.texture.contents);
+            state.previous[change.level] = Some(change.hash);
+            state.uploaded = tick;
+            state.uploaded_on = Some(self.fence.clone());
+            state.readers.clear();
+            drop(state);
+            let held: usize = self.spare.iter().map(Vec::capacity).sum();
+            if held + change.bytes.capacity() <= SPARE_BYTES && change.bytes.capacity() <= SPARE_BYTES / 4 {
+                self.spare.push(change.bytes);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Transfer {
+    fn drop(&mut self) {
+        if let Some((tick, _)) = self.pending.back() {
+            // Resignal in case the original signal failed after ExecuteCommandLists.
+            unsafe {
+                if self.fence.GetCompletedValue() < *tick
+                    && self.queue.Signal(&self.fence, *tick).is_ok()
+                {
+                    let _ = self.fence.SetEventOnCompletion(*tick, HANDLE::default());
+                }
+            }
+        }
+    }
+}
+
+impl Upload {
+    fn record(device: &ID3D12Device, changes: &[Change], pool: &mut Vec<(u64, (ID3D12Resource, u64))>, pool_bytes: &mut u64,
+        lists: &mut Vec<(ID3D12CommandAllocator, ID3D12GraphicsCommandList)>) -> Result<Self> {
+        let alloc_site = crate::diagnostics::cost::site();
+        let alignment = u64::from(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+        let mut total = 0u64;
+        let mut offsets = Vec::with_capacity(changes.len());
+        for change in changes {
+            let offset = total
+                .checked_next_multiple_of(alignment)
+                .ok_or(E_OUTOFMEMORY)?;
+            offsets.push(offset);
+            total = offset
+                .checked_add(change.texture.mips[change.level].bytes)
+                .ok_or(E_OUTOFMEMORY)?;
+        }
+        let size = usize::try_from(total)
+            .ok()
+            .filter(|n| *n <= isize::MAX as usize)
+            .ok_or(E_OUTOFMEMORY)?;
+        let bucket = if upload_pool() { pool_bucket(total) } else { 0 };
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+            Width: if bucket != 0 { bucket } else { total },
+            Height: 1,
+            DepthOrArraySize: 1,
+            MipLevels: 1,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+            ..Default::default()
+        };
+        let buffer = match (bucket != 0).then(|| pool_take(pool, pool_bytes, bucket)).flatten().map(|(b, _)| b) {
+            Some(buffer) => buffer,
+            None => committed(
+                device,
+                D3D12_HEAP_TYPE_UPLOAD,
+                &desc,
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                None,
+            )?,
+        };
+        let reused = lists.pop().and_then(|(allocator, list)| unsafe {
+            (allocator.Reset().is_ok() && list.Reset(&allocator, None).is_ok()).then_some((allocator, list))
+        });
+        let (allocator, list) = match reused {
+            Some(pair) => pair,
+            None => {
+                let allocator: ID3D12CommandAllocator = unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY)? };
+                let list: ID3D12GraphicsCommandList =
+                    unsafe { device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, &allocator, None)? };
+                crate::dred::name(&list, "tuxbox placed texture upload");
+                (allocator, list)
+            }
+        };
+        drop(alloc_site);
+        let mut mapped = core::ptr::null_mut();
+        let empty = D3D12_RANGE::default();
+        unsafe {
+            buffer.Map(0, Some(&empty), Some(&mut mapped))?;
+        }
+        // SAFETY: this CPU-writeable buffer covers 'size' bytes; this command
+        // list has not been executed and the pointer is scoped to the mapping.
+        let output = unsafe { core::slice::from_raw_parts_mut(mapped.cast::<u8>(), size) };
+        let detile_site = crate::diagnostics::cost::site();
+        let detiled = detile_all(changes, &offsets, output);
+        drop(detile_site);
+        let copy_site = crate::diagnostics::cost::site();
+        let mut destinations = Vec::new();
+        let result: Result<()> = detiled.and_then(|()| changes
+            .iter()
+            .zip(offsets)
+            .try_for_each(|(change, offset)| {
+                let texture = &change.texture;
+                let mut footprint = texture.mips[change.level].footprint;
+                footprint.Offset = offset;
+                let mut src = D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: ManuallyDrop::new(Some(buffer.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        PlacedFootprint: footprint,
+                    },
+                };
+                let mut dst = D3D12_TEXTURE_COPY_LOCATION {
+                    pResource: ManuallyDrop::new(Some(texture.native.clone())),
+                    Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+                    Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
+                        SubresourceIndex: change.level as u32,
+                    },
+                };
+                // SAFETY: both active union fields match their location tags. The
+                // batch retains source and destinations until its fence completes.
+                unsafe {
+                    list.CopyTextureRegion(&dst, 0, 0, 0, &src, None);
+                    ManuallyDrop::drop(&mut src.pResource);
+                    ManuallyDrop::drop(&mut dst.pResource);
+                }
+                if destinations.last() != Some(&texture.native) {
+                    destinations.push(texture.native.clone());
+                }
+                Ok(())
+            }));
+        drop(copy_site);
+        unsafe {
+            buffer.Unmap(0, None);
+        }
+        result?;
+        unsafe {
+            list.Close()?;
+        }
+        Ok(Self {
+            buffer,
+            bucket,
+            list: list.cast()?,
+            graphics: list,
+            allocator,
+            _textures: destinations,
+        })
+    }
+}
+
+/// test152: Upload::record cost 13.2 ms of a 27 ms submit per frame, inline
+/// on the submit path. The tiled layouts visit one element per run, so each
+/// changed mip made a copy call per texel straight into write-combined upload
+/// memory. The fast path merges runs contiguous on both sides and detiles
+/// into a cached scratch buffer, then writes the upload buffer in one
+/// sequential copy. TUXBOX_DETILE_FAST=0 copies run by run into the mapping.
+fn detile_fast() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_DETILE_FAST") != Some("0"))
+}
+
+thread_local! {
+    static DETILE_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl Change {
+    fn detile(&self, output: &mut [u8]) -> Result<()> {
+        if !detile_fast() {
+            return self.detile_runs(output);
+        }
+        let n = usize::try_from(self.texture.mips[self.level].bytes).map_err(|_| E_INVALIDARG)?.min(output.len());
+        DETILE_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            scratch.clear();
+            scratch.try_reserve(n).map_err(|_| E_OUTOFMEMORY)?;
+            scratch.resize(n, 0);
+            let bytes = &self.bytes;
+            let mut copy = |tiled: std::ops::Range<usize>, linear: std::ops::Range<usize>| -> Result<()> {
+                scratch.get_mut(linear).ok_or(E_INVALIDARG)?.copy_from_slice(bytes.get(tiled).ok_or(E_INVALIDARG)?);
+                Ok(())
+            };
+            let mut run: Option<(std::ops::Range<usize>, std::ops::Range<usize>)> = None;
+            self.texture.layout_runs(self.level, |tiled, linear| {
+                if let Some((t, l)) = &mut run
+                    && t.end == tiled.start && l.end == linear.start
+                {
+                    t.end = tiled.end;
+                    l.end = linear.end;
+                    return Ok(());
+                }
+                if let Some((t, l)) = run.replace((tiled, linear)) {
+                    copy(t, l)?;
+                }
+                Ok(())
+            })?;
+            if let Some((t, l)) = run {
+                copy(t, l)?;
+            }
+            output[..n].copy_from_slice(&scratch);
+            Ok(())
+        })
+    }
+
+    fn detile_runs(&self, output: &mut [u8]) -> Result<()> {
+        self.texture.layout_runs(self.level, |tiled, linear| {
+            output
+                .get_mut(linear)
+                .ok_or(E_INVALIDARG)?
+                .copy_from_slice(self.bytes.get(tiled).ok_or(E_INVALIDARG)?);
+            Ok(())
+        })
+    }
+}
+
+impl Texture {
+    /// Corresponding contiguous byte runs in the tiled Xbox mip and in its
+    /// D3D12 footprint. Upload and writeback must use the same addresses.
+    pub(super) fn layout_runs(
+        &self,
+        level: usize,
+        mut visit: impl FnMut(std::ops::Range<usize>, std::ops::Range<usize>) -> Result<()>,
+    ) -> Result<()> {
+        let mip = &self.mips[level];
+        let element = mip.element_bytes as usize;
+        let pitch = mip.footprint.Footprint.RowPitch as usize;
+        let Some(plane) = &self.plane else {
+            let source_pitch = ((mip.source.end - mip.source.start) / u64::from(mip.rows)) as usize;
+            let row = mip.elements as usize * element;
+            for y in 0..mip.rows as usize {
+                visit(y * source_pitch..y * source_pitch + row, y * pitch..y * pitch + row)?;
+            }
+            return Ok(());
+        };
+        if self.desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D {
+            for z in 0..mip.footprint.Footprint.Depth {
+                for y in 0..mip.rows {
+                    for x in 0..mip.elements {
+                        let tiled = plane.element_offset_in_volume(z, mip.level, u64::from(x), y).ok_or(E_INVALIDARG)? as usize;
+                        let linear = (z as usize * mip.rows as usize + y as usize) * pitch + x as usize * element;
+                        visit(tiled..tiled + element, linear..linear + element)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        // In layout 0x105, X occupies the low address bits through byte 15.
+        // The display swizzle (0x10a) interleaves Y below 16 bytes for small
+        // elements, so it is copied an element at a time.
+        let run = if self.desc.Layout.0 == 0x100 {
+            mip.elements as usize
+        } else if self.desc.Layout.0 == 0x10a {
+            1
+        } else {
+            16 / element
+        };
+        for y in 0..mip.rows {
+            for x in (0..mip.elements).step_by(run) {
+                let count = (mip.elements - x).min(run as u32) as usize * element;
+                let tiled = plane
+                    .element_offset_in_slice(mip.slice, mip.level, x.into(), y)
+                    .and_then(|a| a.checked_sub(mip.source.start))
+                    .ok_or(E_INVALIDARG)? as usize;
+                let linear = y as usize * pitch + x as usize * element;
+                visit(tiled..tiled + count, linear..linear + count)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn drain_any() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_UPLOAD_DRAIN_ANY") != Some("0"))
+}
+
+/// Detiles every change into its part of the upload buffer, on
+/// `upload_workers()` scoped threads when there is more than one change.
+/// Parts are disjoint: offsets ascend and each part ends at the next offset.
+fn detile_all(changes: &[Change], offsets: &[u64], output: &mut [u8]) -> Result<()> {
+    let workers = upload_workers().min(changes.len());
+    if workers <= 1 {
+        for (change, &offset) in changes.iter().zip(offsets) {
+            change.detile(&mut output[offset as usize..])?;
+        }
+        return Ok(());
+    }
+    let mut parts: Vec<(&Change, &mut [u8])> = Vec::with_capacity(changes.len());
+    let mut rest = output;
+    let mut at = 0u64;
+    for (i, change) in changes.iter().enumerate() {
+        let end = offsets.get(i + 1).copied().unwrap_or(at + rest.len() as u64);
+        let skip = (offsets[i] - at) as usize;
+        let (_, tail) = std::mem::take(&mut rest).split_at_mut(skip);
+        let (part, tail) = tail.split_at_mut((end - offsets[i]) as usize);
+        parts.push((change, part));
+        rest = tail;
+        at = end;
+    }
+    let total: u64 = changes.iter().map(|c| c.texture.mips[c.level].bytes).sum();
+    let share = total.div_ceil(workers as u64).max(1);
+    let mut groups: Vec<Vec<(&Change, &mut [u8])>> = (0..workers).map(|_| Vec::new()).collect();
+    let (mut g, mut filled) = (0, 0u64);
+    for (change, part) in parts {
+        if filled >= share && g + 1 < workers {
+            g += 1;
+            filled = 0;
+        }
+        filled += change.texture.mips[change.level].bytes;
+        groups[g].push((change, part));
+    }
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = groups.into_iter().filter(|g| !g.is_empty()).map(|group| scope.spawn(move || {
+            for (change, part) in group {
+                change.detile(part)?;
+            }
+            Ok::<(), windows::core::Error>(())
+        })).collect();
+        handles.into_iter().try_for_each(|h| h.join().unwrap_or_else(|_| Err(E_FAIL.into())))
+    })
+}

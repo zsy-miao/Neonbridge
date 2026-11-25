@@ -1,0 +1,124 @@
+{
+  "scope": "Desktop run with stock Proton Experimental, packaged graphics settings and MangoHud. Dispatch records identify work recorded on command lists.",
+  "provider_sha256": "7e01b49515fe44d8083e498b14823bd0ebc02e2c464bb1e85b0ba58c74b652c7",
+  "compiler_sha256": "68511f1422b8ba4492303d31ccf7ab828da34596bd16d155a8cf1cd86ef2f372",
+  "log_sha256": "4b98b12c05c59b36c5de9f0c5aa19a1b35868eb946e55f5a5acc5e463ca9744d",
+  "lumen_hardware_ray_tracing": 1,
+  "construct_loaded": true,
+  "recorded_dispatches": {
+    "219": {
+      "source_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 5
+    },
+    "318": {
+      "source_sha256": "29285864ab5a502a45dfe24cb3d1a775f849831c9f0587465ad206d6734a4944",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 13
+    },
+    "306": {
+      "source_sha256": "c96870c66198cee9fc7b8407b62425e86f8fab5d48238d0d767561ab362f7511",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 13
+    },
+    "313": {
+      "source_sha256": "65c8d69bf17229f83648b917806e4b5b4795c61ad5b149326f8de0c4e57a7c68",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 13
+    },
+    "114": {
+      "source_sha256": "c1d37ea3f753a8426aa8831dbe5546aa31496f30152b0fb76e87eeef9ab73b6b",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 18
+    },
+    "58": {
+      "source_sha256": "c7a41d0c26504bd7ce2a95d18355d47ffc0c6839c6ff38259668c7c0df8377e8",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 16
+    },
+    "426": {
+      "source_sha256": "c5fae9002b4ed6fd2910545a37b66636d7e40e2c765684bae287b7fedef8e856",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 18
+    },
+    "434": {
+      "source_sha256": "22c246d69acb4d8f46f5b4397891d168feabf4210075e9b592d36ffcc5b0f2b7",
+      "scene_gpu_va": "0x123700000",
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "root_version": 1,
+      "table": 0,
+      "offset": 15
+    }
+  },
+  "first_shader_failure": null,
+  "mangohud_frames": 501,
+  "exit_code": 1,
+  "elapsed_seconds": 116.6,
+  "host": "GeForce RTX 4070 Ti SUPER",
+  "menu": {
+    "visible": true,
+    "image": "packaged-settings-menu.webp",
+    "observed": "Title, animated green background, Start Chase, Settings and chase video preview. The background has bright streaks."
+  },
+  "wake_up": {
+    "input": {
+      "selected": "Start Chase",
+      "key": "z",
+      "time": "2026-11-23T05:44:44.007459+00:00"
+    },
+    "event_frame": 500,
+    "event": "ChaseSection-WakeUp",
+    "fatal_frame": 503,
+    "failure": "CommandList->Close() returned E_INVALIDARG"
+  },
+  "performance": {
+    "frames": 501,
+    "skipped_rows": 4,
+    "sampled_seconds": 108.04284058,
+    "mean_fps": 4.637049501017478,
+    "frametime_ms": {
+      "p50": 110.199,
+      "p95": 402.984,
+      "p99": 2311.84,
+      "max": 16120.8
+    }
+  },
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "settings": {
+    "graphics_profile": "packaged",
+    "loose_graphics_overrides_in_package": 0,
+    "ray_tracing": 1,
+    "lumen_hardware_ray_tracing": 1
+  },
+  "runs": {
+    "tuxbox": {
+      "log_sha256": "4b98b12c05c59b36c5de9f0c5aa19a1b35868eb946e55f5a5acc5e463ca9744d",
+      "verified_milestones": [
+        "load_world",
+        "submit_frame",
+        "use_menu"
+      ]
+    }
+  }
+}

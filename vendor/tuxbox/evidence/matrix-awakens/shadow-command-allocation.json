@@ -1,0 +1,106 @@
+{
+  "scope": "Frosty global 1019 AllocateCommandInstanceOutputSpaceCs, native Xbox bytecode translated and dispatched on stock Proton",
+  "adapters": {
+    "AMD": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1019": {
+          "source_sha256": "dfd407b6a34c88c999cbdf6e28ad15ed7daecc974584ca4abb8e8a69cfa984c6",
+          "dxil_sha256": "fe3e5353feaea96ae60fa0c0b5c2d03e12bfa59825afeecf5d5ccbe9e77baec7"
+        }
+      },
+      "cases": {
+        "commands_empty": {
+          "commands": 0,
+          "instances": 0,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_one": {
+          "commands": 1,
+          "instances": 3,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_sparse": {
+          "commands": 64,
+          "instances": 18,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_full": {
+          "commands": 64,
+          "instances": 190,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_partial": {
+          "commands": 37,
+          "instances": 36,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "NVIDIA": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1019": {
+          "source_sha256": "dfd407b6a34c88c999cbdf6e28ad15ed7daecc974584ca4abb8e8a69cfa984c6",
+          "dxil_sha256": "fe3e5353feaea96ae60fa0c0b5c2d03e12bfa59825afeecf5d5ccbe9e77baec7"
+        }
+      },
+      "cases": {
+        "commands_empty": {
+          "commands": 0,
+          "instances": 0,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_one": {
+          "commands": 1,
+          "instances": 3,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_sparse": {
+          "commands": 64,
+          "instances": 18,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_full": {
+          "commands": 64,
+          "instances": 190,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "commands_partial": {
+          "commands": 37,
+          "instances": 36,
+          "checked_words": 240,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  },
+  "reproduce": "tools/check_frosty_vsm_pages.py --entry 1019"
+}

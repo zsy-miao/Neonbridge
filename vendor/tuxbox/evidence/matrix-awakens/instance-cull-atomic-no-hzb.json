@@ -1,0 +1,1974 @@
+{
+  "scope": "Eight InstanceCull variants without hierarchical depth input, using the returning depth atomic. Their packaged root signatures were dispatched with scene inputs, guarded output buffers, depth textures, queues and applicable statistics checks. Texture row padding is excluded; equal-depth candidates may win in either order.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "results": {
+    "3413": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3413": {
+            "source_sha256": "b41a79651ccc8c1ed51c01870f11238a9e374c5bd6f095a43b84e4e87d672677",
+            "dxil_sha256": "24d132c2a514675fe65a63b94bd915ffd28e8237fe3b1152b7c2c9d6b8760768"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3413": {
+            "source_sha256": "b41a79651ccc8c1ed51c01870f11238a9e374c5bd6f095a43b84e4e87d672677",
+            "dxil_sha256": "24d132c2a514675fe65a63b94bd915ffd28e8237fe3b1152b7c2c9d6b8760768"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3416": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3416": {
+            "source_sha256": "0dff97fc2f4b82028bc303476df593acaf050ca07a60f327cbc33cc03ec18a52",
+            "dxil_sha256": "82a7d0306670543935ee6921c85f6cbf98fb1ab4d7caf4d21deebc090b969f9d"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3416": {
+            "source_sha256": "0dff97fc2f4b82028bc303476df593acaf050ca07a60f327cbc33cc03ec18a52",
+            "dxil_sha256": "82a7d0306670543935ee6921c85f6cbf98fb1ab4d7caf4d21deebc090b969f9d"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3426": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3426": {
+            "source_sha256": "fae0feb00e54d5752a731c1ad91d9c6e1d862224312f62e147a6b90fbc020516",
+            "dxil_sha256": "87e6bef66b368427af1b5ead34baf7e63ceef00ed1830c39a331c728068e8edc"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3426": {
+            "source_sha256": "fae0feb00e54d5752a731c1ad91d9c6e1d862224312f62e147a6b90fbc020516",
+            "dxil_sha256": "87e6bef66b368427af1b5ead34baf7e63ceef00ed1830c39a331c728068e8edc"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3433": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3433": {
+            "source_sha256": "2fe62015c993ae0399f76923f53e03a94e9b1b599ec2ce325e1446b990ae8e2a",
+            "dxil_sha256": "f64bb7af0f5d3d7561e714cf4d99b35966a1b841f486ddbd1149de45571b059d"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3433": {
+            "source_sha256": "2fe62015c993ae0399f76923f53e03a94e9b1b599ec2ce325e1446b990ae8e2a",
+            "dxil_sha256": "f64bb7af0f5d3d7561e714cf4d99b35966a1b841f486ddbd1149de45571b059d"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3437": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3437": {
+            "source_sha256": "f04a3f5b90f36bde9ea05d287983ac13f1fda1975c384ecedd6568f23374503b",
+            "dxil_sha256": "5531e1f612fa87393bd04381f4840f64a9413acc003906fd01aa1e959dbb735e"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3437": {
+            "source_sha256": "f04a3f5b90f36bde9ea05d287983ac13f1fda1975c384ecedd6568f23374503b",
+            "dxil_sha256": "5531e1f612fa87393bd04381f4840f64a9413acc003906fd01aa1e959dbb735e"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3440": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3440": {
+            "source_sha256": "a23ba20c8330e75b1efaa2303919477fe33fc6ac4c8db1f85d29a13e261a7865",
+            "dxil_sha256": "847e2abe3fa4c88332c09ab810370bee4d9d0bbbc24d098945f693987179aa9a"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3440": {
+            "source_sha256": "a23ba20c8330e75b1efaa2303919477fe33fc6ac4c8db1f85d29a13e261a7865",
+            "dxil_sha256": "847e2abe3fa4c88332c09ab810370bee4d9d0bbbc24d098945f693987179aa9a"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3468": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3468": {
+            "source_sha256": "888091a184eb9c0faae6f0064510662075acd87c70b7aa14ab1944a37081181f",
+            "dxil_sha256": "f8f89019fa958a10f8f4bef3b37ea287570b14017cb9f571999954d7227b78ca"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3468": {
+            "source_sha256": "888091a184eb9c0faae6f0064510662075acd87c70b7aa14ab1944a37081181f",
+            "dxil_sha256": "f8f89019fa958a10f8f4bef3b37ea287570b14017cb9f571999954d7227b78ca"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1675,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3474": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3474": {
+            "source_sha256": "367a2d75b894726368e8f1d37eb8d5792969d70d60df856d06b9dc06c8ead46d",
+            "dxil_sha256": "e4c33db51235a9ef971208cd1e8cd29c95cce63b12f866339f3d869330c9f64f"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3474": {
+            "source_sha256": "367a2d75b894726368e8f1d37eb8d5792969d70d60df856d06b9dc06c8ead46d",
+            "dxil_sha256": "e4c33db51235a9ef971208cd1e8cd29c95cce63b12f866339f3d869330c9f64f"
+          }
+        },
+        "cases": {
+          "visibility_no_hzb_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_no_hzb_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    }
+  }
+}

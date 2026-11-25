@@ -1,0 +1,13 @@
+[package]
+name = "tuxbox-acphal"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Memory", "Win32_System_Diagnostics_Debug"] }
+# LGPL-2.1-or-later, used unmodified and pinned; see NOTICE.
+xma = { git = "https://github.com/omonkeyz/xbox-emulator", package = "xma", rev = "27122f7dfcceb9a899555362ee0dde2d530e033c" }

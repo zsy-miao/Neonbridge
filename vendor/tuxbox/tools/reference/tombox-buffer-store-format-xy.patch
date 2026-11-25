@@ -1,0 +1,31 @@
+--- a/crates/tuxbox-xshader/src/rdna2/mnem.rs
++++ b/crates/tuxbox-xshader/src/rdna2/mnem.rs
+@@ -292,7 +292,7 @@
+     Some(match op {
+         0x00 => "buffer_load_format_x", 0x01 => "buffer_load_format_xy",
+         0x02 => "buffer_load_format_xyz", 0x03 => "buffer_load_format_xyzw",
+-        0x04 => "buffer_store_format_x", 0x07 => "buffer_store_format_xyzw",
++        0x04 => "buffer_store_format_x", 0x05 => "buffer_store_format_xy", 0x07 => "buffer_store_format_xyzw",
+         0x87 => "buffer_store_format_d16_xyzw",
+         0x08 => "buffer_load_ubyte", 0x09 => "buffer_load_sbyte", 0x0a => "buffer_load_ushort",
+         0x0b => "buffer_load_sshort", 0x0c => "buffer_load_dword", 0x0d => "buffer_load_dwordx2",
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -818,6 +818,17 @@
+         em.classify_interpolation();
+     }
+     em.infer_tbuf_types();
++    // Both 512-thread hair scans load integer counts from R32_UINT and store
++    // (exclusive, inclusive) offsets to R32G32_UINT. Their additions pass
++    // through LDS, beyond the local register type-propagation window.
++    if compute_group(ex) == [512, 1, 1]
++        && (packed_root::matches_program(&ex.isa, 444, 0xf9b02aae1588e09b)
++            || packed_root::matches_program(&ex.isa, 588, 0x4884ae622354895b))
++    {
++        for &binding in &em.tbuf {
++            em.tbuf_ty.insert(binding, 1);
++        }
++    }
+     if subsurface_setup {
+         // These two R32_UINT UAVs hold both the atomic head and the XY rows.
+         em.tbuf_uint.extend([0, 1]);

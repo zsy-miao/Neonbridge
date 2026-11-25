@@ -1,0 +1,5 @@
+This marker file identifies the root of the VItoriaBr source tree.
+
+Tools refuse to write game-derived output (caches, converted assets, prepared
+images, logs containing game data) anywhere below a directory that contains
+this file. See docs/asset-policy.md.

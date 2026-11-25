@@ -1,0 +1,186 @@
+{
+  "scope": "Production desktop launcher and stock packaged graphics settings on the same hardware and Proton as menu-normal-launch.json. Capture begins at the first visually confirmed, focused menu image. A title-requested chase transition limited the available interval; only complete menu presents are counted. A second summary covers the entire verified foreground menu interval. The test sent no game input.",
+  "baseline": "menu-normal-launch.json",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": {
+    "os": "Linux 7.3.5-2-cachyos-bore x86_64",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "620.73.4"
+  },
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "launcher": "tools/run_frosty.sh --desktop --work STAGE -nosound",
+  "target_global_entry": 3385,
+  "native_shader_sha256": "76fb3b539aeeab93ca3bc9a935df2d0497047164c6b7902dc51c309f79e3c086",
+  "prior_dxil_sha256": "1f5feb33c03ec4c1e6e8eb98690ed2fe80d85adb5dde915d4eada524addb8d67",
+  "observed_process": {
+    "pid": "2249594",
+    "diagnostic_env": {
+      "VK_INSTANCE_LAYERS": "VK_LAYER_TUXBOX_console_cbv"
+    },
+    "profile_layer_mapped": false,
+    "mangohud": true,
+    "provider_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc",
+    "stage_shader_sha256": "0ad8f7e078bf6c13ca19aadf8ab0bead9fac29edca726a70a284bf21dbc9d1f0"
+  },
+  "shader_prep": "Frosty shaders ready: 0 compiled, 3791 cached. Preparation took 2.0s.",
+  "compute_prep": "Frosty compute pipelines ready: 6 cached.",
+  "launch_utc": "2026-11-23T11:27:19.375752+00:00",
+  "first_menu_match_utc": "2026-11-23T11:28:25.504915+00:00",
+  "elapsed_to_menu_seconds": 66.129,
+  "closed_utc": "2026-11-23T11:28:47.412553+00:00",
+  "sample_utc": [
+    "2026-11-23T11:28:25.505028+00:00",
+    "2026-11-23T11:28:26.507000+00:00"
+  ],
+  "compared_seconds": 1.002,
+  "mangohud": {
+    "complete_presents": 14,
+    "mean_fps": 15.11,
+    "frametime_ms": {
+      "p50": 65.3303,
+      "p95": 134.269,
+      "p99": 134.269,
+      "worst": 134.269
+    },
+    "system_cpu_percent_p50": 28.73,
+    "gpu_percent_p50": 100.0,
+    "csv_sha256": "04b288fb9bb9e991565ee1554069c82f14083b7e7ed7c0b5cb99c32b27cbc31c"
+  },
+  "baseline_compared_seconds": 12.96,
+  "full_foreground_menu": {
+    "sample_seconds": 1.002,
+    "sample_utc": [
+      "2026-11-23T11:28:25.505028+00:00",
+      "2026-11-23T11:28:26.507000+00:00"
+    ],
+    "mangohud": {
+      "complete_presents": 14,
+      "mean_fps": 15.11,
+      "frametime_ms": {
+        "p50": 65.3303,
+        "p95": 134.269,
+        "p99": 134.269,
+        "worst": 134.269
+      },
+      "system_cpu_percent_p50": 28.73,
+      "gpu_percent_p50": 100.0,
+      "csv_sha256": "04b288fb9bb9e991565ee1554069c82f14083b7e7ed7c0b5cb99c32b27cbc31c"
+    }
+  },
+  "device_wide_nvidia_smi": {
+    "command": "nvidia-smi dmon -i 0 -s puct -o DT",
+    "samples": 1,
+    "metrics": {
+      "board_power_w": {
+        "median": 126,
+        "min": 126,
+        "max": 126
+      },
+      "graphics_engine_percent": {
+        "median": 100,
+        "min": 100,
+        "max": 100
+      },
+      "memory_engine_percent": {
+        "median": 4,
+        "min": 4,
+        "max": 4
+      },
+      "mem_clock_mhz": {
+        "median": 10501,
+        "min": 10501,
+        "max": 10501
+      },
+      "sm_clock_mhz": {
+        "median": 2835,
+        "min": 2835,
+        "max": 2835
+      },
+      "pcie_rx_MBps": {
+        "median": 536,
+        "min": 536,
+        "max": 536
+      },
+      "pcie_tx_MBps": {
+        "median": 58,
+        "min": 58,
+        "max": 58
+      }
+    }
+  },
+  "procfs": {
+    "samples": 0,
+    "logical_cpus": 16
+  },
+  "native_capture": {
+    "sha256": "a21d953dc453b243239e580a691b2639380bb28d391f3bdf7a6a0a25e174d98a",
+    "image": "menu.jpg",
+    "background_rgb_sha256": "7d0d90c353329f97eeffd97bb645bb6e7d62b451abd59f198e09d280ccb6af53",
+    "largest_solid_square_side_px": 8,
+    "bright_boxes": 1,
+    "green_pixels": 29961,
+    "sampled_pixels": 220590,
+    "chromatic_pixels": 23774,
+    "green_dominant_pixels": 22944,
+    "blue_dominant_pixels": 741,
+    "chromatic_mean_rgb": [
+      22.66,
+      97.81,
+      62.89
+    ]
+  },
+  "launcher_log_sha256": "51c52838af333b7c414a6ed103902ea63b0b47dbf664ada8974885b44a6a04bf",
+  "first_chase_request_utc": "2026-11-23T11:28:26.507000+00:00",
+  "prior_run_equal_length": {
+    "complete_presents": 8,
+    "mean_fps": 8.701,
+    "frametime_ms": {
+      "p50": 116.134,
+      "p95": 119.795,
+      "p99": 119.795,
+      "worst": 119.795
+    },
+    "system_cpu_percent_p50": 19.573,
+    "gpu_percent_p50": 100.0,
+    "csv_sha256": "0dd326005ffa16db5b1806f7958c7bfe4b1b3ce1b41bc9a89492add7498d1f95"
+  },
+  "chase_wakeup_transition_comparison": {
+    "scope": "First five seconds after the game logs the ChaseSection-WakeUp event, including the cinematic. Each game window remained focused and visible, and both runs delivered 3840x1600 HEVC frames. Only fully contained presentation intervals count.",
+    "before": {
+      "start_utc": "2026-11-23T11:16:28.229000+00:00",
+      "end_utc": "2026-11-23T11:16:33.229000+00:00",
+      "focused_visible_observations": 11,
+      "mangohud": {
+        "complete_presents": 56,
+        "mean_fps": 11.327,
+        "frametime_ms": {
+          "p50": 83.0831,
+          "p95": 104.615,
+          "p99": 390.239,
+          "worst": 390.239
+        },
+        "system_cpu_percent_p50": 27.2611,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "0dd326005ffa16db5b1806f7958c7bfe4b1b3ce1b41bc9a89492add7498d1f95"
+      }
+    },
+    "after": {
+      "start_utc": "2026-11-23T11:28:30.648000+00:00",
+      "end_utc": "2026-11-23T11:28:35.648000+00:00",
+      "focused_visible_observations": 11,
+      "mangohud": {
+        "complete_presents": 109,
+        "mean_fps": 22.35,
+        "frametime_ms": {
+          "p50": 44.4592,
+          "p95": 65.5341,
+          "p99": 71.9291,
+          "worst": 73.7346
+        },
+        "system_cpu_percent_p50": 28.6236,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "04b288fb9bb9e991565ee1554069c82f14083b7e7ed7c0b5cb99c32b27cbc31c"
+      }
+    }
+  }
+}

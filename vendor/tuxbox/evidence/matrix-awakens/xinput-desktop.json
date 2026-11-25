@@ -1,0 +1,22 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "50af3c2268e06f2cc7d92ce47b55945bb225eadfa5c7d677dae6aaedd2a5fc50",
+  "guest_sha256": "bdbd6046d3fd05da638cdb48c1872e44367a563402f681abb3655769d9a14866",
+  "fixture": "Linux uinput Xbox 360-style USB controller (045e:028e)",
+  "host_input": "XInputGetState",
+  "observed": {
+    "slot": "0",
+    "raw_lx": "24000",
+    "raw_rt": "160"
+  },
+  "checks": [
+    "connect",
+    "matching GameInput hardware port",
+    "B, left stick X and right trigger",
+    "Z and left-click press/release during held hardware input",
+    "ordered GetNextReading on same physical port",
+    "neutral",
+    "disconnect",
+    "keyboard fallback"
+  ]
+}

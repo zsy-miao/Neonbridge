@@ -1,0 +1,80 @@
+{
+  "scope": "Dynamic-input controls for sampled BOX16/BOX32, one serialized root and six synthetic paired triangles, compared to native gfx1036; no general traversal equivalence.",
+  "serialized_source_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+  "controls": [
+    {
+      "scope": "synthetic BOX16/BOX32 cases: native gfx1036 instruction output versus HLSL, not a general opcode equivalence proof",
+      "projected_rtz": false,
+      "float_rtz": false,
+      "dynamic": true,
+      "cases": 48,
+      "native_dump_sha256": "d9935e27e40446706c5473504a5688e9e4cc2f29761ca8c6b2d871303ec7b3e1",
+      "hlsl_sha256": "9c31565db83fb16a69833298eb891792074237158cc967fb2e46a2522b73cb01",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 48,
+          "guard_words": 192,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 48,
+          "guard_words": 192,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "48da58889114671f6fc4930a57b7d1c8c4d513d6e01fd4dbb5d486b4ee29ace0"
+    },
+    {
+      "scope": "serialized BLAS root cases: native gfx1036 instruction output versus HLSL, not a general opcode equivalence proof",
+      "projected_rtz": false,
+      "float_rtz": false,
+      "dynamic": true,
+      "cases": 8,
+      "native_dump_sha256": "e6f905514a74682370354017e0d7004d73d7816a90e5ee58dc992c28855ec3cb",
+      "hlsl_sha256": "fa3f72cf5d024bba81daa70687e8193f5d667b164b3921c7f38b186c8f60dbec",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 8,
+          "guard_words": 352,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 8,
+          "guard_words": 352,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "fe001fa23338f64a32c8ac7f753b19b75526d760e9caff07571ed07cd3d8f8c5"
+    },
+    {
+      "scope": "synthetic paired triangle cases: native gfx1036 instruction output versus HLSL, not a general opcode equivalence proof",
+      "projected_rtz": false,
+      "float_rtz": false,
+      "dynamic": true,
+      "cases": 6,
+      "native_dump_sha256": "908e8539dabe2b528576066cf41aa7f9d2b02a88ea20474059bb641d6c1b1dfa",
+      "hlsl_sha256": "ff8e0d4a629dafe3f4c76fdf20e4f2b5659c7358a42999cd4a363c9b1d7d17ea",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2475be624541560311e6b7e787acaa5c57e3a07b8b8a56efa0922db0849d36ca"
+    }
+  ],
+  "cases_per_adapter": 62,
+  "mismatches": 0
+}

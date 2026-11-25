@@ -1,0 +1,3996 @@
+//! Guest command lists and queues. Embedded guest COM pointers are translated
+//! before a batch reaches the desktop API.
+
+use core::{ffi::c_void, mem, ops::Range, ptr, slice};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, E_NOTIMPL, E_OUTOFMEMORY, RECT, S_OK};
+use windows::Win32::Graphics::Direct3D12::*;
+use windows::Win32::System::Diagnostics::Debug::OutputDebugStringA;
+use windows::core::{HRESULT, IUnknown, Interface, s};
+
+use crate::device;
+use crate::device::placement::{self, Texture};
+use crate::present::Presentation;
+use crate::proxy::{Proxy, Slots, allocate, child_slots, unwrap};
+
+mod build_raytracing;
+pub(crate) use build_raytracing::LIST6;
+mod compute;
+mod compute_bindings;
+mod depth;
+mod enhanced;
+mod descriptors;
+mod graphics;
+mod indirect_clamp;
+mod media;
+mod memory_wait;
+mod queue_hold;
+mod slot_trace;
+
+/// A GPU memory wait is holding queued work back (the present throttle).
+pub(crate) fn memory_wait_held() -> bool {
+    memory_wait::held()
+}
+/// Makes every held GPU memory wait give up at once, as a present release
+/// does, and returns how many were held (five-star bd100ba).
+pub(crate) fn release_memory_waits() -> usize {
+    memory_wait::release_all()
+}
+/// TUXBOX_QUEUE_HOLD: runs what title queues hold on the CPU as far as their
+/// memory values are there (a fence moved or was set).
+/// TUXBOX_SHADOW_READ_SET: `list` reads title `[address, address + bytes)`
+/// (Coder2's views::read_set; ztrx refreshes only what a submission reads).
+pub(super) fn note_read(list: &List, address: u64, bytes: u64) {
+    device::read_set_record(list as *const List as usize, address, bytes);
+}
+/// `list` may read anything (a descriptor table, a bundle, a resource copy:
+/// what it reads is not enumerated), so its submission refreshes all.
+pub(super) fn note_read_all(list: &List) {
+    device::read_set_record(list as *const List as usize, 1, u64::MAX - 1);
+}
+pub(crate) fn queue_hold_on() -> bool {
+    queue_hold::on()
+}
+pub(crate) fn release_held_queues() {
+    queue_hold::release_held(false)
+}
+/// TUXBOX_MEMWAIT_RELAY (default on; ztrx c96b4f2, GPL-3.0): copy-backs land
+/// ahead of GPU memory wait gates and merge per fence (memory_wait::relay).
+pub(crate) fn memory_wait_relay_on() -> bool {
+    memory_wait::relay::on()
+}
+pub(crate) mod page_mapping;
+mod queries;
+mod ray_dispatch;
+mod raytracing;
+pub(crate) mod serialized_blas;
+mod split;
+mod tiles;
+mod standard;
+mod stencil;
+mod table_drop;
+mod ztrx_fill;
+
+enum ListState {
+    Fresh(ID3D12CommandAllocator, Option<ID3D12PipelineState>),
+    Open,
+    Closed,
+}
+
+fn dispatch_pending_wait() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_DISPATCH_PENDING_WAIT") != Some("0"))
+}
+
+/// Count draws and dispatches dropped for a pipeline still being made.
+fn dropped_for_pending() {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DroppedPending);
+    static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dropped = DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if dropped.is_power_of_two() {
+        crate::diagnostics::log_once(&std::sync::Once::new(), || {
+            format!("dropped {dropped} draws/dispatches whose pipeline was still being made")
+        });
+    }
+}
+
+/// Count draws and dispatches dropped for a root view that did not resolve.
+fn dropped_for_unresolved_root(mask: u64) {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DroppedRoot);
+    static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dropped = DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if dropped <= 4 || dropped.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "dropped {dropped} draws/dispatches whose root view did not resolve (root indices {mask:#x}; TUXBOX_ROOT_STALE_CLEAR=sink binds the zeroed sink instead)"));
+    }
+}
+
+struct Recording {
+    prefix: memory_wait::Prefix,
+    timestamp_page: Option<(ID3D12QueryHeap, u32)>,
+    resources: device::MediaResources,
+    scene_commands: Vec<raytracing::SceneCommand>,
+    bindings: compute_bindings::Bindings,
+    unresolved_tables: table_drop::Unresolved,
+    stencil_slot: Option<u32>,
+    stencil_targets: Option<stencil::Targets>,
+    dsv_bound: bool,
+    /// TUXBOX_SLOT57_REAL=1: the bound slot 57 record, the bound target
+    /// formats and the title's own stencil reference (graphics::draw_slot57).
+    slot57: Option<Arc<device::compute::Slot57>>,
+    /// The bound host pipeline (graphics::bind_host), for its quad-mask
+    /// variant (graphics::draw_quad); 0 for none.
+    quad_host: usize,
+    slot57_targets: device::compute::Slot57Targets,
+    stencil_reference: u32,
+    display_bound: bool,
+    /// A bound render target has the presented plane's size (rebox 8af34bf).
+    display_sized: bool,
+    trace_target: Option<ID3D12Resource>,
+    trace_samples: Vec<(String, crate::present::sampler::Sample)>,
+    null_pipeline: bool,
+    /// The bound pipeline is lazy and still being made: draws and
+    /// dispatches are dropped until the list binds it again once it exists.
+    pipeline_pending: bool,
+    /// The pending pipeline itself (a `device::compute::Pipeline`), 0 when
+    /// `pipeline_pending` has another cause: each draw and dispatch looks at
+    /// it again (Recording::still_pending).
+    pending_pipeline: usize,
+    /// A dispatch of this recording did not run (dropped or refused): the
+    /// buffers it would have written, indirect arguments and counts among
+    /// them, hold what they held before (see `indirect_guard`).
+    skipped_compute: bool,
+    /// What the skipped dispatches could have written: the host addresses of
+    /// their root UAVs, or None once one could write through anything else
+    /// (TUXBOX_INDIRECT_STALE_NARROW).
+    skipped_writes: Option<Vec<u64>>,
+    /// The bound pipeline's key while a frame is captured (diagnostics capture).
+    capture_pipeline: Option<Arc<str>>,
+    /// Root views (bit = root index) whose title address did not resolve,
+    /// [graphics, compute]: draws/dispatches drop until they are bound again
+    /// (see compute::root_buffer).
+    unresolved_roots: [u64; 2],
+    /// This recording's indirect execution budget (see indirect_clamp).
+    clamp_budget: Option<ID3D12Resource>,
+    /// This recording's clamped indirect arguments (indirect_clamp::Scratch).
+    clamp_scratch: Option<indirect_clamp::Scratch>,
+    media: Option<media::Recording>,
+    placed_reads: Vec<Arc<Texture>>,
+    placed_writes: Vec<Arc<Texture>>,
+    bound_placed_targets: Vec<Arc<Texture>>,
+    /// render heaps of its RTVs and DSVs, touched again at submit
+    target_heaps: device::placement::TargetHeaps,
+    /// when its recording began (render heap residency)
+    opened: std::time::Instant,
+    resource_heap: Option<descriptors::ResourceHeap>,
+    descriptor_arena: Option<Arc<device::descriptor_paging::Arena>>,
+    /// The bound sampler heap's GPU start and stride (TB_ZTRX_SHADER
+    /// sampler table values, ztrx_fill).
+    sampler_heap: Option<(u64, u64)>,
+    indexed_arenas: Vec<Arc<device::descriptor_paging::Arena>>,
+    /// Holds on the table slots of each paged arena this recording bound
+    /// (descriptor_paging/retire.rs); dropped at reset or release.
+    arena_leases: Vec<device::descriptor_paging::Lease>,
+    scalar_descriptors: std::collections::HashSet<descriptors::ScalarDescriptor>,
+    sampled_heaps: Vec<Range<usize>>,
+    /// A descriptor table was bound since the Reset (read_set_heaps).
+    pub(super) tables_bound: bool,
+    /// UAV descriptor ranges this recording's draws and dispatches bound.
+    written_views: Vec<Range<usize>>,
+    /// Heap ranges a per-lane heap write reaches (shadow::uav_fallback).
+    fallback_views: Vec<Range<usize>>,
+    /// Heaps this recording's programs index per lane (shadow::dynamic_heaps).
+    dynamic_heaps: Vec<Range<usize>>,
+    /// TUXBOX_LIST_RING=1: guest caller RVAs of the latest recording calls,
+    /// dumped when the host Close rejects the list.
+    ring: std::collections::VecDeque<usize>,
+    /// Writes this list records to the page of a stalled GPU memory wait.
+    stalled_writes: Vec<u64>,
+    /// CopyMemoryToMemoryX into title memory that is not GPU memory:
+    /// (destination, source, bytes), done on the CPU once the list has run.
+    cpu_copies: Vec<(u64, u64, u64)>,
+    /// marker and 64-bit value writes in recorded order: (address, value,
+    /// bytes), written by the CPU if the list is left out of its batch
+    value_writes: Vec<(u64, u64, u8)>,
+    /// The scratch buffer a same-buffer CopyMemoryToMemoryX goes through
+    /// (buffer, bytes, used in this recording); see copy_through_scratch.
+    copy_scratch: Option<(ID3D12Resource, u64, bool)>,
+    /// Queries begun and not yet ended, ended at Close: an open query makes
+    /// the host Close fail.
+    open_queries: Vec<(ID3D12QueryHeap, D3D12_QUERY_TYPE, u32)>,
+    /// BEGIN_ONLY transitions without their END_ONLY yet, finished at Close.
+    split_barriers: Vec<TransitionBarrier>,
+    /// Split barriers ended at a cut (split carry): their END_ONLY halves,
+    /// recorded later in the next host list, are dropped (native resource,
+    /// subresource).
+    pub(super) ended_splits: Vec<(usize, u32)>,
+    /// Host lists this recording was split into at GPU memory waits (split).
+    segments: split::Segments,
+    phase: ListState,
+    error: HRESULT,
+    /// Where `error` was set (test119 logged two refused 0x80004001 calls
+    /// before its hang with nothing naming them).
+    error_at: (&'static str, u32),
+}
+
+impl Recording {
+    fn track_texture(accesses: &mut Vec<Arc<Texture>>, texture: &Arc<Texture>) -> Result<(), HRESULT> {
+        if !accesses.iter().any(|known| Arc::ptr_eq(known, texture)) {
+            accesses.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+            accesses.push(Arc::clone(texture));
+        }
+        Ok(())
+    }
+
+    fn prepare_copy(
+        &mut self,
+        destination: Option<&Arc<Texture>>,
+        source: Option<&Arc<Texture>>,
+    ) -> Result<(), HRESULT> {
+        for (accesses, texture) in [
+            (&mut self.placed_reads, source),
+            (&mut self.placed_writes, destination),
+        ] {
+            if let Some(texture) = texture {
+                Self::track_texture(accesses, texture)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What became of a draw or dispatch that did not run (capture).
+    fn capture_outcome(&self, ran: bool, before: HRESULT, compute: bool) -> String {
+        if ran {
+            "ran".into()
+        } else if self.error != before {
+            format!("refused {:#010x} at {}:{}", self.error.0, self.error_at.0, self.error_at.1)
+        } else if self.pipeline_pending {
+            "dropped: pipeline still being made".into()
+        } else if self.unresolved_roots[usize::from(compute)] != 0 {
+            format!("dropped: unresolved root view (mask {:#x})", self.unresolved_roots[usize::from(compute)])
+        } else {
+            "dropped: unresolved descriptor table or bindings".into()
+        }
+    }
+
+    fn compute_dispatch(&mut self, list: &List, dispatch: impl FnOnce()) {
+        let ran = std::cell::Cell::new(false);
+        let before = self.error;
+        self.compute_dispatch_inner(list, || { ran.set(true); dispatch() });
+        if !ran.get() {
+            let first = !self.skipped_compute;
+            self.skipped_compute = true;
+            let writes = if self.unresolved_roots[1] != 0 { None } else { self.bindings.root_uav_writes() };
+            self.skipped_writes = match (first, self.skipped_writes.take(), writes) {
+                (true, _, writes) => writes,
+                (false, Some(mut had), Some(more)) => { had.extend(more); Some(had) }
+                _ => None,
+            };
+        }
+        if !crate::diagnostics::capture::active() {
+            return;
+        }
+        let outcome = self.capture_outcome(ran.get(), before, true);
+        crate::diagnostics::capture::call("dispatch", list as *const List as usize, &outcome,
+            self.capture_pipeline.as_deref(), self.null_pipeline);
+    }
+
+    fn draw(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
+        if !crate::diagnostics::capture::active() {
+            return self.draw_inner(list, rasterizes, draw);
+        }
+        let ran = std::cell::Cell::new(false);
+        let before = self.error;
+        self.draw_inner(list, rasterizes, || { ran.set(true); draw() });
+        let outcome = self.capture_outcome(ran.get(), before, false);
+        crate::diagnostics::capture::call(if rasterizes { "draw" } else { "draw (no raster)" },
+            list as *const List as usize, &outcome, self.capture_pipeline.as_deref(), self.null_pipeline);
+    }
+
+    fn compute_dispatch_inner(&mut self, list: &List, dispatch: impl FnOnce()) {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchCalls);
+        let drew_with = self.quad_host;
+        let dispatch = move || {
+            crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DispatchesRecorded);
+            crate::device::compute::note_drew(drew_with); // TUXBOX_EARLY_USED (ztrx d279e69)
+            dispatch()
+        };
+        // test173 hung at a scene change: dispatches were still dropped as
+        // "pipeline still being made" (384.1 s) after binds that had not
+        // waited, and subrender group 2's event was never set. A dispatch
+        // whose compute pipeline is still pending waits for it once more
+        // here (compute::wait_pending_compute: bounded per bind and frame)
+        // and records if it is made (VIctory-fxceless draw.rs prepare_for,
+        // credit to its authors: a dispatch is never dropped).
+        // TUXBOX_DISPATCH_PENDING_WAIT=0 drops it at once as before.
+        if self.still_pending(list) && !(dispatch_pending_wait() && self.wait_pending_dispatch() && !self.still_pending(list)) {
+            dropped_for_pending();
+            return;
+        }
+        if self.unresolved_roots[1] != 0 {
+            dropped_for_unresolved_root(self.unresolved_roots[1]);
+            return;
+        }
+        if let Some(ztrx) = self.bindings.ztrx() {
+            self.ztrx_record(list, true, ztrx, dispatch);
+            return;
+        }
+        if let Some(table) = self.bindings.reflected_table::<true>() {
+            if let Err(error) = self.bindings.with_reflected_table::<true>(
+                table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(),
+                &mut self.sampled_heaps, &self.resources, dispatch,
+            ) && !table_drop::drops(error.code(), "dispatch")
+            {
+                { self.error = error.code(); self.error_at = (file!(), line!()); }
+            }
+            return;
+        }
+        if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<true>() {
+            unpaged_dispatch(self.bindings.paged_shape::<true>(), self.capture_pipeline.as_deref());
+            { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); }
+            return;
+        }
+        if self.unresolved_tables.any(true) && table_drop::enabled() {
+            table_drop::note("dispatch");
+            return;
+        }
+        if let Err(error) = self.bindings.refresh_inline_tables::<true>(self.descriptor_arena.as_deref()) {
+            if !table_drop::drops(error.code(), "dispatch") {
+                { self.error = error.code(); self.error_at = (file!(), line!()); }
+            }
+            return;
+        }
+        self.sample_tables::<true>();
+        let Some(root) = self.bindings.scene_root() else {
+            dispatch();
+            return;
+        };
+        let result = self.bindings.scene_resource(list)
+            .and_then(|scene| {
+                if let Some([instances, normals]) = &scene.geometry {
+                    raytracing::retain(self, &[&scene.scene.0, &instances.0, &normals.0])?;
+                } else {
+                    raytracing::retain(self, &[&scene.scene.0])?;
+                }
+                Ok(scene)
+            })
+            .and_then(|scene| {
+                let va = scene.scene.1;
+                let geometry = scene.geometry.as_ref().map(|[instances, normals]| [instances.1, normals.1]);
+                if scene.recheck_on_submit()
+                    && !matches!(self.scene_commands.last(), Some(raytracing::SceneCommand::Check(last)) if *last == scene)
+                {
+                    self.scene_commands.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+                    self.scene_commands.push(raytracing::SceneCommand::Check(scene));
+                }
+                unsafe { self.bindings.dispatch_scene(&list.native, root, va, geometry, dispatch) };
+                crate::diagnostics::log_once(&root.program.first_dispatch, || {
+                    format!("recorded inline compute shader {} dispatch with scene GPU VA {va:#x}", root.program.source_hash)
+                });
+                Ok(())
+            });
+        if let Err(error) = result {
+            crate::diagnostics::recording_error(format_args!(
+                "inline ray scene binding: {:?}", error.code()
+            ));
+            { self.error = error.code(); self.error_at = (file!(), line!()); }
+        }
+    }
+
+    fn draw_inner(&mut self, list: &List, rasterizes: bool, draw: impl FnOnce()) {
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawCalls);
+        let drew_with = self.quad_host;
+        let draw = move || {
+            crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::DrawsRecorded);
+            crate::device::compute::note_drew(drew_with); // TUXBOX_EARLY_USED (ztrx d279e69)
+            draw()
+        };
+        if self.still_pending(list) {
+            dropped_for_pending();
+            return;
+        }
+        if self.unresolved_roots[0] != 0 {
+            dropped_for_unresolved_root(self.unresolved_roots[0]);
+            return;
+        }
+        if rasterizes {
+            crate::diagnostics::display::draw(self.display_bound, self.null_pipeline);
+        }
+        if rasterizes {
+            for target in &self.bound_placed_targets {
+                if let Err(error) = Self::track_texture(&mut self.placed_writes, target) {
+                    { self.error = error; self.error_at = (file!(), line!()); }
+                    return;
+                }
+            }
+        }
+        let trace = |state: &mut Self| {
+            if let Some(trace) = &state.bindings.draw_trace {
+                trace.recorded(|| state.bindings.raster_inputs(state.resource_heap.as_ref(), state.descriptor_arena.as_deref(), state.display_bound));
+                if let Some(target) = &state.trace_target
+                    && let Some(label) = trace.sample_label()
+                    && let Some(sample) = crate::present::sampler::record(
+                        &list.native, target, D3D12_RESOURCE_STATE_RENDER_TARGET,
+                    )
+                {
+                    state.trace_samples.push((label, sample));
+                }
+            }
+        };
+        if let Some(ztrx) = self.bindings.ztrx() {
+            if self.ztrx_record(list, false, ztrx, draw) {
+                trace(self);
+            }
+            return;
+        }
+        if let Some(table) = self.bindings.reflected_table::<false>() {
+            if self.stencil_slot.is_some() { { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); } return; }
+            if let Some(binding) = table.index_map.filter(|b| b.scalar_mask != 0) {
+                // These PSOs have one descriptor table followed by one root
+                // constants parameter. The native ISA selects its scalar
+                // buffer with a word (and optional mask) from that parameter.
+                let descriptor = self.bindings.graphics_constant(1, binding.scalar_word)
+                    .and_then(|word| self.resource_heap.as_ref()?.scalar_descriptor(
+                        word & binding.scalar_mask, self.descriptor_arena.as_deref(),
+                    ));
+                let Some(descriptor) = descriptor else { { self.error = E_INVALIDARG; self.error_at = (file!(), line!()); } return };
+                if self.scalar_descriptors.try_reserve(1).is_err() {
+                    { self.error = E_OUTOFMEMORY; self.error_at = (file!(), line!()); }
+                    return;
+                }
+                self.scalar_descriptors.insert(descriptor);
+                if let Some(arena) = &self.descriptor_arena
+                    && !self.indexed_arenas.iter().any(|used| Arc::ptr_eq(used, arena))
+                {
+                    if self.indexed_arenas.try_reserve(1).is_err() {
+                        { self.error = E_OUTOFMEMORY; self.error_at = (file!(), line!()); }
+                        return;
+                    }
+                    self.indexed_arenas.push(arena.clone());
+                }
+            }
+            if let Err(error) = self.bindings.with_reflected_table::<false>(
+                table, list, self.descriptor_arena.as_deref(), self.resource_heap.as_ref(), &mut self.sampled_heaps, &self.resources, draw,
+            ) {
+                if table_drop::drops(error.code(), "draw") { return; }
+                { self.error = error.code(); self.error_at = (file!(), line!()); }
+                if crate::diagnostics::display::trace_views() {
+                    crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+                        "reflected raster binding failed {:#010x} guest RVA {:#x}", self.error.0,
+                        crate::survey::title_rva().unwrap_or(0),
+                    ));
+                }
+            } else { trace(self); }
+            return;
+        }
+        if self.descriptor_arena.is_some() && !self.bindings.supports_paged_draw::<false>() {
+            { self.error = E_NOTIMPL; self.error_at = (file!(), line!()); }
+            return;
+        }
+        if self.unresolved_tables.any(false) && table_drop::enabled() {
+            table_drop::note("draw");
+            return;
+        }
+        if let Err(error) = self.bindings.refresh_inline_tables::<false>(self.descriptor_arena.as_deref()) {
+            if table_drop::drops(error.code(), "draw") { return; }
+            { self.error = error.code(); self.error_at = (file!(), line!()); }
+            if crate::diagnostics::display::trace_views() {
+                crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+                    "original raster binding failed {:#010x} guest RVA {:#x}", self.error.0,
+                    crate::survey::title_rva().unwrap_or(0),
+                ));
+            }
+            return;
+        }
+        self.sample_tables::<false>();
+        if let Some(slot) = self.stencil_slot
+            && self.dsv_bound
+        {
+            let status = self
+                .stencil_targets
+                .as_ref()
+                .ok_or_else(|| windows::core::Error::from(E_NOTIMPL))
+                .and_then(|t| t.draw(&list.native, slot, draw));
+            if let Err(e) = status {
+                { self.error = e.code(); self.error_at = (file!(), line!()); }
+            } else { trace(self); }
+        } else {
+            draw();
+            trace(self);
+        }
+    }
+    /// End what the title left open: a begun query or a split barrier
+    /// without its end half makes the host Close fail.
+    fn balance(&mut self, native: &ID3D12GraphicsCommandList) {
+        if !self.open_queries.is_empty() || !self.split_barriers.is_empty() {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&ONCE, || format!(
+                "closing a list with {} open queries and {} unfinished split barriers; ended them",
+                self.open_queries.len(), self.split_barriers.len()));
+        }
+        for (heap, kind, index) in self.open_queries.drain(..) {
+            unsafe { native.EndQuery(&heap, kind, index) };
+        }
+        let ends: Vec<TransitionBarrier> = self.split_barriers.drain(..)
+            .map(|b| TransitionBarrier { flags: D3D12_RESOURCE_BARRIER_FLAG_END_ONLY, ..b })
+            .collect();
+        if !ends.is_empty() {
+            unsafe { (native.vtable().ResourceBarrier)(native.as_raw(), ends.len() as u32, ends.as_ptr().cast()) };
+        }
+    }
+
+    fn sample_tables<const COMPUTE: bool>(&mut self) {
+        if self.resource_heap.is_none()
+            && self.bindings.heap_access.as_ref().is_some_and(|a| !a.writes.is_empty())
+        {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&SAID, || "shadow uav re-mark: a heap-writing program ran with no resource heap bound on its list; its writes are not re-marked".to_string());
+        }
+        if let Some(heap) = &self.resource_heap
+            && crate::device::uav_remark()
+        {
+            self.bindings.uav_tables::<COMPUTE>(heap, &mut self.written_views);
+            self.bindings.heap_writes::<COMPUTE>(heap, &mut self.written_views, &mut self.fallback_views, &mut self.sampled_heaps, &mut self.dynamic_heaps);
+        }
+        if let Some(heap) = &self.resource_heap
+            && self.bindings.sample_tables::<COMPUTE>(heap, &mut self.sampled_heaps).is_none()
+        {
+            self.sample_heap();
+        }
+    }
+
+    fn sample_heap(&mut self) {
+        if let Some(heap) = &self.resource_heap {
+            descriptors::include_range(&mut self.sampled_heaps, heap.cpu.clone());
+        }
+    }
+
+    fn can_record(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if !self.ensure_open(native) { return false; }
+        if let Err(error) = self.prefix.finish(native) {
+            { self.error = error.code(); self.error_at = (file!(), line!()); }
+            return false;
+        }
+        true
+    }
+
+    /// A graphics-only call on a compute or copy list: the core runtime
+    /// refuses the whole list at Close, so drop just the call.
+    fn can_record_graphics(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if !self.can_record(native) { return false; }
+        let kind = unsafe { native.GetType() };
+        if kind == D3D12_COMMAND_LIST_TYPE_DIRECT { return true; }
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::GraphicsOnOtherLists);
+        static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = DROPPED.fetch_add(1, Ordering::Relaxed);
+        if n < 8 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "dropped a graphics-only call on a type {} list from guest RVA {:#x} ({} so far)",
+                kind.0, crate::survey::title_rva().unwrap_or(0), n + 1
+            ));
+        }
+        false
+    }
+
+    fn can_record_for<const COMPUTE: bool>(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if COMPUTE { self.can_record_shader(native) } else { self.can_record_graphics(native) }
+    }
+
+    /// Shader state and dispatches: a copy list refuses them like graphics.
+    fn can_record_shader(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        if unsafe { native.GetType() } == D3D12_COMMAND_LIST_TYPE_COPY {
+            return self.can_record_graphics(native);
+        }
+        self.can_record(native)
+    }
+
+    /// A call our own checks refused (E_NOTIMPL / E_INVALIDARG) is dropped
+    /// alone: latching it silenced the rest of the list and the submission
+    /// dropped the whole batch, so frames stayed black. Draws and dispatches
+    /// wait for the next pipeline bind, in case the refused call was state
+    /// they depend on. TUXBOX_STRICT_LISTS=1 keeps the old latch.
+    fn forgive(&mut self) {
+        if !matches!(self.phase, ListState::Open)
+            || !matches!(self.error, E_NOTIMPL | E_INVALIDARG)
+            || strict_lists()
+        {
+            return;
+        }
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::RefusedCalls);
+        static FORGIVEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FORGIVEN.fetch_add(1, Ordering::Relaxed);
+        if n < 8 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "dropped one refused recording call {:#010x} (set at {}:{}), list continues ({} so far)",
+                self.error.0, self.error_at.0, self.error_at.1, n + 1
+            ));
+        }
+        self.error = S_OK;
+        self.pipeline_pending = true;
+        self.pending_pipeline = 0;
+    }
+
+    /// Whether the bound pipeline is still pending, looked at again for this
+    /// draw or dispatch (VIctory-fxceless draw.rs:775, GPL-3.0, credit to its
+    /// authors). Pending was decided at the bind alone, so a pipeline its
+    /// worker made a millisecond after SetPipelineState lost every draw until
+    /// the next bind. A draw now asks again (and waits within the frame's
+    /// pipeline budget, as the bind does) and binds it once it exists.
+    /// TUXBOX_PENDING_RECHECK=0 keeps the bind's answer.
+    /// Waits for the pending compute pipeline of a dispatch; whether it waited.
+    fn wait_pending_dispatch(&self) -> bool {
+        if self.pending_pipeline == 0 {
+            return false;
+        }
+        // SAFETY: as in still_pending, the title keeps a bound pipeline alive.
+        let host = unsafe { &*(self.pending_pipeline as *const device::compute::Pipeline) };
+        let waited = device::compute::wait_pending_compute(host);
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "a dispatch met its compute pipeline still being made: {}, key {:?} ({n} so far; TUXBOX_DISPATCH_PENDING_WAIT=0 drops at once)",
+                if !waited { "not waited (failed, not lazy or no wait left), dropped" } else if device::compute::current(host).2 { "waited, still not made, dropped" } else { "waited, made, recorded" }, host.state.key));
+        }
+        waited
+    }
+
+    fn still_pending(&mut self, list: &List) -> bool {
+        if !self.pipeline_pending {
+            return false;
+        }
+        if self.pending_pipeline == 0 || crate::env_toggle!("TUXBOX_PENDING_RECHECK") == Some("0") {
+            return true;
+        }
+        // SAFETY: the title keeps a pipeline it bound alive while the list
+        // records and runs (a D3D12 rule); the pointer was taken at the bind.
+        let host = unsafe { &*(self.pending_pipeline as *const device::compute::Pipeline) };
+        let (native, data, pending) = device::compute::current(host);
+        if pending {
+            return true;
+        }
+        let native = native.clone();
+        graphics::bind_host(list, self, host, &native, data, false);
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = MADE.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "a pending pipeline was made after its bind and draws again from its next draw ({n} so far; TUXBOX_PENDING_RECHECK=0 off)"));
+        }
+        false
+    }
+
+    fn ensure_open(&mut self, native: &ID3D12GraphicsCommandList) -> bool {
+        self.forgive();
+        if self.error.is_err() {
+            return false;
+        }
+        if ring_enabled() {
+            if self.ring.len() >= 32 { self.ring.pop_front(); }
+            self.ring.push_back(crate::survey::title_pc());
+        }
+        match &self.phase {
+            ListState::Fresh(allocator, initial) => {
+                // The factory closed the empty native list to release its allocator.
+                // Reopen with its original bindings when the first operation records.
+                if let Err(error) = unsafe { native.Reset(allocator, initial.as_ref()) } {
+                    crate::diagnostics::log_line(format_args!("fresh list reopen failed {:#010x}", error.code().0));
+                    { self.error = error.code(); self.error_at = (file!(), line!()); }
+                    return false;
+                }
+                let allocator = allocator.clone();
+                self.segments.reset(Some(allocator));
+                self.phase = ListState::Open;
+            }
+            ListState::Open => {}
+            ListState::Closed if crate::env_toggle!("TUXBOX_REOPEN_CLOSED") != Some("0")
+                && let Some(allocator) = self.segments.host_allocator() =>
+            {
+                // palmetto 8dc42f40 (GPL-3.0, credit to its authors): a recording
+                // call on a closed list reopens it with a native Reset on its
+                // allocator, as the console's allocator-owned recording allows,
+                // then the bound state is restored as a split does.
+                // TUXBOX_REOPEN_CLOSED=0 refuses the call as before (2e53f61).
+                let pipeline = match self.bindings.pipeline.as_ref() {
+                    Some(compute_bindings::Pipeline::Regular(pso, ..)) if !self.pipeline_pending => Some(pso.clone()),
+                    _ => None,
+                };
+                if let Err(error) = unsafe { native.Reset(&allocator, pipeline.as_ref()) } {
+                    crate::diagnostics::log_line(format_args!("closed list reopen failed {:#010x}", error.code().0));
+                    { self.error = error.code(); self.error_at = (file!(), line!()); }
+                    return false;
+                }
+                memory_wait::list_reset(native.as_raw() as usize);
+                self.prefix = memory_wait::Prefix::default();
+                self.segments.reset(Some(allocator));
+                let kind = unsafe { native.GetType() };
+                if kind != D3D12_COMMAND_LIST_TYPE_COPY {
+                    unsafe { self.bindings.restore_all(native) };
+                }
+                self.phase = ListState::Open;
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "reopened a closed list with a native Reset for a recording call from guest RVA {:#x} ({n} so far; TUXBOX_REOPEN_CLOSED=0 off)",
+                        crate::survey::title_rva().unwrap_or(0)));
+                }
+            }
+            ListState::Closed => {
+                // 2e53f61: reported, not emulated (TUXBOX_REOPEN_CLOSED=0 or no allocator).
+                static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "a recording call reached a closed list without a Reset from guest RVA {:#x} ({n} so far)",
+                        crate::survey::title_rva().unwrap_or(0)));
+                }
+                self.error = E_FAIL
+            }
+        }
+        self.error.is_ok()
+    }
+}
+
+/// TUXBOX_XARGS_STRICT=1: slots 67, 71 and 72 refuse GTA's argument shapes
+/// again (unknown cache masks, marker flags, plain 64-bit value writes).
+pub(super) fn xargs_strict() -> bool {
+    crate::env_toggle!("TUXBOX_XARGS_STRICT").is_some_and(|v| v != "0")
+}
+
+fn strict_lists() -> bool {
+    static STRICT: OnceLock<bool> = OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var_os("TUXBOX_STRICT_LISTS").is_some_and(|v| v != "0"))
+}
+
+fn ring_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TUXBOX_LIST_RING").is_some_and(|v| v != "0"))
+}
+
+// Xbox callers can emit native command packets when space is available.
+// Frosty's topology path compares +0x18 with +0x30 at RVA 0x57f02fe.
+// Empty bounds select the Xbox vtable path, which records desktop commands.
+#[repr(C)]
+struct ListData {
+    reserved0: [usize; 2],
+    write_cursor: usize,
+    reserved1: [usize; 2],
+    packet_end: usize,
+    reserved2: [u8; 0x540 - 0x38],
+    // The guest writes these pipeline packet words before it checks the
+    // packet bounds and calls slot 25. Keep them separate from host state.
+    pipeline_packets: core::cell::UnsafeCell<[u8; 32]>,
+    recording: Mutex<Recording>,
+    extended: OnceLock<Option<ID3D12GraphicsCommandList1>>,
+    enhanced_barriers: OnceLock<Option<ID3D12GraphicsCommandList7>>,
+    mesh: OnceLock<Option<ID3D12GraphicsCommandList6>>,
+    raytracing: Option<ID3D12GraphicsCommandList4>,
+}
+
+type List = Proxy<ID3D12GraphicsCommandList, ListData>;
+const _: () =
+    assert!(mem::offset_of!(List, state) + mem::offset_of!(ListData, pipeline_packets) == 0x540);
+const _: () =
+    assert!(mem::offset_of!(List, state) + mem::offset_of!(ListData, write_cursor) == 0x18);
+const _: () = assert!(mem::offset_of!(List, state) + mem::offset_of!(ListData, packet_end) == 0x30);
+
+/// The list's recording state, held for one call; the hold time feeds the
+/// heartbeat's "record" cost.
+struct Held<'a>(MutexGuard<'a, Recording>, #[allow(dead_code)] crate::diagnostics::cost::Timer);
+impl core::ops::Deref for Held<'_> {
+    type Target = Recording;
+    fn deref(&self) -> &Recording { &self.0 }
+}
+impl core::ops::DerefMut for Held<'_> {
+    fn deref_mut(&mut self) -> &mut Recording { &mut self.0 }
+}
+
+#[track_caller]
+fn recording(list: &List) -> Held<'_> {
+    let timer = crate::diagnostics::cost::sited(crate::diagnostics::cost::Bucket::Record);
+    Held(list.state.recording.lock().unwrap_or_else(|poison| poison.into_inner()), timer)
+}
+
+// FD3D12CommandListFence::Signal reads the type at queue+0x10 before
+// selecting the flush flags. The queue's Xbox prefix precedes private state.
+#[repr(C)]
+struct QueueState {
+    reserved: usize,
+    kind: D3D12_COMMAND_LIST_TYPE,
+    // ExecuteCommandLists is void. Report a rejected batch on the next fence
+    // signal or present, and never signal completion for missing work.
+    placement: placement::QueueAccess,
+    submission: Mutex<bool>, // Whether any native GPU operation has been submitted.
+    page_worker: OnceLock<page_mapping::Worker>,
+    wait_worker: OnceLock<memory_wait::Worker>,
+    presentation: Presentation,
+}
+
+type Queue = Proxy<ID3D12CommandQueue, QueueState>;
+const _: () = assert!(mem::offset_of!(Queue, state) + mem::offset_of!(QueueState, kind) == 0x10);
+
+fn parent(device: &Option<IUnknown>) -> *mut c_void {
+    device.as_ref().map_or(ptr::null_mut(), Interface::as_raw)
+}
+
+// Validate and translate the entire batch before submission. Small batches use
+// stack storage and larger ones can report E_OUTOFMEMORY to the guest.
+fn translate_batch<T: Default, G, C>(
+    guest: &[G],
+    mut context: C,
+    mut translate: impl FnMut(&G, &mut C) -> Result<T, HRESULT>,
+    submit: impl FnOnce(&[T], C) -> Result<(), HRESULT>,
+) -> Result<(), HRESULT> {
+    let mut stack: [T; 8];
+    let mut heap = Vec::new();
+    let host = if guest.len() <= 8 {
+        stack = std::array::from_fn(|_| T::default());
+        &mut stack[..guest.len()]
+    } else {
+        heap.try_reserve_exact(guest.len())
+            .map_err(|_| E_OUTOFMEMORY)?;
+        heap.resize_with(guest.len(), T::default);
+        heap.as_mut_slice()
+    };
+    for (dst, src) in host.iter_mut().zip(guest) {
+        *dst = translate(src, &mut context)?;
+    }
+    submit(host, context)
+}
+
+unsafe extern "system" fn get_type(list: &List) -> D3D12_COMMAND_LIST_TYPE {
+    unsafe { list.native.GetType() }
+}
+
+unsafe extern "system" fn reset(
+    list: &List,
+    allocator: *mut c_void,
+    initial: *mut c_void,
+) -> HRESULT {
+    let device = parent(&list.parent);
+    let Some(allocator) = (unsafe { device::allocator(allocator, device) }) else {
+        crate::diagnostics::log_line(format_args!("list reset: {allocator:p} is not a known allocator"));
+        return E_INVALIDARG;
+    };
+    // SAFETY: the guest holds the initial pipeline through this reset.
+    let initial = match unsafe { device::compute::pipeline(initial, device) } {
+        Ok(pipeline) => pipeline,
+        Err(error) => return error,
+    };
+    let mut state = recording(list);
+    depth::forget(&list.native);
+    if matches!(state.phase, ListState::Open) {
+    device::read_set_begin(list as *const List as usize);
+        // Pooled titles reset a list they never closed (rebox closes and retries).
+        // Close the host recording and discard it; the reset below replaces it.
+        let _ = state.prefix.finish(&list.native);
+        let closed = unsafe { list.native.Close() };
+        static OPEN: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&OPEN, || format!(
+            "list reset while recording: closed the host list first ({:?})", closed.err().map(|e| e.code())));
+        state.phase = ListState::Closed;
+    }
+    let native = &list.native;
+    if let Some(p) = initial
+        && device::compute::current(p).2
+    {
+        device::compute::wait_pending_compute(p);
+    }
+    let pipeline = initial.map_or(ptr::null_mut(), |p| device::compute::current(p).0.as_raw());
+    let host_reset = |host: &ID3D12CommandAllocator| unsafe {
+        (native.vtable().Reset)(native.as_raw(), host.as_raw(), pipeline)
+    };
+    let mut used = device::alloc_swap::current(allocator);
+    let mut hr = host_reset(&used);
+    if hr == E_INVALIDARG && state.error.is_err() {
+        // A host Close that failed (an invalid call was recorded) leaves the
+        // list unresettable forever; the title asserts on the Reset. Swap in
+        // a fresh host list, already open on this allocator. Retrying on
+        // overflow allocators first only made a new allocator per reset.
+        hr = match unsafe { rebuild_native(list, allocator, pipeline) } {
+            Ok(()) => S_OK,
+            Err(error) => error.code(),
+        };
+        static REBUILT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = REBUILT.fetch_add(1, Ordering::Relaxed);
+        if n < 4 || (n + 1).is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "rebuilt host list {list:p} after a failed Close ({:#010x}): {:#010x} ({} so far)",
+                state.error.0, hr.0, n + 1
+            ));
+        }
+    }
+    if hr == E_INVALIDARG {
+        // The allocator is bound to another recording list (legal on Xbox).
+        for extra in device::overflow_allocators(allocator) {
+            hr = host_reset(&extra);
+            if hr != E_INVALIDARG {
+                used = extra;
+                break;
+            }
+        }
+        if hr == E_INVALIDARG {
+            hr = match device::add_overflow_allocator(allocator, unsafe { native.GetType() }) {
+                Ok(extra) => {
+                    let status = host_reset(&extra);
+                    used = extra;
+                    status
+                }
+                Err(error) => error.code(),
+            };
+        }
+    }
+    if hr.is_ok() {
+        memory_wait::list_reset(list.native.as_raw() as usize);
+        device::alloc_swap::recorded(list as *const List as usize, allocator, &used, unsafe { list.native.GetType() });
+        state.phase = ListState::Open;
+        state.opened = std::time::Instant::now();
+        state.target_heaps.clear();
+        state.resources = allocator.state.clone();
+        state.timestamp_page = None;
+        state.prefix = memory_wait::Prefix::default();
+        state.segments.reset(Some(used.clone()));
+        state.scene_commands.clear();
+        state.bindings = compute_bindings::Bindings::new(initial);
+        state.bindings.slot_owner = std::sync::Arc::as_ptr(&state.resources) as usize;
+        if state.media.is_some() {
+            state.media = Some(media::Recording::new(allocator));
+        }
+        state.stencil_slot = initial.and_then(|p| device::compute::current(p).1.stencil_slot);
+        state.pipeline_pending = initial.is_some_and(|p| device::compute::current(p).2);
+        state.pending_pipeline = initial.filter(|_| state.pipeline_pending).map_or(0, |p| p as *const device::compute::Pipeline as usize);
+        state.skipped_compute = false;
+        state.skipped_writes = None;
+        state.capture_pipeline = initial.and_then(|p| device::compute::current(p).1.key.clone())
+            .filter(|_| crate::diagnostics::capture::active());
+        state.unresolved_roots = [0; 2];
+        state.clamp_budget = None;
+        state.clamp_scratch = None;
+        if let Some(targets) = &mut state.stencil_targets {
+            targets.unbind();
+        }
+        state.dsv_bound = false;
+        state.slot57 = None;
+        state.slot57_targets = Default::default();
+        state.stencil_reference = 0;
+        state.trace_target = None;
+        state.trace_samples.clear();
+        state.placed_reads.clear();
+        state.placed_writes.clear();
+        state.bound_placed_targets.clear();
+        state.resource_heap = None;
+        state.descriptor_arena = None;
+        state.indexed_arenas.clear();
+        state.arena_leases.clear();
+        state.scalar_descriptors.clear();
+        state.sampled_heaps.clear();
+        state.tables_bound = false;
+        state.written_views.clear();
+        state.fallback_views.clear();
+        state.dynamic_heaps.clear();
+        state.ring.clear();
+        state.stalled_writes.clear();
+        state.cpu_copies.clear();
+        state.value_writes.clear();
+        // The allocator keeps it alive until the GPU is done with it.
+        state.copy_scratch = None;
+        state.open_queries.clear();
+        state.split_barriers.clear();
+        state.ended_splits.clear();
+        state.error = S_OK;
+    }
+    if hr.is_err() {
+        crate::diagnostics::log_line(format_args!(
+            "list reset failed {:#010x}: list type {} phase {:?} error {:#010x}",
+            hr.0, unsafe { native.GetType() }.0, mem::discriminant(&state.phase), state.error.0
+        ));
+    }
+    hr
+}
+
+/// Replace a list's host command list with a new one, open on `allocator`.
+/// The guest is inside Reset, so no other thread records on this list, and
+/// the old host list never executed (its Close failed).
+unsafe fn rebuild_native(list: &List, allocator: &device::Allocator, pipeline: *mut c_void) -> windows::core::Result<()> {
+    let old = &list.native;
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { old.GetDevice(&mut device)? };
+    let device = device.ok_or(E_FAIL)?;
+    let kind = unsafe { old.GetType() };
+    let pso = unsafe { ID3D12PipelineState::from_raw_borrowed(&pipeline) };
+    let fresh: ID3D12GraphicsCommandList = match unsafe { device.CreateCommandList(0, kind, &device::alloc_swap::current(allocator), pso) } {
+        Ok(fresh) => fresh,
+        Err(_) => {
+            let extra = device::add_overflow_allocator(allocator, kind)?;
+            unsafe { device.CreateCommandList(0, kind, &extra, pso)? }
+        }
+    };
+    crate::dred::name(&fresh, "title (rebuilt)");
+    let old = unsafe { swap_native(list, fresh)? };
+    retire(old);
+    Ok(())
+}
+
+/// Put `fresh` in place of the list's host list and its cached casts; the
+/// old host list is returned. The caller records on this list (inside Reset,
+/// or holding its recording), so no other thread uses these fields.
+unsafe fn swap_native(list: &List, fresh: ID3D12GraphicsCommandList) -> windows::core::Result<ID3D12GraphicsCommandList> {
+    let raytracing = if list.state.raytracing.is_some() { Some(fresh.cast::<ID3D12GraphicsCommandList4>()?) } else { None };
+    // SAFETY: see above; these fields are only read by recording calls.
+    Ok(unsafe {
+        drop(ptr::replace(ptr::addr_of!(list.state.extended).cast_mut(), OnceLock::new()));
+        drop(ptr::replace(ptr::addr_of!(list.state.enhanced_barriers).cast_mut(), OnceLock::new()));
+        drop(ptr::replace(ptr::addr_of!(list.state.mesh).cast_mut(), OnceLock::new()));
+        drop(ptr::replace(ptr::addr_of!(list.state.raytracing).cast_mut(), raytracing));
+        ptr::replace(ptr::addr_of!(list.native).cast_mut(), fresh)
+    })
+}
+
+/// The replaced host list may still be executing its previous, successful
+/// recording. Keep the last few alive instead of releasing them at once.
+fn retire(old: ID3D12GraphicsCommandList) {
+    struct Retired(#[allow(dead_code)] ID3D12GraphicsCommandList);
+    // SAFETY: only held and released; D3D12 objects are free-threaded.
+    unsafe impl Send for Retired {}
+    static RETIRED: Mutex<std::collections::VecDeque<Retired>> = Mutex::new(std::collections::VecDeque::new());
+    let mut retired = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
+    if retired.len() >= 64 {
+        retired.pop_front();
+    }
+    retired.push_back(Retired(old));
+}
+
+unsafe extern "system" fn close(list: &List) -> HRESULT {
+    let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Close);
+    let mut state = recording(list);
+    state.forgive();
+    match state.phase {
+        ListState::Closed => return if close_lenient() { S_OK } else { E_FAIL },
+        ListState::Fresh(..) => {} // The initial empty recording is already closed on the host.
+        ListState::Open => {
+            if let Err(error) = state.prefix.finish(&list.native) { { state.error = error.code(); state.error_at = (file!(), line!()); } }
+            state.balance(&list.native);
+            depth::late_pass(&list.native);
+            let slow = crate::diagnostics::crash::slow_watch("CommandList::Close (native)");
+            let closed = unsafe { list.native.Close() };
+            drop(slow);
+            if closed.is_ok() {
+                enhanced::closed_ok(list);
+            }
+            if let Err(error) = closed {
+                static FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = FAILED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "host list Close failed {:#010x} (recorded error {:#010x}, list type {}, last guest callers {:x?}) ({n} so far)",
+                        error.code().0, state.error.0, unsafe { list.native.GetType() }.0, state.ring
+                    ));
+                }
+                { state.error = error.code(); state.error_at = (file!(), line!()); }
+                enhanced::close_failed(list);
+            }
+        }
+    }
+    state.phase = ListState::Closed;
+    if state.error.is_err() && crate::diagnostics::display::trace_views() {
+        crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
+            "graphics command list Close rejected {:#010x} (list {list:p}, guest caller {:#x})",
+            state.error.0, crate::survey::title_rva().unwrap_or(0),
+        ));
+    }
+    // The failed list stays failed: ExecuteCommandLists leaves it out.
+    if state.error.is_err() && close_lenient() {
+        return S_OK;
+    }
+    state.error
+}
+
+/// TUXBOX_CLOSE_LENIENT (default on, =0 returns the list's error): Close
+/// answers S_OK, also for a list already closed, as VIctory-fxceless list.rs
+/// close always does (GPL-3.0, credit to its authors), so a title that
+/// asserts on Close goes on; a failed list is still left out of its
+/// submission (TUXBOX_STRICT_LISTS).
+fn close_lenient() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_CLOSE_LENIENT") != Some("0"))
+}
+
+// The COM pointer in a barrier or copy location is borrowed by the desktop
+// call. Raw fields allow us to replace it without taking an owned reference.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct TransitionBarrier {
+    kind: D3D12_RESOURCE_BARRIER_TYPE,
+    flags: D3D12_RESOURCE_BARRIER_FLAGS,
+    resource: *mut c_void,
+    subresource: u32,
+    before: D3D12_RESOURCE_STATES,
+    after: D3D12_RESOURCE_STATES,
+}
+
+// Both members start with the guest tag and flags. Aliasing barriers carry
+// two independently optional resources, with no change of resource state.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct AliasingBarrier {
+    kind: D3D12_RESOURCE_BARRIER_TYPE,
+    flags: D3D12_RESOURCE_BARRIER_FLAGS,
+    before: *mut c_void,
+    after: *mut c_void,
+}
+
+#[repr(C)]
+union RecordedBarrier {
+    kind: D3D12_RESOURCE_BARRIER_TYPE,
+    transition: TransitionBarrier,
+    aliasing: AliasingBarrier,
+}
+
+impl Default for RecordedBarrier {
+    fn default() -> Self {
+        Self {
+            transition: TransitionBarrier::default(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CopyLocation {
+    resource: *mut c_void,
+    kind: D3D12_TEXTURE_COPY_TYPE,
+    data: D3D12_TEXTURE_COPY_LOCATION_0,
+}
+
+const _: () = {
+    assert!(size_of::<RecordedBarrier>() == size_of::<D3D12_RESOURCE_BARRIER>());
+    assert!(
+        mem::offset_of!(AliasingBarrier, before)
+            == mem::offset_of!(D3D12_RESOURCE_BARRIER, Anonymous)
+    );
+    assert!(
+        mem::offset_of!(AliasingBarrier, after)
+            == mem::offset_of!(AliasingBarrier, before)
+                + mem::offset_of!(D3D12_RESOURCE_ALIASING_BARRIER, pResourceAfter)
+    );
+    assert!(size_of::<TransitionBarrier>() == size_of::<D3D12_RESOURCE_BARRIER>());
+    assert!(align_of::<TransitionBarrier>() == align_of::<D3D12_RESOURCE_BARRIER>());
+    assert!(
+        mem::offset_of!(TransitionBarrier, resource)
+            == mem::offset_of!(D3D12_RESOURCE_BARRIER, Anonymous)
+    );
+    assert!(size_of::<CopyLocation>() == size_of::<D3D12_TEXTURE_COPY_LOCATION>());
+    assert!(align_of::<CopyLocation>() == align_of::<D3D12_TEXTURE_COPY_LOCATION>());
+    assert!(
+        mem::offset_of!(CopyLocation, data)
+            == mem::offset_of!(D3D12_TEXTURE_COPY_LOCATION, Anonymous)
+    );
+    assert!(size_of::<CopyLocation>() == 48 && mem::offset_of!(CopyLocation, data) == 16);
+};
+
+/// TUXBOX_BARRIER_LENIENT (default on, =0 fails the list as before): a
+/// barrier the host cannot take (unknown type, flags or resource, a depth
+/// subresource out of range, a placed-texture state) is dropped and logged,
+/// not recorded as the list's error, as VIctory-fxceless list.rs never
+/// refuses a barrier (GPL-3.0, credit to its authors): its other barriers
+/// and work still run.
+fn skip_barrier(code: HRESULT, what: &str) -> Result<RecordedBarrier, HRESULT> {
+    if crate::env_toggle!("TUXBOX_BARRIER_LENIENT") == Some("0") {
+        return Err(code);
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!("dropped a barrier the host cannot take ({what}; {n} so far; TUXBOX_BARRIER_LENIENT=0 fails the list)"));
+    }
+    Ok(RecordedBarrier { transition: TransitionBarrier { kind: D3D12_RESOURCE_BARRIER_TYPE_TRANSITION, resource: ptr::null_mut(), ..Default::default() } })
+}
+
+unsafe extern "system" fn transition(
+    list: &List,
+    count: u32,
+    barriers: *const D3D12_RESOURCE_BARRIER,
+) {
+    let mut state = recording(list);
+    if !state.can_record(&list.native) || count == 0 {
+        return;
+    }
+    if barriers.is_null() {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    // The guest supplies count readable barriers. Read a transition payload
+    // only after checking the union tag.
+    let guest = unsafe { slice::from_raw_parts(barriers, count as usize) };
+    let kind = unsafe { list.native.GetType() };
+    let mut splits: Vec<TransitionBarrier> = Vec::new();
+    let ended = std::cell::RefCell::new(std::mem::take(&mut state.ended_splits));
+    let result = translate_batch(
+        guest,
+        Vec::new(),
+        |barrier, handoffs| {
+            if barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING
+                && barrier.Flags == D3D12_RESOURCE_BARRIER_FLAG_NONE
+            {
+                let alias = unsafe { &barrier.Anonymous.Aliasing };
+                let native = |guest: &Option<ID3D12Resource>| match guest {
+                    Some(object) => {
+                        unsafe { device::resource(object.as_raw(), parent(&list.parent)) }
+                            .map(Interface::as_raw)
+                            .ok_or(E_INVALIDARG)
+                    }
+                    None => Ok(ptr::null_mut()),
+                };
+                return Ok(RecordedBarrier {
+                    aliasing: AliasingBarrier {
+                        kind: barrier.Type,
+                        flags: barrier.Flags,
+                        before: native(&alias.pResourceBefore)?,
+                        after: native(&alias.pResourceAfter)?,
+                    },
+                });
+            }
+            if barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_UAV
+                && barrier.Flags == D3D12_RESOURCE_BARRIER_FLAG_NONE
+            {
+                // A null UAV orders all UAV accesses. Only the first pointer of
+                // this union member is initialized by the guest.
+                let guest = unsafe { &barrier.Anonymous.UAV.pResource };
+                let resource = match guest.as_ref() {
+                    Some(object) => {
+                        let r = unsafe {
+                            device::resource_proxy(object.as_raw(), parent(&list.parent))
+                        }
+                        .ok_or(E_INVALIDARG)?;
+                        if device::blas::is_structure(r) {
+                            // A guest AS pool may contain individually relocated structures.
+                            // Order their host writes even when the barrier was recorded first.
+                            ptr::null_mut()
+                        } else if r.state.depth().is_some_and(|pair| pair.stencil_image.is_some()) {
+                            // Two twins (TUXBOX_DEPTH_TWINS): order every UAV access.
+                            ptr::null_mut()
+                        } else {
+                            r.state
+                                .depth()
+                                .map_or(&r.native, |pair| &pair.image)
+                                .as_raw()
+                        }
+                    }
+                    None => ptr::null_mut(),
+                };
+                return Ok(RecordedBarrier {
+                    transition: TransitionBarrier {
+                        kind: barrier.Type,
+                        flags: barrier.Flags,
+                        resource,
+                        ..Default::default()
+                    },
+                });
+            }
+            if barrier.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION
+                || !matches!(
+                    barrier.Flags,
+                    D3D12_RESOURCE_BARRIER_FLAG_NONE
+                        | D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY
+                        | D3D12_RESOURCE_BARRIER_FLAG_END_ONLY
+                )
+            {
+                crate::diagnostics::recording_error(format_args!(
+                    "resource barrier type {} flags {:#x}",
+                    barrier.Type.0, barrier.Flags.0
+                ));
+                return skip_barrier(E_NOTIMPL, "type or flags");
+            }
+            let mut host = unsafe { ptr::from_ref(barrier).cast::<TransitionBarrier>().read() };
+            let Some(resource) = (unsafe { device::resource_proxy(host.resource, parent(&list.parent)) }) else {
+                return skip_barrier(E_INVALIDARG, "unknown resource");
+            };
+            let different = host.before != host.after;
+            let needs_dimension = (host.before.0 | host.after.0) & device::BUFFER_READ_BITS != 0;
+            let texture = needs_dimension
+                && unsafe { resource.native.GetDesc().Dimension }
+                    != D3D12_RESOURCE_DIMENSION_BUFFER;
+            // TUXBOX_LIST_STATE_FIX=0 records the states unrestricted.
+            let restrict = crate::env_toggle!("TUXBOX_LIST_STATE_FIX") != Some("0");
+            let fix = |state| if restrict { list_state(state, kind) } else { state };
+            host.before = fix(device::host_state(host.before, texture));
+            host.after = fix(device::host_state(host.after, texture));
+            if resource.state.unbacked_uav() {
+                // The host depth image has no unordered access; see unbacked_uav.
+                for state in [&mut host.before, &mut host.after] {
+                    if *state == D3D12_RESOURCE_STATE_UNORDERED_ACCESS {
+                        *state = D3D12_RESOURCE_STATE_COMMON;
+                    }
+                }
+            }
+            if resource.state.depth().is_some_and(|pair| pair.deep)
+                && host.before != D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                && host.after != D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+            {
+                depth::note_state(&list.native, &resource.native, host.subresource, host.after);
+            }
+            if let Some(pair) = resource.state.depth()
+                && (host.before == D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                    || host.after == D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+            {
+                // TUXBOX_DEPTH_TWINS: any subresource of either plane.
+                let planes = if pair.stencil { 2 } else { 1 };
+                if !(matches!(host.subresource, 0 | 1 | D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+                    || (device::depth::twins() && host.subresource < pair.count() * planes))
+                {
+                    return skip_barrier(E_INVALIDARG, "depth subresource");
+                }
+                if host.flags != D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY && different {
+                    handoffs.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+                    let index = unsafe { ptr::from_ref(barrier).offset_from(barriers) } as usize;
+                    handoffs.push((index, &resource.native, pair));
+                }
+                host.resource = ptr::null_mut();
+            } else if let Some(placed) = resource.state.placed() {
+                if !placement::supported_state(host.before, placed.flags())
+                    || !placement::supported_state(host.after, placed.flags())
+                {
+                    crate::diagnostics::recording_error(format_args!(
+                        "placed texture transition {:#x} to {:#x}",
+                        host.before.0, host.after.0
+                    ));
+                    return skip_barrier(E_NOTIMPL, "placed texture state");
+                }
+                // Read promotions can accumulate implicitly. An explicit barrier
+                // orders writes against other uses within the same batch.
+                host.resource = if different
+                    && [host.before, host.after].iter().any(|state|
+                        matches!(*state, D3D12_RESOURCE_STATE_COPY_DEST | D3D12_RESOURCE_STATE_RENDER_TARGET))
+                {
+                    resource.native.as_raw()
+                } else {
+                    ptr::null_mut()
+                };
+            } else if host.before == host.after {
+                // The core runtime refuses a transition between equal states.
+                // UA to UA orders UAV accesses; a split half has nothing to do.
+                if host.before == D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                    && host.flags == D3D12_RESOURCE_BARRIER_FLAG_NONE
+                {
+                    return Ok(RecordedBarrier {
+                        transition: TransitionBarrier {
+                            kind: D3D12_RESOURCE_BARRIER_TYPE_UAV,
+                            flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
+                            resource: resource.native.as_raw(),
+                            ..Default::default()
+                        },
+                    });
+                }
+                host.resource = ptr::null_mut();
+            } else {
+                host.resource = resource.native.as_raw();
+            }
+            // Its BEGIN_ONLY half was ended at a cut (split carry): the
+            // transition is done, so this END_ONLY half is left out.
+            if host.flags == D3D12_RESOURCE_BARRIER_FLAG_END_ONLY && !host.resource.is_null() {
+                let mut ended = ended.borrow_mut();
+                if let Some(at) = ended.iter().position(|&(r, s)| r == host.resource as usize && s == host.subresource) {
+                    ended.swap_remove(at);
+                    host.resource = ptr::null_mut();
+                }
+            }
+            Ok(RecordedBarrier { transition: host })
+        },
+        |host, handoffs| unsafe {
+            let mut handoffs = handoffs.into_iter().peekable();
+            let mut first = 0;
+            let submit = |run: &[RecordedBarrier]| {
+                if !run.is_empty() {
+                    (list.native.vtable().ResourceBarrier)(
+                        list.native.as_raw(),
+                        run.len() as u32,
+                        run.as_ptr().cast(),
+                    );
+                }
+            };
+            for (index, barrier) in host.iter().enumerate() {
+                if barrier.kind == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION
+                    && barrier.transition.resource.is_null()
+                {
+                    submit(&host[first..index]);
+                    if let Some((_, resource, pair)) = handoffs.next_if(|(at, _, _)| *at == index) {
+                        depth::handoff(&list.native, resource, pair, &barrier.transition);
+                    }
+                    first = index + 1;
+                }
+            }
+            submit(&host[first..]);
+            for barrier in host {
+                let t = barrier.transition;
+                if barrier.kind == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && !t.resource.is_null()
+                    && t.flags != D3D12_RESOURCE_BARRIER_FLAG_NONE
+                {
+                    splits.push(t);
+                }
+            }
+            Ok(())
+        },
+    );
+    state.ended_splits = ended.into_inner();
+    if let Err(error) = result {
+        { state.error = error; state.error_at = (file!(), line!()); }
+    }
+    for t in splits {
+        let same = |b: &TransitionBarrier| b.resource == t.resource && b.subresource == t.subresource;
+        if t.flags == D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY {
+            state.split_barriers.push(t);
+        } else if let Some(at) = state.split_barriers.iter().position(same) {
+            state.split_barriers.swap_remove(at);
+        }
+    }
+}
+
+/// Legacy resource state bits the desktop runtime knows, excluding the
+/// video-queue states (no graphics, compute or copy list accepts those).
+const LIST_STATES: i32 = 0x3fff
+    | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE.0
+    | D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE.0;
+const WRITE_STATES: i32 = D3D12_RESOURCE_STATE_RENDER_TARGET.0
+    | D3D12_RESOURCE_STATE_UNORDERED_ACCESS.0
+    | D3D12_RESOURCE_STATE_DEPTH_WRITE.0
+    | D3D12_RESOURCE_STATE_STREAM_OUT.0
+    | D3D12_RESOURCE_STATE_COPY_DEST.0
+    | D3D12_RESOURCE_STATE_RESOLVE_DEST.0;
+const COMPUTE_STATES: i32 = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER.0
+    | D3D12_RESOURCE_STATE_UNORDERED_ACCESS.0
+    | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE.0
+    | D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT.0
+    | D3D12_RESOURCE_STATE_COPY_DEST.0
+    | D3D12_RESOURCE_STATE_COPY_SOURCE.0
+    | D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE.0;
+
+/// Restrict a barrier state to what the core runtime accepts on this list
+/// type. An invalid state makes the host Close fail with E_INVALIDARG and
+/// drops the whole list. Compute lists take shader reads as non-pixel reads
+/// and copy lists only copy states; one write state excludes all others.
+fn list_state(state: D3D12_RESOURCE_STATES, kind: D3D12_COMMAND_LIST_TYPE) -> D3D12_RESOURCE_STATES {
+    let mut bits = state.0 & LIST_STATES;
+    match kind {
+        D3D12_COMMAND_LIST_TYPE_COMPUTE => {
+            if bits & (D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE.0 | D3D12_RESOURCE_STATE_DEPTH_READ.0) != 0 {
+                bits |= D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE.0;
+            }
+            bits &= COMPUTE_STATES;
+        }
+        D3D12_COMMAND_LIST_TYPE_COPY => {
+            bits &= D3D12_RESOURCE_STATE_COPY_DEST.0 | D3D12_RESOURCE_STATE_COPY_SOURCE.0;
+        }
+        _ => {}
+    }
+    let writes = bits & WRITE_STATES;
+    if writes != 0 && bits != writes & writes.wrapping_neg() {
+        bits = writes & writes.wrapping_neg();
+    }
+    if bits != state.0 {
+        static SEEN: Mutex<Vec<(i32, i32)>> = Mutex::new(Vec::new());
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 16 && !seen.contains(&(kind.0, state.0)) {
+            seen.push((kind.0, state.0));
+            crate::diagnostics::log_line(format_args!(
+                "barrier state {:#x} on a type {} list recorded as {bits:#x}", state.0, kind.0
+            ));
+        }
+    }
+    D3D12_RESOURCE_STATES(bits)
+}
+
+fn enhanced_barriers(native: &ID3D12GraphicsCommandList) -> Option<ID3D12GraphicsCommandList7> {
+    if !matches!(
+        unsafe { native.GetType() },
+        D3D12_COMMAND_LIST_TYPE_DIRECT | D3D12_COMMAND_LIST_TYPE_COMPUTE
+    ) {
+        return None;
+    }
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { native.GetDevice(&mut device) }.ok()?;
+    let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS12::default();
+    unsafe {
+        device?.CheckFeatureSupport(
+            D3D12_FEATURE_D3D12_OPTIONS12,
+            ptr::from_mut(&mut options).cast(),
+            size_of_val(&options) as u32,
+        )
+    }
+    .ok()?;
+    if options.EnhancedBarriersSupported.as_bool() {
+        native.cast().ok()
+    } else {
+        None
+    }
+}
+
+unsafe extern "system" fn flush_texture_cache(list: &List, mask: u32, address: u64, bytes: u64) {
+    let mut state = recording(list);
+    if !state.can_record(&list.native) {
+        return;
+    }
+    // The mask selects the caches to flush. Both can use the same host
+    // global memory barrier, which also covers subranges and empty ranges.
+    if !matches!(mask, 0xc0_0000 | 0x3000) && xargs_strict() {
+        crate::diagnostics::recording_error(format_args!("texture cache flush mask {mask:#x}"));
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
+        return;
+    }
+    if !matches!(mask, 0xc0_0000 | 0x3000) {
+        // A global barrier covers every cache (rebox and xcl ignore the mask).
+        static OTHER: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&OTHER, || format!(
+            "texture cache flush mask {mask:#x} recorded as a global barrier"));
+    }
+    if address.checked_add(bytes).is_none() {
+        crate::diagnostics::recording_error(format_args!(
+            "overflowing texture cache flush address {address:#x} bytes {bytes:#x}"
+        ));
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    if address != 0 || bytes != 0xff_ffff_ff00 {
+        static RANGE_FLUSH: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&RANGE_FLUSH, || {
+            format!("texture cache range flush mask {mask:#x} address {address:#x} bytes {bytes:#x}")
+        });
+    }
+    global_cache_barrier(list, &mut state);
+}
+
+// The extended list accepts separate cache/engine masks before the VA range.
+// A host global barrier covers the full range and every participating stage.
+unsafe extern "system" fn extended_cache_barrier(
+    list: &List, _cache: u32, _engines: u32, address: u64, bytes: u64,
+) {
+    let mut state = recording(list);
+    if !state.can_record(&list.native) {
+        return;
+    }
+    if address.checked_add(bytes).is_none() {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    global_cache_barrier(list, &mut state);
+}
+
+/// Older-layout pipeline sync (slots 129/130). TUXBOX_PIPELINE_SYNC_BARRIER=0
+/// records nothing, as before.
+unsafe extern "system" fn pipeline_sync(list: &List, flags: u32, control: u32, address: u64, bytes: u64) {
+    if crate::env_toggle!("TUXBOX_PIPELINE_SYNC_BARRIER") == Some("0") {
+        return;
+    }
+    unsafe { extended_cache_barrier(list, flags, control, address, bytes) };
+}
+
+fn global_cache_barrier(list: &List, state: &mut Recording) {
+    let Some(native) = list
+        .state
+        .enhanced_barriers
+        .get_or_init(|| enhanced_barriers(&list.native))
+    else {
+        crate::diagnostics::recording_error(format_args!("enhanced global barriers unavailable"));
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
+        return;
+    };
+    let barrier = D3D12_GLOBAL_BARRIER {
+        SyncBefore: D3D12_BARRIER_SYNC_ALL,
+        SyncAfter: D3D12_BARRIER_SYNC_ALL,
+        AccessBefore: D3D12_BARRIER_ACCESS_COMMON,
+        AccessAfter: D3D12_BARRIER_ACCESS_COMMON,
+    };
+    let group = D3D12_BARRIER_GROUP {
+        Type: D3D12_BARRIER_TYPE_GLOBAL,
+        NumBarriers: 1,
+        Anonymous: D3D12_BARRIER_GROUP_0 {
+            pGlobalBarriers: &barrier,
+        },
+    };
+    // SAFETY: the native open list consumes the stack-backed group during Barrier.
+    unsafe { native.Barrier(&[group]) };
+}
+
+unsafe extern "system" fn clear_rtv(
+    list: &List,
+    handle: D3D12_CPU_DESCRIPTOR_HANDLE,
+    color: *const f32,
+    count: u32,
+    rects: *const RECT,
+) {
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::ClearsRtv);
+    let mut state = recording(list);
+    if !state.can_record_graphics(&list.native) {
+        return;
+    }
+    if handle.ptr == 0 || color.is_null() || (count != 0 && rects.is_null()) {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    // palmetto cf825083 (GPL-3): a clear of a view created from a null resource
+    // clears nothing on the console; it is not recorded here either.
+    // TUXBOX_NULL_RTV_CLEAR=1 records it again.
+    if crate::device::is_null_rtv(handle.ptr) && crate::env_toggle!("TUXBOX_NULL_RTV_CLEAR") != Some("1") {
+        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 2 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "render target clear on a null view skipped: rtv {:#x} was created from a null resource ({n} so far; palmetto cf825083; TUXBOX_NULL_RTV_CLEAR=1 records it)", handle.ptr));
+        }
+        return;
+    }
+    crate::diagnostics::display::clear(handle.ptr);
+    if let Some(target) = unsafe { placement::render_target(parent(&list.parent), handle.ptr, &mut state.target_heaps) }
+        && let Err(error) = Recording::track_texture(&mut state.placed_writes, &target)
+    {
+        { state.error = error; state.error_at = (file!(), line!()); }
+        return;
+    }
+    unsafe { placement::note_clear(parent(&list.parent), handle.ptr, &mut state.target_heaps) };
+    unsafe {
+        (list.native.vtable().ClearRenderTargetView)(
+            list.native.as_raw(),
+            handle,
+            color,
+            count,
+            rects,
+        )
+    };
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || format!(
+        "recorded render target clear list={list:p} rtv={:#x} rgba={:?}", handle.ptr, unsafe { &*color.cast::<[f32;4]>() }
+    ));
+}
+
+// HandleDiscardResources at Frosty RVA 0x5787b84 supplies the native region
+// layout (rect count and pointer, first subresource and subresource count).
+unsafe extern "system" fn discard(
+    list: &List,
+    object: *mut c_void,
+    region: *const D3D12_DISCARD_REGION,
+) {
+    let mut state = recording(list);
+    if !state.can_record(&list.native) {
+        return;
+    }
+    let Some(resource) = (unsafe { device::resource_proxy(object, parent(&list.parent)) }) else {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    };
+    if (unsafe { region.as_ref() }).is_some_and(|r| r.NumRects != 0 && r.pRects.is_null()) {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    // CPU-backed read-only textures acquire their contents at submission.
+    // Keeping the old bytes of a discarded read-only region is permitted.
+    if resource.state.placed().is_none() && resource.state.buffer_window().is_none() {
+        unsafe {
+            (list.native.vtable().DiscardResource)(
+                list.native.as_raw(),
+                resource.native.as_raw(),
+                region,
+            )
+        };
+    }
+}
+
+unsafe fn copy_location<'a>(
+    location: *const CopyLocation,
+    device: *mut c_void,
+) -> Option<(CopyLocation, Option<&'a Arc<Texture>>)> {
+    let location = unsafe { location.as_ref() }?;
+    if !matches!(
+        location.kind,
+        D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX | D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT
+    ) {
+        return None;
+    }
+    let resource = unsafe { device::resource_proxy(location.resource, device) }?;
+    let mut host = CopyLocation { resource: resource.native.as_raw(), ..*location };
+    if let Some((base, length)) = resource.state.buffer_window() {
+        if host.kind != D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT { return None; }
+        let placed = unsafe { &mut host.data.PlacedFootprint };
+        let f = &placed.Footprint;
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: if f.Depth > 1 { D3D12_RESOURCE_DIMENSION_TEXTURE3D } else { D3D12_RESOURCE_DIMENSION_TEXTURE2D },
+            Width: f.Width.into(), Height: f.Height, DepthOrArraySize: f.Depth.try_into().ok()?,
+            MipLevels: 1, Format: f.Format, SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            ..Default::default()
+        };
+        let mut owner: Option<ID3D12Device> = None;
+        let (mut rows, mut row_bytes) = (0, 0);
+        unsafe {
+            resource.native.GetDevice(&mut owner).ok()?;
+            owner?.GetCopyableFootprints(&desc, 0, 1, 0, None, Some(&mut rows), Some(&mut row_bytes), None);
+        }
+        let pitch = u64::from(f.RowPitch);
+        let lines = u64::from(rows).checked_mul(u64::from(f.Depth))?;
+        let bytes = lines.checked_sub(1)?.checked_mul(pitch)?.checked_add(row_bytes)?;
+        if row_bytes > pitch || placed.Offset.checked_add(bytes)? > length { return None; }
+        placed.Offset = placed.Offset.checked_add(base)?;
+    }
+    Some((host, resource.state.placed()))
+}
+
+/// The trailing flags of the console's copies (CopyTextureRegionX, CopyResourceX)
+/// have no desktop counterpart; five-star-recomp 53f89d5 (GPL-3.0) drops them
+/// and copies. A nonzero value is logged once per call and the copy recorded;
+/// TUXBOX_COPY_FLAGS_STRICT=1 refuses the list as before.
+fn copy_flags_dropped(call: &str, flags: u32) -> bool {
+    if crate::env_toggle!("TUXBOX_COPY_FLAGS_STRICT") == Some("1") {
+        return false;
+    }
+    static SEEN: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() < 32 && !seen.iter().any(|(c, f)| c == call && *f == flags) {
+        seen.push((call.to_owned(), flags));
+        crate::diagnostics::log_line(format_args!(
+            "{call} flags {flags:#x} dropped, copy recorded (five-star 53f89d5; TUXBOX_COPY_FLAGS_STRICT=1 refuses the list)"));
+    }
+    true
+}
+
+unsafe extern "system" fn copy_texture(
+    list: &List,
+    dst: *const CopyLocation,
+    x: u32,
+    y: u32,
+    z: u32,
+    src: *const CopyLocation,
+    region: *const D3D12_BOX,
+    flags: u32,
+) {
+    note_read_all(list);
+    let mut state = recording(list);
+    if !state.can_record(&list.native) {
+        return;
+    }
+    if flags != 0 && !copy_flags_dropped("CopyTextureRegionX", flags) {
+        crate::diagnostics::recording_error(format_args!("CopyTextureRegion flags {flags:#x}"));
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
+        return;
+    }
+    let device = parent(&list.parent);
+    let (Some((dst, destination)), Some((src, source))) =
+        (unsafe { copy_location(dst, device) }, unsafe {
+            copy_location(src, device)
+        })
+    else {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    };
+    // The same subresource of one host texture on both sides (fxceless
+    // list.rs copy_texture_region): not a copy the host allows.
+    if dst.resource == src.resource
+        && dst.kind == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX
+        && src.kind == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX
+        && unsafe { dst.data.SubresourceIndex == src.data.SubresourceIndex }
+        && self_copy_skip("CopyTextureRegion")
+    {
+        return;
+    }
+    if let Err(error) = state.prepare_copy(destination, source) {
+        { state.error = error; state.error_at = (file!(), line!()); }
+        return;
+    }
+    crate::diagnostics::display::copy(dst.resource);
+    unsafe { device::note_shadow_write(device, dst.resource as *mut c_void) };
+    unsafe {
+        (list.native.vtable().CopyTextureRegion)(
+            list.native.as_raw(),
+            ptr::from_ref(&dst).cast(),
+            x,
+            y,
+            z,
+            ptr::from_ref(&src).cast(),
+            region,
+        );
+    }
+}
+
+/// TUXBOX_SELF_COPY_SKIP (default on, =0 as before): a copy whose two sides
+/// are one host resource (two title resources over one memory share it) is
+/// left out: the host does not allow a texture copied onto itself and it
+/// would change nothing. CopyResource refused it (E_INVALIDARG, the list
+/// dropped the call); CopyTextureRegion of one subresource onto itself went
+/// to the driver. VIctory-fxceless a253706 list.rs copy_resource and
+/// copy_texture_region (GPL-3.0, credit to its authors; after triippywhale
+/// 6e502b3b): 402 such copies in a five-minute run.
+fn self_copy_skip(what: &str) -> bool {
+    if crate::env_toggle!("TUXBOX_SELF_COPY_SKIP") == Some("0") {
+        return false;
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "{what} between two title resources that share one host resource left out ({n} so far; TUXBOX_SELF_COPY_SKIP=0 off)"));
+    }
+    true
+}
+
+// Frosty's pool allocator and its buffer and texture copy routines all use
+// slot 84 with destination, source and zero options.
+unsafe extern "system" fn copy_resource(
+    list: &List,
+    dst: *mut c_void,
+    src: *mut c_void,
+    options: u32,
+) {
+    note_read_all(list);
+    let mut state = recording(list);
+    if !state.can_record(&list.native) {
+        return;
+    }
+    if options != 0 && !copy_flags_dropped("CopyResourceX", options) {
+        crate::diagnostics::recording_error(format_args!(
+            "slot 84 CopyResource options {options:#x}"
+        ));
+        { state.error = E_NOTIMPL; state.error_at = (file!(), line!()); }
+        return;
+    }
+    let owner = parent(&list.parent);
+    // SAFETY: each guest argument is a live COM object or null. Only resource
+    // proxies owned by the list's device yield borrowed native interfaces.
+    let (Some(dst), Some(src)) = (unsafe { device::resource_proxy(dst, owner) }, unsafe {
+        device::resource_proxy(src, owner)
+    }) else {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    };
+    crate::diagnostics::display::copy(dst.native.as_raw());
+    unsafe { device::note_shadow_write(owner, windows::core::Interface::as_raw(&dst.native)) };
+    let (d, s) = unsafe { (dst.native.GetDesc(), src.native.GetDesc()) };
+    if dst.state.buffer_window().is_some() || src.state.buffer_window().is_some() {
+        let (to, size) = dst.state.buffer_window().unwrap_or((0, d.Width));
+        let (from, other) = src.state.buffer_window().unwrap_or((0, s.Width));
+        if d.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || s.Dimension != d.Dimension || size != other
+            || (dst.native == src.native && to < from + size && from < to + size) {
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+            return;
+        }
+        unsafe { list.native.CopyBufferRegion(&dst.native, to, &src.native, from, size) };
+        return;
+    }
+    if dst.native == src.native && self_copy_skip("CopyResource") {
+        return;
+    }
+    if dst.native == src.native
+        || d.Dimension != s.Dimension
+        || d.DepthOrArraySize != s.DepthOrArraySize
+        || d.MipLevels != s.MipLevels
+        || d.SampleDesc != s.SampleDesc
+        // D3D12 also allows reinterpret copies between some differently sized
+        // block-compressed and uncompressed textures. Leave those to the driver.
+        || (d.Format == s.Format && (d.Width != s.Width || d.Height != s.Height))
+    {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    if let Err(error) = state.prepare_copy(dst.state.placed(), src.state.placed()) {
+        { state.error = error; state.error_at = (file!(), line!()); }
+        return;
+    }
+    // SAFETY: both native resources belong to this open command list's device.
+    // The guest supplies their copy states via barriers and owns their lifetimes.
+    unsafe { list.native.CopyResource(&dst.native, &src.native) };
+    static FIRST_COPY: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST_COPY, || {
+        format!(
+            "recorded slot 84 CopyResource (dimension {}, {} x {} x {}, {} mips)",
+            s.Dimension.0, s.Width, s.Height, s.DepthOrArraySize, s.MipLevels
+        )
+    });
+}
+
+// DriverHintX (Scarlett slot 101, GDK d3d12_xs.h). The desktop driver manages
+// its own hardware policy, so console tuning hints have no effect. GTA VI calls
+// it with feature 2 and value 1 (title RVA 0x50a6651) and ignores the result.
+// TuxBox bedf503 (brcly, Apache-2.0).
+/// Device11 list slot 59, InsertGpuMarker (GDK d3d12_xs.h): logged once.
+unsafe extern "system" fn gpu_marker(
+    list: &List, a: *mut c_void, b: u32, c: *mut c_void, d: u64, e: *mut c_void, f: u64,
+) {
+    if crate::env_toggle!("TUXBOX_DEVICE11_SLOT59") == Some("0") {
+        return unsafe { execute_indirect(list, a, b, c, d, e, f) };
+    }
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&ONCE, || format!("Device11 list slot 59 (InsertGpuMarker) called: ignored ({a:p}, {b:#x}); TUXBOX_DEVICE11_SLOT59=0 runs ExecuteIndirect as before"));
+}
+
+unsafe extern "system" fn driver_hint(_list: &List, _feature: u64, _value: u64) -> u64 {
+    0
+}
+
+// Frosty's RHIDispatchIndirectComputeShader calls slot 59 (RVA 0x57876df).
+unsafe extern "system" fn execute_indirect(
+    list: &List,
+    signature: *mut c_void,
+    max_count: u32,
+    arguments: *mut c_void,
+    argument_offset: u64,
+    count_buffer: *mut c_void,
+    count_offset: u64,
+) {
+    let mut state = recording(list);
+    if !state.can_record(&list.native) {
+        return;
+    }
+    let (max_count, stale) = indirect_guard(&state, max_count);
+    let owner = parent(&list.parent);
+    // A signature accepted in place of a refusal: its calls are dropped
+    // (TUXBOX_SIGNATURE_ACCEPT, device/indirect.rs).
+    if unsafe { device::indirect::signature(signature, owner) }
+        .is_some_and(|s| s.state.kind == device::indirect::DROPPED)
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&ONCE, || "indirect call on an accepted signature we cannot run: dropped".into());
+        return;
+    }
+    // Each object is borrowed from a live guest reference for this call.
+    let (Some(signature), Some(arguments)) = (
+        unsafe { device::indirect::signature(signature, owner) },
+        unsafe { device::resource_proxy(arguments, owner) },
+    ) else {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    };
+    let bytes = u64::from(signature.state.stride) * u64::from(max_count);
+    let Some(argument_offset) = compute::buffer_offset(arguments, argument_offset, bytes) else {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    };
+    let (count, count_offset) = if count_buffer.is_null() { (None, count_offset) } else {
+        let Some(buffer) = (unsafe { device::resource_proxy(count_buffer, owner) }) else { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; };
+        let Some(offset) = compute::buffer_offset(buffer, count_offset, 4) else { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return; };
+        (Some(&buffer.native), offset)
+    };
+    // TUXBOX_INDIRECT_KIND (default on, =0 off): a call whose arguments are
+    // not of the bound pipeline's kind (dispatches with a graphics pipeline,
+    // draws with a compute one) is dropped, as VIctory-fxceless victory-gpu
+    // draw.rs matches_kind (GPL-3.0, credit to its authors).
+    if crate::env_toggle!("TUXBOX_INDIRECT_KIND") != Some("0")
+        && let Some(bound) = state.bindings.pipeline_compute
+    {
+        let kind = signature.state.kind;
+        let matches = match kind {
+            D3D12_INDIRECT_ARGUMENT_TYPE_DRAW | D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED => !bound,
+            D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH => bound,
+            _ => true,
+        };
+        if !matches {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&ONCE, || format!(
+                "indirect kind {}: pipeline mismatch (compute {bound}); the call is dropped", kind.0));
+            return;
+        }
+    }
+    let stale = stale && stale_writes(&state, &arguments.native, count);
+    // TUXBOX_INDIRECT_DROP_UNCLAMPED (default on, =0 off): an indirect call
+    // that cannot be clamped (arguments or count not on 4 bytes, which the
+    // console allows) is dropped, not a list error, as VIctory-fxceless victory-gpu draw.rs
+    // execute_indirect returns false (GPL-3.0, credit to its authors).
+    let drop_unclamped = crate::env_toggle!("TUXBOX_INDIRECT_DROP_UNCLAMPED") != Some("0");
+    if !(argument_offset | count_offset).is_multiple_of(4) {
+        if drop_unclamped {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&ONCE, || "indirect call with arguments or count not on 4 bytes: dropped".into());
+            return;
+        }
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } return;
+    }
+    // A call that will be dropped (pipeline still being made, an unresolved
+    // root view) skips the clamp: its copy and dispatch fed records nothing
+    // reads (VIctory 4e60ea3, GPL-3.0, credit to its authors).
+    let compute = usize::from(signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH);
+    let mut clamped_now = false;
+    let mut from_scratch: Option<indirect_clamp::Clamped> = None;
+    // Pending is decided at this call, not at the bind: a pipeline made since
+    // SetPipelineState is bound now and its call is clamped (still_pending,
+    // VIctory-fxceless draw.rs:775; VIctory 4e60ea3 asks at the call, GPL-3.0,
+    // credit to its authors). TUXBOX_INDIRECT_CALL_TIME=0 keeps the bind's answer.
+    let pending = if crate::env_toggle!("TUXBOX_INDIRECT_CALL_TIME") == Some("0") { state.pipeline_pending } else { state.still_pending(list) };
+    if max_count != 0 && !pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
+        && indirect_clamp::scratch_enabled()
+        && let Some(host) = list.state.raytracing.as_ref()
+    {
+        let (budget, scratch) = { let s = &mut *state; (&mut s.clamp_budget, &mut s.clamp_scratch) };
+        match indirect_clamp::bound_scratch(
+            &list.native, budget, scratch, signature.state.kind, signature.state.stride, max_count,
+            indirect_clamp::Region { buffer: &arguments.native, offset: argument_offset },
+            count.map(|buffer| indirect_clamp::Region { buffer, offset: count_offset }),
+        ) {
+            Ok((ran, made)) => {
+                let made: Vec<&ID3D12Resource> = made.iter().collect();
+                if !made.is_empty()
+                    && let Err(error) = raytracing::retain(&state, &made)
+                {
+                    { state.error = error.code(); state.error_at = (file!(), line!()); }
+                    return;
+                }
+                // The clamp replaced the compute root and the pipeline.
+                if ran.is_some() { unsafe { state.bindings.restore(host) }; }
+                clamped_now = ran.is_some();
+                from_scratch = ran;
+            }
+            Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
+        }
+    } else if max_count != 0 && !pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
+        && let Some(host) = list.state.raytracing.as_ref()
+    {
+        let clamped = indirect_clamp::bound(
+            &list.native, &mut state.clamp_budget, signature.state.kind, signature.state.stride, max_count,
+            indirect_clamp::Region { buffer: &arguments.native, offset: argument_offset },
+            count.map(|buffer| indirect_clamp::Region { buffer, offset: count_offset }),
+        );
+        match clamped {
+            Ok((ran, made)) => {
+                if let Some(made) = made
+                    && let Err(error) = raytracing::retain(&state, &[&made])
+                {
+                    { state.error = error.code(); state.error_at = (file!(), line!()); }
+                    return;
+                }
+                // The clamp replaced the compute root and the pipeline.
+                if ran { unsafe { state.bindings.restore(host) }; }
+                clamped_now = ran;
+            }
+            Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
+        }
+    }
+    if stale && !stale_runs(clamped_now) {
+        return;
+    }
+    let execute = || unsafe {
+        let order = fresh_arguments_buffer(&list.native);
+        if let Some(b) = &order {
+            list.native.ResourceBarrier(&[indirect_clamp::transition(b, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT)]);
+        }
+        match &from_scratch {
+            Some(c) => list.native.ExecuteIndirect(
+                &signature.native,
+                max_count,
+                &c.buffer,
+                c.arguments,
+                c.count.map(|_| &c.buffer),
+                c.count.unwrap_or(0),
+            ),
+            None => list.native.ExecuteIndirect(
+                &signature.native,
+                max_count,
+                &arguments.native,
+                argument_offset,
+                count,
+                count_offset,
+            ),
+        }
+        if let Some(b) = &order {
+            list.native.ResourceBarrier(&[indirect_clamp::transition(b, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COMMON)]);
+        }
+        static FIRST_DRAW: std::sync::Once = std::sync::Once::new();
+        static FIRST_COMPUTE: std::sync::Once = std::sync::Once::new();
+        let site = if signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH { &FIRST_COMPUTE } else { &FIRST_DRAW };
+        crate::diagnostics::log_once(site, || format!(
+            "recorded ExecuteIndirect list={list:p} kind={} max_count={max_count}", signature.state.kind.0
+        ));
+    };
+    // Ray shader records can carry local descriptor tables.
+    if signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS {
+        if ray_dispatch::skip_rays() {
+            return;
+        }
+        // The 104-byte records name shader tables by GPU address and sit in a
+        // GPU buffer, so they are not checked here; log that they are in use.
+        static INDIRECT_RAYS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&INDIRECT_RAYS, || format!(
+            "indirect DispatchRays recorded (max_count {max_count}): its table addresses are not validated (TUXBOX_RAYS=0 skips rays)"));
+        state.sample_heap();
+    }
+    if signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH {
+        state.compute_dispatch(list, execute);
+    } else {
+        let rasterizes = max_count != 0 && signature.state.kind != D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_RAYS;
+        state.draw(list, rasterizes, execute);
+    }
+}
+
+/// test177 refused one dispatch E_NOTIMPL at 409.284 s (a paged arena and a
+/// compute root with no paged path), and every later ExecuteIndirect of its
+/// list then ran empty as stale. A root with no paged path is either directly
+/// indexed (ResourceDescriptorHeap) on a pipeline without the translator's
+/// index map, which only the shader can fix, or has an unbounded table. Each
+/// such pipeline is named once with its shape so the next run says which.
+fn unpaged_dispatch(shape: Option<(bool, bool)>, key: Option<&str>) {
+    static SEEN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+    let key = key.unwrap_or("(no pipeline key)");
+    if !SEEN.lock().unwrap_or_else(|e| e.into_inner()).insert(key.to_string()) {
+        return;
+    }
+    let what = match shape {
+        None => "no root layout".to_string(),
+        Some((direct, paged)) => format!("{}{}",
+            if direct { "directly indexed root (ResourceDescriptorHeap) with no translator index map" } else { "" },
+            if !paged { if direct { ", and an unbounded table" } else { "an unbounded descriptor table" } } else { "" }),
+    };
+    crate::diagnostics::log_line(format_args!(
+        "dispatch refused on a paged descriptor arena: compute pipeline {key}: {what}"));
+}
+
+/// Ported from ivall/xcl bind.rs `indirect_guard` (0223c29, cc73c11;
+/// GPL-2.0-only, via ZigZagBoi1/ScarlettPort): after a dispatch of the same
+/// recording did not run, an ExecuteIndirect's arguments and count are
+/// whatever the buffer held before, not what that dispatch would have
+/// written; stale counts ran huge draws and dispatches. Such a call runs
+/// nothing. MaxCommandCount is capped at TUXBOX_INDIRECT_MAX (65536).
+/// Returns the capped count and whether the arguments are stale.
+/// TUXBOX_INDIRECT_GUARD=0 off.
+fn indirect_guard(state: &Recording, max_count: u32) -> (u32, bool) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    static MAX: OnceLock<u32> = OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_GUARD") != Some("0")) {
+        return (max_count, false);
+    }
+    let cap = *MAX.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(65536));
+    (max_count.min(cap), state.skipped_compute)
+}
+
+/// Whether the dispatches this recording skipped could have written this
+/// ExecuteIndirect's arguments or count. test177: one dispatch refused at
+/// 409.284 s emptied its list's later ExecuteIndirects as stale whatever
+/// they read. A skipped dispatch that can write only through root UAVs (no
+/// directly indexed root, no reflected or scene pipeline, no UAV table bound,
+/// no heap writes; Bindings::root_uav_writes) leaves stale only a call
+/// whose arguments or count buffer holds one of those addresses. Any other
+/// skipped dispatch keeps every later call stale. Aliasing is not seen: a
+/// root UAV on another resource over the same memory is not caught.
+/// TUXBOX_INDIRECT_STALE_NARROW=0 keeps every call after a skip stale.
+fn stale_writes(state: &Recording, arguments: &ID3D12Resource, count: Option<&ID3D12Resource>) -> bool {
+    if crate::env_toggle!("TUXBOX_INDIRECT_STALE_NARROW") == Some("0") {
+        return true;
+    }
+    let Some(writes) = state.skipped_writes.as_ref() else { return true };
+    let covers = |resource: &ID3D12Resource| {
+        let base = unsafe { resource.GetGPUVirtualAddress() };
+        let width = unsafe { resource.GetDesc() }.Width;
+        writes.iter().any(|&va| va >= base && va - base < width)
+    };
+    let stale = covers(arguments) || count.is_some_and(covers);
+    if !stale {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "ExecuteIndirect after a skipped dispatch runs: that dispatch wrote only root UAVs ({} addresses), none in its arguments or count ({n} so far; TUXBOX_INDIRECT_STALE_NARROW=0 keeps it stale)",
+                writes.len()));
+        }
+    }
+    stale
+}
+
+/// Whether an ExecuteIndirect with stale arguments runs. Every one after a
+/// dropped dispatch ran empty, so one compute pipeline still being made
+/// emptied every later indirect draw of its list, the mesh world among
+/// them. VIctory-fxceless (indirect.rs:247-278, GPL-3.0, credit to its
+/// authors) has no such guard and bounds the records on the GPU instead,
+/// as indirect_clamp already does here: a call whose records were clamped
+/// this time runs, the huge stale counts the guard was for bounded by the
+/// clamp, and only one the clamp did not cover runs empty.
+/// TUXBOX_INDIRECT_STALE=empty empties them all as before.
+fn stale_runs(clamped: bool) -> bool {
+    let runs = clamped && crate::env_toggle!("TUXBOX_INDIRECT_STALE") != Some("empty");
+    static COUNTS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+    let n = COUNTS[usize::from(runs)].fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "ExecuteIndirect after a dispatch of its list did not run (stale arguments): {} ({n} so far; TUXBOX_INDIRECT_STALE=empty empties all, TUXBOX_INDIRECT_GUARD=0 runs all)",
+            if runs { "run with its records clamped" } else { "run empty, the clamp did not cover it" }));
+    }
+    runs
+}
+
+/// A buffer of our own whose COMMON -> INDIRECT_ARGUMENT transition goes before
+/// each ExecuteIndirect (and back after), on a list that is not a bundle.
+/// Ported from ivall/xcl 9486494 (wondercrash, GPL-2.0-only): the console orders
+/// a dispatch that writes indirect arguments before the ExecuteIndirect reading
+/// them with a barrier that reaches the PC as a UAV barrier, and NVIDIA's driver
+/// fetches the arguments without waiting for it, so the ExecuteIndirect ran the
+/// count the memory held before the list (40 of 40 tries there), also when the
+/// writes went through another resource over the same memory, as translated
+/// shaders write through placed and imported views. A transition to
+/// INDIRECT_ARGUMENT, of any buffer, makes the driver wait; the title's own
+/// buffer stays in the title's state. TUXBOX_INDIRECT_ORDER=0 off.
+fn fresh_arguments_buffer(list: &ID3D12GraphicsCommandList) -> Option<ID3D12Resource> {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_ORDER") != Some("0")) {
+        return None;
+    }
+    if unsafe { list.GetType() } == D3D12_COMMAND_LIST_TYPE_BUNDLE {
+        return None;
+    }
+    static BUFFER: Mutex<Option<(usize, ID3D12Resource)>> = Mutex::new(None);
+    let mut device: Option<ID3D12Device> = None;
+    unsafe { list.GetDevice(&mut device) }.ok()?;
+    let device = device?;
+    let mut held = BUFFER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, b)) = held.as_ref().filter(|(d, _)| *d == device.as_raw() as usize) {
+        return Some(b.clone());
+    }
+    let desc = D3D12_RESOURCE_DESC {
+        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+        Width: 256,
+        Height: 1,
+        DepthOrArraySize: 1,
+        MipLevels: 1,
+        SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        ..Default::default()
+    };
+    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() };
+    let mut b: Option<ID3D12Resource> = None;
+    if let Err(e) = unsafe { device.CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut b) } {
+        static FAILED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FAILED, || format!("ExecuteIndirect: no buffer to order its arguments after the writes before it ({e}); it may read old ones"));
+        return None;
+    }
+    let b = b?;
+    *held = Some((device.as_raw() as usize, b.clone()));
+    Some(b)
+}
+
+/// TUXBOX_INDIRECT_CLAMP=0 executes indirect arguments as the title wrote them.
+fn clamp_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TUXBOX_INDIRECT_CLAMP").is_none_or(|v| v != "0"))
+}
+
+// Record the title's four-byte progress marker at the requested GPU address.
+unsafe extern "system" fn write_marker(list: &List, address: u64, value: u32, flags: u32, reserved: u32) {
+    let mut state = recording(list);
+    if !state.ensure_open(&list.native) { return; }
+    if address == 0 || !address.is_multiple_of(4) {
+        if xargs_strict() { { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); } }
+        return;
+    }
+    if (flags != 0 || reserved != 0) && xargs_strict() {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    if flags != 0 || reserved != 0 {
+        // Cache-flush and engine selectors; the host write is ordered anyway
+        // (leonida-ce ignores them too).
+        static FLAGS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FLAGS, || format!("marker write flags {flags:#x} {reserved:#x} ignored"));
+    }
+    memory_wait::note_write(list, &mut state, "marker write", address, u64::from(value));
+    if state.value_writes.len() < 4096 {
+        state.value_writes.push((address, u64::from(value), 4));
+    }
+    let result = (|| -> windows::core::Result<()> {
+        // A marker to memory the GPU cannot address poisoned the list; it is
+        // skipped and logged instead.
+        let (resource, dest) = match unsafe { device::command_buffer_address(parent(&list.parent), address, 4) } {
+            Ok(found) => found,
+            Err(error) => {
+                static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                if SKIPPED.fetch_add(1, Ordering::Relaxed) < 4 {
+                    crate::diagnostics::log_line(format_args!("marker write to {address:#x} skipped: {:?}", error.code()));
+                }
+                return Ok(());
+            }
+        };
+        if let Some(buffer) = &resource { raytracing::retain(&state, &[buffer])?; }
+        let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest, Value: value };
+        state.prefix.push(&list.native, memory_wait::Packet::Marker(write))
+    })();
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
+}
+
+/// List slot 62 on the newer console layout (60 on the older one):
+/// CopyMemoryToMemoryX(destination, source, size, flags), a GPU copy between
+/// two title GPU addresses. Both translate to imported host buffers; buffers
+/// promote from COMMON to COPY_SOURCE / COPY_DEST implicitly.
+unsafe extern "system" fn copy_memory(list: &List, destination: u64, source: u64, size: u64, flags: u32) {
+    let mut state = recording(list);
+    if !state.ensure_open(&list.native) { return; }
+    static WARN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let warn = |what: std::fmt::Arguments| if WARN.fetch_add(1, Ordering::Relaxed) < 16 {
+        crate::diagnostics::log_line(format_args!("CopyMemoryToMemoryX {source:#x} -> {destination:#x} ({size:#x} bytes): {what}"));
+    };
+    if size == 0 || destination == 0 || source == 0 {
+        return warn(format_args!("empty, skipped"));
+    }
+    if flags != 0 {
+        static FLAGS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FLAGS, || format!("CopyMemoryToMemoryX flags {flags:#x} ignored"));
+    }
+    if destination < source.saturating_add(size) && source < destination.saturating_add(size) {
+        return warn(format_args!("overlapping ranges, skipped"));
+    }
+    memory_wait::note_write(list, &mut state, "memory copy", destination, size);
+    let owner = parent(&list.parent);
+    let result = (|| -> windows::core::Result<()> {
+        // TUXBOX_COPY_MEMORY_CPU_FALLBACK (default on, =0 refuses the call as
+        // before): a side the GPU path cannot resolve (an import or shadow
+        // copy refused) is copied on the CPU after the list runs, as
+        // VIctory-fxceless victory-gpu list.rs copy_memory does for every
+        // copy (GPL-3.0, credit to its authors). test190 refused one at
+        // t=53 s (E_INVALIDARG), which dropped the call.
+        let fallback = crate::env_toggle!("TUXBOX_COPY_MEMORY_CPU_FALLBACK") != Some("0");
+        let resolve = |address: u64, side: &str| -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
+            match unsafe { device::command_buffer_address(owner, address, size) } {
+                Err(error) if fallback => {
+                    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n <= 8 || n.is_power_of_two() {
+                        crate::diagnostics::log_line(format_args!(
+                            "CopyMemoryToMemoryX {side} {address:#x} ({size:#x} bytes) not resolved on the GPU ({:#x}): copied on the CPU after the list runs ({n} so far; TUXBOX_COPY_MEMORY_CPU_FALLBACK=0 refuses)",
+                            error.code().0));
+                    }
+                    Ok((None, address))
+                }
+                other => other,
+            }
+        };
+        let (dst, dst_va) = resolve(destination, "destination")?;
+        note_read(list, source, size);
+        let (src, src_va) = resolve(source, "source")?;
+        let (Some(dst), Some(src)) = (dst, src) else {
+            // Either side is title memory the GPU cannot address: copy on the
+            // CPU once the list has run (rebox d907249).
+            if accessible(destination as usize, size as usize, true) && accessible(source as usize, size as usize, false)
+                && state.cpu_copies.len() < 4096
+            {
+                state.cpu_copies.push((destination, source, size));
+                static CPU: std::sync::Once = std::sync::Once::new();
+                crate::diagnostics::log_once(&CPU, || format!(
+                    "CopyMemoryToMemoryX {source:#x} -> {destination:#x} ({size:#x} bytes) copied on the CPU after the list runs"));
+            } else {
+                warn(format_args!("not GPU memory and not accessible, skipped"));
+            }
+            return Ok(());
+        };
+        raytracing::retain(&state, &[&dst, &src])?;
+        // SAFETY: both buffers hold the translated ranges and are retained by the list.
+        unsafe {
+            let dst_offset = dst_va - dst.GetGPUVirtualAddress();
+            let src_offset = src_va - src.GetGPUVirtualAddress();
+            if dst == src && copy_through_scratch(list, &mut state, &dst, dst_offset, src_offset, size) {
+                return Ok(());
+            }
+            list.native.CopyBufferRegion(&dst, dst_offset, &src, src_offset, size);
+        }
+        Ok(())
+    })();
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
+}
+
+/// xcl's idea (re-derived from 21bc548/392dc0c): a copy whose source and
+/// destination are the same host buffer has it as COPY_SOURCE and COPY_DEST
+/// at once, which D3D12 leaves undefined (debug layer id 538). It goes in two
+/// copies through a scratch buffer of the list, retained by its allocator
+/// until the GPU is done, and reused with a barrier within the recording. A
+/// list's scratch is at most TUXBOX_COPY_SCRATCH_MB (64; 0 off); a larger copy
+/// is recorded as one copy, as before.
+unsafe fn copy_through_scratch(list: &List, state: &mut Recording, buffer: &ID3D12Resource, dst_offset: u64, src_offset: u64, size: u64) -> bool {
+    static CAP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let cap = *CAP.get_or_init(|| std::env::var("TUXBOX_COPY_SCRATCH_MB").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(64u64) << 20);
+    if size > cap {
+        return false;
+    }
+    let Ok(barriers) = list.native.cast::<ID3D12GraphicsCommandList7>() else { return false };
+    if state.copy_scratch.as_ref().is_none_or(|(_, bytes, _)| *bytes < size) {
+        let bytes = size.next_power_of_two().max(1 << 20).min(cap);
+        let mut device: Option<ID3D12Device> = None;
+        if unsafe { list.native.GetDevice(&mut device) }.is_err() { return false }
+        let Some(device) = device else { return false };
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: bytes, Height: 1, DepthOrArraySize: 1, MipLevels: 1,
+            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR, ..Default::default()
+        };
+        let mut made: Option<ID3D12Resource> = None;
+        if unsafe { device.CreateCommittedResource(&D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() },
+            D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut made) }.is_err() { return false }
+        let Some(made) = made else { return false };
+        if raytracing::retain(state, &[&made]).is_err() { return false }
+        crate::dred::name(&made, "tuxbox copy scratch");
+        state.copy_scratch = Some((made, bytes, false));
+    }
+    let Some((scratch, _, used)) = state.copy_scratch.as_mut() else { return false };
+    let order = |access_before: D3D12_BARRIER_ACCESS, access_after: D3D12_BARRIER_ACCESS| {
+        let g = D3D12_GLOBAL_BARRIER { SyncBefore: D3D12_BARRIER_SYNC_COPY, SyncAfter: D3D12_BARRIER_SYNC_COPY,
+            AccessBefore: access_before, AccessAfter: access_after };
+        unsafe { barriers.Barrier(&[D3D12_BARRIER_GROUP { Type: D3D12_BARRIER_TYPE_GLOBAL, NumBarriers: 1,
+            Anonymous: D3D12_BARRIER_GROUP_0 { pGlobalBarriers: &g } }]) };
+    };
+    if *used {
+        // The last copy out of the scratch is done before it is written again.
+        order(D3D12_BARRIER_ACCESS_COPY_SOURCE, D3D12_BARRIER_ACCESS_COPY_DEST);
+    }
+    unsafe { list.native.CopyBufferRegion(&*scratch, 0, buffer, src_offset, size) };
+    order(D3D12_BARRIER_ACCESS_COPY_DEST, D3D12_BARRIER_ACCESS_COPY_SOURCE);
+    unsafe { list.native.CopyBufferRegion(buffer, dst_offset, &*scratch, 0, size) };
+    *used = true;
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "CopyMemoryToMemoryX within one host buffer ({size:#x} bytes) copied through a scratch buffer ({n} so far; TUXBOX_COPY_SCRATCH_MB=0 off)"));
+    }
+    true
+}
+
+/// Runs the CPU memory copies of a submission once `fence` reaches 1, on a
+/// worker thread so the title's submitting thread does not wait.
+/// five-star-recomp cf12bd9 (GPL-3.0, RetireWaits.cs), opt-in with
+/// TUXBOX_RETIRE_WAITS_ALL=1: the title retires transient memory by a 64-bit
+/// value a list writes at its end, which on the PC waits only for that
+/// list's own queue. With this on, a batch holding such a write first makes
+/// its queue wait on the GPU for every other queue's work submitted so far.
+mod retire_waits {
+    use std::sync::Mutex;
+    use windows::Win32::Graphics::Direct3D12::*;
+    use windows::core::Interface;
+
+    /// (queue, its device, its fence, the last value signalled)
+    static QUEUES: Mutex<Vec<(usize, usize, ID3D12Fence, u64)>> = Mutex::new(Vec::new());
+
+    pub(super) fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RETIRE_WAITS_ALL") == Some("1"))
+    }
+
+    fn device(queue: &ID3D12CommandQueue) -> Option<ID3D12Device> {
+        let mut device: Option<ID3D12Device> = None;
+        unsafe { queue.GetDevice(&mut device) }.ok()?;
+        device
+    }
+
+    /// Makes `queue` wait for the work every other queue of its device has submitted.
+    pub(super) fn wait_others(queue: &ID3D12CommandQueue) {
+        let Some(device) = device(queue) else { return };
+        let (me, dev) = (queue.as_raw() as usize, device.as_raw() as usize);
+        let others: Vec<(ID3D12Fence, u64)> = QUEUES.lock().unwrap_or_else(|e| e.into_inner()).iter()
+            .filter(|q| q.0 != me && q.1 == dev && q.3 != 0).map(|q| (q.2.clone(), q.3)).collect();
+        for (fence, value) in &others {
+            let _ = unsafe { queue.Wait(fence, *value) };
+        }
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "retire waits: a batch with a 64-bit memory wait waits for {} other queues first ({n} so far; TUXBOX_RETIRE_WAITS_ALL=1 on)", others.len()));
+        }
+    }
+
+    /// Signals `queue`'s fence after a submission.
+    pub(super) fn submitted(queue: &ID3D12CommandQueue) {
+        if !enabled() {
+            return;
+        }
+        let me = queue.as_raw() as usize;
+        let mut queues = QUEUES.lock().unwrap_or_else(|e| e.into_inner());
+        if !queues.iter().any(|q| q.0 == me) {
+            let Some(device) = device(queue) else { return };
+            let Ok(fence) = (unsafe { device.CreateFence::<ID3D12Fence>(0, D3D12_FENCE_FLAG_NONE) }) else { return };
+            queues.push((me, device.as_raw() as usize, fence, 0));
+        }
+        if let Some(entry) = queues.iter_mut().find(|q| q.0 == me)
+            && unsafe { queue.Signal(&entry.2, entry.3 + 1) }.is_ok()
+        {
+            entry.3 += 1;
+        }
+    }
+}
+
+/// test96 hung with the title in its loading-screen wait (game+0x23cf6a0,
+/// "GPU Loc Sig" in five-star's notes) after a list was left out of its batch
+/// (its scene preparation failed): the progress markers it would have
+/// written never were. A left-out list's marker and 64-bit value writes are
+/// now made by the CPU, in recorded order, once the queue has run the rest
+/// of the batch. TUXBOX_ORPHAN_WRITES=0 leaves them unwritten.
+fn orphan_writes_on() -> bool {
+    crate::env_toggle!("TUXBOX_ORPHAN_WRITES") != Some("0")
+}
+
+fn orphan_writes_after(fence: ID3D12Fence, writes: Vec<(u64, u64, u8)>) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n.is_power_of_two() {
+        let last = writes.last().copied().unwrap_or_default();
+        crate::diagnostics::log_line(format_args!(
+            "left-out list: {} value writes made by the CPU after the batch (last {:#x} = {:#x}; {n} so far; TUXBOX_ORPHAN_WRITES=0 off)",
+            writes.len(), last.0, last.1));
+    }
+    let jobs: Vec<(u64, u64, u64)> = Vec::new();
+    cpu_copy_after_with(fence, jobs, writes);
+}
+
+fn cpu_copy_after(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>) {
+    cpu_copy_after_with(fence, copies, Vec::new());
+}
+
+fn cpu_copy_after_with(fence: ID3D12Fence, copies: Vec<(u64, u64, u64)>, values: Vec<(u64, u64, u8)>) {
+    use std::sync::mpsc;
+    struct Job(ID3D12Fence, Vec<(u64, u64, u64)>, Vec<(u64, u64, u8)>);
+    // SAFETY: D3D12 fences are free-threaded.
+    unsafe impl Send for Job {}
+    static WORKER: std::sync::OnceLock<std::sync::Mutex<mpsc::Sender<Job>>> = std::sync::OnceLock::new();
+    let sender = WORKER.get_or_init(|| {
+        let (sender, jobs) = mpsc::channel::<Job>();
+        let _ = std::thread::Builder::new().name("TuxBox CPU memory copies".into()).spawn(move || {
+            for Job(fence, copies, values) in jobs {
+                if unsafe { fence.SetEventOnCompletion(1, windows::Win32::Foundation::HANDLE::default()) }.is_err() {
+                    continue;
+                }
+                for (destination, source, size) in copies {
+                    // SAFETY: both ranges were committed when recorded; the title
+                    // keeps them for the list's lifetime.
+                    unsafe { ptr::copy(source as *const u8, destination as *mut u8, size as usize) };
+                }
+                // test102: "the list writing 0xb77 there completed, yet the word
+                // reads 0xb76". A left-out list's value write lands here after
+                // its own batch's fence, which can be after another queue's GPU
+                // already wrote a newer value to the same fence word, so the
+                // plain store took the word backwards and stalled the waiter for
+                // up to a second. These stores only raise the word now; a store
+                // of a smaller value is skipped and logged.
+                // TUXBOX_ORPHAN_WRITES_MAX=0 stores unconditionally again.
+                // test108: raising every word (a counter or index that legitimately
+                // goes back down kept its stale value) lost the device at VA 0, so
+                // only words a GPU memory wait was recorded on are raised;
+                // TUXBOX_ORPHAN_WRITES_MAX=all raises every word as 8e4981d did.
+                let mode = crate::env_toggle!("TUXBOX_ORPHAN_WRITES_MAX");
+                for (address, value, bytes) in values {
+                    if !accessible(address as usize, bytes as usize, true) {
+                        continue;
+                    }
+                    let raise_only = match mode {
+                        Some("0") => false,
+                        Some("all") => true,
+                        _ => memory_wait::is_wait_word(address),
+                    };
+                    // SAFETY: checked committed and writable just now.
+                    let kept = unsafe {
+                        match bytes {
+                            8 => {
+                                let word = &*(address as *const std::sync::atomic::AtomicU64);
+                                if raise_only {
+                                    let old = word.fetch_max(value, Ordering::AcqRel);
+                                    (old > value).then_some(old)
+                                } else {
+                                    word.store(value, Ordering::Release);
+                                    None
+                                }
+                            }
+                            _ => {
+                                let word = &*(address as *const std::sync::atomic::AtomicU32);
+                                if raise_only {
+                                    let old = word.fetch_max(value as u32, Ordering::AcqRel);
+                                    (old > value as u32).then_some(u64::from(old))
+                                } else {
+                                    word.store(value as u32, Ordering::Release);
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    if let Some(newer) = kept {
+                        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                        if n <= 8 || n.is_power_of_two() {
+                            crate::diagnostics::log_line(format_args!(
+                                "left-out list value write {address:#x} = {value:#x} skipped: the word already reads {newer:#x}, written later by another list ({n} so far; GPU wait words only, TUXBOX_ORPHAN_WRITES_MAX=0 off, =all every word)"));
+                        }
+                    }
+                }
+            }
+        });
+        std::sync::Mutex::new(sender)
+    });
+    let _ = sender.lock().unwrap_or_else(|e| e.into_inner()).send(Job(fence, copies, values));
+}
+
+/// Newer-layout list slot 80, DispatchX(x, y, z, flags): a Dispatch whose
+/// console flags have no host meaning (rebox d907249).
+unsafe extern "system" fn dispatch_x(list: &List, x: u32, y: u32, z: u32, flags: u32) {
+    // Off by default, as rebox (c553d53) drops it: TUXBOX_DISPATCHX=1 runs it.
+    if crate::env_toggle!("TUXBOX_DISPATCHX") != Some("1") {
+        static DROPPED: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&DROPPED, || format!("DispatchX ({x}, {y}, {z}) flags {flags:#x} dropped; TUXBOX_DISPATCHX=1 runs it"));
+        return;
+    }
+    if flags != 0 {
+        static FLAGS: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FLAGS, || format!("DispatchX flags {flags:#x} ignored"));
+    }
+    unsafe { compute::dispatch(list, x, y, z) }
+}
+
+/// AllocateEmbeddedX(size, alignment), list slot 148: memory the title fills
+/// and then binds by address (XboxBvhBuilder), so it must be committed title
+/// memory inside the GPU window. Carved from 1 MiB arenas that are never
+/// reused (a list's GPU work may still read them); capped at 256 MiB, after
+/// which it answers null (logged).
+unsafe extern "system" fn allocate_embedded(_: &List, size: u64, alignment: u64) -> *mut c_void {
+    use std::sync::Mutex;
+    struct Arena { base: usize, size: usize, used: usize }
+    static ARENA: Mutex<Option<Arena>> = Mutex::new(None);
+    static TOTAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    const CAP: usize = 256 << 20;
+    let alignment = (alignment.max(16) as usize).next_power_of_two();
+    let size = size as usize;
+    let mut arena = ARENA.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(a) = arena.as_mut() {
+        let at = (a.base + a.used).next_multiple_of(alignment);
+        if at + size <= a.base + a.size {
+            a.used = at + size - a.base;
+            return at as *mut c_void;
+        }
+    }
+    let bytes = (size + alignment).max(1 << 20).next_multiple_of(1 << 16);
+    if TOTAL.fetch_add(bytes, Ordering::Relaxed) + bytes > CAP {
+        static FULL: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FULL, || format!("AllocateEmbeddedX: {CAP:#x} bytes used; {size:#x} bytes refused"));
+        return core::ptr::null_mut();
+    }
+    let base = device::title_window_alloc(bytes);
+    if base == 0 {
+        crate::diagnostics::log_line(format_args!("AllocateEmbeddedX: {bytes:#x}-byte arena failed"));
+        return core::ptr::null_mut();
+    }
+    let at = base.next_multiple_of(alignment);
+    *arena = Some(Arena { base, size: bytes, used: at + size - base });
+    at as *mut c_void
+}
+
+/// FillMemoryWith{32,64,128}BitValueX (newer-layout list slots 63-65): the
+/// pattern repeated over `size` bytes at a title GPU address. Up to 1 KiB is
+/// written as immediate words; larger fills copy from an upload buffer of the
+/// pattern that the list retains.
+fn fill_memory(list: &List, address: u64, size: u64, pattern: [u8; 16], unit: u64) {
+    let mut state = recording(list);
+    if !state.ensure_open(&list.native) { return; }
+    static WARN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if address == 0 || size == 0 || !size.is_multiple_of(unit) || !address.is_multiple_of(4) || size > 1 << 30 {
+        if WARN.fetch_add(1, Ordering::Relaxed) < 8 {
+            crate::diagnostics::log_line(format_args!("memory fill {address:#x} ({size:#x} bytes, unit {unit}) skipped"));
+        }
+        return;
+    }
+    memory_wait::note_write(list, &mut state, "memory fill", address, u64::from_le_bytes(pattern[..8].try_into().unwrap()));
+    let result = (|| -> windows::core::Result<()> {
+        let (resource, dest) = unsafe { device::command_buffer_address(parent(&list.parent), address, size)? };
+        let Some(resource) = resource else {
+            if WARN.fetch_add(1, Ordering::Relaxed) < 8 {
+                crate::diagnostics::log_line(format_args!("memory fill {address:#x} ({size:#x} bytes) is not GPU memory; skipped"));
+            }
+            return Ok(());
+        };
+        raytracing::retain(&state, &[&resource])?;
+        if size <= 1024 {
+            for at in (0..size).step_by(4) {
+                let i = (at % 16) as usize;
+                let value = u32::from_le_bytes(pattern[i..i + 4].try_into().unwrap());
+                let write = D3D12_WRITEBUFFERIMMEDIATE_PARAMETER { Dest: dest + at, Value: value };
+                state.prefix.push(&list.native, memory_wait::Packet::Marker(write))?;
+            }
+            return Ok(());
+        }
+        let mut device: Option<ID3D12Device> = None;
+        unsafe { list.native.GetDevice(&mut device)? };
+        let device = device.ok_or(E_INVALIDARG)?;
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_BUFFER, Width: size, Height: 1, DepthOrArraySize: 1, MipLevels: 1,
+            Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            ..Default::default()
+        };
+        let mut upload: Option<ID3D12Resource> = None;
+        unsafe { device.CreateCommittedResource(&D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_UPLOAD, ..Default::default() },
+            D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, None, &mut upload)? };
+        let upload = upload.ok_or(E_INVALIDARG)?;
+        unsafe {
+            let mut mapped = ptr::null_mut();
+            upload.Map(0, None, Some(&mut mapped))?;
+            for chunk in core::slice::from_raw_parts_mut(mapped.cast::<u8>(), size as usize).chunks_mut(16) {
+                chunk.copy_from_slice(&pattern[..chunk.len()]);
+            }
+            upload.Unmap(0, None);
+            raytracing::retain(&state, &[&upload])?;
+            let offset = dest - resource.GetGPUVirtualAddress();
+            list.native.CopyBufferRegion(&resource, offset, &upload, 0, size);
+        }
+        Ok(())
+    })();
+    if let Err(error) = result { { state.error = error.code(); state.error_at = (file!(), line!()); } }
+}
+
+fn repeat(bytes: &[u8]) -> [u8; 16] {
+    core::array::from_fn(|i| bytes[i % bytes.len()])
+}
+
+unsafe extern "system" fn fill32(list: &List, address: u64, size: u64, value: u32) {
+    fill_memory(list, address, size, repeat(&value.to_le_bytes()), 4);
+}
+
+unsafe extern "system" fn fill64(list: &List, address: u64, size: u64, value: u64) {
+    fill_memory(list, address, size, repeat(&value.to_le_bytes()), 8);
+}
+
+unsafe extern "system" fn fill128(list: &List, address: u64, size: u64, value: *const [u8; 16]) {
+    if value.is_null() || !accessible(value as usize, 16, false) { return; }
+    fill_memory(list, address, size, unsafe { value.read_unaligned() }, 16);
+}
+
+/// Last Release of a list: forget its allocator recording (xcl b55c478).
+unsafe extern "system" fn release_list(this: *mut List) -> u32 {
+    unsafe { crate::proxy::release_with(this, || {
+        device::alloc_swap::forget_list(this as usize);
+        device::read_set_end(this as usize);
+    }) }
+}
+
+static LIST_RAW: Slots<149> = {
+    let mut slots = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
+    slots[2] = crate::slot!(release_list);
+    slots[8] = crate::slot!(get_type);
+    slots[9] = crate::slot!(close);
+    slots[10] = crate::slot!(reset);
+    slots[11] = crate::slot!(standard::clear_state);
+    slots[12] = crate::slot!(graphics::draw);
+    slots[13] = crate::slot!(graphics::draw_indexed);
+    slots[14] = crate::slot!(compute::dispatch);
+    slots[15] = crate::slot!(compute::copy_buffer);
+    slots[16] = crate::slot!(standard::copy_texture_region);
+    slots[17] = crate::slot!(standard::copy_whole_resource);
+    slots[18] = crate::slot!(standard::copy_tiles);
+    slots[19] = crate::slot!(standard::resolve_subresource);
+    slots[20] = crate::slot!(graphics::topology);
+    slots[21] = crate::slot!(graphics::viewports);
+    slots[22] = crate::slot!(graphics::scissors);
+    slots[23] = crate::slot!(graphics::blend_factor);
+    slots[24] = crate::slot!(graphics::stencil_ref);
+    slots[25] = crate::slot!(graphics::pipeline);
+    slots[26] = crate::slot!(transition);
+    slots[27] = crate::slot!(standard::execute_bundle);
+    slots[28] = crate::slot!(queries::query::<true>);
+    slots[29] = crate::slot!(queries::query::<false>);
+    slots[30] = crate::slot!(queries::resolve);
+    slots[31] = crate::slot!(standard::set_predication);
+    // The Xbox root binding slots after ResourceBarrier are shifted by four.
+    slots[32] = crate::slot!(descriptors::bind_heaps);
+    slots[33] = crate::slot!(compute::bind_root);
+    slots[34] = crate::slot!(graphics::root);
+    slots[35] = crate::slot!(descriptors::table::<true>);
+    slots[36] = crate::slot!(descriptors::table::<false>);
+    slots[37] = crate::slot!(compute::one_constant::<true>);
+    slots[38] = crate::slot!(compute::one_constant::<false>);
+    slots[39] = crate::slot!(compute::constants::<true>);
+    slots[40] = crate::slot!(compute::constants::<false>);
+    slots[41] = crate::slot!(compute::constant_buffer::<true>);
+    slots[42] = crate::slot!(compute::constant_buffer::<false>);
+    slots[43] = crate::slot!(compute::shader_resource::<true>);
+    slots[44] = crate::slot!(compute::shader_resource::<false>);
+    slots[45] = crate::slot!(compute::unordered_access::<true>);
+    slots[46] = crate::slot!(compute::unordered_access::<false>);
+    slots[47] = crate::slot!(graphics::index_buffer);
+    slots[48] = crate::slot!(graphics::vertex_buffers);
+    slots[49] = crate::slot!(standard::stream_output);
+    slots[50] = crate::slot!(graphics::targets);
+    slots[51] = crate::slot!(depth::clear);
+    slots[52] = crate::slot!(clear_rtv);
+    slots[53] = crate::slot!(depth::clear_uav::<false>);
+    slots[54] = crate::slot!(depth::clear_uav::<true>);
+    slots[55] = crate::slot!(discard);
+    slots[56] = crate::slot!(standard::set_marker);
+    slots[57] = crate::slot!(standard::begin_event);
+    slots[58] = crate::slot!(standard::end_event);
+    // Slots after EndEvent differ between Xbox generations. Keep traced
+    // assignments, including slot 59 and the slot 62 upload.
+    slots[59] = crate::slot!(execute_indirect);
+    slots[67] = crate::slot!(flush_texture_cache);
+    slots[68] = crate::slot!(graphics::depth_bounds);
+    slots[71] = crate::slot!(write_marker);
+    slots[72] = crate::slot!(queries::timestamp_at);
+    slots[73] = crate::slot!(memory_wait::wait_value32);
+    slots[74] = crate::slot!(memory_wait::wait_value64);
+    slots[83] = crate::slot!(copy_texture);
+    slots[84] = crate::slot!(copy_resource);
+    // GTA's texture uploader uses this entry for a placed footprint to a
+    // subresource, with the same trailing box and copy flags as slot 83.
+    slots[85] = crate::slot!(copy_texture);
+    slots[96] = crate::slot!(compute::async_compute_budget);
+    slots[117] = crate::slot!(build_raytracing::single);
+    slots[118] = crate::slot!(raytracing::postbuild);
+    slots[119] = crate::slot!(raytracing::copy);
+    slots[120] = crate::slot!(ray_dispatch::pipeline);
+    slots[121] = crate::slot!(ray_dispatch::dispatch);
+    slots[126] = crate::slot!(graphics::shading_rate);
+    slots[127] = crate::slot!(graphics::dispatch_mesh);
+    // VIctory-zhai 1d05911 (GPL-3.0): 129/130 on this layout are the pipeline
+    // syncs (flags, control, address, size); they order earlier shader writes
+    // with a global barrier like 131/132 on the newer one.
+    slots[129] = crate::slot!(pipeline_sync);
+    slots[130] = crate::slot!(pipeline_sync);
+    slots[131] = crate::slot!(build_raytracing::batch);
+    slots[139] = crate::slot!(reset_extended);
+    slots[146] = crate::slot!(enhanced::barrier);
+    // ztrx victory-gpu list.rs (MIT, credit): DispatchMeshX at older #98 and
+    // ResetX at older #137 (0x448); both were unmapped here.
+    // TUXBOX_ZTRX_SLOTS=0 makes DispatchMeshX a no-op again.
+    slots[98] = crate::slot!(dispatch_mesh_x);
+    slots[137] = crate::slot!(reset_extended);
+    slots
+};
+
+/// DispatchMeshX (list, x, flags, indirect, payload), ztrx victory-gpu list.rs:
+/// a direct dispatch is DispatchMesh(x, 1, 1); an indirect one is dropped and logged.
+unsafe extern "system" fn dispatch_mesh_x(list: &List, x: u32, flags: u64, indirect: u64, payload: u64) {
+    if crate::env_toggle!("TUXBOX_ZTRX_SLOTS") == Some("0") {
+        return;
+    }
+    if indirect != 0 {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&ONCE, || format!("DispatchMeshX indirect {indirect:#x} (x {x} flags {flags:#x} payload {payload:#x}) dropped"));
+        return;
+    }
+    unsafe { graphics::dispatch_mesh(list, x, 1, 1) }
+}
+
+unsafe extern "system" fn reset_extended(list: &List, allocator: *mut c_void, initial: *mut c_void, options: usize) -> HRESULT {
+    // The console options have no desktop equivalent; reset as plain Reset does
+    // (leonida-ce does the same). Log the first few distinct values only.
+    if options != 0 {
+        use std::sync::{LazyLock, Mutex};
+        static SEEN: LazyLock<Mutex<std::collections::BTreeSet<usize>>> = LazyLock::new(Default::default);
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.len() < 8 && seen.insert(options) {
+    device::read_set_begin(list as *const List as usize);
+            crate::diagnostics::log_once(&std::sync::Once::new(), || format!("ResetX options={options:#x} ignored"));
+        }
+    }
+    unsafe { reset(list, allocator, initial) }
+}
+
+/// Slot 131 on the Device11 table: a batched acceleration-structure build
+/// (count, entries) or the extended cache barrier (cache, engines, address,
+/// bytes). A build's entry array is readable memory; the barrier's engine
+/// mask is not a pointer to `count` readable entries.
+unsafe extern "system" fn slot131(list: &List, a: u32, b: usize, c: u64, d: u64) {
+    let entries = b as *const build_raytracing::Entry;
+    let bytes = (a as usize).checked_mul(size_of::<build_raytracing::Entry>());
+    // TUXBOX_SLOT131=build|barrier forces one form; unset tells them apart.
+    let forced = crate::env_toggle!("TUXBOX_SLOT131");
+    if forced == Some("build")
+        || (forced != Some("barrier") && a != 0 && b > 0xffff && bytes.is_some_and(|n| accessible(b, n, false)))
+    {
+        unsafe { build_raytracing::batch(list, a, entries) };
+        return;
+    }
+    static BARRIER: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&BARRIER, || format!(
+        "list slot 131 recorded as cache barrier (cache {a:#x} engines {b:#x} address {c:#x} bytes {d:#x})"));
+    unsafe { extended_cache_barrier(list, a, b as u32, c, d) };
+}
+
+// Device11 titles use the new raster-state slots even when requesting the
+// base graphics-list IID. The List6-only cache barriers remain separate.
+static DEVICE11_RAW: Slots<149> = {
+    let mut slots = LIST_RAW;
+    // Scarlett's list adds InsertGpuMarker and InsertTimingMarker after
+    // EndEvent (GDK d3d12_xs.h), so ExecuteIndirect moves from slot 59 to 61.
+    // GTA VI calls it at title RVA 0x248cbba (vtable +0x1e8, one command) and
+    // DriverHintX at 0x50a6651 (+0x328); both answered 0 as unmapped in
+    // test130/131, so those indirect commands never ran. TuxBox bedf503
+    // (brcly, Apache-2.0).
+    slots[61] = crate::slot!(execute_indirect);
+    slots[101] = crate::slot!(driver_hint);
+    // Slot 59 here is InsertGpuMarker, not ExecuteIndirect (inherited from
+    // LIST_SLOTS): a logged no-op. TUXBOX_DEVICE11_SLOT59=0 keeps the old mapping.
+    slots[59] = crate::slot!(gpu_marker);
+    // GTA VI calls slot 131 on this table as the extended cache barrier
+    // (cache 0xc280, engines 0x20000, address 0, bytes 0xffffffffff00 at
+    // game+0x1560994); sending it to the batched AS build faulted reading
+    // 0xc280 "entries" at 0x20000. Slot 131 tells the two forms apart.
+    slots[131] = crate::slot!(slot131);
+    slots[132] = crate::slot!(extended_cache_barrier);
+    // GTA VI (test10, title RVA 0x9796a0): CopyMemoryToMemoryX, older #60.
+    slots[62] = crate::slot!(copy_memory);
+    // Newer layout, older #61-#63 shifted by two (xcl NEWER_LIST_SLOTS).
+    slots[63] = crate::slot!(fill32);
+    slots[64] = crate::slot!(fill64);
+    slots[65] = crate::slot!(fill128);
+    // Older #78 DispatchX and #84 CopyResourceX (rebox d907249).
+    slots[80] = crate::slot!(dispatch_x);
+    slots[86] = crate::slot!(copy_resource);
+    // TuxBox b6647ec (brcly, Apache-2.0): GDK d3d12_xs.h puts DXR at 119-123
+    // and DispatchMesh at 129, two above the older layout (117-121, 127).
+    // GTA VI tail-calls slot 129 as (list, x, 1, 1) at game+0x555e789, logged
+    // "unmapped slot 129" in test133-137, so its mesh dispatches never ran.
+    slots[119] = crate::slot!(build_raytracing::single);
+    slots[120] = crate::slot!(raytracing::postbuild);
+    slots[121] = crate::slot!(raytracing::copy);
+    slots[122] = crate::slot!(ray_dispatch::pipeline);
+    slots[123] = crate::slot!(ray_dispatch::dispatch);
+    slots[129] = crate::slot!(graphics::dispatch_mesh);
+    slots[148] = crate::slot!(allocate_embedded);
+    // ztrx: older #98 DispatchMeshX and #137 ResetX are two later here.
+    let base = child_slots::<ID3D12GraphicsCommandList, ListData, 149>();
+    slots[98] = base[98];
+    slots[100] = crate::slot!(dispatch_mesh_x);
+    slots[137] = base[137];
+    slots[70] = crate::slot!(graphics::depth_bounds);
+    slots[75] = crate::slot!(graphics::force_shader_depth_order);
+    slots[142] = crate::slot!(graphics::sample_mask);
+    slots
+};
+
+static EXTENDED_RAW: Slots<149> = {
+    let mut slots = DEVICE11_RAW;
+    slots[131] = crate::slot!(extended_cache_barrier);
+    slots[132] = crate::slot!(extended_cache_barrier);
+    slots
+};
+
+// The tables the guest sees: slots 59..149 log their first call (slot_trace).
+static LIST_SLOTS: Slots<149> = slot_trace::older(LIST_RAW);
+static DEVICE11_LIST_SLOTS: Slots<149> = slot_trace::device11(DEVICE11_RAW);
+static EXTENDED_LIST_SLOTS: Slots<149> = slot_trace::extended(EXTENDED_RAW);
+
+unsafe fn guest_list<'a>(object: *mut c_void, device: *mut c_void) -> Option<&'a List> {
+    unsafe {
+        unwrap(object, device, &LIST_SLOTS)
+            .or_else(|| unwrap(object, device, &DEVICE11_LIST_SLOTS))
+            .or_else(|| unwrap(object, device, &EXTENDED_LIST_SLOTS))
+            .or_else(|| unwrap(object, device, &media::SLOTS))
+    }
+}
+
+fn reject(queue: &Queue, error: HRESULT) {
+    let _ = queue.state.placement.error.compare_exchange(
+        S_OK.0,
+        error.0,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+    unsafe {
+        OutputDebugStringA(s!(
+            "Project TuxBox: direct queue rejected a guest command-list batch\n"
+        ))
+    };
+}
+
+thread_local! {
+    /// The submission step that failed last on this thread, for drop_batch.
+    static FAILED_STEP: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
+/// Notes which submission step returned an error (test78 dropped 8 batches
+/// with E_NOTIMPL and no reason).
+fn step<T>(name: &'static str, result: windows::core::Result<T>) -> windows::core::Result<T> {
+    if result.is_err() {
+        FAILED_STEP.with(|s| s.set(name));
+    }
+    result
+}
+
+/// A bad batch drops only itself: latching the error on the queue made every
+/// later submission return early, so the title kept presenting black frames.
+/// Device loss still latches, since nothing after it can run.
+fn drop_batch(queue: &Queue, error: HRESULT) {
+    use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_DEVICE_HUNG, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET};
+    if matches!(error, DXGI_ERROR_DEVICE_REMOVED | DXGI_ERROR_DEVICE_HUNG | DXGI_ERROR_DEVICE_RESET) {
+        reject(queue, error);
+        return;
+    }
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BatchesDropped);
+    static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = DROPPED.fetch_add(1, Ordering::Relaxed);
+    if n < 4 || (n + 1).is_power_of_two() {
+        let step = FAILED_STEP.with(|s| s.replace(""));
+        crate::diagnostics::log_line(format_args!("dropped a command-list batch: {error:?} at {} ({} so far)",
+            if step.is_empty() { "placed texture submission" } else { step }, n + 1));
+    }
+}
+
+/// Committed memory of `len` bytes at `at`, readable (and writable if asked).
+pub(crate) fn accessible(at: usize, len: usize, write: bool) -> bool {
+    use windows::Win32::System::Memory::*;
+    if at == 0 {
+        return false;
+    }
+    // A lazy title view (read-write) xmem knows committed, after committing
+    // what the GPU alone wrote: no VirtualQuery, which scans the whole region.
+    if device::view_state(at, len).covered() {
+        device::commit_lazy(at, len);
+        if device::view_state(at, len).committed() {
+            return true;
+        }
+    }
+    let mut region = MEMORY_BASIC_INFORMATION::default();
+    if unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+        return false;
+    }
+    // A word or buffer only the GPU wrote (a fence word, a counter) is still
+    // reserved in a lazy title view: its CPU stores and copies were skipped
+    // and a waiter on it hung. Commit it, as the CPU's first touch would.
+    if region.State == MEM_RESERVE && region.Type == MEM_MAPPED && device::commit_lazy(at, len) > 0
+        && unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } == 0 {
+        return false;
+    }
+    let protect = region.Protect;
+    let readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY
+        | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    let writable = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    region.State == MEM_COMMIT
+        && (protect & (PAGE_GUARD | PAGE_NOACCESS)).0 == 0
+        && (protect & if write { writable } else { readable }).0 != 0
+        && at.checked_add(len).is_some_and(|end| end <= region.BaseAddress as usize + region.RegionSize)
+}
+
+// Device11 queue slot 35. xcl and rebox call it ExecuteCommandListsX(count,
+// lists, value, flags); palmetto (the GTA VI runtime) treats it as a clock
+// calibration that writes two QPC ticks to the pointer in the second
+// argument, and the title faults on stack garbage when they stay unwritten.
+// Tell the two apart by whether the second argument holds our list proxies.
+unsafe extern "system" fn execute_frame(
+    queue: &Queue, count: u32, lists: *const *mut c_void, frame_token: u64, flags: u32,
+) {
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    crate::diagnostics::log_once(&FIRST, || format!(
+        "queue slot 35 first call: a1={count:#x} a2={lists:p} a3={frame_token:#x} a4={flags:#x}"));
+    let device = parent(&queue.parent);
+    // TUXBOX_QSLOT35=pair|exec forces one form; unset tells them apart.
+    let forced = crate::env_toggle!("TUXBOX_QSLOT35");
+    let first_is_list = forced != Some("pair") && (forced == Some("exec") || (1..=256).contains(&count)
+        && accessible(lists as usize, count as usize * size_of::<*mut c_void>(), false)
+        && {
+            let item = unsafe { *lists };
+            accessible(item as usize, size_of::<usize>(), false)
+                && unsafe {
+                    unwrap::<ID3D12GraphicsCommandList, ListData>(item, device, &LIST_SLOTS)
+                        .or_else(|| unwrap(item, device, &DEVICE11_LIST_SLOTS))
+                        .or_else(|| unwrap(item, device, &EXTENDED_LIST_SLOTS))
+                }
+                .is_some()
+        });
+    if !first_is_list && forced != Some("pair") {
+        // palmetto 22555b24 dropped its clock-calibration reading: slot 35 is
+        // the console's submit. Writing ticks over an array we could not read
+        // as lists overwrote the title's pointers; it is now left alone.
+        static UNKNOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = UNKNOWN.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 4 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "queue slot 35: a1={count:#x} a2={lists:p} holds no list of ours; batch dropped, nothing written ({n} so far; TUXBOX_QSLOT35=pair writes clock ticks)"));
+        }
+        crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::BatchesDropped);
+        return;
+    }
+    if !first_is_list {
+        if accessible(lists as usize, 16, true) {
+            let mut ticks = 0i64;
+            let _ = unsafe { windows::Win32::System::Performance::QueryPerformanceCounter(&mut ticks) };
+            let out = lists.cast_mut().cast::<i64>();
+            unsafe { out.write_unaligned(ticks); out.add(1).write_unaligned(ticks); }
+        }
+        static CALIBRATION: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&CALIBRATION, || format!(
+            "queue slot 35 treated as clock calibration (a1={count:#x} a2={lists:p})"));
+        return;
+    }
+    // Both flags select how the console assembles its GPU packets. Bit 0
+    // suppresses a hardware buffer switch and bit 1 chains indirect buffers.
+    // The desktop queue owns its packet storage and takes the ordered list
+    // array in one submission. The frame token labels that submission.
+    // test61: a compute queue's submission with flags 0x3 was dropped here,
+    // and the work after it read what that batch should have written (a GPU
+    // page fault at VA 0). Every queue type takes the batch like a direct
+    // one; TUXBOX_SLOT35_DIRECT_ONLY=1 drops the others again.
+    let direct_only = crate::env_toggle!("TUXBOX_SLOT35_DIRECT_ONLY") == Some("1");
+    if (direct_only && queue.state.kind != D3D12_COMMAND_LIST_TYPE_DIRECT) || flags & !3 != 0 {
+        crate::diagnostics::recording_error(format_args!("extended command-list submission flags {flags:#x} on queue type {}", queue.state.kind.0));
+        // Drop this batch only: latching the queue error dropped every
+        // later submission too.
+        drop_batch(queue, E_NOTIMPL);
+        return;
+    }
+    unsafe { execute_batch(queue, count, lists, Some((frame_token, flags))) };
+}
+
+unsafe extern "system" fn execute(queue: &Queue, count: u32, lists: *const *mut c_void) {
+    unsafe { execute_batch(queue, count, lists, None) };
+}
+
+/// TUXBOX_QUEUE_HOLD (queue_hold): the lists from the first whose GPU memory
+/// wait is not met (or all, behind what the queue holds) are held on the
+/// CPU; the rest runs now. Whether the call was taken (held in part or whole).
+unsafe fn hold_batch(queue: &Queue, count: u32, lists: *const *mut c_void, frame: Option<(u64,u32)>) -> bool {
+    if !queue_hold::on() || queue_hold::releasing() || count == 0 || lists.is_null() {
+        return false;
+    }
+    let guest = unsafe { slice::from_raw_parts(lists, count as usize) };
+    let waits: Vec<Vec<Arc<memory_wait::Segment>>> = guest.iter().map(|&item| {
+        let list: Option<&List> = unsafe {
+            unwrap(item, parent(&queue.parent), &LIST_SLOTS)
+                .or_else(|| unwrap(item, parent(&queue.parent), &DEVICE11_LIST_SLOTS))
+                .or_else(|| unwrap(item, parent(&queue.parent), &EXTENDED_LIST_SLOTS))
+                .or_else(|| unwrap(item, parent(&queue.parent), &media::SLOTS))
+        };
+        list.map(|list| recording(list).prefix.segments.clone()).unwrap_or_default()
+    }).collect();
+    let cut = queue_hold::submit_split(queue, guest, &waits, frame);
+    if cut == guest.len() {
+        return false;
+    }
+    if cut > 0 {
+        queue_hold::run_now(|| unsafe { execute_batch(queue, cut as u32, lists, frame) });
+    }
+    // What ran may be what another queue waits for, and what was just held
+    // may be free to run already.
+    queue_hold::release_held(false);
+    true
+}
+
+unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, frame: Option<(u64,u32)>) {
+    if unsafe { hold_batch(queue, count, lists, frame) } {
+        return;
+    }
+    unsafe { execute_batch_now(queue, count, lists, frame) };
+    queue_hold::release_held(false);
+}
+
+unsafe fn execute_batch_now(queue: &Queue, count: u32, lists: *const *mut c_void, frame: Option<(u64,u32)>) {
+    let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Submit);
+    if crate::diagnostics::capture::active() {
+        let guest = if count == 0 || lists.is_null() { &[][..] } else { unsafe { slice::from_raw_parts(lists, count as usize) } };
+        let kind = unsafe { queue.native.GetDesc().Type.0 };
+        crate::diagnostics::capture::note("submit", queue as *const Queue as usize, "submitted",
+            format_args!("queue type {kind}, lists {guest:?}"));
+    }
+    let mut submitted = queue
+        .state
+        .submission
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *submitted = true;
+    if queue.state.placement.error.load(Ordering::Acquire) < 0 || count == 0 {
+        return;
+    }
+    if lists.is_null() {
+        // Only this call: a latched error would drop every later batch.
+        drop_batch(queue, E_INVALIDARG);
+        return;
+    }
+    let guest = unsafe { slice::from_raw_parts(lists, count as usize) };
+    let mut list_index = 0;
+    let trace_samples = std::cell::RefCell::new(Vec::new());
+    let cpu_copies = std::cell::RefCell::new(Vec::new());
+    // Value writes of lists left out of the batch (orphan_writes).
+    let orphan_writes: std::cell::RefCell<Vec<(u64, u64, u8)>> = std::cell::RefCell::new(Vec::new());
+    // A list of the batch writes a 64-bit value (retire_waits).
+    let retire_write = std::cell::Cell::new(false);
+    let swap_lists = std::cell::RefCell::new(Vec::new());
+    // Leases of the batch's lists on paged arenas (descriptor_paging::submitted).
+    let arena_leases = std::cell::RefCell::new(Vec::new());
+    // TUXBOX_SUBMIT_DESC_RESCAN: one id per submit, each arena walked once.
+    let rescan_id = device::descriptor_paging::next_submit();
+    // The batch's lists, for the transient-pool lifetime check.
+    let pool_lists = std::cell::RefCell::new(Vec::new());
+    // Later host lists of lists split at GPU memory waits (split), by first host list.
+    let tails: std::cell::RefCell<Vec<(*mut c_void, Vec<(Arc<memory_wait::Segment>, *mut c_void)>)>> = Default::default();
+    let result = translate_batch(
+        guest,
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), memory_wait::Splits::new()),
+        |&item, (textures, writes, shader_views, scene_lists, splits)| {
+            let list: &List = unsafe {
+                unwrap(item, parent(&queue.parent), &LIST_SLOTS)
+                    .or_else(|| unwrap(item, parent(&queue.parent), &DEVICE11_LIST_SLOTS))
+                    .or_else(|| unwrap(item, parent(&queue.parent), &EXTENDED_LIST_SLOTS))
+                    .or_else(|| unwrap(item, parent(&queue.parent), &media::SLOTS))
+            }
+            .ok_or(E_INVALIDARG)?;
+            let mut state = recording(list);
+            placement::list_submitted(state.opened.elapsed());
+            if placement::target_retouch() {
+                state.target_heaps.retouch();
+            }
+            // A closed list submitted again holds eviction only for its age
+            // since the last submit: its heaps are stamped at each submit
+            // (touch_render_views), so a list recorded once and resubmitted
+            // no longer looks ever older and holds eviction for good
+            // (test154: 564 render heaps idle 30 s+, none evicted, 8075/6983
+            // MiB device-local). TUXBOX_HOLD_FROM_SUBMIT=0 measures from the
+            // recording's start.
+            if crate::env_toggle!("TUXBOX_HOLD_FROM_SUBMIT") != Some("0") {
+                state.opened = std::time::Instant::now();
+            }
+            if crate::diagnostics::transient_pool::enabled() {
+                pool_lists.borrow_mut().push(list.native.as_raw() as usize);
+            }
+            // The trigger is the list's slot-74 64-bit memory wait, the retire
+            // wait itself (five-star 226887c: slot 74 is Wait64BitValueX, not a
+            // write); TUXBOX_RETIRE_WAITS_ON=write keeps the old 64-bit write trigger.
+            if retire_waits::enabled() && if crate::env_toggle!("TUXBOX_RETIRE_WAITS_ON") == Some("write") {
+                state.value_writes.iter().any(|w| w.2 == 8)
+            } else {
+                state.prefix.segments.iter().any(|s| s.wide())
+            } {
+                retire_write.set(true);
+            }
+            if !state.stalled_writes.is_empty() {
+                static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                if LOGGED.fetch_add(1, Ordering::Relaxed) < 32 {
+                    crate::diagnostics::log_line(format_args!(
+                        "list {list:p} writing {:x?} (pages of stalled GPU memory waits) submitted on queue {:p} type {} (thread {})",
+                        state.stalled_writes, queue, queue.state.kind.0,
+                        unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }));
+                }
+            }
+            if !matches!(state.phase, ListState::Closed)
+                || state.error.is_err()
+                || unsafe { list.native.GetType() } != queue.state.kind
+            {
+                // test78: lists whose native Close failed (0x80070057) dropped
+                // their whole batch, and the title's later work read what that
+                // batch should have written. Only this list is left out, with
+                // its memory-wait prefix; TUXBOX_STRICT_LISTS=1 drops the batch.
+                if strict_lists() || unsafe { list.native.GetType() } != queue.state.kind {
+                    FAILED_STEP.with(|s| s.set("a list that is open, failed or of another type"));
+                    return Err(E_INVALIDARG);
+                }
+                if orphan_writes_on() {
+                    orphan_writes.borrow_mut().extend(state.value_writes.iter().copied());
+                }
+                static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let n = SKIPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 8 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "left a list out of its batch: {} (error {:#010x}); the batch's other lists run ({n} so far; TUXBOX_STRICT_LISTS=1 drops the batch)",
+                        if matches!(state.phase, ListState::Closed) { "its recording failed" } else { "not closed" }, state.error.0));
+                }
+                return Ok(std::ptr::null_mut());
+            }
+            // A word a memory wait reads at the title address (its pages do
+            // not import, memory_wait title_word) is written by this list
+            // only into a shadow: the CPU makes those writes too once the
+            // batch has run (as for a left-out list's), so the wait sees them.
+            if memory_wait::title_words_any() {
+                orphan_writes.borrow_mut().extend(state.value_writes.iter().copied().filter(|w| memory_wait::title_word_at(w.0)));
+            }
+            // A descriptor write after Close can exhaust the map's native
+            // heap. Never submit an indexed access with an unpublished entry.
+            for arena in &state.indexed_arenas {
+                arena.check_index_capacity().map_err(|e| e.code())?;
+            }
+            for descriptor in &state.scalar_descriptors {
+                let owner = list.parent.as_ref().ok_or(E_INVALIDARG)?;
+                if !unsafe { device::is_constant_buffer(owner, descriptor.cpu) } {
+                    crate::diagnostics::recording_error(format_args!(
+                        "indexed shader scalar load requires a CBV at logical resource descriptor {}", descriptor.index
+                    ));
+                    return Err(E_INVALIDARG);
+                }
+            }
+            splits.try_reserve(state.prefix.segments.len()).map_err(|_| E_OUTOFMEMORY)?;
+            splits.extend(state.prefix.segments.iter().map(|s| (list_index, s.clone())));
+            list_index += 1;
+            if !state.scene_commands.is_empty() {
+                scene_lists.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+                scene_lists.push(list);
+            }
+            textures
+                .try_reserve(state.placed_reads.len())
+                .map_err(|_| E_OUTOFMEMORY)?;
+            textures.extend(state.placed_reads.iter().cloned());
+            writes
+                .try_reserve(state.placed_writes.len())
+                .map_err(|_| E_OUTOFMEMORY)?;
+            writes.extend(state.placed_writes.iter().cloned());
+            shader_views.extend(state.sampled_heaps.iter().cloned());
+            // TUXBOX_READ_SET_TABLES: what the list's tables and heap-indexed
+            // draws show is read (every buffer view in its sampled ranges).
+            if state.tables_bound && crate::device::read_set_tables() {
+                if state.sampled_heaps.is_empty() {
+                    note_read_all(list);
+                } else {
+                    unsafe { device::read_set_heaps(parent(&list.parent), list as *const List as usize, &state.sampled_heaps) };
+                }
+            }
+            crate::device::uav_submitted(&state.written_views);
+            crate::device::uav_fallback(&state.fallback_views);
+            placement::note_written_views(&state.written_views, &state.fallback_views);
+            crate::device::dynamic_heaps_submitted(&state.dynamic_heaps);
+            trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
+            cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
+            swap_lists.borrow_mut().push(list as *const List as usize);
+            arena_leases.borrow_mut().extend(state.arena_leases.iter().map(|lease| lease.state()));
+            for lease in &state.arena_leases {
+                lease.arena().rescan_submit(rescan_id);
+            }
+            let first = state.segments.first(&list.native);
+            if first != list.native.as_raw() {
+                tails.borrow_mut().push((first, state.segments.tails(&list.native)));
+            }
+            Ok(first)
+        },
+        |host, (mut textures, mut writes, shader_views, scene_lists, splits)| {
+            let _site = crate::diagnostics::cost::site();
+            let kept: Vec<_>;
+            let host = if host.iter().any(|l| l.is_null()) {
+                kept = host.iter().copied().filter(|l| !l.is_null()).collect();
+                if kept.is_empty() {
+                    return Ok(());
+                }
+                &kept[..]
+            } else {
+                host
+            };
+            unsafe {
+                placement::submit(
+                    parent(&queue.parent),
+                    &queue.native,
+                    &queue.state.placement,
+                    &mut textures,
+                    &mut writes,
+                    &shader_views,
+                    || {
+                        // Placement dependencies are settled. Publish scene writes and
+                        // snapshot each instance table in recorded order across lists.
+                        let submission = if scene_lists.is_empty() {
+                            None
+                        } else {
+                            let owner = queue.parent.as_ref().ok_or(E_INVALIDARG)?;
+                            Some(device::blas::begin_submission(owner))
+                        };
+                        // test81 dropped two batches when one list's AS source
+                        // had moved since recording. Only that list is left out
+                        // (its AS work would read the old address); the batch's
+                        // other lists run. TUXBOX_STRICT_SCENE=1 drops the batch.
+                        let mut left_out: Vec<*mut c_void> = Vec::new();
+                        for list in scene_lists {
+                            let state = recording(list);
+                            for command in &state.scene_commands {
+                                let prepared = command.prepare(list);
+                                if let Err(error) = &prepared
+                                    && crate::env_toggle!("TUXBOX_STRICT_SCENE") != Some("1")
+                                {
+                                    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if n <= 16 || n.is_power_of_two() {
+                                        crate::diagnostics::log_line(format_args!(
+                                            "left a list out of its batch: its scene (BLAS) preparation failed {:#010x}; the batch's other lists run ({n} so far; TUXBOX_STRICT_SCENE=1 drops the batch)",
+                                            error.code().0));
+                                    }
+                                    left_out.push(state.segments.first(&list.native));
+                                    if orphan_writes_on() {
+                                        orphan_writes.borrow_mut().extend(state.value_writes.iter().copied());
+                                    }
+                                    break;
+                                }
+                                step("scene (BLAS) preparation", prepared)?;
+                            }
+                        }
+                        let kept_host: Vec<*mut c_void>;
+                        let (host, splits) = if left_out.is_empty() {
+                            (host, splits)
+                        } else {
+                            let gone: Vec<usize> = host.iter().enumerate().filter(|(_, l)| left_out.contains(l)).map(|(i, _)| i).collect();
+                            kept_host = host.iter().copied().filter(|l| !left_out.contains(l)).collect();
+                            if kept_host.is_empty() {
+                                let writes = orphan_writes.take();
+                                if !writes.is_empty() {
+                                    let mut device: Option<ID3D12Device> = None;
+                                    queue.native.GetDevice(&mut device)?;
+                                    let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                                    queue.native.Signal(&fence, 1)?;
+                                    orphan_writes_after(fence, writes);
+                                }
+                                return Ok(());
+                            }
+                            let splits = splits.into_iter()
+                                .filter(|(i, _)| !gone.contains(i))
+                                .map(|(i, s)| (i - gone.iter().filter(|&&g| g < i).count(), s))
+                                .collect();
+                            (&kept_host[..], splits)
+                        };
+                        if let Some(owner) = queue.parent.as_ref() {
+                            let _site = crate::diagnostics::cost::site();
+                            device::read_set_submitted(&swap_lists.borrow());
+                            step("shadow refresh", device::refresh_shadows(owner, &queue.native))?;
+                            step("descriptor table flush", device::flush_desc_table(owner, &queue.native))?;
+                        }
+                        if retire_write.get() {
+                            retire_waits::wait_others(&queue.native);
+                        }
+                        device::placed_device::before_submit(&queue.native);
+                        {
+                            let _site = crate::diagnostics::cost::site();
+                            let tails = tails.borrow();
+                            if tails.is_empty() {
+                                step("GPU memory wait submission", memory_wait::submit(queue, host, splits))?;
+                            } else {
+                                let (host, splits) = split::expand(host, splits, &tails);
+                                step("GPU memory wait submission", memory_wait::submit(queue, &host, splits))?;
+                            }
+                        }
+                        retire_waits::submitted(&queue.native);
+                        crate::diagnostics::transient_pool::submitted(&queue.native, &pool_lists.borrow());
+                        device::committed_writeback::submitted(&queue.native);
+                        device::placed_device::after_submit(&queue.native);
+                        if let Some(owner) = queue.parent.as_ref() {
+                            let _site = crate::diagnostics::cost::site();
+                            step("shadow write-back", device::write_back_shadows(owner, &queue.native))?;
+                        }
+                        if !cpu_copies.borrow().is_empty() {
+                            let mut device: Option<ID3D12Device> = None;
+                            queue.native.GetDevice(&mut device)?;
+                            let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                            queue.native.Signal(&fence, 1)?;
+                            cpu_copy_after(fence, cpu_copies.take());
+                        }
+                        if !orphan_writes.borrow().is_empty() {
+                            let mut device: Option<ID3D12Device> = None;
+                            queue.native.GetDevice(&mut device)?;
+                            let fence: ID3D12Fence = device.ok_or(E_INVALIDARG)?.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                            queue.native.Signal(&fence, 1)?;
+                            orphan_writes_after(fence, orphan_writes.take());
+                        }
+                        if !trace_samples.borrow().is_empty() {
+                            let mut device: Option<ID3D12Device> = None;
+                            queue.native.GetDevice(&mut device)?;
+                            let device = device.ok_or(E_INVALIDARG)?;
+                            let fence: ID3D12Fence = device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
+                            queue.native.Signal(&fence, 1)?;
+                            fence.SetEventOnCompletion(1, windows::Win32::Foundation::HANDLE::default())?;
+                            for (label, sample) in trace_samples.borrow().iter() {
+                                sample.report(label);
+                            }
+                        }
+                        if let Some(submission) = submission {
+                            submission.commit();
+                        }
+                        crate::diagnostics::submitted(queue.state.kind, count);
+                        Ok(())
+                    },
+                )
+            }
+            .map_err(|error| error.code())
+        },
+    );
+    if result.is_ok() {
+        device::alloc_swap::submitted(&queue.native, &swap_lists.borrow());
+        device::descriptor_paging::submitted(&queue.native, &arena_leases.borrow());
+    }
+    if let Err(error) = result {
+        drop_batch(queue, error);
+    } else if let Some((token, flags)) = frame {
+        static FIRST: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
+        crate::diagnostics::log_once(&FIRST[flags as usize], || format!(
+            "submitted frame batch flags={flags:#x} token={token} count={count} first_lists={:?}",
+            &guest[..guest.len().min(4)]
+        ));
+    }
+}
+
+unsafe extern "system" fn queue_fence<const WAIT: bool>(
+    queue: &Queue,
+    fence: *mut c_void,
+    value: u64,
+) -> HRESULT {
+    let mut submitted = queue
+        .state
+        .submission
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *submitted = true;
+    let hr = HRESULT(queue.state.placement.error.load(Ordering::Acquire));
+    if hr.is_err() {
+        return hr;
+    }
+    let owner = parent(&queue.parent);
+    let native;
+    let fence = match unsafe { device::fence(fence, owner) } {
+        Some(fence) => fence,
+        None => {
+            native = match unsafe { device::media::native_child::<ID3D12Fence>(fence, owner) } {
+                Ok(fence) => fence,
+                Err(error) => return error.code(),
+            };
+            &native
+        }
+    };
+    let method = if WAIT {
+        queue.native.vtable().Wait
+    } else {
+        queue.native.vtable().Signal
+    };
+    // A queue that holds work signals after it (TUXBOX_QUEUE_HOLD).
+    if !WAIT && queue_hold::on() && queue_hold::hold_signal(queue, fence.as_raw(), value) {
+        return S_OK;
+    }
+    // A queue behind a fence not reached (or behind what it holds) holds
+    // what it is given next on the CPU (fxceless queue.rs wait): on one
+    // native queue (TUXBOX_ONE_QUEUE) a native Wait would stall the signal
+    // another title queue submits after it.
+    if WAIT && queue_hold::on() && queue_hold::hold_wait(queue, fence, value) {
+        memory_wait::slow::queue_wait(queue.native.as_raw() as usize, fence, value);
+        unsignalled::waited(fence, value);
+        return S_OK;
+    }
+    if WAIT {
+        memory_wait::slow::queue_wait(queue.native.as_raw() as usize, fence, value);
+        crate::diagnostics::queue_waits::note(queue.native.as_raw() as usize, "title", fence, value);
+        unsignalled::waited(fence, value);
+    } else {
+        unsignalled::signalled(fence, value);
+        crate::device::fence::stalls::signalled(fence, value, queue.native.as_raw() as usize);
+    }
+    let status = unsafe { method(queue.native.as_raw(), fence.as_raw(), value) };
+    if !WAIT && status.is_ok() {
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!(
+            "queued guest fence signal value={value} queue_type={} fence={:p}", queue.state.kind.0, fence.as_raw()
+        ));
+    }
+    status
+}
+
+/// A queue wait on a fence value no queue was told to signal (and the fence
+/// has not reached) is logged once per fence and value, first 32 (rebox
+/// 35b0eaf, re-derived): a wait that can only be met by a CPU Signal, or
+/// never. TUXBOX_UNSIGNALLED_WAITS=0 off.
+mod unsignalled {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex;
+    use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
+    use windows::core::Interface;
+
+    #[derive(Default)]
+    struct Seen {
+        /// fence -> highest value a queue was told to signal.
+        signalled: HashMap<usize, u64>,
+        logged: HashSet<(usize, u64)>,
+    }
+
+    static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
+
+    fn on() -> bool {
+        crate::env_toggle!("TUXBOX_UNSIGNALLED_WAITS") != Some("0")
+    }
+
+    pub(super) fn signalled(fence: &ID3D12Fence, value: u64) {
+        if !on() {
+            return;
+        }
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let top = seen.get_or_insert_with(Seen::default).signalled.entry(fence.as_raw() as usize).or_insert(0);
+        *top = (*top).max(value);
+    }
+
+    /// Whether a wait for `value` is one nothing queued will satisfy.
+    pub(super) fn unmet(value: u64, completed: u64, signalled: Option<u64>) -> bool {
+        value > completed && signalled.is_none_or(|top| value > top)
+    }
+
+    pub(super) fn waited(fence: &ID3D12Fence, value: u64) {
+        if !on() {
+            return;
+        }
+        let completed = unsafe { fence.GetCompletedValue() };
+        let key = fence.as_raw() as usize;
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let seen = seen.get_or_insert_with(Seen::default);
+        if !unmet(value, completed, seen.signalled.get(&key).copied()) || seen.logged.len() >= 32
+            || !seen.logged.insert((key, value)) {
+            return;
+        }
+        crate::diagnostics::log_line(format_args!(
+            "queue waits on fence {key:#x} for {value:#x}, which no queue was told to signal (highest {:?}, completed {completed:#x}) from title RVA {:#x}; TUXBOX_UNSIGNALLED_WAITS=0 off",
+            seen.signalled.get(&key), crate::survey::title_rva().unwrap_or(0)));
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn a_wait_is_unmet_only_past_both_completed_and_signalled() {
+        assert!(unmet(5, 3, Some(4)));
+        assert!(unmet(5, 3, None));
+        assert!(!unmet(4, 3, Some(4)));
+        assert!(!unmet(3, 3, None));
+    }
+}
+
+// Frosty's direct/compute path requests its flush before the fence and the
+// copy path passes zero. Native queue Signal orders completion of prior work.
+unsafe extern "system" fn signal_x(
+    queue: &Queue,
+    fence: *mut c_void,
+    value: u64,
+    flush: u32,
+) -> HRESULT {
+    if !matches!(flush, 0 | 0x0800_0000) {
+        return E_NOTIMPL;
+    }
+    unsafe { queue_fence::<false>(queue, fence, value) }
+}
+
+#[repr(C)]
+struct PresentPlane {
+    token: u64,
+    resource_count: u32,
+    padding: u32,
+    resources: *const *mut c_void,
+}
+
+const _: () = assert!(mem::offset_of!(PresentPlane, resources) == 16);
+
+// Frosty submits a 72-byte plane and a separate 32-byte parameter record
+// at RVA 0x5764f32. Older TuxBox guests supply only the plane prefix.
+#[repr(C)]
+struct RetailPresentPlane {
+    prefix: PresentPlane,
+    source_rects: *const RECT,
+    destination: *const [f32; 4],
+    color_space: u32,
+    remaining: [u32; 7],
+}
+
+#[repr(C)]
+struct PresentParameters {
+    immediate_threshold_percent: f32,
+    options: [u32; 7],
+}
+
+const _: () = assert!(mem::size_of::<RetailPresentPlane>() == 72);
+const _: () = assert!(mem::size_of::<PresentParameters>() == 32);
+
+unsafe extern "system" fn present(
+    queue: &Queue,
+    count: u32,
+    planes: *const PresentPlane,
+    params: *const PresentParameters,
+) -> HRESULT {
+    let result = unsafe { present_planes(queue, count, planes, params) };
+    if result.is_err() {
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!("PresentX failed planes={count} HRESULT={:#010x}", result.0));
+        if result == windows::Win32::Graphics::Dxgi::DXGI_ERROR_ACCESS_LOST {
+            // The desktop window was closed. A console title has no such event
+            // and would otherwise wait for this frame's flip until its own
+            // watchdog fires. Treat the close as a request to quit.
+            crate::diagnostics::log_once(&std::sync::Once::new(), || "presentation window closed; exiting title".into());
+            // Compiled host pipelines and the used list, kept for the next run.
+            device::pipeline_cache::save_now();
+            use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+            let _ = unsafe { TerminateProcess(GetCurrentProcess(), 0) };
+        }
+        // A rejected present still ends this frame for the title's pacing.
+        if count >= 1 && let Some(plane) = unsafe { planes.as_ref() } {
+            unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
+        }
+    }
+    result
+}
+
+unsafe fn present_planes(
+    queue: &Queue, count: u32, planes: *const PresentPlane, params: *const PresentParameters,
+) -> HRESULT {
+    // Before the submission lock: the wait must not hold up this queue.
+    memory_wait::presented();
+    // A wait is not kept across frames: what queues hold runs (fxceless
+    // VICTORY_WAIT_FORCE; TUXBOX_QUEUE_HOLD).
+    queue_hold::release_held(true);
+    crate::device::placement::UPLOAD_FRAME.fetch_add(1, Ordering::Relaxed);
+    crate::throttle::presented();
+    let mut submitted = queue
+        .state
+        .submission
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *submitted = true;
+    let hr = HRESULT(queue.state.placement.error.load(Ordering::Acquire));
+    if hr.is_err() {
+        return hr;
+    }
+    if queue.state.kind != D3D12_COMMAND_LIST_TYPE_DIRECT {
+        return E_NOTIMPL;
+    }
+    if count == 0 || planes.is_null() {
+        return E_INVALIDARG;
+    }
+    // Show plane 0 (rebox does the same); overlay planes and extra
+    // resources are dropped with a log line.
+    let plane = unsafe { &*planes };
+    if plane.resource_count == 0 || plane.resources.is_null() {
+        return E_INVALIDARG;
+    }
+    if count != 1 || plane.resource_count != 1 {
+        static EXTRA: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&EXTRA, || format!(
+            "present: showing plane 0 resource 0 of {count} planes, {} resources", plane.resource_count));
+    }
+    let Some(source) = (unsafe { device::resource(*plane.resources, parent(&queue.parent)) })
+    else {
+        return E_INVALIDARG;
+    };
+    if let Some(params) = unsafe { params.as_ref() } {
+        if !(0.0..=100.0).contains(&params.immediate_threshold_percent) {
+            return E_INVALIDARG;
+        }
+        let full = unsafe { &*planes.cast::<RetailPresentPlane>() };
+        let desc = unsafe { source.GetDesc() };
+        let rect = unsafe { full.source_rects.as_ref() };
+        let destination = unsafe { full.destination.as_ref() };
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&FIRST, || format!(
+            "present plane {}x{} source {rect:?} destination {destination:?} color {} parameters {:?}",
+            desc.Width, desc.Height, full.color_space, params.options
+        ));
+        if rect.is_some_and(|r| r.left != 0 || r.top != 0 || r.right as u64 != desc.Width || r.bottom as u32 != desc.Height)
+            || destination.is_some_and(|r| *r != [0.0, 0.0, 1.0, 1.0])
+            || full.color_space != 0 || full.remaining != [0; 7] || params.options != [0; 7] {
+            // Presented as a full-plane copy anyway; the first mismatch is logged above.
+            static PARTIAL: std::sync::Once = std::sync::Once::new();
+            crate::diagnostics::log_once(&PARTIAL, || "present: source rect, destination, color space or options ignored".to_owned());
+        }
+    }
+    let result = {
+        let _cost = crate::diagnostics::cost::timer(crate::diagnostics::cost::Bucket::Present);
+        queue.state.presentation.present(&queue.native, source)
+    };
+    // Frame pacing must advance even if the host present failed; the title
+    // otherwise waits forever for this token's flip.
+    unsafe { device::frame_events::display_flip(parent(&queue.parent), plane.token) };
+    crate::device::shader_cache::frame_presented();
+    crate::diagnostics::capture::presented();
+    crate::diagnostics::frame_work::add(crate::diagnostics::frame_work::Work::Presents);
+    if result == S_OK {
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        static EARLY: [std::sync::Once;4] = [const { std::sync::Once::new() };4];
+        let index = COUNT.fetch_add(1, Ordering::Relaxed);
+        if let Some(site) = EARLY.get(index) {
+            crate::diagnostics::log_once(site, || format!("completed PresentX #{} token={} source={:p}",index+1,plane.token,unsafe { *plane.resources }));
+        } else {
+            // A heartbeat every 10 s with the frame rate since the last one: the
+            // early lines alone made a running game look stalled, and a count
+            // heartbeat stayed silent when slow frames never reached it.
+            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0); // ms since START
+            static LAST_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
+            let last = LAST.load(Ordering::Relaxed);
+            if now >= last + 10_000 && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                let frames = (index + 1).saturating_sub(LAST_INDEX.swap(index + 1, Ordering::Relaxed));
+                let fps = if last == 0 { 0.0 } else { frames as f64 * 1000.0 / (now - last) as f64 };
+                let frame_ms = if fps > 0.0 { 1000.0 / fps } else { 0.0 };
+                let gpu = crate::diagnostics::gpu_clock::take().map_or("-".into(), |ms| format!("{ms:.1}"));
+                let gpu = match crate::diagnostics::gpu_clock::take_before_copy() {
+                    Some(ms) => format!("{gpu} ({ms:.1} before the present copy)"),
+                    None => gpu,
+                };
+                crate::diagnostics::log_line(format_args!(
+                    "completed PresentX #{} ({fps:.1} fps; ms/frame: {})", index + 1, crate::diagnostics::cost::split(frames)));
+                // Separate line: the frame's GPU latency and every thread's CPU time.
+                // Samples of the interval's busiest threads are read before
+                // the split picks the next interval's threads.
+                let hot = crate::diagnostics::sampler::report();
+                crate::diagnostics::log_line(format_args!(
+                    "frame time {frame_ms:.1} ms: gpu latency {gpu} ms (present signal to GPU done); cpu ms/frame: {}",
+                    crate::diagnostics::threads::split(frames.max(1) as f64, frame_ms)));
+                for line in hot {
+                    crate::diagnostics::log_line(format_args!("{line}"));
+                }
+                if let Some(line) = crate::diagnostics::frame_work::report() {
+                    crate::diagnostics::log_line(format_args!("{line}"));
+                }
+                if let Some(line) = crate::diagnostics::audio::engine_report() {
+                    crate::diagnostics::log_line(format_args!("{line}"));
+                }
+            }
+        }
+    }
+    result
+}
+
+static QUEUE_SLOTS: Slots<64> = {
+    let mut slots = child_slots::<ID3D12CommandQueue, QueueState, 64>();
+    // Tile mapping sits before the marker methods, so both queue generations share it.
+    slots[8] = crate::slot!(tiles::update);
+    slots[9] = crate::slot!(tiles::copy);
+    slots[10] = crate::slot!(execute);
+    slots[14] = crate::slot!(queue_fence::<false>);
+    slots[15] = crate::slot!(queue_fence::<true>);
+    slots[16] = crate::slot!(queries::frequency);
+    slots[17] = crate::slot!(queries::calibrate);
+    slots[18] = crate::slot!(queries::queue_desc);
+    slots[23] = crate::slot!(signal_x);
+    // CopyPageMappingsBatchX: the Device11 table's slot 31 less this table's
+    // two-slot shift (rebox maps it at 29 on the older queue table too).
+    slots[29] = crate::slot!(page_mapping::copy);
+    slots[30] = crate::slot!(present);
+    slots
+};
+
+static DEVICE11_QUEUE_SLOTS: Slots<64> = {
+    let mut slots = child_slots::<ID3D12CommandQueue, QueueState, 64>();
+    // Tile mapping sits before the marker methods, so both queue generations share it.
+    slots[8] = crate::slot!(tiles::update);
+    slots[9] = crate::slot!(tiles::copy);
+    slots[10] = crate::slot!(execute);
+    slots[16] = crate::slot!(queue_fence::<false>);
+    slots[17] = crate::slot!(queue_fence::<true>);
+    slots[18] = crate::slot!(queries::frequency);
+    slots[19] = crate::slot!(queries::calibrate);
+    slots[20] = crate::slot!(queries::queue_desc);
+    slots[25] = crate::slot!(signal_x);
+    slots[31] = crate::slot!(page_mapping::copy);
+    slots[32] = crate::slot!(present);
+    slots[35] = crate::slot!(execute_frame);
+    slots
+};
+
+pub(crate) unsafe fn wrap_command_list(
+    native: ID3D12GraphicsCommandList,
+    allocator: &device::Allocator,
+    initial: Option<&device::compute::Pipeline>,
+    device: &IUnknown,
+    compact: bool,
+    extended: bool,
+    device11: bool,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    let raytracing = if compact {
+        None
+    } else {
+        native.cast::<ID3D12GraphicsCommandList4>().ok()
+    };
+    let has_list4 = raytracing.is_some();
+    let has_list6 = has_list4 && native.cast::<ID3D12GraphicsCommandList6>().is_ok();
+    if extended && !has_list6 {
+        return windows::Win32::Foundation::E_NOINTERFACE;
+    }
+    let state = ListData {
+        reserved0: [0; 2],
+        write_cursor: 0,
+        reserved1: [0; 2],
+        packet_end: 0,
+        reserved2: [0; 0x540 - 0x38],
+        pipeline_packets: core::cell::UnsafeCell::new([0; 32]),
+        extended: OnceLock::new(),
+        enhanced_barriers: OnceLock::new(),
+        mesh: OnceLock::new(),
+        raytracing,
+        recording: Mutex::new(Recording {
+            timestamp_page: None,
+            prefix: memory_wait::Prefix::default(),
+            resources: allocator.state.clone(),
+            scene_commands: Vec::new(),
+            bindings: {
+                let mut bindings = compute_bindings::Bindings::new(initial);
+                bindings.slot_owner = std::sync::Arc::as_ptr(&allocator.state) as usize;
+                bindings
+            },
+            unresolved_tables: Default::default(),
+            stencil_slot: initial.and_then(|p| device::compute::current(p).1.stencil_slot),
+            stencil_targets: None,
+            dsv_bound: false,
+            slot57: None,
+            quad_host: 0,
+            slot57_targets: Default::default(),
+            stencil_reference: 0,
+            display_bound: false,
+            display_sized: false,
+            trace_target: None,
+            trace_samples: Vec::new(),
+            null_pipeline: false,
+            pipeline_pending: initial.is_some_and(|p| device::compute::current(p).2),
+            pending_pipeline: initial.filter(|p| device::compute::current(p).2).map_or(0, |p| p as *const device::compute::Pipeline as usize),
+            skipped_compute: false,
+            skipped_writes: None,
+            capture_pipeline: None,
+            unresolved_roots: [0; 2],
+            clamp_budget: None,
+            clamp_scratch: None,
+            placed_reads: Vec::new(),
+            placed_writes: Vec::new(),
+            bound_placed_targets: Vec::new(),
+            target_heaps: Default::default(),
+            opened: std::time::Instant::now(),
+            resource_heap: None,
+            descriptor_arena: None,
+            sampler_heap: None,
+            indexed_arenas: Vec::new(),
+            arena_leases: Vec::new(),
+            scalar_descriptors: Default::default(),
+            sampled_heaps: Vec::new(),
+            tables_bound: false,
+            written_views: Vec::new(),
+            fallback_views: Vec::new(),
+            dynamic_heaps: Vec::new(),
+            ring: std::collections::VecDeque::new(),
+            stalled_writes: Vec::new(),
+            cpu_copies: Vec::new(),
+            value_writes: Vec::new(),
+            copy_scratch: None,
+            open_queries: Vec::new(),
+            split_barriers: Vec::new(),
+            ended_splits: Vec::new(),
+            segments: Default::default(),
+            media: compact.then(|| media::Recording::new(allocator)),
+            phase: ListState::Fresh(allocator.native.clone(), initial.map(|p| p.native.clone())),
+            error: S_OK,
+            error_at: ("", 0),
+        }),
+    };
+    unsafe {
+        allocate(
+            if compact { &media::SLOTS } else if extended { &EXTENDED_LIST_SLOTS }
+            else if device11 { &DEVICE11_LIST_SLOTS } else { &LIST_SLOTS },
+            if compact {
+                &[
+                    ID3D12DeviceChild::IID,
+                    ID3D12CommandList::IID,
+                    device::media::DMA_IID,
+                ]
+            } else if has_list6 {
+                &[
+                    ID3D12DeviceChild::IID,
+                    ID3D12CommandList::IID,
+                    ID3D12GraphicsCommandList::IID,
+                    ID3D12GraphicsCommandList4::IID,
+                    build_raytracing::LIST6,
+                ]
+            } else if has_list4 {
+                &[
+                    ID3D12DeviceChild::IID,
+                    ID3D12CommandList::IID,
+                    ID3D12GraphicsCommandList::IID,
+                    ID3D12GraphicsCommandList4::IID,
+                ]
+            } else {
+                &[
+                    ID3D12DeviceChild::IID,
+                    ID3D12CommandList::IID,
+                    ID3D12GraphicsCommandList::IID,
+                ]
+            },
+            native,
+            Some(device),
+            state,
+            out,
+        )
+    }
+}
+
+pub(crate) unsafe fn wrap_command_queue(
+    native: ID3D12CommandQueue,
+    device: &IUnknown,
+    device11_queue: bool,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    crate::throttle::follow(&native);
+    let state = QueueState {
+        reserved: 0,
+        kind: unsafe { native.GetDesc() }.Type,
+        placement: placement::QueueAccess::default(),
+        submission: Mutex::new(false),
+        page_worker: OnceLock::new(),
+        wait_worker: OnceLock::new(),
+        presentation: Presentation::default(),
+    };
+    unsafe {
+        allocate(
+            if device11_queue { &DEVICE11_QUEUE_SLOTS } else { &QUEUE_SLOTS },
+            &[
+                ID3D12DeviceChild::IID,
+                ID3D12Pageable::IID,
+                ID3D12CommandQueue::IID,
+            ],
+            native,
+            Some(device),
+            state,
+            out,
+        )
+    }
+}

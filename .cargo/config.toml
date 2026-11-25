@@ -1,0 +1,6 @@
+[alias]
+# Portable release zip (replaces tools/package-release.ps1): builds into
+# target/package (never touches target/release), then neonbridge
+# --package-release builds the TuxBox providers and xshader and lays out
+# neonbridge-<version>-win-x64/ plus its .zip in target/package/dist.
+package-release = "run --release --locked --target-dir target/package -- --package-release target/package/dist"

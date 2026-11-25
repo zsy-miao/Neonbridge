@@ -1,0 +1,58 @@
+{
+  "scope": "MaterialSortLocal complete packaged compute shaders. Compared native-wave64 translation on AMD and the portable histogram translation on AMD and NVIDIA against an independent CPU oracle.",
+  "records": "12 bytes per record, seeded as (5000 + i, 0x2000 | ((51 * i + 31) % 128), 0x10000 + i).",
+  "dispatch": "Empty, 37, 135, full tile, and full tile plus 73 live records; dispatch ceil(live/tile) groups, with one group minimum. The UAV view starts 12 bytes into a guarded allocation.",
+  "checks": [
+    "Every live input record appears exactly once.",
+    "Within each dispatch tile the low seven bits of word 1 are monotonically increasing. Duplicate keys may appear in either order.",
+    "Every byte outside the live region, including both guards, matches the seed."
+  ],
+  "cases_per_entry_per_run": 5,
+  "runs": {
+    "native_wave64_amd": "1002:13c0",
+    "portable_amd": "1002:13c0",
+    "portable_nvidia": "10de:2705"
+  },
+  "entries": [
+    {
+      "entry": 3661,
+      "threads": 512,
+      "tile": 2048,
+      "guest_sha256": "bf125e3d888b8aa4477d1961ad9a4a2949e467839bfc3e58f844db074a3bd6e8",
+      "portable_dxil_sha256": "70f73dcfbff544a080878186107670d9beadb9ea809fe1131262db2bd85bd146",
+      "reference_dxil_sha256": "3a53a084e41e67891f7ce12932f9c4f8f0df9bed63ab22da91ae75561cd5788c"
+    },
+    {
+      "entry": 3666,
+      "threads": 512,
+      "tile": 4096,
+      "guest_sha256": "891438964131deae9ea6966ad450d98a4daaa9dbf68b3c3496fce3608b0e7214",
+      "portable_dxil_sha256": "e4fea3c6e20f80087cbda32eba7fb53b413739151c756f042729acbd71b28827",
+      "reference_dxil_sha256": "759146a0ad20f2e0319d5d00717bae288998d55872cc08abbcbaf9da6e100bb6"
+    },
+    {
+      "entry": 3667,
+      "threads": 256,
+      "tile": 512,
+      "guest_sha256": "7d05365d1fda2f4aaaef7d78eadda11f0780cdbeef58b5755edf2ab18f2657d3",
+      "portable_dxil_sha256": "7beb384c24a34c0df067292a6a9b14794a9bcfee19f8269f3451117de5aeff2d",
+      "reference_dxil_sha256": "f67e22b49f817960c34842f2cb005b47846527f67c958fa19dbb57859e299424"
+    },
+    {
+      "entry": 3668,
+      "threads": 256,
+      "tile": 256,
+      "guest_sha256": "8aa1aa18610317e3b456b3b6f85a7fa02807c5091063332a1231a4e43d178bfa",
+      "portable_dxil_sha256": "968d10be054a6ca232512bccdfca49c16e9ce309acb3066e3772fa0d373f676e",
+      "reference_dxil_sha256": "612d8efc23207ca84df396a530ae0c1c970033871b63d11acd2fca251a5e61b6"
+    },
+    {
+      "entry": 3670,
+      "threads": 512,
+      "tile": 1024,
+      "guest_sha256": "891b52915c62f777fd808e75eeeeb999ccbbf3f1cd2a7602d597ac5f2faaf83c",
+      "portable_dxil_sha256": "ae66b9548c52a2e95bff4325d4f1fb2bc05fde51bb3a0eb6862785fd0d30af31",
+      "reference_dxil_sha256": "2aef9581c14c15856742ed26c3da7de334ea40a30d995af4c172086df1c3426b"
+    }
+  ]
+}

@@ -1,0 +1,4288 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapter": "10de:2705",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "name": "InstanceCull",
+  "guest_sha256": "0cccf822fca463dce0fdcddfdc161422fd4784215755bdef570ca22a0964a6c7",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "programs": [
+    {
+      "entry": 3400,
+      "visibility_format": "R32G32_UINT",
+      "source_sha256": "b40df2f9cb1784a9723935722f73727e8a4936539de8f84ecc6e432219481656",
+      "dxil_sha256": "a20c3dca7ea8a3dd9123bc5b401add746e822b31171ec1676e05efa4920d4610",
+      "cases": {
+        "empty": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 2,
+          "center_words": [
+            "800025a1",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 4,
+          "queue_ids": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "counters": [
+            7,
+            23
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-occluded": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              32,
+              0
+            ],
+            [
+              63,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            66
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-left-half": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              47,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            65
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 3,
+          "queue_ids": [
+            2,
+            32,
+            48
+          ],
+          "counters": [
+            6,
+            22
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-hidden": {
+          "occluded": [
+            [
+              7,
+              0
+            ],
+            [
+              48,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            7,
+            48
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-tie": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3404,
+      "visibility_format": "R32G32_UINT",
+      "source_sha256": "84563b69998d3b0fd49db337b7d3da8a587f4580916cfe6e96237025c3a8bed0",
+      "dxil_sha256": "62f2e7c693bdc68197dc37fa97649946e89ddb2ad37436c3cd65ddf314ca033b",
+      "cases": {
+        "empty": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 2,
+          "center_words": [
+            "800025a1",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 4,
+          "queue_ids": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "counters": [
+            7,
+            23
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-occluded": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              32,
+              0
+            ],
+            [
+              63,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            66
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-left-half": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              47,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            65
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 3,
+          "queue_ids": [
+            2,
+            32,
+            48
+          ],
+          "counters": [
+            6,
+            22
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-hidden": {
+          "occluded": [
+            [
+              7,
+              0
+            ],
+            [
+              48,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            7,
+            48
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-view-mask": {
+          "occluded": [
+            [
+              1,
+              1
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              63,
+              1
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            66
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 4,
+          "queue_ids": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "counters": [
+            7,
+            23
+          ],
+          "stats_counter": 47,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "zero-views": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 0,
+          "queue_views": []
+        },
+        "two-views": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7,
+            31,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1,
+            1,
+            1
+          ]
+        },
+        "three-views": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            7,
+            63,
+            32,
+            47,
+            7,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2
+          ]
+        },
+        "view-capacity": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "view-groups": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 12,
+          "queue_ids": [
+            3,
+            34,
+            64,
+            106,
+            31,
+            63,
+            98,
+            104,
+            3,
+            34,
+            64,
+            106
+          ],
+          "counters": [
+            15,
+            31
+          ],
+          "stats_counter": 55,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            1,
+            1,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "primitive-gate": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            32,
+            63
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 45,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            1
+          ]
+        },
+        "gate-closed": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": []
+        },
+        "visibility-tie": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3405,
+      "visibility_format": "R32_UINT",
+      "source_sha256": "8bc365fc72410ebd3bebf6d20298233e8ae412eeb8047b8c78de6fe31c3e6b80",
+      "dxil_sha256": "86d1be3aae60b9580d5757805833b8c5826247105b0798f5af5a085fceac523e",
+      "cases": {
+        "empty": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "checked_texels": 81,
+          "changed_visibility_words": 1,
+          "center_words": [
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "zero-views": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 0,
+          "queue_views": []
+        },
+        "two-views": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7,
+            31,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1,
+            1,
+            1
+          ]
+        },
+        "three-views": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            7,
+            63,
+            32,
+            47,
+            7,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2
+          ]
+        },
+        "view-capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "view-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 12,
+          "queue_ids": [
+            3,
+            34,
+            64,
+            106,
+            31,
+            63,
+            98,
+            104,
+            3,
+            34,
+            64,
+            106
+          ],
+          "counters": [
+            15,
+            31
+          ],
+          "stats_counter": 55,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            1,
+            1,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "primitive-gate": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            32,
+            63
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 45,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            1
+          ]
+        },
+        "gate-closed": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": []
+        }
+      }
+    },
+    {
+      "entry": 3409,
+      "visibility_format": "R32G32_UINT",
+      "source_sha256": "613ff2893f65b403027bd09bd315e484bf7acaae4e7f9a8bafab8ac0d30e6702",
+      "dxil_sha256": "49e51012930c92a1db10d9baffea419472ab46a356a38e8225c964cfad9341c0",
+      "cases": {
+        "empty": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "checked_texels": 81,
+          "changed_visibility_words": 2,
+          "center_words": [
+            "800025a1",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "zero-views": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 0,
+          "queue_views": []
+        },
+        "two-views": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7,
+            31,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1,
+            1,
+            1
+          ]
+        },
+        "three-views": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            7,
+            63,
+            32,
+            47,
+            7,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2
+          ]
+        },
+        "view-capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "view-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 12,
+          "queue_ids": [
+            3,
+            34,
+            64,
+            106,
+            31,
+            63,
+            98,
+            104,
+            3,
+            34,
+            64,
+            106
+          ],
+          "counters": [
+            15,
+            31
+          ],
+          "stats_counter": 55,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            1,
+            1,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "primitive-gate": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            32,
+            63
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 45,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            1
+          ]
+        },
+        "gate-closed": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": []
+        },
+        "visibility-tie": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3425,
+      "visibility_format": "R32_UINT",
+      "source_sha256": "b07d956ff61846c8e25f0de1fd0f72d3d72a4910fca9599d990b401d34fc7637",
+      "dxil_sha256": "607f5bf8c0b9d20cbf2a982c342c78272cb4fcb972a96f7af17231d83923b0cf",
+      "cases": {
+        "empty": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "checked_texels": 81,
+          "changed_visibility_words": 1,
+          "center_words": [
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3431,
+      "visibility_format": "R32_UINT",
+      "source_sha256": "bc4c6e4eeb8125526dbb41a1024530695f06d07e1941dcbb362c8a315a1e8bc5",
+      "dxil_sha256": "d211c5195d34a8512513c86d0e610556dd0002b79cc4aa877c2114fd91c59b96",
+      "cases": {
+        "empty": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 1,
+          "center_words": [
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 4,
+          "queue_ids": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "counters": [
+            7,
+            23
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-occluded": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              32,
+              0
+            ],
+            [
+              63,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            66
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-left-half": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              47,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            65
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 3,
+          "queue_ids": [
+            2,
+            32,
+            48
+          ],
+          "counters": [
+            6,
+            22
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-hidden": {
+          "occluded": [
+            [
+              7,
+              0
+            ],
+            [
+              48,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            7,
+            48
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-view-mask": {
+          "occluded": [
+            [
+              1,
+              1
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              63,
+              1
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            66
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 4,
+          "queue_ids": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "counters": [
+            7,
+            23
+          ],
+          "stats_counter": 47,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "zero-views": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 0,
+          "queue_views": []
+        },
+        "two-views": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7,
+            31,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1,
+            1,
+            1
+          ]
+        },
+        "three-views": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            7,
+            63,
+            32,
+            47,
+            7,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2
+          ]
+        },
+        "view-capacity": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            32,
+            47,
+            7
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "view-groups": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 12,
+          "queue_ids": [
+            3,
+            34,
+            64,
+            106,
+            31,
+            63,
+            98,
+            104,
+            3,
+            34,
+            64,
+            106
+          ],
+          "counters": [
+            15,
+            31
+          ],
+          "stats_counter": 55,
+          "checked_words": 336,
+          "views": 3,
+          "queue_views": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            1,
+            1,
+            2,
+            2,
+            2,
+            2
+          ]
+        },
+        "primitive-gate": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            32,
+            63
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 45,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": [
+            0,
+            1
+          ]
+        },
+        "gate-closed": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336,
+          "views": 2,
+          "queue_views": []
+        }
+      }
+    },
+    {
+      "entry": 3439,
+      "visibility_format": "R32_UINT",
+      "source_sha256": "337f12e7d9ba902a8fd9c32b46994b2f53d6b0171675c88f9f0c6f0dd0726233",
+      "dxil_sha256": "2138c16de763dff8bbaeeb162e628a16ea222b1cb115f7c66ba1fbaa642ae09f",
+      "cases": {
+        "empty": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 1,
+          "center_words": [
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 4,
+          "queue_ids": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "counters": [
+            7,
+            23
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-occluded": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              32,
+              0
+            ],
+            [
+              63,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            66
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-left-half": {
+          "occluded": [
+            [
+              1,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              47,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            2,
+            1,
+            1,
+            65
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 3,
+          "queue_ids": [
+            2,
+            32,
+            48
+          ],
+          "counters": [
+            6,
+            22
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-hidden": {
+          "occluded": [
+            [
+              7,
+              0
+            ],
+            [
+              48,
+              0
+            ]
+          ],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            64
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "hzb-mip1-clear": {
+          "occluded": [],
+          "dispatch_args": [
+            1,
+            1,
+            1,
+            62
+          ],
+          "checked_hzb_words": 528,
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 2,
+          "queue_ids": [
+            7,
+            48
+          ],
+          "counters": [
+            5,
+            21
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3444,
+      "visibility_format": "R32G32_UINT",
+      "source_sha256": "06444185d9d7411b6a4cdf41ce1bd9a549ed6ab66add5a04b06a6209874a760d",
+      "dxil_sha256": "140a3c4b61fd91cfb7e297d9b9f626c32b9c9c093914f49eaebabafd4a7bf22d",
+      "cases": {
+        "empty": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "checked_texels": 81,
+          "changed_visibility_words": 2,
+          "center_words": [
+            "800025a1",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-tie": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3452,
+      "visibility_format": "R32_UINT",
+      "source_sha256": "85fe16be29d6ba9dae77cfc7fb2885b99ed3acb35ce0550e0b7464a90c361c61",
+      "dxil_sha256": "c613cb962b33e07fd15313ec38c45a87e3749df033633c9e841dada34ea700e3",
+      "cases": {
+        "empty": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "checked_texels": 81,
+          "changed_visibility_words": 1,
+          "center_words": [
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3461,
+      "visibility_format": "R32G32_UINT",
+      "source_sha256": "65751afa1088ed403f694333e09a2372c5ad661363d763b83e218e3fccc68c38",
+      "dxil_sha256": "417440a09aaf1eea451ecaaba9cd637f0a7b4cfa10d0f6df13297f1b59f423c6",
+      "cases": {
+        "empty-post": {
+          "groups": 1,
+          "nodes": [],
+          "visible": 0,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            3,
+            29
+          ],
+          "statistics": [
+            0,
+            43
+          ]
+        },
+        "previously-hidden": {
+          "groups": 1,
+          "nodes": [
+            [
+              36,
+              0
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              36,
+              0
+            ],
+            [
+              54,
+              0
+            ]
+          ],
+          "visible": 4,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            7,
+            33
+          ],
+          "statistics": [
+            4,
+            47
+          ]
+        },
+        "post-limit": {
+          "groups": 1,
+          "nodes": [
+            [
+              36,
+              0
+            ],
+            [
+              3,
+              0
+            ]
+          ],
+          "visible": 4,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            7,
+            33
+          ],
+          "statistics": [
+            2781079369,
+            43
+          ]
+        },
+        "post-hzb-hidden": {
+          "groups": 1,
+          "nodes": [],
+          "visible": 0,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            3,
+            29
+          ],
+          "statistics": [
+            4,
+            43
+          ]
+        },
+        "post-hzb-left-half": {
+          "groups": 1,
+          "nodes": [
+            [
+              36,
+              0
+            ],
+            [
+              36,
+              0
+            ],
+            [
+              54,
+              0
+            ]
+          ],
+          "visible": 3,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            6,
+            32
+          ],
+          "statistics": [
+            4,
+            46
+          ]
+        },
+        "post-visibility": {
+          "groups": 1,
+          "nodes": [],
+          "visible": 0,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            3,
+            29
+          ],
+          "statistics": [
+            2,
+            43
+          ]
+        },
+        "post-upper-lanes": {
+          "groups": 1,
+          "nodes": [
+            [
+              63,
+              0
+            ],
+            [
+              62,
+              0
+            ],
+            [
+              61,
+              0
+            ],
+            [
+              60,
+              0
+            ],
+            [
+              59,
+              0
+            ],
+            [
+              58,
+              0
+            ],
+            [
+              57,
+              0
+            ],
+            [
+              56,
+              0
+            ],
+            [
+              55,
+              0
+            ],
+            [
+              54,
+              0
+            ],
+            [
+              53,
+              0
+            ],
+            [
+              52,
+              0
+            ],
+            [
+              51,
+              0
+            ],
+            [
+              50,
+              0
+            ],
+            [
+              49,
+              0
+            ],
+            [
+              48,
+              0
+            ],
+            [
+              47,
+              0
+            ],
+            [
+              46,
+              0
+            ],
+            [
+              45,
+              0
+            ],
+            [
+              44,
+              0
+            ],
+            [
+              43,
+              0
+            ],
+            [
+              42,
+              0
+            ],
+            [
+              41,
+              0
+            ],
+            [
+              40,
+              0
+            ],
+            [
+              39,
+              0
+            ],
+            [
+              38,
+              0
+            ],
+            [
+              37,
+              0
+            ],
+            [
+              36,
+              0
+            ],
+            [
+              35,
+              0
+            ],
+            [
+              34,
+              0
+            ],
+            [
+              33,
+              0
+            ],
+            [
+              32,
+              0
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              30,
+              0
+            ],
+            [
+              29,
+              0
+            ],
+            [
+              28,
+              0
+            ],
+            [
+              27,
+              0
+            ],
+            [
+              26,
+              0
+            ],
+            [
+              25,
+              0
+            ]
+          ],
+          "visible": 39,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            42,
+            68
+          ],
+          "statistics": [
+            39,
+            82
+          ]
+        }
+      }
+    },
+    {
+      "entry": 3473,
+      "visibility_format": "R32G32_UINT",
+      "source_sha256": "cbe4d099f555f59bd1c3c5c2667918dcf5e01340cf7fbc4cb23f9374f15ffec9",
+      "dxil_sha256": "eb45e70f46a8066fc1e5587025f8499e5c3a845805f5d517768fb2fc40c9b97d",
+      "cases": {
+        "empty": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "clip": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "upper": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 1,
+          "queue_ids": [
+            37
+          ],
+          "counters": [
+            4,
+            20
+          ],
+          "stats_counter": 44,
+          "checked_words": 336
+        },
+        "sparse": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            7,
+            31,
+            32,
+            47,
+            63
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "capacity": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 1,
+          "visible": 5,
+          "queue_ids": [
+            3,
+            15
+          ],
+          "counters": [
+            8,
+            24
+          ],
+          "stats_counter": 48,
+          "checked_words": 336
+        },
+        "two-groups": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "00000028",
+            "3e800000"
+          ],
+          "groups": 2,
+          "visible": 6,
+          "queue_ids": [
+            3,
+            34,
+            61,
+            64,
+            95,
+            106
+          ],
+          "counters": [
+            9,
+            25
+          ],
+          "stats_counter": 49,
+          "checked_words": 336
+        },
+        "visibility": {
+          "checked_texels": 81,
+          "changed_visibility_words": 2,
+          "center_words": [
+            "800025a1",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-guard": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f600000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        },
+        "visibility-tie": {
+          "checked_texels": 81,
+          "changed_visibility_words": 0,
+          "center_words": [
+            "ffffffff",
+            "3f400000"
+          ],
+          "groups": 1,
+          "visible": 0,
+          "queue_ids": [],
+          "counters": [
+            3,
+            19
+          ],
+          "stats_counter": 43,
+          "checked_words": 336
+        }
+      }
+    },
+    {
+      "entry": 3480,
+      "visibility_format": "R32_UINT",
+      "source_sha256": "f156e46ca9464d65b51a6e6e2e606ef6b71b049d89208195a6c3183df8ba90d3",
+      "dxil_sha256": "391f5eaedfe152755653394d974256c4e549cd13ff952726d75b31184c7a273a",
+      "cases": {
+        "empty-post": {
+          "groups": 1,
+          "nodes": [],
+          "visible": 0,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            3,
+            29
+          ],
+          "statistics": [
+            0,
+            43
+          ]
+        },
+        "previously-hidden": {
+          "groups": 1,
+          "nodes": [
+            [
+              36,
+              1
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              36,
+              0
+            ],
+            [
+              54,
+              1
+            ]
+          ],
+          "visible": 4,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            7,
+            33
+          ],
+          "statistics": [
+            4,
+            47
+          ]
+        },
+        "post-limit": {
+          "groups": 1,
+          "nodes": [
+            [
+              36,
+              1
+            ],
+            [
+              3,
+              0
+            ]
+          ],
+          "visible": 4,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            7,
+            33
+          ],
+          "statistics": [
+            2781079369,
+            43
+          ]
+        },
+        "post-hzb-hidden": {
+          "groups": 1,
+          "nodes": [],
+          "visible": 0,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            3,
+            29
+          ],
+          "statistics": [
+            4,
+            43
+          ]
+        },
+        "post-hzb-left-half": {
+          "groups": 1,
+          "nodes": [
+            [
+              36,
+              1
+            ],
+            [
+              36,
+              0
+            ],
+            [
+              54,
+              1
+            ]
+          ],
+          "visible": 3,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            6,
+            32
+          ],
+          "statistics": [
+            4,
+            46
+          ]
+        },
+        "post-visibility": {
+          "groups": 1,
+          "nodes": [],
+          "visible": 0,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            3,
+            29
+          ],
+          "statistics": [
+            2,
+            43
+          ]
+        },
+        "post-upper-lanes": {
+          "groups": 1,
+          "nodes": [
+            [
+              63,
+              0
+            ],
+            [
+              62,
+              1
+            ],
+            [
+              61,
+              0
+            ],
+            [
+              60,
+              1
+            ],
+            [
+              59,
+              0
+            ],
+            [
+              58,
+              1
+            ],
+            [
+              57,
+              0
+            ],
+            [
+              56,
+              1
+            ],
+            [
+              55,
+              0
+            ],
+            [
+              54,
+              1
+            ],
+            [
+              53,
+              0
+            ],
+            [
+              52,
+              1
+            ],
+            [
+              51,
+              0
+            ],
+            [
+              50,
+              1
+            ],
+            [
+              49,
+              0
+            ],
+            [
+              48,
+              1
+            ],
+            [
+              47,
+              0
+            ],
+            [
+              46,
+              1
+            ],
+            [
+              45,
+              0
+            ],
+            [
+              44,
+              1
+            ],
+            [
+              43,
+              0
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              41,
+              0
+            ],
+            [
+              40,
+              1
+            ],
+            [
+              39,
+              0
+            ],
+            [
+              38,
+              1
+            ],
+            [
+              37,
+              0
+            ],
+            [
+              36,
+              1
+            ],
+            [
+              35,
+              0
+            ],
+            [
+              34,
+              1
+            ],
+            [
+              33,
+              0
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              31,
+              0
+            ],
+            [
+              30,
+              1
+            ],
+            [
+              29,
+              0
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              27,
+              0
+            ],
+            [
+              26,
+              1
+            ],
+            [
+              25,
+              0
+            ]
+          ],
+          "visible": 39,
+          "checked_texels": 81,
+          "checked_words": 537,
+          "counters": [
+            42,
+            68
+          ],
+          "statistics": [
+            39,
+            82
+          ]
+        }
+      }
+    }
+  ],
+  "scope": "Original compute shader and root signature at Xbox device slot 62. The fixtures check frustum culling, wave allocation, clipped queue writes, optional statistics, multiview candidate records and impostor visibility atomics. HZB permutations additionally check the occluded instance list and next dispatch arguments, including spatially distinct depths and explicit sampling of mip 1. Post-pass checks consume that list and verify three-word candidate records, clipping, counters and impostors. Each check compares every output word."
+}

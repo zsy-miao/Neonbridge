@@ -1,0 +1,70 @@
+{
+  "scope": "Desktop test of the reduced graphics profile with current TuxBox providers on Valve Proton Experimental. Stopped manually during the Wake Up sequence.",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "game_arguments": [
+    "-nosound"
+  ],
+  "profile_sha256": "116650b1e05d9dd29d6f2832f458e0ac2c0945f931cc3bf21a34cc1198d286f2",
+  "profile_cvars": {
+    "r.RayTracing": "0",
+    "r.Lumen.DiffuseIndirect.Allow": "0",
+    "r.Lumen.Reflections.Allow": "0",
+    "r.ScreenPercentage": "33.3333",
+    "r.HairStrands.Strands": "0"
+  },
+  "providers": {
+    "Frosty-XSX-Shipping.exe": {
+      "origin": "Original retail package",
+      "sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04"
+    },
+    "d3d12_xs.dll": {
+      "origin": "TuxBox d3d12",
+      "sha256": "50bf45863da3bd36b8573ea84266f3063b539a32ef4a033d0e176d6935fb562e"
+    },
+    "dxcompiler_xs.dll": {
+      "origin": "TuxBox dxc-utils",
+      "sha256": "fc4c8ff9cb80e974da87f3e151928e0e683c416878a70a899ff5fa8b22a41bc8"
+    },
+    "xmem.dll": {
+      "origin": "TuxBox xmem",
+      "sha256": "1151f3569939eada5e6a20b967495d4ae2d1706cf5ab1120a418af1dd67b1e8b"
+    },
+    "xg_xs.dll": {
+      "origin": "TuxBox xg",
+      "sha256": "1209bc211305d7f5faaaec2889bd992ffb3433fc3d81d156d3149e309a39451a"
+    }
+  },
+  "regression_log_sha256": "fc3369e1ab5bfd6b31cbc6f8133ed6cb339616ec98ff07a50d5477c3bf671a68",
+  "atlas_only_log_sha256": "a94683ff05bbd56e549d9fae2f8ac14eeb7c0e31af4236de94aefbd13e3db262",
+  "fixed_log_sha256": "4baed915e706916e1a2f8f4c87b7ad6b12cef5334d633ff4acff825530e3ff90",
+  "events": [
+    {
+      "event": "Wake Up",
+      "seconds_after_wake_up": 0
+    },
+    {
+      "event": "Startflow to Chase",
+      "seconds_after_wake_up": 0.026
+    },
+    {
+      "event": "Room",
+      "seconds_after_wake_up": 15.475
+    },
+    {
+      "event": "Construct furniture",
+      "seconds_after_wake_up": 68.534
+    },
+    {
+      "event": "Construct bullet time",
+      "seconds_after_wake_up": 95.857
+    }
+  ],
+  "mangohud": {
+    "csv_sha256": "7b71b5bfb5a94989d4cd08b96d013b9f5df43ef6af7f6885b7b675f850d4f261",
+    "frame_samples": 6041
+  },
+  "screenshot": "wake-up-cinematic.webp",
+  "layout_comparison": "evidence/providers/xg-wake-up.json",
+  "retail_settings_test": "evidence/matrix-awakens/three-library-comparison.json"
+}

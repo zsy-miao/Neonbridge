@@ -1,0 +1,1989 @@
+//! Neonbridge: run a dumped Xbox Series (Scarlett / GDK) executable on
+//! Windows through TuxBox's Rust console-library providers.
+//!
+//! The game's x64 code runs natively; the console DLLs it imports (d3d12_xs,
+//! xg_xs, xmem, xapu, chad, AcpHal, GameInput, XCRDAPI, XboxBvhBuilder, ...)
+//! are replaced by TuxBox providers built from a local TuxBox checkout
+//! (`runtime/*`, staticlib crates linked against their `.def` export tables,
+//! the same recipe as TuxBox `build.py`). Providers are staged beside the exe;
+//! any game file they replace is moved to `<game>/_6ixpack_orig/` first and
+//! `--restore` puts it back.
+
+mod awake;
+mod ctl;
+mod dxc;
+mod runtimes;
+mod ztrx;
+mod hang_watch;
+mod dxil_upgrade;
+mod game_settings;
+mod picker;
+mod xshader_lib;
+mod progress;
+mod replay;
+mod timeline;
+mod shaders;
+mod splash;
+mod controls;
+mod fps;
+mod mix;
+
+use std::{
+    collections::HashMap,
+    error::Error,
+    ffi::OsString,
+    fs,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::Instant,
+};
+
+const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>] [--exe <name>] [--log <file>]
+                      [--build-only | --stage-only | --build-shaders | --prewarm | --pipelines | --restore] [-- <game args>]
+  --game       dumped package folder (holds MicrosoftGame.Config and the exe)
+  --runtime    which emulator runs the game: vendor/<name> per its NEONBRIDGE.toml (default scarlettport,
+               or env NEONBRIDGE_RUNTIME); tuxbox is the TuxBox provider path below. --list prints them
+  --list <rt>  that runtime's options, defaults and the values a run would use
+  --set K=V    an option for this run (env var, or --flag=VALUE for its run arguments); repeatable
+  --preset P   the runtime's preset_P settings (before --set)
+  --setup <rt> the runtime's setup steps; download and user-file steps ask first
+  --tuxbox     provider source (default: the vendored vendor/neonbridge-own, or env TUXBOX_ROOT)
+  --rev        build providers and xshader from this commit's vendor/neonbridge-own (git archive
+               snapshot, env NEONBRIDGE_REV), not the working tree
+  providers build into %LOCALAPPDATA%/6ixpack/tuxbox; a release build ships them
+  prebuilt in a tuxbox folder beside neonbridge.exe and builds nothing
+  replay-shaders <capture dir> [--xshader <exe>] [--against <dir>]  translate a
+               TUXBOX_CAPTURE_FRAME capture's shaders offline and diff the outcomes
+  --package-release DIR  build everything and lay out a portable release in DIR,
+               zipped as neonbridge-<version>-win-x64.zip beside it
+  --package    the same with every runtime: dist/Neonbridge (the launcher, tuxbox,
+               each vendor runtime's built exe and toml, README, CREDITS.md,
+               LICENSE), zipped as dist/Neonbridge-<version>.zip
+  --exe        executable name (default: the MicrosoftGame.Config Executable, else the only x64 exe)
+  --log        game log file (default %LOCALAPPDATA%/6ixpack/logs/<exe>_<unix time>.log)
+  --build-only build the providers, touch nothing in the game folder
+  --stage-only build and stage the providers beside the exe, do not start it
+  --build-shaders translate every shader in shaders.rpf into the cache, do not start the game
+  --prewarm    translate the programs earlier runs asked for into the current translator's
+               cache and exit: no provider build, no staging, no game (--game optional), so
+               the next run starts warm. NEONBRIDGE_SHADER_THREADS sets the parallelism
+  --pipelines  build the pipelines earlier runs created (their journal) into the pipeline
+               library in this process, below normal priority, without starting the game
+               (NEONBRIDGE_PIPELINE_THREADS, default half the cores; waits while under
+               TUXBOX_PIPELINE_BUILD_FREE_GB=6 of commit is free); also `neonbridge pipelines`.
+               Not while the game runs: both write the library
+  --restore    remove staged providers and put the original game files back
+  --debug      run under cdb (Windows Kits debugger): first-chance exceptions, the
+               crash event, registers, stack and loaded modules go to the log
+  --sandbox    run inside Sandboxie-Plus (box DefaultBox, or env SANDBOXIE_BOX); the
+               game's writes stay in the box; with --debug the cdb log is fetched back
+  --debug-full like --debug, plus every first-chance C++/WinRT exception with its stack
+               (each one stalls the game for the stack walk: slow, use to chase a throw)
+  --cdb FILE   extra cdb commands (breakpoints etc.) run before the game starts; implies --debug
+  --timeout S  stop the game (and cdb) after S seconds, then print the summary as usual
+  --watch-hang SPEC  sample game globals every 100 ms (RVA[:size][=name],...; name* = heartbeat), log changes and 5/15/25 s stalls (five-star)
+  --summary LOG  print the end-of-run summary of an existing log (and its cdb part); runs nothing
+  ctl <command>  control the running game over a local pipe (neonbridge ctl help)
+Game feed (NEONBRIDGE_FEED=1): watch the game in a browser on 127.0.0.1:8788 and over
+  Tailscale (tools/tsproxy.exe, else tools/cloudflared.exe), behind a site password set
+  on this PC; needs ffmpeg. NEONBRIDGE_FEED_PORT, _HOST (Tailscale name, neonbridge),
+  _LINK (tailscale|cloudflared|none), _FPS (30), _WIDTH (1280), _KBPS (4000).
+  --feed-only  keep the feed page and its link up without a game; games started with
+               NEONBRIDGE_FEED=1 meanwhile show on it (the page waits for them).
+Building needs Visual Studio Build Tools (x64 C++), cargo and the x86_64-pc-windows-msvc target;
+a release with a prebuilt tuxbox folder needs neither.";
+
+/// (cargo package, output DLL, export table relative to the TuxBox root, extra import libs, extra C++ sources)
+const PROVIDERS: &[(&str, &str, &str, &[&str], &[&str])] = &[
+    ("tuxbox-xmem-http", "tuxbox_xhttp.dll", "runtime/xmem/xhttp.def", &["winhttp.lib"], &[]),
+    ("tuxbox-xmem", "xmem.dll", "runtime/xmem/xmem.def", &["tuxbox_xhttp.lib", "ole32.lib", "user32.lib", "gdi32.lib", "advapi32.lib", "/include:DllMain"], &[]), // own DllMain must win over the libcmt stub; forwards XMemSetWinHttpHooks to tuxbox_xhttp
+    ("tuxbox-acphal", "AcpHal.dll", "runtime/acphal/AcpHal.def", &[], &[]),
+    ("tuxbox-xapu", "xapu.dll", "runtime/xapu/xapu.def", &[], &[]),
+    ("tuxbox-xapu", "chad.dll", "runtime/xapu/chad.def", &[], &[]),
+    ("tuxbox-xcrdapi", "XCRDAPI.dll", "runtime/xcrdapi/xcrdapi.def", &[], &[]),
+    ("tuxbox-xgameruntime", "xgameruntime.dll", "runtime/xgameruntime/xgameruntime.def", &[], &[]),
+    ("tuxbox-bvh", "XboxBvhBuilder.dll", "runtime/bvh/XboxBvhBuilder.def", &[], &[]),
+    ("tuxbox-xg", "xg_xs.dll", "runtime/xg/xg_xs.def", &[], &[]),
+    ("tuxbox-dxc", "dxcompiler_xs.dll", "runtime/dxc/dxcompiler_xs.def", &[], &[]),
+    ("tuxbox-d3d12", "d3d12_xs.dll", "runtime/d3d12/d3d12_xs.def", &["dxgi.lib", "d3d12.lib", "user32.lib", "d3dcompiler.lib", "advapi32.lib", "wevtapi.lib" /* drvwatch: EvtSubscribe */], &[]),
+    ("tuxbox-gameinput", "GameInput.dll", "runtime/gameinput/GameInput.def", &["libcmt.lib", "user32.lib", "xinput.lib"] /* CRT first: xinput.lib also exports DllMain */, &[]),
+];
+/// `rustc --print native-static-libs` for the MSVC target with +crt-static (TuxBox build.py).
+const RUST_STD_LIBS: &[&str] = &["kernel32.lib", "ntdll.lib", "userenv.lib", "ws2_32.lib", "dbghelp.lib", "/defaultlib:libcmt"];
+const TARGET: &str = "x86_64-pc-windows-msvc";
+const BACKUP: &str = "_6ixpack_orig";
+const STAGED: &str = "_6ixpack_staged.txt";
+
+#[derive(PartialEq)]
+enum Mode {
+    Run,
+    BuildOnly,
+    StageOnly,
+    BuildShaders,
+    Prewarm,
+    Pipelines,
+    Restore,
+}
+
+fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
+    if args.first().is_some_and(|a| a == "ctl") {
+        return ctl::run(&args[1..]);
+    }
+    if args.first().is_some_and(|a| a == "replay-shaders") {
+        return replay::run_cli(&args[1..], || {
+            let tuxbox = env_path("TUXBOX_ROOT").unwrap_or_else(baked_tuxbox);
+            let out = provider_out();
+            build_xshader(&tuxbox, &out).map(|(x, _)| x)
+        });
+    }
+    let (mut game, mut tuxbox, mut exe, mut log, mut mode, mut game_args) = (None, env_path("TUXBOX_ROOT"), None, None, Mode::Run, Vec::new());
+    let (mut debug, mut sandbox, mut cdb_extra, mut timeout, mut trace_throws) = (false, false, None, None, false);
+    let mut rev = std::env::var("NEONBRIDGE_REV").ok().map(|r| r.trim().to_owned()).filter(|r| !r.is_empty());
+    let mut runtime_arg: Option<String> = None;
+    let (mut sets, mut preset, mut list_of): (Vec<String>, Option<String>, Option<Option<String>>) = (Vec::new(), None, None);
+    // --mix <saved name | last-good | file>, --mix-part <part>=<runtime>.
+    let mut mix: Option<mix::Mix> = None;
+    // Started by a double-click (the console is ours alone): it goes away; the
+    // picker window (game, runtime, mix, options) and the loader follow.
+    // NEONBRIDGE_KEEP_CONSOLE=1 keeps it.
+    if args.is_empty() && std::env::var("NEONBRIDGE_KEEP_CONSOLE").map_or(true, |v| v.trim() != "1") {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
+            fn FreeConsole() -> i32;
+        }
+        let mut ids = [0u32; 4];
+        // SAFETY: plain kernel32 calls on a local buffer.
+        if unsafe { GetConsoleProcessList(ids.as_mut_ptr(), 4) } == 1 {
+            unsafe { FreeConsole() };
+        }
+    }
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut val = |n: &str| it.next().cloned().ok_or_else(|| format!("{n} needs a value\n{USAGE}"));
+        match a.to_str() {
+            Some("--game") => game = Some(PathBuf::from(val("--game")?)),
+            Some("--tuxbox") => tuxbox = Some(PathBuf::from(val("--tuxbox")?)),
+            Some("--rev") => rev = Some(val("--rev")?.to_string_lossy().into_owned()),
+            Some("--exe") => exe = Some(val("--exe")?.to_string_lossy().into_owned()),
+            Some("--log") => {
+                log = Some(PathBuf::from(val("--log")?));
+                *PANIC_LOG.lock().unwrap_or_else(|e| e.into_inner()) = log.clone();
+            }
+            Some("--runtime") => runtime_arg = Some(val("--runtime")?.to_string_lossy().into_owned()),
+            // --list: the runtimes; --list <runtime>: its options and values
+            // (printed after the other arguments, so --set and --preset show).
+            Some("--list") => {
+                let next = it.clone().next().and_then(|n| n.to_str()).filter(|n| !n.starts_with("--")).map(str::to_owned);
+                if next.is_some() {
+                    it.next();
+                }
+                list_of = Some(next);
+            }
+            Some("--set") => sets.push(val("--set")?.to_string_lossy().into_owned()),
+            Some("--preset") => preset = Some(val("--preset")?.to_string_lossy().into_owned()),
+            Some("--mix") => {
+                let v = val("--mix")?.to_string_lossy().into_owned();
+                let m = mix::load(&v).or_else(|| fs::read_to_string(&v).ok().map(|t| mix::Mix::parse(&t))).ok_or_else(|| format!("--mix {v}: no saved mix or file of that name"))?;
+                mix.get_or_insert_with(mix::Mix::default).parts.extend(m.parts);
+            }
+            Some("--mix-part") => {
+                let v = val("--mix-part")?.to_string_lossy().into_owned();
+                let (k, t) = v.split_once('=').ok_or_else(|| format!("--mix-part {v}: <part>=<runtime>"))?;
+                mix.get_or_insert_with(mix::Mix::default).parts.insert(k.trim().to_owned(), t.trim().to_owned());
+            }
+            Some("--setup") => return runtimes::setup(&val("--setup")?.to_string_lossy()),
+            Some("--build-only") => mode = Mode::BuildOnly,
+            Some("--stage-only") => mode = Mode::StageOnly,
+            Some("--build-shaders") => mode = Mode::BuildShaders,
+            Some("--prewarm" | "prewarm") => mode = Mode::Prewarm,
+            Some("--pipelines" | "pipelines") => mode = Mode::Pipelines,
+            Some("--restore") => mode = Mode::Restore,
+            // Started detached at a launcher's exit (dxil_upgrade::spawn_drainer).
+            Some("--drain-upgrades") => return Ok(dxil_upgrade::drain(Path::new(&val("--drain-upgrades")?))?),
+            // Started by the d3d12 journal build for one heavy pipeline (TUXBOX_PSO_CHILD).
+            Some("--pso-child") => pso_child(&val("--pso-child")?.to_string_lossy()),
+            Some("--debug") => debug = true,
+            Some("--debug-full") => {
+                debug = true;
+                trace_throws = true;
+            }
+            // five-star --watch-hang: title globals sampled every 100 ms (hang_watch.rs).
+            Some("--watch-hang") => unsafe { std::env::set_var("NEONBRIDGE_WATCH_HANG", val("--watch-hang")?) },
+            Some("--timeout") => timeout = Some(val("--timeout")?.to_string_lossy().parse::<f64>().map_err(|e| format!("--timeout: {e}"))?),
+            Some("--summary") => return print_summary(Path::new(&val("--summary")?)),
+            // The feed page and its link without a game: games started later with
+            // NEONBRIDGE_FEED=1 publish their frames to it.
+            Some("--feed-only") => {
+                neonbridge_feed::start(neonbridge_feed::Settings::from_env());
+                println!("[launch] --feed-only: the feed stays up until this window is closed (Ctrl+C); start games with NEONBRIDGE_FEED=1");
+                loop {
+                    std::thread::park();
+                }
+            }
+            Some("--package-release") => {
+                let dir = PathBuf::from(val("--package-release")?);
+                return package_release(tuxbox.unwrap_or_else(baked_tuxbox), &dir, None);
+            }
+            Some("--controls-preview") => {
+                let name = val("--controls-preview")?.to_string_lossy().into_owned();
+                controls::preview(&name, runtimes::controls_of(&name));
+                return Ok(());
+            }
+            Some("--package") => {
+                let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("dist");
+                return package_release(tuxbox.unwrap_or_else(baked_tuxbox), &dist, Some("Neonbridge"));
+            }
+            Some("--sandbox") => sandbox = true,
+            Some("--cdb") => {
+                cdb_extra = Some(fs::read_to_string(val("--cdb")?)?);
+                debug = true;
+            }
+            Some("--") => {
+                game_args.extend(it.by_ref().cloned());
+            }
+            Some("-h" | "--help") => {
+                println!("{USAGE}");
+                return Ok(());
+            }
+            _ => return Err(format!("launch: unknown argument {}\n{USAGE}", a.to_string_lossy()).into()),
+        }
+    }
+    match list_of {
+        Some(Some(name)) => return runtimes::list_runtime(&name, preset.as_deref(), &sets),
+        Some(None) => {
+            runtimes::list();
+            return Ok(());
+        }
+        None => {}
+    }
+    // No --game: the one-line picker (folder, exe or MicrosoftGame.Config).
+    if game.is_none() && mode != Mode::BuildOnly && mode != Mode::Prewarm && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
+        let Some(p) = picker::pick() else { return Ok(()) };
+        game = Some(p.folder);
+        exe = exe.or(p.exe);
+        // The picker's runtime, preset and options, under what the command line named.
+        runtime_arg = runtime_arg.or(p.runtime);
+        preset = preset.or(p.preset);
+        mix = mix.or(p.mix);
+        sets.splice(0..0, p.sets);
+    }
+    if mode == Mode::Restore {
+        return restore(&game.ok_or(USAGE)?);
+    }
+    // --runtime / NEONBRIDGE_RUNTIME (default scarlettport): vendor/<name> runs
+    // the game per its NEONBRIDGE.toml (runtimes.rs); tuxbox goes on to the
+    // TuxBox providers below.
+    let mut runtime = runtimes::name(runtime_arg.as_deref());
+    // A mix: every part not named comes from the runtime picked (or the
+    // default); its app tree's toml runs it.
+    if let Some(m) = mix.take() {
+        let base = m.app().map(str::to_owned).unwrap_or_else(|| runtime.clone());
+        let m = m.filled(if runtimes::victory_tree(&base).is_some() { &base } else { "scarlettport" });
+        runtime = m.app().unwrap_or("scarlettport").to_owned();
+        println!("[launch] mix (app from {runtime}):\n{}", m.text());
+        mix = Some(m);
+    }
+    if runtime != runtimes::TUXBOX && matches!(mode, Mode::Run | Mode::BuildOnly | Mode::Prewarm) {
+        if debug || sandbox || rev.is_some() || tuxbox.is_some() {
+            println!("[launch] {runtime}: --debug, --sandbox, --rev and --tuxbox apply to --runtime tuxbox only");
+        }
+        let task = match mode { Mode::BuildOnly => runtimes::Task::Build, Mode::Prewarm => runtimes::Task::Prewarm, _ => runtimes::Task::Run };
+        return runtimes::run(&runtime, task, game.as_deref(), exe.as_deref(), log, timeout, &game_args, runtimes::Choice { preset: preset.as_deref(), sets: &sets, mix: mix.as_ref() });
+    }
+    // --pipelines: nothing waits on it, so every program is translated before
+    // the build (no NEONBRIDGE_PREWARM_MAX_S cap unless one is set), and the
+    // d3d12 builder's outcome lines go to this console.
+    if mode == Mode::Pipelines {
+        // SAFETY: no other thread of ours runs yet.
+        unsafe {
+            if std::env::var_os("NEONBRIDGE_PREWARM_MAX_S").is_none() {
+                std::env::set_var("NEONBRIDGE_PREWARM_MAX_S", "0");
+            }
+            if std::env::var_os("TUXBOX_LOG").is_none() {
+                std::env::set_var("TUXBOX_LOG", "stderr");
+            }
+        }
+    }
+    // --rev: the providers and xshader come from that commit, not the working
+    // tree, so other sessions' uncommitted edits stay out of the run.
+    if let Some(rev) = &rev {
+        if tuxbox.is_some() {
+            return Err("--rev and --tuxbox/TUXBOX_ROOT name two sources; pass one".into());
+        }
+        tuxbox = Some(rev_snapshot(rev)?);
+    }
+    // A release ships the providers prebuilt beside the exe: use them unless a
+    // source was named (--tuxbox or TUXBOX_ROOT).
+    let prebuilt = if tuxbox.is_none() { prebuilt_dir() } else { None };
+    let tuxbox = tuxbox.unwrap_or_else(baked_tuxbox);
+    if prebuilt.is_none() && !tuxbox.join("runtime/d3d12/d3d12_xs.def").is_file() {
+        return Err(if tuxbox == baked_tuxbox() {
+            format!("no prebuilt providers in a tuxbox folder beside neonbridge.exe, and the source it was built from ({}) is gone; \
+                unpack the full release zip, or pass --tuxbox <TuxBox checkout> (or set TUXBOX_ROOT)", tuxbox.display())
+        } else {
+            format!("{} is not a TuxBox provider source (no runtime/d3d12/d3d12_xs.def)", tuxbox.display())
+        }.into());
+    }
+    if mode == Mode::Prewarm {
+        return prewarm_only(&tuxbox, prebuilt.as_deref(), game.as_deref());
+    }
+    let game = if mode == Mode::BuildOnly { game } else { Some(game.ok_or(USAGE)?) };
+    // The title's d3d12 starts this exe as a --pso-child for a heavy pipeline
+    // (TUXBOX_PSO_CHILD_GAME): its own current exe is the title's.
+    if let Some(game) = &game
+        && let Ok(exe) = std::env::current_exe()
+    {
+        // SAFETY: no other thread of ours runs yet.
+        unsafe {
+            std::env::set_var("TUXBOX_PSO_CHILD_EXE", exe);
+            if std::env::var_os("TUXBOX_PSO_CHILD_DLL").is_none() {
+                std::env::set_var("TUXBOX_PSO_CHILD_DLL", game.join("d3d12_xs.dll"));
+            }
+        }
+    }
+    let target = match &game {
+        Some(g) => Some(find_exe(g, exe.as_deref())?),
+        None => None,
+    };
+
+    if mode == Mode::Run {
+        splash::show("Building the TuxBox runtime");
+    }
+    let out = provider_out();
+    // xshader builds beside the runtime, not after it (test159: the two cargo
+    // runs were back to back before the game started). NEONBRIDGE_XSHADER_PARALLEL=0 builds it after.
+    let mut early_xshader = (mode == Mode::Run && prebuilt.is_none()
+        && std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() != Ok("0")
+        && std::env::var("NEONBRIDGE_XSHADER_PARALLEL").as_deref() != Ok("0"))
+        .then(|| {
+            let (t, o) = (tuxbox.to_path_buf(), out.clone());
+            std::thread::spawn(move || build_xshader(&t, &o).map_err(|e| e.to_string()))
+        });
+    let dlls = match &prebuilt {
+        Some(dir) => {
+            println!("[launch] prebuilt providers: {} (nothing to build)", dir.display());
+            fs::create_dir_all(&out)?;
+            PROVIDERS.iter().map(|p| dir.join(p.1)).collect()
+        }
+        None => build_providers(&tuxbox, &out)?,
+    };
+    splash::status(0.3, "Staging the runtime beside the game");
+    if mode == Mode::BuildOnly {
+        println!("[launch] built {} providers in {}", dlls.len(), out.display());
+        return Ok(());
+    }
+    let (game, target) = (game.unwrap(), target.unwrap());
+    // d3d12_xs compiles Xbox rectangle-list pipelines with DXC loaded from the
+    // game folder; stage the SDK's signed compiler beside it.
+    let mut dlls = dlls;
+    if let Some(dxc) = shaders::find_dxc() {
+        dlls.extend(["dxcompiler.dll", "dxil.dll"].map(|n| dxc.with_file_name(n)).into_iter().filter(|p| p.is_file()));
+    } else if let Some(dir) = &prebuilt {
+        // The release's redistributable copies (Windows SDK Redist\D3D\x64).
+        dlls.extend(["dxcompiler.dll", "dxil.dll"].map(|n| dir.join(n)).into_iter().filter(|p| p.is_file()));
+    }
+    if mode != Mode::BuildShaders {
+        stage(&game, &dlls)?;
+    }
+    if mode == Mode::StageOnly {
+        println!("[launch] staged {} providers beside {}; not started (--stage-only)", dlls.len(), target.display());
+        return Ok(());
+    }
+    splash::status(0.4, "Preparing shaders");
+    // Runtime shader worker (TuxBox runtime_shaders.py on Windows): xshader + SDK dxc.
+    let worker = if std::env::var("TUXBOX_RUNTIME_SHADERS").as_deref() == Ok("0") { None } else {
+        let xshader = match prebuilt.as_ref().map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
+            Some(prebuilt) => Ok((prebuilt, None)),
+            None => match early_xshader.take() {
+                Some(h) => h.join().map_err(|_| "xshader build thread panicked".to_string()).and_then(|r| r).map_err(Into::into),
+                None => build_xshader(&tuxbox, &out),
+            },
+        };
+        match (xshader, shaders::find_dxc()) {
+            (Ok((xshader, source_key)), Some(dxc)) => {
+                let cache_root = crate::shaders::cache_root();
+                // Build every program in shaders.rpf into the prewarm archive (once per shaders.rpf).
+                let rpf = game.join("shaders.rpf");
+                // The archive only feeds the prewarm; TUXBOX_PREWARM=0 skips both.
+                if rpf.is_file() && std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0") {
+                    println!("[launch] building shaders from {}", rpf.display());
+                    match shaders::build_requests(&rpf, &cache_root.join("requests")) {
+                        Ok(Some(b)) => println!("[launch] shaders.rpf: {} programs, {} new requests archived", b.programs, b.written),
+                        Ok(None) => println!("[launch] shaders.rpf already built"),
+                        Err(e) => println!("[launch] shaders.rpf not built: {e}"),
+                    }
+                }
+                let name = format!("run-{}", std::process::id());
+                let real = cache_root.join(&name);
+                let session = if sandbox { boxed_path(&real).unwrap_or(real) } else { real };
+                println!("[launch] shader worker: {} + {}; session {}", xshader.display(), dxc.display(), session.display());
+                let log_path = out.join("shader-worker.log");
+                let _ = fs::remove_file(&log_path);
+                shaders::set_compile_log(&log_path, false);
+                let sink = std::sync::Mutex::new(fs::OpenOptions::new().create(true).append(true).open(&log_path)?);
+                match shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
+                    move |line| { let _ = writeln!(sink.lock().unwrap(), "{line}"); }) {
+                    Ok(w) => Some((w, name, session, log_path)),
+                    Err(e) => return Err(no_worker(&format!("{e}"))),
+                }
+            }
+            // test141: xshader's in-progress edit did not compile, the run went
+            // on without a worker, and every pipeline bound untranslated (0
+            // draws, a black screen). A run without the worker is never started
+            // by accident; TUXBOX_RUNTIME_SHADERS=0 asks for one.
+            (Err(e), _) => return Err(no_worker(&format!("xshader build failed: {e}"))),
+            (_, None) => return Err(no_worker("no Windows SDK dxc.exe with dxil.dll (or set DXC)")),
+        }
+    };
+    if mode == Mode::BuildShaders {
+        let (w, _, session, log_path) = worker.ok_or("shader worker not started")?;
+        let st = w.stop();
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("[launch] shaders built: {} translated, {} from cache, {} unsupported, {} failed (log {})",
+            st.prewarmed.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        let total = (st.unsupported.load(Relaxed) + st.failed.load(Relaxed)).max(1) as f64;
+        println!("[launch] by construct:");
+        for (group, count) in st.top_constructs(15) {
+            println!("[launch]   {count:>6}  {:>5.1}%  {group}", 100.0 * count as f64 / total);
+        }
+        println!("[launch] by reason:");
+        for (reason, count) in st.top_reasons(25) {
+            println!("[launch]   {count:>6}  {:>5.1}%  {reason}", 100.0 * count as f64 / total);
+        }
+        let _ = fs::remove_dir_all(session);
+        return Ok(());
+    }
+    if mode == Mode::Pipelines {
+        let (w, name, session, log_path) = worker.ok_or("shader worker not started (the pipeline build translates through it)")?;
+        let result = build_pipelines(&game, &name);
+        let st = w.stop();
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("[launch] shaders: {} compiled, {} from cache, {} unsupported, {} failed (log {})",
+            st.compiled.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        let _ = fs::remove_dir_all(session);
+        return result;
+    }
+    let env: Vec<(String, String)> = worker.iter().map(|(_, name, _, _)| ("TUXBOX_SHADER_SESSION".to_owned(), name.clone())).collect();
+    splash::status(0.6, "Starting the game");
+    commit_preflight();
+    dxc_preflight(&game);
+    // XLaunchNewGame: the title writes a request and exits; start what it asked
+    // for in its place (at most 8 times in a row). TUXBOX_RELAUNCH=0 in the
+    // title ignores the request, so no file appears.
+    let request = relaunch_request(&target);
+    if let Some(r) = &request {
+        let _ = fs::remove_file(r);
+    }
+    let (mut target, mut game_args, mut log) = (target, game_args, log);
+    let mut relaunches = 0;
+    let result = loop {
+        let result = start(&game, &target, &game_args, log.take(), debug.then(|| cdb_extra.clone().unwrap_or_default()), trace_throws, sandbox, &env, timeout);
+        let Some(text) = request.as_ref().and_then(|r| fs::read_to_string(r).ok()) else { break result };
+        let _ = fs::remove_file(request.as_ref().unwrap());
+        relaunches += 1;
+        if relaunches > 8 {
+            println!("[launch] relaunch request ignored: 8 relaunches in a row");
+            break result;
+        }
+        let (exe, args) = text.split_once('\n').unwrap_or((&text, ""));
+        let named = Path::new(exe.trim());
+        let candidate = if named.is_absolute() { named.to_path_buf() } else { game.join(named) };
+        if !exe.trim().is_empty() && candidate.is_file() && is_x64_exe(&candidate) {
+            target = candidate;
+        }
+        game_args = split_args(args.trim());
+        println!("[launch] the title asked to launch {} {}; relaunching ({relaunches})", target.display(), args.trim());
+    };
+    if let Some((w, _, session, log_path)) = worker {
+        let st = w.stop();
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("[launch] shaders: {} prewarmed, {} compiled, {} from cache, {} unsupported, {} failed (log {})",
+            st.prewarmed.load(Relaxed), st.compiled.load(Relaxed), st.cached.load(Relaxed), st.unsupported.load(Relaxed), st.failed.load(Relaxed), log_path.display());
+        // Prewarm failures are only counted (test136: "6 failed" with no
+        // reason anywhere): name them, and whether dxc timed out.
+        for (reason, count) in st.top_reasons(64).into_iter().filter(|(r, _)| r.starts_with("failed")).take(8) {
+            println!("[launch]   {count:>4} {reason}");
+        }
+        let _ = fs::remove_dir_all(session);
+    }
+    result
+}
+
+/// `--pipelines`: loads the staged d3d12_xs.dll into this process and builds
+/// the pipeline journal's pipelines into the shared pipeline library, so the
+/// next run loads them instead of compiling them (XCL's `xcl pipelines`,
+/// ScarlettPort runtime/xcl/crates/xcl/src/pipelines.rs e980ecb). It
+/// translates through this launcher's shader worker session.
+fn build_pipelines(game: &Path, session: &str) -> Result<(), Box<dyn Error>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH, LoadLibraryExW};
+    use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, SetPriorityClass};
+    // SAFETY: the builder runs before any thread of ours reads the environment.
+    unsafe {
+        std::env::set_var("TUXBOX_SHADER_SESSION", session);
+        // The title's control pipe stays the title's.
+        std::env::set_var("TUXBOX_CTL", "0");
+        // The builder's reasons ("pipeline build: ...") reach this console:
+        // --prewarm set no TUXBOX_LOG, so a build that stopped early said nothing.
+        if std::env::var_os("TUXBOX_LOG").is_none() {
+            std::env::set_var("TUXBOX_LOG", "stderr");
+        }
+        // The build's time cap (prewarm178c: 0.4 pipelines/s, ~3 days for
+        // the journal): NEONBRIDGE_PREWARM_PSO_MIN minutes (10; 0 none).
+        if std::env::var_os("TUXBOX_PIPELINE_BUILD_MIN").is_none() {
+            let minutes = std::env::var("NEONBRIDGE_PREWARM_PSO_MIN").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10);
+            std::env::set_var("TUXBOX_PIPELINE_BUILD_MIN", minutes.to_string());
+        }
+        // Heavy builds last, the library saved before each (journal.rs):
+        // NEONBRIDGE_PREWARM_HEAVY_LAST=0 keeps the most-bound order.
+        if std::env::var_os("TUXBOX_PIPELINE_HEAVY_LAST").is_none() && std::env::var("NEONBRIDGE_PREWARM_HEAVY_LAST").is_ok_and(|v| v.trim() == "0") {
+            std::env::set_var("TUXBOX_PIPELINE_HEAVY_LAST", "0");
+        }
+        SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    let dll = game.join("d3d12_xs.dll");
+    // SAFETY: as above, before the builder's threads start.
+    unsafe { std::env::set_var("TUXBOX_PSO_CHILD_DLL", &dll) };
+    let wide: Vec<u16> = dll.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    // SAFETY: a NUL-terminated path; the module stays loaded until exit.
+    let module = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
+    if module.is_null() {
+        return Err(format!("{} not loaded: {}", dll.display(), std::io::Error::last_os_error()).into());
+    }
+    // SAFETY: a NUL-terminated export name of the loaded module.
+    let Some(build) = (unsafe { GetProcAddress(module, c"TuxBoxBuildPipelines".as_ptr().cast()) }) else {
+        return Err(format!("{} has no TuxBoxBuildPipelines export (an older build)", dll.display()).into());
+    };
+    // SAFETY: the export is `extern "system" fn(u32) -> u32`.
+    let build: unsafe extern "system" fn(u32) -> u32 = unsafe { std::mem::transmute(build) };
+    let threads = std::env::var("NEONBRIDGE_PIPELINE_THREADS").ok().and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or_else(|| (std::thread::available_parallelism().map_or(2, |n| n.get()) as u32 / 2).max(1));
+    println!("[launch] pipelines: building the journal's pipelines on {threads} threads at below-normal priority (Ctrl+C stops; what is made is kept)");
+    let made = unsafe { build(threads) };
+    println!("[launch] pipelines: {made} in the pipeline library (stored now or already there; the d3d12 \"pipeline build: done\" line above counts the rest)");
+    Ok(())
+}
+
+/// `--pso-child <frame>`: a --pipelines build's child for one heavy pipeline
+/// (TUXBOX_PSO_CHILD). Loads the builder's d3d12_xs.dll (TUXBOX_PSO_CHILD_DLL,
+/// inherited with the build's environment), builds the journal frame at byte
+/// `frame` and exits, its driver compile arenas with it; the DLL writes the
+/// pipeline's cached blob to TUXBOX_PSO_CHILD_OUT for the parent.
+fn pso_child(frame: &str) -> ! {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH, LoadLibraryExW};
+    let fail = |why: String| -> ! {
+        eprintln!("[launch] pso child: {why}");
+        std::process::exit(2)
+    };
+    let Ok(frame) = frame.trim().parse::<u64>() else { fail(format!("bad frame {frame:?}")) };
+    let Some(dll) = std::env::var_os("TUXBOX_PSO_CHILD_DLL") else { fail("no TUXBOX_PSO_CHILD_DLL".into()) };
+    let wide: Vec<u16> = Path::new(&dll).as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    // SAFETY: a NUL-terminated path; the module stays loaded until exit.
+    let module = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
+    if module.is_null() {
+        fail(format!("{} not loaded: {}", Path::new(&dll).display(), std::io::Error::last_os_error()));
+    }
+    // SAFETY: a NUL-terminated export name of the loaded module.
+    let Some(build) = (unsafe { GetProcAddress(module, c"TuxBoxBuildPipelineChild".as_ptr().cast()) }) else {
+        fail("no TuxBoxBuildPipelineChild export".into())
+    };
+    // SAFETY: the export is `extern "system" fn(u64) -> i32`.
+    let build: unsafe extern "system" fn(u64) -> i32 = unsafe { std::mem::transmute(build) };
+    std::process::exit(unsafe { build(frame) })
+}
+
+/// Where the title's xgameruntime writes an XLaunchNewGame request.
+fn relaunch_request(exe: &Path) -> Option<PathBuf> {
+    Some(env_path("LOCALAPPDATA")?.join("TuxBox").join("relaunch").join(format!("{}.txt", exe.file_stem()?.to_string_lossy())))
+}
+
+/// Command-line split on spaces, keeping double-quoted runs together.
+fn split_args(s: &str) -> Vec<OsString> {
+    let (mut out, mut cur, mut quoted, mut any) = (Vec::new(), String::new(), false, false);
+    for c in s.chars() {
+        match c {
+            '"' => { quoted = !quoted; any = true; }
+            c if c.is_whitespace() && !quoted => {
+                if any || !cur.is_empty() { out.push(OsString::from(std::mem::take(&mut cur))); }
+                any = false;
+            }
+            c => cur.push(c),
+        }
+    }
+    if any || !cur.is_empty() { out.push(cur.into()); }
+    out
+}
+
+/// Port of TuxBox 02dcc15 (Apache-2.0, warn_scarlett_dxc): advisory only.
+/// d3d12_xs compiles rectangle-list pipelines with the dxcompiler.dll and
+/// dxil.dll beside the game (a system copy may still work).
+/// NEONBRIDGE_DXC_CHECK=0 skips it.
+fn dxc_preflight(game: &Path) {
+    if std::env::var("NEONBRIDGE_DXC_CHECK").as_deref() == Ok("0") {
+        return;
+    }
+    let x64_dll = |data: &[u8]| -> bool {
+        let u16_at = |o: usize| data.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+        let Some(pe) = data.get(0x3c..0x40).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize) else { return false };
+        data.starts_with(b"MZ")
+            && data.get(pe..pe + 4) == Some(b"PE\0\0")
+            && u16_at(pe + 4) == Some(0x8664)
+            && u16_at(pe + 22).is_some_and(|c| c & 0x2000 != 0)
+            && u16_at(pe + 24) == Some(0x20b)
+    };
+    let mut problems = Vec::new();
+    for name in ["dxcompiler.dll", "dxil.dll"] {
+        match fs::read(game.join(name)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => problems.push(format!("{name} missing")),
+            Err(e) => problems.push(format!("{name} is unreadable ({e})")),
+            Ok(data) if !x64_dll(&data) => problems.push(format!("{name} is not an x64 Windows DLL")),
+            Ok(_) => {}
+        }
+    }
+    if !problems.is_empty() {
+        println!("[launch] Windows DXC: {}. Rectangle-list pipelines need both DLLs from the same Microsoft x64 DXC release (Windows SDK Redist\\D3D\\x64, or set DXC) beside the game; a system copy may also work", problems.join("; "));
+    }
+}
+
+/// Pre-flight: Windows commit (RAM plus page file) available for the title.
+/// Translation layers commit about 15 GB at the menu; when commit runs out
+/// allocations fail with error 1455 and the title crashes. Warns below
+/// TUXBOX_MIN_COMMIT_GB (default 20); NEONBRIDGE_COMMIT_CHECK=0 skips it.
+fn commit_preflight() {
+    #[repr(C)]
+    struct MemoryStatusEx { length: u32, load: u32, total_phys: u64, avail_phys: u64, total_page_file: u64, avail_page_file: u64, total_virtual: u64, avail_virtual: u64, avail_extended: u64 }
+    unsafe extern "system" {
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
+    }
+    if std::env::var("NEONBRIDGE_COMMIT_CHECK").as_deref() == Ok("0") {
+        return;
+    }
+    let need = std::env::var("TUXBOX_MIN_COMMIT_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(20);
+    let mut m: MemoryStatusEx = unsafe { std::mem::zeroed() };
+    m.length = size_of::<MemoryStatusEx>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut m) } == 0 {
+        return;
+    }
+    let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let (limit, free, ram) = (gb(m.total_page_file), gb(m.avail_page_file), gb(m.total_phys));
+    if free < need as f64 {
+        let msg = format!("only {free:.1} GB of Windows commit is free (limit {limit:.1} GB = {ram:.1} GB RAM + page file); the game needs about {need} GB and crashes with error 1455 when it runs out. Raise the page file (System > About > Advanced system settings > Performance > Advanced > Virtual memory: system managed, or at least {:.0} GB) or close other programs", (need as f64 - ram + 4.0).max(16.0));
+        println!("[launch] WARNING: {msg}");
+        splash::status(0.55, "Low memory: raise the Windows page file (see the log)");
+    } else {
+        println!("[launch] commit: {free:.1} GB free of {limit:.1} GB (RAM {ram:.1} GB); need about {need} GB");
+    }
+}
+
+/// The launch stops when the shader worker cannot start: a run without it
+/// binds every pipeline untranslated and draws nothing.
+fn no_worker(why: &str) -> Box<dyn Error> {
+    println!("[launch] shader worker not started: {why}");
+    println!("[launch] not starting the game without it (TUXBOX_RUNTIME_SHADERS=0 runs without translated shaders on purpose)");
+    format!("shader worker not started: {why}").into()
+}
+
+/// The shader-compiler sources' commit, with "+edits" when the working tree
+/// differs from it there.
+fn xshader_commit(tuxbox: &Path) -> String {
+    let git = |args: &[&str]| crate::runtimes::command("git").arg("-C").arg(tuxbox).args(args).output().ok()
+        .filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+    let head = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown commit".into());
+    let dirty = git(&["status", "--porcelain", "--", "tools/shader-compiler"]).is_some_and(|s| !s.is_empty());
+    if dirty { format!("{head}+edits") } else { head }
+}
+
+/// Build the vendored TuxBox shader translator (tools/shader-compiler -> xshader.exe).
+///
+/// Each successful build is kept as `xshader-good.exe` with its commit in
+/// `xshader-good.txt`. When a build fails (another session's edit in
+/// progress, test141), the last good binary is used and said so loudly,
+/// with its commit; with none the launch stops.
+/// --prewarm: the programs earlier runs asked for (the seen set) translated
+/// into the current translator's cache, without a game. Every xshader commit
+/// changes the cache key, so the first run after one spent about ten minutes
+/// (test143, ~1,300 programs) translating before the game started; run this
+/// after an xshader landing and the next run finds them cached. Nothing in
+/// the game folder or the provider output is touched. TUXBOX_PREWARM=1 also
+/// translates the whole shaders.rpf archive; the time cap is off unless
+/// NEONBRIDGE_PREWARM_MAX_S is set.
+fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>, game: Option<&Path>) -> Result<(), Box<dyn Error>> {
+    shaders::PREWARM_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: no other thread of ours runs yet.
+    unsafe {
+        if std::env::var_os("NEONBRIDGE_PREWARM_MAX_S").is_none() {
+            std::env::set_var("NEONBRIDGE_PREWARM_MAX_S", "0");
+        }
+        if std::env::var_os("TUXBOX_PREWARM").is_none() {
+            std::env::set_var("TUXBOX_PREWARM", "0");
+        }
+    }
+    let out = provider_out();
+    fs::create_dir_all(&out)?;
+    let (xshader, source_key) = match prebuilt.map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
+        Some(prebuilt) => (prebuilt, None),
+        None => build_xshader(tuxbox, &out)?,
+    };
+    let dxc = shaders::find_dxc().ok_or("no Windows SDK dxc.exe with dxil.dll (or set DXC)")?;
+    let cache_root = crate::shaders::cache_root();
+    // d3d12_xs binds only a `run-*` session (shader_cache::compile::session),
+    // so the PSO build of a `prewarm-<pid>` session found no cache folder and
+    // built nothing ("0 in the pipeline library", prewarm174b).
+    let session = cache_root.join(format!("run-prewarm-{}", std::process::id()));
+    println!("[prewarm] {} + {}", xshader.display(), dxc.display());
+    // No loading screen here: the prewarm's progress is one console line
+    // rewritten in place, its plain summary lines after it.
+    progress::set_inline(true);
+    let started = Instant::now();
+    shaders::set_compile_log(&out.join("shader-worker.log"), true);
+    println!("[prewarm] per-compile dxc times: {}", out.join("shader-worker.log").display());
+    let worker = shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
+        |line| println!("[prewarm] {line}"))?;
+    // Driver pipelines too, graphics and compute (the journal's G and C
+    // records, as --pipelines builds them), through this worker: test173
+    // hung binding compute pipelines that were not built yet (1108 pending
+    // with the dxc prewarm at 1272/1695), because --prewarm only ran dxc.
+    // Needs the game folder's staged d3d12_xs.dll (--game).
+    // NEONBRIDGE_PREWARM_PIPELINES=0 runs dxc only, as before.
+    if std::env::var("NEONBRIDGE_PREWARM_PIPELINES").as_deref() != Ok("0") {
+        // The PSO build loads d3d12_xs.dll into this process. The game
+        // folder's copy is whatever the last launch staged: prewarm177 loaded
+        // one staged before 3a1e515 and built nothing for real (106047 created
+        // lazily, 2 stored). The runtime is built from the tree (or taken from
+        // --prebuilt) and loaded from there now; NEONBRIDGE_PREWARM_STAGED_DLL=1
+        // loads the game folder's copy as before.
+        let fresh = if std::env::var("NEONBRIDGE_PREWARM_STAGED_DLL").as_deref() == Ok("1") {
+            None
+        } else {
+            match prebuilt {
+                Some(dir) => Some(dir.to_path_buf()),
+                None => match build_providers(tuxbox, &out) {
+                    Ok(_) => Some(out.clone()),
+                    Err(e) => {
+                        println!("[prewarm] pipelines not built: building the runtime failed: {e}");
+                        Some(PathBuf::new())
+                    }
+                },
+            }
+        };
+        let dir = match fresh {
+            Some(dir) => Some(dir).filter(|d| d.join("d3d12_xs.dll").is_file()),
+            None => game.filter(|g| g.join("d3d12_xs.dll").is_file()).map(Path::to_path_buf),
+        };
+        match dir.as_deref() {
+            Some(game) => {
+                let name = session.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                println!("[prewarm] pipelines: runtime {}", game.join("d3d12_xs.dll").display());
+                if let Err(e) = build_pipelines(game, &name) {
+                    println!("[prewarm] pipelines not built: {e}");
+                }
+            }
+            None => println!("[prewarm] pipelines not built: no d3d12_xs.dll to load (NEONBRIDGE_PREWARM_PIPELINES=0 skips this)"),
+        }
+    }
+    let st = worker.stop();
+    let _ = fs::remove_dir_all(&session);
+    use std::sync::atomic::Ordering::Relaxed;
+    let secs = started.elapsed().as_secs_f64();
+    let done = st.prewarmed.load(Relaxed) + st.reused.load(Relaxed) + st.cached.load(Relaxed) + st.unsupported.load(Relaxed) + st.failed.load(Relaxed);
+    println!("[prewarm] done in {secs:.1} s ({:.1} programs/s): {} translated, {} with dxc output reused, {} already cached, {} unsupported, {} failed",
+        done as f64 / secs.max(0.001), st.prewarmed.load(Relaxed), st.reused.load(Relaxed), st.cached.load(Relaxed),
+        st.unsupported.load(Relaxed), st.failed.load(Relaxed));
+    Ok(())
+}
+
+/// The 6ixpack data dir (`%LOCALAPPDATA%ixpack`).
+pub(crate) fn data_dir() -> PathBuf {
+    env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack")
+}
+
+static REV_BUILD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Where providers and xshader are built: `6ixpack/tuxbox`, or for --rev
+/// `6ixpack/tuxbox-rev`, one target dir shared by every snapshot so their
+/// registry dependencies and unchanged crates build once.
+fn provider_out() -> PathBuf {
+    data_dir().join(if REV_BUILD.load(std::sync::atomic::Ordering::Relaxed) { "neonbridge-own-rev" } else { "neonbridge-own" })
+}
+
+/// `vendor/neonbridge-own` of `rev`, exported once with `git archive` into
+/// `6ixpack/snapshots/<full commit>` (a finished one holds `.complete`).
+/// `.neonbridge-snapshot` marks it, so its shader-compiler key is hashed
+/// from its files (see xshader_source_key).
+fn rev_snapshot(rev: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let git = |args: &[&str]| -> Result<String, Box<dyn Error>> {
+        let o = crate::runtimes::command("git").arg("-C").arg(repo).args(args).output()?;
+        if !o.status.success() {
+            return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim()).into());
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    };
+    let commit = git(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")])?;
+    let root = data_dir().join("snapshots").join(&commit);
+    let tuxbox = root.join("vendor/neonbridge-own");
+    REV_BUILD.store(true, std::sync::atomic::Ordering::Relaxed);
+    if root.join(".complete").is_file() {
+        let _ = fs::remove_file(tuxbox.join(".neonbridge-source-key"));
+        fs::write(tuxbox.join(".neonbridge-snapshot"), &commit)?;
+        println!("[launch] --rev {rev}: snapshot {commit} (cached) at {}", root.display());
+        return rev_build_tree(&tuxbox, &commit);
+    }
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root)?;
+    let tar = root.with_extension("tar");
+    git(&["archive", "--format=tar", "-o", &tar.to_string_lossy(), &commit, "vendor/neonbridge-own"])?;
+    let status = crate::runtimes::command("tar").arg("-xf").arg(&tar).arg("-C").arg(&root).status()?;
+    let _ = fs::remove_file(&tar);
+    if !status.success() {
+        return Err(format!("tar -xf of the {commit} snapshot failed ({status})").into());
+    }
+    fs::write(tuxbox.join(".neonbridge-snapshot"), &commit)?;
+    fs::write(root.join(".complete"), &commit)?;
+    println!("[launch] --rev {rev}: snapshot {commit} exported to {}", root.display());
+    rev_build_tree(&tuxbox, &commit)
+}
+
+/// The tree --rev builds in: `6ixpack/rev-build/vendor/neonbridge-own`, one path for
+/// every snapshot, made equal to `snapshot` by content. Cargo fingerprints
+/// path crates by their path and file mtimes, so building each snapshot at its
+/// own path, or copying git archive's commit-time mtimes, rebuilt every crate;
+/// here only files whose bytes differ are rewritten (and extras removed), so
+/// unchanged crates stay built. NEONBRIDGE_REV_INCREMENTAL=0 builds in the
+/// snapshot itself.
+fn rev_build_tree(snapshot: &Path, commit: &str) -> Result<PathBuf, Box<dyn Error>> {
+    if std::env::var("NEONBRIDGE_REV_INCREMENTAL").as_deref() == Ok("0") {
+        return Ok(snapshot.to_path_buf());
+    }
+    fn mirror(from: &Path, to: &Path, changed: &mut usize) -> std::io::Result<()> {
+        fs::create_dir_all(to)?;
+        let mut keep = std::collections::HashSet::new();
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let (src, dst) = (entry.path(), to.join(entry.file_name()));
+            keep.insert(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                if dst.is_file() { fs::remove_file(&dst)?; }
+                mirror(&src, &dst, changed)?;
+            } else {
+                let bytes = fs::read(&src)?;
+                if dst.is_dir() { fs::remove_dir_all(&dst)?; }
+                if fs::read(&dst).ok().as_deref() != Some(&bytes[..]) {
+                    fs::write(&dst, &bytes)?;
+                    *changed += 1;
+                }
+            }
+        }
+        for entry in fs::read_dir(to)? {
+            let entry = entry?;
+            if !keep.contains(&entry.file_name()) {
+                *changed += 1;
+                if entry.file_type()?.is_dir() { fs::remove_dir_all(entry.path())?; } else { fs::remove_file(entry.path())?; }
+            }
+        }
+        Ok(())
+    }
+    let build = data_dir().join("rev-build").join("vendor/neonbridge-own");
+    let mut changed = 0;
+    // Half-mirrored, the tree is no commit: marked so until it matches.
+    let marker = build.with_file_name("vendor.commit");
+    let _ = fs::remove_file(&marker);
+    mirror(snapshot, &build, &mut changed)?;
+    fs::write(&marker, commit)?;
+    println!("[launch] --rev: build tree {} at {commit} ({changed} files changed)", build.display());
+    Ok(build)
+}
+
+/// Content hash of the shader-compiler sources: path + bytes of each file
+/// `git ls-files` lists (read from the working tree, so edits count), or for
+/// a --rev snapshot, which is no checkout, every file under the folder (git
+/// archive exports exactly the tracked files). Both give the same key for the
+/// same source, so a snapshot and the live tree share one translation cache;
+/// a snapshot once keyed by its git tree id ("tree:...") had a cache of its
+/// own and every --rev prewarm began cold (79dff41: 1337 seen, 0 cached).
+fn xshader_source_key(tuxbox: &Path) -> Option<String> {
+    source_hash(tuxbox, tracked_files(tuxbox, "tools/shader-compiler")?)
+}
+
+/// What decides xshader's bytes, for skipping its cargo run: the source key
+/// plus runtime/dxbc (a path dependency the key leaves out, since it is the
+/// translation cache's key too) and the workspace manifest and lock.
+fn xshader_build_fingerprint(tuxbox: &Path, key: &str) -> Option<String> {
+    let mut files = tracked_files(tuxbox, "runtime/dxbc")?;
+    files.extend(["Cargo.toml", "Cargo.lock"].into_iter().filter(|f| tuxbox.join(f).is_file()).map(str::to_owned));
+    Some(format!("{key}+{}", source_hash(tuxbox, files)?))
+}
+
+fn tracked_files(tuxbox: &Path, dir: &str) -> Option<Vec<String>> {
+    let files: Vec<String> = if tuxbox.join(".neonbridge-snapshot").is_file() {
+        fn walk(root: &Path, rel: &str, out: &mut Vec<String>) -> Option<()> {
+            for e in fs::read_dir(root.join(rel)).ok()? {
+                let e = e.ok()?;
+                let r = format!("{rel}/{}", e.file_name().to_str()?);
+                if e.file_type().ok()?.is_dir() { walk(root, &r, out)?; } else { out.push(r); }
+            }
+            Some(())
+        }
+        let mut v = Vec::new();
+        walk(tuxbox, dir, &mut v)?;
+        v
+    } else {
+        let out = crate::runtimes::command("git").arg("-C").arg(tuxbox).args(["ls-files", "-z", "--", dir]).output().ok()
+            .filter(|o| o.status.success())?;
+        out.stdout.split(|b| *b == 0).filter(|f| !f.is_empty()).map(|f| String::from_utf8_lossy(f).into_owned()).collect()
+    };
+    Some(files)
+}
+
+fn source_hash(tuxbox: &Path, mut files: Vec<String>) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    if files.is_empty() {
+        return None;
+    }
+    files.sort();
+    let mut h = Sha256::new();
+    for rel in files {
+        h.update(rel.as_bytes());
+        h.update([0]);
+        // A tracked file deleted in the working tree hashes as absent.
+        match fs::read(tuxbox.join(&rel)) {
+            Ok(bytes) => {
+                // CRLF hashed as LF: with core.autocrlf, git archive writes CRLF
+                // where sessions' edits leave LF (38 of 143 files at 79dff41),
+                // and line endings change no translation.
+                let mut text = Vec::with_capacity(bytes.len());
+                for (i, &b) in bytes.iter().enumerate() {
+                    if !(b == b'\r' && bytes.get(i + 1) == Some(&b'\n')) { text.push(b); }
+                }
+                h.update((text.len() as u64).to_le_bytes());
+                h.update(&text);
+            }
+            Err(_) => h.update(u64::MAX.to_le_bytes()),
+        }
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The built xshader and the source key it was built from (None: key by the
+/// exe's bytes). The key is taken before and after the build; an edit landing
+/// mid-build leaves the two apart and the binary unkeyed by source.
+/// NEONBRIDGE_XSHADER_SOURCE_KEY=0 keys by the exe as before.
+fn build_xshader(tuxbox: &Path, out: &Path) -> Result<(PathBuf, Option<String>), Box<dyn Error>> {
+    let manifest = tuxbox.join("tools/shader-compiler/Cargo.toml");
+    if !manifest.is_file() {
+        return Err(format!("{} missing", manifest.display()).into());
+    }
+    let target_dir = out.join("xshader");
+    let good = target_dir.join("xshader-good.exe");
+    let good_note = target_dir.join("xshader-good.txt");
+    let good_key = target_dir.join("xshader-good.key");
+    let commit = xshader_commit(tuxbox);
+    let keyed = std::env::var("NEONBRIDGE_XSHADER_SOURCE_KEY").as_deref() != Ok("0");
+    let before = if keyed { xshader_source_key(tuxbox) } else { None };
+    let good_fp = target_dir.join("xshader-good.fp");
+    let fingerprint = before.as_deref().and_then(|k| xshader_build_fingerprint(tuxbox, k));
+    // The crate's sources hash as they did at the last good build: no cargo at
+    // all (a no-op cargo run still costs seconds). NEONBRIDGE_XSHADER_SKIP=0 always runs cargo.
+    if let Some(fp) = &fingerprint
+        && std::env::var("NEONBRIDGE_XSHADER_SKIP").as_deref() != Ok("0")
+        && good.is_file()
+        && fs::read_to_string(&good_fp).is_ok_and(|k| k.trim() == fp)
+    {
+        println!("[launch] xshader: sources unchanged since the last build ({commit}); no cargo run");
+        return Ok((good, before));
+    }
+    // /Brepro: a rebuild of unchanged sources gives the same bytes (kept for
+    // the prebuilt and unkeyed cases, which key the cache by xshader's hash).
+    let status = cargo_status(crate::runtimes::command("cargo").args(["build", "--release", "--manifest-path"]).arg(&manifest)
+        .arg("--target-dir").arg(&target_dir).env("RUSTFLAGS", "-C link-arg=/Brepro"), 0.4, 0.2, "Building the shader translator")?;
+    let built = target_dir.join("release/xshader.exe");
+    if status.success() {
+        let key = before.filter(|b| xshader_source_key(tuxbox).as_ref() == Some(b));
+        if fs::copy(&built, &good).is_ok() {
+            let _ = fs::write(&good_note, &commit);
+            let _ = match &key { Some(k) => fs::write(&good_key, k), None => fs::remove_file(&good_key) };
+            // Only when nothing changed mid-build, like the key.
+            let _ = match fingerprint.as_ref().filter(|_| key.is_some()) { Some(f) => fs::write(&good_fp, f), None => fs::remove_file(&good_fp) };
+        }
+        return Ok((built, key));
+    }
+    if good.is_file() {
+        let from = fs::read_to_string(&good_note).unwrap_or_else(|_| "an unknown commit".into());
+        for _ in 0..3 {
+            println!("[launch] !!! xshader did not build from the working tree ({commit}, {status}); using the last good xshader, built from {} !!!", from.trim());
+        }
+        let key = if keyed { fs::read_to_string(&good_key).ok().map(|k| k.trim().to_owned()).filter(|k| !k.is_empty()) } else { None };
+        return Ok((good, key));
+    }
+    Err(format!("cargo build of xshader failed ({status}) at {commit}, and no earlier good build is kept").into())
+}
+
+/// Block while any process runs this exe image (Start.exe /wait can return early).
+fn wait_for_image(exe: &Path) {
+    let Some(name) = exe.file_name().map(|n| n.to_string_lossy().into_owned()) else { return };
+    let running = || crate::runtimes::command("tasklist").args(["/FI", &format!("IMAGENAME eq {name}"), "/NH"]).output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&name.to_ascii_lowercase()))
+        .unwrap_or(false);
+    let t = Instant::now();
+    let mut waited = false;
+    while running() {
+        waited = true;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    if waited {
+        println!("[launch] {name} ended {:.1}s later", t.elapsed().as_secs_f64());
+    }
+}
+
+/// The vendored TuxBox source this exe was built from (absent on other PCs).
+fn baked_tuxbox() -> PathBuf {
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/vendor/neonbridge-own"))
+}
+
+/// `<exe dir>/neonbridge-own` (or a release's old `tuxbox` folder) when it
+/// holds every provider DLL (a release layout).
+fn prebuilt_dir() -> Option<PathBuf> {
+    if std::env::var("NEONBRIDGE_PREBUILT").is_ok_and(|v| v.trim() == "0") {
+        return None;
+    }
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    ["neonbridge-own", "tuxbox"].iter().map(|d| exe_dir.join(d)).find(|dir| PROVIDERS.iter().all(|p| dir.join(p.1).is_file()))
+}
+
+const RELEASE_README: &str = r"Neonbridge (portable)
+
+Run neonbridge.exe, pick the dumped game folder (it holds MicrosoftGame.Config)
+or its executable, and press Launch. Nothing is built: the runtime DLLs in
+tuxbox\ are copied beside the game exe (originals are kept in _6ixpack_orig\;
+neonbridge --restore --game <dir> puts them back).
+
+No game files are included; you need your own dump.
+
+Shaders: the runtime shader worker needs dxc.exe, which may not be
+redistributed. Install the Windows 10/11 SDK, or unpack a DirectX Shader
+Compiler release (github.com/microsoft/DirectXShaderCompiler) and set the DXC
+environment variable to its bin\x64\dxc.exe. tuxbox\dxcompiler.dll and
+tuxbox\dxil.dll are the Windows SDK's redistributable copies (Redist\D3D\x64).
+
+Options: neonbridge --help. The game starts in a 16:9 window; Alt+Enter or F11
+toggles borderless fullscreen (TUXBOX_FULLSCREEN=1 starts borderless).
+
+Licences: LICENSE (Neonbridge), tuxbox\LICENSE (TuxBox runtime),
+tuxbox\NOTICE-acphal (LGPL xma code in AcpHal.dll).
+";
+
+/// Build the providers and xshader into `<dir>/build`, lay out a portable
+/// release in `<dir>/neonbridge-<version>-win-x64` and zip it beside it.
+/// `all`: `--package`, staged as `<dir>/<all>` with every vendor runtime too
+/// and zipped as `<dir>/<all>-<version>.zip`.
+fn package_release(tuxbox: PathBuf, dir: &Path, all: Option<&str>) -> Result<(), Box<dyn Error>> {
+    if !tuxbox.join("runtime/d3d12/d3d12_xs.def").is_file() {
+        return Err(format!("{} is not a TuxBox provider source; pass --tuxbox", tuxbox.display()).into());
+    }
+    let name = format!("neonbridge-{}-win-x64", env!("CARGO_PKG_VERSION"));
+    let build = dir.join("build");
+    let stage = dir.join(all.unwrap_or(&name));
+    let zip = dir.join(match all {
+        Some(a) => format!("{a}-{}.zip", env!("CARGO_PKG_VERSION")),
+        None => format!("{name}.zip"),
+    });
+    fs::create_dir_all(&build)?;
+    let dlls = build_providers(&tuxbox, &build)?;
+    let xshader = build_xshader(&tuxbox, &build)?;
+    if stage.exists() {
+        fs::remove_dir_all(&stage)?;
+    }
+    let runtime = stage.join("neonbridge-own");
+    fs::create_dir_all(&runtime)?;
+    fs::copy(std::env::current_exe()?, stage.join("neonbridge.exe"))?;
+    for dll in &dlls {
+        fs::copy(dll, runtime.join(dll.file_name().unwrap()))?;
+    }
+    fs::copy(&xshader.0, runtime.join("xshader.exe"))?;
+    // dxcompiler.dll and dxil.dll are on the Windows SDK redist list (Redist\D3D\x64);
+    // dxc.exe is not, so it is never shipped.
+    let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+    let redist = Path::new(&pf86).join(r"Windows Kits\10\Redist\D3D\x64");
+    for n in ["dxcompiler.dll", "dxil.dll"] {
+        match fs::copy(redist.join(n), runtime.join(n)) {
+            Ok(_) => {}
+            Err(e) => println!("[package] {n} not shipped ({}: {e})", redist.display()),
+        }
+    }
+    let root = tuxbox.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_default();
+    for (from, to) in [
+        (root.join("LICENSE"), stage.join("LICENSE")),
+        (tuxbox.join("LICENSE"), runtime.join("LICENSE")),
+        (tuxbox.join("runtime/acphal/NOTICE"), runtime.join("NOTICE-acphal")),
+    ] {
+        fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    }
+    fs::write(stage.join("README.txt"), RELEASE_README.replace('\n', "\r\n"))?;
+    if all.is_some() {
+        for f in ["README.md", "CREDITS.md"] {
+            fs::copy(root.join(f), stage.join(f)).map_err(|e| format!("{f}: {e}"))?;
+        }
+        let (done, skipped) = runtimes::package(&stage)?;
+        for r in done {
+            println!("[package] runtime {r}");
+        }
+        // Runtimes left out (a missing prerequisite, a failed build) are
+        // listed at the end of the package's README.
+        if !skipped.is_empty() {
+            let mut note = String::from("\n## Not bundled in this package\n\n");
+            for (n, why) in &skipped {
+                println!("[package] runtime {n}: not bundled: {why}");
+                // No build machine paths in a shipped file.
+                let why = match std::env::var("USERPROFILE") {
+                    Ok(home) if !home.is_empty() => why.replace(&home, "%USERPROFILE%"),
+                    _ => why.clone(),
+                };
+                note.push_str(&format!("- `{n}`: not bundled: {why}\n"));
+            }
+            let readme = stage.join("README.md");
+            let text = fs::read_to_string(&readme).unwrap_or_default();
+            fs::write(&readme, text + &note).map_err(|e| format!("README.md: {e}"))?;
+        }
+    }
+    let _ = fs::remove_file(&zip);
+    check(
+        crate::runtimes::command("powershell").args(["-NoProfile", "-Command", "Compress-Archive -Path $env:NB_STAGE -DestinationPath $env:NB_ZIP -CompressionLevel Optimal"])
+            .env("NB_STAGE", &stage).env("NB_ZIP", &zip),
+        "Compress-Archive",
+    )?;
+    println!("[package] {} ({} providers, xshader) -> {}", stage.display(), dlls.len(), zip.display());
+    Ok(())
+}
+
+fn env_path(k: &str) -> Option<PathBuf> {
+    std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// The exe named by MicrosoftGame.Config (`<Executable Name="...">`), else the
+/// only x64 PE executable in the folder.
+fn find_exe(game: &Path, name: Option<&str>) -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(n) = name {
+        let p = game.join(n);
+        return if p.is_file() { Ok(p) } else { Err(format!("{} not found", p.display()).into()) };
+    }
+    for cfg in ["MicrosoftGame.Config", "MicrosoftGame.config"] {
+        if let Ok(text) = fs::read_to_string(game.join(cfg)) {
+            for tag in text.split("<Executable").skip(1) {
+                if let Some(v) = tag.split("Name=\"").nth(1).and_then(|s| s.split('"').next()) {
+                    let p = game.join(v);
+                    if p.is_file() {
+                        return Ok(p);
+                    }
+                }
+            }
+        }
+    }
+    let exes: Vec<_> = fs::read_dir(game)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && is_x64_exe(p))
+        .collect();
+    match exes.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(format!("no x64 executable in {}", game.display()).into()),
+        _ => Err(format!("several executables in {}; pick one with --exe", game.display()).into()),
+    }
+}
+
+fn is_x64_exe(p: &Path) -> bool {
+    let Ok(b) = fs::read(p).map(|b| b[..b.len().min(4096)].to_vec()) else { return false };
+    if b.len() < 0x40 || &b[..2] != b"MZ" {
+        return false;
+    }
+    let pe = u32::from_le_bytes(b[0x3c..0x40].try_into().unwrap()) as usize;
+    b.len() >= pe + 24 && &b[pe..pe + 4] == b"PE\0\0" && u16::from_le_bytes([b[pe + 4], b[pe + 5]]) == 0x8664 && u16::from_le_bytes([b[pe + 22], b[pe + 23]]) & 0x2000 == 0
+}
+
+/// Environment of an x64 Visual Studio developer prompt (vcvars64.bat via vswhere).
+pub(crate) fn msvc_env() -> Result<HashMap<String, String>, Box<dyn Error>> {
+    let pf86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+    let vswhere = Path::new(&pf86).join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+    let o = crate::runtimes::command(&vswhere)
+        .args(["-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"])
+        .output()
+        .map_err(|e| format!("vswhere ({}): {e}; install Visual Studio Build Tools with the x64 C++ tools", vswhere.display()))?;
+    let root = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
+    let vcvars = Path::new(&root).join(r"VC\Auxiliary\Build\vcvars64.bat");
+    if root.is_empty() || !vcvars.is_file() {
+        return Err("no Visual Studio install with the x64 C++ tools (vcvars64.bat) found".into());
+    }
+    // A script file sidesteps cmd /c quoting of the space-laden vcvars path.
+    let script = std::env::temp_dir().join(format!("6ixpack_vcvars_{}.cmd", std::process::id()));
+    fs::write(&script, format!("@call \"{}\" >nul\r\n@set\r\n", vcvars.display()))?;
+    let o = crate::runtimes::command("cmd").arg("/c").arg(&script).output();
+    let _ = fs::remove_file(&script);
+    let o = o?;
+    let env: HashMap<_, _> = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .collect();
+    if !env.keys().any(|k| k.eq_ignore_ascii_case("LIB")) {
+        return Err(format!("{} did not set up an x64 environment", vcvars.display()).into());
+    }
+    Ok(env)
+}
+
+fn tool(env: &HashMap<String, String>, exe: &str) -> PathBuf {
+    let path = env.iter().find(|(k, _)| k.eq_ignore_ascii_case("PATH")).map(|(_, v)| v.as_str()).unwrap_or("");
+    path.split(';').map(|d| Path::new(d).join(exe)).find(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(exe))
+}
+
+/// Runs cargo with its stderr echoed, moving the splash bar from `base` across
+/// `span` as crates compile (test159: a --rev build sat at 0% with no sign of
+/// work). The total is unknown up front, so each crate closes a fixed share of
+/// what is left. NEONBRIDGE_BUILD_PROGRESS=0 runs cargo as before.
+fn cargo_status(cmd: &mut Command, base: f32, span: f32, label: &str) -> std::io::Result<std::process::ExitStatus> {
+    use std::io::BufRead;
+    if std::env::var("NEONBRIDGE_BUILD_PROGRESS").as_deref() == Ok("0") {
+        return cmd.status();
+    }
+    let mut child = cmd.stderr(std::process::Stdio::piped()).spawn()?;
+    let mut n = 0i32;
+    if let Some(err) = child.stderr.take() {
+        for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+            eprintln!("{line}");
+            if let Some(name) = line.trim_start().strip_prefix("Compiling ") {
+                n += 1;
+                let krate = name.split_whitespace().next().unwrap_or(name);
+                splash::counted(base + span * 0.9 * (1.0 - 0.8f32.powi(n)), &format!("{label}: {krate} ({n} compiled)"));
+            }
+        }
+    }
+    child.wait()
+}
+
+fn cargo_with_progress(cmd: &mut Command, what: &str, base: f32, span: f32, label: &str) -> Result<(), Box<dyn Error>> {
+    let s = cargo_status(cmd, base, span, label).map_err(|e| format!("{what}: {e}"))?;
+    if s.success() { Ok(()) } else { Err(format!("{what} failed ({s})").into()) }
+}
+
+fn check(cmd: &mut Command, what: &str) -> Result<(), Box<dyn Error>> {
+    let s = cmd.status().map_err(|e| format!("{what}: {e}"))?;
+    if s.success() { Ok(()) } else { Err(format!("{what} failed ({s})").into()) }
+}
+
+/// Build every provider DLL into `out`; returns their paths.
+fn build_providers(tuxbox: &Path, out: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let env = msvc_env()?;
+    let (link, cl) = (tool(&env, "link.exe"), tool(&env, "cl.exe"));
+    let cargo_dir = out.join("cargo");
+    fs::create_dir_all(out)?;
+    let mut packages: Vec<&str> = PROVIDERS.iter().map(|p| p.0).collect();
+    packages.dedup();
+    let t = Instant::now();
+    eprintln!("[launch] cargo: {} provider crates ({TARGET}, release)", packages.len());
+    let mut cargo = crate::runtimes::command("cargo");
+    cargo.current_dir(tuxbox).envs(&env).args(["build", "--locked", "--release", "--target", TARGET, "--target-dir"]).arg(&cargo_dir);
+    for p in &packages {
+        cargo.args(["--package", p]);
+    }
+    cargo_with_progress(&mut cargo, "cargo build", 0.0, 0.3, "Building the TuxBox runtime")?;
+    eprintln!("[launch] cargo done in {:.0}s", t.elapsed().as_secs_f64());
+    let lib_dir = cargo_dir.join(TARGET).join("release");
+    let mut dlls = Vec::new();
+    for (i, (pkg, dll, def, libs, cpp)) in PROVIDERS.iter().enumerate() {
+        // Skip the link when the DLL is newer than its archive, .def and C++ sources.
+        let mtime = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+        let inputs: Vec<PathBuf> = std::iter::once(lib_dir.join(format!("{}.lib", pkg.replace('-', "_"))))
+            .chain(std::iter::once(tuxbox.join(def)))
+            .chain(cpp.iter().map(|c| tuxbox.join(c)))
+            .collect();
+        if let Some(t) = mtime(&out.join(dll)) {
+            if inputs.iter().all(|p| mtime(p).is_some_and(|m| m <= t)) {
+                dlls.push(out.join(dll));
+                continue;
+            }
+        }
+        eprintln!("[launch] link {}/{}: {dll}", i + 1, PROVIDERS.len());
+        let mut objs = Vec::new();
+        for src in *cpp {
+            let src = tuxbox.join(src);
+            let obj = format!("{}.obj", src.file_stem().unwrap().to_string_lossy());
+            check(
+                crate::runtimes::command(&cl).current_dir(out).envs(&env).args(["/nologo", "/c", "/O2", "/MT", "/Brepro", "/std:c++17", "/EHsc", "/W4", "/WX"]).arg(format!("/Fo{obj}")).arg(&src),
+                &format!("cl {}", src.display()),
+            )?;
+            objs.push(obj);
+        }
+        let stem = dll.trim_end_matches(".dll");
+        check(
+            crate::runtimes::command(&link)
+                .current_dir(out)
+                .envs(&env)
+                .args(["/nologo", "/machine:x64", "/Brepro", "/incremental:no", "/dll"])
+                .arg(format!("/def:{}", tuxbox.join(def).display()))
+                .arg(format!("/implib:{stem}.lib"))
+                .arg(format!("/out:{dll}"))
+                // symbol addresses for the sampler's "module+0xRVA" (see hot_lines)
+                .arg(format!("/map:{stem}.map"))
+                .args(&objs)
+                // extra libs (CRT first) before the Rust archive, so DllMain binds to the
+                // CRT stub, not to an import library that also exports it (xinput.lib)
+                .args(libs.iter().take_while(|l| **l == "libcmt.lib"))
+                .arg(lib_dir.join(format!("{}.lib", pkg.replace('-', "_"))))
+                .args(libs.iter().skip_while(|l| **l == "libcmt.lib"))
+                .args(RUST_STD_LIBS),
+            &format!("link {dll}"),
+        )?;
+        dlls.push(out.join(dll));
+    }
+    Ok(dlls)
+}
+
+/// Copy providers beside the exe; a replaced game file is moved to `_6ixpack_orig/` once.
+fn stage(game: &Path, dlls: &[PathBuf]) -> Result<(), Box<dyn Error>> {
+    let backup = game.join(BACKUP);
+    let mut staged = Vec::new();
+    for d in dlls {
+        let name = d.file_name().unwrap();
+        let dst = game.join(name);
+        // A file we staged has the recorded size; anything else (an original put
+        // back by hand) is kept, never overwritten.
+        let ours = staged_size(game, &name.to_string_lossy()).is_some_and(|n| fs::metadata(&dst).is_ok_and(|m| m.len() == n));
+        if dst.is_file() && !ours {
+            fs::create_dir_all(&backup)?;
+            let mut saved = backup.join(name);
+            let mut i = 1;
+            while saved.exists() {
+                saved = backup.join(format!("{}.{i}", name.to_string_lossy()));
+                i += 1;
+            }
+            fs::rename(&dst, &saved)?;
+            eprintln!("[launch] kept original {} as {}", name.to_string_lossy(), saved.display());
+        }
+        fs::copy(d, &dst)?;
+        staged.push(format!("{}\t{}", name.to_string_lossy(), fs::metadata(&dst)?.len()));
+    }
+    fs::write(game.join(STAGED), staged.join("\n") + "\n")?;
+    Ok(())
+}
+
+/// Size recorded when `name` was staged (older lists without sizes: unknown size, treated as foreign).
+fn staged_size(game: &Path, name: &str) -> Option<u64> {
+    let list = fs::read_to_string(game.join(STAGED)).ok()?;
+    list.lines().find_map(|l| {
+        let (n, size) = l.split_once('\t')?;
+        n.eq_ignore_ascii_case(name).then(|| size.parse().ok()).flatten()
+    })
+}
+
+fn restore(game: &Path) -> Result<(), Box<dyn Error>> {
+    let list = fs::read_to_string(game.join(STAGED)).map_err(|_| format!("nothing staged in {}", game.display()))?;
+    let backup = game.join(BACKUP);
+    let (mut removed, mut put_back) = (0, 0);
+    for name in list.lines().filter(|l| !l.is_empty()).map(|l| l.split('\t').next().unwrap_or(l)) {
+        if fs::remove_file(game.join(name)).is_ok() {
+            removed += 1;
+        }
+        if fs::rename(backup.join(name), game.join(name)).is_ok() {
+            put_back += 1;
+        }
+    }
+    fs::remove_file(game.join(STAGED))?;
+    let _ = fs::remove_dir(&backup);
+    println!("[launch] removed {removed} providers, restored {put_back} original files");
+    Ok(())
+}
+
+/// Start the exe from its folder (optionally under cdb and/or in Sandboxie);
+/// stdout+stderr go to the console and the log.
+/// Puts the game in a job that Windows ends when the launcher exits (closing the
+/// console window or a crash no longer leaves the title running). TUXBOX_COMMIT_CAP_GB
+/// caps its committed memory (unset: no cap). NEONBRIDGE_JOB=0 turns this off.
+/// The job handle is never closed: it lives as long as the launcher.
+fn kill_on_close(child: &std::process::Child) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::JobObjects::*;
+    if std::env::var("NEONBRIDGE_JOB").as_deref() == Ok("0") {
+        return;
+    }
+    let cap = std::env::var("TUXBOX_COMMIT_CAP_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|&g| g > 0);
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            println!("[launch] job: CreateJobObject failed; the game is not tied to the launcher");
+            return;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Some(gb) = cap {
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+            info.ProcessMemoryLimit = (gb << 30) as usize;
+        }
+        let ok = SetInformationJobObject(job, JobObjectExtendedLimitInformation, (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(), size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32) != 0
+            && AssignProcessToJobObject(job, child.as_raw_handle() as _) != 0;
+        if ok {
+            println!("[launch] job: the game ends with the launcher{} (NEONBRIDGE_JOB=0 turns this off)", cap.map(|g| format!("; commit capped at {g} GiB")).unwrap_or_default());
+        } else {
+            println!("[launch] job: could not assign the game to a job ({}); it is not tied to the launcher", std::io::Error::last_os_error());
+        }
+    }
+}
+
+fn start(game: &Path, exe: &Path, args: &[OsString], log: Option<PathBuf>, debug: Option<String>, trace_throws: bool, sandbox: bool, env: &[(String, String)], timeout: Option<f64>) -> Result<(), Box<dyn Error>> {
+    let log = log.unwrap_or_else(|| {
+        let base = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/logs");
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        base.join(format!("{}_{secs}.log", exe.file_stem().unwrap().to_string_lossy()))
+    });
+    if let Some(p) = log.parent() {
+        fs::create_dir_all(p)?;
+    }
+    let file = fs::OpenOptions::new().create(true).append(true).open(&log)?;
+    // The log is appended to; the summary reads only what this run wrote.
+    let log_start = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let cdb_log = log.with_extension("cdb.txt");
+    let mut argv: Vec<OsString> = vec![exe.as_os_str().into()];
+    argv.extend(args.iter().cloned());
+    if let Some(extra) = &debug {
+        let cdb = find_cdb().ok_or("--debug needs cdb.exe (Windows SDK 'Debugging Tools for Windows')")?;
+        let _ = fs::remove_file(&cdb_log);
+        // The script runs at the initial break. First-chance exceptions are logged as
+        // they happen; a first-chance AV gets the full fault dump (it may be handled,
+        // so the run goes on); any break that stops the run (second-chance exception,
+        // fast-fail) gets the same dump plus every thread, then cdb quits. A title
+        // int 3 is a release-build assert that falls through: log it, step over it
+        // and go on (without a debugger the title's own handler decides).
+        // NtTerminateProcess is breakpointed so a title that kills itself (crash
+        // handler, watchdog, anti-debug) leaves the caller's stack; no -G, so the exit
+        // event itself is a break too and reports the exit code.
+        // Commands go in a script file: Sandboxie's Start.exe re-splits a quoted -c argument.
+        let script = log.with_extension("cdb.cmd");
+        // Illegal instructions are the title's CPU feature probes: not logged; module
+        // loads are not dumped (lm) since ModLoad lines already list them.
+        let dump = ".echo ==== FAULT ====;.lastevent;.exr -1;r;!vprot @rip;.echo ==== code at rip ====;ub @rip L8;u @rip L4;.echo ==== stack ====;kn 40";
+        // Plain --debug ignores C++/WinRT throws: each traced one costs a debugger
+        // round trip and a stack walk, and the title throws many while running.
+        let throws = if trace_throws {
+            "sxe -c \".exr -1;kn 25;gn\" e06d7363
+sxe -c \".exr -1;kn 25;gn\" e0000001
+sxe -c \".exr -1;kn 25;gn\" 40080201"
+        } else {
+            "sxi e06d7363
+sxi e0000001
+sxi 40080201"
+        };
+        fs::write(&script, format!("{throws}
+sxe -c \".echo ==== first-chance AV ====;{dump};gn\" av
+sxi ii
+sxe -c \".echo ==== int 3 (title assert, continued) ====;.lastevent;kn 12;.if (by(@rip) == 0xcc) {{r @rip=@rip+1}};gh\" bpe
+sxe -c \".echo ==== process exit ====;.lastevent;q\" epr
+bp ntdll!NtTerminateProcess \".echo ==== NtTerminateProcess ====;r rcx,rdx;kn 40;.echo ==== threads ====;~*kn 8;gc\"
+{extra}
+g
+{dump}
+.echo ==== threads ====
+~*kn 8
+q
+"))?;
+        // -hd: the debug heap that cdb otherwise turns on serializes every allocation.
+        let mut d: Vec<OsString> = vec![cdb.into(), "-hd".into(), "-logo".into(), cdb_log.clone().into(), "-cf".into(), script.into()];
+        d.extend(argv);
+        argv = d;
+    }
+    if sandbox {
+        let start = Path::new(&std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into())).join(r"Sandboxie-Plus\Start.exe");
+        if !start.is_file() {
+            return Err(format!("--sandbox needs Sandboxie-Plus ({} not found)", start.display()).into());
+        }
+        let bx = std::env::var("SANDBOXIE_BOX").unwrap_or_else(|_| "DefaultBox".into());
+        let mut w: Vec<OsString> = vec![start.into(), format!("/box:{bx}").into(), "/wait".into()];
+        w.extend(argv);
+        argv = w;
+    }
+    println!("[launch] log: {}", log.display());
+    if debug.is_some() {
+        println!("[launch] debugger log: {}", cdb_log.display());
+    }
+    game_settings::apply(game);
+    println!("[launch] starting {}", argv.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "));
+    // NEONBRIDGE_FEED=1: the game's picture on 127.0.0.1 and over Tailscale
+    // (crates/feed); the game gets the frame tap (TUXBOX_FEED=1).
+    let feed_env = if neonbridge_feed::enabled() {
+        neonbridge_feed::start(neonbridge_feed::Settings::from_env());
+        neonbridge_feed::game_env()
+    } else {
+        Vec::new()
+    };
+    // The displays stay on for the run: with them off, DWM paces presents at ~10 Hz (src/awake.rs).
+    let _awake = awake::hold();
+    let t = Instant::now();
+    timeline::start(&log, t);
+    let mut child = crate::runtimes::command(&argv[0])
+        .current_dir(game)
+        .args(&argv[1..])
+        .env("TUXBOX_LOG", std::env::var("TUXBOX_LOG").unwrap_or_else(|_| "stderr".into()))
+        // stderr is a pipe the launcher tees into the log; ctl status/log read this file.
+        .env("TUXBOX_LOG_FILE", &log)
+        // One readback every 120 presents: cheap, and every summary gets lit= samples.
+        .env("TUXBOX_TRACE_PRESENT", std::env::var("TUXBOX_TRACE_PRESENT").unwrap_or_else(|_| "120".into()))
+        .envs(feed_env)
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    shaders::GAME_PID.store(child.id(), std::sync::atomic::Ordering::Relaxed);
+    kill_on_close(&child);
+    splash::watch(exe);
+    controls::show(runtimes::TUXBOX, exe, controls::tuxbox_rows());
+    let tee = |r: Box<dyn std::io::Read + Send>, mut f: fs::File| {
+        std::thread::spawn(move || {
+            for line in BufReader::new(r).split(b'\n').map_while(Result::ok) {
+                let line = String::from_utf8_lossy(&line);
+                // The loading screen stays up until the title's first frame.
+                if line.contains("completed PresentX #1 ") {
+                    splash::close();
+                } else if line.contains("D3D12") {
+                    splash::status(0.8, "Waiting for the first frame");
+                }
+                timeline::line(&line);
+                fps::feed(&line);
+                eprintln!("{line}");
+                let _ = writeln!(f, "{line}");
+            }
+        })
+    };
+    if let Ok(spec) = std::env::var("NEONBRIDGE_WATCH_HANG") {
+        let f = std::sync::Mutex::new(file.try_clone()?);
+        hang_watch::start(&spec, exe.file_name().unwrap_or_default().to_string_lossy().into_owned(), move |line| {
+            timeline::line(&line);
+            eprintln!("{line}");
+            let _ = writeln!(f.lock().unwrap_or_else(|e| e.into_inner()), "{line}");
+        })?;
+    }
+    let a = tee(Box::new(child.stdout.take().unwrap()), file.try_clone()?);
+    let b = tee(Box::new(child.stderr.take().unwrap()), file.try_clone()?);
+    // --timeout: the launcher stops the run itself, so the summary below still prints
+    // (an outside kill of the launcher loses it; `--summary LOG` recovers it then).
+    let status = loop {
+        if let Some(s) = child.try_wait()? {
+            break s;
+        }
+        if timeout.is_some_and(|limit| t.elapsed().as_secs_f64() >= limit) {
+            println!("[launch] --timeout: stopping the run after {:.0}s", t.elapsed().as_secs_f64());
+            timeline::note(None, "--timeout: the launcher stops the run");
+            let _ = child.kill();
+            if let Some(name) = exe.file_name() {
+                let _ = crate::runtimes::command("taskkill").args(["/F", "/T", "/IM"]).arg(name).stdout(Stdio::null()).stderr(Stdio::null()).status();
+            }
+            break child.wait()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let _ = (a.join(), b.join());
+    wait_for_image(exe);
+    splash::close();
+    timeline::exit(&format!("{status}{}", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default()));
+    println!("[launch] exited with {status}{} after {:.1}s", status.code().map(|c| format!(" (0x{:08x}{})", c as u32, ntstatus(c as u32))).unwrap_or_default(), t.elapsed().as_secs_f64());
+    // A loader failure names only its status: name the DLL behind it.
+    if let Some(c) = status.code().map(|c| c as u32)
+        && matches!(c, 0xc0000135 | 0xc0000139 | 0xc000007b | 0xc0000142)
+    {
+        for line in import_problems(game, exe) {
+            println!("[launch] loader: {line}");
+        }
+    }
+    if debug.is_some() {
+        // Sandboxie redirects the debugger's log write into the box; fetch it back.
+        if !cdb_log.is_file() && sandbox {
+            if let Some(boxed) = sandboxed_copy(&cdb_log) {
+                let _ = fs::copy(boxed, &cdb_log);
+            }
+        }
+        match fs::read_to_string(&cdb_log) {
+            Ok(text) => {
+                let mut f = file;
+                let _ = writeln!(f, "---- cdb ----\n{text}");
+                for l in debug_report(&text) {
+                    println!("[launch:debug] {l}");
+                }
+            }
+            Err(_) => println!("[launch:debug] no debugger log at {}", cdb_log.display()),
+        }
+    }
+    println!("[launch] log: {}", log.display());
+    let mut text = String::new();
+    if let Ok(mut f) = fs::File::open(&log) {
+        use std::io::{Read, Seek, SeekFrom};
+        let _ = f.seek(SeekFrom::Start(log_start));
+        let mut bytes = Vec::new();
+        let _ = f.read_to_end(&mut bytes);
+        text = String::from_utf8_lossy(&bytes).into_owned();
+    }
+    let (game_text, cdb_text) = text.split_once("\n---- cdb ----\n").unwrap_or((&text, ""));
+    // Under --debug the child is cdb: the game's own exit code is in cdb's exit event.
+    println!("{}", run_summary(game_text, cdb_exit_code(cdb_text).or(if debug.is_some() { None } else { status.code() })));
+    for l in hot_lines(game_text) {
+        println!("[launch] {l}");
+    }
+    // The fps above is not the game's own while these run: say which were on.
+    let mut costly: Vec<String> = ["TUXBOX_LIST_RING", "TUXBOX_SURVEY", "TUXBOX_TRACE_RASTER_INPUTS", "TUXBOX_STRICT_LISTS"].iter()
+        .filter(|k| std::env::var(k).is_ok_and(|v| !v.is_empty() && v != "0")).map(|k| k.to_string()).collect();
+    if debug.is_some() {
+        costly.push(if trace_throws { "--debug-full".into() } else { "--debug".into() });
+    }
+    if !costly.is_empty() {
+        println!("[launch] fps measured with diagnostics on: {}", costly.join(" "));
+    }
+    Ok(())
+}
+
+/// `--summary LOG`: the end-of-run report of a log written earlier (or cut off).
+fn print_summary(log: &Path) -> Result<(), Box<dyn Error>> {
+    let bytes = fs::read(log).map_err(|e| format!("{}: {e}", log.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let (game_text, cdb_text) = text.split_once("\n---- cdb ----\n").unwrap_or((&text, ""));
+    // A killed launcher never appended the cdb log; read it from beside the game log.
+    let side = if cdb_text.is_empty() {
+        fs::read(log.with_extension("cdb.txt")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let cdb_text = if cdb_text.is_empty() { side.as_str() } else { cdb_text };
+    for l in debug_report(cdb_text) {
+        println!("[launch:debug] {l}");
+    }
+    println!("{}", run_summary(game_text, cdb_exit_code(cdb_text)));
+    for l in hot_lines(game_text) {
+        println!("[launch] {l}");
+    }
+    Ok(())
+}
+
+/// The last heartbeat's "hot thread ..." lines (where the busiest threads
+/// execute), with each provider "module+0xRVA" named from the link map
+/// written beside the provider DLL.
+fn hot_lines(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let last = lines.iter().rposition(|l| l.contains("hot thread ")).unwrap_or(usize::MAX);
+    let first = if last == usize::MAX { usize::MAX } else { lines[..last].iter().rposition(|l| !l.contains("hot thread ")).map_or(0, |i| i + 1) };
+    let out = provider_out();
+    let mut maps: HashMap<String, Option<Vec<(u64, String)>>> = HashMap::new();
+    // Crash records and hang stacks (every one) and the last heartbeat's hot threads.
+    let picked: Vec<(&str, &str)> = lines.iter().enumerate()
+        .filter_map(|(i, l)| ["crash record: ", "hang: "].iter().find_map(|k| l.split_once(k).map(|(_, r)| (*k, r)))
+            .or_else(|| (i >= first && i <= last).then(|| l.split_once("hot thread ").map(|(_, r)| ("hot thread ", r))).flatten()))
+        .collect();
+    picked.into_iter().map(|(kind, rest)| {
+        let named: Vec<String> = rest.split(' ').map(|word| {
+            let core = word.trim_end_matches([',', ';']);
+            let tail = &word[core.len()..];
+            let Some((module, rva)) = core.split_once("+0x") else { return word.to_owned() };
+            let Ok(rva) = u64::from_str_radix(rva, 16) else { return word.to_owned() };
+            let symbols = maps.entry(module.to_owned()).or_insert_with(|| map_symbols(&out.join(format!("{module}.map"))));
+            match symbols.as_ref().and_then(|v| v[..v.partition_point(|e| e.0 <= rva)].last()) {
+                Some((start, name)) if rva - start < 0x10000 => format!("{module}!{name}{tail}"),
+                _ => word.to_owned(),
+            }
+        }).collect();
+        format!("{kind}{}", named.join(" "))
+    }).collect()
+}
+
+/// (RVA, name) of every symbol in an MSVC link map, by address.
+fn map_symbols(map: &Path) -> Option<Vec<(u64, String)>> {
+    let text = String::from_utf8_lossy(&fs::read(map).ok()?).into_owned();
+    let base = text.lines().find_map(|l| l.trim().strip_prefix("Preferred load address is "))
+        .and_then(|h| u64::from_str_radix(h.trim(), 16).ok())?;
+    let mut symbols: Vec<(u64, String)> = text.lines().filter_map(|l| {
+        let mut fields = l.split_whitespace();
+        let (place, name, address) = (fields.next()?, fields.next()?, fields.next()?);
+        if place.len() != 13 || place.as_bytes()[4] != b':' || address.len() != 16 {
+            return None;
+        }
+        Some((u64::from_str_radix(address, 16).ok()?.checked_sub(base)?, demangle(name)))
+    }).collect();
+    symbols.sort();
+    Some(symbols)
+}
+
+/// Rust's legacy symbol names ("_ZN4core3ptr4read17h0123456789abcdefE") as paths.
+fn demangle(name: &str) -> String {
+    let Some(mut rest) = name.strip_prefix("_ZN").and_then(|r| r.strip_suffix('E')) else { return name.to_owned() };
+    let mut parts = Vec::new();
+    while !rest.is_empty() {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let Ok(len) = rest[..digits].parse::<usize>() else { return name.to_owned() };
+        let Some(part) = rest.get(digits..digits + len) else { return name.to_owned() };
+        rest = &rest[digits + len..];
+        // the trailing hash segment
+        if rest.is_empty() && len == 17 && part.starts_with('h') {
+            break;
+        }
+        let mut part = part.to_owned();
+        for (from, to) in [("$LT$", "<"), ("$GT$", ">"), ("$u20$", " "), ("$RF$", "&"), ("$BP$", "*"), ("$C$", ","),
+            ("$LP$", "("), ("$RP$", ")"), ("$u7b$", "{"), ("$u7d$", "}"), ("$u5b$", "["), ("$u5d$", "]"), ("..", "::")] {
+            part = part.replace(from, to);
+        }
+        parts.push(part.trim_start_matches('_').to_owned());
+    }
+    parts.join("::").replace(' ', "")
+}
+
+/// The debuggee's exit code from cdb's "Exit process 0:pid, code X" event.
+fn cdb_exit_code(cdb: &str) -> Option<i32> {
+    let line = cdb.lines().rev().find(|l| l.contains("Exit process") && l.contains(", code "))?;
+    let hex = line.rsplit(", code ").next()?.split_whitespace().next()?;
+    u32::from_str_radix(hex, 16).ok().map(|c| c as i32)
+}
+
+/// The lines of a cdb log worth printing: the last fault dump (or, failing that,
+/// the last NtTerminateProcess stack), the exit event and the first-chance codes.
+fn debug_report(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    // Headers are .echo output, so they start the line (the command echoes start "0:000>").
+    let block = |marker: &str| -> Option<&[&str]> {
+        let start = lines.iter().rposition(|l| l.starts_with(marker))?;
+        let sub = |l: &&str| l.starts_with("==== code at rip") || l.starts_with("==== stack");
+        let end = lines[start + 1..].iter().position(|l| l.starts_with("====") && !sub(l)).map_or(lines.len(), |i| start + 1 + i);
+        Some(&lines[start..end.min(start + 80)])
+    };
+    let mut out: Vec<&str> = Vec::new();
+    let mut codes: Vec<&str> = lines.iter().copied().filter(|l| l.contains("- code ") && l.contains("chance")).collect();
+    codes.dedup();
+    out.extend(codes.into_iter().rev().take(6).rev());
+    if let Some(b) = block("==== FAULT ====").or_else(|| block("==== NtTerminateProcess ====")) {
+        out.extend_from_slice(b);
+    }
+    out.extend(lines.iter().copied().filter(|l| l.starts_with("Last event:") && l.contains("Exit process")).take(1));
+    out
+}
+
+/// One line from this run's game log: exit code, how far it got, first fatal line
+/// and the counts of the diagnostics that say what broke.
+fn run_summary(text: &str, code: Option<i32>) -> String {
+    // Rate-limited lines carry "(N so far)": the largest N is the true count.
+    let count = |needle: &str| {
+        let hits: Vec<&str> = text.lines().filter(|l| l.contains(needle)).collect();
+        hits.iter().filter_map(|l| l.rsplit_once(" so far)")?.0.rsplit('(').next()?.trim().parse::<usize>().ok()).max().unwrap_or(0).max(hits.len())
+    };
+    let presents = text.lines().filter_map(|l| l.split("completed PresentX #").nth(1))
+        .filter_map(|r| r.split(|c: char| !c.is_ascii_digit()).next()?.parse::<u64>().ok()).max().unwrap_or(0);
+    let lits: Vec<&str> = text.lines().filter_map(|l| l.split(" lit=").nth(1)?.split(' ').next()).collect();
+    let fatal = text.lines().find(|l| {
+        let l = l.to_ascii_lowercase();
+        ["panicked", "presentx failed", "device removed", "0x887a0005", "0x887a0006", "fatal", "access violation", "stack overflow"].iter().any(|k| l.contains(k))
+    });
+    // Heartbeat: "completed PresentX #N (x fps)" or "(x fps; ms/frame: record a, close b, ...)".
+    let beat = text.lines().rev().find_map(|l| l.split("completed PresentX #").nth(1)?.split_once(" (").map(|(_, r)| r.trim_end().strip_suffix(')').unwrap_or(r.trim_end()).to_owned()));
+    let (beat, top) = match beat.as_deref().map(|b| b.split_once("; top sites ms/frame: ").unwrap_or((b, ""))) {
+        Some((b, t)) => (Some(b.to_owned()), t.to_owned()),
+        None => (None, String::new()),
+    };
+    let (fps, split) = match beat.as_deref().map(|b| b.split_once("; ms/frame: ").unwrap_or((b, ""))) {
+        Some((f, s)) => (f.trim_end_matches(" fps").to_owned(), s.replace(", ", ",").replace(" (worker)", "").replace(' ', "-")),
+        None => ("-".into(), String::new()),
+    };
+    let fps = if split.is_empty() { fps } else { format!("{fps} ms/frame={split}") };
+    let fps = if top.is_empty() { fps } else { format!("{fps} top-record=[{top}]") };
+    // "frame time X ms: gpu latency Y ms (...); cpu ms/frame: ..." from the heartbeat.
+    let frame = text.lines().rev().find_map(|l| l.split_once("frame time ").filter(|(_, r)| r.contains("gpu latency")).map(|(_, r)| r.trim().to_owned()));
+    let fps = match frame { Some(f) => format!("{fps} frame=[{f}]"), None => fps };
+    let exit = code.map(|c| format!("0x{:08x}{}", c as u32, ntstatus(c as u32))).unwrap_or_else(|| "none".into());
+    format!(
+        "[launch] summary: exit={exit} presents={presents} fps={fps} lit={}x last={} close-failed={} rebuilt={} dropped-batches={} unresolved-desc={} presentx-failed={} \
+refused-calls={} graphics-only-drops={} barrier-rewrites={} slot131-cache-barriers={} null-root-views={} barriers-fitted={} probe-rejects={} cannot-record={} unbalanced-closes={} first-fatal={}",
+        lits.len(), lits.last().unwrap_or(&"-"), count("host list Close failed"), count("rebuilt host list"),
+        count("dropped a command-list batch"), count("unresolved inline descriptor"), count("PresentX failed"),
+        count("dropped one refused recording call"), count("dropped a graphics-only call"),
+        count("recorded as") - count("list slot 131 recorded as cache barrier"),
+        count("list slot 131 recorded as cache barrier"), count("root view at uncommitted title address"), count("fitted to host"), count("barrier probe: host Close"),
+        count("command list cannot record"), count("closing a list with"),
+        fatal.map(|l| format!("{:?}", l.trim())).unwrap_or_else(|| "none".into())
+    )
+}
+
+fn find_cdb() -> Option<PathBuf> {
+    ["ProgramFiles(x86)", "ProgramFiles"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .map(|p| Path::new(&p).join(r"Windows Kits\10\Debuggers\x64\cdb.exe"))
+        .find(|p| p.is_file())
+}
+
+/// Where Sandboxie puts a file the boxed process wrote under the user profile.
+fn sandboxed_copy(p: &Path) -> Option<PathBuf> {
+    boxed_path(p).filter(|c| c.is_file())
+}
+
+/// The box's copy of a path under the user profile.
+fn boxed_path(p: &Path) -> Option<PathBuf> {
+    let user = std::env::var("USERNAME").ok()?;
+    let bx = std::env::var("SANDBOXIE_BOX").unwrap_or_else(|_| "DefaultBox".into());
+    let profile = env_path("USERPROFILE")?;
+    let rel = p.strip_prefix(&profile).ok()?;
+    Some(Path::new(r"C:\Sandbox").join(user).join(bx).join(r"user\current").join(rel))
+}
+
+/// Names of the DLLs a PE file imports (its import directory).
+fn pe_imports(p: &Path) -> Option<Vec<String>> {
+    let b = fs::read(p).ok()?;
+    let u16_at = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]));
+    let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
+    let pe = u32_at(0x3c)? as usize;
+    if b.get(pe..pe + 4)? != b"PE\0\0" {
+        return None;
+    }
+    let sections = u16_at(pe + 6)? as usize;
+    let optional = pe + 24;
+    let optional_size = u16_at(pe + 20)? as usize;
+    // PE32+ data directory 1 (imports) is at optional + 120.
+    let import_rva = u32_at(optional + 120)?;
+    let table = optional + optional_size;
+    let offset = |rva: u32| -> Option<usize> {
+        (0..sections).find_map(|i| {
+            let s = table + i * 40;
+            let (va, size, raw) = (u32_at(s + 12)?, u32_at(s + 8)?.max(u32_at(s + 16)?), u32_at(s + 20)?);
+            (rva >= va && rva < va + size).then(|| (rva - va + raw) as usize)
+        })
+    };
+    let mut names = Vec::new();
+    let mut d = offset(import_rva)?;
+    while let Some(name_rva) = u32_at(d + 12).filter(|&n| n != 0) {
+        let o = offset(name_rva)?;
+        let end = b[o..].iter().position(|&c| c == 0)?;
+        names.push(String::from_utf8_lossy(&b[o..o + end]).into_owned());
+        d += 20;
+    }
+    Some(names)
+}
+
+/// After a loader status: each import of the exe that is missing, or present
+/// but not a valid x64 PE, in the game folder and System32 (API sets skipped).
+fn import_problems(game: &Path, exe: &Path) -> Vec<String> {
+    let Some(names) = pe_imports(exe) else { return vec![format!("could not read the import table of {}", exe.display())] };
+    let system = Path::new(&std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join("System32");
+    let mut out = Vec::new();
+    for name in names {
+        let lower = name.to_ascii_lowercase();
+        if lower.starts_with("api-ms-") || lower.starts_with("ext-ms-") {
+            continue;
+        }
+        let local = game.join(&name);
+        let found = [local.clone(), exe.with_file_name(&name), system.join(&name)].into_iter().find(|p| p.is_file());
+        match found {
+            None => out.push(format!("{name} is imported by {} but is in neither the game folder nor System32", exe.display())),
+            Some(p) if pe_imports(&p).is_none() || !is_x64_dll(&p) => out.push(format!("{} is not a valid x64 DLL", p.display())),
+            Some(_) => {}
+        }
+    }
+    if out.is_empty() {
+        out.push("every DLL the exe imports is present and x64; the failing one is a dependency of those, or an entry point it lacks".into());
+    }
+    out
+}
+
+fn is_x64_dll(p: &Path) -> bool {
+    let Ok(b) = fs::read(p).map(|b| b[..b.len().min(4096)].to_vec()) else { return false };
+    if b.len() < 0x40 || &b[..2] != b"MZ" {
+        return false;
+    }
+    let pe = u32::from_le_bytes(b[0x3c..0x40].try_into().unwrap()) as usize;
+    b.len() >= pe + 6 && &b[pe..pe + 4] == b"PE\0\0" && u16::from_le_bytes([b[pe + 4], b[pe + 5]]) == 0x8664
+}
+
+fn ntstatus(c: u32) -> &'static str {
+    match c {
+        0xc0000005 => ", access violation",
+        0xc0000409 => ", fail-fast / stack buffer overrun",
+        0xc0000135 => ", DLL not found",
+        0xc0000139 => ", entry point (import) not found",
+        0xc000007b => ", bad DLL image",
+        0xc0000142 => ", DLL init failed",
+        0xc000001d => ", illegal instruction",
+        0x80000003 => ", breakpoint",
+        _ => "",
+    }
+}
+
+/// Where a launcher panic is written: the --log file, else
+/// %LOCALAPPDATA%\6ixpack\logs\launcher-panic.log.
+static PANIC_LOG: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// A panic anywhere in the launcher (any thread) is appended to the log with
+/// its backtrace and shown in an error box, then the process exits, which
+/// ends every child through the job below.
+fn panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
+        let text = format!("[launch] neonbridge panicked on thread {thread}: {info}\n{}", std::backtrace::Backtrace::force_capture());
+        eprintln!("{text}");
+        let path = PANIC_LOG.lock().ok().and_then(|p| p.clone()).unwrap_or_else(|| env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/logs/launcher-panic.log"));
+        if let Some(d) = path.parent() {
+            let _ = fs::create_dir_all(d);
+        }
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{text}");
+        }
+        splash::close();
+        runtimes::fail_box(&format!("Neonbridge stopped on an internal error (thread {thread}):\n{info}\n\nWritten to {}", path.display()));
+        std::process::exit(101);
+    }));
+}
+
+/// Puts the launcher in a job that Windows ends when its last handle closes
+/// (the launcher exiting, crashing or being killed), so every child it
+/// starts (builds, warms, the game) ends with it instead of running on
+/// orphaned. Children join the job when they start. NEONBRIDGE_JOB=0: off.
+fn job_self() {
+    use windows_sys::Win32::System::JobObjects::*;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    if std::env::var("NEONBRIDGE_JOB").as_deref() == Ok("0") {
+        return;
+    }
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(job, JobObjectExtendedLimitInformation, (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(), size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32) != 0 {
+            AssignProcessToJobObject(job, GetCurrentProcess());
+        }
+    }
+}
+
+fn main() {
+    panic_hook();
+    job_self();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let result = run(&args);
+    splash::close();
+    // -O0 DXIL still queued is recompiled at -O1 between runs.
+    dxil_upgrade::spawn_drainer();
+    if let Err(e) = result {
+        eprintln!("neonbridge: {e}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod loader_names {
+    use super::*;
+
+    #[test]
+    fn reads_a_system_dll_s_imports() {
+        let k = Path::new(&std::env::var("SystemRoot").unwrap()).join(r"System32\kernel32.dll");
+        let names = pe_imports(&k).expect("kernel32 import table");
+        assert!(!names.is_empty());
+        assert!(is_x64_dll(&k));
+    }
+
+    #[test]
+    fn a_broken_dll_is_named() {
+        let dir = std::env::temp_dir().join("neonbridge_loader_names");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("broken.dll"), b"MZ not a PE").unwrap();
+        assert!(pe_imports(&dir.join("broken.dll")).is_none());
+        assert!(!is_x64_dll(&dir.join("broken.dll")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

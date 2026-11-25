@@ -1,0 +1,253 @@
+//! Slot 13 record layouts from the packaged Scarlett driver, xgs12_10 RVA 0x512f0.
+use super::Device;
+use core::ffi::c_void;
+use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, S_OK};
+use windows::Win32::Graphics::Direct3D12::*;
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_B4G4R4A4_UNORM};
+use windows::core::{HRESULT, Interface};
+
+fn host_query<T>(device: &Device, feature: D3D12_FEATURE, mut record: T) -> Result<T, HRESULT> {
+    let host = &device.native;
+    // Each caller uses the desktop record for this feature, including its exact size.
+    let hr = unsafe {
+        (host.vtable().CheckFeatureSupport)(
+            host.as_raw(),
+            feature,
+            (&raw mut record).cast(),
+            size_of::<T>() as u32,
+        )
+    };
+    hr.ok().map(|()| record).map_err(|e| e.code())
+}
+
+fn options(device: &Device) -> Result<[u32; 16], HRESULT> {
+    let host = host_query(
+        device,
+        D3D12_FEATURE_D3D12_OPTIONS,
+        D3D12_FEATURE_DATA_D3D12_OPTIONS::default(),
+    )?;
+    // The Xbox driver writes the address width at +36 and heap tier at +60.
+    // Keep the unverified flags between them disabled. The tiled-resource
+    // tier is the field at +12: reserved resources are made now (TuxBox
+    // aeed457; TUXBOX_RESERVED=0 reports 0 again). ROVs stay off.
+    let tiled = if super::reserved::on() { host.TiledResourcesTier.0.clamp(0, 4) as u32 } else { 0 };
+    Ok([
+        u32::from(host.DoublePrecisionFloatShaderOps.as_bool()),
+        u32::from(host.OutputMergerLogicOp.as_bool()),
+        0,
+        tiled,
+        host.ResourceBindingTier.0.clamp(0, 3) as u32,
+        u32::from(host.PSSpecifiedStencilRefSupported.as_bool()),
+        u32::from(host.TypedUAVLoadAdditionalFormats.as_bool()),
+        0,
+        host.ConservativeRasterizationTier.0.clamp(0, 2) as u32,
+        host.MaxGPUVirtualAddressBitsPerResource.min(40),
+        0,
+        0,
+        0,
+        0,
+        0,
+        host.ResourceHeapTier.0.clamp(0, 2) as u32,
+    ])
+}
+
+// These DXGI format numbers have the same meaning on desktop and Xbox.
+fn shared_format(format: DXGI_FORMAT) -> bool {
+    (1..=DXGI_FORMAT_B4G4R4A4_UNORM.0).contains(&format.0)
+}
+
+pub(super) unsafe extern "system" fn query(
+    device: &Device,
+    feature: D3D12_FEATURE,
+    data: *mut c_void,
+    size: u32,
+) -> HRESULT {
+    let minimum = match feature {
+        D3D12_FEATURE_D3D12_OPTIONS => 64,
+        D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS => 16,
+        D3D12_FEATURE_FORMAT_SUPPORT | D3D12_FEATURE_D3D12_OPTIONS5 => 12,
+        D3D12_FEATURE_FORMAT_INFO
+        | D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT
+        | D3D12_FEATURE_D3D12_OPTIONS7 => 8,
+        D3D12_FEATURE_ROOT_SIGNATURE => 4,
+        _ => return E_NOTIMPL,
+    };
+    if data.is_null() || size < minimum {
+        return E_INVALIDARG;
+    }
+    // The guest owns at least the known prefix. Read only the inputs and
+    // commit only successful outputs, leaving padding and extensions intact.
+    unsafe { translate(device, feature, data.cast()) }.map_or_else(|error| error, |()| S_OK)
+}
+
+unsafe fn translate(
+    device: &Device,
+    feature: D3D12_FEATURE,
+    words: *mut u32,
+) -> Result<(), HRESULT> {
+    match feature {
+        D3D12_FEATURE_D3D12_OPTIONS => unsafe {
+            words.cast::<[u32; 16]>().write_unaligned(options(device)?)
+        },
+        D3D12_FEATURE_D3D12_OPTIONS5 => {
+            // TuxBox has no guest tiled SRV, render-pass, or DXR command interface.
+            unsafe { words.cast::<[u32; 3]>().write_unaligned([0; 3]) };
+        }
+        D3D12_FEATURE_D3D12_OPTIONS7 => {
+            // At RVA 0x51844 the Scarlett UMD writes mesh tier then sampler
+            // feedback tier. Feedback maps require additional device methods.
+            let mesh = match host_query(
+                device,
+                feature,
+                D3D12_FEATURE_DATA_D3D12_OPTIONS7::default(),
+            ) {
+                Ok(host) if host.MeshShaderTier.0 >= D3D12_MESH_SHADER_TIER_1.0 => {
+                    D3D12_MESH_SHADER_TIER_1
+                }
+                // Older desktop runtimes may not recognize this feature query.
+                Ok(_) | Err(E_INVALIDARG | E_NOTIMPL) => D3D12_MESH_SHADER_TIER_NOT_SUPPORTED,
+                Err(error) => return Err(error),
+            };
+            unsafe { words.cast::<[u32; 2]>().write_unaligned([mesh.0 as u32, 0]) };
+        }
+        D3D12_FEATURE_ROOT_SIGNATURE => {
+            // The packaged driver always reports 1.0, including for a 1.1 request.
+            let record = D3D12_FEATURE_DATA_ROOT_SIGNATURE {
+                HighestVersion: D3D_ROOT_SIGNATURE_VERSION_1_0,
+            };
+            let result = host_query(device, feature, record)?;
+            unsafe { words.write_unaligned(result.HighestVersion.0 as u32) };
+        }
+        D3D12_FEATURE_GPU_VIRTUAL_ADDRESS_SUPPORT => {
+            let result = host_query(
+                device,
+                feature,
+                D3D12_FEATURE_DATA_GPU_VIRTUAL_ADDRESS_SUPPORT::default(),
+            )?;
+            let bits = [
+                result.MaxGPUVirtualAddressBitsPerResource.min(40),
+                result.MaxGPUVirtualAddressBitsPerProcess.min(40),
+            ];
+            unsafe { words.cast::<[u32; 2]>().write_unaligned(bits) };
+        }
+        D3D12_FEATURE_FORMAT_SUPPORT => {
+            let format = unsafe { words.cast::<DXGI_FORMAT>().read_unaligned() };
+            // Console-only format numbers have no native mapping here. Zero
+            // support lets a title keep enumerating the remaining formats.
+            let flags = if shared_format(format) {
+                let record = D3D12_FEATURE_DATA_FORMAT_SUPPORT {
+                    Format: format,
+                    ..Default::default()
+                };
+                let result = host_query(device, feature, record)?;
+                // Sampler-feedback views are not made here; tiled resources are (aeed457).
+                let unavailable = if super::reserved::on() {
+                    D3D12_FORMAT_SUPPORT2_SAMPLER_FEEDBACK
+                } else {
+                    D3D12_FORMAT_SUPPORT2_TILED | D3D12_FORMAT_SUPPORT2_SAMPLER_FEEDBACK
+                };
+                [
+                    result.Support1.0 as u32,
+                    (result.Support2.0 & !unavailable.0) as u32,
+                ]
+            } else if (0..=191).contains(&format.0) {
+                [0; 2]
+            } else {
+                return Err(E_INVALIDARG);
+            };
+            unsafe { words.add(1).cast::<[u32; 2]>().write_unaligned(flags) };
+        }
+        D3D12_FEATURE_FORMAT_INFO => {
+            let format = unsafe { words.cast::<DXGI_FORMAT>().read_unaligned() };
+            if !shared_format(format) {
+                return Err(E_INVALIDARG);
+            }
+            let record = D3D12_FEATURE_DATA_FORMAT_INFO {
+                Format: format,
+                ..Default::default()
+            };
+            let result = host_query(device, feature, record)?;
+            unsafe { words.add(1).cast::<u8>().write(result.PlaneCount) };
+        }
+        D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS => {
+            let [format, count, flags] = unsafe { words.cast::<[u32; 3]>().read_unaligned() };
+            let format = DXGI_FORMAT(format as i32);
+            if !shared_format(format) {
+                return Err(E_INVALIDARG);
+            }
+            let record = D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS {
+                Format: format,
+                SampleCount: count,
+                Flags: D3D12_MULTISAMPLE_QUALITY_LEVEL_FLAGS(flags as i32),
+                NumQualityLevels: 0,
+            };
+            let result = host_query(device, feature, record)?;
+            // The packaged driver offers one quality level for supported counts
+            // through 8x. The tiled-resource flag is the only extra bit accepted
+            // while reserved resources are on (TuxBox aeed457).
+            let tiled = D3D12_MULTISAMPLE_QUALITY_LEVELS_FLAG_TILED_RESOURCE.0 as u32;
+            let levels = u32::from(
+                matches!(count, 1 | 2 | 4 | 8)
+                    && (flags == 0 || (flags == tiled && super::reserved::on()))
+                    && result.NumQualityLevels != 0,
+            );
+            unsafe { words.add(3).write_unaligned(levels) };
+        }
+        _ => return Err(E_NOTIMPL),
+    }
+    Ok(())
+}
+
+/// The host filter for a sampler's filter (VIctory 170ab23, PR #1337,
+/// GPL-3.0, credit to its authors). Anisotropic filtering with a point mip
+/// filter (0x54 and its comparison/min/max forms) is optional on desktop
+/// D3D12, reported by D3D12_OPTIONS19.AnisoFilterWithPointMipSupported; a
+/// device without it is handed the linear-mip 0x55 forms, as every sampler
+/// was before. Console S# words and extended samplers ask for a point mip
+/// with anisotropy as often as for a linear one, and blending mips the title
+/// meant to keep apart blurs textures that pick a level on purpose.
+/// TUXBOX_ANISO_POINT_MIP=0 hands every anisotropic sampler 0x55 again.
+pub(crate) fn host_filter(native: &ID3D12Device, filter: D3D12_FILTER) -> D3D12_FILTER {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let bits = filter.0 as u32;
+    if bits & !0x180 != 0x54 {
+        return filter;
+    }
+    let supported = *SUPPORTED.get_or_init(|| {
+        if crate::env_toggle!("TUXBOX_ANISO_POINT_MIP") == Some("0") {
+            return false;
+        }
+        let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS19::default();
+        // SAFETY: the query writes a record of the size given. A runtime
+        // that does not know OPTIONS19 fails it, which means no support.
+        let ok = unsafe {
+            native.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, (&raw mut options).cast(), size_of_val(&options) as u32)
+        }
+        .is_ok()
+            && options.AnisoFilterWithPointMipSupported.as_bool();
+        crate::diagnostics::log_line(format_args!(
+            "anisotropic samplers with a point mip filter: {}",
+            if ok { "host filter 0x54" } else { "no host support, linear mip (0x55) instead" }
+        ));
+        ok
+    });
+    if supported { filter } else { D3D12_FILTER((bits | 1) as i32) }
+}
+
+/// VIctory-fxceless c96b4f2 (host.rs depth_bounds, GPL-3.0, credit to its
+/// authors and #82 by Kaivyyy): whether the host GPU supports the depth
+/// bounds test (OPTIONS2), asked once. A pipeline enabling it on a GPU
+/// without it fails creation; fxceless makes it without the test instead.
+/// TUXBOX_DEPTH_BOUNDS_CHECK=0 passes the enable through unchecked.
+pub(crate) fn depth_bounds_supported(device: &Device) -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if crate::env_toggle!("TUXBOX_DEPTH_BOUNDS_CHECK") == Some("0") {
+        return true;
+    }
+    *SUPPORTED.get_or_init(|| {
+        let supported = host_query(device, D3D12_FEATURE_D3D12_OPTIONS2, D3D12_FEATURE_DATA_D3D12_OPTIONS2::default())
+            .is_ok_and(|o| o.DepthBoundsTestSupported.as_bool());
+        crate::diagnostics::log_line(format_args!("host depth bounds test supported: {supported} (TUXBOX_DEPTH_BOUNDS_CHECK=0 skips the check)"));
+        supported
+    })
+}

@@ -1,0 +1,28 @@
+{
+  "scope": "XGComputeTexture3DLayout (ordinal 6), XGCreateTexture3DComputer (ordinal 10) and generic XGCreateTextureComputer (ordinal 11) for a bounded 3D subset. Identical guest and XMem dependency; complete layouts and sampled element addresses compared against the supplied Xbox XG DLL.",
+  "subset": "57 uncompressed color formats; eight rectangular shapes with widths 65, 68, 128 or 129 and heights 13 or 37; depth 1, 8 or 17; two or three mips; shader-resource bind; 4 KiB swizzle with default or immutable usage; no packed tails; no CPU access flags, misc flags or explicit pitch. Depth-only mip chains, block-compressed formats and other combinations are unsupported.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "0354674274963f05a4d495ac88dd1ecc20d09eb13eee3e3e760b7777288e08a9",
+  "guest_source_sha256": "ce1e19e7c2a7aaa7164f35b1193d2c8032eff41b85d4f9c95c3315f789700534",
+  "xmem_sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+  "layouts": 5472,
+  "sampled_element_addresses": 1723680,
+  "checks": [
+    "all three exports and complete matching layouts",
+    "sampled mip and depth-slice addresses including the first out-of-range slice",
+    "null arguments and guards",
+    "unverified usage rejected by provider"
+  ],
+  "runs": {
+    "original": {
+      "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "guest_receipt": "xg-3d-mips PASS 5472 layouts 1723680 element addresses",
+      "result_sha256": "d8f521533ce9fb4685d44ccae4f1ec4cc01d3c173800469734b2a899de7dc036"
+    },
+    "tuxbox": {
+      "dll_sha256": "cf1882b3e59023dd22b45af850bf874ac053a55d0eb8dbe0c7e9ba32a0cc10dc",
+      "guest_receipt": "xg-3d-mips PASS 5472 layouts 1723680 element addresses",
+      "result_sha256": "d8f521533ce9fb4685d44ccae4f1ec4cc01d3c173800469734b2a899de7dc036"
+    }
+  }
+}

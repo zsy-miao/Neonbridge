@@ -1,0 +1,944 @@
+{
+  "scope": "Offline diagnostic and aligned synthetic SDR PNG comparisons; no game execution or GPU",
+  "base": "3086e0b0451aafb7d74dac44b1ebf7786bea06d4",
+  "python_tests": {
+    "full_suite_total": 140,
+    "passed_in_project_venv": 133,
+    "optional_pillow_tests_passed_separately": 7,
+    "distinct_passed": 140
+  },
+  "public_log": {
+    "source": "https://github.com/user-attachments/files/35319464/scarlett-3.log",
+    "report": {
+      "schema": 1,
+      "log_sha256": "af81cbc62e027d9d74f102d9b418b66bf9ab38f73a693a895b62e529e2f6495d",
+      "lines": 2811,
+      "oversize_lines_skipped": 0,
+      "sessions": [
+        {
+          "first_line": 1,
+          "last_line": 2811,
+          "first_launcher_timestamp": "2026-11-24T07:37:07+00:00",
+          "last_launcher_timestamp": "2026-11-24T07:39:40+00:00",
+          "timestamp_order_reversed": false,
+          "outcome": "incomplete_log_no_exit_record",
+          "terminal": null,
+          "milestones": [
+            {
+              "kind": "game_start",
+              "line": 5,
+              "utc": "2026-11-24T07:37:07+00:00"
+            },
+            {
+              "kind": "device_created",
+              "line": 308,
+              "utc": null
+            },
+            {
+              "kind": "first_pipeline_stream",
+              "line": 484,
+              "utc": null
+            },
+            {
+              "kind": "first_submission",
+              "line": 495,
+              "utc": null
+            },
+            {
+              "kind": "first_present",
+              "line": 514,
+              "utc": null
+            },
+            {
+              "kind": "page_mapping",
+              "line": 548,
+              "utc": null
+            }
+          ],
+          "last_milestone": "page_mapping",
+          "findings": [
+            {
+              "count": 17,
+              "first": {
+                "kind": "compute_pipeline_failure",
+                "line": 326,
+                "utc": null,
+                "code": "0x80004005",
+                "meaning": "unspecified API failure"
+              },
+              "last": {
+                "kind": "compute_pipeline_failure",
+                "line": 655,
+                "utc": null,
+                "code": "0x80004005",
+                "meaning": "unspecified API failure"
+              },
+              "next_check": "Replay the reported shader and inspect its native pipeline creation result."
+            },
+            {
+              "count": 38,
+              "first": {
+                "kind": "compute_pipeline_failure",
+                "line": 330,
+                "utc": null,
+                "code": "0x80070057",
+                "meaning": "invalid argument"
+              },
+              "last": {
+                "kind": "compute_pipeline_failure",
+                "line": 468,
+                "utc": null,
+                "code": "0x80070057",
+                "meaning": "invalid argument"
+              },
+              "next_check": "Replay the reported shader and inspect its native pipeline creation result."
+            },
+            {
+              "count": 1,
+              "first": {
+                "kind": "pipeline_stream_failure",
+                "line": 541,
+                "utc": null,
+                "code": "0x8007007e",
+                "meaning": "module not found (which module is not established)"
+              },
+              "last": {
+                "kind": "pipeline_stream_failure",
+                "line": 541,
+                "utc": null,
+                "code": "0x8007007e",
+                "meaning": "module not found (which module is not established)"
+              },
+              "next_check": "Inspect slot 86 stream construction, stage failures and actual library loader diagnostics."
+            },
+            {
+              "count": 9,
+              "first": {
+                "kind": "compute_pipeline_failure",
+                "line": 583,
+                "utc": null,
+                "code": "0x80004001",
+                "meaning": "not implemented"
+              },
+              "last": {
+                "kind": "compute_pipeline_failure",
+                "line": 636,
+                "utc": null,
+                "code": "0x80004001",
+                "meaning": "not implemented"
+              },
+              "next_check": "Replay the reported shader and inspect its native pipeline creation result."
+            }
+          ],
+          "investigation_order": [
+            {
+              "count": 17,
+              "first": {
+                "kind": "compute_pipeline_failure",
+                "line": 326,
+                "utc": null,
+                "code": "0x80004005",
+                "meaning": "unspecified API failure"
+              },
+              "last": {
+                "kind": "compute_pipeline_failure",
+                "line": 655,
+                "utc": null,
+                "code": "0x80004005",
+                "meaning": "unspecified API failure"
+              },
+              "next_check": "Replay the reported shader and inspect its native pipeline creation result."
+            },
+            {
+              "count": 9,
+              "first": {
+                "kind": "compute_pipeline_failure",
+                "line": 583,
+                "utc": null,
+                "code": "0x80004001",
+                "meaning": "not implemented"
+              },
+              "last": {
+                "kind": "compute_pipeline_failure",
+                "line": 636,
+                "utc": null,
+                "code": "0x80004001",
+                "meaning": "not implemented"
+              },
+              "next_check": "Replay the reported shader and inspect its native pipeline creation result."
+            },
+            {
+              "count": 1,
+              "first": {
+                "kind": "pipeline_stream_failure",
+                "line": 541,
+                "utc": null,
+                "code": "0x8007007e",
+                "meaning": "module not found (which module is not established)"
+              },
+              "last": {
+                "kind": "pipeline_stream_failure",
+                "line": 541,
+                "utc": null,
+                "code": "0x8007007e",
+                "meaning": "module not found (which module is not established)"
+              },
+              "next_check": "Inspect slot 86 stream construction, stage failures and actual library loader diagnostics."
+            },
+            {
+              "count": 38,
+              "first": {
+                "kind": "compute_pipeline_failure",
+                "line": 330,
+                "utc": null,
+                "code": "0x80070057",
+                "meaning": "invalid argument"
+              },
+              "last": {
+                "kind": "compute_pipeline_failure",
+                "line": 468,
+                "utc": null,
+                "code": "0x80070057",
+                "meaning": "invalid argument"
+              },
+              "next_check": "Replay the reported shader and inspect its native pipeline creation result."
+            }
+          ],
+          "shader_events": {
+            "compiled": 217,
+            "refused": 836
+          },
+          "last_observed_shader_status": {
+            "compiled": 217,
+            "refused": 836
+          },
+          "unique_shader_requests": 1053
+        }
+      ],
+      "scope": "Observed launch milestones and candidate fault evidence only; not proof of causal failure, hang, visible image or gameplay."
+    }
+  },
+  "synthetic_diagnosis": {
+    "schema": 1,
+    "log_sha256": "ee8e4887355bebba59ab419a6de979ad42acd62bc0468197540320a8ddc7663c",
+    "lines": 11,
+    "oversize_lines_skipped": 0,
+    "sessions": [
+      {
+        "first_line": 1,
+        "last_line": 7,
+        "first_launcher_timestamp": "2026-11-24T07:37:07+00:00",
+        "last_launcher_timestamp": "2026-11-24T07:37:07+00:00",
+        "timestamp_order_reversed": false,
+        "outcome": "nonzero_exit",
+        "terminal": {
+          "kind": "exit",
+          "line": 7,
+          "utc": "2026-11-24T07:37:07+00:00",
+          "detail": {
+            "code": 3,
+            "seconds": 97.0
+          }
+        },
+        "milestones": [
+          {
+            "kind": "game_start",
+            "line": 2,
+            "utc": "2026-11-24T07:37:07+00:00"
+          },
+          {
+            "kind": "first_present",
+            "line": 3,
+            "utc": null
+          }
+        ],
+        "last_milestone": "first_present",
+        "findings": [
+          {
+            "count": 1,
+            "first": {
+              "kind": "survey_assert_continued",
+              "line": 4,
+              "utc": null,
+              "detail": {
+                "rva": "0x4ffd879",
+                "reported_hit": 1
+              }
+            },
+            "last": {
+              "kind": "survey_assert_continued",
+              "line": 4,
+              "utc": null,
+              "detail": {
+                "rva": "0x4ffd879",
+                "reported_hit": 1
+              }
+            },
+            "next_check": "Inspect this title-relative address for the exact executable build. This assert was continued, not necessarily terminal."
+          },
+          {
+            "count": 1,
+            "first": {
+              "kind": "pipeline_stream_failure",
+              "line": 5,
+              "utc": null,
+              "code": "0x8007007e",
+              "meaning": "module not found (which module is not established)"
+            },
+            "last": {
+              "kind": "pipeline_stream_failure",
+              "line": 5,
+              "utc": null,
+              "code": "0x8007007e",
+              "meaning": "module not found (which module is not established)"
+            },
+            "next_check": "Inspect slot 86 stream construction, stage failures and actual library loader diagnostics."
+          },
+          {
+            "count": 1,
+            "first": {
+              "kind": "unhandled_wine_exception",
+              "line": 6,
+              "utc": null,
+              "detail": {
+                "absolute_address": "0x140001234",
+                "wine_thread": "0x40"
+              },
+              "code": "0xc0000005"
+            },
+            "last": {
+              "kind": "unhandled_wine_exception",
+              "line": 6,
+              "utc": null,
+              "detail": {
+                "absolute_address": "0x140001234",
+                "wine_thread": "0x40"
+              },
+              "code": "0xc0000005"
+            },
+            "next_check": "Inspect the terminal exception and same-thread unwind. A module-relative address requires matching image metadata."
+          }
+        ],
+        "investigation_order": [
+          {
+            "count": 1,
+            "first": {
+              "kind": "unhandled_wine_exception",
+              "line": 6,
+              "utc": null,
+              "detail": {
+                "absolute_address": "0x140001234",
+                "wine_thread": "0x40"
+              },
+              "code": "0xc0000005"
+            },
+            "last": {
+              "kind": "unhandled_wine_exception",
+              "line": 6,
+              "utc": null,
+              "detail": {
+                "absolute_address": "0x140001234",
+                "wine_thread": "0x40"
+              },
+              "code": "0xc0000005"
+            },
+            "next_check": "Inspect the terminal exception and same-thread unwind. A module-relative address requires matching image metadata."
+          },
+          {
+            "count": 1,
+            "first": {
+              "kind": "pipeline_stream_failure",
+              "line": 5,
+              "utc": null,
+              "code": "0x8007007e",
+              "meaning": "module not found (which module is not established)"
+            },
+            "last": {
+              "kind": "pipeline_stream_failure",
+              "line": 5,
+              "utc": null,
+              "code": "0x8007007e",
+              "meaning": "module not found (which module is not established)"
+            },
+            "next_check": "Inspect slot 86 stream construction, stage failures and actual library loader diagnostics."
+          },
+          {
+            "count": 1,
+            "first": {
+              "kind": "survey_assert_continued",
+              "line": 4,
+              "utc": null,
+              "detail": {
+                "rva": "0x4ffd879",
+                "reported_hit": 1
+              }
+            },
+            "last": {
+              "kind": "survey_assert_continued",
+              "line": 4,
+              "utc": null,
+              "detail": {
+                "rva": "0x4ffd879",
+                "reported_hit": 1
+              }
+            },
+            "next_check": "Inspect this title-relative address for the exact executable build. This assert was continued, not necessarily terminal."
+          }
+        ],
+        "shader_events": {},
+        "last_observed_shader_status": {},
+        "unique_shader_requests": 0
+      },
+      {
+        "first_line": 8,
+        "last_line": 11,
+        "first_launcher_timestamp": "2026-11-24T07:37:07+00:00",
+        "last_launcher_timestamp": "2026-11-24T07:37:07+00:00",
+        "timestamp_order_reversed": false,
+        "outcome": "normal_exit",
+        "terminal": {
+          "kind": "exit",
+          "line": 11,
+          "utc": "2026-11-24T07:37:07+00:00",
+          "detail": {
+            "code": 0,
+            "seconds": 1.0
+          }
+        },
+        "milestones": [
+          {
+            "kind": "game_start",
+            "line": 9,
+            "utc": "2026-11-24T07:37:07+00:00"
+          },
+          {
+            "kind": "device_created",
+            "line": 10,
+            "utc": null
+          }
+        ],
+        "last_milestone": "device_created",
+        "findings": [],
+        "investigation_order": [],
+        "shader_events": {},
+        "last_observed_shader_status": {},
+        "unique_shader_requests": 0
+      }
+    ],
+    "scope": "Observed launch milestones and candidate fault evidence only; not proof of causal failure, hang, visible image or gameplay."
+  },
+  "synthetic_4k_frames": {
+    "identity": {
+      "pixels": 8294400,
+      "changed_pixels": 0,
+      "over_tolerance_pixels": 0,
+      "over_tolerance_fraction": 0.0,
+      "max_channel_error": 0,
+      "mean_absolute_error": 0.0,
+      "mse": 0.0,
+      "psnr_db": null,
+      "bounding_box": null,
+      "reference": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "candidate": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "capture_size": [
+        3840,
+        2160
+      ],
+      "roi": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "mode": "RGB",
+      "max_tile_fraction": 0.0,
+      "changed_tiles": 0,
+      "worst_tiles": [],
+      "passed": true,
+      "cpu_wall_seconds": 0.3893
+    },
+    "one_pixel": {
+      "pixels": 8294400,
+      "changed_pixels": 1,
+      "over_tolerance_pixels": 1,
+      "over_tolerance_fraction": 1.2056327160493827e-07,
+      "max_channel_error": 1,
+      "mean_absolute_error": 4.0187757201646094e-08,
+      "mse": 4.0187757201646094e-08,
+      "psnr_db": 122.08986591106034,
+      "bounding_box": [
+        3839,
+        2159,
+        3840,
+        2160
+      ],
+      "reference": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "candidate": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "ba7759a7b9a73cc5c235bf7cdc84b7fc237b415934e41db4010f2e80549e9ae2"
+      },
+      "capture_size": [
+        3840,
+        2160
+      ],
+      "roi": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "mode": "RGB",
+      "max_tile_fraction": 0.0003255208333333333,
+      "changed_tiles": 1,
+      "worst_tiles": [
+        {
+          "box": [
+            3776,
+            2112,
+            3840,
+            2160
+          ],
+          "pixels_over_tolerance": 1,
+          "fraction": 0.0003255208333333333,
+          "max_channel_error": 1
+        }
+      ],
+      "passed": false,
+      "cpu_wall_seconds": 0.3577
+    },
+    "local_artifact": {
+      "pixels": 8294400,
+      "changed_pixels": 256,
+      "over_tolerance_pixels": 256,
+      "over_tolerance_fraction": 3.08641975308642e-05,
+      "max_channel_error": 223,
+      "mean_absolute_error": 0.002294238683127572,
+      "mse": 0.5116152263374486,
+      "psnr_db": 51.04136899697863,
+      "bounding_box": [
+        64,
+        64,
+        80,
+        80
+      ],
+      "reference": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "candidate": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 255,
+        "min_rgb": 32,
+        "pixel_sha256": "4f06f2e2f0aa877dcdb0d7c6a3a80f4e2e24b0adaf8d7aa6091aba12dbf908b3"
+      },
+      "capture_size": [
+        3840,
+        2160
+      ],
+      "roi": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "mode": "RGB",
+      "max_tile_fraction": 0.0625,
+      "changed_tiles": 1,
+      "worst_tiles": [
+        {
+          "box": [
+            64,
+            64,
+            128,
+            128
+          ],
+          "pixels_over_tolerance": 256,
+          "fraction": 0.0625,
+          "max_channel_error": 223
+        }
+      ],
+      "passed": false,
+      "cpu_wall_seconds": 0.3475
+    },
+    "black": {
+      "pixels": 8294400,
+      "changed_pixels": 8294400,
+      "over_tolerance_pixels": 8294400,
+      "over_tolerance_fraction": 1.0,
+      "max_channel_error": 192,
+      "mean_absolute_error": 114.37037037037037,
+      "mse": 16061.62962962963,
+      "psnr_db": 6.0729075372036,
+      "bounding_box": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "reference": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "candidate": {
+        "near_black_fraction": 1.0,
+        "flat_rgb": true,
+        "max_rgb": 0,
+        "min_rgb": 0,
+        "pixel_sha256": "5319c5a4fa603cd501927bb6001fa64460eab83705c923c14afec98cf7bfc1bc"
+      },
+      "capture_size": [
+        3840,
+        2160
+      ],
+      "roi": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "mode": "RGB",
+      "max_tile_fraction": 1.0,
+      "changed_tiles": 2040,
+      "worst_tiles": [
+        {
+          "box": [
+            640,
+            448,
+            704,
+            512
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            512,
+            704,
+            576
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            576,
+            704,
+            640
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            640,
+            704,
+            704
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            704,
+            704,
+            768
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            768,
+            704,
+            832
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            832,
+            704,
+            896
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            640,
+            896,
+            704,
+            960
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            704,
+            448,
+            768,
+            512
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        },
+        {
+          "box": [
+            704,
+            512,
+            768,
+            576
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 192
+        }
+      ],
+      "passed": false,
+      "cpu_wall_seconds": 0.3758
+    },
+    "tolerated": {
+      "pixels": 8294400,
+      "changed_pixels": 8294400,
+      "over_tolerance_pixels": 0,
+      "over_tolerance_fraction": 0.0,
+      "max_channel_error": 1,
+      "mean_absolute_error": 1.0,
+      "mse": 1.0,
+      "psnr_db": 48.1308036086791,
+      "bounding_box": null,
+      "reference": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "candidate": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 193,
+        "min_rgb": 33,
+        "pixel_sha256": "9249b15d7777eb329f94f771e7a08563e2909fef0d571ae660969e0035d9e4c5"
+      },
+      "capture_size": [
+        3840,
+        2160
+      ],
+      "roi": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "mode": "RGB",
+      "max_tile_fraction": 0.0,
+      "changed_tiles": 0,
+      "worst_tiles": [],
+      "passed": true,
+      "cpu_wall_seconds": 0.3924
+    },
+    "color_swap": {
+      "pixels": 8294400,
+      "changed_pixels": 8294400,
+      "over_tolerance_pixels": 8294400,
+      "over_tolerance_fraction": 1.0,
+      "max_channel_error": 128,
+      "mean_absolute_error": 44.24691358024691,
+      "mse": 3034.074074074074,
+      "psnr_db": 13.310541813951422,
+      "bounding_box": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "reference": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "7559a6a95b43e9f8899b546a564e1ca3697b40a1c28aefa96570236ff8650448"
+      },
+      "candidate": {
+        "near_black_fraction": 0.0,
+        "flat_rgb": false,
+        "max_rgb": 192,
+        "min_rgb": 32,
+        "pixel_sha256": "a3f5e88236ebd31fc4285cf059d13421526fb6f836218bd03a1422ca45e00065"
+      },
+      "capture_size": [
+        3840,
+        2160
+      ],
+      "roi": [
+        0,
+        0,
+        3840,
+        2160
+      ],
+      "mode": "RGB",
+      "max_tile_fraction": 1.0,
+      "changed_tiles": 2040,
+      "worst_tiles": [
+        {
+          "box": [
+            640,
+            448,
+            704,
+            512
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            512,
+            704,
+            576
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            576,
+            704,
+            640
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            640,
+            704,
+            704
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            704,
+            704,
+            768
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            768,
+            704,
+            832
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            832,
+            704,
+            896
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            640,
+            896,
+            704,
+            960
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            704,
+            448,
+            768,
+            512
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        },
+        {
+          "box": [
+            704,
+            512,
+            768,
+            576
+          ],
+          "pixels_over_tolerance": 4096,
+          "fraction": 1.0,
+          "max_channel_error": 128
+        }
+      ],
+      "passed": false,
+      "cpu_wall_seconds": 0.3762
+    }
+  }
+}

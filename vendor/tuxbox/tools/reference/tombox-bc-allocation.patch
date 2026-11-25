@@ -1,0 +1,36 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -306,6 +306,33 @@
+         if n < 20 { record("d3d12_xs", "GetResourceAllocationInfo", &format!("numDescs={num_descs} pDescs=NULL -> default{{64KB,64KB}}")); }
+         return AllocInfo { size: 0x10000, align: 0x10000 };
+     }
++    // A single, ordinary BC texture uses the PC resource descriptor layout.
++    // Query actual GPU requirements. Per-mip byte estimates omit native image
++    // alignment and row padding. Slot 25 uses Win64 COM's explicit RetVal.
++    if num_descs == 1 {
++        let dim = unsafe { *pdescs };
++        let format = unsafe { *pdescs.add(8) };
++        let layout = unsafe { *pdescs.add(11) };
++        if dim == 3 && matches!(format, 70..=84 | 94..=99) && layout == 0 {
++            #[repr(C, align(8))]
++            struct ResourceDesc([u32; 14]);
++            let mut desc = ResourceDesc([0; 14]);
++            // The PC descriptor ends at flags. Its final four bytes are padding.
++            unsafe { core::ptr::copy_nonoverlapping(pdescs, desc.0.as_mut_ptr(), 13) };
++            desc.0[12] &= 0xff; // same flags as CreatePlacedResource
++            let real = unsafe { (*this).real };
++            let query: unsafe extern "system" fn(
++                *mut c_void, *mut AllocInfo, u32, u32, *const ResourceDesc,
++            ) -> *mut AllocInfo = unsafe { core::mem::transmute(*real_vtbl(real).add(25)) };
++            let mut info = AllocInfo { size: u64::MAX, align: 0 };
++            unsafe { query(real, &mut info, visible_mask, 1, &desc) };
++            if desc.0[4] >= 8192 {
++                record("d3d12_xs", "GetResourceAllocationInfo",
++                    &format!("BC texture {}x{} host size={} alignment={}", desc.0[4], desc.0[6], info.size, info.align));
++            }
++            return info;
++        }
++    }
+     // Copy and sanitize the desc(s): Xbox may leave SampleDesc.Count / DepthOrArraySize
+     // / MipLevels as 0, which are invalid on PC D3D12 and crash GetResourceAllocationInfo.
+     // D3D12_RESOURCE_DESC is 0x40 bytes: Dimension@0, Alignment@8, Width@16, Height@24,

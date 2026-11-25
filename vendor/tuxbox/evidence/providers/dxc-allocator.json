@@ -1,0 +1,41 @@
+{
+  "console_sha256": "40c0d27a4c8e580975b64b386a5decee083aa1465317d4f62bc16445f63681db",
+  "guest_sha256": "8bef51bab134d49e6187618d1dd1a5d5b70f47bb57680d29cb80d24fadb50118",
+  "exports": {
+    "3": "DxcCreateInstance",
+    "4": "DxcCreateInstance2"
+  },
+  "checks": "The same guest checks both console ordinals, supplies a custom IMalloc to the second factory, verifies that the factory uses it, releases the factory before inspecting blob data, and checks that every allocation made through the custom allocator was freed.",
+  "runs": [
+    {
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "export": "DxcCreateInstance",
+      "control_exit": 0,
+      "tuxbox_exit": 0,
+      "matching_receipt": "dxc-utils PASS bytes=257 source-freed=1 writable=257 retained=1"
+    },
+    {
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "export": "DxcCreateInstance2",
+      "control_exit": 0,
+      "tuxbox_exit": 0,
+      "matching_receipt": "dxc-allocator PASS ordinals=3,4 custom=1 retained=1 balanced=1"
+    },
+    {
+      "host": "1792432585 GE-Proton11-11",
+      "export": "DxcCreateInstance",
+      "control_exit": 0,
+      "tuxbox_exit": 0,
+      "matching_receipt": "dxc-utils PASS bytes=257 source-freed=1 writable=257 retained=1"
+    },
+    {
+      "host": "1792432585 GE-Proton11-11",
+      "export": "DxcCreateInstance2",
+      "control_exit": 0,
+      "tuxbox_exit": 0,
+      "matching_receipt": "dxc-allocator PASS ordinals=3,4 custom=1 retained=1 balanced=1"
+    }
+  ],
+  "tuxbox_forwarder_sha256": "920938f673eb7640951b21bf4cf3989f3254dc82912139717dfbe8ccef4ac525",
+  "desktop_dxc_sha256": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9"
+}

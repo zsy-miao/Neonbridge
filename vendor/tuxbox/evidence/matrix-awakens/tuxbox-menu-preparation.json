@@ -1,0 +1,57 @@
+{
+  "title": "Frosty",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider": "TuxBox d3d12_xs",
+  "platform": "Linux x86_64, Proton Experimental",
+  "tool": "tuxbox.py run --prepare-only",
+  "profile_sha256": "8d2e6327506e40f7de9ed493005f2d978785edfe180d174f4b0102ab7e8da605",
+  "optional_profile_sha256": "8a856422334f15ec4d6237795fa1ff2569138ad285d9fc1118af1b685af02aef",
+  "normal_cold": {
+    "compiled": 118,
+    "reused": 4,
+    "wall_seconds": 60.69,
+    "log_sha256": "b89b22906b8ec44fcba998d2aacf16630f2d79a667ba31cbe54540698a861768"
+  },
+  "normal_warm_compilers_disabled": {
+    "compiled": 0,
+    "reused": 122,
+    "wall_seconds": 0.23,
+    "log_sha256": "e01580b6cd5af2737879fb492d9498caad0ebee672499d7312686cbd3a98ed9d"
+  },
+  "optional_after_normal": {
+    "compiled": 42,
+    "reused": 127,
+    "wall_seconds": 4.74,
+    "log_sha256": "be12da72876b5220c57cde4ed9169ee2eef82a144f3031084e538f480b94eab7"
+  },
+  "optional_warm_compilers_disabled": {
+    "compiled": 0,
+    "reused": 169,
+    "wall_seconds": 0.29,
+    "log_sha256": "f11ed1a07c632aa566cb095bb1de927e92657a2ee6e84f211f4bee35f640f18e"
+  },
+  "linked_producer_variants": [
+    {
+      "producer": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+      "pixel": "bf851dbaac9b5fdefdbf6fe01ed5b58e3a6e78a6fb1d3177249d9425f691ba9f",
+      "dxil_sha256": "441726aa009c995a41e5d11c5c4f7a8d1c017539d2ec587dbdf3c4bd1a26445b"
+    },
+    {
+      "producer": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+      "pixel": "bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+      "dxil_sha256": "441726aa009c995a41e5d11c5c4f7a8d1c017539d2ec587dbdf3c4bd1a26445b"
+    },
+    {
+      "producer": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+      "pixel": "dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc",
+      "dxil_sha256": "441726aa009c995a41e5d11c5c4f7a8d1c017539d2ec587dbdf3c4bd1a26445b"
+    },
+    {
+      "producer": "90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98",
+      "pixel": "c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95",
+      "dxil_sha256": "1beaf835827515334a5c72a88eee17a3184b3c59089f202aa7ef380838ec4e9a"
+    }
+  ],
+  "source_observations": "Watched opens of prepared shaders in the isolated Proton cache after the TuxBox launcher logged Starting game. The 111 distinct source keys observed through frame 7 are included in normal preparation. Supplementary compute candidates matched exact translated HLSL keys from reference startup runs.",
+  "scope": "Measures host shader preparation for the local Frosty PAK. GPU pipeline creation and game launch time are separate."
+}

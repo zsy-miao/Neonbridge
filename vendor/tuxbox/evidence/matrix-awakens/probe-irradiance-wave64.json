@@ -1,0 +1,43 @@
+{
+  "scope": "Packaged global 475 probe irradiance; portable wave64 versus native Radeon wave64",
+  "source_sha256": "90cf444d64207901249689f602a57bb9ec4bb54ed8204b7ac693b0a3f915e3cb",
+  "compiler_sha256": "c5d498a34b1a67b0f2a5667863f70baa8c384d579dde91c3db134623bdca2dd2",
+  "cases": [
+    "8x8 active probe",
+    "1x1 to 5x5 partial wave",
+    "zero counter",
+    "rejected probe"
+  ],
+  "tolerance": 1e-06,
+  "runs": {
+    "native_amd": {
+      "adapter": "adapter=1002:13c0",
+      "cases": 8,
+      "compared_words_per_case": 512
+    },
+    "portable_amd": {
+      "adapter": "adapter=1002:13c0",
+      "cases": 8,
+      "compared_words_per_case": 512
+    },
+    "portable_nvidia": {
+      "adapter": "adapter=10de:2705",
+      "cases": 8,
+      "compared_words_per_case": 512
+    },
+    "sample_amd": {
+      "adapter": "adapter=1002:13c0",
+      "cases": 8,
+      "compared_words_per_case": 512
+    },
+    "sample_nvidia": {
+      "adapter": "adapter=10de:2705",
+      "cases": 8,
+      "compared_words_per_case": 512
+    }
+  },
+  "point_sample_boundary": {
+    "scope": "Width 3, gradient texture, direct capture after SampleLevel",
+    "different_words": 12
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "scope": "Lumen global 2136 through the provider and runtime shader compiler. Finite bounds and guard checks; not an end-to-end lighting test.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "shader_sha256": "02b127a5122394daa54fd9200a36419fe34cfe249087133bdd91696aa26b2fbd",
+  "view": {
+    "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "bounds": "PF_A32B32G32R32F; 16-byte elements",
+    "counter": "PF_R32_UINT; 12-byte allocation",
+    "tiles": "PF_R32_UINT; 4-byte elements",
+    "mask": "PF_R8_UINT; 3D texture",
+    "evidence": "Named allocations and descriptor format instructions are checked in the executable. Bounds, counter and tile views load their corresponding allocation pointers."
+  },
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "xshader_sha256": "8b09d1d99add1425c99c5d1f98df509dab1c663835f4d1388745aaee1b2ea5ba",
+  "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+  "guest_sha256": "bac7014bc89103ef4bf9cdd672ca815057006fed7329feffa3f0d5db7d3690f6",
+  "cases": {
+    "none": {
+      "active_tiles": 0,
+      "mask_texels_checked": 64,
+      "tile_words_checked": 64,
+      "counter_words_checked": 3
+    },
+    "one": {
+      "active_tiles": 1,
+      "mask_texels_checked": 64,
+      "tile_words_checked": 64,
+      "counter_words_checked": 3
+    },
+    "last": {
+      "active_tiles": 1,
+      "mask_texels_checked": 64,
+      "tile_words_checked": 64,
+      "counter_words_checked": 3
+    },
+    "all": {
+      "active_tiles": 8,
+      "mask_texels_checked": 64,
+      "tile_words_checked": 64,
+      "counter_words_checked": 3
+    },
+    "offset": {
+      "active_tiles": 1,
+      "mask_texels_checked": 64,
+      "tile_words_checked": 64,
+      "counter_words_checked": 3
+    },
+    "edge": {
+      "active_tiles": 8,
+      "mask_texels_checked": 64,
+      "tile_words_checked": 64,
+      "counter_words_checked": 3
+    }
+  }
+}

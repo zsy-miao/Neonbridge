@@ -1,0 +1,2423 @@
+{
+  "scope": "Synthetic LLVM-assembled packed integer instructions; dynamic instrumented inputs and observed outputs, no game",
+  "adapter": "1002:73a5",
+  "proton": "1794497090 experimental-11.0-20261112-x86_64",
+  "seed": 1346454347,
+  "clamped": false,
+  "instructions": 5,
+  "shader_cases": 22,
+  "selector_combinations": 176,
+  "result_words": 2816,
+  "compared_words": 8448,
+  "mismatches": 0,
+  "baseline_refused_shaders": null,
+  "negative_controls": [
+    {
+      "opcode": "v_pk_add_i16",
+      "kind": "scalar_source",
+      "assembly": "v_pk_add_i16 v7, s4, v5",
+      "refusal": "unsupported packed integer source or encoding [v_pk_add_i16 @ 0x0]"
+    },
+    {
+      "opcode": "v_pk_mad_i16",
+      "kind": "scalar_source",
+      "assembly": "v_pk_mad_i16 v7, s4, v5, v6",
+      "refusal": "unsupported packed integer source or encoding [v_pk_mad_i16 @ 0x0]"
+    },
+    {
+      "opcode": "v_pk_mad_u16",
+      "kind": "scalar_source",
+      "assembly": "v_pk_mad_u16 v7, s4, v5, v6",
+      "refusal": "unsupported packed integer source or encoding [v_pk_mad_u16 @ 0x0]"
+    },
+    {
+      "opcode": "v_pk_max_u16",
+      "kind": "scalar_source",
+      "assembly": "v_pk_max_u16 v7, s4, v5",
+      "refusal": "unsupported packed integer source or encoding [v_pk_max_u16 @ 0x0]"
+    },
+    {
+      "opcode": "v_pk_max_u16",
+      "kind": "clamp",
+      "assembly": "v_pk_max_u16 v7, v4, v5 clamp",
+      "refusal": "unsupported packed integer clamp form or source [v_pk_max_u16 @ 0x0]"
+    },
+    {
+      "opcode": "v_pk_min_u16",
+      "kind": "scalar_source",
+      "assembly": "v_pk_min_u16 v7, s4, v5",
+      "refusal": "unsupported packed integer source or encoding [v_pk_min_u16 @ 0x0]"
+    },
+    {
+      "opcode": "v_pk_min_u16",
+      "kind": "clamp",
+      "assembly": "v_pk_min_u16 v7, v4, v5 clamp",
+      "refusal": "unsupported packed integer clamp form or source [v_pk_min_u16 @ 0x0]"
+    }
+  ],
+  "tool_sha256": {
+    "emitter": "271f63483af5f83aeb18549c5dd235787566c4a39b72093fe87c8e8d8f06eb4b",
+    "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "provider": "241a341d95edeb415418435dfcced81b38c497c3d6fc3e8c391ef93883c4b95d"
+  },
+  "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+  "rows": [
+    {
+      "case": "packed00",
+      "opcode": "v_pk_add_i16",
+      "selectors": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_add_i16 v7, v7, v5 op_sel:[0,0] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_add_i16 v8, v4, v8 op_sel:[0,0] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_add_i16 v9, v9, v5 op_sel:[0,0] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_add_i16 v10, v4, v10 op_sel:[0,0] op_sel_hi:[1,1]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_add_i16 v11, v11, v5 op_sel:[1,0] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_add_i16 v12, v4, v12 op_sel:[1,0] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_add_i16 v13, v13, v5 op_sel:[1,0] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_add_i16 v14, v4, v14 op_sel:[1,0] op_sel_hi:[1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc024007",
+        "02020b07",
+        "7e100305",
+        "cc024008",
+        "0a021104",
+        "7e120304",
+        "cc024009",
+        "12020b09",
+        "7e140305",
+        "cc02400a",
+        "1a021504",
+        "7e160304",
+        "cc02480b",
+        "02020b0b",
+        "7e180305",
+        "cc02480c",
+        "0a021904",
+        "7e1a0304",
+        "cc02480d",
+        "12020b0d",
+        "7e1c0305",
+        "cc02480e",
+        "1a021d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "03ecbe43c48c9f894ec5916fffd92427e8b35cfe854af562d1c3e1d7b2e95578",
+      "instrumented_sha256": "2eb91677d44802f6df69e6b4409e8b0bf8717b5113ba2b8ffee9ad86a1e0857e",
+      "dxil_sha256": "b673bbed76a9f9bde02ce406fb595a9a5e8684d984c18bfed8f050902127d669",
+      "readback_sha256": "cd8faf53baf59317ae9f1309aaeb18e5634cef3d998dc5317793cac7199e07fa"
+    },
+    {
+      "case": "packed01",
+      "opcode": "v_pk_add_i16",
+      "selectors": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_add_i16 v7, v7, v5 op_sel:[0,1] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_add_i16 v8, v4, v8 op_sel:[0,1] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_add_i16 v9, v9, v5 op_sel:[0,1] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_add_i16 v10, v4, v10 op_sel:[0,1] op_sel_hi:[1,1]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_add_i16 v11, v11, v5 op_sel:[1,1] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_add_i16 v12, v4, v12 op_sel:[1,1] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_add_i16 v13, v13, v5 op_sel:[1,1] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_add_i16 v14, v4, v14 op_sel:[1,1] op_sel_hi:[1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc025007",
+        "02020b07",
+        "7e100305",
+        "cc025008",
+        "0a021104",
+        "7e120304",
+        "cc025009",
+        "12020b09",
+        "7e140305",
+        "cc02500a",
+        "1a021504",
+        "7e160304",
+        "cc02580b",
+        "02020b0b",
+        "7e180305",
+        "cc02580c",
+        "0a021904",
+        "7e1a0304",
+        "cc02580d",
+        "12020b0d",
+        "7e1c0305",
+        "cc02580e",
+        "1a021d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "1ab6e3da4bc241227dbe31dae080b7ebb8f7b999b02f535ef91d728acab2f68c",
+      "instrumented_sha256": "19e385a2b11bfa0459e0fa03dc3251b7d0c7bd2b8ebb32f4c5787c911d33fc98",
+      "dxil_sha256": "4f9bcbca2da6104de4d7f5d632e8df230e5217d6566d71cfa2afa24da1da67f8",
+      "readback_sha256": "f2a4425b0a310aed1595e685449a09cb7a6e9228400ce79d26445fcc6e9ff510"
+    },
+    {
+      "case": "packed02",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          0,
+          6
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_mad_i16 v7, v7, v5, v6 op_sel:[0,0,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_mad_i16 v8, v4, v8, v6 op_sel:[0,0,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v6",
+        "v_pk_mad_i16 v9, v4, v5, v9 op_sel:[0,0,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v4",
+        "v_pk_mad_i16 v10, v10, v5, v6 op_sel:[0,0,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v5",
+        "v_pk_mad_i16 v11, v4, v11, v6 op_sel:[0,0,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v6",
+        "v_pk_mad_i16 v12, v4, v5, v12 op_sel:[0,0,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_mad_i16 v13, v13, v5, v6 op_sel:[0,0,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_mad_i16 v14, v4, v14, v6 op_sel:[0,0,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc000007",
+        "041a0b07",
+        "7e100305",
+        "cc000008",
+        "0c1a1104",
+        "7e120306",
+        "cc000009",
+        "14260b04",
+        "7e140304",
+        "cc00000a",
+        "1c1a0b0a",
+        "7e160305",
+        "cc00400b",
+        "041a1704",
+        "7e180306",
+        "cc00400c",
+        "0c320b04",
+        "7e1a0304",
+        "cc00400d",
+        "141a0b0d",
+        "7e1c0305",
+        "cc00400e",
+        "1c1a1d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "901bc8ac4a31ee20de6e7fbf718501517c514a2f05b31f003400d28e839eda11",
+      "instrumented_sha256": "ce17b0073c80bd2d48ab9342a6dc8ade1445d1171a9169a36d7298cda5d0bf9f",
+      "dxil_sha256": "b0e06d36ba82b51d73a870dbb53124af291b82a5b1ce2d5ab3f5e8d676f65ae5",
+      "readback_sha256": "178a11ad4675250fd4576677d9090022547b5013e21490f240b846a90e50a55c"
+    },
+    {
+      "case": "packed03",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ]
+      ],
+      "alias_indices": [
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v6",
+        "v_pk_mad_i16 v7, v4, v5, v7 op_sel:[1,0,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v4",
+        "v_pk_mad_i16 v8, v8, v5, v6 op_sel:[1,0,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v5",
+        "v_pk_mad_i16 v9, v4, v9, v6 op_sel:[1,0,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v6",
+        "v_pk_mad_i16 v10, v4, v5, v10 op_sel:[1,0,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_mad_i16 v11, v11, v5, v6 op_sel:[1,0,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_mad_i16 v12, v4, v12, v6 op_sel:[1,0,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v6",
+        "v_pk_mad_i16 v13, v4, v5, v13 op_sel:[1,0,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v4",
+        "v_pk_mad_i16 v14, v14, v5, v6 op_sel:[1,0,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0306",
+        "cc000807",
+        "041e0b04",
+        "7e100304",
+        "cc000808",
+        "0c1a0b08",
+        "7e120305",
+        "cc000809",
+        "141a1304",
+        "7e140306",
+        "cc00080a",
+        "1c2a0b04",
+        "7e160304",
+        "cc00480b",
+        "041a0b0b",
+        "7e180305",
+        "cc00480c",
+        "0c1a1904",
+        "7e1a0306",
+        "cc00480d",
+        "14360b04",
+        "7e1c0304",
+        "cc00480e",
+        "1c1a0b0e",
+        "bf810000"
+      ],
+      "emitted_sha256": "b116878317b3fb1c33c61beb147f1e16b5af59074d14ee6815a73ddc142b7fd2",
+      "instrumented_sha256": "f84326c1905639a0b1cb27bd1126ce0b78692a05b616ecfe14449bdabc62f0f4",
+      "dxil_sha256": "2be445f5469e5a952c43e1c109d0677bc60589dd4fe1fff70c13a2f787927881",
+      "readback_sha256": "50f70118dacdbda1428bef6fd5f3b02e8428c22fda517589c11202361eb808d9"
+    },
+    {
+      "case": "packed04",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ]
+      ],
+      "alias_indices": [
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v5",
+        "v_pk_mad_i16 v7, v4, v7, v6 op_sel:[0,1,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v6",
+        "v_pk_mad_i16 v8, v4, v5, v8 op_sel:[0,1,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_mad_i16 v9, v9, v5, v6 op_sel:[0,1,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_mad_i16 v10, v4, v10, v6 op_sel:[0,1,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v6",
+        "v_pk_mad_i16 v11, v4, v5, v11 op_sel:[0,1,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v4",
+        "v_pk_mad_i16 v12, v12, v5, v6 op_sel:[0,1,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v5",
+        "v_pk_mad_i16 v13, v4, v13, v6 op_sel:[0,1,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v6",
+        "v_pk_mad_i16 v14, v4, v5, v14 op_sel:[0,1,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0305",
+        "cc001007",
+        "041a0f04",
+        "7e100306",
+        "cc001008",
+        "0c220b04",
+        "7e120304",
+        "cc001009",
+        "141a0b09",
+        "7e140305",
+        "cc00100a",
+        "1c1a1504",
+        "7e160306",
+        "cc00500b",
+        "042e0b04",
+        "7e180304",
+        "cc00500c",
+        "0c1a0b0c",
+        "7e1a0305",
+        "cc00500d",
+        "141a1b04",
+        "7e1c0306",
+        "cc00500e",
+        "1c3a0b04",
+        "bf810000"
+      ],
+      "emitted_sha256": "2b5ea3edbb02b92e8fd5e31a58bc166e738baa322c3adecd118be4805bebeeb2",
+      "instrumented_sha256": "88caf3a93171310d71883f14145c405b2765f27cd7ab1bc49e253c5f41f7a3a6",
+      "dxil_sha256": "9d87b785d6737af4fde0d9407fae246f8eddc4938e195715708be3749a270faa",
+      "readback_sha256": "afa031f81306e20069c46d5a1de7cd91ee2323c75423260a32b7c3243fbb5897"
+    },
+    {
+      "case": "packed05",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_mad_i16 v7, v7, v5, v6 op_sel:[1,1,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_mad_i16 v8, v4, v8, v6 op_sel:[1,1,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v6",
+        "v_pk_mad_i16 v9, v4, v5, v9 op_sel:[1,1,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v4",
+        "v_pk_mad_i16 v10, v10, v5, v6 op_sel:[1,1,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v5",
+        "v_pk_mad_i16 v11, v4, v11, v6 op_sel:[1,1,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v6",
+        "v_pk_mad_i16 v12, v4, v5, v12 op_sel:[1,1,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_mad_i16 v13, v13, v5, v6 op_sel:[1,1,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_mad_i16 v14, v4, v14, v6 op_sel:[1,1,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc001807",
+        "041a0b07",
+        "7e100305",
+        "cc001808",
+        "0c1a1104",
+        "7e120306",
+        "cc001809",
+        "14260b04",
+        "7e140304",
+        "cc00180a",
+        "1c1a0b0a",
+        "7e160305",
+        "cc00580b",
+        "041a1704",
+        "7e180306",
+        "cc00580c",
+        "0c320b04",
+        "7e1a0304",
+        "cc00580d",
+        "141a0b0d",
+        "7e1c0305",
+        "cc00580e",
+        "1c1a1d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "db29ae8ac7bdf33bcf49c2c4990be950d53200999f7d2a7d5861593e02df69c9",
+      "instrumented_sha256": "4508f0207924bfde03b46846732cb9bc435be4413e844c23eb0511173b862841",
+      "dxil_sha256": "813666d1a10ddd3cbc6d8c3d413e6c08764287c09ade1140c2abc249f25561c9",
+      "readback_sha256": "64761242ba0aa7b495a2b7e0c598927d86dacfb437ecc6c7a35fd7c298b6f3a5"
+    },
+    {
+      "case": "packed06",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ]
+      ],
+      "alias_indices": [
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v6",
+        "v_pk_mad_i16 v7, v4, v5, v7 op_sel:[0,0,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v4",
+        "v_pk_mad_i16 v8, v8, v5, v6 op_sel:[0,0,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v5",
+        "v_pk_mad_i16 v9, v4, v9, v6 op_sel:[0,0,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v6",
+        "v_pk_mad_i16 v10, v4, v5, v10 op_sel:[0,0,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_mad_i16 v11, v11, v5, v6 op_sel:[0,0,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_mad_i16 v12, v4, v12, v6 op_sel:[0,0,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v6",
+        "v_pk_mad_i16 v13, v4, v5, v13 op_sel:[0,0,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v4",
+        "v_pk_mad_i16 v14, v14, v5, v6 op_sel:[0,0,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0306",
+        "cc002007",
+        "041e0b04",
+        "7e100304",
+        "cc002008",
+        "0c1a0b08",
+        "7e120305",
+        "cc002009",
+        "141a1304",
+        "7e140306",
+        "cc00200a",
+        "1c2a0b04",
+        "7e160304",
+        "cc00600b",
+        "041a0b0b",
+        "7e180305",
+        "cc00600c",
+        "0c1a1904",
+        "7e1a0306",
+        "cc00600d",
+        "14360b04",
+        "7e1c0304",
+        "cc00600e",
+        "1c1a0b0e",
+        "bf810000"
+      ],
+      "emitted_sha256": "52419a49bc22c72f76a560d6cb5a01cf1123c297dc62fd468ea5fdd31d9d334e",
+      "instrumented_sha256": "671a63dede6f3940761e35ae66a777e8d32297d2adc1cf153f3b4fec2809425c",
+      "dxil_sha256": "e3b4c3a47222c6c3172a34f7a3c58bcabcba696ab3b81759d99058f1fb5fb1e5",
+      "readback_sha256": "d1e3b6fac84e453187cc92b4b8ea88fc3f1d583297a18600a019c5c8b8005725"
+    },
+    {
+      "case": "packed07",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          5,
+          0
+        ],
+        [
+          5,
+          1
+        ],
+        [
+          5,
+          2
+        ],
+        [
+          5,
+          3
+        ],
+        [
+          5,
+          4
+        ],
+        [
+          5,
+          5
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          7
+        ]
+      ],
+      "alias_indices": [
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v5",
+        "v_pk_mad_i16 v7, v4, v7, v6 op_sel:[1,0,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v6",
+        "v_pk_mad_i16 v8, v4, v5, v8 op_sel:[1,0,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_mad_i16 v9, v9, v5, v6 op_sel:[1,0,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_mad_i16 v10, v4, v10, v6 op_sel:[1,0,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v6",
+        "v_pk_mad_i16 v11, v4, v5, v11 op_sel:[1,0,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v4",
+        "v_pk_mad_i16 v12, v12, v5, v6 op_sel:[1,0,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v5",
+        "v_pk_mad_i16 v13, v4, v13, v6 op_sel:[1,0,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v6",
+        "v_pk_mad_i16 v14, v4, v5, v14 op_sel:[1,0,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0305",
+        "cc002807",
+        "041a0f04",
+        "7e100306",
+        "cc002808",
+        "0c220b04",
+        "7e120304",
+        "cc002809",
+        "141a0b09",
+        "7e140305",
+        "cc00280a",
+        "1c1a1504",
+        "7e160306",
+        "cc00680b",
+        "042e0b04",
+        "7e180304",
+        "cc00680c",
+        "0c1a0b0c",
+        "7e1a0305",
+        "cc00680d",
+        "141a1b04",
+        "7e1c0306",
+        "cc00680e",
+        "1c3a0b04",
+        "bf810000"
+      ],
+      "emitted_sha256": "e1551ec4e104a82ad1abe50197fd255168375633c059ec844791c819a36a4072",
+      "instrumented_sha256": "a3e6108d00b735eb6c94e6342abf740d20fc5702e0fc85a6a90c1f1ba9bdd98d",
+      "dxil_sha256": "ca977c833ee5eef369470857e7b295358c9f0360c396d46d1ea30802abf1785b",
+      "readback_sha256": "bb741221e20469bf9416af6f1f5f5dafcb12bd90aa89b7e86300477b890dc7b7"
+    },
+    {
+      "case": "packed08",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          6,
+          3
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          6,
+          5
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_mad_i16 v7, v7, v5, v6 op_sel:[0,1,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_mad_i16 v8, v4, v8, v6 op_sel:[0,1,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v6",
+        "v_pk_mad_i16 v9, v4, v5, v9 op_sel:[0,1,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v4",
+        "v_pk_mad_i16 v10, v10, v5, v6 op_sel:[0,1,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v5",
+        "v_pk_mad_i16 v11, v4, v11, v6 op_sel:[0,1,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v6",
+        "v_pk_mad_i16 v12, v4, v5, v12 op_sel:[0,1,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_mad_i16 v13, v13, v5, v6 op_sel:[0,1,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_mad_i16 v14, v4, v14, v6 op_sel:[0,1,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc003007",
+        "041a0b07",
+        "7e100305",
+        "cc003008",
+        "0c1a1104",
+        "7e120306",
+        "cc003009",
+        "14260b04",
+        "7e140304",
+        "cc00300a",
+        "1c1a0b0a",
+        "7e160305",
+        "cc00700b",
+        "041a1704",
+        "7e180306",
+        "cc00700c",
+        "0c320b04",
+        "7e1a0304",
+        "cc00700d",
+        "141a0b0d",
+        "7e1c0305",
+        "cc00700e",
+        "1c1a1d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "d42c8f45f2a97caef5c898660359beba067cd23d79d3e532da72f40e0cd3cba1",
+      "instrumented_sha256": "68d5a00ae0d4cb7d4b763b39575193eb7528feedaf47d3c9161387ed215bd8ca",
+      "dxil_sha256": "b3080e1ef14bf7e8a552143af7603b238c14758e4e58118560db25af8a0a84fd",
+      "readback_sha256": "6ca6708e7f9cff29f681d29a3427a9b6aeabff64be896714348b8a62fb304040"
+    },
+    {
+      "case": "packed09",
+      "opcode": "v_pk_mad_i16",
+      "selectors": [
+        [
+          7,
+          0
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          2
+        ],
+        [
+          7,
+          3
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          5
+        ],
+        [
+          7,
+          6
+        ],
+        [
+          7,
+          7
+        ]
+      ],
+      "alias_indices": [
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v6",
+        "v_pk_mad_i16 v7, v4, v5, v7 op_sel:[1,1,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v4",
+        "v_pk_mad_i16 v8, v8, v5, v6 op_sel:[1,1,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v5",
+        "v_pk_mad_i16 v9, v4, v9, v6 op_sel:[1,1,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v6",
+        "v_pk_mad_i16 v10, v4, v5, v10 op_sel:[1,1,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_mad_i16 v11, v11, v5, v6 op_sel:[1,1,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_mad_i16 v12, v4, v12, v6 op_sel:[1,1,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v6",
+        "v_pk_mad_i16 v13, v4, v5, v13 op_sel:[1,1,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v4",
+        "v_pk_mad_i16 v14, v14, v5, v6 op_sel:[1,1,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0306",
+        "cc003807",
+        "041e0b04",
+        "7e100304",
+        "cc003808",
+        "0c1a0b08",
+        "7e120305",
+        "cc003809",
+        "141a1304",
+        "7e140306",
+        "cc00380a",
+        "1c2a0b04",
+        "7e160304",
+        "cc00780b",
+        "041a0b0b",
+        "7e180305",
+        "cc00780c",
+        "0c1a1904",
+        "7e1a0306",
+        "cc00780d",
+        "14360b04",
+        "7e1c0304",
+        "cc00780e",
+        "1c1a0b0e",
+        "bf810000"
+      ],
+      "emitted_sha256": "f3e8dc6ac00310fae591e5d54320d7b0fadf201741dbe9897152da50f4bc3ac7",
+      "instrumented_sha256": "b2956a433e53f52d332cc49bf18cc34144f5bffcbadc16642f1284b6022b69cb",
+      "dxil_sha256": "44c6c12ef4581378509259a99d874f930ff8b8bfed9e71dfa207c814d4fe961a",
+      "readback_sha256": "64181f010f49bbcc77b839b39dde5243d23050c21bf3bef1f384cf3b4af3df48"
+    },
+    {
+      "case": "packed10",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          0,
+          6
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_mad_u16 v7, v7, v5, v6 op_sel:[0,0,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_mad_u16 v8, v4, v8, v6 op_sel:[0,0,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v6",
+        "v_pk_mad_u16 v9, v4, v5, v9 op_sel:[0,0,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v4",
+        "v_pk_mad_u16 v10, v10, v5, v6 op_sel:[0,0,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v5",
+        "v_pk_mad_u16 v11, v4, v11, v6 op_sel:[0,0,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v6",
+        "v_pk_mad_u16 v12, v4, v5, v12 op_sel:[0,0,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_mad_u16 v13, v13, v5, v6 op_sel:[0,0,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_mad_u16 v14, v4, v14, v6 op_sel:[0,0,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc090007",
+        "041a0b07",
+        "7e100305",
+        "cc090008",
+        "0c1a1104",
+        "7e120306",
+        "cc090009",
+        "14260b04",
+        "7e140304",
+        "cc09000a",
+        "1c1a0b0a",
+        "7e160305",
+        "cc09400b",
+        "041a1704",
+        "7e180306",
+        "cc09400c",
+        "0c320b04",
+        "7e1a0304",
+        "cc09400d",
+        "141a0b0d",
+        "7e1c0305",
+        "cc09400e",
+        "1c1a1d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "5f9a663c8b7307a9619a463c76fa6e0949282d5fd1429f78b523ded47ceeb09b",
+      "instrumented_sha256": "775fb23e73a04c8b2563bf071bd7ff0debb122268002e3c7bcc514ff4bc2fd39",
+      "dxil_sha256": "b0e06d36ba82b51d73a870dbb53124af291b82a5b1ce2d5ab3f5e8d676f65ae5",
+      "readback_sha256": "562fb81b917bcf5f1c6f151c13ee29563d686dcdd8e50f6c5b62c6f2a08bedd3"
+    },
+    {
+      "case": "packed11",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ]
+      ],
+      "alias_indices": [
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v6",
+        "v_pk_mad_u16 v7, v4, v5, v7 op_sel:[1,0,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v4",
+        "v_pk_mad_u16 v8, v8, v5, v6 op_sel:[1,0,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v5",
+        "v_pk_mad_u16 v9, v4, v9, v6 op_sel:[1,0,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v6",
+        "v_pk_mad_u16 v10, v4, v5, v10 op_sel:[1,0,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_mad_u16 v11, v11, v5, v6 op_sel:[1,0,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_mad_u16 v12, v4, v12, v6 op_sel:[1,0,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v6",
+        "v_pk_mad_u16 v13, v4, v5, v13 op_sel:[1,0,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v4",
+        "v_pk_mad_u16 v14, v14, v5, v6 op_sel:[1,0,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0306",
+        "cc090807",
+        "041e0b04",
+        "7e100304",
+        "cc090808",
+        "0c1a0b08",
+        "7e120305",
+        "cc090809",
+        "141a1304",
+        "7e140306",
+        "cc09080a",
+        "1c2a0b04",
+        "7e160304",
+        "cc09480b",
+        "041a0b0b",
+        "7e180305",
+        "cc09480c",
+        "0c1a1904",
+        "7e1a0306",
+        "cc09480d",
+        "14360b04",
+        "7e1c0304",
+        "cc09480e",
+        "1c1a0b0e",
+        "bf810000"
+      ],
+      "emitted_sha256": "017729fdaa157be2396da1b724c8cc0a013591b5482a632fc024efe9e4da8544",
+      "instrumented_sha256": "db257384b81bf5c85682e5057796d0f93c782f7ad4e405168c4f1e2e1a8edc58",
+      "dxil_sha256": "2be445f5469e5a952c43e1c109d0677bc60589dd4fe1fff70c13a2f787927881",
+      "readback_sha256": "63ff6919463ad3b55cb31359efb08a6e56b1f5bb9b700d43cd74f2ea3bceb729"
+    },
+    {
+      "case": "packed12",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ]
+      ],
+      "alias_indices": [
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v5",
+        "v_pk_mad_u16 v7, v4, v7, v6 op_sel:[0,1,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v6",
+        "v_pk_mad_u16 v8, v4, v5, v8 op_sel:[0,1,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_mad_u16 v9, v9, v5, v6 op_sel:[0,1,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_mad_u16 v10, v4, v10, v6 op_sel:[0,1,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v6",
+        "v_pk_mad_u16 v11, v4, v5, v11 op_sel:[0,1,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v4",
+        "v_pk_mad_u16 v12, v12, v5, v6 op_sel:[0,1,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v5",
+        "v_pk_mad_u16 v13, v4, v13, v6 op_sel:[0,1,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v6",
+        "v_pk_mad_u16 v14, v4, v5, v14 op_sel:[0,1,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0305",
+        "cc091007",
+        "041a0f04",
+        "7e100306",
+        "cc091008",
+        "0c220b04",
+        "7e120304",
+        "cc091009",
+        "141a0b09",
+        "7e140305",
+        "cc09100a",
+        "1c1a1504",
+        "7e160306",
+        "cc09500b",
+        "042e0b04",
+        "7e180304",
+        "cc09500c",
+        "0c1a0b0c",
+        "7e1a0305",
+        "cc09500d",
+        "141a1b04",
+        "7e1c0306",
+        "cc09500e",
+        "1c3a0b04",
+        "bf810000"
+      ],
+      "emitted_sha256": "fa70ae367514fac27d1e4bbc175e35948fd8144309461c185833c5dae6dd1b08",
+      "instrumented_sha256": "bdf2e4f246bec6598b8e8d5e4713d5cc00b74e821985328315131231946195db",
+      "dxil_sha256": "9d87b785d6737af4fde0d9407fae246f8eddc4938e195715708be3749a270faa",
+      "readback_sha256": "59b4ad33d3ca79575f3645c5b69aa49d7743be1a89fd23ffcfaf4e0280d549d1"
+    },
+    {
+      "case": "packed13",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_mad_u16 v7, v7, v5, v6 op_sel:[1,1,0] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_mad_u16 v8, v4, v8, v6 op_sel:[1,1,0] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v6",
+        "v_pk_mad_u16 v9, v4, v5, v9 op_sel:[1,1,0] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v4",
+        "v_pk_mad_u16 v10, v10, v5, v6 op_sel:[1,1,0] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v5",
+        "v_pk_mad_u16 v11, v4, v11, v6 op_sel:[1,1,0] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v6",
+        "v_pk_mad_u16 v12, v4, v5, v12 op_sel:[1,1,0] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_mad_u16 v13, v13, v5, v6 op_sel:[1,1,0] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_mad_u16 v14, v4, v14, v6 op_sel:[1,1,0] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc091807",
+        "041a0b07",
+        "7e100305",
+        "cc091808",
+        "0c1a1104",
+        "7e120306",
+        "cc091809",
+        "14260b04",
+        "7e140304",
+        "cc09180a",
+        "1c1a0b0a",
+        "7e160305",
+        "cc09580b",
+        "041a1704",
+        "7e180306",
+        "cc09580c",
+        "0c320b04",
+        "7e1a0304",
+        "cc09580d",
+        "141a0b0d",
+        "7e1c0305",
+        "cc09580e",
+        "1c1a1d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "4ba09881b73036779f5fd8127b011c7670468e56c99531e930c796c9b55ab92b",
+      "instrumented_sha256": "3f033d6d3c2d4704ecab5333304ef35e8058115f4daab7fea33c0de1fb7f9e34",
+      "dxil_sha256": "813666d1a10ddd3cbc6d8c3d413e6c08764287c09ade1140c2abc249f25561c9",
+      "readback_sha256": "c492fbd6e669aed3c38ca56875b2f7509bd30054c2847a2407695dbcaafcc811"
+    },
+    {
+      "case": "packed14",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ]
+      ],
+      "alias_indices": [
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v6",
+        "v_pk_mad_u16 v7, v4, v5, v7 op_sel:[0,0,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v4",
+        "v_pk_mad_u16 v8, v8, v5, v6 op_sel:[0,0,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v5",
+        "v_pk_mad_u16 v9, v4, v9, v6 op_sel:[0,0,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v6",
+        "v_pk_mad_u16 v10, v4, v5, v10 op_sel:[0,0,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_mad_u16 v11, v11, v5, v6 op_sel:[0,0,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_mad_u16 v12, v4, v12, v6 op_sel:[0,0,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v6",
+        "v_pk_mad_u16 v13, v4, v5, v13 op_sel:[0,0,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v4",
+        "v_pk_mad_u16 v14, v14, v5, v6 op_sel:[0,0,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0306",
+        "cc092007",
+        "041e0b04",
+        "7e100304",
+        "cc092008",
+        "0c1a0b08",
+        "7e120305",
+        "cc092009",
+        "141a1304",
+        "7e140306",
+        "cc09200a",
+        "1c2a0b04",
+        "7e160304",
+        "cc09600b",
+        "041a0b0b",
+        "7e180305",
+        "cc09600c",
+        "0c1a1904",
+        "7e1a0306",
+        "cc09600d",
+        "14360b04",
+        "7e1c0304",
+        "cc09600e",
+        "1c1a0b0e",
+        "bf810000"
+      ],
+      "emitted_sha256": "4d74b32bff1909857aa6f74cb5133aaf9412da04373ca2c60accbecb8964bb66",
+      "instrumented_sha256": "e8b299077fc83f220c202289b434793ea7d850a897bc8d2c38e9001cfd445f72",
+      "dxil_sha256": "e3b4c3a47222c6c3172a34f7a3c58bcabcba696ab3b81759d99058f1fb5fb1e5",
+      "readback_sha256": "4276a936f3649c11cba2fbb726a5dcef8511ef87f49045a9ea4e8efec6c27482"
+    },
+    {
+      "case": "packed15",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          5,
+          0
+        ],
+        [
+          5,
+          1
+        ],
+        [
+          5,
+          2
+        ],
+        [
+          5,
+          3
+        ],
+        [
+          5,
+          4
+        ],
+        [
+          5,
+          5
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          7
+        ]
+      ],
+      "alias_indices": [
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v5",
+        "v_pk_mad_u16 v7, v4, v7, v6 op_sel:[1,0,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v6",
+        "v_pk_mad_u16 v8, v4, v5, v8 op_sel:[1,0,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_mad_u16 v9, v9, v5, v6 op_sel:[1,0,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_mad_u16 v10, v4, v10, v6 op_sel:[1,0,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v6",
+        "v_pk_mad_u16 v11, v4, v5, v11 op_sel:[1,0,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v4",
+        "v_pk_mad_u16 v12, v12, v5, v6 op_sel:[1,0,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v5",
+        "v_pk_mad_u16 v13, v4, v13, v6 op_sel:[1,0,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v6",
+        "v_pk_mad_u16 v14, v4, v5, v14 op_sel:[1,0,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0305",
+        "cc092807",
+        "041a0f04",
+        "7e100306",
+        "cc092808",
+        "0c220b04",
+        "7e120304",
+        "cc092809",
+        "141a0b09",
+        "7e140305",
+        "cc09280a",
+        "1c1a1504",
+        "7e160306",
+        "cc09680b",
+        "042e0b04",
+        "7e180304",
+        "cc09680c",
+        "0c1a0b0c",
+        "7e1a0305",
+        "cc09680d",
+        "141a1b04",
+        "7e1c0306",
+        "cc09680e",
+        "1c3a0b04",
+        "bf810000"
+      ],
+      "emitted_sha256": "161f23d9e5f1344f8024ededfc4370f7028f592a8df6e01837cfe5370d3cedeb",
+      "instrumented_sha256": "f93969cbed5f7fe0b8a172726d0fa215503455bd78678d231f08b91c7ce79eb3",
+      "dxil_sha256": "ca977c833ee5eef369470857e7b295358c9f0360c396d46d1ea30802abf1785b",
+      "readback_sha256": "19256b37635b32ebc5a626f8dd0ab991ff3da3ab65ad4db297c28d0909dc4b7b"
+    },
+    {
+      "case": "packed16",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          6,
+          3
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          6,
+          5
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_mad_u16 v7, v7, v5, v6 op_sel:[0,1,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_mad_u16 v8, v4, v8, v6 op_sel:[0,1,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v6",
+        "v_pk_mad_u16 v9, v4, v5, v9 op_sel:[0,1,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v4",
+        "v_pk_mad_u16 v10, v10, v5, v6 op_sel:[0,1,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v5",
+        "v_pk_mad_u16 v11, v4, v11, v6 op_sel:[0,1,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v6",
+        "v_pk_mad_u16 v12, v4, v5, v12 op_sel:[0,1,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_mad_u16 v13, v13, v5, v6 op_sel:[0,1,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_mad_u16 v14, v4, v14, v6 op_sel:[0,1,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc093007",
+        "041a0b07",
+        "7e100305",
+        "cc093008",
+        "0c1a1104",
+        "7e120306",
+        "cc093009",
+        "14260b04",
+        "7e140304",
+        "cc09300a",
+        "1c1a0b0a",
+        "7e160305",
+        "cc09700b",
+        "041a1704",
+        "7e180306",
+        "cc09700c",
+        "0c320b04",
+        "7e1a0304",
+        "cc09700d",
+        "141a0b0d",
+        "7e1c0305",
+        "cc09700e",
+        "1c1a1d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "61f7e4f0fa1b742d8a1c74a7f25fa76d656fd18ccbe883224e9a6c528daf8580",
+      "instrumented_sha256": "3b41f728bb5202481967dc1cb0911e237ddf36887d4e2ba0220b82a7409f5f2e",
+      "dxil_sha256": "b3080e1ef14bf7e8a552143af7603b238c14758e4e58118560db25af8a0a84fd",
+      "readback_sha256": "eba5141510652c505213d3c280f17a3f89f8b4e56c70982efb76524864dff5af"
+    },
+    {
+      "case": "packed17",
+      "opcode": "v_pk_mad_u16",
+      "selectors": [
+        [
+          7,
+          0
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          2
+        ],
+        [
+          7,
+          3
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          5
+        ],
+        [
+          7,
+          6
+        ],
+        [
+          7,
+          7
+        ]
+      ],
+      "alias_indices": [
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v6",
+        "v_pk_mad_u16 v7, v4, v5, v7 op_sel:[1,1,1] op_sel_hi:[0,0,0]",
+        "v_mov_b32_e32 v8, v4",
+        "v_pk_mad_u16 v8, v8, v5, v6 op_sel:[1,1,1] op_sel_hi:[1,0,0]",
+        "v_mov_b32_e32 v9, v5",
+        "v_pk_mad_u16 v9, v4, v9, v6 op_sel:[1,1,1] op_sel_hi:[0,1,0]",
+        "v_mov_b32_e32 v10, v6",
+        "v_pk_mad_u16 v10, v4, v5, v10 op_sel:[1,1,1] op_sel_hi:[1,1,0]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_mad_u16 v11, v11, v5, v6 op_sel:[1,1,1] op_sel_hi:[0,0,1]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_mad_u16 v12, v4, v12, v6 op_sel:[1,1,1] op_sel_hi:[1,0,1]",
+        "v_mov_b32_e32 v13, v6",
+        "v_pk_mad_u16 v13, v4, v5, v13 op_sel:[1,1,1] op_sel_hi:[0,1,1]",
+        "v_mov_b32_e32 v14, v4",
+        "v_pk_mad_u16 v14, v14, v5, v6 op_sel:[1,1,1] op_sel_hi:[1,1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0306",
+        "cc093807",
+        "041e0b04",
+        "7e100304",
+        "cc093808",
+        "0c1a0b08",
+        "7e120305",
+        "cc093809",
+        "141a1304",
+        "7e140306",
+        "cc09380a",
+        "1c2a0b04",
+        "7e160304",
+        "cc09780b",
+        "041a0b0b",
+        "7e180305",
+        "cc09780c",
+        "0c1a1904",
+        "7e1a0306",
+        "cc09780d",
+        "14360b04",
+        "7e1c0304",
+        "cc09780e",
+        "1c1a0b0e",
+        "bf810000"
+      ],
+      "emitted_sha256": "f63d648b8a114468782d2a5263ba9f476f90a410c814dab3f9a1716df4b11c73",
+      "instrumented_sha256": "7448e5f9091ffe71d9f037b05ed2f2026d31a1829ef8370152529d3056b894af",
+      "dxil_sha256": "44c6c12ef4581378509259a99d874f930ff8b8bfed9e71dfa207c814d4fe961a",
+      "readback_sha256": "4b5af56bbfdb499dd47271d766234cfa1f19c82abb81f4a32ec8baa0b146ff51"
+    },
+    {
+      "case": "packed18",
+      "opcode": "v_pk_max_u16",
+      "selectors": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_max_u16 v7, v7, v5 op_sel:[0,0] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_max_u16 v8, v4, v8 op_sel:[0,0] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_max_u16 v9, v9, v5 op_sel:[0,0] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_max_u16 v10, v4, v10 op_sel:[0,0] op_sel_hi:[1,1]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_max_u16 v11, v11, v5 op_sel:[1,0] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_max_u16 v12, v4, v12 op_sel:[1,0] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_max_u16 v13, v13, v5 op_sel:[1,0] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_max_u16 v14, v4, v14 op_sel:[1,0] op_sel_hi:[1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc0c4007",
+        "02020b07",
+        "7e100305",
+        "cc0c4008",
+        "0a021104",
+        "7e120304",
+        "cc0c4009",
+        "12020b09",
+        "7e140305",
+        "cc0c400a",
+        "1a021504",
+        "7e160304",
+        "cc0c480b",
+        "02020b0b",
+        "7e180305",
+        "cc0c480c",
+        "0a021904",
+        "7e1a0304",
+        "cc0c480d",
+        "12020b0d",
+        "7e1c0305",
+        "cc0c480e",
+        "1a021d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "3e0271a3e7d3a81da187a86ccffa678c9ef4cb2e9ba44aa99d6518c131e749ac",
+      "instrumented_sha256": "fd648928a916fe74ff3368f68443560d3c7b25c13e1b9c2e186358a44e5348c6",
+      "dxil_sha256": "8333cbf5dc9b71e30ab1017e6cede260bcce1cdfe54fcff6a1790f7ace4f5104",
+      "readback_sha256": "a7e41ff0f8f4256224944943e57c352be8c98270be833399cb3aa6bcd59e640e"
+    },
+    {
+      "case": "packed19",
+      "opcode": "v_pk_max_u16",
+      "selectors": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_max_u16 v7, v7, v5 op_sel:[0,1] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_max_u16 v8, v4, v8 op_sel:[0,1] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_max_u16 v9, v9, v5 op_sel:[0,1] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_max_u16 v10, v4, v10 op_sel:[0,1] op_sel_hi:[1,1]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_max_u16 v11, v11, v5 op_sel:[1,1] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_max_u16 v12, v4, v12 op_sel:[1,1] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_max_u16 v13, v13, v5 op_sel:[1,1] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_max_u16 v14, v4, v14 op_sel:[1,1] op_sel_hi:[1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc0c5007",
+        "02020b07",
+        "7e100305",
+        "cc0c5008",
+        "0a021104",
+        "7e120304",
+        "cc0c5009",
+        "12020b09",
+        "7e140305",
+        "cc0c500a",
+        "1a021504",
+        "7e160304",
+        "cc0c580b",
+        "02020b0b",
+        "7e180305",
+        "cc0c580c",
+        "0a021904",
+        "7e1a0304",
+        "cc0c580d",
+        "12020b0d",
+        "7e1c0305",
+        "cc0c580e",
+        "1a021d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "d01ce563d62ba331c67bebfc2b7ab7a41e3b30852c0b60db57d8d7447652dc6a",
+      "instrumented_sha256": "ac23b5accd7513b4fe4fff0937abbe5878f8b73dbed86c088fe0ccc3dace1ed2",
+      "dxil_sha256": "325a420458c966a60eb630a46982a7014342c0208cbddb0aba1c37972dc85daa",
+      "readback_sha256": "6733d3101aae3667c9cb7bdd01c3b16cc926dd9cd29f3c494e67d79e321d3eab"
+    },
+    {
+      "case": "packed20",
+      "opcode": "v_pk_min_u16",
+      "selectors": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_min_u16 v7, v7, v5 op_sel:[0,0] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_min_u16 v8, v4, v8 op_sel:[0,0] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_min_u16 v9, v9, v5 op_sel:[0,0] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_min_u16 v10, v4, v10 op_sel:[0,0] op_sel_hi:[1,1]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_min_u16 v11, v11, v5 op_sel:[1,0] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_min_u16 v12, v4, v12 op_sel:[1,0] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_min_u16 v13, v13, v5 op_sel:[1,0] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_min_u16 v14, v4, v14 op_sel:[1,0] op_sel_hi:[1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc0d4007",
+        "02020b07",
+        "7e100305",
+        "cc0d4008",
+        "0a021104",
+        "7e120304",
+        "cc0d4009",
+        "12020b09",
+        "7e140305",
+        "cc0d400a",
+        "1a021504",
+        "7e160304",
+        "cc0d480b",
+        "02020b0b",
+        "7e180305",
+        "cc0d480c",
+        "0a021904",
+        "7e1a0304",
+        "cc0d480d",
+        "12020b0d",
+        "7e1c0305",
+        "cc0d480e",
+        "1a021d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "be5e3811e62af16461abe50280b7526e8384741a397c8ebb6d09a1ff2941b2e7",
+      "instrumented_sha256": "dcf5052a515928df8934f1a3c597beaa6b6f7936005fe0fe827681e12f7e4f25",
+      "dxil_sha256": "262249a9b141fb6f76b2848027548548fdfe140f6187d662c730ffb5b2e817eb",
+      "readback_sha256": "fc4a54f2f2dd2503cb13fb10c3bf2d5d1bd2b420328d7d16868c7a58bb96e37a"
+    },
+    {
+      "case": "packed21",
+      "opcode": "v_pk_min_u16",
+      "selectors": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ]
+      ],
+      "alias_indices": [
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        0,
+        1
+      ],
+      "assembly": [
+        "v_mov_b32_e32 v4, 0x12345678",
+        "v_mov_b32_e32 v5, 0x23456789",
+        "v_mov_b32_e32 v6, 0x3456789a",
+        "v_mov_b32_e32 v7, v4",
+        "v_pk_min_u16 v7, v7, v5 op_sel:[0,1] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v8, v5",
+        "v_pk_min_u16 v8, v4, v8 op_sel:[0,1] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v9, v4",
+        "v_pk_min_u16 v9, v9, v5 op_sel:[0,1] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v10, v5",
+        "v_pk_min_u16 v10, v4, v10 op_sel:[0,1] op_sel_hi:[1,1]",
+        "v_mov_b32_e32 v11, v4",
+        "v_pk_min_u16 v11, v11, v5 op_sel:[1,1] op_sel_hi:[0,0]",
+        "v_mov_b32_e32 v12, v5",
+        "v_pk_min_u16 v12, v4, v12 op_sel:[1,1] op_sel_hi:[1,0]",
+        "v_mov_b32_e32 v13, v4",
+        "v_pk_min_u16 v13, v13, v5 op_sel:[1,1] op_sel_hi:[0,1]",
+        "v_mov_b32_e32 v14, v5",
+        "v_pk_min_u16 v14, v4, v14 op_sel:[1,1] op_sel_hi:[1,1]",
+        "s_endpgm"
+      ],
+      "native_words": [
+        "7e0802ff",
+        "12345678",
+        "7e0a02ff",
+        "23456789",
+        "7e0c02ff",
+        "3456789a",
+        "7e0e0304",
+        "cc0d5007",
+        "02020b07",
+        "7e100305",
+        "cc0d5008",
+        "0a021104",
+        "7e120304",
+        "cc0d5009",
+        "12020b09",
+        "7e140305",
+        "cc0d500a",
+        "1a021504",
+        "7e160304",
+        "cc0d580b",
+        "02020b0b",
+        "7e180305",
+        "cc0d580c",
+        "0a021904",
+        "7e1a0304",
+        "cc0d580d",
+        "12020b0d",
+        "7e1c0305",
+        "cc0d580e",
+        "1a021d04",
+        "bf810000"
+      ],
+      "emitted_sha256": "415aec1949509817202f9e94f916c7c94ee97f1eb3558f00ac51db82a6249542",
+      "instrumented_sha256": "1ca9bd8f53a3dabe16b9e2ef42d443f58d07dcdc20394b660fae9272e8330f9e",
+      "dxil_sha256": "fdfbabbd8479479fa970ccc53c52812968fdb81846073696628baa3d24d91880",
+      "readback_sha256": "64df79d36d11483076f4c60f00ba0ec8051089259022fed84f96c3dcf03bf7c1"
+    }
+  ],
+  "hardware": "AMD Radeon RX 6950 XT",
+  "test_date_utc": "2026-11-24"
+}

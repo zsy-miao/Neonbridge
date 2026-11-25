@@ -1,0 +1,220 @@
+//! Descriptor heap binding and compute/graphics root tables in the Xbox list.
+use super::{List, parent, recording};
+use crate::device;
+use core::{ffi::c_void, ptr, slice};
+use windows::Win32::Foundation::E_INVALIDARG;
+use windows::Win32::Graphics::Direct3D12::*;
+use windows::core::Interface;
+
+use core::ops::Range;
+
+pub(super) struct ResourceHeap {
+    pub(super) cpu: Range<usize>,
+    gpu: u64,
+    stride: usize,
+    /// Slots the identity map clamps to: the native heap's, whose last is
+    /// the null guard (device::identity_guard); 0 derives the title's count.
+    clamp: u32,
+    // The guest heap owns its descriptor arena and placed-view metadata.
+    guest: ID3D12Pageable,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub(super) struct ScalarDescriptor {
+    pub(super) index: u32,
+    pub(super) cpu: usize,
+}
+
+impl ResourceHeap {
+    pub(super) fn scalar_descriptor(
+        &self, index: u32, arena: Option<&device::descriptor_paging::Arena>,
+    ) -> Option<ScalarDescriptor> {
+        let offset = (index as usize).checked_mul(self.stride)?;
+        let cpu = if let Some(arena) = arena {
+            let logical = arena.base().checked_add(offset)?;
+            if !arena.contains(logical as u64) { return None; }
+            arena.cpu(logical).ptr
+        } else {
+            let handle = self.cpu.start.checked_add(offset)?;
+            if !self.cpu.contains(&handle) { return None; }
+            handle
+        };
+        Some(ScalarDescriptor { index, cpu })
+    }
+
+    /// Entries of the per-slot tables (view_formats, slot_views, view_marks)
+    /// of an unpaged heap: every slot an index can reach, so the null guard
+    /// slot the identity clamp lands on (ea11afd) is inside them too.
+    pub(super) fn table_slots(&self) -> u32 {
+        if self.clamp != 0 { self.clamp } else { (self.cpu.len() / self.table_stride().max(1)) as u32 }
+    }
+
+    pub(super) fn index_map(
+        &self, list: &List, arena: Option<&device::descriptor_paging::Arena>,
+        resources: &device::MediaResources,
+    ) -> windows::core::Result<u64> {
+        let parent = list.parent.as_ref().ok_or(E_INVALIDARG)?;
+        // All command list proxies own a reference to their creating Device.
+        let slots = if self.clamp != 0 { self.clamp } else if self.stride == 0 { 0 } else { u32::try_from(self.cpu.len() / self.stride).unwrap_or(0) };
+        let map = unsafe { device::descriptor_paging::index_map(parent, arena, slots)? };
+        let address = unsafe { map.GetGPUVirtualAddress() };
+        if address == 0 { return Err(E_INVALIDARG.into()); }
+        let mut held = resources.lock().unwrap_or_else(|e| e.into_inner());
+        // SetDescriptorHeaps and command-list Reset can precede GPU execution.
+        // The allocator keeps the map, shader-visible heap and its aliases alive.
+        for object in [&self.guest, &ID3D12Pageable::from(map)] {
+            if !held.contains(object) {
+                held.try_reserve(1).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+                held.push(object.clone());
+            }
+        }
+        Ok(address)
+    }
+
+    pub(super) fn table_stride(&self) -> usize { self.stride }
+    pub(super) fn gpu_start(&self) -> u64 { self.gpu }
+
+    pub(super) fn table(&self, base: u64, slots: &Range<u32>) -> Option<Range<usize>> {
+        let offset = usize::try_from(base.checked_sub(self.gpu)?).ok()?;
+        if self.stride == 0 || !offset.is_multiple_of(self.stride) { return None; }
+        let base = self.cpu.start.checked_add(offset)?;
+        let address = |slot: u32| base.checked_add((slot as usize).checked_mul(self.stride)?);
+        let range = address(slots.start)?..address(slots.end)?;
+        (range.end <= self.cpu.end).then_some(range)
+    }
+}
+
+/// Keep submitted ranges sorted and coalesced even if a table is rebound.
+pub(super) fn include_range(sampled: &mut Vec<Range<usize>>, range: Range<usize>) {
+    let first = sampled.partition_point(|prior| prior.end < range.start);
+    let count = sampled[first..].partition_point(|prior| prior.start <= range.end);
+    if count == 0 {
+        sampled.insert(first, range);
+    } else {
+        sampled[first].start = sampled[first].start.min(range.start);
+        sampled[first].end = sampled[first + count - 1].end.max(range.end);
+        sampled.drain(first + 1..first + count);
+    }
+}
+
+pub(super) unsafe extern "system" fn bind_heaps(
+    list: &List,
+    count: u32,
+    heaps: *const *mut c_void,
+) {
+    let mut state = recording(list);
+    if !state.ensure_open(&list.native) {
+        return;
+    }
+    if unsafe { list.native.GetType() } == D3D12_COMMAND_LIST_TYPE_COPY {
+        // A copy list has no descriptor heaps; the core runtime refuses the list.
+        static COPY: std::sync::Once = std::sync::Once::new();
+        crate::diagnostics::log_once(&COPY, || "dropped SetDescriptorHeaps on a copy list".into());
+        return;
+    }
+    if count > 2 || (count != 0 && heaps.is_null()) {
+        { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+        return;
+    }
+    let guest = if count == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(heaps, count as usize) }
+    };
+    let mut native = [ptr::null_mut(); 2];
+    let mut retained = [None, None];
+    let mut previous = None;
+    let mut resource_heap = None;
+    let mut descriptor_arena = None;
+    let mut sampler_heap = None;
+    for (index, &object) in guest.iter().enumerate() {
+        let Some(heap) = (unsafe { device::descriptor_heap(object, parent(&list.parent)) }) else {
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+            return;
+        };
+        let desc = &heap.state.desc;
+        if desc.Flags != D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE || previous == Some(desc.Type) {
+            { state.error = E_INVALIDARG; state.error_at = (file!(), line!()); }
+            return;
+        }
+        if let Some(views) = &heap.state.placed_views {
+            descriptor_arena = heap.state.arena.clone();
+            resource_heap = Some(ResourceHeap {
+                // descriptor_heap validated this guest pageable and its device.
+                guest: unsafe { ID3D12Pageable::from_raw_borrowed(&object) }.unwrap().clone(),
+                cpu: views.range.clone(),
+                gpu: unsafe { heap.native.GetGPUDescriptorHandleForHeapStart() }.ptr,
+                stride: views.range.len() / (unsafe { heap.native.GetDesc() }.NumDescriptors - device::root_tables::tail_len(&heap.native)
+                    - u32::from(heap.state.arena.is_none() && device::identity_guard(desc))).max(1) as usize,
+                clamp: if heap.state.arena.is_none() && device::identity_guard(desc) { unsafe { heap.native.GetDesc() }.NumDescriptors } else { 0 },
+            });
+        }
+        if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER
+            && let Ok(dev) = (|| { let mut d: Option<ID3D12Device> = None; unsafe { heap.native.GetDevice(&mut d) }?; d.ok_or(windows::core::Error::from(E_INVALIDARG)) })()
+        {
+            let stride = unsafe { dev.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER) };
+            sampler_heap = Some((unsafe { heap.native.GetGPUDescriptorHandleForHeapStart() }.ptr, u64::from(stride)));
+        }
+        previous = Some(desc.Type);
+        native[index] = heap.native.as_raw();
+        retained[index] = Some(heap.native.clone());
+    }
+    state.resource_heap = resource_heap;
+    state.sampler_heap = sampler_heap;
+    if let Some(arena) = &descriptor_arena
+        && !state.arena_leases.iter().any(|lease| std::sync::Arc::ptr_eq(lease.arena(), arena))
+    {
+        state.arena_leases.push(arena.lease());
+    }
+    state.descriptor_arena = descriptor_arena;
+    state.bindings.heaps(&retained[..count as usize]);
+    unsafe {
+        (list.native.vtable().SetDescriptorHeaps)(list.native.as_raw(), count, native.as_ptr())
+    };
+    state.bindings.rebind_views(&list.native);
+}
+
+pub(super) unsafe extern "system" fn table<const COMPUTE: bool>(
+    list: &List,
+    index: u32,
+    base: D3D12_GPU_DESCRIPTOR_HANDLE,
+) {
+    // TUXBOX_READ_SET_TABLES: the views a table shows are read at
+    // submission from the list's sampled heap ranges (read_set_heaps).
+    if crate::device::read_set_tables() {
+        recording(list).tables_bound = true;
+    } else {
+        super::note_read_all(list);
+    }
+    let mut state = recording(list);
+    if !state.can_record_for::<COMPUTE>(&list.native) {
+        return;
+    }
+    let logical = base;
+    let base = if let Some(arena) = &state.descriptor_arena && arena.contains(base.ptr) {
+        let Some(Some(length)) = state.bindings.paged_layout::<COMPUTE>().and_then(|t| t.get(index as usize)) else {
+            { state.error = windows::Win32::Foundation::E_NOTIMPL; state.error_at = (file!(), line!()); }
+            return;
+        };
+        // The selected PSO may supply a more precise descriptor layout.
+        // Defer reading guest records until draw or dispatch.
+        match arena.gpu_table(base.ptr, *length, &[], None) {
+            Ok(handle) => handle,
+            Err(error) if super::table_drop::enabled() && super::table_drop::exhausted(error.code()) => {
+                // No host table: keep the title's binding for draw-time
+                // resolution, and drop draws that would use it unresolved.
+                state.unresolved_tables.set(COMPUTE, index, true);
+                state.bindings.table::<COMPUTE>(index, logical, logical);
+                return;
+            }
+            Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
+        }
+    } else { base };
+    state.unresolved_tables.set(COMPUTE, index, false);
+    state.bindings.table::<COMPUTE>(index, base, logical);
+    if COMPUTE {
+        unsafe { list.native.SetComputeRootDescriptorTable(index, base) };
+    } else {
+        unsafe { list.native.SetGraphicsRootDescriptorTable(index, base) };
+    }
+}

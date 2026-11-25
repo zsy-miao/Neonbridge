@@ -1,0 +1,68 @@
+{
+  "title": "The Matrix Awakens, Xbox Series X|S, build 1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "date_utc": "2026-11-21",
+  "host": "Linux, Valve Proton Experimental 1793301796, NVIDIA GeForce RTX 4070 Ti SUPER (10de:2705)",
+  "configuration": "Same retail package and reduced-effects configuration in both runs. Authored film grain enabled. Nanite, Lumen, virtual shadows and ray tracing disabled. Audio disabled on the isolated X11 display. Keyboard Z selected Start Chase. Shader and pipeline caches persisted between runs.",
+  "user_engine_ini_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+  "previous_slot_84_stop": "shader-linked-chase.json",
+  "whole_copy_only": {
+    "provider_sha256": "164e84bc9f419d151957aecb51c7f445f423a876db4d729f8fbf15cdf1a4bd01",
+    "start_chase_input_utc": "2026-11-21T21:28:38Z",
+    "trace_sha256": "f395ab84b264def754363bf68e1aea22d60039fa985d3dbcbeaf0d0e0b34c4d2",
+    "launcher_log_sha256": "1318eb974175d034f22abc5fa08b2ff981f4f94fde4ad7826cda38d805b8ec32",
+    "first_slot_84": "recorded slot 84 CopyResource (dimension 1, 65536 x 1 x 1, 1 mips)",
+    "activated_layers_utc": {
+      "Chase_Global": "2026-11-21T21:28:39.631Z",
+      "Cine_00_Wakeup_0_Room": "2026-11-21T21:28:57.198Z",
+      "Cine_00_Wakeup_1_ConstructFurniture": "2026-11-21T21:30:03.463Z",
+      "Cine_00_Wakeup_2_ConstructBulletTime": "2026-11-21T21:30:35.804Z",
+      "Cine_00_Wakeup_3_ConstructMorph": "2026-11-21T21:32:12.925Z",
+      "Cine_00_Wakeup_3_ConstructMorphAnnie": "2026-11-21T21:33:12.149Z",
+      "CITY_VISTA": "2026-11-21T21:33:39.801Z",
+      "CITY_Lighting": "2026-11-21T21:33:39.801Z"
+    },
+    "exit_utc": "2026-11-21T21:35:34Z",
+    "exit_code": 1,
+    "seconds_after_selection": 416,
+    "result": "The game recorded a 64 KiB whole-buffer copy. The next stop was a placed-texture transition, shader read (0xc0) to COPY_DEST (0x400). Command-list Close returned E_NOTIMPL and Unreal exited."
+  },
+  "placed_copy_writeback": {
+    "provider_sha256": "bcbe6e2dc7c7feeef22122e221f47676233419c2d8b4eb865d53a5c74fc66c31",
+    "start_chase_input_utc": "2026-11-21T21:44:08Z",
+    "trace_sha256": "5b5e0e94a03ce93696b7647bda531768f5812d75adc41ca3a4e1ffe8d6e59791",
+    "launcher_log_sha256": "bbf53d319ab08192ec55d1738ee4d580d3a8ae7c26dc8c676a66975a46233b71",
+    "first_slot_84": "recorded slot 84 CopyResource (dimension 1, 781056 x 1 x 1, 1 mips)",
+    "activated_layers_utc": {
+      "Chase_Global": "2026-11-21T21:44:09.916Z",
+      "Cine_00_Wakeup_0_Room": "2026-11-21T21:44:27.276Z",
+      "Cine_00_Wakeup_1_ConstructFurniture": "2026-11-21T21:45:20.610Z",
+      "Cine_00_Wakeup_2_ConstructBulletTime": "2026-11-21T21:45:44.106Z",
+      "Cine_00_Wakeup_3_ConstructMorph": "2026-11-21T21:45:57.118Z",
+      "Cine_00_Wakeup_3_ConstructMorphAnnie": "2026-11-21T21:46:04.350Z",
+      "CITY_VISTA": "2026-11-21T21:46:13.267Z",
+      "CITY_Lighting": "2026-11-21T21:46:13.267Z",
+      "Cine_10_ChaseIntro_0_Corner": "2026-11-21T21:47:25.572Z",
+      "Chase_Gameplay_hero": "2026-11-21T21:47:29.570Z",
+      "Cine_10_ChaseIntro_1_Dialogue": "2026-11-21T21:48:41.500Z"
+    },
+    "end_utc": "2026-11-21T21:55:30Z",
+    "seconds_after_selection": 682,
+    "end_reason": "The test service reached its 720-second runtime limit. Unreal had not reported a fatal graphics error. At 21:55:26 the render thread reported a 6.4-second wait for pipeline creation.",
+    "screen_capture": "placed-copy-city.jpg",
+    "screen_capture_sha256": "d998753aa6dbd36648947d0f19a548d77bfb70c4a686c0633635eef10af29080",
+    "screen_capture_utc": "2026-11-21T21:49:38Z",
+    "observed": "Vehicles, street fixtures and partial building geometry were visible in the chase intro. Surfaces were missing or distorted. The dialogue scene continued rendering.",
+    "default_material_fallbacks": 27,
+    "material_examples": [
+      "M_Sidewalk_Corner_from_megascan",
+      "Kit_Freeway_A_Master",
+      "M_Freeway_Underside"
+    ]
+  },
+  "controlled_gpu_tests": [
+    "command-list-copy.json",
+    "command-list-copy-amd.json"
+  ],
+  "scope": "Layer activation and captured frames verify progress through the cinematic. Driving, shooting and the cause of missing geometry remain unverified."
+}

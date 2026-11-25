@@ -1,0 +1,63 @@
+{
+  "scope": "Packaged physics-field visualization. Original root signatures, stock Proton, and 1 MiB PE stack. Each dispatch was checked against independently constructed glyph records. The provided bounds leave the field illustration and line buffer inactive.",
+  "adapters": {
+    "AMD": "1002:13c0",
+    "NVIDIA": "10de:2705"
+  },
+  "dispatch": "One group. Screen variants use 8\u00d78\u00d71 threads. Vector volume variants use 4\u00d74\u00d74.",
+  "controls": [
+    "Empty dispatch bounds and no fields. The seeded counters and all output allocations stay unchanged.",
+    "One field and text capacity four, with allocation counter seeded at three. The counter records the full request and a single glyph fits.",
+    "One field and capacity 8192. All glyph code points, XY positions, packed colors and final counter checked. The first glyph starts at (6.25,25), columns advance 0.25, and the second row advances 0.5. Each literal has color 0xffffff00. The numeric count uses 0xffffff03. The other 16384-record structured buffer, unused slots, typed counters and texture pixels retain their input values."
+  ],
+  "entries": {
+    "2238": {
+      "field": "vector",
+      "glyphs_requested": 42,
+      "guest_sha256": "e6f0391edcd24dc2cdf19ee52e0079b237c45daaf62d5f286ee63c0b5adf63b0",
+      "portable_dxil_sha256": "f295c8d333f2d15692e5257f8f7ee04d359fd87f779ab3316e5ff1918708854b",
+      "wave64_reference_dxil_sha256": "dbdd3c649551013db1e9baa44b557f424e060e526e9ac4c5a85bd6a28cf9008e",
+      "full_glyph_buffer_sha256": "d81369a12cbec0068eaebf01ff262cd8c739bf306a556f2ce3d5a009b47eda7e"
+    },
+    "2240": {
+      "field": "integer",
+      "glyphs_requested": 58,
+      "guest_sha256": "2d36fc796c6a9db002f2945d1a78e4cf1c5f057c8cd23a7cfc41f528f33355f0",
+      "portable_dxil_sha256": "5a07cb0b129481a476c8bb91f92ef5cac0544e1572eb14cd42c399076e5148c6",
+      "wave64_reference_dxil_sha256": "cc03601957812e4458954d937d805391a18b43ff6706594fdc77fd2f7a849fe6",
+      "full_glyph_buffer_sha256": "78e8a42e81538af196920aabb419d1ae62ac1a1d3a8a88858809a4f76e05fa83"
+    },
+    "2241": {
+      "field": "scalar",
+      "glyphs_requested": 42,
+      "guest_sha256": "7c85fcd9b0bbaab300bfea9d9d4871ba0333937fa4eb2709b02993d08ec27a9f",
+      "portable_dxil_sha256": "266ed9b35b48feb847b5b5f79afebb049babb2e6e985c7dac85321c275c219b4",
+      "wave64_reference_dxil_sha256": "38f564de492aeee0b499a9e666a7e5ccebe332b7e3b60f88a4616744832b0614",
+      "full_glyph_buffer_sha256": "87980e1dc34e76e366389655573cafeafbf234b4dd7931fe03342fe1eefdd2a9"
+    },
+    "2242": {
+      "field": "integer",
+      "glyphs_requested": 58,
+      "guest_sha256": "9c0ed407b97fc36cd36e13d743693819ded12a174906fcc00de753c27bcce8ba",
+      "portable_dxil_sha256": "44b6bde4b040bb67d9870538323d0a80fe57fdfdedcbf7d33b3bd63af0762b4b",
+      "wave64_reference_dxil_sha256": "7bca4b53a6cee8350667e0dfb42c17d411ff7856108f36f3e8c8bb7f3ef6a52b",
+      "full_glyph_buffer_sha256": "78e8a42e81538af196920aabb419d1ae62ac1a1d3a8a88858809a4f76e05fa83"
+    },
+    "2243": {
+      "field": "scalar",
+      "glyphs_requested": 42,
+      "guest_sha256": "76a20976599464d9e5ecae5d7c4e897fadad8004b1b5e29b3688f09e8132d8ce",
+      "portable_dxil_sha256": "e39fdb08c5b0aa3d74dffd7b485b4ff482020c9dd2eebac0e93ca7f0d07b6716",
+      "wave64_reference_dxil_sha256": "1cb5a4fb090b3ac649fb93504b13679d118c93a6915fa1ce6bd980f30fd1f082",
+      "full_glyph_buffer_sha256": "87980e1dc34e76e366389655573cafeafbf234b4dd7931fe03342fe1eefdd2a9"
+    },
+    "2244": {
+      "field": "vector",
+      "glyphs_requested": 42,
+      "guest_sha256": "2d6654b6237422aa7638cb33fbd80bfaa1c9fcb9fb889a395fe631c88abab1f7",
+      "portable_dxil_sha256": "9ca8ef7b9038b0e56f9d45c7918b9cf4fbfd092b9a4a83005d40fc7ff3ac9160",
+      "wave64_reference_dxil_sha256": "e503c56f2c873e127e41896434431526e255e3cf3e0d2e26ab175c0a70e8856a",
+      "full_glyph_buffer_sha256": "d81369a12cbec0068eaebf01ff262cd8c739bf306a556f2ce3d5a009b47eda7e"
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "scope": "Experimental candidate-stage control only. CPU directory encoded by the runtime-source Rust encoder feeds a GPU procedural TLAS, raw leaf buffers and an incomplete shader 219 candidate helper. This does not execute whole 219 or attach anything to the provider.",
+  "probe": "python tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "runtime/d3d12/src/device/blas/sidecar_directory.rs": "f0d5eb0c9dd0312416a95e1973ee0710fded8bc824bcdd7afe5e908b7df2343c",
+    "tools/reference/blas/sidecar_fixture.rs": "37550f05473c2d76d6a88ef1a60915a29550426d10fe79b54a91d95d0fc48c93",
+    "tools/reference/blas/inline219_candidate.hlsl": "42c53a6a6b57f1d03b5b759b01d06858c0825f427054c81abc301cbae49f80a1",
+    "tools/reference/blas/inline219_probe.hlsl": "969e4a9d7e99f8554a743d007ca0e8715fb7b91a646c08d3fe4670bdb8372772",
+    "tools/reference/blas/zero_aabb_probe.h": "296feb2bd6d73525c3d34401af03f8749e281d78f4f2275a0d2967c6fe20aa4d",
+    "tools/reference/blas/zero_aabb.hlsl": "7f5524d7063f06d12102d1c1f77593d5644d7767b7eb9564dff76a180130553a",
+    "tools/reference/bvh-node/rtz_triangle.hlsl": "5802530c7cf61ae8f94372016fb8a1a5c603fc4172754033cfa2ab08f4eaa6d7",
+    "tools/check_frosty_blas.py": "b299881598978f4f5e5d375de452951050a1b79716890d4e2ff4ef74071e8bf1",
+    "tools/reference/blas/guest.cpp": "c77ed4834d2779fe3a0d732d421ecdc41667fe7d0c6acb85730f09196f826715"
+  },
+  "directory": "Version 1: 16-byte header; per-TLAS-instance 16-byte candidate ranges including disabled entries; 16-byte candidate entries map primitive index to an aligned 64-byte leaf and side. Root constants provide physical byte extents because root SRVs have no size.",
+  "reference": "procedural-triangle-candidates.json",
+  "assertions": [
+    "Valid synthetic candidates have the same commit status, instance, primitive, and numeric distance as the existing TRI0 fixture; positive and negative zero compare numerically equal and raw bits are recorded.",
+    "Conservatively unsupported miss numerics set status bit 4. This makes the whole result invalid for consumption; the harness uses a private output only to inspect candidate behavior.",
+    "An intentionally truncated 15-byte physical directory extent sets status bit 2 and commits no candidates."
+  ],
+  "limitations": [
+    "The candidate helper deliberately rejects ordinary misses as unsupported and does not implement full 219 control flow, native reciprocal precision, general hardware arithmetic or ray culling.",
+    "The Rust encoder and GPU helper are not linked to live provider dispatch or queue-ordered AS provenance.",
+    "GPU status is read only by the control after completion; in real command lists later commands could consume output before the CPU observes failure. This is not fail-closed for live dispatch.",
+    "Geometric bounds, transforms, sidecar ownership, descriptor association, aliasing, compaction, replay and cross-queue lifetimes are not established."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "40039b954d97f061de3c85a0868ffdffab0316c70a3fff9ad459a61479c6ebf4",
+      "status": "4",
+      "short_directory_status": "2",
+      "cases": {
+        "0": "1,2,80000000,00070000",
+        "1": "1,2,80000000,00070001",
+        "2": "1,2,80000000,00080000",
+        "3": "1,2,80000000,00070000",
+        "4": "1,0,00000000,00000000",
+        "5": "1,0,00000000,00000000",
+        "6": "1,2,80000000,00080001",
+        "7": "0,0,00000000,00000000",
+        "8": "1,2,3f800000,00070000",
+        "9": "0,0,00000000,00000000"
+      }
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "40039b954d97f061de3c85a0868ffdffab0316c70a3fff9ad459a61479c6ebf4",
+      "status": "4",
+      "short_directory_status": "2",
+      "cases": {
+        "0": "1,2,80000000,00070000",
+        "1": "1,2,80000000,00070001",
+        "2": "1,2,80000000,00080000",
+        "3": "1,2,80000000,00070000",
+        "4": "1,0,00000000,00000000",
+        "5": "1,0,00000000,00000000",
+        "6": "1,2,80000000,00080001",
+        "7": "0,0,00000000,00000000",
+        "8": "1,2,3f800000,00070000",
+        "9": "0,0,00000000,00000000"
+      }
+    }
+  }
+}

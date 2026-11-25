@@ -1,0 +1,50 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "date_utc": "2026-11-21",
+  "d3d12_xs_sha256": "124318ee0e4e070d595b4d8da913acc5ebd7e03e332470121f90b34ba94bf703",
+  "guest_sha256": "2be748cb187c8931997a1fbb1e8a43889c68d9c2a05738f352914059ccb89c17",
+  "reproduce": "python tuxbox.py verify --adapter 10de:2705 --only d3d12-copy-resource --output build/command-list-copy.json",
+  "texture": {
+    "format": "RGBA8_UNORM",
+    "width": 19,
+    "height": 13,
+    "mips": 4,
+    "array_layers": 2,
+    "guest_layout": "0x105"
+  },
+  "checks": [
+    "Whole-resource slot 84 copies transfer a patterned buffer and texture into complementary destinations. Both readbacks match every original byte and texel and preserve 64 leading and 512 trailing guard bytes.",
+    "Close rejects a nonzero option and a self-copy. Reset starts a valid recording after each error.",
+    "Two copies from the same guest texture observe different page contents committed after each Close and before submission.",
+    "A guest-backed texture transitions from shader read to COPY_DEST. A whole-resource copy writes it, and a second handle at the same address reads all eight subresources in the same list.",
+    "A CPU-controlled fence holds the writer queue. A second direct queue accepts an ordered alias read before the writer is released. Both GPU readbacks match, and the guest's completion fence exposes the tiled bytes to the CPU.",
+    "A later submission sees the prior GPU write. After the CPU edits the red bytes, another submission sees the edits. A two-texel region copy into slice 1, mip 1 preserves every other texel and the layout padding.",
+    "After the writer fence, a one-slice resource at the base address plus 8192 reads back all four mips of the second slice."
+  ],
+  "tiled_reference": {
+    "source": "Retail xg_xs.dll XGCreateTextureComputer",
+    "xg_xs_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+    "method": "Address-computer slot 6 returned the byte offset of every plane-0 texel. The reference inserted source RGBA bytes at those offsets in the initial allocation, then applied the CPU edits and the two replacement texels. The guest checks the entire allocation against each reference hash after its queue fence.",
+    "texel_offsets_checked": 630,
+    "allocation_bytes": 65536,
+    "initial_allocation_byte": "0x51",
+    "whole_copy_fnv1a64": "6df8e35207948235",
+    "after_cpu_edits_and_partial_copy_fnv1a64": "d5c14aecb150fb89"
+  },
+  "results": {
+    "pci": "10de:2705",
+    "slot": "84",
+    "buffer_bytes": "1028",
+    "texture_subresources": "8",
+    "nonzero_option": "E_NOTIMPL",
+    "self_copy": "E_INVALIDARG",
+    "source_and_destination": "verified",
+    "placed_uploads": "2",
+    "placed_dst": "verified",
+    "same_va_alias": "verified",
+    "cpu_writeback": "verified",
+    "partial_copy_texels": "2",
+    "overlap_mips": "4",
+    "pending_reader": "verified"
+  }
+}

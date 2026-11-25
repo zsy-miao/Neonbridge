@@ -1,0 +1,257 @@
+{
+  "probe": "Descriptor-table constant buffer, 192 u32 words per offset",
+  "source": "tools/reference/film-cbv/guest.cpp",
+  "offsets_bytes": [
+    0,
+    16,
+    32,
+    48,
+    64,
+    80,
+    96,
+    112,
+    128,
+    144,
+    160,
+    176,
+    192,
+    208,
+    224,
+    240
+  ],
+  "guest_sha256": "4fc3a5271d5d4ecf96022cb4a5430afd9a00b1954606d7397e59423ed3863d3f",
+  "tuxbox_d3d12_xs_sha256": "332f2f9b4fb85d04f7a7dfca3180c63b6d005db1381e24b6f03fd5d359dd10db",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "proton_upstream": "871b0bf1402dd9632a16495a2def7036161e771c",
+  "proton_fork": "9b0a6aef35352e5af40030ec043733c7c4fdc8d7",
+  "vkd3d_fork": "18dd7c1a4a327e3aa2b66ab40f9fa2627dc9b1ab",
+  "stock_dll_sha256": {
+    "d3d12.dll": "f728f7f04364b5761863428131317008f61b627d8335fcd8db9fd75715fc1278",
+    "d3d12core.dll": "5edbb1df81ce270e2263e4472e1dcddaeaccdd8624af561a00eea865926f3c40"
+  },
+  "component_build_dll_sha256": {
+    "d3d12.dll": "34bcf0f1efcc7fe4c0b0e4df21b6003ff4315fe8aa8e13486c0ece5641d95c2d",
+    "d3d12core.dll": "6ec74aef8938aff76c6248fd7f6039a25c3ace5462e172011d99e1e58579ef65"
+  },
+  "disabled_extensions": "VK_EXT_descriptor_buffer",
+  "vulkan_cbv_layer": false,
+  "adapters": {
+    "AMD": {
+      "adapter": "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+      "modes": {
+        "disabled": {
+          "guest_exit_code": 0,
+          "config": "",
+          "words_matching_by_offset": [
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192
+          ],
+          "matched_total": 3072
+        },
+        "enabled": {
+          "guest_exit_code": 0,
+          "config": "cbv_16_byte_alignment",
+          "words_matching_by_offset": [
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192
+          ],
+          "matched_total": 3072
+        },
+        "stock": {
+          "guest_exit_code": 0,
+          "config": "",
+          "words_matching_by_offset": [
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192
+          ],
+          "matched_total": 3072
+        }
+      },
+      "distribution_words_matching_by_offset": [
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192
+      ]
+    },
+    "NVIDIA": {
+      "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+      "modes": {
+        "disabled": {
+          "guest_exit_code": 1,
+          "config": "",
+          "words_matching_by_offset": [
+            192,
+            0,
+            0,
+            0,
+            192,
+            0,
+            0,
+            0,
+            192,
+            0,
+            0,
+            0,
+            192,
+            0,
+            0,
+            0
+          ],
+          "matched_total": 768
+        },
+        "enabled": {
+          "guest_exit_code": 0,
+          "config": "cbv_16_byte_alignment",
+          "words_matching_by_offset": [
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192,
+            192
+          ],
+          "matched_total": 3072
+        },
+        "stock": {
+          "guest_exit_code": 1,
+          "config": "",
+          "words_matching_by_offset": [
+            192,
+            0,
+            0,
+            0,
+            192,
+            0,
+            0,
+            0,
+            192,
+            0,
+            0,
+            0,
+            192,
+            0,
+            0,
+            0
+          ],
+          "matched_total": 768
+        }
+      },
+      "distribution_words_matching_by_offset": [
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192,
+        192
+      ]
+    }
+  },
+  "distribution": {
+    "version": "1795317580 experimental-11.0-20261027b-2-g9b0a6ae",
+    "dll_sha256": {
+      "d3d12.dll": "bced4b8e7ec5d80d4b3d21f2f97f0bbc36f236fc1979f85c626544e94b4863ec",
+      "d3d12core.dll": "d52f0780e69ead1e929e89471a671585eb5213d27f6bc10a0c29d16322c9e851"
+    },
+    "tuxbox_d3d12_xs_sha256": "9d0cfe6f6c2d16e7a041d22b427573e9751fe3f681a0711d61d0f5b376567c8d"
+  },
+  "frosty_menu": {
+    "proton": "1795317580 experimental-11.0-20261027b-2-g9b0a6ae",
+    "tuxbox_d3d12_xs_sha256": "9d0cfe6f6c2d16e7a041d22b427573e9751fe3f681a0711d61d0f5b376567c8d",
+    "xshader_sha256": "15bfaf05b812842abb36dc2f9a913005aea3cf1852dcf3df034db7e924855138",
+    "image": "proton-menu.jpg",
+    "rendered": [
+      "green code background",
+      "H.264 preview",
+      "Start Chase",
+      "Settings"
+    ],
+    "vkd3d_log": "Using storage buffers for 16-byte aligned descriptor-table CBVs.",
+    "mangohud": {
+      "frames": 3191,
+      "sampled_seconds": 97.394811151,
+      "mean_fps": 32.76355241402649,
+      "frametime_ms": {
+        "p50": 10.2932,
+        "p95": 14.6044,
+        "p99": 1000.45,
+        "max": 14720.2
+      }
+    },
+    "performance_scope": "Cold startup, logos and main menu on RTX 4070 Ti SUPER. Sample ends when the desktop test window closes."
+  }
+}

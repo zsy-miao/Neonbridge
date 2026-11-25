@@ -1,0 +1,46 @@
+{
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "c53f1973290caa837a0026664ff94347447db79e5b38d3768222429c90543110",
+  "guest_sha256": "f860e1405bf8d8c97a1722a4870ef6eae3a1b9ce7a2839d5ab69d805a9a2e526",
+  "source_shaders": {
+    "vertex": "a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e",
+    "geometry": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+    "pixel0": "554edb6efa21c2f093ff37ebf3f10cc5c54119edd93934f6cb86bc1af2827a47",
+    "vertex7": "90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98",
+    "pixel7": "c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95"
+  },
+  "runs": {
+    "offline": {
+      "guest": {
+        "pci": "10de:2705",
+        "geometry": "0",
+        "vertex": "0",
+        "wrong_pixel": "0"
+      }
+    },
+    "cold": {
+      "guest": {
+        "pci": "10de:2705",
+        "geometry": "1",
+        "vertex": "1",
+        "wrong_pixel": "0"
+      },
+      "host_compiles": 2,
+      "replies": 2
+    },
+    "warm": {
+      "guest": {
+        "pci": "10de:2705",
+        "geometry": "1",
+        "vertex": "1",
+        "wrong_pixel": "0"
+      },
+      "host_compiles": 0,
+      "replies": 2
+    }
+  },
+  "compiled_links": {
+    "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33_554edb6efa21c2f093ff37ebf3f10cc5c54119edd93934f6cb86bc1af2827a47_0469b9dcb32e1bd1aa1c4617646e17afb685c898ca52c6d00ed90e78040549d8": "8be5f61fd2b7fbfe95c59e7acd060644813dd967813f60a3e264a3d01aad6ef7",
+    "90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98_c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95_e53dd0215df9fcdf7c4aa4a5090e11fd0e9ca88f3b17946defafd721bdcac2de": "e42302973aea2997b2323a37e752bd6e80be955a9e192d27f1dc8fb0e015d1f3"
+  }
+}

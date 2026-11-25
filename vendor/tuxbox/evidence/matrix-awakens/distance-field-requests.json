@@ -1,0 +1,341 @@
+{
+  "scope": "Global entry 517 GenerateDistanceFieldAssetStreamingRequestsCS, dispatched with its original root signature. CPU controls verify changed, matching, zero and capacity-clipped requests across sparse, full and partial wave64 groups, including sentinel output guards.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 517,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "517": {
+          "source_sha256": "6869d870ed0f38ec07865036f93ad6bf77f0f542a84ed6b6fef70dc631aacbe3",
+          "dxil_sha256": "7698965d6f4d0742bc474d681f228719435a9448ce84b9b76e99c81743841a62"
+        }
+      },
+      "cases": {
+        "distance_empty": {
+          "selected": [],
+          "count": 64,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_zero_count": {
+          "selected": [],
+          "count": 0,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_zero_capacity": {
+          "selected": [
+            0,
+            2,
+            31,
+            32,
+            33,
+            63
+          ],
+          "count": 64,
+          "capacity": 0,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_sparse": {
+          "selected": [
+            0,
+            2,
+            31,
+            32,
+            33,
+            63
+          ],
+          "count": 64,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_partial": {
+          "selected": [
+            0,
+            2,
+            31,
+            32
+          ],
+          "count": 33,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_capacity": {
+          "selected": [
+            0,
+            2,
+            31,
+            32,
+            33,
+            63
+          ],
+          "count": 64,
+          "capacity": 6,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_full": {
+          "selected": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63
+          ],
+          "count": 64,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "517": {
+          "source_sha256": "6869d870ed0f38ec07865036f93ad6bf77f0f542a84ed6b6fef70dc631aacbe3",
+          "dxil_sha256": "7698965d6f4d0742bc474d681f228719435a9448ce84b9b76e99c81743841a62"
+        }
+      },
+      "cases": {
+        "distance_empty": {
+          "selected": [],
+          "count": 64,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_zero_count": {
+          "selected": [],
+          "count": 0,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_zero_capacity": {
+          "selected": [
+            0,
+            2,
+            31,
+            32,
+            33,
+            63
+          ],
+          "count": 64,
+          "capacity": 0,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_sparse": {
+          "selected": [
+            0,
+            2,
+            31,
+            32,
+            33,
+            63
+          ],
+          "count": 64,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_partial": {
+          "selected": [
+            0,
+            2,
+            31,
+            32
+          ],
+          "count": 33,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_capacity": {
+          "selected": [
+            0,
+            2,
+            31,
+            32,
+            33,
+            63
+          ],
+          "count": 64,
+          "capacity": 6,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "distance_full": {
+          "selected": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63
+          ],
+          "count": 64,
+          "capacity": 100,
+          "initial": 3,
+          "checked_words": 270,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

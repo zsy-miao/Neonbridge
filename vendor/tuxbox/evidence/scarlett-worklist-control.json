@@ -1,0 +1,399 @@
+{
+  "scope": "Public log ranking and synthetic native compiler/replay/regression workflow; no retail compilation or GPU",
+  "log": {
+    "url": "https://github.com/user-attachments/files/35319464/scarlett-3.log",
+    "sha256": "af81cbc62e027d9d74f102d9b418b66bf9ab38f73a693a895b62e529e2f6495d",
+    "totals": {
+      "refused": 836,
+      "refusal_events": 836
+    },
+    "groups": [
+      {
+        "rank": 1,
+        "reason": "wave reduction at 0x_ may execute in divergent control flow",
+        "opcode": null,
+        "count": 396,
+        "sampler_variants": []
+      },
+      {
+        "rank": 2,
+        "reason": "mimg at 0x_: sN not a sampler descriptor (Some(InlineWord(N))) words [0x_, 0x_, 0x_, 0x_]",
+        "opcode": null,
+        "count": 393,
+        "sampler_variants": [
+          {
+            "words": [
+              "0x30b6",
+              "0xc00000",
+              "0x18500000",
+              "0x80000000"
+            ],
+            "count": 206
+          },
+          {
+            "words": [
+              "0x92",
+              "0xc00000",
+              "0x14500000",
+              "0x0"
+            ],
+            "count": 166
+          },
+          {
+            "words": [
+              "0x0",
+              "0xc00000",
+              "0x14000000",
+              "0x0"
+            ],
+            "count": 8
+          },
+          {
+            "words": [
+              "0x92",
+              "0xc00000",
+              "0x14000000",
+              "0x0"
+            ],
+            "count": 6
+          },
+          {
+            "words": [
+              "0x400",
+              "0xc00000",
+              "0x18f00000",
+              "0x0"
+            ],
+            "count": 5
+          },
+          {
+            "words": [
+              "0x92",
+              "0xc00000",
+              "0x18500000",
+              "0x0"
+            ],
+            "count": 2
+          }
+        ]
+      },
+      {
+        "rank": 3,
+        "reason": "raw buffer IDXEN needs the console descriptor stride",
+        "opcode": "buffer_load_dword",
+        "count": 43,
+        "sampler_variants": []
+      },
+      {
+        "rank": 4,
+        "reason": "image atomic requires a verified two-word binding for DMASK=N or DMASK=N for one word",
+        "opcode": "image_atomic_umax",
+        "count": 2,
+        "sampler_variants": []
+      },
+      {
+        "rank": 5,
+        "reason": "unknown two-word visibility atomic",
+        "opcode": "image_atomic_umax",
+        "count": 2,
+        "sampler_variants": []
+      }
+    ],
+    "largest_selection": 396,
+    "missing_local_inputs_refused": true
+  },
+  "synthetic": {
+    "paired": {
+      "scope": "CPU-only production compiler pipeline; no rendering or retail gameplay claim",
+      "tool_sha256": {
+        "baseline": "ca5a4c854e514f1dbee3773269e22f484284d9aafc13034829bff059e42c56ed",
+        "candidate": "7726eac09fa2bffb4f15bcaebfdf8cabb36bda3d22259abcb84fd44c18002fa7",
+        "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+        "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+      },
+      "requests": 9,
+      "before": {
+        "compiled": 2,
+        "refused": 6,
+        "failed": 1
+      },
+      "after": {
+        "compiled": 5,
+        "refused": 3,
+        "failed": 1
+      },
+      "recovered": 3,
+      "regressed": 0,
+      "candidate_failures_after_success": 0,
+      "inconclusive": 1,
+      "transitions": {
+        "compiled": {
+          "compiled": 2,
+          "refused": 0,
+          "failed": 0
+        },
+        "refused": {
+          "compiled": 3,
+          "refused": 3,
+          "failed": 0
+        },
+        "failed": {
+          "compiled": 0,
+          "refused": 0,
+          "failed": 1
+        }
+      },
+      "rows": [
+        {
+          "request": "120a8dc0cb7a01d36a7714d9ff311a0965b63182859b4160ac9c5f6028480c74.dxbc",
+          "before": {
+            "status": "failed",
+            "reason": "xshader failed (N): invalid DXBC magic"
+          },
+          "after": {
+            "status": "failed",
+            "reason": "xshader failed (N): invalid DXBC magic"
+          }
+        },
+        {
+          "request": "13b94d7847cbe15287909637a1481e4cfebf67182a0778d601f2a3faeabf5c34.dxbc",
+          "before": {
+            "status": "refused",
+            "reason": "wave reduction at 0x_ may execute in divergent control flow",
+            "opcode": null,
+            "sampler_words": null
+          },
+          "after": {
+            "status": "refused",
+            "reason": "wave reduction at 0x_ may execute in divergent control flow",
+            "opcode": null,
+            "sampler_words": null
+          }
+        },
+        {
+          "request": "374ae63627d5885b0e410dd844d8befc1bde5a8d834b707c14f23ffeae5f29c5.dxbc",
+          "before": {
+            "status": "refused",
+            "reason": "mubuf at 0x_: sN not a buffer descriptor (Some(Table(N)))",
+            "opcode": null,
+            "sampler_words": null
+          },
+          "after": {
+            "status": "refused",
+            "reason": "mubuf at 0x_: sN not a buffer descriptor (Some(Table(N)))",
+            "opcode": null,
+            "sampler_words": null
+          }
+        },
+        {
+          "request": "43e81166724f81a23617afbb679ebbe1c949e0555f5990a0dd78c00e09322c66.dxbc",
+          "before": {
+            "status": "refused",
+            "reason": "wave reduction at 0x_ may execute in divergent control flow",
+            "opcode": null,
+            "sampler_words": null
+          },
+          "after": {
+            "status": "refused",
+            "reason": "wave reduction at 0x_ may execute in divergent control flow",
+            "opcode": null,
+            "sampler_words": null
+          }
+        },
+        {
+          "request": "54a089f42222b207fc1e697e3e7ae6611740a5ef4c4734b2b463be5279666ded.dxbc",
+          "before": {
+            "status": "compiled",
+            "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+          },
+          "after": {
+            "status": "compiled",
+            "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+          }
+        },
+        {
+          "request": "58951bc312f6db1a061db1e07b0415ebbe48f50ff7625a35c638021a4b74ad51.dxbc",
+          "before": {
+            "status": "refused",
+            "reason": "wave reduction at 0x_ may execute in divergent control flow",
+            "opcode": null,
+            "sampler_words": null
+          },
+          "after": {
+            "status": "compiled",
+            "dxil_sha256": "e4f9716f1824e6ca6a8431c948b00b5741dd88c97052d17872881716b57f493e"
+          }
+        },
+        {
+          "request": "74d8b54d340fe249048ac0cf27801e05a7db49ac6630407cba3af5e775bea25c.dxbc",
+          "before": {
+            "status": "refused",
+            "reason": "raw buffer IDXEN needs the console descriptor stride",
+            "opcode": "buffer_load_dwordx4",
+            "sampler_words": null
+          },
+          "after": {
+            "status": "compiled",
+            "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+          }
+        },
+        {
+          "request": "a71ea29974c7532b6b3f903661dea49eeb1d9085510ceeb2eadc9492addf5f09.dxbc",
+          "before": {
+            "status": "compiled",
+            "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+          },
+          "after": {
+            "status": "compiled",
+            "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+          }
+        },
+        {
+          "request": "d225324589cae5aba2e46650279eae56c9eea0c7f9908979629156bd73447d14.dxbc",
+          "before": {
+            "status": "refused",
+            "reason": "wave reduction at 0x_ may execute in divergent control flow",
+            "opcode": null,
+            "sampler_words": null
+          },
+          "after": {
+            "status": "compiled",
+            "dxil_sha256": "eba6a2dc40415aca43924b57a026467b41f732db5ea7ccb1a7fc7e17a4795a60"
+          }
+        }
+      ],
+      "expectation_mismatches": []
+    },
+    "worklist": {
+      "schema": 1,
+      "mode": "paired",
+      "scope": "Same-request compilation outcomes, not rendering or gameplay",
+      "totals": {
+        "requests": 9,
+        "compiled": 5,
+        "failed": 1,
+        "refused": 3
+      },
+      "groups": [
+        {
+          "rank": 1,
+          "reason": "wave reduction at 0x_ may execute in divergent control flow",
+          "opcode": null,
+          "count": 2,
+          "requests": [
+            "13b94d7847cbe15287909637a1481e4cfebf67182a0778d601f2a3faeabf5c34.dxbc",
+            "43e81166724f81a23617afbb679ebbe1c949e0555f5990a0dd78c00e09322c66.dxbc"
+          ],
+          "sampler_variants": []
+        },
+        {
+          "rank": 2,
+          "reason": "mubuf at 0x_: sN not a buffer descriptor (Some(Table(N)))",
+          "opcode": null,
+          "count": 1,
+          "requests": [
+            "374ae63627d5885b0e410dd844d8befc1bde5a8d834b707c14f23ffeae5f29c5.dxbc"
+          ],
+          "sampler_variants": []
+        }
+      ],
+      "history": [
+        {
+          "reason": "wave reduction at 0x_ may execute in divergent control flow",
+          "opcode": null,
+          "before": 4,
+          "recovered": 2,
+          "still_same": 2,
+          "different_refusal": 0,
+          "different_variant": 0,
+          "inconclusive": 0,
+          "next_blockers": []
+        },
+        {
+          "reason": "mubuf at 0x_: sN not a buffer descriptor (Some(Table(N)))",
+          "opcode": null,
+          "before": 1,
+          "recovered": 0,
+          "still_same": 1,
+          "different_refusal": 0,
+          "different_variant": 0,
+          "inconclusive": 0,
+          "next_blockers": []
+        },
+        {
+          "reason": "raw buffer IDXEN needs the console descriptor stride",
+          "opcode": "buffer_load_dwordx4",
+          "before": 1,
+          "recovered": 1,
+          "still_same": 0,
+          "different_refusal": 0,
+          "different_variant": 0,
+          "inconclusive": 0,
+          "next_blockers": []
+        }
+      ],
+      "recovered": 3,
+      "regressions": [],
+      "changed_compiled_outputs": [],
+      "inconclusive": 1,
+      "tool_sha256": {
+        "baseline": "ca5a4c854e514f1dbee3773269e22f484284d9aafc13034829bff059e42c56ed",
+        "candidate": "7726eac09fa2bffb4f15bcaebfdf8cabb36bda3d22259abcb84fd44c18002fa7",
+        "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+        "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+      }
+    },
+    "protected_count": 5,
+    "protected_replay_passed": true,
+    "downgrade_rejected": true,
+    "downgrade_mismatches": 3,
+    "remaining_replay_passed": true
+  },
+  "coordination": {
+    "scope": "Explicit manually checked PR claims, not automatic GitHub inference or proof of fixes",
+    "public_log_unclaimed_ranks": [],
+    "public_log_claims": [
+      {
+        "rank": 1,
+        "count": 396,
+        "claims": [
+          "#46"
+        ]
+      },
+      {
+        "rank": 2,
+        "count": 393,
+        "claims": [
+          "#45"
+        ]
+      },
+      {
+        "rank": 3,
+        "count": 43,
+        "claims": [
+          "#48"
+        ]
+      },
+      {
+        "rank": 4,
+        "count": 2,
+        "claims": [
+          "#49"
+        ]
+      },
+      {
+        "rank": 5,
+        "count": 2,
+        "claims": [
+          "#49"
+        ]
+      }
+    ],
+    "synthetic_overlap_groups": 3,
+    "overlap_prs": [
+      "#56",
+      "#58"
+    ]
+  },
+  "python_tests_passed": 138
+}

@@ -1,0 +1,199 @@
+{
+  "scope": "Both Scarlett ray compiler factories, portable DXIL linking and table binding, and Series leaf-miss continuation collections.",
+  "host": "Valve Proton Experimental on Linux",
+  "reference_sha256": "40c0d27a4c8e580975b64b386a5decee083aa1465317d4f62bc16445f63681db",
+  "provider_sha256": "fc4c8ff9cb80e974da87f3e151928e0e683c416878a70a899ff5fa8b22a41bc8",
+  "desktop_dxc_sha256": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9",
+  "guest": "runtime/dxc/xdxr_guest.cpp",
+  "guest_sha256": "258f5fa7a4009444cfe8099b693006edf8b9436f4f10884a2b16899704fa6c5b",
+  "factory_and_library_control": {
+    "reference_exit": 0,
+    "provider_exit": 0,
+    "matching_receipt": "xdxr-link PASS factories=2 flat=1 grouped=1 retained-shader-body=1 shader-tables=single,multiple",
+    "methods": {
+      "6": "Select and rename a shader in a flat library array",
+      "7": "Prepare a shader with an individual root-signature association",
+      "11": "Select and rename exports within a group before linking groups",
+      "12": "Prepare a shader library with named local root signatures and a shared global signature"
+    }
+  },
+  "translated_title_controls": {
+    "input": "DXIL produced by TuxBox for Frosty. All shader table calls returned S_OK with successful IDxcOperationResult status on both DLLs.",
+    "miss": {
+      "check": "After patching, disassembly of the entire entry function matched between providers.",
+      "shaders": [
+        {
+          "export": "LumenHardwareRayTracingMaterialMS_3b1ba881",
+          "input_sha256": "8ab05a2bfca90ba9a5509b4103feb6fd01002afb7a480a560c03a4da75d35d44"
+        },
+        {
+          "export": "DefaultPayloadMS_1b832205",
+          "input_sha256": "7cb49c6ffaffe932b14ccaaaa3998531d58d33cff887a3e6e5ec29a532d0941f"
+        },
+        {
+          "export": "PackedMaterialClosestHitPayloadMS_1b832205",
+          "input_sha256": "73bac4444b241a9dabe3fff62db41b98d05334478ffefe7f042b89c5dcfa51f3"
+        },
+        {
+          "export": "DeferredMaterialMS_c7926a2a",
+          "input_sha256": "a089aacbc219ed9f6f62cdaf08d9dd6b9814959e63588bb1a1c2f8f2fd3c69c3"
+        },
+        {
+          "export": "NiagaraCollisionRayTraceMiss_36ba2e21",
+          "input_sha256": "70a8cc16438ae0beb3cc0f99f5fecc76ba33abc6d4f308a6740fe982c090a6e6"
+        }
+      ]
+    },
+    "ray_generation": {
+      "check": "Bound the reflected resources through a global root signature containing 128 descriptors of each range type in spaces 0 and 1. Collected compiled library blobs from both providers. The outputs target different resource-binding implementations.",
+      "shaders": [
+        {
+          "export": "OcclusionRGS_7b8a9555",
+          "input_sha256": "24d64e1e632b45e30c914df8a4f4eeb8736e3474b29cda83d17b2c3e6235b47a",
+          "reference_bytes": 540240,
+          "provider_bytes": 501924
+        },
+        {
+          "export": "LumenTranslucencyVolumeHardwareRayTracingRGS_808058e3",
+          "input_sha256": "051bed9eae5ab81da60bb31d5a9b48bcddba92a7506edc174ec4e30c7b0a2b6b",
+          "reference_bytes": 63144,
+          "provider_bytes": 58488
+        },
+        {
+          "export": "LumenTranslucencyVolumeHardwareRayTracingRGS_8e197dd2",
+          "input_sha256": "30a240f94f790789c9a34761c67a59d31e7c25e4d206c483fdbd9327d0586c98",
+          "reference_bytes": 36012,
+          "provider_bytes": 35280
+        }
+      ]
+    }
+  },
+  "desktop_gpu_control": {
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER, 10de:2705",
+    "guest_api": "ID3D12GraphicsCommandList4::DispatchRays",
+    "shader": "[shader(\"raygeneration\")] void WriteRay() { uint i = DispatchRaysIndex().x; output.Store(i * 4, 0xf1e00000u ^ i); }",
+    "binding": "RWByteAddressBuffer output at u0, space 0",
+    "dispatch": [
+      64,
+      1,
+      1
+    ],
+    "cases": [
+      "Global root UAV set before dispatch",
+      "Local root UAV supplied as a GPU VA at byte 32 of the ray-generation shader record"
+    ],
+    "matching_words_per_case": 64,
+    "first": "f1e00000",
+    "last": "f1e0003f",
+    "reference_comparison": "The Xbox control lowered the global and local binding to platform-specific loads feeding a DXIL rawBufferStore. The GPU dispatch used only the TuxBox output."
+  },
+  "remaining": [
+    "General continuation compilation (ray suspension, traversal and stages beyond scalar payload-only misses), and the console GPU scheduler linker (slot 9).",
+    "Xbox-specific compiler intrinsics, alternate root or shader-record layouts, and resource classes outside the supported binding paths.",
+    "These checks ran without launching Frosty and do not establish frame rendering or title-wide parity."
+  ],
+  "continuation_cross_link": {
+    "method": "Both slot 8 implementations received the Frosty miss shader, the Series driver runtime callback, its traversal library and its scheduling library. The original slot 9 linked each resulting collection in isolation. The control checked the -1.0f payload write in the final compute shader state function.",
+    "tool": "tools/check_xdxr_continuation.py",
+    "driver_sha256": "036b9a0d8569ba662e52e2f7454c3f0e6506415b3b4f7423d51f3c7e31a3a288",
+    "command": "python tools/check_xdxr_continuation.py --system32 /path/to/EmbeddedXvd/Windows/System32 --shader build/frosty-retail-settings/state-object/1285.dxil --entry PackedMaterialClosestHitPayloadMS_1b832205 --proton /path/to/Proton --prefix /path/to/prefix",
+    "shaders": [
+      {
+        "shader": "LumenHardwareRayTracingMaterialMS_3b1ba881",
+        "shader_sha256": "8ab05a2bfca90ba9a5509b4103feb6fd01002afb7a480a560c03a4da75d35d44",
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "reference": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 57836,
+          "native_linked_scheduler_bytes": 10828,
+          "payload_minus_one": true
+        },
+        "tuxbox": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 59628,
+          "native_linked_scheduler_bytes": 10552,
+          "payload_minus_one": true
+        }
+      },
+      {
+        "shader": "DefaultPayloadMS_1b832205",
+        "shader_sha256": "7cb49c6ffaffe932b14ccaaaa3998531d58d33cff887a3e6e5ec29a532d0941f",
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "reference": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 57776,
+          "native_linked_scheduler_bytes": 10804,
+          "payload_minus_one": true
+        },
+        "tuxbox": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 59552,
+          "native_linked_scheduler_bytes": 10540,
+          "payload_minus_one": true
+        }
+      },
+      {
+        "shader": "PackedMaterialClosestHitPayloadMS_1b832205",
+        "shader_sha256": "73bac4444b241a9dabe3fff62db41b98d05334478ffefe7f042b89c5dcfa51f3",
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "reference": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 57836,
+          "native_linked_scheduler_bytes": 10828,
+          "payload_minus_one": true
+        },
+        "tuxbox": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 59628,
+          "native_linked_scheduler_bytes": 10552,
+          "payload_minus_one": true
+        }
+      },
+      {
+        "shader": "DeferredMaterialMS_c7926a2a",
+        "shader_sha256": "a089aacbc219ed9f6f62cdaf08d9dd6b9814959e63588bb1a1c2f8f2fd3c69c3",
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "reference": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 57784,
+          "native_linked_scheduler_bytes": 10808,
+          "payload_minus_one": true
+        },
+        "tuxbox": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 59564,
+          "native_linked_scheduler_bytes": 10544,
+          "payload_minus_one": true
+        }
+      },
+      {
+        "shader": "NiagaraCollisionRayTraceMiss_36ba2e21",
+        "shader_sha256": "70a8cc16438ae0beb3cc0f99f5fecc76ba33abc6d4f308a6740fe982c090a6e6",
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "reference": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 57820,
+          "native_linked_scheduler_bytes": 10824,
+          "payload_minus_one": true
+        },
+        "tuxbox": {
+          "state": 0,
+          "stack_bytes": 4,
+          "collection_bytes": 59608,
+          "native_linked_scheduler_bytes": 10552,
+          "payload_minus_one": true
+        }
+      }
+    ],
+    "constraint": "The Series scheduler generated by slot 9 converts a 32-bit state identifier to a GPU function pointer (llvm.xbox.pointer.32), makes an indirect cc804 call, and reads absolute GPU addresses. Desktop state objects return opaque shader identifiers. The cross-link control stops at final compute DXIL. It does not execute the console scheduler on a desktop device."
+  }
+}

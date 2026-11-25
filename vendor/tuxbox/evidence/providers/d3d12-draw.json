@@ -1,0 +1,59 @@
+{
+  "reference_executable": "Frosty-XSX-Shipping.exe",
+  "reference_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "guest_call_sites": {
+    "graphics_pipeline": "RVA 0x5759a4a loads device slot 60 and RVA 0x5759a60 calls it. IID_ID3D12PipelineState and the output address are stack arguments.",
+    "render_targets": "RVA 0x5790ccf calls list slot 50 with the RTV count, handle array, contiguous flag and optional DSV handle pointer.",
+    "topology": "RVA 0x57f02fa reads the list write pointer at +0x18 and compares it with the end at +0x30. A full buffer branches to the slot 20 call at 0x57f0330."
+  },
+  "control": "A guest creates an Xbox graphics pipeline with vertex and pixel DXIL, binds the wrapped root signature, PSO and RTV, clears a 16x16 target, draws a full-screen triangle with a 6x6 scissor and reads all 256 pixels after the fence. The topology call follows the observed guest capacity check.",
+  "limits": "The control uses portable DXIL, zero Xbox pipeline extensions and an empty pipeline cache record. Native Scarlett shader translation, derived PSOs, and retail frame output are outside this control.",
+  "shader_source_sha256": "7a3103c0bb726f8067d651666ffd7ef0a17f34d454d2f02c953f8fd027986c7b",
+  "runs": [
+    {
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "binaries_sha256": {
+        "d3d12-smoke/d3d12-draw.exe": "cbc6784924495830e8f9dcdf7bd33f9fb261ad60c506eb8ca011c132a0fd505b",
+        "d3d12-smoke/d3d12_xs.dll": "54c200d00fb8723fc33256cfbc8486345912ecd4c9d17e8d96ae0fa1c1bbf2f5"
+      },
+      "checks": [
+        {
+          "gate": "d3d12-draw",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-draw PASS pci=10de:2705 red=36 blue=220"
+        }
+      ]
+    },
+    {
+      "provider": "1792432585 GE-Proton11-11",
+      "binaries_sha256": {
+        "d3d12-smoke/d3d12-draw.exe": "cbc6784924495830e8f9dcdf7bd33f9fb261ad60c506eb8ca011c132a0fd505b",
+        "d3d12-smoke/d3d12_xs.dll": "54c200d00fb8723fc33256cfbc8486345912ecd4c9d17e8d96ae0fa1c1bbf2f5"
+      },
+      "checks": [
+        {
+          "gate": "d3d12-draw",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-draw PASS pci=10de:2705 red=36 blue=220"
+        }
+      ]
+    },
+    {
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "binaries_sha256": {
+        "d3d12-smoke/d3d12-draw.exe": "cbc6784924495830e8f9dcdf7bd33f9fb261ad60c506eb8ca011c132a0fd505b",
+        "d3d12-smoke/d3d12_xs.dll": "54c200d00fb8723fc33256cfbc8486345912ecd4c9d17e8d96ae0fa1c1bbf2f5"
+      },
+      "checks": [
+        {
+          "gate": "d3d12-draw",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-draw PASS pci=1002:13c0 red=36 blue=220"
+        }
+      ]
+    }
+  ]
+}

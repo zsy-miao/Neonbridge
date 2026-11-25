@@ -1,0 +1,127 @@
+{
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "guest_sha256": "f2f650fd9b76e40bfca390282ffd457890a9e6fa5e5207cd7fa2bec87b3cb2f6",
+  "d3d12_xs_sha256": "5f1c60bd824fe8116fba9298e52153decfb1b9ff60ea11cc07a0f949a6ce2029",
+  "adapter": "1002:13c0",
+  "modes": [
+    "desktop",
+    "xbox"
+  ],
+  "rays_per_material": 5,
+  "triangle_hits_per_mode": 48,
+  "misses_per_mode": 12,
+  "payload_bytes": 64,
+  "shader_record_bytes": 96,
+  "shader_record": {
+    "32": "index buffer GPU address",
+    "40": "vertex buffer GPU address",
+    "48": "four geometry constants",
+    "64": "SRV table",
+    "72": "CBV table",
+    "80": "sampler table",
+    "88": "UAV table"
+  },
+  "inputs": {
+    "directions": [
+      "+Z",
+      "-Z",
+      "+Z",
+      "-Z",
+      "+Z"
+    ],
+    "payload_word9": [
+      "00000000",
+      "00000000",
+      "02000000",
+      "02000000",
+      "02000000"
+    ],
+    "material_b2_row1_rgb": [
+      0.25,
+      0.5,
+      0.75
+    ],
+    "material_b2_row2_x": 0.5,
+    "scene": "Two triangular geometries in two TLAS instances. Rays 0\u20131 hit instance 0. Rays 2\u20133 hit instance 1, translated four world units in X. All four hit primitive 0 at t=1. Ray 4 passes between the triangles."
+  },
+  "checks": [
+    "All 960 returned dwords matched across the Xbox and desktop entry points.",
+    "Reversing the ray sets bit 23 in word 9. With input bit 25 set, the translated instance returns index 1 in word 12.",
+    "Materials 3559 and 28725 return RGB half-float encodings 3400, 3800, 3a00 from their shader-record constant buffer.",
+    "A miss overwrites only word 0 with -1.0 and preserves all 15 other inputs."
+  ],
+  "materials": {
+    "3559": {
+      "state_sha256": "694bcfe1c58f34f1421a80eb679af2df1f691bef88112df7778ae4dda9ecc411",
+      "dxil_sha256": "0e919934e8a2ec936e70a291983871773cb747d417df85988d87d609d973f5c0",
+      "readback_sha256": "0fcf8c521a7f3e8c5f669138920d1077169ac382ff337d9ff2177b0ce49d4dd3",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,38003400,3c003a00,38008000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "15261": {
+      "state_sha256": "16fae90481fe095ba20eb129baa39efab235482639c1f8ff06ce378468a00339",
+      "dxil_sha256": "35ff62e4e191ee33d6d0b2095d53942e4876fd64aa823b1093a8422a2bceac7a",
+      "readback_sha256": "f0895b31dfeaa7b4bc6c48fa52c833a1f3ed28440954d0b92a46d71851d3009b",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00008000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "17501": {
+      "state_sha256": "b8e65c5b19c5d2f9dbb4dc390f501e5cc11a93d0848955b9b4cdc37cfa521d23",
+      "dxil_sha256": "6923afbff1a1c0627343bf29e814ca580bbe744d04bc1032b6b4472f5d07de7d",
+      "readback_sha256": "f0895b31dfeaa7b4bc6c48fa52c833a1f3ed28440954d0b92a46d71851d3009b",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00008000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "17901": {
+      "state_sha256": "19acabaca74eb3ec9506e58105ccec46f914ecc175f00b96a273d260b246d583",
+      "dxil_sha256": "b910cad5bdc416aa62c4ae581c2e7c7638381bedc934d4bf0dda250e143c0353",
+      "readback_sha256": "d87abf35fab0a04d8182854a1459172636ddb39ee245d73639f771cf656e8870",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00000000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "18610": {
+      "state_sha256": "3d51eed1793fb6c1ca5162c8ba04c026757294593dd0af9f00cd3a677cbe5877",
+      "dxil_sha256": "2176cd7f36a4588ba508fab7d5e3c43d0f66ab79e49d259146d8b86c494c2b1b",
+      "readback_sha256": "17737700492d36f4c4f6bff510c0f1e093cf7d88b34a854412f35d371e7f7aa6",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,0000ff00,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "18676": {
+      "state_sha256": "12251b8698a15e8d0cf93eec0de522dba8cbbe74ea9fa3005e2a727dd7fc1b19",
+      "dxil_sha256": "154ec58ff357338437331059accc2f73110b6a2f66687ae1758521ff69d876e1",
+      "readback_sha256": "e9abd451263e9779ef7d182f56dd1be7939d70ce6205f49a8330cdad5470405e",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,38008000,00003c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "19004": {
+      "state_sha256": "71daa4d93096502e270f382f124428065693f3d91c7c4878c7db433bc6b79d23",
+      "dxil_sha256": "5a27ad9f0e3ec2be8f4ea0475c113be5197e3ace598e8c0f60f76740efd00e13",
+      "readback_sha256": "d87abf35fab0a04d8182854a1459172636ddb39ee245d73639f771cf656e8870",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00000000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "28725": {
+      "state_sha256": "594e4c497531d6df10ce69c5933912ba2129e754e8af761abde57eac0008b556",
+      "dxil_sha256": "4fec3adac1c7fc85ff3a9e9d1825dbd89caa1a79b692f3a6f72f3caa175643fb",
+      "readback_sha256": "03fd7fefbe2562503dd3350e32b78513af49e677cc9c8c5aaf79a7a76f191b76",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,38003400,3c003a00,00008080,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "29878": {
+      "state_sha256": "9d1031823c9fb273906182e515734983cec5fb62ce19991cd890aac86c50c66c",
+      "dxil_sha256": "1db631b6a229f9160f8d0209f73c8d5c0fe4031b0392f93a9013a213a5b0ed87",
+      "readback_sha256": "f0895b31dfeaa7b4bc6c48fa52c833a1f3ed28440954d0b92a46d71851d3009b",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00008000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "29890": {
+      "state_sha256": "129edda5a79c7c315f4e7500b447f105e9290dda11405be9c90987f200db4c3b",
+      "dxil_sha256": "2962043ecbc5484b317ffde5c17afacf1d3cdc24fceabd52951424778b30a633",
+      "readback_sha256": "f0895b31dfeaa7b4bc6c48fa52c833a1f3ed28440954d0b92a46d71851d3009b",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00008000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "30995": {
+      "state_sha256": "e210a37d452c0b58c6d3f014b8af3cd743cd566bb0499421c76e188451d0dcc2",
+      "dxil_sha256": "b4461cc5dc5569d5d5fa830eea2f46d6016ab5d4053666a682697481985239c0",
+      "readback_sha256": "d87abf35fab0a04d8182854a1459172636ddb39ee245d73639f771cf656e8870",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,00000000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    },
+    "38210": {
+      "state_sha256": "d14b9f7610912e474286edc33c9ef82ecbb718711d91fd61ba0917c4d2aad7b9",
+      "dxil_sha256": "290e83b2d8748991d558c4fd973f2cce6ab0056603780569593149c6353b677c",
+      "readback_sha256": "e9abd451263e9779ef7d182f56dd1be7939d70ce6205f49a8330cdad5470405e",
+      "forward_hit_payload": "3f800000,00001001,00000000,00000000,00000000,00000000,00000000,3c000000,38008000,00003c00,00000000,00000000,00001aff,00000000,00000000,00000000"
+    }
+  }
+}

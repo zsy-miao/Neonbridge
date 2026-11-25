@@ -1,0 +1,54 @@
+{
+  "scope": "Synthetic native image_atomic_umax emitted instruction, controlled pixel inputs, three competing fragments, not retail shaders",
+  "adapter": "10de:2704",
+  "proton": "1794497090 experimental-11.0-20261112-x86_64",
+  "cases": 3,
+  "texels": 741,
+  "mismatches": 0,
+  "body_sha256": "081992bf86fed83b6f3053406e3ce2ced30ba598bc51b1b15e0af401e15951dc",
+  "guest_sha256": "0e065c2de6b1471a7c2358d9d975d857074f456677c44d04cd1ae3258857087a",
+  "shaders": [
+    {
+      "stage": "vs",
+      "case": 2989,
+      "dxil_sha256": "897a9895dad8618228ab3ac80151ab946b16251c4535afb4ae28b79021f7b3a2"
+    },
+    {
+      "stage": "ps",
+      "case": 2989,
+      "dxil_sha256": "4484f23dc2b056d6209c0691c983ae9e1c2a281a06bb65b2f2f76a06c6a38121"
+    },
+    {
+      "stage": "vs",
+      "case": 2853,
+      "dxil_sha256": "8c307ffef87b684d007420fd518a88f81f82fefb0e81691c0fc0be08bb345aac"
+    },
+    {
+      "stage": "ps",
+      "case": 2853,
+      "dxil_sha256": "6309ddbe5170c06d639c8440535f93bcba89f1a208c76e5d124cf02b4eda5c07"
+    },
+    {
+      "stage": "vs",
+      "case": 3050,
+      "dxil_sha256": "cca6af9f421acadff848e1358c44ebdc71794523f4cc913a108505aea7b19e86"
+    },
+    {
+      "stage": "ps",
+      "case": 3050,
+      "dxil_sha256": "e01d1e002df18f5d13d70e8a64f1d53dba970c8a0d279552a6d14fc94d83e9dc"
+    }
+  ],
+  "readback": {
+    "adapter": "10de:2704",
+    "typed_int64_atomics": "1",
+    "entry_2989_matched": "247",
+    "entry_2989_changed": "69",
+    "entry_2853_matched": "247",
+    "entry_2853_changed": "69",
+    "entry_3050_matched": "247",
+    "entry_3050_changed": "18"
+  },
+  "hardware": "GeForce RTX 4080",
+  "test_date_utc": "2026-11-24"
+}

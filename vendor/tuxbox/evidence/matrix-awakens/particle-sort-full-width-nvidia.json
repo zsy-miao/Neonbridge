@@ -1,0 +1,30 @@
+{
+  "shader": "GenerateParticleSortKeys",
+  "global_archive_entry": 3335,
+  "cooked_sha256": "5201c5a3f6c6c556de14ec9036c4bcb4c21ea5b6fb0236340273d7735a838eaf",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "group": [
+    64,
+    1,
+    1
+  ],
+  "groups_dispatched": 2,
+  "guest_slot": 62,
+  "key_bits": 32,
+  "scope": "Three dispatches using genuine particle attribute, indirect count and visibility tag SRVs. Ascending and descending keys including negative, zero and fractional values that round to duplicate half-precision keys. Destination offset, 103 capacity, two particle groups, sparse visibility across lanes 31/32 and 63/64, non-zero initial count, empty input, guard words.",
+  "words_per_case": 384,
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+  ],
+  "readback": {
+    "live_67_matched": "384",
+    "live_67_count": "74",
+    "live_99_matched": "384",
+    "live_99_count": "14",
+    "live_0_matched": "384",
+    "live_0_count": "7"
+  },
+  "guest_sha256": "6aea919a4fb19ac2ee1da5cf2faad661b4ac8be29a33e0691ffec04ec54663b4",
+  "provider_sha256": "08ffeb035220c40445858966448ea60c5746856de4a93c8de96d5f6fd6dc8ec9",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+}

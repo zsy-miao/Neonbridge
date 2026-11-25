@@ -1,0 +1,30 @@
+{
+  "scope": "Initial framebuffer-preservation size and invalid virtual-memory configuration. TuxBox additionally checks first configuration with zero preservation, repeat configuration and the unavailable framebuffer allocation path.",
+  "layout_basis": "Series xgskmd10 ConfigureVirtualMemory and MmConfigureGraphicsPtes from Frosty era.vbi. The default uses 5120 pages. Each input unit requests 1024 pages. The kernel fits 2056-byte directory/leaf groups, rounds down to 8 groups and caps the VA range at 1 TiB.",
+  "reference_sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+  "provider_sha256": "18af35109925fdd71ede066eba74a526101bf116ca9615572dee1ab7167df27e",
+  "xmem_sha256": "f7c3748b9b74b42956ba124c2f1a032919c87490f5893c59eb3b748da719b003",
+  "guest_sha256": "3bf2eebb142e0cc0943d5a70766a464554547aec51a3032aa419ebe14466a98a",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "reference": {
+      "initial": "0",
+      "null": "E_INVALIDARG",
+      "invalid_flags": "E_INVALIDARG",
+      "invalid_count": "E_INVALIDARG",
+      "after_invalid": "0",
+      "outputs_unchanged": "1"
+    },
+    "provider": {
+      "initial": "0",
+      "null": "E_INVALIDARG",
+      "invalid_flags": "E_INVALIDARG",
+      "invalid_count": "E_INVALIDARG",
+      "after_invalid": "0",
+      "outputs_unchanged": "1",
+      "preserve_allocation": "E_FAIL",
+      "zero_preserve_config": "0x10000000",
+      "repeat": "E_FAIL"
+    }
+  }
+}

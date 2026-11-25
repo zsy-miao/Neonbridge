@@ -1,0 +1,76 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -22,6 +22,7 @@
+ mod compare;
+ mod exec_group;
+ mod hair_cluster;
++mod particle_sort;
+ mod lds_tile;
+ mod ps09_classify;
+ mod subsurface_setup;
+@@ -742,6 +743,7 @@
+                 | Opnd::ConstInt(_) | Opnd::ConstF32(_) | Opnd::Literal(_)))
+     })).then(|| compute_group(ex));
+     lower_local_pc_transfers(&mut insns)?;
++    let particle_sort = particle_sort::prepare(ex, &mut insns);
+     let hair_cluster = hair_cluster::prepare(ex, &mut insns);
+     let subsurface_setup = subsurface_setup::prepare(ex, &mut insns);
+     let material_classify = ps09_classify::prepare(ex, &mut insns);
+@@ -842,6 +844,10 @@
+         em.classify_interpolation();
+     }
+     em.infer_tbuf_types();
++    if particle_sort {
++        // R32_UINT particle count, sort keys and particle indices.
++        em.tbuf_ty.extend([((false, 3), 1), ((true, 0), 1), ((true, 1), 1)]);
++    }
+     // Both 512-thread hair scans load integer counts from R32_UINT and store
+     // (exclusive, inclusive) offsets to R32G32_UINT. Their additions pass
+     // through LDS, beyond the local register type-propagation window.
+@@ -872,7 +878,9 @@
+ ");
+         em.body.push_str(hair_cluster::EPILOGUE);
+     }
++    if particle_sort { em.body.push_str(particle_sort::EPILOGUE); }
+     let mut hlsl = em.finish(is_ps, output_order)?;
++    if particle_sort { hlsl.insert_str(0, particle_sort::DECLARATIONS); }
+     if hair_cluster { hlsl.insert_str(0, hair_cluster::DECLARATIONS); }
+     if material_classify { hlsl.insert_str(0, ps09_classify::DECLARATIONS); }
+     hlsl.insert_str(0, &format!("// entry-live registers (read before written): {}
+--- /dev/null
++++ b/crates/tuxbox-xshader/src/hlsl/particle_sort.rs
+@@ -0,0 +1,34 @@
++//! Global 3333. The final native instructions elect the first active lane,
++//! count VCC across the original wave, and issue one non-returning atomic add.
++use super::{compute_group, packed_root::matches_program, Insn, ShaderExtract, Stage};
++
++pub(super) fn prepare(ex: &ShaderExtract, insns: &mut Vec<Insn>) -> bool {
++    if ex.stage != Stage::Compute || compute_group(ex) != [64, 1, 1]
++        || ex.entry.as_deref() != Some("GenerateParticleSortKeys")
++        || !matches_program(&ex.isa, 2320, 0x00f43d576c9ad43b)
++    {
++        return false;
++    }
++    // Preserve the keys/IDs and the s46 -> EXEC restore at 0x8b8.
++    insns.retain(|ins| ins.offset <= 0x8b8 || ins.offset == 0x90c);
++    true
++}
++
++pub(super) const DECLARATIONS: &str = r#"
++groupshared uint sort_first, sort_count;
++RWBuffer<uint> sort_counter : register(u2);
++"#;
++
++pub(super) const EPILOGUE: &str = r#"
++    if (gtid.x == 0u) {
++        sort_first = 64u;
++        sort_count = 0u;
++    }
++    GroupMemoryBarrierWithGroupSync();
++    if ((exec_lo & 1u) != 0u) {
++        InterlockedMin(sort_first, gtid.x);
++        if (v2 == 0u) InterlockedAdd(sort_count, 1u);
++    }
++    GroupMemoryBarrierWithGroupSync();
++    if (gtid.x == sort_first) InterlockedAdd(sort_counter[cb0[3].y], sort_count);
++"#;

@@ -1,0 +1,43 @@
+{
+  "title": "The Matrix Awakens, Xbox Series X|S, build 1.20.1831.3754",
+  "host": "TuxBox on Linux, Valve Proton Experimental, NVIDIA GeForce RTX 4070 Ti SUPER",
+  "run": "Headless X11 retail run with the reduced-effects profile, authored film grain, and audio disabled. Keyboard input confirmed Start Chase after the menu appeared.",
+  "providers": {
+    "d3d12_xs_sha256": "ab2f4450d5c798e27c4d3ec4332d4f037eec32c8e3682bc04b7b4b22eb7e1d2b",
+    "user_engine_ini_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed"
+  },
+  "comparison": {
+    "condition": "Prepared shader pairs only",
+    "trace_sha256": "f38d1fcea8a56bd11f2e8cbd4c1a698732c36cb0898c2573aff65c2e6d7fa3d0",
+    "result": "VKD3D rejected additional geometry/pixel pairs while streaming the opening sequence. Slot 86 returned E_INVALIDARG and Unreal reported a GPU error."
+  },
+  "dynamic_linking": {
+    "trace_sha256": "2ee8b55d481310f5c71cb632baa66e512d89ab0f05afa4bb6fca188ea40d5c24",
+    "launcher_log_sha256": "b9e1782740e353890c8db26fc75daef02301438aec7aef2cdde6244a98343b4e",
+    "observed_unique_source_hashes": 336,
+    "standalone_runtime_compiles": 175,
+    "runtime_link_compiles": 33,
+    "compile_key_manifest_sha256": "e78e8419a4a0c1574aa11e865c6bd31a6dd9f8f7598781c13d5dda80585b45ca",
+    "manifest_format": "Successful host compilation keys sorted lexicographically, UTF-8 with one LF per key. A standalone key contains its source hash. A link key joins producer source, pixel source and compiled pixel DXIL hashes with underscores.",
+    "start_chase_keypress_utc": "Sat Nov 21 21:10:32 UTC 2026",
+    "process_exit_utc": "2026-11-21T21:14:28Z",
+    "elapsed_seconds_after_selection": 236,
+    "exit_code": 2,
+    "screen_capture": "shader-linked-wake-up.webp",
+    "screen_capture_sha256": "8042d2077a6710e77ff282e3443ad6f231747bb2124c38099128b2471922cbae",
+    "frame_context": "The Wake Up sequence displayed Morpheus in the white room. The log continued to report decoded 3840 × 1600 HEVC frames."
+  },
+  "blocker": {
+    "interface": "D3D12.x graphics command list",
+    "vtable_slot": 84,
+    "title_return_rva": "0x57a5c6d",
+    "caller": "FD3D12PoolAllocator::FlushPendingCopyOps",
+    "observation": "The provider stopped at its unsupported-method handler. The call site selects a whole-resource copy while the allocator flushes pending work.",
+    "additional_callsites": {
+      "FD3D12DynamicRHI::RHICopyBuffer": "0x5781957",
+      "FD3D12CommandContext::RHICopyTexture": "0x57e5728"
+    },
+    "observed_arguments": "The title supplied destination resource, source resource, and a zero final argument. The Xbox method name and nonzero options are unverified."
+  },
+  "gameplay": "Driving and shooting have not been verified."
+}

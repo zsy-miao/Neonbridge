@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "date_utc": "2026-11-21",
+  "host": {
+    "kernel": "7.3.4-1-cachyos",
+    "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+    "adapter": "10de:2705",
+    "display": "Xvfb 640x720, 24-bit",
+    "package_selection": "Lanes"
+  },
+  "package_sha256": {
+    "lanes.exe": "43388204db8bb56a35ab0ffccf6e85fc5577f5dca415235812abb78433d639d2",
+    "d3d12_xs.dll": "49437bcc6c1c394064455e5a2b814d63f9a9a0e5b5848af114720ec66eeaa497",
+    "GameInput.dll": "54ed6429d071c9893ca712852e4c6aa757a6985813a8c1aecf6b7ff8e6c86903",
+    "xmem.dll": "c7b7364c455d21c639fe6550cb7f90ff77f288161197c1d3833cce9a2dc1640b"
+  },
+  "statically_imported_dlls": [
+    "GameInput.dll",
+    "api-ms-win-core-console-l1-1-0.dll",
+    "api-ms-win-core-debug-l1-1-0.dll",
+    "api-ms-win-core-errorhandling-l1-1-0.dll",
+    "api-ms-win-core-file-l1-1-0.dll",
+    "api-ms-win-core-handle-l1-1-0.dll",
+    "api-ms-win-core-heap-l1-1-0.dll",
+    "api-ms-win-core-interlocked-l1-1-0.dll",
+    "api-ms-win-core-libraryloader-l1-2-0.dll",
+    "api-ms-win-core-localization-l1-2-0.dll",
+    "api-ms-win-core-processenvironment-l1-1-0.dll",
+    "api-ms-win-core-processthreads-l1-1-0.dll",
+    "api-ms-win-core-processthreads-l1-1-1.dll",
+    "api-ms-win-core-profile-l1-1-0.dll",
+    "api-ms-win-core-rtlsupport-l1-1-0.dll",
+    "api-ms-win-core-string-l1-1-0.dll",
+    "api-ms-win-core-synch-l1-1-0.dll",
+    "api-ms-win-core-synch-l1-2-0.dll",
+    "api-ms-win-core-sysinfo-l1-1-0.dll",
+    "api-ms-win-core-util-l1-1-0.dll",
+    "d3d12_xs.dll",
+    "xmem.dll"
+  ],
+  "app_local_loader_trace": {
+    "d3d12_xs.dll": "d3d12_xs.dll loaded natively from the app directory",
+    "GameInput.dll": "GameInput.dll loaded natively from the app directory",
+    "xmem.dll": "xmem.dll loaded natively from the app directory"
+  },
+  "sample": "RGB24 lower track pixels, excluding text and software cursor. All results use the same title process except the separate window-close run.",
+  "checks": {
+    "sample_rectangle": [
+      24,
+      407,
+      496,
+      548
+    ],
+    "sample_sha256_rgb24": {
+      "initial": "6f1ad05215299176c3e1ace730196bd11b71c7c5118eef07d896d4d208d5c975",
+      "Right": "e2f4db55759334102e8e03092b0e96eff6b0bd4fc68e08be4f52b7dd9fdbe36d",
+      "Left": "7608c19dc1ce8824c332d8cab71759b4ecf70318f6e7ccf77f7629d220e3dc3b",
+      "space": "1d6d3d9ef7f09328df0a94022360a46851d6fe99c8e1d3112d9f3be44c5c0e0c"
+    },
+    "uinput": {
+      "vendor_product": "045e:028e",
+      "hotplugged_after_launch": true,
+      "dpad": "left/right",
+      "left_stick": "-24000/+24000",
+      "a": "hold lane",
+      "start": "restart",
+      "held_control": "one turn"
+    },
+    "keyboard": [
+      "Left",
+      "Right",
+      "Space",
+      "R",
+      "Escape"
+    ],
+    "mouse": [
+      "center equals Space",
+      "left equals Left",
+      "right equals Right"
+    ],
+    "escape_exit": 0,
+    "window_manager_close_exit": 0
+  },
+  "trace_sha256": {
+    "interaction": "5b0e952c51e31dd0585625c3de52755f603c172a769941f519d540a6b6887ed5",
+    "window_close": "0b4996fbefff754e74479d9dbfc76aeb9e0227e14fde56dfb09911bebd15a512"
+  },
+  "reproduction": "Launch the Lanes manifest entry on Proton Experimental with a fresh prefix on a private Xvfb display. Sample the lower board after separate key presses, restart between each action, then compare mouse clicks and controller inputs to the corresponding key. Board layout varies with the live course seed.",
+  "initial_frame": {
+    "path": "evidence/lanes-xbox-board.png",
+    "width": 520,
+    "height": 640,
+    "sha256": "f3d747a08e70bd66ccabec7536e2846613e4284d77059bd3829eddc98b9bc19f"
+  }
+}

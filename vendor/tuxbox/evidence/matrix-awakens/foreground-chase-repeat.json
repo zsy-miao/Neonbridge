@@ -1,0 +1,495 @@
+{
+  "title": "The Matrix Awakens",
+  "comparison": "First and repeat desktop chase on the same RTX 4070 Ti SUPER, stock Proton, reduced-effects TAA profile. The repeat started with populated driver and translation caches, had 41 additional standalone Xbox programs ready and enabled Unreal pipeline capture. More than one input changed.",
+  "method": {
+    "alignment": "Fixed engine data-layer activations and ChaseSection log entries. The first post-WakeUp 3840x1600 HEVC output uses the median UTC time offset of the five nearest Unreal timestamps on the Wine clock. This marks decoder delivery.",
+    "timing": "Per-present MangoHud rows on frame end = CSV inode creation UTC + elapsed nanoseconds. Ignore invalid, incomplete and uptime-sized rows. Include frames wholly inside both the event window and a focused, mapped, uncovered Frosty viewport on the powered active workspace. Hyprland polls every 0.5 s; each visibility transition has a 0.6 s exclusion margin. Percentiles use nearest rank. UTC spans are guarded and clipped to the recording.",
+    "duration": "Elapsed milestone seconds include any occlusion. Focused-visible wall time integrates the guarded windows. Presented seconds sum complete included frame durations; presents crossing a milestone or visibility boundary are excluded."
+  },
+  "cold": {
+    "csv": "Frosty-XSX-Shipping_2026-11-22_04-55-18.csv",
+    "csv_sha256": "e36d72038d4fb1cc5b42d1a4b15064cc57e1d96b6edb7f2530bfd05f5776a7d4",
+    "csv_clock_origin_utc": "2026-11-22T04:55:18.921269+00:00",
+    "log_sha256": "722409bd9a500425f9620cf77bda848a556c3568f1f390e0ef7708f041375ae7",
+    "selection_utc": "2026-11-22T04:57:50.049878+00:00",
+    "close_utc": "2026-11-22T05:08:12.506+00:00",
+    "events_seconds_after_input": {
+      "Start Chase": 0.0,
+      "WakeUp": 3.479,
+      "first 3840x1600 movie frame delivered": 3.67,
+      "room": 18.956,
+      "ConstructFurniture": 99.441,
+      "ConstructBulletTime": 142.825,
+      "ConstructMorph": 229.759,
+      "ConstructMorphAnnie": 276.503,
+      "CityIntro": 413.133,
+      "city dialogue": 473.868,
+      "120 s after city dialogue": 593.868,
+      "last captured present": 621.478
+    },
+    "focused_visible_windows_utc_after_guard": [
+      [
+        "2026-11-22T04:55:18.921269+00:00",
+        "2026-11-22T04:56:13.945000+00:00"
+      ],
+      [
+        "2026-11-22T04:56:27.299000+00:00",
+        "2026-11-22T04:56:49.549000+00:00"
+      ],
+      [
+        "2026-11-22T04:56:57.862000+00:00",
+        "2026-11-22T04:57:03.771000+00:00"
+      ],
+      [
+        "2026-11-22T04:57:08.015000+00:00",
+        "2026-11-22T04:57:09.380000+00:00"
+      ],
+      [
+        "2026-11-22T04:57:51.052000+00:00",
+        "2026-11-22T04:59:46.883000+00:00"
+      ],
+      [
+        "2026-11-22T04:59:49.095000+00:00",
+        "2026-11-22T05:08:11.527858+00:00"
+      ]
+    ],
+    "invalid_mangohud_samples": 6,
+    "full_visible_after_selection": {
+      "elapsed_s": 621.478,
+      "focused_visible_wall_s": 618.264,
+      "presented_s": 602.927,
+      "frames": 13240,
+      "p50_ms": 5.617,
+      "p99_ms": 74.463,
+      "max_ms": 27523.4,
+      "frames_over_100_ms": 87,
+      "s_in_frames_over_100_ms": 475.543
+    },
+    "event_utc": {
+      "Start Chase": "2026-11-22T04:57:50.049878+00:00",
+      "WakeUp": "2026-11-22T04:57:53.529000+00:00",
+      "first 3840x1600 movie frame delivered": "2026-11-22T04:57:53.720000+00:00",
+      "room": "2026-11-22T04:58:09.006000+00:00",
+      "ConstructFurniture": "2026-11-22T04:59:29.491000+00:00",
+      "ConstructBulletTime": "2026-11-22T05:00:12.875000+00:00",
+      "ConstructMorph": "2026-11-22T05:01:39.809000+00:00",
+      "ConstructMorphAnnie": "2026-11-22T05:02:26.553000+00:00",
+      "CityIntro": "2026-11-22T05:04:43.183000+00:00",
+      "city dialogue": "2026-11-22T05:05:43.918000+00:00",
+      "120 s after city dialogue": "2026-11-22T05:07:43.918000+00:00",
+      "last captured present": "2026-11-22T05:08:11.527858+00:00"
+    },
+    "prepared_chase_programs": 1959,
+    "prepared_chase_links": 228,
+    "profile_sha256": "eb10eff360b8d05b7c3dd8dec05321b7502fe08ad4f1cd8a15c895066e43530f"
+  },
+  "warm": {
+    "csv": "Frosty-XSX-Shipping_2026-11-22_05-09-07.csv",
+    "csv_sha256": "4a5ab6c8d3462d470e99cb456850cce2ebe32134bf5fa084e94130ab8a0ecc0d",
+    "csv_clock_origin_utc": "2026-11-22T05:09:07.532047+00:00",
+    "log_sha256": "ae1162c78ab5864414854a45952859152ddfb1451f55cd2f15131263ab98b61a",
+    "selection_utc": "2026-11-22T05:10:01.377404+00:00",
+    "close_utc": "2026-11-22T05:20:56.177+00:00",
+    "events_seconds_after_input": {
+      "Start Chase": 0.0,
+      "WakeUp": 3.717,
+      "first 3840x1600 movie frame delivered": 3.873,
+      "room": 25.843,
+      "ConstructFurniture": 78.806,
+      "ConstructBulletTime": 102.303,
+      "ConstructMorph": 115.198,
+      "ConstructMorphAnnie": 122.36,
+      "CityIntro": 153.043,
+      "city dialogue": 155.081,
+      "120 s after city dialogue": 275.081,
+      "Frogger": 442.008,
+      "gameplay layer": 554.096,
+      "gameplay profile": 556.928,
+      "first sampled Switch Targets / Shoot prompt": 598.618,
+      "last captured present": 654.758
+    },
+    "focused_visible_windows_utc_after_guard": [
+      [
+        "2026-11-22T05:09:07.532047+00:00",
+        "2026-11-22T05:10:12.961000+00:00"
+      ],
+      [
+        "2026-11-22T05:10:25.306000+00:00",
+        "2026-11-22T05:15:54.819000+00:00"
+      ],
+      [
+        "2026-11-22T05:16:07.650000+00:00",
+        "2026-11-22T05:18:44.787000+00:00"
+      ],
+      [
+        "2026-11-22T05:18:51.554000+00:00",
+        "2026-11-22T05:20:56.131000+00:00"
+      ]
+    ],
+    "invalid_mangohud_samples": 1,
+    "full_visible_after_selection": {
+      "elapsed_s": 654.758,
+      "focused_visible_wall_s": 622.811,
+      "presented_s": 612.794,
+      "frames": 14226,
+      "p50_ms": 6.134,
+      "p99_ms": 125.095,
+      "max_ms": 20271.6,
+      "frames_over_100_ms": 243,
+      "s_in_frames_over_100_ms": 404.813
+    },
+    "event_utc": {
+      "Start Chase": "2026-11-22T05:10:01.377404+00:00",
+      "WakeUp": "2026-11-22T05:10:05.094000+00:00",
+      "first 3840x1600 movie frame delivered": "2026-11-22T05:10:05.250000+00:00",
+      "room": "2026-11-22T05:10:27.220000+00:00",
+      "ConstructFurniture": "2026-11-22T05:11:20.183000+00:00",
+      "ConstructBulletTime": "2026-11-22T05:11:43.680000+00:00",
+      "ConstructMorph": "2026-11-22T05:11:56.575000+00:00",
+      "ConstructMorphAnnie": "2026-11-22T05:12:03.737000+00:00",
+      "CityIntro": "2026-11-22T05:12:34.420000+00:00",
+      "city dialogue": "2026-11-22T05:12:36.458000+00:00",
+      "120 s after city dialogue": "2026-11-22T05:14:36.458000+00:00",
+      "Frogger": "2026-11-22T05:17:23.385000+00:00",
+      "gameplay layer": "2026-11-22T05:19:15.473000+00:00",
+      "gameplay profile": "2026-11-22T05:19:18.305000+00:00",
+      "first sampled Switch Targets / Shoot prompt": "2026-11-22T05:19:59.994916+00:00",
+      "last captured present": "2026-11-22T05:20:56.135471+00:00"
+    },
+    "prepared_chase_programs": 2000,
+    "prepared_chase_links": 228,
+    "close_reason": "Intentional desktop test close after reaching the interactive chase tutorial.",
+    "profile_sha256": "e3055c90311f04487d067f23be532a1082208e68c8505f959f0ae1eb4ec885cb",
+    "exit_code": 1,
+    "samples_after_visible_tutorial": {
+      "elapsed_s": 56.141,
+      "focused_visible_wall_s": 56.136,
+      "presented_s": 53.351,
+      "frames": 161,
+      "p50_ms": 91.334,
+      "p99_ms": 7688.73,
+      "max_ms": 9003.34,
+      "frames_over_100_ms": 41,
+      "s_in_frames_over_100_ms": 42.499
+    },
+    "visible_tutorial_bounds_s": [
+      586.54,
+      598.618
+    ],
+    "input_observation": {
+      "before": "No Switch Targets / Shoot prompts in the immediately preceding sample.",
+      "controller": "Left-stick and right-trigger events were delivered by the virtual Linux input device. The original action sequence shows the tutorial changing to the auto-fire message. It does not isolate a target-lock change or manual shot.",
+      "controller_log_sha256": "a703098a9c714321b131c03b0796f4938557c6ebad6eb098443d97bfb880b6b9"
+    },
+    "captures": [
+      {
+        "file": "warm-chase-tutorial.jpg",
+        "sha256": "b86907c61322090869a0bf5757d576cebaab2f9811099a528b4bd6fd0a112424",
+        "seconds_after_selection": 598.618,
+        "observation": "First sampled Switch Targets / Shoot tutorial overlay."
+      },
+      {
+        "file": "warm-chase-autofire.jpg",
+        "sha256": "1dc5ae44071156603459ce49242fb998f26e5a978ed10b6a2eaf2ed166b36228",
+        "seconds_after_selection": 638.261,
+        "observation": "The tutorial advanced to its auto-fire message after controller inputs."
+      }
+    ],
+    "native_pipeline_events": {
+      "timeline_sha256": "299bc10a9e830ef9f4bf450d7357a533586a58097a1ce578ea6e05cca3ac8844",
+      "instrument": "Stock vkd3d-proton queue timeline, absolute Wine clock. Clip each complete pid=pso phase-X event to each foreground frame over one second after selection and union overlaps. These spans time specific native pipeline operations; other D3D12 pipeline setup stages are outside their scope.",
+      "wine_to_unix_time_offset_s": 1794756135.759,
+      "long_foreground_frames": 53,
+      "seconds_in_those_frames": 372.081,
+      "seconds_overlapping_instrumented_pipeline_operations": 28.988
+    }
+  },
+  "paired_intervals": [
+    {
+      "from": "Start Chase",
+      "to": "WakeUp",
+      "cold": {
+        "elapsed_s": 3.479,
+        "focused_visible_wall_s": 2.477,
+        "presented_s": 2.456,
+        "frames": 159,
+        "p50_ms": 15.103,
+        "p99_ms": 30.259,
+        "max_ms": 42.319,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      },
+      "warm": {
+        "elapsed_s": 3.717,
+        "focused_visible_wall_s": 3.717,
+        "presented_s": 3.705,
+        "frames": 278,
+        "p50_ms": 12.577,
+        "p99_ms": 19.685,
+        "max_ms": 37.296,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      }
+    },
+    {
+      "from": "WakeUp",
+      "to": "first 3840x1600 movie frame delivered",
+      "cold": {
+        "elapsed_s": 0.191,
+        "focused_visible_wall_s": 0.191,
+        "presented_s": 0.171,
+        "frames": 5,
+        "p50_ms": 15.311,
+        "p99_ms": 95.699,
+        "max_ms": 95.699,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      },
+      "warm": {
+        "elapsed_s": 0.156,
+        "focused_visible_wall_s": 0.156,
+        "presented_s": 0.151,
+        "frames": 4,
+        "p50_ms": 10.622,
+        "p99_ms": 97.73,
+        "max_ms": 97.73,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      }
+    },
+    {
+      "from": "first 3840x1600 movie frame delivered",
+      "to": "room",
+      "cold": {
+        "elapsed_s": 15.286,
+        "focused_visible_wall_s": 15.286,
+        "presented_s": 15.257,
+        "frames": 2522,
+        "p50_ms": 5.448,
+        "p99_ms": 11.752,
+        "max_ms": 71.211,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      },
+      "warm": {
+        "elapsed_s": 21.97,
+        "focused_visible_wall_s": 9.625,
+        "presented_s": 9.592,
+        "frames": 1371,
+        "p50_ms": 5.687,
+        "p99_ms": 17.586,
+        "max_ms": 157.244,
+        "frames_over_100_ms": 1,
+        "s_in_frames_over_100_ms": 0.157
+      }
+    },
+    {
+      "from": "room",
+      "to": "ConstructFurniture",
+      "cold": {
+        "elapsed_s": 80.485,
+        "focused_visible_wall_s": 80.485,
+        "presented_s": 80.48,
+        "frames": 6777,
+        "p50_ms": 5.058,
+        "p99_ms": 61.794,
+        "max_ms": 18255.3,
+        "frames_over_100_ms": 24,
+        "s_in_frames_over_100_ms": 33.375
+      },
+      "warm": {
+        "elapsed_s": 52.963,
+        "focused_visible_wall_s": 52.963,
+        "presented_s": 52.957,
+        "frames": 7105,
+        "p50_ms": 5.037,
+        "p99_ms": 51.729,
+        "max_ms": 134.051,
+        "frames_over_100_ms": 4,
+        "s_in_frames_over_100_ms": 0.472
+      }
+    },
+    {
+      "from": "ConstructFurniture",
+      "to": "ConstructBulletTime",
+      "cold": {
+        "elapsed_s": 43.384,
+        "focused_visible_wall_s": 41.172,
+        "presented_s": 25.839,
+        "frames": 2012,
+        "p50_ms": 8.826,
+        "p99_ms": 44.892,
+        "max_ms": 5374.57,
+        "frames_over_100_ms": 2,
+        "s_in_frames_over_100_ms": 5.52
+      },
+      "warm": {
+        "elapsed_s": 23.497,
+        "focused_visible_wall_s": 23.497,
+        "presented_s": 23.491,
+        "frames": 2313,
+        "p50_ms": 8.836,
+        "p99_ms": 39.274,
+        "max_ms": 122.733,
+        "frames_over_100_ms": 1,
+        "s_in_frames_over_100_ms": 0.123
+      }
+    },
+    {
+      "from": "ConstructBulletTime",
+      "to": "ConstructMorph",
+      "cold": {
+        "elapsed_s": 86.934,
+        "focused_visible_wall_s": 86.934,
+        "presented_s": 73.529,
+        "frames": 834,
+        "p50_ms": 7.507,
+        "p99_ms": 68.734,
+        "max_ms": 27065.9,
+        "frames_over_100_ms": 5,
+        "s_in_frames_over_100_ms": 62.927
+      },
+      "warm": {
+        "elapsed_s": 12.895,
+        "focused_visible_wall_s": 12.895,
+        "presented_s": 12.88,
+        "frames": 893,
+        "p50_ms": 8.153,
+        "p99_ms": 49.097,
+        "max_ms": 77.32,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      }
+    },
+    {
+      "from": "ConstructMorph",
+      "to": "ConstructMorphAnnie",
+      "cold": {
+        "elapsed_s": 46.744,
+        "focused_visible_wall_s": 46.744,
+        "presented_s": 46.682,
+        "frames": 144,
+        "p50_ms": 31.48,
+        "p99_ms": 14081.2,
+        "max_ms": 26373.7,
+        "frames_over_100_ms": 7,
+        "s_in_frames_over_100_ms": 41.916
+      },
+      "warm": {
+        "elapsed_s": 7.162,
+        "focused_visible_wall_s": 7.162,
+        "presented_s": 7.12,
+        "frames": 208,
+        "p50_ms": 33.444,
+        "p99_ms": 68.505,
+        "max_ms": 90.565,
+        "frames_over_100_ms": 0,
+        "s_in_frames_over_100_ms": 0.0
+      }
+    },
+    {
+      "from": "ConstructMorphAnnie",
+      "to": "CityIntro",
+      "cold": {
+        "elapsed_s": 136.63,
+        "focused_visible_wall_s": 136.63,
+        "presented_s": 136.569,
+        "frames": 715,
+        "p50_ms": 32.381,
+        "p99_ms": 6155.5,
+        "max_ms": 21150.8,
+        "frames_over_100_ms": 23,
+        "s_in_frames_over_100_ms": 112.649
+      },
+      "warm": {
+        "elapsed_s": 30.683,
+        "focused_visible_wall_s": 30.683,
+        "presented_s": 30.649,
+        "frames": 861,
+        "p50_ms": 32.848,
+        "p99_ms": 73.56,
+        "max_ms": 118.758,
+        "frames_over_100_ms": 2,
+        "s_in_frames_over_100_ms": 0.222
+      }
+    },
+    {
+      "from": "CityIntro",
+      "to": "city dialogue",
+      "cold": {
+        "elapsed_s": 60.735,
+        "focused_visible_wall_s": 60.735,
+        "presented_s": 33.264,
+        "frames": 7,
+        "p50_ms": 1743.81,
+        "p99_ms": 17046.6,
+        "max_ms": 17046.6,
+        "frames_over_100_ms": 4,
+        "s_in_frames_over_100_ms": 33.133
+      },
+      "warm": {
+        "elapsed_s": 2.038,
+        "focused_visible_wall_s": 2.038,
+        "presented_s": 1.986,
+        "frames": 23,
+        "p50_ms": 76.242,
+        "p99_ms": 171.949,
+        "max_ms": 171.949,
+        "frames_over_100_ms": 5,
+        "s_in_frames_over_100_ms": 0.737
+      }
+    },
+    {
+      "from": "city dialogue",
+      "to": "120 s after city dialogue",
+      "cold": {
+        "elapsed_s": 120.0,
+        "focused_visible_wall_s": 120.0,
+        "presented_s": 115.8,
+        "frames": 26,
+        "p50_ms": 95.759,
+        "p99_ms": 26902.5,
+        "max_ms": 26902.5,
+        "frames_over_100_ms": 13,
+        "s_in_frames_over_100_ms": 114.845
+      },
+      "warm": {
+        "elapsed_s": 120.0,
+        "focused_visible_wall_s": 120.0,
+        "presented_s": 118.823,
+        "frames": 323,
+        "p50_ms": 66.015,
+        "p99_ms": 10451.4,
+        "max_ms": 14974.8,
+        "frames_over_100_ms": 42,
+        "s_in_frames_over_100_ms": 100.517
+      }
+    },
+    {
+      "from": "Start Chase",
+      "to": "city dialogue",
+      "cold": {
+        "elapsed_s": 473.868,
+        "focused_visible_wall_s": 470.654,
+        "presented_s": 427.849,
+        "frames": 13183,
+        "p50_ms": 5.608,
+        "p99_ms": 65.645,
+        "max_ms": 27065.9,
+        "frames_over_100_ms": 66,
+        "s_in_frames_over_100_ms": 302.975
+      },
+      "warm": {
+        "elapsed_s": 155.081,
+        "focused_visible_wall_s": 142.736,
+        "presented_s": 142.701,
+        "frames": 13064,
+        "p50_ms": 5.755,
+        "p99_ms": 55.014,
+        "max_ms": 171.949,
+        "frames_over_100_ms": 13,
+        "s_in_frames_over_100_ms": 1.711
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-22",
+  "method": "EmitRaytracingAccelerationStructurePostbuildInfo",
+  "xbox_command_list_slot": 118,
+  "title_function": "FD3D12RayTracingCompactionRequestHandler::Update",
+  "retail_call_rva": "0x57a95d5",
+  "control": "Query two distinct rebuilt 528-triangle sphere BLASes for current and compacted byte sizes, then trace 3,171 rays. A second command list supplies a misaligned address and must reject the recording at Close.",
+  "serialized_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+  "guest_sha256": "f84bfc468aaea3aecaa644b8f45621ce80ff9579b5e24bc130a65f9af8b1eb32",
+  "provider_sha256": "d1a5f56edd0bde38b8f381712914d165ab27155378fd4c385a22d0f4b93a1283",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapters": {
+    "1002:13c0": {
+      "desktop_fresh_current_bytes": 56776,
+      "desktop_compacted_bytes": 56704,
+      "xbox_deserialized_current_bytes": 56776,
+      "xbox_compacted_bytes": 56704,
+      "xbox_postbuild_sources": 2,
+      "ray_readback_sha256": "010abd43743f3c7fbfdc2755c71c2fd23f73635938a76b35f432e38eda94426a"
+    },
+    "10de:2705": {
+      "desktop_fresh_current_bytes": 34944,
+      "desktop_compacted_bytes": 13824,
+      "xbox_deserialized_current_bytes": 13824,
+      "xbox_compacted_bytes": 13824,
+      "xbox_postbuild_sources": 2,
+      "ray_readback_sha256": "f7f6b35e037944cade880d8126401fb877ca4ffdb12fdb838aca39f26c7872b3"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -5839,6 +5839,34 @@
+             }
+             let _ = writeln!(init, "    s3 = 0x100u; v0 = 0x04000000u; v1 = 0x800u;");
+         }
++        // In the merged vertex-stage prologue, s3[7:0] is the vertex count.
++        // The per-invocation HLSL register model handles one active vertex.
++        let merged_count = ex.stage == Stage::Vertex && self.insns.windows(2).take(8).any(|pair| {
++            let (count, mask) = (&pair[0], &pair[1]);
++            matches!(count.mnemonic.as_str(), "s_bfe_i32" | "s_bfe_u32")
++                && count.src == [Opnd::Sgpr(3), Opnd::Literal(0x80000)]
++                && mask.mnemonic == "s_bfm_b64" && mask.dst == [Opnd::ExecLo]
++                && matches!(mask.src.as_slice(), [width, Opnd::ConstInt(0)] if count.dst == [*width])
++        });
++        if merged_count {
++            init.push_str("    s3 = 1u;\n");
++        }
++        // ES-GS puts five GS parameters before the ordinary four VS input registers.
++        // Both shipped variants call a fetch shader: s12 for merged, s4 for standalone.
++        let merged_fetch = merged_count && self.insns.iter().take(16).any(|ins| {
++            ins.mnemonic == "s_swappc_b64" && ins.dst == [Opnd::Sgpr(12)] && ins.src == [Opnd::Sgpr(12)]
++        });
++        if merged_fetch {
++            for (i, elem) in ex.input_sig.iter().enumerate() {
++                let reg = match elem.sysval {
++                    6 => "v5", // SV_VertexID
++                    8 => "v8", // SV_InstanceID
++                    _ => continue,
++                };
++                self.regs.insert(reg.to_string());
++                let _ = writeln!(init, "    {reg} = (uint)i.i{i};");
++            }
++        }
+         if !is_ps && !self.is_gs {
+             let mut group = 0usize;
+             for reg in distinct_regs(ex.input_sig.iter().filter(|e| e.sysval == 0)) {
+@@ -5846,7 +5874,7 @@
+                 if ex.stage == Stage::Vertex && !read {
+                     continue;
+                 }
+-                let first = if ex.stage == Stage::Vertex { 4 + 4 * group } else { 4 + 4 * reg as usize };
++                let first = if merged_fetch { 9 + 4 * group } else if ex.stage == Stage::Vertex { 4 + 4 * group } else { 4 + 4 * reg as usize };
+                 group += 1;
+                 for c in 0..4usize {
+                     let v = format!("v{}", first + c);

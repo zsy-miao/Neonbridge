@@ -1,0 +1,190 @@
+{
+  "scope": "Desktop run from the retail executable with TuxBox XG and D3D12, stock Proton Experimental and MangoHud. Unreal frame IDs wrap after 999.",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": "GeForce RTX 4070 Ti SUPER",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "settings": {
+    "graphics_profile": "packaged",
+    "loose_graphics_overrides_in_package": 0,
+    "ray_tracing": 1,
+    "lumen_hardware_ray_tracing": 1
+  },
+  "xg_sha256": "d6eb5334a939e18245bf3d5f1e7335fe82837bb0805d6347d22cd280b127231a",
+  "d3d12_sha256": "c79dcc2fba913b1a58e4760eaa3cbb65bad47f4ad1aa869fcaea6b6360c33e0a",
+  "shader_compiler_sha256": "ba293a12ffffdff376819cded002918f098d2d745c29a72e477267867e4eacd1",
+  "runs": {
+    "tuxbox": {
+      "log_sha256": "6394f86da0637776ceea9bb62a31e1d897535b62ad46028a58d4a69e412a6dab",
+      "verified_milestones": [
+        "load_world",
+        "submit_frame",
+        "use_menu",
+        "load_wake_up_room",
+        "load_chase_intro"
+      ]
+    }
+  },
+  "elapsed_seconds": 670.3,
+  "exit_code": 1,
+  "start_chase": {
+    "selected": "Start Chase",
+    "key": "z",
+    "score": 15.838680168299511,
+    "time": "2026-11-23T07:16:36.366043+00:00"
+  },
+  "events": [
+    {
+      "timestamp": "2026.11.23-07.16.41:109",
+      "frame": 205,
+      "event": "ChaseSection-WakeUp"
+    },
+    {
+      "timestamp": "2026.11.23-07.16.56:635",
+      "frame": 409,
+      "event": "Cine_00_Wakeup_0_Room Activated"
+    },
+    {
+      "timestamp": "2026.11.23-07.17.16:261",
+      "frame": 490,
+      "event": "Cine_00_Wakeup_0_Room Unloaded"
+    },
+    {
+      "timestamp": "2026.11.23-07.17.51:069",
+      "frame": 924,
+      "event": "Cine_00_Wakeup_1_ConstructFurniture Activated"
+    },
+    {
+      "timestamp": "2026.11.23-07.18.18:990",
+      "frame": 64,
+      "event": "Cine_00_Wakeup_1_ConstructFurniture Unloaded"
+    },
+    {
+      "timestamp": "2026.11.23-07.18.23:865",
+      "frame": 100,
+      "event": "Cine_00_Wakeup_2_ConstructBulletTime Activated"
+    },
+    {
+      "timestamp": "2026.11.23-07.19.57:670",
+      "frame": 155,
+      "event": "Cine_00_Wakeup_3_ConstructMorph Activated"
+    },
+    {
+      "timestamp": "2026.11.23-07.20.09:148",
+      "frame": 160,
+      "event": "Cine_00_Wakeup_2_ConstructBulletTime Unloaded"
+    },
+    {
+      "timestamp": "2026.11.23-07.20.35:205",
+      "frame": 180,
+      "event": "Cine_00_Wakeup_3_ConstructMorphAnnie Activated"
+    },
+    {
+      "timestamp": "2026.11.23-07.20.53:350",
+      "frame": 225,
+      "event": "Cine_00_Wakeup_3_ConstructMorphAnnie Unloaded"
+    },
+    {
+      "timestamp": "2026.11.23-07.20.53:350",
+      "frame": 225,
+      "event": "Cine_00_Wakeup_3_ConstructMorph Unloaded"
+    },
+    {
+      "timestamp": "2026.11.23-07.23.20:075",
+      "frame": 267,
+      "event": "Cine_10_ChaseIntro_0_Corner Activated"
+    }
+  ],
+  "cinematic_image": "packaged-settings-wake-up.webp",
+  "first_shader_failure": null,
+  "recorded_inline_dispatches": [
+    219,
+    318,
+    306,
+    313,
+    114,
+    58,
+    426,
+    434
+  ],
+  "observation": "Frosty played through the Wake Up cinematic, activated the street-corner layer for the chase intro and stopped before the shooting tutorial. NVIDIA reported an Xid 13 MMU fault in the game process; vkd3d-proton returned VK_ERROR_DEVICE_LOST. Audio was muted.",
+  "performance": {
+    "frames": 1279,
+    "skipped_rows": 1,
+    "sampled_seconds": 653.0456685,
+    "mean_fps": 1.9585154020510893,
+    "frametime_ms": {
+      "p50": 88.8772,
+      "p95": 2367.63,
+      "p99": 6201.17,
+      "max": 36650.9
+    }
+  },
+  "sandbox_diagnostic": {
+    "command_line": [
+      "-nosound",
+      "-gauntlet=FrostyTestControllerAutoTest",
+      "-FrostyTest.PreferSandbox"
+    ],
+    "result": "The title test timed out waiting for its menu and exited before selecting Sandbox.",
+    "runs": [
+      {
+        "startup_movie_plugin_disabled": false,
+        "timeout_seconds": 30.0,
+        "test_exit_code": 1,
+        "game_exit_code": 0,
+        "log_sha256": "36a23a74e48ecfb1535c8323901b431e523572070bf248eb5a8850bf32744a90"
+      },
+      {
+        "startup_movie_plugin_disabled": true,
+        "timeout_seconds": 30.0,
+        "test_exit_code": 1,
+        "game_exit_code": 0,
+        "log_sha256": "0f72550bb597d100ae41014c2639bd537e2321484b95bfbf76e6b9831db6d585"
+      }
+    ]
+  },
+  "failure": {
+    "engine_frame": 281,
+    "operation": "Present",
+    "host_result": "VK_ERROR_DEVICE_LOST",
+    "kernel_report": "NVRM Xid 13: Graphics SM Warp Exception: MMU Fault",
+    "faulting_command": null,
+    "diagnostic": "Unreal reported no valid GPU breadcrumbs. The first failed Vulkan semaphore wait preceded the successful host creation of MaterialCHS_dfa0dab0 by 16 ms. The trace records shader creation requests but does not identify the pipeline executing at the fault.",
+    "offline_review": {
+      "requested_material_ray_libraries": 241,
+      "register_and_descriptor_review": "All 241 regenerated libraries fit their declared register and descriptor ranges. The trace contains no active shader-table record or faulting address.",
+      "last_requested_material_pixel_entries": [36649, 36668],
+      "pixel_shader_observation": "Both pixel shaders write to a buffer at u0 using a computed index. Both also appeared in earlier runs that reached the shooting tutorial. The binding and extent of the live buffer at the fault are unknown."
+    }
+  },
+  "timing_from_start_chase_seconds": {
+    "wake_up": 4,
+    "chase_intro_corner_activation": 403,
+    "device_loss": 441
+  },
+  "menu_background": "Some captures showed heavily smeared green code. Others showed a black background and working menu controls.",
+  "preparation": "Warm runtime caches plus on-demand compilation; the desktop test used --no-shader-prep.",
+  "previous_run_cpu_sample": {
+    "scope": "Earlier retailUv run during Construct furniture loading. Six-second user-space CPU cycle sample of the game process.",
+    "log_sha256": "35f31aadb5b80e4ea31d2828af62b7412ef6329999d042884d73a8f456ec4b6e",
+    "nvidia_gpu_compiler_percent": 75.78,
+    "d3d12core_percent": 15.68,
+    "nvidia_glvkspirv_percent": 4.69
+  },
+  "subsequent_launcher_preparation": {
+    "compiler_sha256": "7f502654627fd947d9e678313dad92ad7c3a4c3fbdbd19641c2b943d300b0844",
+    "profile": "chase",
+    "command": "tools/run_frosty.sh --work <prepared stage> --prepare-only",
+    "first_pass": {
+      "compiled": 2181,
+      "cache_hits": 471,
+      "log_sha256": "51dfa994ebc5a25eb4c62ff8d17c007260c09e56bc422f58a18857b6c930b57a"
+    },
+    "repeat": {
+      "compiled": 0,
+      "cache_hits": 2652,
+      "cached_compute_pipelines": 6,
+      "log_sha256": "ce6740b935e734b2d78d2d0d4088babdffc6254acccfc4d525d5e3145277b422"
+    }
+  }
+}

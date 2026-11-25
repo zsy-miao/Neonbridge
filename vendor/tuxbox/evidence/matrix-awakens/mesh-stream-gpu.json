@@ -1,0 +1,20 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "d3d12_xs_sha256": "77a877584436d661c069e33cca447dce54cf00a42f84e4c350be9023650707b5",
+  "guest_sha256": "87fc0153c09a1bb961b1170c7e99797f2bd0f25332081800a0818336b8236085",
+  "scope": "Desktop SM6.5 DXIL mesh and pixel shaders with optional amplification payload; 8x8 UAV readback",
+  "runs": {
+    "desktop": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "ms_ps_matching_pixels": "64",
+      "as_ms_ps_matching_pixels": "64"
+    },
+    "xbox": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "ms_ps_matching_pixels": "64",
+      "as_ms_ps_matching_pixels": "64"
+    }
+  }
+}

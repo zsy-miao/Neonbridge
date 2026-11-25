@@ -1,0 +1,48 @@
+{
+  "scope": "Synthetic host pixel draw characterizing physical wave width, quad helper neighbors and wave-coalesced append with overflow; does not execute Xbox shaders or establish wave64 ordering equivalence.",
+  "source_sha256": {
+    "tools/reference/pixel-wave/guest.cpp": "ee7c0c130c7695cc94cab6a4cc14aaf686af9998b36a36a342f41245bde8f69d",
+    "tools/reference/pixel-wave/vertex.hlsl": "2956dbf0721906946477a23ee0050738ffa209874ec6aeb9ccedb54497ab1e03",
+    "tools/reference/pixel-wave/pixel.hlsl": "014e0f81c7ddf6c7af882a53b0414c3c6747ec0cd88c8fb4872297af36538be0",
+    "tools/check_pixel_wave.py": "89da410cda93157f04b2b0463b828feb996cc398b4c466b629d5dcb1f095c449"
+  },
+  "runs": {
+    "amd": {
+      "scope": "Host pixel-wave characterization using a synthetic triangle, not original Xbox shader execution. Overflow is checked for valid unique slots, not equality with the Xbox wave64 subset.",
+      "adapter": "1002:13c0",
+      "wave_sizes": [
+        64
+      ],
+      "covered_pixels": 496,
+      "active_pixels": 397,
+      "reserved": 397,
+      "capacity": 160,
+      "helper_neighbor_pixels": 16,
+      "slots_checked": 160,
+      "guard_words": 16,
+      "guest_sha256": "7de372726e4e24f0a03529da60521c6858b1b92917cf4d654c12842e2b9f5f3f",
+      "pixel_source_sha256": "014e0f81c7ddf6c7af882a53b0414c3c6747ec0cd88c8fb4872297af36538be0"
+    },
+    "nvidia": {
+      "scope": "Host pixel-wave characterization using a synthetic triangle, not original Xbox shader execution. Overflow is checked for valid unique slots, not equality with the Xbox wave64 subset.",
+      "adapter": "10de:2705",
+      "wave_sizes": [
+        32
+      ],
+      "covered_pixels": 496,
+      "active_pixels": 397,
+      "reserved": 397,
+      "capacity": 160,
+      "helper_neighbor_pixels": 16,
+      "slots_checked": 160,
+      "guard_words": 16,
+      "guest_sha256": "7de372726e4e24f0a03529da60521c6858b1b92917cf4d654c12842e2b9f5f3f",
+      "pixel_source_sha256": "014e0f81c7ddf6c7af882a53b0414c3c6747ec0cd88c8fb4872297af36538be0"
+    }
+  },
+  "limits": [
+    "Draw uses a synthetic triangle; pixel grouping and helper participation can vary across draw geometry, pipeline state, hardware and driver.",
+    "This validates unique reserved slots and guards, not the exact ordering or selected subset from an Xbox wave64 shader.",
+    "No production pixel translation is enabled by this control."
+  ]
+}

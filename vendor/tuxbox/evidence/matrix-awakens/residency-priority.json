@@ -1,0 +1,40 @@
+{
+  "build": "The Matrix Awakens 1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "retail_call": {
+    "first_run_proton_log_sha256": "2ebb0ea131bfe2770bfc95f8440e9fa1b188013dfaf66b706afdc6cf89f138b4",
+    "device_query_rva": "0x57670d0",
+    "device_iid": "8b4f173b-2fea-4b80-8f58-4307191ab95d",
+    "adapter_field_offset": "0x40",
+    "function": "FD3D12PoolAllocator::AllocateResource",
+    "fault_rva": "0x57a4b59",
+    "slot_call_rva": "0x57a4b6a",
+    "device_slot": 85,
+    "object_count": 1,
+    "priority": "0xa0010000 (D3D12_RESIDENCY_PRIORITY_HIGH)",
+    "first_run": "The allocator selected the acceleration-structure resource state (0x400000). It dereferenced a null Device5 pointer while preparing the residency call before the first frame."
+  },
+  "probe": {
+    "source": "runtime/d3d12/heap_guest.cpp",
+    "exe_sha256": "d57f22c239208db8666002e233104014d6af822c28e83901ae1342ab73923d68",
+    "provider_sha256": "40e20218ae4e3b538e8dfc6da67583e61779e3190b2105a877189ee0521c5385",
+    "host": "Valve Proton Experimental 1793301796 experimental-11.0-20261027b-x86_64",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (10de:2705), driver 620.73.04",
+    "receipt": "d3d12-heaps PASS pci=10de:2705 heap=32MiB offsets=0,65536 words=256/256 invalid=4 display=3840x2160/RGB10A2 pixel=c00ffc00 volume=45/45 priorities=4/4 invalid_priority_calls=4",
+    "receipt_sha256": "239492d4b5c43d9ff073de3439431f83bad4873687f59a5d5f6409352731e7a0",
+    "exit_code": 0,
+    "batch": {
+      "memory heap": "HIGH",
+      "committed texture": "NORMAL",
+      "descriptor heap": "HIGH",
+      "query heap": "LOW"
+    },
+    "returned_e_invalidarg": [
+      "null pageable element",
+      "pageable from another guest device",
+      "null object array with count one",
+      "null priority array with count one"
+    ],
+    "scope": "The guest called Xbox Device5 slot 85 and checked its HRESULT. The host controls the resulting memory residency and eviction decisions."
+  }
+}

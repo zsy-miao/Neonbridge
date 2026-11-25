@@ -1,0 +1,20 @@
+{
+  "scope": "Synthetic BOX16/BOX32 cases: native gfx1036 instruction output versus HLSL, not a general opcode equivalence proof",
+  "cases": 48,
+  "native_dump_sha256": "d9935e27e40446706c5473504a5688e9e4cc2f29761ca8c6b2d871303ec7b3e1",
+  "hlsl_sha256": "4cdb977a30fb82ef86963e2c87dc8729f3748919323df41e24921d29d5aa19e5",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": 48,
+      "guard_words": 192
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": 48,
+      "guard_words": 192
+    }
+  },
+  "dxil_sha256": "74f42d33ab8d120aceccdb310301a3c9d9cce22bdb75d640ee4d601d978d3e08",
+  "constant_folded_limitation": "HLSL node and ray inputs were compiled as constants and DXC may have folded arithmetic. These results do not establish dynamic GPU arithmetic equivalence; use controls with dynamic inputs."
+}

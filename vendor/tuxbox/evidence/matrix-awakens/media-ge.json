@@ -1,0 +1,37 @@
+{
+  "host": "1792432585 GE-Proton11-11",
+  "dll_sha256": {
+    "mfplat.dll": "137df288c0a34eebfc183fee80aacde16be320d1e143fbb2d92468c3b62c3c5b",
+    "mfplat_sys.dll": "a65cdafadd5dcc4e9b0e314441f5224524a2f91d9c7de9b84b188664625c3ce9",
+    "mfplat_tombox.dll": "04a56adec588bce9536aff7603790794edbbcfaadd0c472aa35686b193e9a978"
+  },
+  "sample": {
+    "exit": 0,
+    "wrong_token_hr": "0x80070057",
+    "verified_pixel_words": "4"
+  },
+  "videos": [
+    {
+      "name": "Sandbox.mp4",
+      "exit": 0,
+      "native_fourcc": "3231564e",
+      "size": "1024,512",
+      "activate_decoder_hr": "0x00000000",
+      "decoded_bytes": "786432",
+      "timestamp": "0",
+      "oracle_sha256": "6914ce61a623396988dc6126815964b3015c9415306c68c8ab4636751fc654fa",
+      "frame_sha256": "6914ce61a623396988dc6126815964b3015c9415306c68c8ab4636751fc654fa",
+      "matched": true
+    },
+    {
+      "name": "LOGO_VID_HEVC.mp4",
+      "exit": 124,
+      "native_fourcc": "43564548",
+      "size": "3840,2160",
+      "activate_decoder_hr": "0xc00d5212",
+      "oracle_sha256": "cbf4921aa347ee2d3b3bc9b4dc81e30f914948a5a19210736bc048df7d43906e",
+      "frame_sha256": null,
+      "matched": false
+    }
+  ]
+}

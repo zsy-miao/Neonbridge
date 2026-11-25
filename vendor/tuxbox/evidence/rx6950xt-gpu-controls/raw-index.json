@@ -1,0 +1,58 @@
+{
+  "scope": "Synthetic translated IDXEN and IDXEN+OFFEN raw SRV loads; instrumented input and output only",
+  "adapter": "1002:73a5",
+  "proton": "1794497090 experimental-11.0-20261112-x86_64",
+  "cases": 8,
+  "compared_words": 3072,
+  "result_words": 1024,
+  "preserved_words": 2048,
+  "mismatches": 0,
+  "emitted_hlsl_sha256": "169b6fbca2a586e10ab7090f9d93a9d2109df98f956b53bbff4ae3d4c9bf6a49",
+  "instrumented_hlsl_sha256": "b5678206c5500db2b8e5aef7f4c1d0930819a576f81eb7ed45fd7d3c3538c7e4",
+  "dxil_sha256": "836a9f409e3f38733c3c9ed7bcc1f8e327a56af43c891be8efb0e5e20129dbe2",
+  "guest_sha256": "cd636122f8b42fab583e5ce3d00029da5f5d33284f94bcdb3570110308ddfc08",
+  "rows": [
+    {
+      "case": "case00",
+      "matched": true,
+      "sha256": "125ea90c80ce4843792c9e926de83e8483623f995b42d99fe36041cb5140d457"
+    },
+    {
+      "case": "case01",
+      "matched": true,
+      "sha256": "f259da24a19eaa81e93bb01e52ded97923f5e78f0f482c68d8ea7eab778b48a9"
+    },
+    {
+      "case": "case02",
+      "matched": true,
+      "sha256": "17f40b61ee17ed9e5f9ce97a6a39d8b2dbd9d6886ba7bd01642db48d0e74f254"
+    },
+    {
+      "case": "case03",
+      "matched": true,
+      "sha256": "ec59346dfba6b6bc60e33beb781684248bae7a9ddcac8b6660210dda2e099feb"
+    },
+    {
+      "case": "case04",
+      "matched": true,
+      "sha256": "1db10c1cc41b1d8b71b7628793f8062d81174464577e822c405351656e303688"
+    },
+    {
+      "case": "case05",
+      "matched": true,
+      "sha256": "068978abd52be321ee45f18772aabde262cd9321b94b4d772370a3bf6f65674b"
+    },
+    {
+      "case": "case06",
+      "matched": true,
+      "sha256": "19b9a659c8590850ba513b3679911d83af8224775f949716b18726906a1b3cab"
+    },
+    {
+      "case": "case07",
+      "matched": true,
+      "sha256": "8e29733c844d3a066ff4ec7093db87599d72d592f00e106f170bcd0f8803143c"
+    }
+  ],
+  "hardware": "AMD Radeon RX 6950 XT",
+  "test_date_utc": "2026-11-24"
+}

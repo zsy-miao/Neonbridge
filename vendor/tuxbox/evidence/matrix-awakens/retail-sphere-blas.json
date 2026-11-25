@@ -1,0 +1,155 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "08ac95ae3664a17ed8e02ba27079cbdc2a8629399a781ca1586f06f17b046222",
+  "d3d12_xs_sha256": "c5c3dc18f832ecc7737c68efe8900d659b7df7c2fe3a74bcac5991e6448b4b05",
+  "geometry": {
+    "asset": "EngineMeshes/Sphere",
+    "triangles": 528,
+    "instances": 2,
+    "xyz_sha256": "5381a79d200954ba9c317f325cdb10fa476e420c6915971dfc11458a1602f9a1",
+    "rays_sha256": "d3827b8a5fa262a03b7f6f1b2be4e6b649f561c734d98728b85a8a251eda5227",
+    "distance_tolerance": 0.0002,
+    "guest_blas_bytes": 31232,
+    "geometry_flags": "NONE",
+    "query_flags": [
+      "NONE",
+      "CULL_OPAQUE",
+      "CULL_NON_OPAQUE"
+    ],
+    "build_flags": "PREFER_FAST_TRACE | ALLOW_COMPACTION"
+  },
+  "serialized_blas_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+  "asset_sha256": "612c245f01199b775c095c578216a10aecd58b60feb93bfa4b70cfcbed3b7c10",
+  "method": "The Rust decoder extracted 528 triangles in original primitive order. The CPU asset check compared them byte-for-byte against the indexed render mesh. Desktop D3D12 rebuilt the two instances with the sphere\u2019s non-opaque geometry flags. The inline query commits each encountered non-opaque triangle candidate. At each primitive centroid, both an unfiltered ray and a CULL_OPAQUE ray must hit the expected instance, geometry and primitive at the expected distance. A CULL_NON_OPAQUE ray must miss. Three background rays also miss. The control repeats all queries against an Xbox slot-119 clone and compact copy.",
+  "postbuild": "The desktop command list queried CURRENT_SIZE and COMPACTED_SIZE on the original BLAS built with ALLOW_COMPACTION. The control allocated the full prebuild size for each copy destination. Guest serialized and deserialized byte counts are 31,296 and 31,232 respectively.",
+  "scope": "The GPU readbacks cover geometry, hit distances, triangle opacity classification, recorded source changes, and two-instance traversal of the retail sphere. The inline control accepts every non-opaque triangle candidate it encounters. Rendering material shaders and other cooked BVH layouts require their own tests.",
+  "adapters": {
+    "10de:2705": {
+      "desktop": {
+        "exit": 0,
+        "adapter": "10de:2705",
+        "raytracing_tier": "12",
+        "blas_result_bytes": "34944",
+        "blas_scratch_bytes": "6656",
+        "blas_current_bytes": "34944",
+        "blas_compacted_bytes": "13824",
+        "rays": "3171",
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "f7f6b35e037944cade880d8126401fb877ca4ffdb12fdb838aca39f26c7872b3"
+        }
+      },
+      "xbox-copy": {
+        "exit": 0,
+        "adapter": "10de:2705",
+        "raytracing_tier": "12",
+        "blas_result_bytes": "34944",
+        "blas_scratch_bytes": "6656",
+        "copy_modes": "clone,compact",
+        "invalid_copies": "2",
+        "blas_current_bytes": "34944",
+        "blas_compacted_bytes": "13824",
+        "rays": "3171",
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "f7f6b35e037944cade880d8126401fb877ca4ffdb12fdb838aca39f26c7872b3"
+        }
+      }
+    },
+    "1002:13c0": {
+      "desktop": {
+        "exit": 0,
+        "adapter": "1002:13c0",
+        "raytracing_tier": "11",
+        "blas_result_bytes": "84096",
+        "blas_scratch_bytes": "122656",
+        "blas_current_bytes": "56776",
+        "blas_compacted_bytes": "56704",
+        "rays": "3171",
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "010abd43743f3c7fbfdc2755c71c2fd23f73635938a76b35f432e38eda94426a"
+        }
+      },
+      "xbox-copy": {
+        "exit": 0,
+        "adapter": "1002:13c0",
+        "raytracing_tier": "11",
+        "blas_result_bytes": "84096",
+        "blas_scratch_bytes": "122656",
+        "copy_modes": "clone,compact",
+        "invalid_copies": "2",
+        "blas_current_bytes": "56776",
+        "blas_compacted_bytes": "56704",
+        "rays": "3171",
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "010abd43743f3c7fbfdc2755c71c2fd23f73635938a76b35f432e38eda94426a"
+        }
+      }
+    }
+  },
+  "deserialize": {
+    "host": "1793301796 experimental-11.0-20261027b-x86_64",
+    "provider_sha256": "ab94f915c4377402d4a9d48eb7a79663310c06cb4bb4c3b44cdaf4abca8fa4c3",
+    "guest_sha256": "22d5dca494bcc503f31c959e118c05ae65c4abe3bcb6462cd12b66f5de156e42",
+    "method": "On a guest command list, slot 119 rebuilds two copies of the cooked sphere into separate 31,232-byte Xbox resources. The source upload contains swapped primitive IDs during recording. After Close the guest restores the original IDs, then submits. Slot 131 builds the two-instance TLAS. Desktop inline ray queries check all primitive IDs, opacity, distances and misses.",
+    "adapters": {
+      "10de:2705": {
+        "desktop_compacted_bytes": 13824,
+        "placement": "guest address",
+        "desktop": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "f7f6b35e037944cade880d8126401fb877ca4ffdb12fdb838aca39f26c7872b3"
+        },
+        "xbox": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "f7f6b35e037944cade880d8126401fb877ca4ffdb12fdb838aca39f26c7872b3"
+        }
+      },
+      "1002:13c0": {
+        "desktop_compacted_bytes": 56704,
+        "placement": "relocated storage and patched instance addresses",
+        "desktop": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "010abd43743f3c7fbfdc2755c71c2fd23f73635938a76b35f432e38eda94426a"
+        },
+        "xbox": {
+          "hits": 2112,
+          "misses": 1059,
+          "max_distance_error": 2.9087066650390625e-05,
+          "readback_sha256": "010abd43743f3c7fbfdc2755c71c2fd23f73635938a76b35f432e38eda94426a"
+        }
+      }
+    },
+    "test": "tools/check_frosty_blas.py --provider DLL --deserialize SPHERE_SERIALIZED --sphere-vertices SPHERE_XYZ --output REPORT"
+  },
+  "sparse_geometry_control": {
+    "asset": "Prop/Kit_StreetLamp_A/Mesh/SM_StreetLamp_A_StopLight_D",
+    "asset_sha256": "b0474245979d65556ab66835e30135e386acadd9242e5be426cd39ac5e223e73",
+    "serialized_sha256": "ad63288f4b26a2d5b8a805ddd294a3fbe2e6436a1dd1a8600e845fa626b0f00c",
+    "serialized_bytes": 26560,
+    "active_triangles": 329,
+    "geometry_slots": 13,
+    "empty_geometry_ids": [
+      1
+    ],
+    "vertex_sha256": "b50ef59e87b857983ff09c71625edb6413be3a3b191b09c64e2c5f1ab5dee976",
+    "method": "The Xbox tree omits section 1. TuxBox supplies one inactive NaN-X triangle there so hardware assigns the original geometry indices 2 through 12. Each active triangle's geometry index, primitive index, winding and positions agree with the title's independent 32-bit render indices and section table.",
+    "test": "tools/check_frosty_serialized_blas.py MOUNT --mesh stoplight"
+  }
+}

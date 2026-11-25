@@ -1,0 +1,61 @@
+{
+  "scope": "Standard DXC factories, retained utility blobs, caller IMalloc, and shader compilation with an embedded root signature. The shader check requires a nonempty DXIL container part and diagnostics for a missing entry point. Xbox GPU code, custom compiler intrinsics, and XDXR are outside this check.",
+  "series_helper_sha256": {
+    "scdxil.dll": "7c945a23da710ba89d6a9496f9e4122c819bb500f08fd70253b1d913e5a5ed48",
+    "newbe_xs.dll": "4857484c2de7172022a77acf813046196219c00aafbf3aff2b74df15d98f45a3",
+    "xbsc_xs.dll": "e6110c2a28ec5908ec1d720a0fa2a0db685e3b5997d60a2d647b1e73f74b8f8d"
+  },
+  "desktop_dxc_sha256": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9",
+  "libraries": [
+    {
+      "dll": "dxcompiler_xs.dll",
+      "guest_sha256": "a85a10f85e8b5319c441a681e1af1ef37a5e623cdd0a813342be4f29bd83ca32",
+      "console_sha256": "40c0d27a4c8e580975b64b386a5decee083aa1465317d4f62bc16445f63681db",
+      "provider_sha256": "920938f673eb7640951b21bf4cf3989f3254dc82912139717dfbe8ccef4ac525",
+      "matching_receipts": {
+        "blob": "dxc-utils PASS bytes=257 source-freed=1 writable=257 retained=1",
+        "allocator": "dxc-allocator PASS ordinals=3,4 custom=1 retained=1 balanced=1",
+        "compile": "dxc-compiler PASS profile=cs_6_0 dxil=1 invalid-entry=1 diagnostics=1"
+      },
+      "runs": [
+        {
+          "host": "1793301796 experimental-11.0-20261027b-x86_64",
+          "provider": "console",
+          "exits": {
+            "blob": 0,
+            "allocator": 0,
+            "compile": 0
+          }
+        },
+        {
+          "host": "1793301796 experimental-11.0-20261027b-x86_64",
+          "provider": "tuxbox",
+          "exits": {
+            "blob": 0,
+            "allocator": 0,
+            "compile": 0
+          }
+        },
+        {
+          "host": "1792432585 GE-Proton11-11",
+          "provider": "console",
+          "exits": {
+            "blob": 0,
+            "allocator": 0,
+            "compile": 0
+          }
+        },
+        {
+          "host": "1792432585 GE-Proton11-11",
+          "provider": "tuxbox",
+          "exits": {
+            "blob": 0,
+            "allocator": 0,
+            "compile": 0
+          }
+        }
+      ]
+    }
+  ],
+  "date_utc": "2026-11-21"
+}

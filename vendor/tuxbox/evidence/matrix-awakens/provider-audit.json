@@ -1,0 +1,133 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "platform": "Xbox Series X|S title on Linux, Valve Proton Experimental 1793301796, RTX 4070 Ti SUPER",
+  "method": "Matched Wine +loaddll module paths to the staged manifest and the two builtin system32 libraries. Each desktop run used MangoHud, a separate copy of the package and prefix, and omitted gameconfighelper.dll.",
+  "reduced_graphics_profile_sha256": "116650b1e05d9dd29d6f2832f458e0ac2c0945f931cc3bf21a34cc1198d286f2",
+  "chase_control": {
+    "graphics_stack": "Earlier TuxBox graphics build and packaged Series XG. The control uses the previously recorded reduced graphics profile.",
+    "args": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer",
+      "-nosound"
+    ],
+    "log_sha256": "94b4483c81cc3a5b14fd1a4187efc5b71aa18976386b5e1a45e9c1011afb26a5",
+    "mangohud_csv_sha256": "19c8ad2f4d20021c0daefa915fd1c3f6c4e26df4c1835aa74348a13ccc1100d1",
+    "state": "Loaded P_Construct_WP, recorded ChaseSection-WakeUp and changed from Startflow to Chase. The media bridge delivered at least 720 NV12 frames of the 3840x1600 movie before the session was closed.",
+    "loaded_libraries": {
+      "d3d12_xs.dll": {
+        "loaded_file": "d3d12_xs.dll",
+        "provider": "TuxBox d3d12",
+        "sha256": "568b5a9f91fe40f2d01bcc35229b3d68c9d9eb0b909270208739bdba826a33fb"
+      },
+      "dxcompiler_xs.dll": {
+        "loaded_file": "dxcompiler_xs.dll",
+        "provider": "TuxBox dxc-utils",
+        "sha256": "920938f673eb7640951b21bf4cf3989f3254dc82912139717dfbe8ccef4ac525"
+      },
+      "xg_xs.dll": {
+        "loaded_file": "xg_xs.dll",
+        "provider": "Packaged Xbox XG",
+        "sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493"
+      },
+      "xmem.dll": {
+        "loaded_file": "xmem.dll",
+        "provider": "TuxBox xmem",
+        "sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd"
+      },
+      "GameInput.dll": {
+        "loaded_file": "gameinput.dll",
+        "provider": "TuxBox gameinput",
+        "sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99"
+      },
+      "xgameruntime.dll": {
+        "loaded_file": "xgameruntime.dll",
+        "provider": "TuxBox xgameruntime",
+        "sha256": "5a83cb0998cf99be48a4f2cfbfd39aa55deb7725b3b3245f599b42f8aca7f61b"
+      },
+      "xcrdapi.dll": {
+        "loaded_file": "xcrdapi.dll",
+        "provider": "TuxBox xcrdapi",
+        "sha256": "c02cd03e78906f48f1d0cf939303537a29631d1a83cc35a2284380202f69b532"
+      },
+      "AcpHal.dll": {
+        "loaded_file": "acphal.dll",
+        "provider": "TuxBox acphal",
+        "sha256": "5679643b085e008a0f1102179144de3ecdbf6ce594c30f64cbaff3d1df5f5229"
+      },
+      "mfplat.dll": {
+        "loaded_file": "mfplat.dll",
+        "provider": "TuxBox media",
+        "sha256": "ba2b8d3123865b8ce25a9e44bc1b9cc9335f28d3a012d600ee202994d39e9c0f"
+      },
+      "GameChat2.dll": {
+        "loaded_file": "gamechat2.dll",
+        "provider": "Original retail package",
+        "sha256": "35ecdfbea3a9f4d004b638d8b1070dcded9cb05f76514a4184b5a5832f4afb87"
+      },
+      "MSAudDecMFT.dll": {
+        "loaded_file": "frosty_packaged_aac.dll",
+        "provider": "Packaged Xbox AAC",
+        "sha256": "810c007551ec389a2c7dd0f0066747e453b5c3d1efb3cdc62cc1f22a76c5b454"
+      },
+      "mfh264dec.dll": {
+        "loaded_file": "frosty_packaged_h264.dll",
+        "provider": "Packaged Xbox H.264",
+        "sha256": "9db2936779eec00c69c9a549e7ec4ab2af717b64b95454065e80dfa5c5a439ac",
+        "tuxbox_adapter": "frosty_h264.dll"
+      },
+      "mfhevcdec.dll": {
+        "loaded_file": "mfhevcdec.dll",
+        "provider": "Packaged Xbox HEVC",
+        "sha256": "fecc135bf0387f68c304542af3cb2c4aaed1267a06027f5198223f585678cd0d",
+        "tuxbox_adapter": "frosty_hevc.dll"
+      },
+      "mfreadwrite.dll": {
+        "loaded_file": "mfreadwrite.dll",
+        "provider": "Proton builtin",
+        "sha256": "352a6d1c7684720f1f9790b25120540eede28a64411e031ec982ef830932e8d4"
+      },
+      "XAudio2_9.dll": {
+        "loaded_file": "xaudio2_9.dll",
+        "provider": "Proton builtin",
+        "sha256": "c6338d9f2607d40c6cff1d5a9b590c18e4b825afb5f00ffcff2c4f788793dcbd"
+      }
+    }
+  },
+  "recent_tuxbox_xg_runs": {
+    "xg_sha256": "07576cb2724600e833171ddce6d15fe3a6e392f7eaed2b9acae94b432f12884a",
+    "d3d12_sha256": "0d0204dacb201de737391b73a4393f02d346b5ed5c6789eb6286ff86a287ef0f",
+    "logs_sha256": [
+      "cc63b3a3d4fec9ae8fc63a8bc0b623f0cfe4dcff63850e9f50a3d738a0f0f56d",
+      "74b465f113063bf74cde533e7c93b101a30f64460958e598113262438b7c0c78"
+    ],
+    "result": "Both reduced-profile runs reached Construct and reported GPU device removal before the menu. No missing gameconfighelper.dll was reported. These runs do not establish the cause of device loss."
+  },
+  "provider_decisions": {
+    "retain_tuxbox": [
+      "d3d12_xs.dll",
+      "dxcompiler_xs.dll",
+      "xg_xs.dll",
+      "xmem.dll",
+      "GameInput.dll",
+      "xgameruntime.dll",
+      "xcrdapi.dll",
+      "AcpHal.dll",
+      "mfplat.dll",
+      "mfh264dec.dll",
+      "mfhevcdec.dll"
+    ],
+    "use_game_or_host": [
+      "GameChat2.dll",
+      "MSAudDecMFT.dll",
+      "mfreadwrite.dll",
+      "XAudio2_9.dll"
+    ],
+    "remove_from_staging": "None of the 25 staged PE files in the chase control or 26 in the newer staging imports gameconfighelper.dll by regular or delay import. Its file was removed from the prefix before each run. The chase loader trace has no load of the helper.",
+    "audio": "The chase control was muted. An earlier audio-enabled clean-prefix menu run started an XAudio2 stream and submitted a buffer with the same external provider choices. The AAC media registration helper remains required.",
+    "other_runs": [
+      "evidence/matrix-awakens/independent-menu.json",
+      "evidence/matrix-awakens/independent-media.json",
+      "evidence/matrix-awakens/chase-gameplay.json",
+      "evidence/matrix-awakens/three-library-comparison.json"
+    ]
+  }
+}

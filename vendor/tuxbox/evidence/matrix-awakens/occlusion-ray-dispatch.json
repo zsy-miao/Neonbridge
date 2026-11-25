@@ -1,0 +1,198 @@
+{
+  "archive": "global",
+  "programs": {
+    "3801": {
+      "state_sha256": "336239180c1e1cdc2049fb9177310dc9168b17c9edaf7226b93b0f955b055bc3",
+      "dxil_sha256": "0e16a5178db10dd842b49931ced1189f43aae96c188dffeb44d361cd4578fd88"
+    },
+    "3824": {
+      "state_sha256": "f5074cc1267eac4293a0ed2db8b729e6df4b1b354d7465bd1d8bf8959ff4bacc",
+      "dxil_sha256": "a63542b6506497418df25465e77d14219347aeaa2973985d613286f0d1f4d6c6"
+    }
+  },
+  "guest_sha256": "35b6f0153fab11baf1fd6fa842e38cf29ed0bcf6ed70484b152aa00f4f5ea659",
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "dispatch": [
+    4,
+    2,
+    1
+  ],
+  "shader_table": "Translated retail ray-generation export plus instrumented closest-hit and miss exports producing native hit distances.",
+  "inputs": "Columns have zero depth, an occluding triangle, an open ray, and a coordinate outside the light rectangle. Rows select shading models 1 and 2.",
+  "runs": {
+    "nvidia": {
+      "adapter": "10de:2705",
+      "exit": 0,
+      "programs": {
+        "3801": [
+          "0,0,1,0;hits 0;misses 0",
+          "0,0,1,0;hits 1;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,1,0;hits 0;misses 0",
+          "0,0,1,0;hits 0;misses 0",
+          "1,2,1,2;hits 2;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,1,0;hits 0;misses 0"
+        ],
+        "3824": [
+          "0,0,0,0;hits 0;misses 0",
+          "0,0,0,0;hits 1;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,0,0;hits 0;misses 0",
+          "0,0,0,0;hits 0;misses 0",
+          "1,2,1,2;hits 2;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,0,0;hits 0;misses 0"
+        ]
+      },
+      "distance_3824": [
+        -1.0,
+        0.98989999,
+        9.9999999e+26,
+        -1.0,
+        -1.0,
+        9.9999999e+26,
+        9.9999999e+26,
+        -1.0
+      ]
+    },
+    "amd": {
+      "adapter": "1002:13c0",
+      "exit": 0,
+      "programs": {
+        "3801": [
+          "0,0,1,0;hits 0;misses 0",
+          "0,0,1,0;hits 1;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,1,0;hits 0;misses 0",
+          "0,0,1,0;hits 0;misses 0",
+          "1,2,1,2;hits 2;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,1,0;hits 0;misses 0"
+        ],
+        "3824": [
+          "0,0,0,0;hits 0;misses 0",
+          "0,0,0,0;hits 1;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,0,0;hits 0;misses 0",
+          "0,0,0,0;hits 0;misses 0",
+          "1,2,1,2;hits 2;misses 0",
+          "1,1,1,1;hits 0;misses 1",
+          "0,0,0,0;hits 0;misses 0"
+        ]
+      },
+      "distance_3824": [
+        -1.0,
+        0.98989993,
+        9.9999999e+26,
+        -1.0,
+        -1.0,
+        9.9999999e+26,
+        9.9999999e+26,
+        -1.0
+      ]
+    }
+  },
+  "hair_voxels": {
+    "archive_entry": 3810,
+    "export": "OcclusionRGS_f203fe18",
+    "state_sha256": "b0ec46889a98c46cb8f1a77b34397968805a3d97cbcf5935c539e78b13f6a10e",
+    "dxil_sha256": "a049ee5c0cc841694d30233fa57df75aa9d3da911da38cdce5d192540f8c6a3c",
+    "guest_sha256": "8aa2ea2df382b848b0f51398aac8f5bf57f47314b5819c26c0510a6dbc679a7b",
+    "adapter": "1002:13c0",
+    "host": "1789159601 experimental-11.0-20260910b-x86_64",
+    "exit": 0,
+    "inputs": {
+      "dispatch": [
+        4,
+        2,
+        1
+      ],
+      "virtual_node": {
+        "world_bounds": [
+          -128,
+          128
+        ],
+        "pages": [
+          1,
+          1,
+          1
+        ]
+      },
+      "page_table": "0xffffffff for absent, 0 for resident.",
+      "volume": "One R32_UINT voxel. The flags-only page contains 0xff000000. The other cases store 1024.",
+      "voxel_size": 1.0,
+      "density_scale": 1.0,
+      "occlusion_threshold": 0.01,
+      "lighting": "The light uses bit 0. Separate R32_UINT scene and hair light-channel textures store 0x101 for an overlapping mask or 0x100 for a disjoint mask. The hair surface is a positive-depth sample at x=2, y=0."
+    },
+    "result_order": "In each pixel pair, the first element contains scene lighting RGBA and hardware callback counts. The second element is hair lighting RGBA.",
+    "absent_page_row_major": [
+      [
+        "0,0,1,0;hits 0;misses 0",
+        "0,0,0,0"
+      ],
+      [
+        "0,0,1,0;hits 1;misses 0",
+        "0,0,0,0"
+      ],
+      [
+        "1,1,1,1;hits 0;misses 1",
+        "0,0,0,0"
+      ],
+      [
+        "0,0,1,0;hits 0;misses 0",
+        "0,0,0,0"
+      ],
+      [
+        "0,0,1,0;hits 0;misses 0",
+        "0,0,0,0"
+      ],
+      [
+        "1,2,1,2;hits 2;misses 0",
+        "0,0,0,0"
+      ],
+      [
+        "1,1,1,1;hits 0;misses 1",
+        "0,0,0,0"
+      ],
+      [
+        "0,0,1,0;hits 0;misses 0",
+        "0,0,0,0"
+      ]
+    ],
+    "changed_pixels_relative_to_absent_page": {
+      "resident_flags_only": {},
+      "resident_density_1024": {
+        "2,0": [
+          "0,0,1,0;hits 0;misses 1",
+          "0,0,0,0"
+        ],
+        "2,1": [
+          "0,0,1,0;hits 0;misses 2",
+          "0,0,0,0"
+        ]
+      },
+      "hair_surface_outside_light_channels": {},
+      "hair_surface_in_light_channels": {
+        "2,0": [
+          "1,1,1,1;hits 0;misses 2",
+          "1,1,1,1"
+        ]
+      }
+    }
+  },
+  "scene_light_channels": {
+    "archive_entry": 3801,
+    "state_sha256": "336239180c1e1cdc2049fb9177310dc9168b17c9edaf7226b93b0f955b055bc3",
+    "dxil_sha256": "7eb75851790e77dfc042d493d6eb2069ed6994e0a140f3c4dee9d88e757133af",
+    "adapter": "1002:13c0",
+    "pixel": [
+      1,
+      0
+    ],
+    "light": 1,
+    "incoming_mask_0x101": "0,0,1,0;hits 1;misses 0",
+    "incoming_mask_0x100": "0,0,1,0;hits 0;misses 0"
+  }
+}

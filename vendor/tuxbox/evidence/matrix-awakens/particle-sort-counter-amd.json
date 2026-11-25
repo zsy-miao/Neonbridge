@@ -1,0 +1,23 @@
+{
+  "provider_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+  "translated_hlsl_sha256": "900650b2c9aedc018f4f1832b759a516e7efdb164228e3c6961186cc2b45826f",
+  "terminal_hlsl_sha256": "877cea23d6a949100222a7214cb51cfedc5212861126f2098fa9105f4c7f0521",
+  "guest_sha256": "c8ab5e6eb896ac80bd6d3511c1e992921851cce94379627fea3f152115b2daa2",
+  "matching_uints": 768,
+  "groups": 4,
+  "elected_lanes": [
+    null,
+    34,
+    0,
+    0
+  ],
+  "increments": [
+    0,
+    10,
+    1,
+    1
+  ],
+  "adapters": [
+    "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+  ]
+}

@@ -1,0 +1,24 @@
+/target
+/vendor/neonbridge-own/target
+# The game feed's link helpers: RuneLink's Go tsproxy and cloudflared builds, never committed
+/tools/tsproxy.exe
+/tools/cloudflared.exe
+# Build output of any nested crate, Python caches, and run screenshots left at the root
+target/
+__pycache__/
+/*.jpg
+# Working notes stay local
+/TODO.md
+/docs/
+# Crash dumps, run output, side-session notes and loose patches stay local
+*.dmp
+*.crash.log
+/runs/
+/notes/
+/*.patch
+# Agility SDK DLLs staged next to an exe
+/D3D12/
+# Environment files
+.env*
+# --package output
+/dist/

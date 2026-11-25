@@ -1,0 +1,23 @@
+{
+  "scope": "Material 1840 through the original serialized Xbox hit-group collection and local shader record, compared with direct desktop DXR. Four triangle intersections cover both sides of two instances, and a fifth ray misses.",
+  "export": "MaterialCHS_224b264d",
+  "shader": {
+    "state_sha256": "1e577b724aaf8396746ad9121150cf0c340e6e5cccb46a86e30c3c44b9881893",
+    "dxil_sha256": "49c8b5562c476629ae87a18d7180a2f6455a40b2a16cb3c1e9e30923c94e32e7"
+  },
+  "provider_sha256": "7e01b49515fe44d8083e498b14823bd0ebc02e2c464bb1e85b0ba58c74b652c7",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "payloads": [
+    "3f800000,00001001,00000000,00000000,00000000,00000000,3c003c00,3c003c00,00008000,00013c00,00000000,00000000,00001aff,00000000,00000000,00000000",
+    "3f800000,00001001,00000000,00000000,00000000,00000000,3c003c00,3c003c00,00008000,00813c00,00000000,00000000,00001aff,00000000,00000000,00000000",
+    "3f800000,00001001,00000000,00000000,00000000,00000000,3c003c00,3c003c00,00008000,00013c00,00000000,00000000,00000001,00000000,00000000,00000000",
+    "3f800000,00001001,00000000,00000000,00000000,00000000,3c003c00,3c003c00,00008000,00813c00,00000000,00000000,00000001,00000000,00000000,00000000",
+    "bf800000,00001001,00001002,00001003,00001004,00001005,00001006,00001007,00001008,02000000,0000100a,0000100b,0000100c,0000100d,0000100e,0000100f"
+  ],
+  "observations": "Both GPU models matched all 80 readback words. The independent expected-field checks covered hit distance, face, per-ray flags, and all words of the miss payload. All fourteen observed material shaders passed the same run.",
+  "limits": "Material test descriptors and zero page-table entries."
+}

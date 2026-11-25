@@ -1,0 +1,47 @@
+--- a/crates/tuxbox-xshader/src/bin/xshader.rs
++++ b/crates/tuxbox-xshader/src/bin/xshader.rs
+@@ -17,12 +17,16 @@
+     let mut isa_out = None;
+     let mut fssm_out = None;
+     let mut hlsl_out: Option<String> = None;
++    let mut link_pixel = None;
++    let mut pixel_order = None;
+     let mut i = 2;
+     while i + 1 < args.len() {
+         match args[i].as_str() {
+             "--isa-out" => isa_out = Some(args[i + 1].clone()),
+             "--fssm-out" => fssm_out = Some(args[i + 1].clone()),
+             "--hlsl-out" => hlsl_out = Some(args[i + 1].clone()),
++            "--link-pixel" => link_pixel = Some(&args[i + 1]),
++            "--pixel-order" => pixel_order = Some(&args[i + 1]),
+             other => eprintln!("warning: ignoring unknown arg {other}"),
+         }
+         i += 2;
+@@ -159,7 +163,26 @@
+         }
+     }
+     if let Some(f) = hlsl_out {
+-        match tuxbox_xshader::hlsl::translate(&ex) {
++        let translate = || -> Result<_, String> {
++            let Some(path) = link_pixel else {
++                return tuxbox_xshader::hlsl::translate(&ex);
++            };
++            let source = std::fs::read(path).map_err(|e| e.to_string())?;
++            let pixel = extract(&source).map_err(|e| format!("{e:?}"))?;
++            if !matches!(ex.stage, Stage::Vertex | Stage::Geometry) || pixel.stage != Stage::Pixel {
++                return Err("expected a vertex or geometry producer and a pixel consumer".into());
++            }
++            let pixel = tuxbox_xshader::hlsl::translate(&pixel)?;
++            let order = match pixel_order {
++                None => Vec::new(),
++                Some(path) => {
++                    let dxil = std::fs::read(path).map_err(|e| e.to_string())?;
++                    tuxbox_xshader::meta::pixel_input_order(&dxil)
++                }
++            };
++            tuxbox_xshader::hlsl::translate_ordered(&ex, Some(&pixel.ps_input_interp), &order)
++        };
++        match translate() {
+             Ok(t) => {
+                 if let Err(e) = std::fs::write(&f, &t.hlsl) {
+                     eprintln!("cannot write {f}: {e}");

@@ -1,0 +1,135 @@
+--- a/crates/compat/d3d12_xs/src/cmdlist_wrap.rs
++++ b/crates/compat/d3d12_xs/src/cmdlist_wrap.rs
+@@ -492,6 +492,7 @@
+     group: [u32; 3],
+     copy_dest: core::ops::Range<u64>,
+     has_recording_allocator: bool,
++    build_error: i32,
+ }
+ 
+ const _: () = assert!(core::mem::offset_of!(ListShim, real) == SHIM_REAL_OFF);
+@@ -548,6 +549,106 @@
+     }
+ }
+ 
++const XBOX_LIST6: crate::device_wrap::Guid = crate::device_wrap::Guid {
++    d1: 0xc3827890, d2: 0x4024, d3: 0x474c, d4: [0x98,0xcf,0x64,0x5b,0x51,0xdc,0x48,0x74],
++};
++const LIST4: crate::device_wrap::Guid = crate::device_wrap::Guid {
++    d1: 0x8754318e, d2: 0xd3a9, d3: 0x4541, d4: [0x98,0xcf,0x64,0x5b,0x50,0xdc,0x48,0x74],
++};
++
++unsafe fn query_list(real: *mut c_void, iid: *const crate::device_wrap::Guid, out: *mut *mut c_void) -> i32 {
++    let methods = unsafe { *real.cast::<*const usize>() };
++    let query: unsafe extern "system" fn(*mut c_void, *const crate::device_wrap::Guid, *mut *mut c_void) -> i32 =
++        unsafe { core::mem::transmute(*methods) };
++    unsafe { query(real, iid, out) }
++}
++
++unsafe extern "system" fn shim_query(shim: *mut ListShim, iid: *const crate::device_wrap::Guid, out: *mut *mut c_void) -> i32 {
++    let real = unsafe { (*shim).real };
++    if iid.is_null() || unsafe { *iid != XBOX_LIST6 } {
++        return unsafe { query_list(real, iid, out) };
++    }
++    if out.is_null() { return 0x80004003u32 as i32; }
++    unsafe { out.write(core::ptr::null_mut()) };
++    // Frosty's Xbox List6 supplies batched builds at slot 131. Host List4
++    // provides the underlying command. The returned guest pointer retains
++    // a reference on the base list, as required by the shim Release thunk.
++    let mut list4 = core::ptr::null_mut();
++    let hr = unsafe { query_list(real, &LIST4, &mut list4) };
++    if hr < 0 { return hr; }
++    if list4.is_null() { return 0x80004002u32 as i32; }
++    unsafe {
++        let real_methods = *real.cast::<*const usize>();
++        let add_ref: unsafe extern "system" fn(*mut c_void) -> u32 = core::mem::transmute(*real_methods.add(1));
++        add_ref(real);
++        let methods = *list4.cast::<*const usize>();
++        let release: unsafe extern "system" fn(*mut c_void) -> u32 = core::mem::transmute(*methods.add(2));
++        release(list4);
++        out.write(shim.cast());
++    }
++    0
++}
++
++#[repr(C)]
++struct RaytracingBuild {
++    destination: u64,
++    inputs: [u64; 3],
++    source: u64,
++    scratch: u64,
++    extension: [u64; 4],
++}
++const _: () = assert!(size_of::<RaytracingBuild>() == 80);
++
++unsafe extern "system" fn build_acceleration_structures(
++    shim: &mut ListShim, count: u32, entries: *const RaytracingBuild,
++) {
++    if count == 0 { return; }
++    if entries.is_null() { shim.build_error = 0x80070057u32 as i32; return; }
++    // The caller passes count 80-byte records. The first 48 bytes are the
++    // desktop build descriptor. Frosty zeroes the entire trailing 32 bytes.
++    let builds = unsafe { core::slice::from_raw_parts(entries, count as usize) };
++    if builds.iter().any(|b| b.extension != [0; 4]) {
++        record("d3d12_xs", "BuildAccelerationStructures", "unsupported extended record");
++        shim.build_error = 0x80004001u32 as i32;
++        return;
++    }
++    if builds.iter().any(|b| b.destination == 0 || b.scratch == 0 ||
++        (b.destination | b.scratch | b.source) & 255 != 0) {
++        record("d3d12_xs", "BuildAccelerationStructures", "invalid acceleration structure buffer addresses");
++        shim.build_error = 0x80070057u32 as i32;
++        return;
++    }
++    let mut list4 = core::ptr::null_mut();
++    let hr = unsafe { query_list(shim.real, &LIST4, &mut list4) };
++    if hr < 0 || list4.is_null() { shim.build_error = 0x80004002u32 as i32; return; }
++    // SAFETY: desktop List4 slot 72 consumes the 48-byte build prefix
++    // synchronously. No postbuild-info descriptors occur in this batch form.
++    unsafe {
++        let methods = *list4.cast::<*const usize>();
++        let build: unsafe extern "system" fn(*mut c_void, *const RaytracingBuild, u32, *const c_void) =
++            core::mem::transmute(*methods.add(72));
++        for entry in builds { build(list4, entry, 0, core::ptr::null()); }
++        let release: unsafe extern "system" fn(*mut c_void) -> u32 = core::mem::transmute(*methods.add(2));
++        release(list4);
++    }
++    static CALLS: AtomicUsize = AtomicUsize::new(0);
++    if CALLS.fetch_add(1, Ordering::Relaxed) < 8 {
++        let b = &builds[0];
++        record("d3d12_xs", "BuildAccelerationStructures", &format!(
++            "recorded {count} builds, first dest={:#x} scratch={:#x}", b.destination, b.scratch
++        ));
++    }
++}
++
++unsafe extern "system" fn shim_close(shim: &mut ListShim) -> i32 {
++    // An error in a void recording command is reported by Close. Keep the
++    // host list open on failure so even an erroneous submission is rejected.
++    if shim.build_error != 0 { return shim.build_error; }
++    let close: unsafe extern "system" fn(*mut c_void) -> i32 =
++        unsafe { core::mem::transmute(*REAL_VT_PTR.add(9)) };
++    unsafe { close(shim.real) }
++}
++
+ unsafe extern "system" fn shim_reset(shim: &mut ListShim, allocator: *mut c_void, pso: *mut c_void) -> i32 {
+     let reset: unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
+         core::mem::transmute(*REAL_VT_PTR.add(10));
+@@ -555,6 +656,7 @@
+     if hr >= 0 {
+         crate::texture_state::TRACKER.lock().unwrap().reset(shim.real as usize);
+         shim.remember_allocator(allocator);
++        shim.build_error = 0;
+         shim.copy_dest = 0..0;
+         shim.remember_pipeline(pso);
+     }
+@@ -686,6 +788,9 @@
+         b[15] = 0x20;
+         core::ptr::copy_nonoverlapping(b.as_ptr(), p, 16);
+         let entry = match i {
++            0 => shim_query as *const () as usize,
++            9 => shim_close as *const () as usize,
++            131 => build_acceleration_structures as *const () as usize,
+             10 => shim_reset as usize,
+             11 => shim_clear as usize,
+             25 => shim_set_pso as usize,

@@ -1,0 +1,56 @@
+{
+  "scope": "Offline validated graph-to-directory export of a user-owned Frosty sphere, followed by GPU AABB generation and original primitive mapping. No game bytes are distributed. This is not a runtime provider path or full shader 219 execution.",
+  "probe": "python tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "tools/reference/blas/sphere_sidecar.rs": "ccad784e7a63832f146ddb8d1953aea5ceddf250296291f9f2757644dd6e6dcf",
+    "tools/reference/blas/sphere_sidecar_probe.h": "efa6d2f7bf10ec12703ffbc3a1c32537a33547210ab3313b47787749d084df9d",
+    "tools/reference/blas/sidecar_bounds.hlsl": "fc01f0dc399288809b2f76d790e5f97984666eaaf9915079dfe689d482c431f2",
+    "tools/reference/blas/sidecar_map.hlsl": "a9322c310ecc3085bdca809e421d8f3db168d108e36f5b456d98ae4848863d4b",
+    "tools/reference/blas/validate_traversal.rs": "cff765144d8eb27d635fd0700a5d4102ef41eb1e08444a2206ba7df93dbd9e6d",
+    "runtime/d3d12/src/commands/serialized_blas.rs": "c43b326ab3646c2fc97c2686a5b229c840986095c39eaeeb683bf22041cec8ca",
+    "runtime/d3d12/src/device/blas/sidecar_directory.rs": "f0d5eb0c9dd0312416a95e1973ee0710fded8bc824bcdd7afe5e908b7df2343c",
+    "tools/check_frosty_blas.py": "1bda66cb280f33a0b99b2c3ce796f0323dfe4a227609f16c73cdfbf767c705ee",
+    "tools/reference/blas/guest.cpp": "73ad417ae2ce21d1fbae473a6eb6605472dfa72afba0f4dabbc664d14c39a672"
+  },
+  "graph": "The existing conservative validator checks structure, reachable nodes, graph bounds and containment before export. The exporter walks only types 0/4/5, emits both paired leaf sides, and matches each geometry/primitive ID to a unique CPU decoder triangle. Unsupported, clipped or shared-leaf cases are rejected.",
+  "gpu_checks": "GPU kernels read the GPU-copied body and directory, generate one AABB and geometry/primitive/leaf/side mapping per candidate. Readback compares every mapping against the CPU decoder and requires each generated AABB to strictly enclose all three CPU-decoded vertices.",
+  "negative_controls": [
+    "unsupported_root_type",
+    "root_cycle",
+    "nan_child_bound",
+    "truncated"
+  ],
+  "limits": [
+    "One observed sphere asset and one set of vertices; the directory decoder and GPU tests do not establish coverage of other assets, node types or spatial splits.",
+    "Bounds are not used to build an acceleration structure in this sphere-wide check. The separate synthetic paired control exercises BLAS/TLAS building and ray queries.",
+    "No queue-ordered runtime publication, guest descriptor association, resource lifetime, shader 219 execution, full numerical equivalence or fail-closed live dispatch is established."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "bf8b129dd5ce404f791f01de2ea4f8ff93e8afe17a0fc25dd6828fbe31eeee1a",
+      "serialized_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+      "graph_rejections": [
+        "unsupported_root_type",
+        "root_cycle",
+        "nan_child_bound",
+        "truncated"
+      ],
+      "sphere_sidecar": "count 528; second_sides 221; bounds_status 0; map_status 0; matched 1"
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "bf8b129dd5ce404f791f01de2ea4f8ff93e8afe17a0fc25dd6828fbe31eeee1a",
+      "serialized_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+      "graph_rejections": [
+        "unsupported_root_type",
+        "root_cycle",
+        "nan_child_bound",
+        "truncated"
+      ],
+      "sphere_sidecar": "count 528; second_sides 221; bounds_status 0; map_status 0; matched 1"
+    }
+  }
+}

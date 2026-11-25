@@ -1,0 +1,31 @@
+{
+  "title": "Frosty-XSX-Shipping.exe",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "reference_provider_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "capture": "Stopped the unmodified staged retail executable at its first call to Xbox command queue slot 30 (RVA 0x5764f32) in a private Proton prefix. Read RDX and the 72 bytes at R8 and 32 bytes at R9 before the call. An existing separate reference rendering run reported frame 1 at 3840x2160 in DXGI_FORMAT_R10G10B10A2_UNORM.",
+  "call_site": {
+    "plane_count_selection": "RVA 0x5764eec selects two planes when the optional second surface is present. RVA 0x5764f16 selects one plane otherwise.",
+    "first_plane": "RVAs 0x5764e39, 0x5764e41 and 0x5764e49 store the resource-array pointer, resource count and frame token.",
+    "present_parameters": "RVA 0x5764db5 stores the floating-point threshold, and RVA 0x5764dc0 can set bit 0 at byte offset 24 on a separate branch.",
+    "call": "RVA 0x5764f2b loads vtable offset 0xf0, and RVA 0x5764f32 calls it with both records on the caller stack."
+  },
+  "first_call": {
+    "planes": 1,
+    "plane_size_bytes": 72,
+    "plane_token": 0,
+    "plane_resource_count": 1,
+    "plane_resource_array_pointer": "non-null, process-local",
+    "plane_bytes_24_through_71": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "present_record_hex": "0000204100000000000000000000000000000000000000000000000000000000",
+    "immediate_threshold_percent": 10.0
+  },
+  "translation": "PresentX accepts a single resource, a default plane tail, and a zero-initialized parameter record with a threshold from 0 to 100. The desktop flip chain waits for VBlank. Scanline-dependent late-frame tearing and nonzero option fields are unsupported. A null parameter pointer retains the original shorter plane-prefix ABI.",
+  "parameter_reference": "https://learn.microsoft.com/en-us/samples/microsoft/xbox-gdk-samples/framepacing/",
+  "guest_control": {
+    "provider_sha256": "68a16989e600c75a349a6774ebda0da1494e434ec66fb570407498cedf1ca2ca",
+    "guest_sha256": "b9ec9057483c9fd0e0c5dfed6f310eafdc3f6eb5d382633fbc1142ddd320e624",
+    "tested": "10% and 0% thresholds display distinct frames, guarded pixel readbacks, and rejection of a nonzero option in each record.",
+    "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
+  }
+}

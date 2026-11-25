@@ -1,0 +1,44 @@
+{
+  "scope": "XGComputeOptimalSwizzleMode ordinal 3. Returned mode values compared with supplied Xbox XG DLL for dimensions, formats, resource and bind flags, sizes and sample-count boundaries. The control supplies the eighth flags argument explicitly.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "78f332f91f1da4b8e472ca337002ccc3ee626cf2a309c8118064f2a525381262",
+  "guest_source_sha256": "733b25f100c0d3a469af3ea3c766b8be94b031c64261c9653990c38ba4cf98b9",
+  "xmem_sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+  "cases": 70200,
+  "xgs_callsite_checks": {
+    "xgs12_10d.dll": {
+      "binary_sha256": "ab5ec402680bff9990507d86329481ed7d8c70dabe80c067ad7916728a5c9136",
+      "import_address": "0x1801f8130",
+      "call_rvas": [
+        "0x1aeec1"
+      ],
+      "eighth_argument": "Caller writes the fourth stack argument at rsp+0x38 before call."
+    },
+    "xgs12_10i.dll": {
+      "binary_sha256": "11c6ad99499d8f661199f8bceaecfe9b21e6cc4b3026a9bedb05f683bef8dde4",
+      "import_address": "0x1801a7858",
+      "call_rvas": [
+        "0x16fdb1"
+      ],
+      "eighth_argument": "Caller writes the fourth stack argument at rsp+0x38 before call."
+    }
+  },
+  "checks": [
+    "six resource dimensions",
+    "formats 0\u2013127 and two integer boundaries",
+    "six bind flag sets and five resource flag sets",
+    "zero, ordinary and maximum size/sample parameters"
+  ],
+  "runs": {
+    "original": {
+      "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "guest_receipt": "xg-optimal-swizzle PASS 70200 cases",
+      "result_sha256": "10e2696656993ffe7cfd49b1f69dd8dc8ce38ea6b4ec167e25c6cac4cbef1f46"
+    },
+    "tuxbox": {
+      "dll_sha256": "372fdbc00dba672dfbcff334ed63664d0db24981754ee611f8d5c83f7de60abd",
+      "guest_receipt": "xg-optimal-swizzle PASS 70200 cases",
+      "result_sha256": "10e2696656993ffe7cfd49b1f69dd8dc8ce38ea6b4ec167e25c6cac4cbef1f46"
+    }
+  }
+}

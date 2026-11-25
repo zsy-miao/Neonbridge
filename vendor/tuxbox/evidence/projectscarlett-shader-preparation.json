@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "date_utc": "2026-11-25",
+  "executable_sha256": "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
+  "compiler_sha256": "c28f447023d6379631a665c5845c06bf539e35c235ac43fab0691171f5f33aba",
+  "log_sha256": "869f7292e5d29d88ebcea5d009034c7eb3f855977432bdb2b111c8c5b67feb4c",
+  "requests": {
+    "total": 25079,
+    "compiled": 20583,
+    "unsupported": 4496,
+    "failed": 0
+  },
+  "duration_seconds": 1426,
+  "dxil_reused": 2227
+}

@@ -1,0 +1,555 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "d3d12_xs_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc",
+  "runtime_shader_cache_fingerprint": "115e997204a24b9acfcd538ffdb8414075694a651d1cdbfe9081df5ae8036e44",
+  "desktop": "Full-size 1920x1080 window on gaming, using the ordinary Frosty launcher with its benchmark arguments.",
+  "arguments": [
+    "-gauntlet=FrostyTestControllerAutoTest",
+    "-FrostyTest.PreferSandbox",
+    "-UseFixedTimeStep",
+    "-DisablePlugins=XboxCommonGDKMoviePlayer"
+  ],
+  "sample_utc": [
+    "2026-11-23T11:53:16.499586+00:00",
+    "2026-11-23T11:53:30.119687+00:00"
+  ],
+  "frame_interval_inclusive": [
+    878,
+    910
+  ],
+  "instrumentation": "VulkanProfiler per-pipeline GPU timestamps, vkd3d debug ring pixel probes and original shader dumps, MangoHud. Profiling and probe serialization affect timing. Pipeline and pass costs sum timestamp pairs across queues and can overlap.",
+  "instrumented_mangohud": {
+    "complete_presents": 33,
+    "mean_fps": 2.451,
+    "frametime_ms": {
+      "p50": 348.234,
+      "p95": 717.086,
+      "p99": 733.469,
+      "worst": 733.469
+    },
+    "system_cpu_percent_p50": 32.7386,
+    "gpu_percent_p50": 52.0,
+    "csv_sha256": "3d9ff5c3f5ebd7883a410da9e9302bdb6d515242d318e419f8c304f50fd3bddc"
+  },
+  "uninstrumented_prior_run": {
+    "scope": "Same arguments and route; matched interval relative to SandboxIntroFinished. Different launches, and camera can move. Regular MangoHud with no VulkanProfiler or pixel probes.",
+    "mangohud": {
+      "complete_presents": 43,
+      "mean_fps": 3.216,
+      "frametime_ms": {
+        "p50": 300.188,
+        "p95": 372.408,
+        "p99": 521.185,
+        "worst": 521.185
+      },
+      "system_cpu_percent_p50": 29.966,
+      "gpu_percent_p50": 54.0,
+      "csv_sha256": "56b69b5de6df2dfe862156eb11f815616a78b2525dbb37b76ee4118263a6ec6c"
+    }
+  },
+  "compositor_samples_in_measured_interval": {
+    "count": 3,
+    "visible": 3,
+    "focused": 0
+  },
+  "gpu_active_command_buffers_union_ms_median": 173.256,
+  "gpu_first_to_last_timestamp_ms_median": 177.056,
+  "backward_timestamp_pairs_skipped": 20,
+  "render_pass_timings": [
+    {
+      "name": "Dynamic Graphics Pass",
+      "mean_ms_per_frame": 58.86,
+      "max_ms_per_frame": 60.568
+    },
+    {
+      "name": "Compute Pass",
+      "mean_ms_per_frame": 22.818,
+      "max_ms_per_frame": 25.688
+    },
+    {
+      "name": "Copy Pass",
+      "mean_ms_per_frame": 1.346,
+      "max_ms_per_frame": 2.128
+    },
+    {
+      "name": "Ray Tracing Pass",
+      "mean_ms_per_frame": 0.099,
+      "max_ms_per_frame": 0.248
+    },
+    {
+      "name": "VkRenderPass 0x00007f89d02691f0",
+      "mean_ms_per_frame": 0.067,
+      "max_ms_per_frame": 0.08
+    }
+  ],
+  "pipeline_timings": [
+    {
+      "name": "VS=38F54696 (main), PS=11D9580B (main)",
+      "mean_ms_per_frame": 13.643,
+      "max_ms_per_frame": 14.48,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "a8360668418d639d.spv",
+            "native": [
+              [
+                "material",
+                18398
+              ]
+            ],
+            "families": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "CS=B73784A7 (main)",
+      "mean_ms_per_frame": 10.374,
+      "max_ms_per_frame": 12.72,
+      "stages": {
+        "CS": [
+          {
+            "module": "84530f50f707714d.spv",
+            "native": [
+              [
+                "global",
+                3013
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/Rasterizer.usf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "VS=38F54696 (main), PS=848F4299 (main)",
+      "mean_ms_per_frame": 8.243,
+      "max_ms_per_frame": 8.696,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "80330d7de846d8f3.spv",
+            "native": [
+              [
+                "material",
+                18236
+              ]
+            ],
+            "families": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "VS=38F54696 (main), PS=0BA08F24 (main)",
+      "mean_ms_per_frame": 7.977,
+      "max_ms_per_frame": 8.352,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "f6c5c5f63928e5c5.spv",
+            "native": [
+              [
+                "material",
+                18082
+              ]
+            ],
+            "families": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "CS=C21B87E4 (main)",
+      "mean_ms_per_frame": 4.99,
+      "max_ms_per_frame": 5.728,
+      "stages": {
+        "CS": [
+          {
+            "module": "d3be01c3316da786.spv",
+            "native": [
+              [
+                "global",
+                3246
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/Rasterizer.usf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "CS=988E9A07 (main)",
+      "mean_ms_per_frame": 3.874,
+      "max_ms_per_frame": 4.264,
+      "stages": {
+        "CS": [
+          {
+            "module": "0899e4c4df7af919.spv",
+            "native": [
+              [
+                "global",
+                811
+              ]
+            ],
+            "families": [
+              "/Engine/Private/VirtualShadowMaps/VirtualShadowMapProjection.usf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "VS=38F54696 (main), PS=40B63A93 (main)",
+      "mean_ms_per_frame": 2.696,
+      "max_ms_per_frame": 3.024,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "597f6fa184b3ed86.spv",
+            "native": [
+              [
+                "material",
+                17981
+              ]
+            ],
+            "families": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "VS=38F54696 (main), PS=454AFD8C (main)",
+      "mean_ms_per_frame": 1.743,
+      "max_ms_per_frame": 1.856,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": []
+      }
+    },
+    {
+      "name": "VS=38F54696 (main), PS=EE05F459 (main)",
+      "mean_ms_per_frame": 1.376,
+      "max_ms_per_frame": 1.448,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "5577ba1d8c92fb62.spv",
+            "native": [
+              [
+                "material",
+                17687
+              ]
+            ],
+            "families": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "CS=CA270EF4 (main)",
+      "mean_ms_per_frame": 0.951,
+      "max_ms_per_frame": 1.312,
+      "stages": {
+        "CS": [
+          {
+            "module": "791442b22370aa07.spv",
+            "native": [
+              [
+                "global",
+                3078
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/Rasterizer.usf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "VS=38F54696 (main), PS=3772752B (main)",
+      "mean_ms_per_frame": 0.915,
+      "max_ms_per_frame": 0.96,
+      "stages": {
+        "VS": [
+          {
+            "module": "b334099cd245db80.spv",
+            "native": [
+              [
+                "global",
+                1766
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/ExportGBuffer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "cee709fbea14ca87.spv",
+            "native": [
+              [
+                "material",
+                18394
+              ]
+            ],
+            "families": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "VS=71FCCA62 (main), PS=E00E029E (main)",
+      "mean_ms_per_frame": 0.9,
+      "max_ms_per_frame": 1.056,
+      "stages": {
+        "VS": [
+          {
+            "module": "def14d42c5a9a576.spv",
+            "native": [
+              [
+                "global",
+                2927
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/Rasterizer.usf"
+            ]
+          }
+        ],
+        "PS": [
+          {
+            "module": "e345de7faf8ee150.spv",
+            "native": [
+              [
+                "global",
+                3077
+              ]
+            ],
+            "families": [
+              "/Engine/Private/Nanite/Rasterizer.usf"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "runtime_shader_compiler_sha256": "030bc7b93d6d9abdf5ac04510c540fdd0255c6d5f701d1c77ceb2f439e5e6414",
+  "title_event": {
+    "name": "SandboxIntroFinished",
+    "utc": "2026-11-23T11:53:01.242Z",
+    "engine_frame": 840
+  },
+  "native_capture": {
+    "width": 1920,
+    "height": 1080,
+    "sha256": "e609a81182f3f5358d635107b8c61dd76f117c5c17419f3513c92c330c51b297"
+  },
+  "gpu_trace_frame_count": 651,
+  "active_pipelines_observed_in_window": 847,
+  "capture": "VulkanProfiler 2026.3.402, MangoHud, Linux 7.3.5-2-cachyos-bore, NVIDIA GeForce RTX 4070 Ti SUPER",
+  "runtime_modules": [
+    "libVkLayer_profiler_layer.so",
+    "Frosty-XSX-Shipping.exe",
+    "d3d12_xs.dll",
+    "libMangoHud.so"
+  ],
+  "original_shader_module_count": 1927,
+  "profile_hashes_resolved_to_archive_entries": 1921,
+  "original_profiler_shader_hashes": 1926,
+  "authored_exit": {
+    "utc": "2026-11-23T12:01:05.613Z",
+    "gauntlet_exit_code": 0
+  },
+  "gpu_trace_sha256": "08c5621226a5b75d223e87e3e14cd555c96bc5dd75ed073b26b6aa4708f3676b",
+  "desktop_focus_controls": {
+    "scope": "Independent samples across the same authored street route. The camera and scene can change between intervals.",
+    "intervals": [
+      {
+        "utc": [
+          "2026-11-23T11:53:32.688720+00:00",
+          "2026-11-23T11:54:38.959304+00:00"
+        ],
+        "visible": true,
+        "focused": true,
+        "observations": 14,
+        "complete_presents": 178,
+        "mean_fps": 2.696,
+        "median_frametime_ms": 311.643
+      },
+      {
+        "utc": [
+          "2026-11-23T11:57:53.090450+00:00",
+          "2026-11-23T11:59:19.402320+00:00"
+        ],
+        "visible": false,
+        "focused": false,
+        "observations": 18,
+        "complete_presents": 84,
+        "mean_fps": 0.992,
+        "median_frametime_ms": 1007.42
+      }
+    ]
+  },
+  "followup_on_corrected_view_strides": {
+    "authored_exit": {
+      "utc": "2026-11-23T12:12:42.572Z",
+      "gauntlet_exit_code": 0
+    },
+    "scene": "Same autonomous initial free-roam camera after SandboxIntroFinished. MangoHud and read-only shader probes active. VulkanProfiler disabled.",
+    "verified_dxil": {
+      "global/2927 linked": {
+        "vkd3d": "00c1c2c5f3c203a2",
+        "sha256": "e0941ed16f7fdf519dd2381b48dc00e32c02faa146caf3a54407902c08186091"
+      },
+      "global/3194": {
+        "vkd3d": "84c3d8a5c5971ea3",
+        "sha256": "291c5bde238baba7cbdf8d6880c2f127ae0b62574107386963ec59357f86564b"
+      }
+    },
+    "shader_cache": "2774c8127ae77d0fc9945ee8767077d105d594e20663eccd09f0eabf7adea352",
+    "native_window": [
+      1920,
+      1058
+    ],
+    "thumbnail": {
+      "file": "street-lighting.jpg",
+      "sha256": "496b067297de99e6e6108c21a3744be164320bac9d976955d010ba388603a3c6"
+    },
+    "post_intro_seconds": [
+      15,
+      29
+    ],
+    "utc": [
+      "2026-11-23T12:08:12.970389+00:00",
+      "2026-11-23T12:08:26.970389+00:00"
+    ],
+    "frame_statistics": {
+      "complete_presents": 42,
+      "mean_fps": 3.054,
+      "frametime_ms": {
+        "p50": 317.926,
+        "p95": 380.904,
+        "p99": 497.297,
+        "worst": 497.297
+      },
+      "system_cpu_percent_p50": 34.891,
+      "gpu_percent_p50": 65.0,
+      "csv_sha256": "4fd73fc9208b277d46cc87dd8261592e0fa20fcd5a3aaf73f228ec8fb0c1be7c"
+    },
+    "process_cpu": {
+      "samples": 14,
+      "process_cpu_logical_cores_median": 2.282,
+      "host_busy_percent_median": 34.945
+    },
+    "visible_compositor_observations": 3,
+    "focused_compositor_observations": 0,
+    "later_hottest_thread": {
+      "scope": "A four-second, 99 Hz user-mode CPU-clock sample of the thread previously measured using 0.91 CPU core. Windows PE instructions mapped to the SHA-matched TuxBox linker map. Register R8 and the two return addresses sampled inside memcmp identify byte counts and callers.",
+      "user_cpu_samples": 355,
+      "memcmp_leaf_samples": 173,
+      "direct_return_to_Texture_changed": 173,
+      "upstream_Transfer_refresh": 173,
+      "most_frequent_memcmp_lengths_bytes_by_samples": {
+        "262144": 42,
+        "65536": 32,
+        "4194304": 16,
+        "8388608": 16,
+        "16777216": 15,
+        "1048576": 13,
+        "524288": 11,
+        "2097152": 7
+      },
+      "perf_sha256": "737aa3a98d7e30811a043c9c3c58c77bb42a412210243c3c76ac54c35ac7a27c"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapter": "10de:2705",
+  "driver": "620.70.06",
+  "vkd3d": "cae2e003bb8251627ff93c0f471ae18a28234490",
+  "guest_sha256": "1e4686c24e593e002e94b0eeb843367832da6722ba767d378d1b3a6531f2cfc2",
+  "programs": [
+    {
+      "archive": "global",
+      "entry": 2653,
+      "dxil_sha256": "7bc8ee21c5eae06096a660fecf37cb27bb733fbeb03a9b3216255d792780564f"
+    },
+    {
+      "archive": "material",
+      "entry": 37635,
+      "dxil_sha256": "956b32ea59b0f4396c80cb0ba20b4f66ec53e0a7be1299ac0bf8755b6a961353"
+    }
+  ],
+  "timings_ms": {
+    "identifier": {
+      "empty_driver_and_proton": [
+        5297.627,
+        24804.622
+      ],
+      "empty_driver_warm_proton": [
+        6005.782,
+        25338.219
+      ],
+      "warm_driver_and_proton": [
+        1.928,
+        3.141
+      ],
+      "proton_cache_bytes": 432
+    },
+    "spirv": {
+      "empty_driver_and_proton": [
+        5623.617,
+        21656.012
+      ],
+      "empty_driver_warm_proton": [
+        1608.651,
+        5210.639
+      ],
+      "warm_driver_and_proton": [
+        1755.39,
+        5840.409
+      ],
+      "proton_cache_bytes": 1288880
+    }
+  },
+  "scope": "Three independent Proton processes per mode created the same two host compute PSOs. The second process used an empty NVIDIA driver cache and the first process\u2019s vkd3d cache. The third reused both. The identifier mode used Proton defaults for shader module identifiers. The spirv mode disabled VK_EXT_shader_module_identifier. Timings cover CreateComputePipelineState only."
+}

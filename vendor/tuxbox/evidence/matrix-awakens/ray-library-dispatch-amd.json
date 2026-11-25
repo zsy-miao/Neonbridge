@@ -1,0 +1,51 @@
+{
+  "guest_sha256": "5cec5c00650589110f2ca4b5813235e78ee56fe89dd70997da3d596ccf4ac98f",
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "runs": {
+    "desktop": {
+      "exit": 0,
+      "adapter": "1002:13c0",
+      "raytracing_tier": "11",
+      "blas_result_bytes": "576",
+      "blas_scratch_bytes": "65848",
+      "ray_query_results": "70010,70120,80010,80120,dead",
+      "ray_library_dispatches": "2",
+      "ray_library_hits_per_dispatch": "4",
+      "ray_library_misses_per_dispatch": "2"
+    },
+    "xbox": {
+      "exit": 0,
+      "adapter": "1002:13c0",
+      "raytracing_tier": "11",
+      "blas_result_bytes": "576",
+      "blas_scratch_bytes": "65848",
+      "guest_tlas_instances": "2",
+      "invalid_batches": "2",
+      "ray_query_results": "70010,70120,80010,80120,dead",
+      "guest_deserialized_collections": "4",
+      "guest_linked_pipelines": "1",
+      "ray_library_dispatches": "2",
+      "ray_library_hits_per_dispatch": "4",
+      "ray_library_misses_per_dispatch": "2"
+    }
+  },
+  "translated_ray_libraries": {
+    "1280": {
+      "state_sha256": "e2dfc27ed0f4469ceab36a4ac3fe4b680b1bff1957b6e2aae60556f52725ba05",
+      "dxil_sha256": "6461656fcc94213c42db17d60e1748255a736a438d333aba256c216c228fab1d"
+    },
+    "1282": {
+      "state_sha256": "e668787c5574913553c67024c861ed46201447af385c90085e7e5d343250651b",
+      "dxil_sha256": "7cb49c6ffaffe932b14ccaaaa3998531d58d33cff887a3e6e5ec29a532d0941f"
+    },
+    "1284": {
+      "state_sha256": "f84629dabf82cb2e4ee20c0e9e8555bd1f5e3b067fb554ef75cc64a2ea87ffd4",
+      "dxil_sha256": "dda62ed037a5f77a40e9672a5cee33664fb995c1ddac2661cde32f1742f12bbf"
+    },
+    "1286": {
+      "state_sha256": "361ea477ff7b2d5f6c4e5c2b62a8f631cc7fb75849e7ca04ac9db7e1af792551",
+      "dxil_sha256": "7a7aa05bdcdf46bbe8c2d65432137655efe07552cc56ef6ff7529b889454adc2"
+    }
+  },
+  "d3d12_xs_sha256": "7d065444be43d1aabeff18c726b81a12c807fd82319ed1d1cd41483f3b9ddf5e"
+}

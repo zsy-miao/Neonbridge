@@ -1,0 +1,504 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "global_shader_map_cache_sha256": "d6640174767d44dfa1049fd147b495bab214bd3c5a27d931d628b3e2e95cf37c",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+  "scope": "Packaged permutations. A map match or standalone validation does not establish a gameplay request.",
+  "shader_maps": 14,
+  "programs": 34,
+  "hlsl_emitted": 34,
+  "dxil_validated": 34,
+  "maps": [
+    {
+      "map": 140,
+      "map_sha1": "b0893f995ca0d6730da56d87a58f91e3c5ec02aa",
+      "shader_type": "FTSRUpdateSuperResHistoryCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRUpdateSuperResHistory.usf",
+      "type_key": "99014f926129b34f",
+      "file_key": "bee4a91cef6f9b5e",
+      "programs": [
+        {
+          "entry": 2157,
+          "source_sha256": "a2d8d604f32551d61a5cc06a3e265f237c5c2de0c38823a80b6d5c25868f0fa7",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "8d3597672a9c64e099402359e067170f8645d1ef725593e4670e08985de3ef81",
+          "dxil_validated": true,
+          "dxil_sha256": "8b0352d3d7c4a0c30dfe7145236fe77f89b31befe73b5baf816ca3151198bb8d"
+        }
+      ]
+    },
+    {
+      "map": 172,
+      "map_sha1": "6b067769d9a8e96dcfa017c7804f63fc3a54aa1a",
+      "shader_type": "FTSRSpatialAntiAliasingCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRSpatialAntiAliasing.usf",
+      "type_key": "7b1fc71103cc970c",
+      "file_key": "30d6c1e80644ac6a",
+      "programs": [
+        {
+          "entry": 2484,
+          "source_sha256": "6595a7e463dd3cbb8c879361196e9410f1257616339845917e798868e01654e4",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "084c6dc68ad97eaebef33d5beaea1c87b77423cb50f130e16be1757a2e1f4dfa",
+          "dxil_validated": true,
+          "dxil_sha256": "0e7fa07dc958a9c054a581d96c236e1e3e0a4b263fcd26b8447566edbafb50eb"
+        },
+        {
+          "entry": 2485,
+          "source_sha256": "867098ed9ff0fcbb976bec3d662c9caef3d7bdeab36c032d114d611fb0bfb748",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "403b0b32107ad75c29b3bb86089690fcbbc84979150a5bd75c7ea6cd0579a416",
+          "dxil_validated": true,
+          "dxil_sha256": "9d20d208c01d403c27a414d5bae0c4b09afb2d3a1458b9c6ec63be6a251cce60"
+        }
+      ]
+    },
+    {
+      "map": 173,
+      "map_sha1": "bc3d5c38eafdf6fcef5adc846f661f7fb49bc3e6",
+      "shader_type": "FTSRPostfilterRejectionCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRPostfilterRejection.usf",
+      "type_key": "0827e28ba3efb61b",
+      "file_key": "117f0fece9ff17ca",
+      "programs": [
+        {
+          "entry": 2486,
+          "source_sha256": "84e6301b26855bd6ad680ce2f31c08c61b31baa1b6ae9be5a4fbe1c40e633a82",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "9b2b484cf57d1b5fe3d896cc77f0b456bc205b65963dba0976c5079a09a33db6",
+          "dxil_validated": true,
+          "dxil_sha256": "6c7b94df324e92de5bdf94c84b481aea202b509dd8de6f2817b67fe29c53232e"
+        },
+        {
+          "entry": 2487,
+          "source_sha256": "d2a8314e470e513ae2653885329ae44646c38558c36933747462a133aa6328a5",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "23ff0f8cdc499fdb8d468c1fd1ec762891de09e0d388c557424d1e69d906b651",
+          "dxil_validated": true,
+          "dxil_sha256": "c0d053f7f87d908ee140e206926945f9f01664476c92db03ed787ee32bee3228"
+        }
+      ]
+    },
+    {
+      "map": 174,
+      "map_sha1": "d1a7bb0b535e0a90f2679c76dcc15329a29351cd",
+      "shader_type": "FTSRCompareTranslucencyCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRCompareTranslucency.usf",
+      "type_key": "9e87b8c671a54582",
+      "file_key": "4dffa3e2e5d0302e",
+      "programs": [
+        {
+          "entry": 2488,
+          "source_sha256": "12e00cec69f63bb730d0cb1b2c40e4cfc5782decf47e87d9551aad0ed1717c18",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "5f00921f0fe78a274435ce8a3cd083b7de38e97d69088f6305e8e98680b6e315",
+          "dxil_validated": true,
+          "dxil_sha256": "15e5fb2ba0dd6eb4f184472c15a814ac331dfb365778861f000a5ead3f961576"
+        }
+      ]
+    },
+    {
+      "map": 198,
+      "map_sha1": "b55fb2367ae5f6ac14ee3af1d369416f25dfd060",
+      "shader_type": "FTSRFilterAntiAliasingCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRFilterAntiAliasing.usf",
+      "type_key": "e9930ffe4bb83325",
+      "file_key": "da71406b74d64533",
+      "programs": [
+        {
+          "entry": 2570,
+          "source_sha256": "d46d5d1c716a2404945e0dd764698a1b50123ed4ef1a7cb290b07d25a38f30da",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "4b7a9c0dd88b9baa0784b364e732a9c9f8ed67e80cc5877a9868bb8b97079909",
+          "dxil_validated": true,
+          "dxil_sha256": "61d406f2ba56b0622ae161634b5ca6d43187c8a81e24644b8d9679343d877655"
+        }
+      ]
+    },
+    {
+      "map": 199,
+      "map_sha1": "fc9f7e6fd0766ad5b3e51d81f193f157ed8ae95b",
+      "shader_type": "FTSRDetectInterferenceCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRDetectInterference.usf",
+      "type_key": "dbb8ba75337aad13",
+      "file_key": "0b24ce5ea89a450e",
+      "programs": [
+        {
+          "entry": 2571,
+          "source_sha256": "fd822afa01ae6657d1bd50419a3d6769cb78cf58fe751ef49848b5df2d0df80d",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "cbc2a732c05a47a4557b49f8856d935d0ecdec6d523a28b97b61eabf040a6269",
+          "dxil_validated": true,
+          "dxil_sha256": "4c04e6a1751668a1a5528e1caff074ec724bf05955048493e381cd14fed1a0b8"
+        }
+      ]
+    },
+    {
+      "map": 217,
+      "map_sha1": "945a508cb23de751af290da9451e90afc9d11233",
+      "shader_type": "FTSRFilterFrequenciesCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRFilterFrequencies.usf",
+      "type_key": "1da1a140a110bbdd",
+      "file_key": "a784f69d7d6fb05d",
+      "programs": [
+        {
+          "entry": 2652,
+          "source_sha256": "34287d25aaf1e590e8054fcd8388c3237e4022a571f7e7c63fdd10d6725022ad",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "d7b6f4e8948ae11f214c623c5511ac3094b6a481caa6e1e88ab5801f9a38cd2c",
+          "dxil_validated": true,
+          "dxil_sha256": "d4a24810b6e6ba2c81a9cd80fa9558ecf9f3ca2c8d394657d919a08ef1a62b0f"
+        },
+        {
+          "entry": 2653,
+          "source_sha256": "d70b3993585759774396d39ec7471a3a598a80801d986a29265c6f5f47b73b6e",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "aae149817328d1c4dde83022b345fd4b308e651b993d3ab56fb0e0eeb5cff3f1",
+          "dxil_validated": true,
+          "dxil_sha256": "461f97db7e0f4a76fd9ee56b43f6b8cdc51e6819bc7b425634eddc17fad3e85b"
+        },
+        {
+          "entry": 2654,
+          "source_sha256": "d287bc66b0b1833cfc2bf6b81a2ae069524fc69cf6a3c588ad2a1e19ec31cc7a",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "a09c138e0427f9d681221975425198c93d5d44ef69afde420c0c8134d545ed16",
+          "dxil_validated": true,
+          "dxil_sha256": "5834cc6d16c3271fc521c16905909bf332df4f413651b4b194128668bde29f9e"
+        },
+        {
+          "entry": 2655,
+          "source_sha256": "d8781c811e258d86db5aee4fbedd97f13b1e81956b996385c7631ca443fbd894",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "3c5de2fd4f2df38263a634983dc6acd3452d346ad0636386cea857675cb4fe23",
+          "dxil_validated": true,
+          "dxil_sha256": "5678d8ee3c87f93f5854eb1efefe86159af4c2a03ae65cdda5b845ec0f94e451"
+        }
+      ]
+    },
+    {
+      "map": 218,
+      "map_sha1": "9e6e6b54da03f0339382d50d772e1677a76ef51d",
+      "shader_type": "FTSRClearPrevTexturesCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRClearPrevTextures.usf",
+      "type_key": "b7bc5ed20d155342",
+      "file_key": "88f9750f37dca796",
+      "programs": [
+        {
+          "entry": 2656,
+          "source_sha256": "d4e0b2775cb6ef377aeb126094ad5721ff0faf12eab6438e7812e2a11336d943",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "ee56540e0bf1530b72eea775f4cb3329697559a32a12d871e6c5e37ba4e3be94",
+          "dxil_validated": true,
+          "dxil_sha256": "21783944b684fc2128aa473b8b1b43a87608bcf19801d74db3771a8e44f65a97"
+        }
+      ]
+    },
+    {
+      "map": 232,
+      "map_sha1": "0cf46cda825a641daa126b6dde15ef487f6a354b",
+      "shader_type": "FTSRHoleFillVelocityCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRHoleFillVelocity.usf",
+      "type_key": "616f65b939e75eb4",
+      "file_key": "873edad831ff25aa",
+      "programs": [
+        {
+          "entry": 2697,
+          "source_sha256": "bc557fef925c96557d798eafb461ca658ca3d598645d19d7c092b7ff083241e7",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "6f2b3db8e1f5c0d67432a40e2ab5490dc63c2b22417529c6d6592abb6f6a25d2",
+          "dxil_validated": true,
+          "dxil_sha256": "142836a85e42e55ed59cbd03f1e1fae428e959a2fc286432ceca73fee154de62"
+        }
+      ]
+    },
+    {
+      "map": 249,
+      "map_sha1": "ed8b2f6738d1e8f60ca863c504dd322bcc9fcbf2",
+      "shader_type": "FTSRDilateRejectionCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRDilateRejection.usf",
+      "type_key": "ed4a0c67f5eb1b08",
+      "file_key": "988a8583efd4bc1b",
+      "programs": [
+        {
+          "entry": 2746,
+          "source_sha256": "5486bc1f53de728abb85c51f085f345c485a70eba1cdfd9fac6ac522d2476f9d",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "a09471b85e142c3b2517dc4b125604336ecb4bbcbb099628896b16675ba9da05",
+          "dxil_validated": true,
+          "dxil_sha256": "3018af4e48b32067f7af52e1ec6ecb5d24b93270dd934905dd31638856342058"
+        }
+      ]
+    },
+    {
+      "map": 250,
+      "map_sha1": "77ee33db5240a911886e4e9da6ea8b2e6b755da4",
+      "shader_type": "FTSRDecimateHistoryCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRDecimateHistory.usf",
+      "type_key": "3134add622a66746",
+      "file_key": "c686a0734c979ee7",
+      "programs": [
+        {
+          "entry": 2747,
+          "source_sha256": "441209887329f52d90b6abc75c48e85c6ac68553a0c9345fbd59895247b72889",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "a9172ae9e8e285d4767646f4954076a2daf44e54eee616e560ec54b2ab1a46e7",
+          "dxil_validated": true,
+          "dxil_sha256": "0f69e1bd8752836f70fb4ff1eacee3eba7536395a3ab7be3588ea8e58cc310e3"
+        },
+        {
+          "entry": 2748,
+          "source_sha256": "7bf11086d0e8e0e885bffaff21e3190ca9ff7f9db2e112d0b052057f6466ee93",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "fa837cbd7c5f811df62cf932858df1c6203205cf7d54980364ad6565092eb485",
+          "dxil_validated": true,
+          "dxil_sha256": "d89288b21a5ac2bd942fd70aa4852954f3595b9513764a029f02f42f1b071014"
+        },
+        {
+          "entry": 2749,
+          "source_sha256": "40a20c16f11793a11db7265fd6d5f008cb469515c8ab9ed5c2670840b79b73d4",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "bbaf8c3c97d56ff97794cf571e410880fe865778c7cdf70c8ccc53370147b6af",
+          "dxil_validated": true,
+          "dxil_sha256": "f19a1513e8f48938aacdf9f04d69dbbcf9527806e2d328ab797aa6224ba59697"
+        },
+        {
+          "entry": 2750,
+          "source_sha256": "93dc7ccc5dc2dd7ce0fef0259c35cbbe5aaf20deda557ba43b61c80f0e7e3355",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "55b5be4a199baf4ef1f132229d332e1b4ef2543bb57a954d37502d32a8be4a40",
+          "dxil_validated": true,
+          "dxil_sha256": "c35adc4a231d1440a2907eb3d1ce976a5f56fe81ea0ead2a355a608f60564f36"
+        }
+      ]
+    },
+    {
+      "map": 266,
+      "map_sha1": "c4f82bbe753ff67529e31a92a6fe68f7eb86c95b",
+      "shader_type": "FTSRDilateVelocityCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRDilateVelocity.usf",
+      "type_key": "4919848ff21888fd",
+      "file_key": "14c8153b18cd98fe",
+      "programs": [
+        {
+          "entry": 3322,
+          "source_sha256": "dcf4d59a182abf65127205318c509c65fb3071d10a05803f5af178a73ff5238b",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "83d964350a02304e0a49ef2c042709688634cbfed6a9b8af2b422824b755a267",
+          "dxil_validated": true,
+          "dxil_sha256": "ba0bab26e3d9f4a9c15f959d88496464271abf2205599adce8661e5086e9cc89"
+        },
+        {
+          "entry": 3323,
+          "source_sha256": "e0794742f6d96f82605417679685437183abfc411050f4637ead9507ebfd7c5c",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "d8b68f35c77494b6d5475da49ec15a2c9e3b23bea1688c78a50841db961a862e",
+          "dxil_validated": true,
+          "dxil_sha256": "9fc085198e7309b595accf202d2f27f8fed29e1c0def6bd3e02dbe02de75adea"
+        },
+        {
+          "entry": 3324,
+          "source_sha256": "57d59136bd76433200e6dae3cd9eaf497ec49b27cff332e993b4b257ef6dc96e",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "b034f4356df424da33f45139085f9dcc14face646201dadf74fca26c85dae0ac",
+          "dxil_validated": true,
+          "dxil_sha256": "fccc6c44f18163ee744f7867fb88749786576accbec328a24284b97f34731228"
+        }
+      ]
+    },
+    {
+      "map": 267,
+      "map_sha1": "e6a2d9372732c23a045763dc7819f489300fc19e",
+      "shader_type": "FTSRCompareHistoryCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRCompareHistory.usf",
+      "type_key": "fd70cb639f9e44c0",
+      "file_key": "8589424fc8f5fab0",
+      "programs": [
+        {
+          "entry": 3325,
+          "source_sha256": "28015d38c4ae26d24495ccf358856e4470385ae6163eb4e04b7bafea19cae574",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "470d3a466c0b1d7717962447544c57e55e0d729072cbe9d5c832488af2f901a9",
+          "dxil_validated": true,
+          "dxil_sha256": "d433dfca2adb671af9f2a233704af830dce427ac89c4a4c8ec8d29702dd48d86"
+        },
+        {
+          "entry": 3326,
+          "source_sha256": "f84a6a447930972830c77dc4cb5c32ba451865071b3344d212b4fbc4cf419018",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "9451be26db31e09fcbb10ad26511259df65b103bc9e68b51f370356662e8642a",
+          "dxil_validated": true,
+          "dxil_sha256": "fb52b603ebf1021b85fbeedc7ccd24d2c2c6d2cf1fb4f431bf9d024c6bdf9a7e"
+        },
+        {
+          "entry": 3327,
+          "source_sha256": "63965f2c630d9cab7f67ef4a87b80828129f045917d83c071f43f47a1985db52",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "803ad7faa4cc73c0c7dba8cc46bde1a8d6344756f3f3a0cf2b800195c3469da7",
+          "dxil_validated": true,
+          "dxil_sha256": "3e2694ae933d8afe2ace613392deb0bf699d3426645749e61f0edb4bae63ad97"
+        },
+        {
+          "entry": 3328,
+          "source_sha256": "146000a5c8c261240f81002c87eb10a27b56ff5fdf0335678463f8e787c86dcf",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "6968df196d8e391ebdf7db0dd936c4dce61bb6c17386f136c81ef600efa1b13f",
+          "dxil_validated": true,
+          "dxil_sha256": "9e0da0c7d02f1304ddbff197bc13cef5cd9a93dc3360430e2f6ba0cfec9c03e6"
+        }
+      ]
+    },
+    {
+      "map": 281,
+      "map_sha1": "10ed87c8f61ad86cc14e3a661f6dac8e22762a53",
+      "shader_type": "FTSRUpdateHistoryCS",
+      "shader_file": "/Engine/Private/TemporalSuperResolution/TSRUpdateHistory.usf",
+      "type_key": "4dd76ef2359395c2",
+      "file_key": "719fe64d713c5c5d",
+      "programs": [
+        {
+          "entry": 3381,
+          "source_sha256": "2822dfc49c14066fd8fbbf5322d37df476ead86c8969c7e3609a0bb08f2e281c",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "713d255aadd1cfdfceb7ef9ffa5c2a7f4bec3b50e3b2994d8967f0b0b516cb94",
+          "dxil_validated": true,
+          "dxil_sha256": "cb6336be3184089204fdafab4eea313ee815d2d1192d24a6971b5c73e0f6a6e0"
+        },
+        {
+          "entry": 3382,
+          "source_sha256": "acedf7c928f5058841dc6794700d3a318eac08476ca6a5ff3462684ad4aae841",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "2ba22460c9ebb8cb73c470e61286f8189145659a10be6ffc9d6f0c59ad5d658a",
+          "dxil_validated": true,
+          "dxil_sha256": "970d8225dc91e2b902da7953afe5aafbe1cf6055af30cbf7a0c8f522f399a221"
+        },
+        {
+          "entry": 3383,
+          "source_sha256": "472582c21504c47065784a8ac144050b825d2b0b84ef8a542d55941d79ae449b",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "6c14ce7b508d199c84ca41c26234fa76162f81b3a591fd08430513729ec68a90",
+          "dxil_validated": true,
+          "dxil_sha256": "7371a926c78d3108ff38c9661ec0a193adcb52de70613ee22dd5a24fc04b6a93"
+        },
+        {
+          "entry": 3384,
+          "source_sha256": "447b6e8662a3fd125eb33c6bcc9bc9fe63f63dfd7598d764dba2427c86bbaf87",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "5d4b583b4159a247b4a12e2f47cbde4b32d25eb691c54f642eb016371f5374a1",
+          "dxil_validated": true,
+          "dxil_sha256": "e449f6fd7ce2bfdd817254847d42826a5cbc6b90555441d195e5c3c807fd419d"
+        },
+        {
+          "entry": 3385,
+          "source_sha256": "76fb3b539aeeab93ca3bc9a935df2d0497047164c6b7902dc51c309f79e3c086",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "390ec3a902b55278e0797a9d56857adb869fd86dc1a8f92032b71e1835e8e5a4",
+          "dxil_validated": true,
+          "dxil_sha256": "9559f473c03f4aef2f647d3c3ebab007914f9c28194a700019d5903980635a11"
+        },
+        {
+          "entry": 3386,
+          "source_sha256": "acd3c81ba8499df2a3162cbace017c6aa876a2f2efa5e42c6a6ddd7e1439239c",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "bae4ebbd556d9379c301e273f45e95597e83c56cf6ef48680f0c6f532d47b582",
+          "dxil_validated": true,
+          "dxil_sha256": "a60260cfac9167ddfdfa48d17f3ad6d1e46fbbeef245ab48d9e55826b55ec60b"
+        },
+        {
+          "entry": 3387,
+          "source_sha256": "56987fd3f2a3f9fbbe7d8d161a66589ec58b383c777c28852f8e2ee823643d87",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "67260c3dd908da4ceed3a2bde15e0495d933dbc71ecd67bf02e8181dc0287e1b",
+          "dxil_validated": true,
+          "dxil_sha256": "98b4406ca7d951ca40be7898bfc0c7cc6f6fa5f00372dcb93fa1edd6c4ff9f55"
+        },
+        {
+          "entry": 3388,
+          "source_sha256": "a27303dcd36c2ddbf5fff95ff0dddbac4e93253ece90cc45b3ab3d79ac53e347",
+          "hlsl_emitted": true,
+          "hlsl_sha256": "144985f6255a598898416a3660a0f9dc75bd85d2be42c8796e99ee5139e44e5f",
+          "dxil_validated": true,
+          "dxil_sha256": "3915dd797ff79ac6fbab9110db8f6ad788bb555d0e034b3069ebbc2011c8f821"
+        }
+      ]
+    }
+  ],
+  "retail_trace": {
+    "sha256": "03742337ac3872947dd3d5fdacbe392d8815bf7a27e4611fad5b917870e0483b",
+    "programs": [
+      {
+        "entry": 2485,
+        "events": [
+          "compiled",
+          "request"
+        ]
+      },
+      {
+        "entry": 2487,
+        "events": [
+          "compiled",
+          "request"
+        ]
+      },
+      {
+        "entry": 2570,
+        "events": [
+          "compiled",
+          "request"
+        ]
+      },
+      {
+        "entry": 2653,
+        "events": [
+          "request"
+        ]
+      },
+      {
+        "entry": 2656,
+        "events": [
+          "request"
+        ]
+      },
+      {
+        "entry": 2697,
+        "events": [
+          "request"
+        ]
+      },
+      {
+        "entry": 2746,
+        "events": [
+          "compiled",
+          "request"
+        ]
+      },
+      {
+        "entry": 2747,
+        "events": [
+          "request"
+        ]
+      },
+      {
+        "entry": 3323,
+        "events": [
+          "request"
+        ]
+      },
+      {
+        "entry": 3326,
+        "events": [
+          "compiled",
+          "request"
+        ]
+      },
+      {
+        "entry": 3385,
+        "events": [
+          "compile_failed",
+          "request"
+        ]
+      }
+    ]
+  }
+}

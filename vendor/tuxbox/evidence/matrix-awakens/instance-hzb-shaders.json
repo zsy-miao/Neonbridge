@@ -1,0 +1,101 @@
+{
+  "scope": "Frosty global InstanceCullBuildInstanceIdBufferCS permutations with integer-mip t4/s0 HZB gathers. Every native gather was audited to derive its mip from an integer conversion. All entries translated, compiled and passed DXV and Vulkan 1.2 SPIR-V validation. Full shader output and title point-sampler binding remain unverified for these permutations.",
+  "entries": [
+    {
+      "archive_entry": 327,
+      "native_sha256": "d42fcf6053a08857264aa46dea43db348076261d35e6965ba7dc15beea782abd",
+      "dxil_sha256": "52ce002e04cd800e2418e571bdaf01a9a0f650267cb32111f90be5048d804e3f",
+      "spirv_sha256": "adc655a31f43eed86b0fe9548ede4e1cb6ea43e41cb1bc0c553e3d1dac0d078d"
+    },
+    {
+      "archive_entry": 329,
+      "native_sha256": "4d09c60a9fae8cf07a6141567c9231f0145c69b207023f573b22107fd697e700",
+      "dxil_sha256": "3dfc58cd1f38f2347dbc545b9178527864bfee2fd252d8bb9e0c66d020518acf",
+      "spirv_sha256": "bb9406873fbbf4e0a7c2418874a45148fe1d345b6393700636e786a8f0173d06"
+    },
+    {
+      "archive_entry": 331,
+      "native_sha256": "f5b8a4fc708b89f206158e5d97205314bfcd34834532da16e68b883b1e60ebb8",
+      "dxil_sha256": "f07feed12ee7b5be2751af1537a6548a7be0d354372325359b712236d635edfd",
+      "spirv_sha256": "0c3c0bdbce418bc7881c45fd132f2ece8bf9e867728f03c1b331bc29a522c446"
+    },
+    {
+      "archive_entry": 336,
+      "native_sha256": "2fc5d0114efbd617509c1abbe75fc3c43f481647c1343b5c31b7ae9390d5ef4d",
+      "dxil_sha256": "ffb1398ae97f33b3cbb3e7be7e483ad2fff85cab0bb50d706b388aad4455da5b",
+      "spirv_sha256": "921d6499a62b921e82d27f9c22e502901bf760de318c20838268894dfd037f0a"
+    },
+    {
+      "archive_entry": 338,
+      "native_sha256": "2442f041a4378c4208bca187397e3548132bf50d8c6b9614178ede4fa8e008df",
+      "dxil_sha256": "10311f4791a757583758967d09a06ee5098e112ef62c01117cb3ef43e8549695",
+      "spirv_sha256": "29462023b43ab09cde5f793839b08fad26500b1b5909174509a5baa023de1016"
+    },
+    {
+      "archive_entry": 340,
+      "native_sha256": "534b4d01f148c291b390a9ca6e0a7a6bdd1a858824e1f3c67e67d95909f2d466",
+      "dxil_sha256": "449bf527b0a08f1ef5c3cec5cf023cac132dca5c7b786a450a63e25be8307cfd",
+      "spirv_sha256": "75aee94b5fbcf22a106bf4e73244c50b8d0345ddc3a05b86f190c6ffb1b0ba00"
+    },
+    {
+      "archive_entry": 343,
+      "native_sha256": "04b155d7b58648f492265ffeeab23fba6f150789cb57807c14ceab8459ca8571",
+      "dxil_sha256": "0133092a472836d3d8909ec9aed0ade05af2f12947d5ed66256a7de0f0aa966f",
+      "spirv_sha256": "80e44f08a05cc60b32263146370775d65c8ee2f2ee92f902ae38b1b80e549714"
+    },
+    {
+      "archive_entry": 344,
+      "native_sha256": "3487eded0d141a53c0f48a04e789721405ba564a39e423c690d461048a4ea3bd",
+      "dxil_sha256": "b35d267fbe9b629f6ea58bc3f865e1e6ea88a2ddf5f10cf0e745a2e04e051745",
+      "spirv_sha256": "c371fb28af6eea841926e5febc9ab4f2f1982246dec2e1a5737e45fb9d3b1b89"
+    },
+    {
+      "archive_entry": 345,
+      "native_sha256": "7eafa2814950dcd49249f0ed194328b0f17f77fd17ec1e381b0a4ff1c0478b53",
+      "dxil_sha256": "eab1ea58c356c44865953d1dd64f08567f143c49a7d749f53143a6520eff81f9",
+      "spirv_sha256": "330755f44f1d2ae21eebe0668ad9488ccc09c1ac5e08bb670201e944bcc85a98"
+    },
+    {
+      "archive_entry": 346,
+      "native_sha256": "4383338ff036eadf27443c59106aa3db96eb812e1526d1d49495dc7b5d42e828",
+      "dxil_sha256": "91a1e37d85b5c4cf960917783eac78cf83e2b3719beeb2d7b0841a754c09ba1c",
+      "spirv_sha256": "cfbe3b3f6321b5d306cada2f2f6351a30a34dce3117d1f26de0718e4bdcdfd2d"
+    },
+    {
+      "archive_entry": 358,
+      "native_sha256": "adca789b71be60cd32c6a806d95df085237b1ed8ee8d16de0f157c98060a3e91",
+      "dxil_sha256": "bcddbc17b187eee3b33f36f61e5723085d34ccba8ca3b8cfb9dca999f30b3a72",
+      "spirv_sha256": "09f517ec991972f9c8a0f91ec05dfae90c12c3c833b2b67d4abb264251981a5f"
+    },
+    {
+      "archive_entry": 360,
+      "native_sha256": "57f48b8d7ffee190b0e493d92f1751180a360ad27cf9da79b9b280ff581beb2f",
+      "dxil_sha256": "0e3de84de22a69c3ee8666a433b8cb221d5461bc429207a21ceacab6f48a42d0",
+      "spirv_sha256": "d3b626c8e1b9355923d7e253142344b948da296f054b327ddd689ceba4786390"
+    },
+    {
+      "archive_entry": 364,
+      "native_sha256": "5827e909a0f7ac17c651f5e18a47a59df71bf215483cfba7a0981f412b810cd1",
+      "dxil_sha256": "6ebc8935f1523e16909b1bf1ecfdb7a8dd3d67d92ee5b63da790621267701ace",
+      "spirv_sha256": "40137be9284661c130dc5d879d3ac2af3714365b90b9cc513e110a90085dfd07"
+    },
+    {
+      "archive_entry": 365,
+      "native_sha256": "350512f3da51e52ea4d5e8f5b8501b46ff7ab4cdc52545268ffda8cacbf95683",
+      "dxil_sha256": "ebd8f84651f7adaa4cb95bd6905383e673a9239afeda4be95b75bdac583c6b72",
+      "spirv_sha256": "d49316c41e864201f143baba7de51758b91a47d194d9e0f311757ce096172768"
+    },
+    {
+      "archive_entry": 367,
+      "native_sha256": "680ecf316631e2796f7cab13535b3e8605d594e51c93392ff1e6c5417c100b5c",
+      "dxil_sha256": "c1dacf5989c8ce40e41695a89cd1d016bdc75c7e1a57cebe78c1d499ee8596b2",
+      "spirv_sha256": "158b352d834a914ac4eea549ff6a000c3799f9dcc4427a1bce935f3fba80c73d"
+    },
+    {
+      "archive_entry": 375,
+      "native_sha256": "d8df4a1bbd0649c195b7de63c0758034c2dce5e25630d0829cc6eda8ab3f3324",
+      "dxil_sha256": "fdd34494f39ff59f1cb01092ae92e0edeaa8f170e792d0b40e31e247ba36d369",
+      "spirv_sha256": "6cb35a2b3dfb66b597138edd348d99b02b5c47963a24f21c20f3ad60d80ec5d7"
+    }
+  ]
+}

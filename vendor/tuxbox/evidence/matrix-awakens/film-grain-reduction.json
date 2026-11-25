@@ -1,0 +1,51 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER (620.70.6)",
+  "capture": {
+    "frame": 1330,
+    "scene": "Frosty main menu on Linux",
+    "settings": "The game used its authored film grain. Setting r.FilmGrain.CacheTextureConstants=0 made it recalculate the normalization in the captured frame.",
+    "comparison": "Replayed the captured frame with the original shader, with workgroup barriers around its LDS exchanges, and with the production shader dumped from a live retail run. The last two matched byte for byte at all three reduction stages, the tonemap draw and the final menu draw.",
+    "reduce_shader": {
+      "entry": 3499,
+      "xbox_sha256": "d7f20d1948c7417d74f298a17eea6d78b64b05280cf9a8234b65faa19ecbe640",
+      "compiled_dxil_sha256": "b4ef78446153e10ebef991a061569f46a9bb32694f1fd2c80b79ca5623a202e0",
+      "retail_spirv_sha256": "2553b8f59a149b6496e5023b7cf8f90fd356ab0023a7c3a2631563f0fedc22ba",
+      "workgroup_barriers": 11
+    },
+    "pack_shader": {
+      "entry": 2552,
+      "xbox_sha256": "9b1bd08dd30b0fe7f8a4d2b9e3d3e1b5caca450f8fc72348b0e5c432d391fde9",
+      "event": 13805
+    }
+  },
+  "reference": {
+    "input": "128 by 128 BC7_UNORM grain texture",
+    "method": "Decode the captured texture, sum each channel in float64 and divide 16384 by each sum. Compare every GPU reduction texel to the sum of the corresponding source region.",
+    "normalization_rgba": [5.5461790, 5.5479834, 5.5147071, 1.0]
+  },
+  "synchronized_reduction": [
+    {"event": 13792, "output_size": [16, 16], "source_pixels_per_texel": 64, "max_absolute_sum_error": 0.00000137},
+    {"event": 13795, "output_size": [2, 2], "source_pixels_per_texel": 4096, "max_absolute_sum_error": 0.0000412},
+    {"event": 13800, "output_size": [1, 1], "source_pixels_per_texel": 16384, "max_absolute_sum_error": 0.000138}
+  ],
+  "tonemap": {
+    "event": 13822,
+    "format": "B8G8R8A8_UNORM",
+    "pixel_count": 3686400,
+    "measurement": "Count pixels over each 8-bit green-channel threshold before the menu UI is drawn.",
+    "before": {
+      "normalization_rgba": [0.08833771, 0.12042468, 0.08620233, 0.01587745],
+      "green_above_10": 45522,
+      "green_above_50": 44964,
+      "green_above_128": 42212,
+      "repeatability": "The unsynchronized reduction produced different constants across replays."
+    },
+    "after": {
+      "normalization_rgba": [5.5461788, 5.5479836, 5.5147066, 1.0],
+      "green_above_10": 861569,
+      "green_above_50": 409611,
+      "green_above_128": 177991
+    }
+  }
+}

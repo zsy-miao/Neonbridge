@@ -1,0 +1,1117 @@
+{
+  "scope": "Synthetic ordinary RDNA2 scalar programs, CPU-only production HLSL constant-folding with DXC/DXV; not GPU execution or retail coverage",
+  "base": "11a278a993652c6d0b39399531282d10705daddc",
+  "bridge_source": "55f9e37",
+  "extended_translator": "4ca3bffe295c5e7f357df1aa8a0d110e089d4f4b",
+  "llvm_verified_encodings": 77,
+  "unit_tests": {
+    "python": 133,
+    "dxbc": 45,
+    "shader_compiler": 65
+  },
+  "core": {
+    "scope": "CPU scalar ISA model vs production emitter, DXC constant folding and DXV; no GPU or retail coverage",
+    "program_sha256": "21e366c74a6d43a17c184f18ced2a9e670f15d4e1bbbb0499aebcf60cc545158",
+    "seed": 1396916562,
+    "profile": "core",
+    "categories": {
+      "s_abs_i32": 128,
+      "s_add_i32": 128,
+      "s_add_u32": 128,
+      "s_addc_u32": 128,
+      "s_and_b32": 128,
+      "s_and_b64": 128,
+      "s_andn2_b32": 128,
+      "s_andn2_b64": 128,
+      "s_ashr_i32": 128,
+      "s_ashr_i64": 128,
+      "s_bcnt1_i32_b32": 128,
+      "s_bcnt1_i32_b64": 128,
+      "s_bitcmp0_b32": 128,
+      "s_bitcmp1_b32": 128,
+      "s_bitset0_b32": 128,
+      "s_bitset1_b32": 128,
+      "s_brev_b32": 128,
+      "s_cmov_b32": 128,
+      "s_cmov_b64": 128,
+      "s_cmp_eq_i32": 128,
+      "s_cmp_eq_u32": 128,
+      "s_cmp_ge_i32": 128,
+      "s_cmp_ge_u32": 128,
+      "s_cmp_gt_i32": 128,
+      "s_cmp_gt_u32": 128,
+      "s_cmp_le_i32": 128,
+      "s_cmp_le_u32": 128,
+      "s_cmp_lg_i32": 128,
+      "s_cmp_lg_u32": 128,
+      "s_cmp_lt_i32": 128,
+      "s_cmp_lt_u32": 128,
+      "s_cselect_b32": 128,
+      "s_cselect_b64": 128,
+      "s_ff1_i32_b32": 128,
+      "s_flbit_i32_b32": 128,
+      "s_lshl_b32": 128,
+      "s_lshl_b64": 128,
+      "s_lshr_b32": 128,
+      "s_lshr_b64": 128,
+      "s_max_i32": 128,
+      "s_max_u32": 128,
+      "s_min_i32": 128,
+      "s_min_u32": 128,
+      "s_mov_b32": 128,
+      "s_mov_b64": 128,
+      "s_mul_i32": 128,
+      "s_nand_b32": 128,
+      "s_nand_b64": 128,
+      "s_nor_b32": 128,
+      "s_nor_b64": 128,
+      "s_not_b32": 128,
+      "s_not_b64": 128,
+      "s_or_b32": 128,
+      "s_or_b64": 128,
+      "s_orn2_b32": 128,
+      "s_orn2_b64": 128,
+      "s_sext_i32_i16": 128,
+      "s_sext_i32_i8": 128,
+      "s_sub_i32": 128,
+      "s_sub_u32": 128,
+      "s_subb_u32": 128,
+      "s_xnor_b32": 128,
+      "s_xnor_b64": 128,
+      "s_xor_b32": 128,
+      "s_xor_b64": 128,
+      "chain": 256,
+      "selectors_and_carry": 1
+    },
+    "tool_sha256": {
+      "bridge": "28e2a5737d01d3963e08a01bd5566eac9e3ce4640964b8bf1e5d710572714710",
+      "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+    },
+    "cases": 8577,
+    "passed": 8577,
+    "checked_words": 77193,
+    "failures": [],
+    "validated_batches": 387
+  },
+  "core_with_pr58": {
+    "scope": "CPU scalar ISA model vs production emitter, DXC constant folding and DXV; no GPU or retail coverage",
+    "program_sha256": "21e366c74a6d43a17c184f18ced2a9e670f15d4e1bbbb0499aebcf60cc545158",
+    "seed": 1396916562,
+    "profile": "core",
+    "categories": {
+      "s_abs_i32": 128,
+      "s_add_i32": 128,
+      "s_add_u32": 128,
+      "s_addc_u32": 128,
+      "s_and_b32": 128,
+      "s_and_b64": 128,
+      "s_andn2_b32": 128,
+      "s_andn2_b64": 128,
+      "s_ashr_i32": 128,
+      "s_ashr_i64": 128,
+      "s_bcnt1_i32_b32": 128,
+      "s_bcnt1_i32_b64": 128,
+      "s_bitcmp0_b32": 128,
+      "s_bitcmp1_b32": 128,
+      "s_bitset0_b32": 128,
+      "s_bitset1_b32": 128,
+      "s_brev_b32": 128,
+      "s_cmov_b32": 128,
+      "s_cmov_b64": 128,
+      "s_cmp_eq_i32": 128,
+      "s_cmp_eq_u32": 128,
+      "s_cmp_ge_i32": 128,
+      "s_cmp_ge_u32": 128,
+      "s_cmp_gt_i32": 128,
+      "s_cmp_gt_u32": 128,
+      "s_cmp_le_i32": 128,
+      "s_cmp_le_u32": 128,
+      "s_cmp_lg_i32": 128,
+      "s_cmp_lg_u32": 128,
+      "s_cmp_lt_i32": 128,
+      "s_cmp_lt_u32": 128,
+      "s_cselect_b32": 128,
+      "s_cselect_b64": 128,
+      "s_ff1_i32_b32": 128,
+      "s_flbit_i32_b32": 128,
+      "s_lshl_b32": 128,
+      "s_lshl_b64": 128,
+      "s_lshr_b32": 128,
+      "s_lshr_b64": 128,
+      "s_max_i32": 128,
+      "s_max_u32": 128,
+      "s_min_i32": 128,
+      "s_min_u32": 128,
+      "s_mov_b32": 128,
+      "s_mov_b64": 128,
+      "s_mul_i32": 128,
+      "s_nand_b32": 128,
+      "s_nand_b64": 128,
+      "s_nor_b32": 128,
+      "s_nor_b64": 128,
+      "s_not_b32": 128,
+      "s_not_b64": 128,
+      "s_or_b32": 128,
+      "s_or_b64": 128,
+      "s_orn2_b32": 128,
+      "s_orn2_b64": 128,
+      "s_sext_i32_i16": 128,
+      "s_sext_i32_i8": 128,
+      "s_sub_i32": 128,
+      "s_sub_u32": 128,
+      "s_subb_u32": 128,
+      "s_xnor_b32": 128,
+      "s_xnor_b64": 128,
+      "s_xor_b32": 128,
+      "s_xor_b64": 128,
+      "chain": 256,
+      "selectors_and_carry": 1
+    },
+    "tool_sha256": {
+      "bridge": "8d759bdec6157ffd6e8b384c3bbd8ca0f7811dd2c0374b74dfdb1adafbecc7b6",
+      "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+    },
+    "cases": 8577,
+    "passed": 8577,
+    "checked_words": 77193,
+    "failures": [],
+    "validated_batches": 387
+  },
+  "extended_with_pr58": {
+    "scope": "CPU scalar ISA model vs production emitter, DXC constant folding and DXV; no GPU or retail coverage",
+    "program_sha256": "8ab5a592dc3706a5dc834a37bd07070035bde83747a4a8cde9cba5004f32c474",
+    "seed": 1396916563,
+    "profile": "extended",
+    "categories": {
+      "s_abs_i32": 128,
+      "s_add_i32": 128,
+      "s_add_u32": 128,
+      "s_addc_u32": 128,
+      "s_and_b32": 128,
+      "s_and_b64": 128,
+      "s_andn2_b32": 128,
+      "s_andn2_b64": 128,
+      "s_ashr_i32": 128,
+      "s_ashr_i64": 128,
+      "s_bcnt0_i32_b32": 128,
+      "s_bcnt0_i32_b64": 128,
+      "s_bcnt1_i32_b32": 128,
+      "s_bcnt1_i32_b64": 128,
+      "s_bitcmp0_b32": 128,
+      "s_bitcmp0_b64": 128,
+      "s_bitcmp1_b32": 128,
+      "s_bitcmp1_b64": 128,
+      "s_bitset0_b32": 128,
+      "s_bitset0_b64": 128,
+      "s_bitset1_b32": 128,
+      "s_bitset1_b64": 128,
+      "s_brev_b32": 128,
+      "s_brev_b64": 128,
+      "s_cmov_b32": 128,
+      "s_cmov_b64": 128,
+      "s_cmp_eq_i32": 128,
+      "s_cmp_eq_u32": 128,
+      "s_cmp_ge_i32": 128,
+      "s_cmp_ge_u32": 128,
+      "s_cmp_gt_i32": 128,
+      "s_cmp_gt_u32": 128,
+      "s_cmp_le_i32": 128,
+      "s_cmp_le_u32": 128,
+      "s_cmp_lg_i32": 128,
+      "s_cmp_lg_u32": 128,
+      "s_cmp_lt_i32": 128,
+      "s_cmp_lt_u32": 128,
+      "s_cselect_b32": 128,
+      "s_cselect_b64": 128,
+      "s_ff0_i32_b32": 128,
+      "s_ff0_i32_b64": 128,
+      "s_ff1_i32_b32": 128,
+      "s_flbit_i32": 128,
+      "s_flbit_i32_b32": 128,
+      "s_flbit_i32_b64": 128,
+      "s_flbit_i32_i64": 128,
+      "s_lshl_b32": 128,
+      "s_lshl_b64": 128,
+      "s_lshr_b32": 128,
+      "s_lshr_b64": 128,
+      "s_max_i32": 128,
+      "s_max_u32": 128,
+      "s_min_i32": 128,
+      "s_min_u32": 128,
+      "s_mov_b32": 128,
+      "s_mov_b64": 128,
+      "s_mul_i32": 128,
+      "s_nand_b32": 128,
+      "s_nand_b64": 128,
+      "s_nor_b32": 128,
+      "s_nor_b64": 128,
+      "s_not_b32": 128,
+      "s_not_b64": 128,
+      "s_or_b32": 128,
+      "s_or_b64": 128,
+      "s_orn2_b32": 128,
+      "s_orn2_b64": 128,
+      "s_sext_i32_i16": 128,
+      "s_sext_i32_i8": 128,
+      "s_sub_i32": 128,
+      "s_sub_u32": 128,
+      "s_subb_u32": 128,
+      "s_xnor_b32": 128,
+      "s_xnor_b64": 128,
+      "s_xor_b32": 128,
+      "s_xor_b64": 128,
+      "chain": 256,
+      "selectors_and_carry": 1
+    },
+    "tool_sha256": {
+      "bridge": "8d759bdec6157ffd6e8b384c3bbd8ca0f7811dd2c0374b74dfdb1adafbecc7b6",
+      "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+    },
+    "cases": 10113,
+    "passed": 10026,
+    "checked_words": 90234,
+    "failures": [
+      {
+        "id": "009856",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x58]"
+      },
+      {
+        "id": "009857",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32 @ 0x58]"
+      },
+      {
+        "id": "009858",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b64 @ 0x68]"
+      },
+      {
+        "id": "009859",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x64]"
+      },
+      {
+        "id": "009864",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x54]"
+      },
+      {
+        "id": "009868",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x6c]"
+      },
+      {
+        "id": "009871",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x50]"
+      },
+      {
+        "id": "009873",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b32 @ 0x70]"
+      },
+      {
+        "id": "009877",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x6c]"
+      },
+      {
+        "id": "009882",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x64]"
+      },
+      {
+        "id": "009887",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x54]"
+      },
+      {
+        "id": "009888",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b64 @ 0x64]"
+      },
+      {
+        "id": "009895",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x5c]"
+      },
+      {
+        "id": "009896",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x60]"
+      },
+      {
+        "id": "009899",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_b64 @ 0x7c]"
+      },
+      {
+        "id": "009906",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x64]"
+      },
+      {
+        "id": "009918",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x6c]"
+      },
+      {
+        "id": "009923",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x64]"
+      },
+      {
+        "id": "009927",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x80]"
+      },
+      {
+        "id": "009931",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x64]"
+      },
+      {
+        "id": "009934",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x64]"
+      },
+      {
+        "id": "009935",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x7c]"
+      },
+      {
+        "id": "009942",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x70]"
+      },
+      {
+        "id": "009944",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x7c]"
+      },
+      {
+        "id": "009945",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x74]"
+      },
+      {
+        "id": "009951",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x74]"
+      },
+      {
+        "id": "009953",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x70]"
+      },
+      {
+        "id": "009959",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x54]"
+      },
+      {
+        "id": "009960",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x54]"
+      },
+      {
+        "id": "009961",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x78]"
+      },
+      {
+        "id": "009963",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_b64 @ 0x78]"
+      },
+      {
+        "id": "009964",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x60]"
+      },
+      {
+        "id": "009966",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_b64 @ 0x58]"
+      },
+      {
+        "id": "009971",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x6c]"
+      },
+      {
+        "id": "009972",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x70]"
+      },
+      {
+        "id": "009977",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_i64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_i64 @ 0x64]"
+      },
+      {
+        "id": "009978",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x68]"
+      },
+      {
+        "id": "009979",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x64]"
+      },
+      {
+        "id": "009980",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x48]"
+      },
+      {
+        "id": "009984",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x64]"
+      },
+      {
+        "id": "009985",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x64]"
+      },
+      {
+        "id": "009988",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x58]"
+      },
+      {
+        "id": "009990",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x5c]"
+      },
+      {
+        "id": "009997",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x74]"
+      },
+      {
+        "id": "009998",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_i64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_i64 @ 0x74]"
+      },
+      {
+        "id": "009999",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_i64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_i64 @ 0x68]"
+      },
+      {
+        "id": "010001",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_i64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_i64 @ 0x64]"
+      },
+      {
+        "id": "010002",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b32 @ 0x54]"
+      },
+      {
+        "id": "010003",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x6c]"
+      },
+      {
+        "id": "010006",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x68]"
+      },
+      {
+        "id": "010008",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b64 @ 0x70]"
+      },
+      {
+        "id": "010012",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x6c]"
+      },
+      {
+        "id": "010014",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x58]"
+      },
+      {
+        "id": "010016",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x74]"
+      },
+      {
+        "id": "010017",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x5c]"
+      },
+      {
+        "id": "010022",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x5c]"
+      },
+      {
+        "id": "010023",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b32 @ 0x74]"
+      },
+      {
+        "id": "010024",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x74]"
+      },
+      {
+        "id": "010027",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x48]"
+      },
+      {
+        "id": "010032",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x5c]"
+      },
+      {
+        "id": "010033",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b64 @ 0x4c]"
+      },
+      {
+        "id": "010038",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x58]"
+      },
+      {
+        "id": "010039",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x5c]"
+      },
+      {
+        "id": "010047",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x5c]"
+      },
+      {
+        "id": "010049",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x68]"
+      },
+      {
+        "id": "010051",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x50]"
+      },
+      {
+        "id": "010053",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x68]"
+      },
+      {
+        "id": "010060",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b64 @ 0x58]"
+      },
+      {
+        "id": "010062",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp1_b64 @ 0x58]"
+      },
+      {
+        "id": "010066",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b64 @ 0x60]"
+      },
+      {
+        "id": "010067",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bcnt0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_bcnt0_i32_b32 @ 0x58]"
+      },
+      {
+        "id": "010068",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x60]"
+      },
+      {
+        "id": "010074",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x60]"
+      },
+      {
+        "id": "010075",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x68]"
+      },
+      {
+        "id": "010079",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x5c]"
+      },
+      {
+        "id": "010082",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x58]"
+      },
+      {
+        "id": "010085",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x54]"
+      },
+      {
+        "id": "010087",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_i64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_i64 @ 0x6c]"
+      },
+      {
+        "id": "010089",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset0_b64 @ 0x70]"
+      },
+      {
+        "id": "010091",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b64 @ 0x60]"
+      },
+      {
+        "id": "010093",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_brev_b64 needs proven ordinary scalar operands (not a wave mask) [s_brev_b64 @ 0x58]"
+      },
+      {
+        "id": "010094",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_b64 @ 0x70]"
+      },
+      {
+        "id": "010098",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_ff0_i32_b32 needs proven ordinary scalar operands (not a wave mask) [s_ff0_i32_b32 @ 0x80]"
+      },
+      {
+        "id": "010103",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_flbit_i32_b64 needs proven ordinary scalar operands (not a wave mask) [s_flbit_i32_b64 @ 0x64]"
+      },
+      {
+        "id": "010105",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x78]"
+      },
+      {
+        "id": "010106",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitcmp0_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitcmp0_b64 @ 0x70]"
+      },
+      {
+        "id": "010107",
+        "category": "chain",
+        "status": "refused",
+        "reason": "s_bitset1_b64 needs proven ordinary scalar operands (not a wave mask) [s_bitset1_b64 @ 0x64]"
+      }
+    ],
+    "validated_batches": 324
+  },
+  "mutation_control": {
+    "scope": "CPU scalar ISA model vs production emitter, DXC constant folding and DXV; no GPU or retail coverage",
+    "program_sha256": "811918407dc98b0edf5378fd310358cf27fb6795bb6664ac9180b37787346162",
+    "seed": 1396916562,
+    "profile": "core",
+    "categories": {
+      "s_abs_i32": 4,
+      "s_add_i32": 4,
+      "s_add_u32": 4,
+      "s_addc_u32": 4,
+      "s_and_b32": 4,
+      "s_and_b64": 4,
+      "s_andn2_b32": 4,
+      "s_andn2_b64": 4,
+      "s_ashr_i32": 4,
+      "s_ashr_i64": 4,
+      "s_bcnt1_i32_b32": 4,
+      "s_bcnt1_i32_b64": 4,
+      "s_bitcmp0_b32": 4,
+      "s_bitcmp1_b32": 4,
+      "s_bitset0_b32": 4,
+      "s_bitset1_b32": 4,
+      "s_brev_b32": 4,
+      "s_cmov_b32": 4,
+      "s_cmov_b64": 4,
+      "s_cmp_eq_i32": 4,
+      "s_cmp_eq_u32": 4,
+      "s_cmp_ge_i32": 4,
+      "s_cmp_ge_u32": 4,
+      "s_cmp_gt_i32": 4,
+      "s_cmp_gt_u32": 4,
+      "s_cmp_le_i32": 4,
+      "s_cmp_le_u32": 4,
+      "s_cmp_lg_i32": 4,
+      "s_cmp_lg_u32": 4,
+      "s_cmp_lt_i32": 4,
+      "s_cmp_lt_u32": 4,
+      "s_cselect_b32": 4,
+      "s_cselect_b64": 4,
+      "s_ff1_i32_b32": 4,
+      "s_flbit_i32_b32": 4,
+      "s_lshl_b32": 4,
+      "s_lshl_b64": 4,
+      "s_lshr_b32": 4,
+      "s_lshr_b64": 4,
+      "s_max_i32": 4,
+      "s_max_u32": 4,
+      "s_min_i32": 4,
+      "s_min_u32": 4,
+      "s_mov_b32": 4,
+      "s_mov_b64": 4,
+      "s_mul_i32": 4,
+      "s_nand_b32": 4,
+      "s_nand_b64": 4,
+      "s_nor_b32": 4,
+      "s_nor_b64": 4,
+      "s_not_b32": 4,
+      "s_not_b64": 4,
+      "s_or_b32": 4,
+      "s_or_b64": 4,
+      "s_orn2_b32": 4,
+      "s_orn2_b64": 4,
+      "s_sext_i32_i16": 4,
+      "s_sext_i32_i8": 4,
+      "s_sub_i32": 4,
+      "s_sub_u32": 4,
+      "s_subb_u32": 4,
+      "s_xnor_b32": 4,
+      "s_xnor_b64": 4,
+      "s_xor_b32": 4,
+      "s_xor_b64": 4,
+      "chain": 8,
+      "selectors_and_carry": 1
+    },
+    "tool_sha256": {
+      "bridge": "cd561eed46853a8be7348999f1438f5159ba25f2329f598b78c8dd03320e6305",
+      "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+    },
+    "cases": 269,
+    "passed": 264,
+    "checked_words": 2421,
+    "failures": [
+      {
+        "id": "000008",
+        "category": "s_add_u32",
+        "status": "mismatch",
+        "expected": [
+          3970915556,
+          3752910938,
+          4233038648,
+          1441480678,
+          0,
+          1,
+          3188090586,
+          1,
+          0
+        ],
+        "actual": [
+          3970915556,
+          3752910938,
+          4233038648,
+          1441480678,
+          0,
+          1,
+          3188090586,
+          4294967295,
+          0
+        ]
+      },
+      {
+        "id": "000009",
+        "category": "s_add_u32",
+        "status": "mismatch",
+        "expected": [
+          2424946031,
+          225761812,
+          64,
+          3694220619,
+          2669814934,
+          1464850443,
+          3051727711,
+          2485052608,
+          0
+        ],
+        "actual": [
+          2424946031,
+          225761812,
+          0,
+          3694220619,
+          2669814934,
+          1464850443,
+          3051727711,
+          2485052608,
+          0
+        ]
+      },
+      {
+        "id": "000010",
+        "category": "s_add_u32",
+        "status": "mismatch",
+        "expected": [
+          1057600747,
+          1243852071,
+          257,
+          2,
+          2648158406,
+          2136356814,
+          2832108700,
+          3079094573,
+          0
+        ],
+        "actual": [
+          1057600747,
+          1243852071,
+          4294967043,
+          2,
+          2648158406,
+          2136356814,
+          2832108700,
+          3079094573,
+          0
+        ]
+      },
+      {
+        "id": "000011",
+        "category": "s_add_u32",
+        "status": "mismatch",
+        "expected": [
+          2147483654,
+          2834402207,
+          2147483647,
+          2847658838,
+          3186736551,
+          299059195,
+          913652577,
+          3525116954,
+          0
+        ],
+        "actual": [
+          2147483656,
+          2834402207,
+          2147483647,
+          2847658838,
+          3186736551,
+          299059195,
+          913652577,
+          3525116954,
+          0
+        ]
+      },
+      {
+        "id": "000268",
+        "category": "selectors_and_carry",
+        "status": "mismatch",
+        "expected": [
+          0,
+          1,
+          2147483648,
+          4294967295,
+          0,
+          4294967280,
+          0,
+          0,
+          0
+        ],
+        "actual": [
+          4294967294,
+          1,
+          2147483648,
+          4294967295,
+          0,
+          4294967280,
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "validated_batches": 16
+  },
+  "mutation_description": "In a disposable worktree only, replace s_add_u32 addition expression with subtraction. Gate returned nonzero; worktree removed.",
+  "latest_upstream_recheck": {
+    "base": "3086e0b0451aafb7d74dac44b1ebf7786bea06d4",
+    "tests": {
+      "python": 134,
+      "dxbc": 51,
+      "shader_compiler": 80
+    },
+    "core": {
+      "scope": "CPU scalar ISA model vs production emitter, DXC constant folding and DXV; no GPU or retail coverage",
+      "program_sha256": "21e366c74a6d43a17c184f18ced2a9e670f15d4e1bbbb0499aebcf60cc545158",
+      "seed": 1396916562,
+      "profile": "core",
+      "categories": {
+        "s_abs_i32": 128,
+        "s_add_i32": 128,
+        "s_add_u32": 128,
+        "s_addc_u32": 128,
+        "s_and_b32": 128,
+        "s_and_b64": 128,
+        "s_andn2_b32": 128,
+        "s_andn2_b64": 128,
+        "s_ashr_i32": 128,
+        "s_ashr_i64": 128,
+        "s_bcnt1_i32_b32": 128,
+        "s_bcnt1_i32_b64": 128,
+        "s_bitcmp0_b32": 128,
+        "s_bitcmp1_b32": 128,
+        "s_bitset0_b32": 128,
+        "s_bitset1_b32": 128,
+        "s_brev_b32": 128,
+        "s_cmov_b32": 128,
+        "s_cmov_b64": 128,
+        "s_cmp_eq_i32": 128,
+        "s_cmp_eq_u32": 128,
+        "s_cmp_ge_i32": 128,
+        "s_cmp_ge_u32": 128,
+        "s_cmp_gt_i32": 128,
+        "s_cmp_gt_u32": 128,
+        "s_cmp_le_i32": 128,
+        "s_cmp_le_u32": 128,
+        "s_cmp_lg_i32": 128,
+        "s_cmp_lg_u32": 128,
+        "s_cmp_lt_i32": 128,
+        "s_cmp_lt_u32": 128,
+        "s_cselect_b32": 128,
+        "s_cselect_b64": 128,
+        "s_ff1_i32_b32": 128,
+        "s_flbit_i32_b32": 128,
+        "s_lshl_b32": 128,
+        "s_lshl_b64": 128,
+        "s_lshr_b32": 128,
+        "s_lshr_b64": 128,
+        "s_max_i32": 128,
+        "s_max_u32": 128,
+        "s_min_i32": 128,
+        "s_min_u32": 128,
+        "s_mov_b32": 128,
+        "s_mov_b64": 128,
+        "s_mul_i32": 128,
+        "s_nand_b32": 128,
+        "s_nand_b64": 128,
+        "s_nor_b32": 128,
+        "s_nor_b64": 128,
+        "s_not_b32": 128,
+        "s_not_b64": 128,
+        "s_or_b32": 128,
+        "s_or_b64": 128,
+        "s_orn2_b32": 128,
+        "s_orn2_b64": 128,
+        "s_sext_i32_i16": 128,
+        "s_sext_i32_i8": 128,
+        "s_sub_i32": 128,
+        "s_sub_u32": 128,
+        "s_subb_u32": 128,
+        "s_xnor_b32": 128,
+        "s_xnor_b64": 128,
+        "s_xor_b32": 128,
+        "s_xor_b64": 128,
+        "chain": 256,
+        "selectors_and_carry": 1
+      },
+      "tool_sha256": {
+        "bridge": "368d8e26ce4a3bd246e209832466fbcb1a74bf14efb1b5bb8eaf6048d02169ad",
+        "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+        "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+      },
+      "cases": 8577,
+      "passed": 8577,
+      "checked_words": 77193,
+      "failures": []
+    },
+    "validated_batches": 387
+  }
+}

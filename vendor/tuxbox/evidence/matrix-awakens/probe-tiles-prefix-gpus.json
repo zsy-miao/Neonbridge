@@ -1,0 +1,22 @@
+{
+  "scope": "Complete packaged probe-tile emission and six-plane prefix scans. Shader model 6.0 on Radeon and NVIDIA and a Radeon native wave64 reference using the same arithmetic. Verified outputs independently against CPU expectations.",
+  "devices": {
+    "AMD-ref": "1002:13c0",
+    "AMD-portable": "1002:13c0",
+    "NVIDIA-portable": "10de:2705"
+  },
+  "entries": {
+    "681": {
+      "guest_sha256": "66bfe1dd0768af8f127fdf1361db5b177cf63123201a683c7f793993b6e1b921",
+      "dxil_sha256": "32e95ece88b042ba5ce60afb451e1929baa594ac2da4d1c067d1302d2fc69cd4",
+      "native_wave64_reference_dxil_sha256": "5e81b310bac538701e35b28f7a9facd208c31e877e0a9be678fe02a8e3d5e35b",
+      "cases": "Four Z groups for four probe IDs, counter initially 3. Empty probes and inactive coefficients emit no tiles. The active case emits four level-one children for probe 0 and one level-zero tile for each other probe. All seven records, counter, and 8185 untouched tile slots checked."
+    },
+    "1279": {
+      "guest_sha256": "f5d9bace41476d844009db5f1b8c6e24192bc77bf9026c018ba7e132d17bde03",
+      "dxil_sha256": "acd4ed89b83bd879b2e054dbc548fde00af5daf6ab092f2c2af537d4741c3450",
+      "native_wave64_reference_dxil_sha256": "84a410bcdd087d2715fa5c1411fbe883f6d4f457e2609419509b270fa487fdc1",
+      "cases": "8x8 zero counts, 8x8 unit counts, 7x5 varying counts clipped in an 8x8 group. Six width-8 planes in a 10x50 allocation. All active prefix sums checked in Morton order, debug RGBA per pixel, six final counters, inactive pixels and counter guards."
+    }
+  }
+}

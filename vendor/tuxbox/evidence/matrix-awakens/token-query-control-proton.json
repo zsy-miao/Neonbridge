@@ -1,0 +1,30 @@
+{
+  "type": "host-capability",
+  "probe": "NtQueryInformationToken",
+  "target": "current process token",
+  "information_class": 39,
+  "buffer_bytes": 0,
+  "exe_sha256": "45a609744ff99c6b31516bc3390f86dec4e74ba2f9d4285218ab53f8e2297257",
+  "observations": [
+    {
+      "backend": "proton",
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "ntstatus": "0xc0000002",
+      "win32": 1,
+      "hresult_from_win32": "0x80070001",
+      "required_bytes": 0,
+      "package_status": 15700,
+      "package_full_name": null
+    },
+    {
+      "backend": "proton",
+      "provider": "1792432585 GE-Proton11-11",
+      "ntstatus": "0xc0000002",
+      "win32": 1,
+      "hresult_from_win32": "0x80070001",
+      "required_bytes": 0,
+      "package_status": 15700,
+      "package_full_name": null
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "scope": "Single-plane multisampled 32-bit color render targets with disabled color metadata. Compares Xbox XG hardware profiles 3 and 4 with TuxBox.",
+  "stock_descriptor": {
+    "width": 2976,
+    "height": 1676,
+    "format": 42,
+    "samples": 4,
+    "slices": 1,
+    "mips": 1,
+    "layout": 0,
+    "flags": "0x300001",
+    "layout_bytes": 83165184,
+    "alignment": 65536,
+    "planes": 1
+  },
+  "controls": {
+    "guest": "xg-library.exe --color-msaa",
+    "resource_layouts": 36,
+    "hardware_profiles": [
+      3,
+      4
+    ],
+    "samples": [
+      2,
+      4,
+      8
+    ],
+    "formats": [
+      42,
+      28,
+      34,
+      87,
+      24,
+      41
+    ],
+    "array_sizes": [
+      1,
+      2,
+      3,
+      4,
+      8
+    ],
+    "compared_output_bytes": 1028532,
+    "output_sha256": "0fdf3b3bbbc9d07d858a2ed70f40eff11b50ce00a4220b7ac55c30ace6003982",
+    "result": "xg-color-msaa 36 layouts 8b6aadde5f4cd7c1",
+    "checks": [
+      "Complete 6976-byte layouts",
+      "Packed image views and decodes back into the same layout",
+      "D3D sparse and tile queries",
+      "Coordinate and offset queries for each sample including the first invalid sample",
+      "Pitched upload to sample zero and separate downloads from all samples of an array slice"
+    ]
+  },
+  "retail_dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "provider_sha256": "d6eb5334a939e18245bf3d5f1e7335fe82837bb0805d6347d22cd280b127231a",
+  "guest_sha256": "cd0c598e868b293188cb236a2a539ebabbae3a9ad1128b1bdecd119da79f410c",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64"
+}

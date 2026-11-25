@@ -1,0 +1,35 @@
+{
+  "scope": "GPU-written sphere BLAS source, bounded GPU verification and guarded mathematical traversal of a synthetic TLAS; not hardware-exact node instructions or runtime integration",
+  "serialized_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+  "shader_sha256": "1e435ec479e3808c9d1c4b952bae23c81430c2cfa584100189a10d8d2c45a759",
+  "verification_shader_sha256": "61d56135dcd80a573f4060209023620bc7be45f2a81036b965bb5652a748d776",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "hits": 2112,
+      "misses": 1587,
+      "max_distance_error": 3.0994415283203125e-05,
+      "readback_sha256": "c4a8d5ce8807d2f1aed2f0d4a35fed0c5d617aceacf418dde076de073f24882a",
+      "cpu_max_distance_error": 4.76837158203125e-05,
+      "native_rayquery_max_distance_error": 5.3882598876953125e-05,
+      "guard_rejections": 3699,
+      "unsupported_ray_rejections": 5,
+      "gpu_verified_mismatch_replay": true
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "hits": 2112,
+      "misses": 1587,
+      "max_distance_error": 3.170967102050781e-05,
+      "readback_sha256": "dd2b2a5c5b48101f57f02dd46f19dff72091057c743166400955c8312c7acfe2",
+      "cpu_max_distance_error": 3.5881996154785156e-05,
+      "native_rayquery_max_distance_error": 2.753734588623047e-05,
+      "guard_rejections": 3699,
+      "unsupported_ray_rejections": 5,
+      "gpu_verified_mismatch_replay": true
+    }
+  },
+  "scene_sha256": "e462dd8c66d1fda4b1f72ac02db0eb568b75b0832bfd3a1172a9997f92b833d4",
+  "rays_sha256": "e47ffabeaedfd0f890c82e5bfd2c431bea2365756a852bd9c9755723d6812254",
+  "desktop_guest_sha256": "c00d84a6c56a5e07a8eddacaeea6b14ee1671dcce9bf3fbad00af2f21873ab97"
+}

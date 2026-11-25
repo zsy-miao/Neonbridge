@@ -1,0 +1,19 @@
+artifacts/
+.vs/
+*.user
+TestResults/
+
+# `fivestar exe analyze` default output folder (reports on your own executable).
+fivestar-exe-report/
+
+# Never commit game data or anything extracted from it.
+*.rpf
+*.ttpf
+*.xvd
+*.fssm
+*.dxbc
+*.dxil
+*.bk2
+*.dds
+*.png
+!docs/**/*.png

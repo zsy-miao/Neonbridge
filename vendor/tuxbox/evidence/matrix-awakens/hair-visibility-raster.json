@@ -1,0 +1,58 @@
+{
+  "title": "The Matrix Awakens",
+  "shader_file": "/Engine/Private/HairStrands/HairStrandsVisibilityRasterCompute.usf",
+  "entry_point": "MainCS",
+  "archive": "global",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "first_entry": 2458,
+  "last_entry": 2481,
+  "permutations": 24,
+  "previous_compiler_sha256": "f42f9d916e6fe267d4e723efd3938eab5d8db8da2dde799eef4fb3d560f8ff19",
+  "previous_translation_failures": 24,
+  "previous_diagnostic": "unknown two-word visibility atomic [image_atomic_umax]",
+  "compiler_sha256": "91031a7bf967af0a0d3f90274ace479d7a8eefda816ffec514e452afdad43d51",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+  "shader_model": "cs_6_6",
+  "dxil_validated": 24,
+  "binding_check": "Each of the 24 kernels retains its 32-bit hit-count UAV at u0 and uses unsigned 64-bit maximum on one, two, or four distinct visibility UAVs starting at u1.",
+  "pipeline_check": "CreateRootSignature using each original shader container, then CreateComputePipelineStateX through slot 62 with its original bytecode and the source-keyed desktop translation. Check S_OK and a non-null pipeline for each entry.",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "d3d12_xs_sha256": "40e20218ae4e3b538e8dfc6da67583e61779e3190b2105a877189ee0521c5385",
+  "gpu_pipelines": [
+    {
+      "adapter": "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+      "vkd3d_proton": "cae2e003bb82516",
+      "created": 24
+    },
+    {
+      "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+      "vkd3d_proton": "cae2e003bb82516",
+      "created": 24
+    }
+  ],
+  "manifest_sha256": "004395bcd1414052eb5c6a4a4a274c5d08da9d56ce7d419100e60b66c85b2749",
+  "manifest_encoding": "One ASCII line per ascending archive entry containing decimal index, source DXBC SHA-256 and translated DXIL SHA-256 with single spaces and a trailing LF.",
+  "scope": "Offline shader validation and hardware pipeline creation. Rendered hair and the visibility compaction passes require separate checks.",
+  "compute_frontend_survey": {
+    "distinct_console_compute_programs": 3233,
+    "previous_hlsl_emitted": 2868,
+    "current_hlsl_emitted": 2892,
+    "remaining_translation_failures": 341,
+    "newly_translated": 24,
+    "previously_translated_programs_regressed": 0
+  },
+  "negative_control": "Changing only the first 64-bit maximum at ISA offset 0x604 in global/2458 to a 32-bit maximum leaves conflicting widths on the same UAV. The compiler rejects the resulting shader.",
+  "compute_raster_compaction": [
+    {
+      "entry": 744,
+      "source_sha256": "7b50efe4e1af24ee493d1fdcf898f4f63a2bc648896e49be42365d54982e1272",
+      "diagnostic": "unverified EXEC election at 0x4ec"
+    },
+    {
+      "entry": 745,
+      "source_sha256": "6279fec42a171d61f708225a65d3f023eed1ec79031cbe0e8c97ef5b4a7e7cde",
+      "diagnostic": "unverified EXEC election at 0x490"
+    }
+  ]
+}

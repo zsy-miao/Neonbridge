@@ -1,0 +1,216 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -105,6 +105,7 @@
+     Samp(u32),
+     Uav(u32, u32), // slot, dim
+     Buf(u32, bool), // slot, is_uav (structured buffer)
++    Raw(u32, bool), // slot, is_uav (byte-address buffer)
+     TBuf(u32, bool), // slot, is_uav (typed buffer)
+     CbDyn(u32),      // constant buffer read through MUBUF (per-lane offset)
+     CodeTbl,         // s_load from the code section (embedded constant table)
+@@ -308,6 +309,7 @@
+     samp_cmp: BTreeSet<u32>,
+     uav: BTreeMap<u32, u32>,       // slot -> dim
+     sbuf: BTreeMap<(bool, u32), u32>, // (is_uav, slot) -> element dwords used
++    raw: BTreeSet<(bool, u32)>,
+     tbuf: BTreeSet<(bool, u32)>,      // typed buffers (is_uav, slot)
+     tbuf_uint: BTreeSet<u32>,         // typed UAV slots whose element must be uint (atomics)
+     /// Inferred integer element type of typed buffers: (is_uav, slot) -> 1 uint, 2 sint.
+@@ -980,6 +982,7 @@
+             samp_cmp: BTreeSet::new(),
+             uav: BTreeMap::new(),
+             sbuf: BTreeMap::new(),
++            raw: BTreeSet::new(),
+             tbuf: BTreeSet::new(),
+             tbuf_uint: BTreeSet::new(),
+             tbuf_ty: BTreeMap::new(),
+@@ -1587,6 +1590,16 @@
+         }
+     }
+ 
++    fn raw_binding(&mut self, slot: u32, is_uav: bool) -> Option<Res> {
++        let ty = if is_uav { 7 } else { 4 };
++        if self.ex.resources.iter().any(|p| p.res_type == ty && p.space == 0 && p.lower <= slot && slot <= p.upper) {
++            self.raw.insert((is_uav, slot));
++            Some(Res::Raw(slot, is_uav))
++        } else {
++            None
++        }
++    }
++
+     /// Resource a MUBUF instruction addresses when its descriptor is `slot` of `table`
+     /// (also records declaration requirements).
+     fn mubuf_res(&mut self, ins: &Insn, offset: u32, table: u8) -> Result<Res, String> {
+@@ -1602,6 +1615,9 @@
+             }
+             other => return Err(format!("mubuf at {:#x}: buffer in table of kind {other:?}", ins.offset)),
+         };
++        if let Some(raw) = self.raw_binding(slot, is_uav) {
++            return Ok(raw);
++        }
+         if ins.mnemonic.contains("_atomic_") {
+             if !is_uav {
+                 return Err(format!("mubuf at {:#x}: atomic on a non-UAV buffer", ins.offset));
+@@ -1858,6 +1874,10 @@
+                         let (kind, slot) = self.table_binding(*table, *off, 32)?;
+                         let buffer_kind = kind.filter(|k| *k <= 1 && cands.len() == 1);
+                         if let Some(k) = buffer_kind {
++                            if let Some(raw) = self.raw_binding(slot, k == 1) {
++                                out.push((((*table as u32) << 24) | off, raw));
++                                continue;
++                            }
+                             let key = (k == 1, slot);
+                             let e = self.sbuf.entry(key).or_insert(0);
+                             *e = (*e).max(4);
+@@ -2986,15 +3006,21 @@
+                 let soff = ins.raw.get(1).copied().unwrap_or(0) >> 25;
+                 let slot = match self.res.get(&idx).and_then(|v| v.first()).copied() {
+                     Some(Res::Cb(s)) => s,
+-                    Some(Res::Buf(slot, is_uav)) => {
+-                        // Structured buffer read by byte offset (see `tb_sbw_*`).
++                    Some(res @ (Res::Buf(slot, is_uav) | Res::Raw(slot, is_uav))) => {
++                        // Snapshot all words before replacing any overlapping destination SGPR.
++                        let raw = matches!(res, Res::Raw(..));
+                         let nm = if is_uav { "ubuf" } else { "sbuf" };
+                         let dynamic = if soff != 0x7d { format!(" + {}", ssrc_name(soff)?) } else { String::new() };
+                         let t = self.tmp;
+                         self.tmp += 1;
+                         self.line(&format!("uint t{t} = {:#x}u{dynamic};", ins.aux.imm as u32));
+                         for k in 0..n {
+-                            self.line(&format!("uint t{t}_{k} = tb_sbw_{nm}{slot}(t{t} + {}u);", 4 * k));
++                            let load = if raw {
++                                format!("raw_{nm}{slot}.Load(t{t} + {}u)", 4 * k)
++                            } else {
++                                format!("tb_sbw_{nm}{slot}(t{t} + {}u)", 4 * k)
++                            };
++                            self.line(&format!("uint t{t}_{k} = {load};"));
+                         }
+                         for k in 0..n {
+                             let dst = sreg_opnd(base + k as u8);
+@@ -4214,6 +4240,52 @@
+         })
+     }
+ 
++    /// Resolve a raw buffer's byte address before any overlapping VGPR is overwritten.
++    /// OFFEN and SOFFSET are byte offsets. IDXEN uses the runtime descriptor stride,
++    /// which the PSV raw declaration does not encode.
++    fn raw_address(&mut self, ins: &Insn) -> Result<String, String> {
++        if ins.aux.mask & 2 != 0 {
++            return Err("raw buffer IDXEN needs the console descriptor stride".into());
++        }
++        let vector = if ins.aux.mask & 1 != 0 { r(&ins.src[0])? } else { "0u".to_string() };
++        let address = format!("raw_addr{}", self.tmp);
++        self.tmp += 1;
++        self.line(&format!("uint {address} = {vector} + {} + {}u;", r(&ins.src[2])?, ins.aux.imm));
++        Ok(address)
++    }
++
++    fn raw_transfer(&mut self, ins: &Insn, slot: u32, is_uav: bool) -> Result<(), String> {
++        let buffer = if is_uav { format!("raw_ubuf{slot}") } else { format!("raw_sbuf{slot}") };
++        let load = ins.mnemonic.starts_with("buffer_load_");
++        if !load && (!is_uav || !ins.mnemonic.starts_with("buffer_store_")) {
++            return Err("unsupported write to raw buffer".into());
++        }
++        let Opnd::Vgpr(base) = ins.dst[0] else { return Err("raw buffer needs VGPR data".into()); };
++        let width = match ins.mnemonic.rsplit('_').next() {
++            Some("dword" | "x") => 1, Some("dwordx2") => 2, Some("dwordx3") => 3, Some("dwordx4") => 4,
++            _ => return Err(format!("unsupported raw buffer transfer {}", ins.mnemonic)),
++        };
++        let address = self.raw_address(ins)?;
++        let t = self.tmp;
++        self.tmp += 1;
++        for k in 0..width {
++            let offset = format!("{address} + {}u", 4 * k);
++            let reg = Opnd::Vgpr(base.checked_add(k).ok_or("raw buffer register overflow")?);
++            if load {
++                self.line(&format!("uint t{t}_{k} = {buffer}.Load({offset});"));
++            } else {
++                self.touch(&reg);
++                self.line(&format!("if (exec_lo & 1u) {buffer}.Store({offset}, {});", r(&reg)?));
++            }
++        }
++        if load {
++            for k in 0..width {
++                self.wv(&Opnd::Vgpr(base + k), &format!("t{t}_{k}"))?;
++            }
++        }
++        Ok(())
++    }
++
+     /// MUBUF on a structured buffer: `vaddr` is the element index (IDXEN), the 12-bit
+     /// immediate the byte offset inside the element. Dynamic offsets (OFFEN / SOFFSET
+     /// register) are not handled yet and fail explicitly.
+@@ -4258,19 +4330,30 @@
+             }
+             return Ok(());
+         }
++        let resolved = self.res.get(&idx).and_then(|v| v.first()).copied();
++        if let Some(Res::Raw(slot, is_uav)) = resolved {
++            if !ins.mnemonic.contains("_atomic_") {
++                return self.raw_transfer(ins, slot, is_uav);
++            }
++        }
+         if ins.mnemonic.contains("_atomic_") {
+             // Buffer atomics → HLSL Interlocked* on the UAV element. With GLC set the
+             // pre-operation value is returned in vdata.
+             let (offen, idxen, glc) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0, ins.aux.mask & 4 != 0);
+-            let resolved = self.res.get(&idx).and_then(|v| v.first()).copied();
++            let raw = matches!(resolved, Some(Res::Raw(_, true)));
+             let scalar_only = !offen && !idxen && matches!(resolved, Some(Res::Buf(_, true))) && matches!(ins.src[2], Opnd::Sgpr(_));
+-            if (offen && idxen) || !(scalar_only || matches!(ins.src[2], Opnd::ConstInt(0))) {
++            if (offen && idxen) || !(raw || scalar_only || matches!(ins.src[2], Opnd::ConstInt(0))) {
+                 return Err("atomic MUBUF addressing unsupported".into());
+             }
+             // IDXEN selects an element. OFFEN and SOFFSET add byte offsets.
+             // With no register offset the immediate alone selects the counter.
+             let index = if idxen { r(&ins.src[0])? } else { "0u".to_string() };
++            let receiver = match resolved {
++                Some(Res::Raw(slot, true)) => format!("raw_ubuf{slot}."),
++                _ => String::new(),
++            };
+             let target = match (resolved, offen) {
++                (Some(Res::Raw(_, true)), _) => self.raw_address(ins)?,
+                 (Some(Res::Buf(slot, true)), false) if scalar_only => {
+                     let nwords = self.sbuf_words((true, slot));
+                     let w = format!("(({} + {:#x}u) >> 2)", r(&ins.src[2])?, ins.aux.imm as u32);
+@@ -4299,7 +4382,7 @@
+                     let Opnd::Vgpr(v) = vdata else { return Err("expected atomic VGPR pair".into()) };
+                     let compare = Opnd::Vgpr(v.checked_add(1).ok_or("atomic register pair overflow")?);
+                     self.touch(&compare);
+-                    self.line(&format!("InterlockedCompareExchange({target}, {}, {val}, t{t});", r(&compare)?));
++                    self.line(&format!("{receiver}InterlockedCompareExchange({target}, {}, {val}, t{t});", r(&compare)?));
+                 }
+                 "buffer_atomic_inc" | "buffer_atomic_dec" | "buffer_atomic_smin" | "buffer_atomic_smax" => {
+                     // The UAV is declared uint. Perform signed comparisons and bounded
+@@ -4311,7 +4394,7 @@
+                         "buffer_atomic_smin" => format!("asuint(min(asint({old}), asint({val})))"),
+                         _ => format!("asuint(max(asint({old}), asint({val})))"),
+                     };
+-                    self.line(&format!("uint {old}; [allow_uav_condition] do {{ {old} = t{t}; InterlockedCompareExchange({target}, {old}, {next}, t{t}); }} while (t{t} != {old});"));
++                    self.line(&format!("uint {old}; [allow_uav_condition] do {{ {old} = t{t}; {receiver}InterlockedCompareExchange({target}, {old}, {next}, t{t}); }} while (t{t} != {old});"));
+                 }
+                 op => {
+                     let (func, arg) = match op {
+@@ -4325,7 +4408,7 @@
+                         "buffer_atomic_swap" => ("InterlockedExchange", val),
+                         other => return Err(format!("{other} unsupported")),
+                     };
+-                    self.line(&format!("{func}({target}, {arg}, t{t});"));
++                    self.line(&format!("{receiver}{func}({target}, {arg}, t{t});"));
+                 }
+             }
+             self.line("}");
+@@ -5396,6 +5479,13 @@
+         let device_fence = self.packed.as_ref().is_some_and(|p| !p.device_sync_before.is_empty() || !p.device_sync_barriers.is_empty())
+             || (self.is_cs && self.insns.iter().any(|i| i.enc == Enc::Mubuf && matches!(i.op, 0x71 | 0x72)));
+         let coherent = if device_fence { "globallycoherent " } else { "" };
++        for (is_uav, slot) in &self.raw {
++            if *is_uav {
++                let _ = writeln!(h, "{coherent}RWByteAddressBuffer raw_ubuf{slot} : register(u{slot});");
++            } else {
++                let _ = writeln!(h, "ByteAddressBuffer raw_sbuf{slot} : register(t{slot});");
++            }
++        }
+         for (is_uav, slot) in self.sbuf.keys() {
+             let (ty, nm, reg) = if *is_uav { ("RWStructuredBuffer", "ubuf", "u") } else { ("StructuredBuffer", "sbuf", "t") };
+             let qualifier = if *is_uav { coherent } else { "" };

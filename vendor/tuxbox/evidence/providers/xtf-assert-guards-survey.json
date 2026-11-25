@@ -1,0 +1,15 @@
+{
+  "scope": "Original DLL only. The guest temporarily intercepts OutputDebugStringA through the DLL import table. A vectored exception handler catches the breakpoints and advances RIP as needed by Proton. With level 5 a normal assertion returned success and generated no intercepted OutputDebugStringA message in this environment; other outputs, native Windows breakpoint handling and full built-in assertion logging are not established; no TuxBox handler implementation.",
+  "reference_sha256": "b5b562b7b9c7366b9f56f7f7956bd38fc9539b22413dd2bb75f924f3ea3cab26",
+  "guest_sha256": "1281410d182fa6139aca820998e1671b324fce465dcc825c9d9d9044561eb730",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "observations": {
+    "normal": "00000000,1,0",
+    "start": "1",
+    "debug1": "Multiple calls to assert.",
+    "recursive": "1,0,1",
+    "debug2": "Multiple calls to assert.",
+    "concurrent": "1,0,2",
+    "id": "4"
+  }
+}

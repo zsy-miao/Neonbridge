@@ -1,0 +1,744 @@
+{
+  "scope": "Global entries 3398, 3399, 3412: returning depth atomic InstanceCull with statistics, each dispatched using its packaged root signature. CPU checks scene outputs, guarded buffers, statistics and queues. Texture row padding is excluded; equal-depth contenders can win in either order.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "results": {
+    "3398": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3398": {
+            "source_sha256": "d23aefe78027fb61418525e338ee4155a02a7ebe15085b9a0de524e13e5250f7",
+            "dxil_sha256": "0645b1c46a58b66cf9aaf3d69df14281b0d9301b10d8fd1706b1e6acc4d5e651"
+          }
+        },
+        "cases": {
+          "visibility_3398_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3398": {
+            "source_sha256": "d23aefe78027fb61418525e338ee4155a02a7ebe15085b9a0de524e13e5250f7",
+            "dxil_sha256": "0645b1c46a58b66cf9aaf3d69df14281b0d9301b10d8fd1706b1e6acc4d5e651"
+          }
+        },
+        "cases": {
+          "visibility_3398_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3398_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3399": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3399": {
+            "source_sha256": "efac296340bef23499655904a80086c6ccbb3a44ea685fa7c0a29542050e0f76",
+            "dxil_sha256": "f0ff2a8f4fd462967f06d70e09ab2347c3b863318622ecae9507dd217ae5faca"
+          }
+        },
+        "cases": {
+          "visibility_3399_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3399": {
+            "source_sha256": "efac296340bef23499655904a80086c6ccbb3a44ea685fa7c0a29542050e0f76",
+            "dxil_sha256": "f0ff2a8f4fd462967f06d70e09ab2347c3b863318622ecae9507dd217ae5faca"
+          }
+        },
+        "cases": {
+          "visibility_3399_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3399_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 2276,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    },
+    "3412": {
+      "amd": {
+        "gpu": {
+          "adapter": "1002:13c0"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3412": {
+            "source_sha256": "5ede1a86e84aa81531f9206f8862921969753909850f28c0c7d7e735ac311878",
+            "dxil_sha256": "174c3c24e55774c4581c5d67b36b84e61db039a29b8d290402493de5b2bf0c10"
+          }
+        },
+        "cases": {
+          "visibility_3412_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      },
+      "nvidia": {
+        "gpu": {
+          "adapter": "10de:2705"
+        },
+        "host": "1793301796 experimental-11.0-20261027b-x86_64",
+        "exit": 0,
+        "libraries": {
+          "3412": {
+            "source_sha256": "5ede1a86e84aa81531f9206f8862921969753909850f28c0c7d7e735ac311878",
+            "dxil_sha256": "174c3c24e55774c4581c5d67b36b84e61db039a29b8d290402493de5b2bf0c10"
+          }
+        },
+        "cases": {
+          "visibility_3412_empty": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane1": {
+            "visible": [
+              1
+            ],
+            "occluders": [
+              1
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane31": {
+            "visible": [
+              31
+            ],
+            "occluders": [
+              31
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane32": {
+            "visible": [
+              32
+            ],
+            "occluders": [
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_lane63": {
+            "visible": [
+              63
+            ],
+            "occluders": [
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_pair": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_full": {
+            "visible": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "occluders": [
+              1,
+              31,
+              32,
+              63
+            ],
+            "protected": null,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          },
+          "visibility_3412_protected": {
+            "visible": [
+              1,
+              32
+            ],
+            "occluders": [
+              1,
+              32
+            ],
+            "protected": 1.0,
+            "checked_words": 1689,
+            "mismatches": 0,
+            "first_mismatches": []
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "scope": "Original DLL survey of assert callbacks only; TuxBox does not implement handler registration or dispatch. Built-in assertion logging/debugging and recursive/concurrent dispatch remain unverified.",
+  "reference_sha256": "b5b562b7b9c7366b9f56f7f7956bd38fc9539b22413dd2bb75f924f3ea3cab26",
+  "guest_sha256": "c8cc9ebc33c3e589b1e6597232e792125d476b238259dbdf3408525530a31a2f",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "observations": {
+    "ids": "0,4,5,6,5,7",
+    "dispatch": "C:condition,file.cpp,42,value=37;A:condition,file.cpp,42,value=37;B:condition,file.cpp,42,value=37;ret:1",
+    "snapshot": "C:condition,file.cpp,42,value=38;A:condition,file.cpp,42,value=38;B:condition,file.cpp,42,value=38;ret:1",
+    "after": "C:condition,file.cpp,42,value=39;ret:1",
+    "remove": "1,0,0,0"
+  }
+}

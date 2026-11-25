@@ -1,0 +1,61 @@
+{
+  "scope": "Readback from the packaged hair voxel page allocation shader using its original root signature. The CPU reference compares every word of the page flags, atomic allocation counter and packed indirect records, including guard words.",
+  "entry": 752,
+  "entry_point": "MarkValid_PrepareCS",
+  "reproduce": "python tools/check_frosty_vsm_pages.py /path/to/MA/Mount --entry 752 --output build/hair-pages.json",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "source_sha256": "3b446060452e1c44133d002cb25182c96d1044627f22896cdc5a0c7787b3511b",
+  "dxil_sha256": "ae53f812e1347b784bfe96eeee0a4cb97df88f846756a97c3b1641dff3edddcc",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "per_adapter": {
+    "hair_pages_mixed": {
+      "clusters": 32,
+      "capacity": 64,
+      "force_direct": false,
+      "marked_pages": 3,
+      "counter": 11,
+      "checked_words": 648,
+      "mismatches": 0
+    },
+    "hair_pages_partial": {
+      "clusters": 14,
+      "capacity": 64,
+      "force_direct": false,
+      "marked_pages": 3,
+      "counter": 4,
+      "checked_words": 648,
+      "mismatches": 0
+    },
+    "hair_pages_bounded": {
+      "clusters": 32,
+      "capacity": 5,
+      "force_direct": false,
+      "marked_pages": 3,
+      "counter": 11,
+      "checked_words": 648,
+      "mismatches": 0
+    },
+    "hair_pages_all_direct": {
+      "clusters": 32,
+      "capacity": 64,
+      "force_direct": true,
+      "marked_pages": 50,
+      "counter": 2,
+      "checked_words": 648,
+      "mismatches": 0
+    },
+    "hair_pages_empty": {
+      "clusters": 0,
+      "capacity": 64,
+      "force_direct": false,
+      "marked_pages": 0,
+      "counter": 2,
+      "checked_words": 648,
+      "mismatches": 0
+    }
+  }
+}

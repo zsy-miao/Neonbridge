@@ -1,0 +1,241 @@
+--- a/crates/compat/gameinput/gameinput.cpp
++++ b/crates/compat/gameinput/gameinput.cpp
+@@ -17,6 +17,139 @@
+ extern "C" IMAGE_DOS_HEADER __ImageBase;
+ 
+ namespace {
++constexpr DWORD keyboard_slot = XUSER_MAX_COUNT;
++constexpr DWORD slot_count = XUSER_MAX_COUNT + 1;
++
++bool desktop_enabled() {
++    static const bool enabled = [] {
++        wchar_t flag[2]{};
++        return GetEnvironmentVariableW(L"TUXBOX_KEYBOARD_GAMEPAD", flag, 2) == 1 && flag[0] == L'1';
++    }();
++    return enabled;
++}
++
++bool key_down(int key) {
++    return (GetAsyncKeyState(key) & 0x8000) != 0;
++}
++
++// Mouse movement acts as a rate-controlled stick while the secondary button is held.
++// Keep the cursor inside the game on long turns, and restore it when aiming ends.
++class MouseLook {
++    HWND captured = nullptr;
++    POINT saved{}, center{};
++    ULONGLONG sampled = 0;
++    LONG dx = 0, dy = 0;
++    SHORT x = 0, y = 0;
++    std::mutex mutex;
++public:
++    void sample(HWND window, XINPUT_GAMEPAD& pad) {
++        std::lock_guard<std::mutex> lock(mutex);
++        if (captured && captured != window) captured = nullptr;
++        if (!window) return;
++        const bool aiming = key_down(VK_RBUTTON);
++        if (key_down(VK_LBUTTON)) {
++            if (aiming) pad.bRightTrigger = 255;
++            else pad.wButtons |= XINPUT_GAMEPAD_A;
++        }
++        if (!aiming) {
++            if (captured) {
++                SetCursorPos(saved.x, saved.y);
++                captured = nullptr;
++            }
++            return;
++        }
++
++        pad.bLeftTrigger = 255;
++        POINT position;
++        if (!GetCursorPos(&position)) return;
++        const auto now = GetTickCount64();
++        if (!captured) {
++            RECT client, clip;
++            if (!GetClientRect(window, &client) || !GetClipCursor(&clip) || IsRectEmpty(&clip)) return;
++            POINT local = position;
++            if (!ScreenToClient(window, &local) || !PtInRect(&client, local)) return;
++            center = {(client.right + client.left) / 2, (client.bottom + client.top) / 2};
++            if (!ClientToScreen(window, &center)) return;
++            center.x = std::clamp(center.x, clip.left, clip.right - 1);
++            center.y = std::clamp(center.y, clip.top, clip.bottom - 1);
++            if (!SetCursorPos(center.x, center.y)) return;
++            captured = window;
++            saved = position;
++            x = y = 0;
++            dx = dy = 0;
++            sampled = now;
++        } else {
++            if ((position.x != center.x || position.y != center.y) && SetCursorPos(center.x, center.y)) {
++                dx += position.x - center.x;
++                dy += center.y - position.y;
++            }
++            const auto elapsed = now - sampled;
++            if (elapsed >= 24) {
++                auto axis = [elapsed](LONG delta) {
++                    const auto speed = delta * 24000.0 / static_cast<double>(elapsed);
++                    return static_cast<SHORT>(std::clamp(speed, -32768.0, 32767.0));
++                };
++                x = axis(dx);
++                y = axis(dy);
++                dx = dy = 0;
++                sampled = now;
++            }
++        }
++        if (x) pad.sThumbRX = x;
++        if (y) pad.sThumbRY = y;
++    }
++};
++
++void mix_desktop(XINPUT_GAMEPAD& pad) {
++    static MouseLook mouse;
++    HWND window = GetForegroundWindow();
++    DWORD owner = 0;
++    GetWindowThreadProcessId(window, &owner);
++    if (owner != GetCurrentProcessId()) {
++        mouse.sample(nullptr, pad);
++        return;
++    }
++    mouse.sample(window, pad);
++    static constexpr struct { int key; WORD button; } bindings[] = {
++        {'I', XINPUT_GAMEPAD_DPAD_UP}, {'K', XINPUT_GAMEPAD_DPAD_DOWN},
++        {'J', XINPUT_GAMEPAD_DPAD_LEFT}, {'L', XINPUT_GAMEPAD_DPAD_RIGHT},
++        {'Z', XINPUT_GAMEPAD_A}, {VK_RETURN, XINPUT_GAMEPAD_A}, {'X', XINPUT_GAMEPAD_B},
++        {VK_ESCAPE, XINPUT_GAMEPAD_B}, {'C', XINPUT_GAMEPAD_X}, {'V', XINPUT_GAMEPAD_Y},
++        {'M', XINPUT_GAMEPAD_START}, {'N', XINPUT_GAMEPAD_BACK},
++        {'Q', XINPUT_GAMEPAD_LEFT_SHOULDER}, {'E', XINPUT_GAMEPAD_RIGHT_SHOULDER}
++    };
++    for (auto binding : bindings)
++        if (key_down(binding.key)) pad.wButtons |= binding.button;
++    // Any deliberate keyboard direction takes priority over the analog stick.
++    auto axis = [](int negative, int positive, SHORT current) -> SHORT {
++        const bool lower = key_down(negative), higher = key_down(positive);
++        if (!lower && !higher) return current;
++        if (lower && higher) return 0;
++        return lower ? -32768 : 32767;
++    };
++    pad.sThumbLX = axis('A', 'D', pad.sThumbLX);
++    pad.sThumbLY = axis('S', 'W', pad.sThumbLY);
++    pad.sThumbRX = axis(VK_LEFT, VK_RIGHT, pad.sThumbRX);
++    pad.sThumbRY = axis(VK_DOWN, VK_UP, pad.sThumbRY);
++    if (key_down('R')) pad.bLeftTrigger = 255;
++    if (key_down('F')) pad.bRightTrigger = 255;
++}
++
++bool read_port(DWORD port, XINPUT_STATE& state) {
++    const bool is_virtual = port == keyboard_slot;
++    if (is_virtual) state = {};
++    else if (XInputGetState(port, &state) != ERROR_SUCCESS) return false;
++    if (!desktop_enabled()) return !is_virtual;
++
++    // A one-player game can keep a device filter. Deliver both input sources to
++    // its first connected pad and preserve the identity/rumble of hardware ports.
++    XINPUT_STATE other{};
++    for (DWORD i = 0; i < port; ++i)
++        if (XInputGetState(i, &other) == ERROR_SUCCESS) return !is_virtual;
++    mix_desktop(state.Gamepad);
++    return true;
++}
++
+ uint64_t clock_us() {
+     static const auto frequency = [] {
+         LARGE_INTEGER value;
+@@ -61,7 +194,7 @@
+         info.supportedInput = GameInputKindGamepad;
+         info.gamepadInfo = &labels;
+         XINPUT_CAPABILITIES caps{};
+-        if (XInputGetCapabilities(slot, 0, &caps) == ERROR_SUCCESS) {
++        if (slot != keyboard_slot && XInputGetCapabilities(slot, 0, &caps) == ERROR_SUCCESS) {
+             if (caps.Vibration.wLeftMotorSpeed) info.supportedRumbleMotors |= GameInputRumbleLowFrequency;
+             if (caps.Vibration.wRightMotorSpeed) info.supportedRumbleMotors |= GameInputRumbleHighFrequency;
+         }
+@@ -69,7 +202,7 @@
+     bool sample(XINPUT_STATE& state) {
+         std::lock_guard<std::mutex> lock(port_mutex);
+         if (!connected) return false;
+-        if (XInputGetState(slot, &state) == ERROR_SUCCESS) return true;
++        if (read_port(slot, state)) return true;
+         connected = false;
+         return false;
+     }
+@@ -172,7 +305,7 @@
+         ComPtr<Device> device;
+         ComPtr<Reading> reading;
+         DWORD packet = 0;
+-    } slots[XUSER_MAX_COUNT];
++    } slots[slot_count];
+     std::mutex mutex;
+     std::vector<ComPtr<Reading>> history;
+     uint64_t next_order = 1, last_expired_order = 0;
+@@ -205,7 +338,7 @@
+ 
+         GameInputReadingCallback reading_callback = nullptr;
+         float threshold = 0;
+-        ComPtr<Reading> baseline[XUSER_MAX_COUNT];
++        ComPtr<Reading> baseline[slot_count];
+         unsigned pending_readings = 0;
+         bool missed_reading = false;
+ 
+@@ -298,14 +431,15 @@
+                 return hr;
+             }
+         } else {
+-            if (XInputGetState(i, &state) != ERROR_SUCCESS) return S_OK;
++            if (!read_port(i, state)) return S_OK;
+             auto device = Make<Device>(i);
+             if (!device) return E_OUTOFMEMORY;
+             HRESULT hr = transition(device.Get(), true);
+             if (FAILED(hr)) return hr;
+             slot.device = std::move(device);
+         }
+-        if (slot.reading && slot.packet == state.dwPacketNumber) return S_OK;
++        // Desktop input may change while the hardware packet number stays the same.
++        if (!desktop_enabled() && slot.reading && slot.packet == state.dwPacketNumber) return S_OK;
+         const auto sample = gamepad_state(state.Gamepad);
+         if (!slot.reading || !slot.reading->matches(sample)) {
+             auto reading = Make<Reading>(slot.device.Get(), sample, next_order);
+@@ -339,7 +473,7 @@
+             const auto now = clock_us();
+             const bool discover = now >= next_discovery;
+             if (discover) next_discovery = now + 32000;
+-            for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i)
++            for (DWORD i = 0; i < slot_count; ++i)
+                 if (discover || input.slots[i].device) input.refresh_slot(i);
+             input.expire_history(clock_us());
+             lock.unlock();
+@@ -411,7 +545,7 @@
+         r = find(0);
+         if (!r) return HRESULT_FROM_WIN32(ERROR_TOO_MANY_CMDS);
+         // Observe pre-existing state before installing any subscription.
+-        for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
++        for (DWORD i = 0; i < slot_count; ++i) {
+             HRESULT hr = refresh_slot(i);
+             if (FAILED(hr)) return hr;
+         }
+@@ -436,7 +570,7 @@
+         if (kind != GameInputKindUnknown && !(kind & GameInputKindGamepad)) return GAMEINPUT_E_READING_NOT_FOUND;
+         std::lock_guard<std::mutex> lock(mutex);
+         Device* connected = nullptr;
+-        for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
++        for (DWORD i = 0; i < slot_count; ++i) {
+             if (filter && filter != slots[i].device.Get()) continue;
+             HRESULT hr = refresh_slot(i);
+             if (FAILED(hr)) return hr;
+@@ -494,7 +628,7 @@
+         if (!(kind & GameInputKindGamepad) && kind != GameInputKindUnknown) return GAMEINPUT_E_READING_NOT_FOUND;
+         std::lock_guard<std::mutex> guard(mutex);
+         Reading* newest = nullptr;
+-        for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
++        for (DWORD i = 0; i < slot_count; ++i) {
+             auto& slot = slots[i];
+             if (filter && filter != slot.device.Get()) continue;
+             HRESULT hr = refresh_slot(i);
+@@ -531,7 +665,7 @@
+         r->reading_callback = callback;
+         r->threshold = threshold;
+         if (threshold) {
+-            for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i)
++            for (DWORD i = 0; i < slot_count; ++i)
+                 if (r->matches(slots[i].device.Get())) r->baseline[i] = slots[i].reading;
+         }
+         if (out) *out = r->token;

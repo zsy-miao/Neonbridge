@@ -1,0 +1,373 @@
+{
+  "archive": "global",
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "programs": {
+    "1213": {
+      "entry": "SelectPagesToInitializeCS",
+      "source_sha256": "0a3cdafa7eb858eb0637299a62e1586609ecf7cc8ecb253f0b081fa580dc7f30",
+      "dxil_sha256": "28de474c678ad02b9a891add9db969f085fb19e2f6fbcc3a8897aa29f9f629be"
+    },
+    "1215": {
+      "entry": "SelectPagesForHZBCS",
+      "source_sha256": "4c9ec9d0d701a3513707838764e152a4c33e6df212b24736b32048b84df5a147",
+      "dxil_sha256": "0942ed43906f0eb1281393b8cdddcd7c2c9d3bc5ad2cabd5065b95c49fbc42d3"
+    },
+    "1219": {
+      "entry": "SelectPagesToMergeCS",
+      "source_sha256": "88eb264cf52c68e12649820af1065901c2c17160ab5bc056856b18d60004e08d",
+      "dxil_sha256": "60171ca1534e6c4dc972645f1cc3de640e729fb5de4a9c9b5e1d99b862538e36"
+    },
+    "1224": {
+      "entry": "AllocateNewPageMappings",
+      "source_sha256": "8012291acd2ba04fbcde35eca7b47b3839dc678cb6eae2d0b82713a6e452a986",
+      "dxil_sha256": "cb1f975ead2e358235796ad5a7fdf5aa26ad2580181cb99720830885e81be2c0"
+    },
+    "1230": {
+      "entry": "SelectPagesToMergeCS",
+      "source_sha256": "c169f710aa88a5175f1e9bbd860a60aa752cfcedb94c97b6f338aaa1026a58df",
+      "dxil_sha256": "8d49194294cd766928b9bfcc2adc7b3136001510576eec118575f45c0db05921"
+    },
+    "1235": {
+      "entry": "AllocateNewPageMappings",
+      "source_sha256": "411e8755c2fc8a27876c9e8cf25b5edd182d047bf2519a54fde62e705a920a03",
+      "dxil_sha256": "cf2f05c4a0c6c98c2685f318d9f55c0759af22fa5e3094bcbd468e3375002bd2"
+    },
+    "1236": {
+      "entry": "SelectPagesToInitializeCS",
+      "source_sha256": "3384c9d152ce7dc9bf25edac327af16d5d96893de5711aff1caebf6b4906855b",
+      "dxil_sha256": "aa24cb6ede70aed9fc56bf3dbbcf41fb898829f3318562854cffcfd6add6586d"
+    },
+    "3477": {
+      "entry": "CompactViewsVSM_CS",
+      "source_sha256": "f804111bd5eda0deecdb8ee3f3f791d8c5f83331fa795a9e8e2792ee915edbf9",
+      "dxil_sha256": "5901d5d7de81d0ba1e32830e4cf749f41dc8c48f545b3102fad4ad5c5ef2aa51"
+    },
+    "1223": {
+      "entry": "PackFreePages",
+      "source_sha256": "2873e39a4648a58e8cdea0455a6d8343a8ad356b435577486084aa72b45db868",
+      "dxil_sha256": "c6eabb33a3e4a45176656daf6fbef9f64f296ad6b8941ec4c8e46eec0f990127"
+    },
+    "3403": {
+      "entry": "InstanceCullVSM",
+      "source_sha256": "28032e785440d60cea7f1b8679ffc797cdb71a9971604b57ccd12e310574229a",
+      "dxil_sha256": "f264812b116c2f62acc0b53bbfae406dc40db89b338dc5fc841f68db6af589ff"
+    }
+  },
+  "fixtures": {
+    "allocation": "Requests in both halves of one wave, pre-existing page, full and exhausted free stacks, physical page row and column packing, unchanged second metadata word and separate Y slices.",
+    "selection": "Primary and optional secondary lists, multiple page flag combinations, partial page counts, indirect counters scaled by 16 and statistics.",
+    "compaction": "Non-contiguous shadow-map IDs, selected mip levels and primary views across wave halves. Check 800-byte records, per-view counters, allocation offsets and guard words.",
+    "shadow_instances": "Three real instances (lanes 2,33,60), two packed views, explicit page residency, and an 8x8 R32_FLOAT HZB. Depth zero preserves all six records and depth one culls all six. Includes empty and stats-disabled cases.",
+    "free_pages": "Compaction of free pages from 8-byte metadata rows, starting at a biased list head with multiple workgroups. Guard words, empty and full lists are checked."
+  },
+  "adapters": [
+    {
+      "adapter": "1002:13c0",
+      "cases": 43,
+      "checked_words": 137694,
+      "mismatches": 0
+    },
+    {
+      "adapter": "10de:2705",
+      "cases": 43,
+      "checked_words": 137694,
+      "mismatches": 0
+    }
+  ],
+  "cases": {
+    "views_75_0": {
+      "input_views": 75,
+      "active_group": 0,
+      "contributing_views": 9,
+      "copied_records": 18,
+      "record_bytes": 800,
+      "checked_words": 9654
+    },
+    "views_75_1": {
+      "input_views": 75,
+      "active_group": 1,
+      "contributing_views": 3,
+      "copied_records": 6,
+      "record_bytes": 800,
+      "checked_words": 9654
+    },
+    "views_75_-1": {
+      "input_views": 75,
+      "active_group": -1,
+      "contributing_views": 0,
+      "copied_records": 0,
+      "record_bytes": 800,
+      "checked_words": 9654
+    },
+    "views_0_-1": {
+      "input_views": 0,
+      "active_group": -1,
+      "contributing_views": 0,
+      "copied_records": 0,
+      "record_bytes": 800,
+      "checked_words": 9654
+    },
+    "alloc_1224_10_0": {
+      "requested": 7,
+      "available": 10,
+      "allocated": 7,
+      "layer": 0,
+      "checked_words": 728
+    },
+    "alloc_1224_3_0": {
+      "requested": 7,
+      "available": 3,
+      "allocated": 3,
+      "layer": 0,
+      "checked_words": 728
+    },
+    "alloc_1224_0_0": {
+      "requested": 7,
+      "available": 0,
+      "allocated": 0,
+      "layer": 0,
+      "checked_words": 728
+    },
+    "alloc_1224_8_1": {
+      "requested": 7,
+      "available": 8,
+      "allocated": 7,
+      "layer": 1,
+      "checked_words": 44418
+    },
+    "alloc_1235_10_0": {
+      "requested": 7,
+      "available": 10,
+      "allocated": 7,
+      "layer": 0,
+      "checked_words": 730
+    },
+    "alloc_1235_3_0": {
+      "requested": 7,
+      "available": 3,
+      "allocated": 3,
+      "layer": 0,
+      "checked_words": 730
+    },
+    "alloc_1235_0_0": {
+      "requested": 7,
+      "available": 0,
+      "allocated": 0,
+      "layer": 0,
+      "checked_words": 730
+    },
+    "alloc_1235_8_1": {
+      "requested": 7,
+      "available": 8,
+      "allocated": 7,
+      "layer": 1,
+      "checked_words": 44420
+    },
+    "init_1213_64_0": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1213_64_1": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 4,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1213_35_1": {
+      "pages": 35,
+      "selected": 4,
+      "additional_pages": 2,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1213_0_1": {
+      "pages": 0,
+      "selected": 0,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1215_64_0": {
+      "pages": 64,
+      "selected": 7,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 26
+    },
+    "init_1215_64_1": {
+      "pages": 64,
+      "selected": 7,
+      "additional_pages": 7,
+      "initial_indirect_x": 32,
+      "checked_words": 26
+    },
+    "init_1215_35_1": {
+      "pages": 35,
+      "selected": 4,
+      "additional_pages": 4,
+      "initial_indirect_x": 32,
+      "checked_words": 26
+    },
+    "init_1215_0_1": {
+      "pages": 0,
+      "selected": 0,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 26
+    },
+    "init_1219_64_0": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 38
+    },
+    "init_1219_64_1": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 38
+    },
+    "init_1219_35_1": {
+      "pages": 35,
+      "selected": 4,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 38
+    },
+    "init_1219_0_1": {
+      "pages": 0,
+      "selected": 0,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 38
+    },
+    "init_1230_64_0": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1230_64_1": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1230_35_1": {
+      "pages": 35,
+      "selected": 4,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1230_0_1": {
+      "pages": 0,
+      "selected": 0,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 24
+    },
+    "init_1236_64_0": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 39
+    },
+    "init_1236_64_1": {
+      "pages": 64,
+      "selected": 6,
+      "additional_pages": 4,
+      "initial_indirect_x": 32,
+      "checked_words": 39
+    },
+    "init_1236_35_1": {
+      "pages": 35,
+      "selected": 4,
+      "additional_pages": 2,
+      "initial_indirect_x": 32,
+      "checked_words": 39
+    },
+    "init_1236_0_1": {
+      "pages": 0,
+      "selected": 0,
+      "additional_pages": 0,
+      "initial_indirect_x": 32,
+      "checked_words": 39
+    },
+    "pack_449_mixed": {
+      "page_count": 449,
+      "initial": 5,
+      "selected_pages": 82,
+      "checked_words": 528
+    },
+    "pack_449_all": {
+      "page_count": 449,
+      "initial": 0,
+      "selected_pages": 449,
+      "checked_words": 528
+    },
+    "pack_317_none": {
+      "page_count": 317,
+      "initial": 3,
+      "selected_pages": 0,
+      "checked_words": 528
+    },
+    "pack_0_none": {
+      "page_count": 0,
+      "initial": 0,
+      "selected_pages": 0,
+      "checked_words": 528
+    },
+    "instance_zero": {
+      "instances": 0,
+      "compacted_views": 1,
+      "mode": "zero",
+      "checked_words": 450
+    },
+    "instance_disabled": {
+      "instances": 0,
+      "compacted_views": 1,
+      "mode": "disabled",
+      "checked_words": 450
+    },
+    "instance_empty_views": {
+      "instances": 64,
+      "compacted_views": 0,
+      "mode": "empty_views",
+      "checked_words": 450
+    },
+    "instance_missing_pages": {
+      "instances": 64,
+      "compacted_views": 1,
+      "mode": "missing_pages",
+      "checked_words": 450
+    },
+    "instance_visible": {
+      "instances": 64,
+      "compacted_views": 1,
+      "mode": "visible",
+      "checked_words": 450
+    },
+    "instance_shadow_cache": {
+      "instances": 64,
+      "compacted_views": 2,
+      "mode": "shadow_cache",
+      "checked_words": 450
+    },
+    "instance_shadow_blocked": {
+      "instances": 64,
+      "compacted_views": 2,
+      "mode": "shadow_blocked",
+      "checked_words": 450
+    }
+  }
+}

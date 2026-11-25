@@ -1,0 +1,136 @@
+{
+  "archive": "Matrix Awakens global shader archive, LumenScreenProbeGatherHardwareRayTracingRGS",
+  "offline": {
+    "packaged_variants": 64,
+    "dxc_dxv_pass": 64,
+    "dxil_spirv_vulkan12_pass": 64,
+    "variants_with_trace": 48,
+    "static_trace_sites": 264,
+    "payload_words_per_trace": 5
+  },
+  "gpu_control": "tools/check_frosty_blas.py --screen-gather --ray-archive MOUNT --proton PROTON --prefix PREFIX --output RECEIPT",
+  "dispatch": [
+    4,
+    1,
+    1
+  ],
+  "observers": "The closest-hit and miss callbacks count host traversal, record ray parameters and observe the payload. The packaged ray generator controls the work queue, projection, trace, output pixel and retrace records.",
+  "exports": {
+    "64": {
+      "state_sha256": "3b9c215b502d6fbe8bca42ee1aa8eef1697036a03a14756f540aac94f78466f5",
+      "dxil_sha256": "0576671d8c9781fb80a2d8786ea582ebfcac6755881c84c8d87bbdb060e93113"
+    },
+    "71": {
+      "state_sha256": "248aad22fe2ba86d0078187ed382be9d5d010bfef34738425b6b355ba3e8768c",
+      "dxil_sha256": "fac83939f008d1e0bf2ab27480f1b32b61ce66f6a069121879de9e888d3f1c43"
+    }
+  },
+  "adapters": {
+    "1002:13c0": {
+      "readback_sha256": "7d104bacd5af7146de4a9b45961ba734ab783df32c437cc583829426acdc48ed",
+      "guest_sha256": "3e910f9fb807c1d86efa78f665e7c89db5168298c6aad4c3e0a6a80c6e5a22f0",
+      "tested_harness_sha256": "1860d14a7002f27d0ed38345bc4e2cfaef3affc87b26eb75da83510909a91161",
+      "screen_gather_results_sha256": "bb13592d6dbb62aa2d73cda86477f8e06d9dc4bbf8967104a97c008aa3c0e8bd"
+    },
+    "10de:2705": {
+      "readback_sha256": "308f8d34749fe6e57d09720994991a075c8af148cc4732a28e78facc8983df77",
+      "guest_sha256": "3e910f9fb807c1d86efa78f665e7c89db5168298c6aad4c3e0a6a80c6e5a22f0",
+      "tested_harness_sha256": "1860d14a7002f27d0ed38345bc4e2cfaef3affc87b26eb75da83510909a91161",
+      "screen_gather_results_sha256": "bb13592d6dbb62aa2d73cda86477f8e06d9dc4bbf8967104a97c008aa3c0e8bd"
+    }
+  },
+  "matching_results": {
+    "64": {
+      "empty_queue": {
+        "hits": 0,
+        "misses": 0,
+        "depth": "deadbeef",
+        "adjacent_depth": "deadbeef",
+        "radiance_rgb_hex": "deadbeef,deadbeef,deadbeef",
+        "retrace_words_hex": "00000000,00000000,00000000,00000000,00000000"
+      },
+      "sky": {
+        "hits": 0,
+        "misses": 1,
+        "depth": "00000000",
+        "adjacent_depth": "deadbeef",
+        "radiance_rgb_hex": "00000000,00000000,00000000",
+        "retrace_words_hex": "00000000,00000000,00000000,00000000,00000000",
+        "ray": [
+          20.0,
+          20.0,
+          19.99,
+          0.0099999998,
+          0.0,
+          0.0,
+          -1.0,
+          17.0
+        ]
+      },
+      "surface": {
+        "hits": 1,
+        "misses": 0,
+        "depth": "40000000",
+        "adjacent_depth": "deadbeef",
+        "radiance_rgb_hex": "00000000,00000000,00000000",
+        "retrace_words_hex": "00000000,00000000,00000000,00000000,00000000",
+        "ray": [
+          -1.0,
+          0.0,
+          0.49000001,
+          0.0099999998,
+          0.0,
+          0.0,
+          -1.0,
+          0.49000001
+        ]
+      }
+    },
+    "71": {
+      "empty_queue": {
+        "hits": 0,
+        "misses": 0,
+        "depth": "deadbeef",
+        "adjacent_depth": "deadbeef",
+        "radiance_rgb_hex": "deadbeef,deadbeef,deadbeef",
+        "retrace_words_hex": "00000000,00000000,00000000,00000000,00000000"
+      },
+      "sky": {
+        "hits": 0,
+        "misses": 2,
+        "depth": "00000002",
+        "adjacent_depth": "deadbeef",
+        "radiance_rgb_hex": "00000000,00000000,00000000",
+        "retrace_words_hex": "00000000,ffffffff,41880000,ffffffff,ffffffff",
+        "ray": [
+          20.0,
+          20.0,
+          19.99,
+          0.0,
+          0.0,
+          0.0,
+          -1.0,
+          17.0
+        ]
+      },
+      "surface": {
+        "hits": 1,
+        "misses": 0,
+        "depth": "40000000",
+        "adjacent_depth": "deadbeef",
+        "radiance_rgb_hex": "00000000,00000000,00000000",
+        "retrace_words_hex": "00000000,00000000,00000000,00000000,00000000",
+        "ray": [
+          -1.0,
+          0.0,
+          0.49000001,
+          0.0,
+          0.0,
+          0.0,
+          -1.0,
+          0.49000001
+        ]
+      }
+    }
+  }
+}

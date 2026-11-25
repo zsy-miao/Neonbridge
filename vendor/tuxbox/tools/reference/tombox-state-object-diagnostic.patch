@@ -1,0 +1,72 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -41,6 +41,11 @@
+     Guid { d1: 0x9218_e6bb, d2: 0xf944, d3: 0x4f7e, d4: [0xa7, 0x5c, 0xb1, 0xb2, 0xc7, 0xb7, 0x01, 0xf3] }, // Device8
+ ];
+ 
++// The XSX Device8 IID used by DeserializeStateObjectX is distinct from desktop Device8.
++const IID_XSX_DEVICE8: Guid = Guid {
++    d1: 0x728f1fa2, d2: 0xea11, d3: 0x4a9f, d4: [0x9b, 0x52, 0x9b, 0x42, 0xa4, 0x84, 0xd5, 0xc9],
++};
++
+ fn is_device_iid(g: &Guid) -> bool {
+     DEVICE_IIDS.iter().any(|d| d == g)
+ }
+@@ -69,7 +74,7 @@
+     }
+     unsafe { *ppv = core::ptr::null_mut() };
+     let g = unsafe { &*riid };
+-    if is_device_iid(g) || *g == IID_IUNKNOWN {
++    if is_device_iid(g) || *g == IID_IUNKNOWN || *g == IID_XSX_DEVICE8 {
+         unsafe {
+             *ppv = this as *mut c_void;
+             (*this).refs.fetch_add(1, Ordering::SeqCst);
+@@ -681,6 +686,29 @@
+     }
+ }
+ 
++/// Record the serialized ray state object requested by the guest. This diagnostic build
++/// returns E_NOTIMPL until it can supply a functional desktop state object for these bytes.
++///
++/// # Safety
++/// The caller supplies a readable span of `len` bytes, a valid IID, and writable COM out storage.
++unsafe extern "system" fn deserialize_state_object_x(
++    _this: *mut DeviceWrapper, bytecode: *const u8, len: u32, root: *mut c_void,
++    flags: u32, iid: *const Guid, out: *mut *mut c_void,
++) -> i32 {
++    if out.is_null() { return E_POINTER; }
++    // SAFETY: the COM caller provides a writable output pointer.
++    unsafe { out.write(core::ptr::null_mut()) };
++    if bytecode.is_null() || iid.is_null() || len == 0 { return E_POINTER; }
++    // SAFETY: the guest supplies the serialized object's byte span and readable IID for this call.
++    let (data, requested) = unsafe { (core::slice::from_raw_parts(bytecode, len as usize), &*iid) };
++    let hash = crate::shader_xlat::fnv1a(data);
++    let head = &data[..data.len().min(8)];
++    record("d3d12_xs", "DeserializeStateObjectX",
++        &format!("bytes={len} fnv1a64={hash:016x} prefix={head:02x?} root={} flags={flags:#x} iid={} E_NOTIMPL",
++                 !root.is_null(), guid_str(requested)));
++    compat_common::E_NOTIMPL
++}
++
+ // Forwarding thunk: this(rcx) -> this->real; jmp real->vtbl[slot].
+ macro_rules! fwd {
+     ($name:ident, $slot:expr) => {
+@@ -1431,6 +1459,7 @@
+         v[67] = deserialize_compute_pso_x as usize;
+         v[76] = create_committed_resource_x as usize;
+         v[102] = raytracing_prebuild_info as *const () as usize;
++        v[115] = deserialize_state_object_x as *const () as usize;
+         v[73] = create_command_list_x as usize;  // Xbox command-list create
+         if crate::rtcap::enabled() {
+             v[20] = create_rtv_traced as usize;
+--- a/crates/compat/d3d12_xs/src/shader_xlat.rs
++++ b/crates/compat/d3d12_xs/src/shader_xlat.rs
+@@ -33,7 +33,7 @@
+     ORIGIN.get()?.lock().unwrap().get(&code).cloned()
+ }
+ 
+-fn fnv1a(b: &[u8]) -> u64 {
++pub(crate) fn fnv1a(b: &[u8]) -> u64 {
+     let mut h = 0xcbf2_9ce4_8422_2325u64;
+     for &x in b {
+         h ^= x as u64;

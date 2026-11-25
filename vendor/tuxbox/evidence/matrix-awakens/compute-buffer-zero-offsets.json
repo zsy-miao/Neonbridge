@@ -1,0 +1,29 @@
+{
+  "scope": "Scalar register byte offsets for RDNA2 MUBUF operations in packaged compute shaders. Every reaching path supplies zero at the measured uses.",
+  "comparison": "Replace the SOFFSET byte of each SGPR-addressed MUBUF with inline zero (0x80), except scalar-only atomics that already accept dynamic offsets. Translate the original and modified ISA with the same container metadata. The complete HLSL sources match byte for byte.",
+  "profile": "cs_6_0",
+  "validation": "DXC and DXV for all three original shader streams",
+  "entries": {
+    "2224": {
+      "guest_sha256": "8f3829af3a24ee44068647d2fbadea03ffe97f088f70a7fd3c1f149490d7409e",
+      "instructions": 5627,
+      "checked_substitutions": 352,
+      "hlsl_sha256": "257801b5baba41604bbc1077923a5a4e5e761bc8f746fa864c221bcf715be0a3",
+      "dxil_sha256": "fd7a40db6a18307cc91855761b6b26b2d1757c4ec2e5e1fc51bbf4065981d418"
+    },
+    "2225": {
+      "guest_sha256": "49294a61f49f98a30f2d5237e4a9b41773f3b07dd1ef35ef0f691f163353b119",
+      "instructions": 5608,
+      "checked_substitutions": 351,
+      "hlsl_sha256": "05348665960a7a9fb63e51b78b03a610fa848fb8f46a44b07bd5ea32e08a0ebf",
+      "dxil_sha256": "f18caa2997df2f46fe974536ce9893b1f208c21ce5e89282248e03362fa29dd5"
+    },
+    "2738": {
+      "guest_sha256": "a306aef600c8053e96ac1134051e01009716c5345578299d3229ab93d1bdf9f1",
+      "instructions": 2471,
+      "checked_substitutions": 52,
+      "hlsl_sha256": "8b3766389f42f4be778ddeec0ebfc8cc8d4f07ca5547bb347159abed3e1666af",
+      "dxil_sha256": "3d26d2e6da562c49080bf3f8661fa36e59fb25dadb382b5b2d7c7f02fc4a2483"
+    }
+  }
+}

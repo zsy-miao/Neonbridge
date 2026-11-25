@@ -1,0 +1,31 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "33028fad1d4b4b97d39a59ce84d91701331fc2319ea5583be0c0de0d850ebf21",
+  "translator_sha256": "2786c07c84d553f3cfc3fc4f10fbb2910cac35cd32c7924ffbfa1fde007d05ec",
+  "patch_sha256": "210ee10b474a2d195ec50fec62e90915dd1153069c4aa9cc540e2943bf8f9675",
+  "vertex_entry": {
+    "6113": {
+      "native_sha256": "4952ebb81b8868e66c39f8f1323501d9c9affec2f54fb6fcec21472933b46035",
+      "hlsl_sha256": "adfb4c4ec5d3a2c6f73bc3be3e661484796c453a413009748e9b2c2647a4f9bf",
+      "dxil_sha256": "4fdb5766299ab1a547405478b1c84953eb52c8c9cecbc20351508b6946d7d0c7"
+    },
+    "31788": {
+      "native_sha256": "bfee6e102ab504ca659652189db6ad1d4e0790971745c3919dc2111076ef35cd",
+      "hlsl_sha256": "1a372cf2d98ed1ac1078c0401c7019107cc48a46feb36463d8fa78136a0ab12e",
+      "dxil_sha256": "87a7fb145cd7637f5f4b892bef6e6abbb4fe9d8943941b663fd2677eb95e641b"
+    }
+  },
+  "adapter": "1002:13c0",
+  "readback": [
+    "mat6113.cso instance 0 position=(0.25,-0.5,0.75,2) TEXCOORD6=(0.25,-0.5,0.75,2) id=17",
+    "mat6113.cso instance 1 position=(0.25,-0.5,0.75,2) TEXCOORD6=(0.25,-0.5,0.75,2) id=29",
+    "mat6113.cso instance 0 position=(-0.875,0.125,1,1.5) TEXCOORD6=(-0.875,0.125,1,1.5) id=17",
+    "mat6113.cso instance 1 position=(-0.875,0.125,1,1.5) TEXCOORD6=(-0.875,0.125,1,1.5) id=29",
+    "mat31788.cso instance 0 position=(0.25,-0.5,0.75,2) TEXCOORD6=(0.25,-0.5,0.75,2) id=17",
+    "mat31788.cso instance 1 position=(0.25,-0.5,0.75,2) TEXCOORD6=(0.25,-0.5,0.75,2) id=29",
+    "mat31788.cso instance 0 position=(-0.875,0.125,1,1.5) TEXCOORD6=(-0.875,0.125,1,1.5) id=17",
+    "mat31788.cso instance 1 position=(-0.875,0.125,1,1.5) TEXCOORD6=(-0.875,0.125,1,1.5) id=29"
+  ],
+  "resource_setup": "Zero initial inputs except ATTRIBUTE13=3, t2[3,4]=2,3, t1[2,3].x=17,29, and CB2[20] clip-space translation. Two instances per draw. The guest verifies both float4 exports, primitive ID, byte count and trailing guard.",
+  "scope": "Actual translated retail vertex shaders dispatched through a desktop stream-output PSO with controlled resources."
+}

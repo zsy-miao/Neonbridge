@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "scope": "Synthetic runtime table indexing, input/output instrumentation only",
+  "adapter": "10de:2704",
+  "cases": 64,
+  "compared_words": 24576,
+  "result_words": 4096,
+  "mismatches": [],
+  "guest_exit": 0,
+  "emitter_hlsl_sha256": "4ff51d586e581029e3784f75c51f3cec24d88ddcb707fc03980ad05cba21dd62",
+  "dxil_sha256": "16e03d281c9105fe6894b5a96d8a8b8734d4d242b1a1bb03a5fd889f5f4d044f",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+  "provider_sha256": "146d938f05693164d101cdc327fb5286ae33ac118cec0466e79a615c743e16c1"
+}

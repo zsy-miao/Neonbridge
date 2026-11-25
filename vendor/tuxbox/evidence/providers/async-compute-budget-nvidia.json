@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-indirect.exe": "9e7404c0c4f5b088812fba2d062d7cc0ad6dda4d1d0b0bc6c6597eb432bd7d26",
+    "d3d12-smoke/d3d12_xs.dll": "3b040a4cb64c38c294840a4285f3fc8c005bdc4e7edb3cd0d73ec1b052937081"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-indirect",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-indirect PASS pci=10de:2705 sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero flush=global,range budget=default,rejected2 mesh=0x00000000 rays=0x00000000"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "scope": "XGValidateDepthStencilSwizzleMode ordinal 21. HRESULTs compared with supplied Xbox XG DLL for representative formats, sample counts, all modes 0 through 31 and integer boundary modes.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "ed24b657eb39704d39616f33e6d0cbd589e7d16eabac02967cb137eed5995152",
+  "guest_source_sha256": "81f66ef07b215d8d7d219d23560a530f7721f6baa3dfc278face96036c62f121",
+  "xmem_sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+  "cases": 6125,
+  "checks": [
+    "25 representative formats including unknown and boundary values",
+    "seven sample counts including invalid extremes",
+    "32 contiguous swizzle modes and three integer boundary modes"
+  ],
+  "runs": {
+    "original": {
+      "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "guest_receipt": "xg-depth-swizzle PASS 6125 cases",
+      "result_sha256": "d2302b4f3b01059b58a15f62ad88441ee4a8d7ce2ca90772c481a561a166e5a5"
+    },
+    "tuxbox": {
+      "dll_sha256": "d383d04fd248997500d76bd02e83372c7c6a78f4211eb71f8d9fdad916d15ed4",
+      "guest_receipt": "xg-depth-swizzle PASS 6125 cases",
+      "result_sha256": "d2302b4f3b01059b58a15f62ad88441ee4a8d7ce2ca90772c481a561a166e5a5"
+    }
+  }
+}

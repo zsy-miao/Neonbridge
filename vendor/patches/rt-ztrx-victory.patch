@@ -1,0 +1,904 @@
+diff --git a/apps/victory/src/run.rs b/apps/victory/src/run.rs
+index dc5bf715..028973ec 100644
+--- a/apps/victory/src/run.rs
++++ b/apps/victory/src/run.rs
+@@ -150,7 +150,7 @@ fn diagnostics(image: &victory_loader::LoadedImage, cfg: &victory_core::Config)
+             .filter_map(|(rva, len)| Some((hex(rva)?, hex(len)?)))
+             .filter(|&(rva, len)| rva.checked_add(len).is_some_and(|end| end <= size))
+             .map(|(rva, len)| {
+-                let file = cfg.cache_dir.join(format!("crash-{rva:x}.bin"));
++                let file = cfg.cache_dir.join(format!("crash-{rva:x}-{}.bin", victory_core::config::runtime_id()));
+                 (image.base() + rva, len, file)
+             })
+             .collect(),
+diff --git a/crates/victory-core/src/config.rs b/crates/victory-core/src/config.rs
+index b65014e7..56813033 100644
+--- a/crates/victory-core/src/config.rs
++++ b/crates/victory-core/src/config.rs
+@@ -119,6 +119,34 @@ impl Config {
+     }
+ }
+ 
++/// Neonbridge shared cache: the name every runtime of the victory family
++/// gives its own files in one shared cache folder (`VICTORY_CACHE_DIR`), so
++/// that their fixed-name files do not clash: `NEONBRIDGE_RUNTIME` (the
++/// launcher sets it to the tree name), else the first 12 hex digits of a
++/// hash of this executable (a build identity).
++pub fn runtime_id() -> &'static str {
++    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    ID.get_or_init(|| {
++        if let Ok(v) = std::env::var("NEONBRIDGE_RUNTIME") {
++            let v: String = v
++                .trim()
++                .chars()
++                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
++                .collect();
++            if !v.is_empty() {
++                return v;
++            }
++        }
++        let bytes = std::env::current_exe().and_then(std::fs::read).unwrap_or_default();
++        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
++        for b in bytes {
++            h ^= u64::from(b);
++            h = h.wrapping_mul(0x0100_0000_01b3);
++        }
++        format!("{:012x}", h >> 16)
++    })
++}
++
+ fn subdir(root: &Path, sub: &str) -> Result<PathBuf> {
+     let dir = root.join(sub);
+     ensure_outside_repo(&dir)?;
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index e91db795..d3220378 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -1858,6 +1858,20 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
+             Some(Some(shadow.buffer.clone()))
+         }
+         View::Shader(resource, desc) => {
++            // A TLAS view (dimension RAYTRACING_ACCELERATION_STRUCTURE, no
++            // resource, the title's address at words 4 and 5): our
++            // acceleration structure for that address (Neonbridge rt patch).
++            if let Some(d) = desc.filter(|d| d[1] == D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE.0 as u32) {
++                let title = u64::from(d[4]) | u64::from(d[5]) << 32;
++                let (gpu, buffer) = crate::raytrace::view(title)?;
++                let mut v = srv_desc(&d);
++                v.Format = windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
++                v.Anonymous.RaytracingAccelerationStructure = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_SRV { Location: gpu };
++                // SAFETY: a slot of our heap; the location is a live buffer
++                // in the acceleration structure state.
++                unsafe { device.CreateShaderResourceView(None, Some(&v), at) };
++                return Some(Some(buffer));
++            }
+             let resource = *resource as crate::object::This;
+             if let Some(texture) = crate::resource::host_resource(resource) {
+                 // The title's views of textures with a stencil plane, as it
+diff --git a/crates/victory-gpu/src/device.rs b/crates/victory-gpu/src/device.rs
+index dfbf2b22..fc7abf98 100644
+--- a/crates/victory-gpu/src/device.rs
++++ b/crates/victory-gpu/src/device.rs
+@@ -324,6 +324,57 @@ extern "system" fn check_feature_support(
+     }
+ }
+ 
++/// Neonbridge rt-prebuild.patch (ported from TuxBox runtime/d3d12
++/// device/ray_build.rs prebuild, GPL-3.0): GetRaytracingAccelerationStructure-
++/// PrebuildInfo (device slot 0x330). The Xbox call takes the same 24-byte inputs
++/// and writes the same three 64-bit sizes as DXR, so it is answered by the host
++/// ID3D12Device5. The title calls it on its intro path whatever OPTIONS5 says;
++/// left unwritten, the sizes trip the title's assert (int3). Sizes are zero when
++/// the inputs are not a plain array of triangle/AABB descs or there is no host.
++extern "system" fn rt_prebuild(
++    _: This,
++    inputs: *const windows::Win32::Graphics::Direct3D12::D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS,
++    out: *mut windows::Win32::Graphics::Direct3D12::D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO,
++) {
++    use windows::Win32::Graphics::Direct3D12::*;
++    use windows::core::Interface;
++    // SAFETY: the title passes its output struct or null.
++    let Some(out) = (unsafe { out.as_mut() }) else { return };
++    *out = Default::default();
++    static FIRST: std::sync::Once = std::sync::Once::new();
++    FIRST.call_once(|| tracing::info!("ray-tracing prebuild answered by the host device (Neonbridge rt-prebuild.patch)"));
++    // SAFETY: the title passes its inputs or null.
++    let Some(inputs) = (unsafe { inputs.as_ref() }) else { return };
++    let supported = |g: &D3D12_RAYTRACING_GEOMETRY_DESC| {
++        matches!(g.Type, D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES | D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS)
++    };
++    let n = inputs.NumDescs as usize;
++    let valid = match inputs.Type {
++        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL => true,
++        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL if n == 0 => true,
++        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL if inputs.DescsLayout == D3D12_ELEMENTS_LAYOUT_ARRAY => {
++            // SAFETY: the title passes NumDescs descriptors.
++            let p = unsafe { inputs.Anonymous.pGeometryDescs };
++            !p.is_null() && unsafe { std::slice::from_raw_parts(p, n) }.iter().all(supported)
++        }
++        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL if inputs.DescsLayout == D3D12_ELEMENTS_LAYOUT_ARRAY_OF_POINTERS => {
++            // SAFETY: the title passes NumDescs pointers.
++            let p = unsafe { inputs.Anonymous.ppGeometryDescs };
++            !p.is_null() && unsafe { std::slice::from_raw_parts(p, n) }.iter().all(|g| unsafe { g.as_ref() }.is_some_and(supported))
++        }
++        _ => false,
++    };
++    if !valid {
++        return;
++    }
++    if let Some(host) = crate::host::host()
++        && let Ok(device) = host.device.cast::<ID3D12Device5>()
++    {
++        // SAFETY: validated inputs; out is the title's struct of the same layout.
++        unsafe { device.GetRaytracingAccelerationStructurePrebuildInfo(inputs, out) };
++    }
++}
++
+ fn feature_levels(data: *mut c_void) -> HRESULT {
+     // SAFETY: the caller checked size and non-null.
+     let query = unsafe { &mut *data.cast::<FeatureLevels>() };
+@@ -453,6 +504,7 @@ static FUNCTIONS: Table<160> = {
+     f[80] = frame::wait as *const (); // 0x280
+     f[81] = frame::statistics as *const (); // 0x288
+     f[86] = pipeline::create_stream as *const (); // 0x2b0
++    f[102] = rt_prebuild as *const (); // 0x330 (Neonbridge rt-prebuild.patch)
+     f[108] = resource::allocation_info2 as *const (); // 0x360
+     f[127] = resource::create_committed3 as *const (); // 0x3f8
+     f[133] = resource::create_at_address as *const (); // 0x428
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index aebefdec..e3d33808 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -376,6 +376,10 @@ pub(crate) fn dispatched() -> u64 {
+ /// megabyte was never brought up to date - meshes without bodies, exploded
+ /// triangles. `VICTORY_ROOT_VIEW_MB` sets a limit again.)
+ fn root_view(list: &HostList, address: u64, srv: bool) -> Option<u64> {
++    // A TLAS the shader traces: our acceleration structure (Neonbridge rt patch).
++    if srv && let Some(gpu) = crate::raytrace::root_view(list, address) {
++        return Some(gpu);
++    }
+     static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+     let limit = *LIMIT.get_or_init(|| {
+         std::env::var("VICTORY_ROOT_VIEW_MB")
+@@ -613,6 +617,13 @@ impl State {
+     /// shortcut: the render target views are made again from the handles'
+     /// descriptors as they are now, not as they were when the title set
+     /// the targets (a descriptor rewritten in between names another view).
++    /// Our own compute pass ran in the host list (Neonbridge rt patch): the
++    /// next dispatch sets the title's pipeline and root signature again.
++    pub(crate) fn forget_compute(&mut self) {
++        self.host_pipeline = 0;
++        self.host_roots[1] = 0;
++    }
++
+     pub(crate) fn replay(&mut self, list: &HostList) {
+         self.host_pipeline = 0;
+         self.host_roots = [0; 2];
+@@ -994,6 +1005,9 @@ impl State {
+                             u.slot == slot
+                                 && u.root == RootType::Other(victory_shader::emit::USER_VIEW_BIAS)
+                         });
++                    if tabled && crate::raytrace::is_destination(address) {
++                        once!("a TLAS root SRV in bounded root SRV tables is not translated (Neonbridge rt patch)");
++                    }
+                     if tabled {
+                         if !self.root_srv_table(list, Some(address), param, compute, biased) {
+                             return false;
+diff --git a/crates/victory-gpu/src/lib.rs b/crates/victory-gpu/src/lib.rs
+index db53f110..0df1c54f 100644
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -39,6 +39,8 @@ pub mod pipeline;
+ #[cfg(windows)]
+ mod primitive;
+ pub mod query;
++#[cfg(windows)]
++mod raytrace; // Neonbridge rt patch
+ pub mod queue;
+ pub mod resource;
+ pub mod root;
+diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
+index 8ce98568..21783916 100644
+--- a/crates/victory-gpu/src/list.rs
++++ b/crates/victory-gpu/src/list.rs
+@@ -142,7 +142,7 @@ const _: () = assert!(offset_of!(List, pipeline_shadow) + 32 == 0x560);
+ /// Runs `f` with the host list and draw state of a title list, if there
+ /// is a host GPU.
+ #[cfg(windows)]
+-fn with_state(this: This, f: impl FnOnce(&crate::host::HostList, &mut crate::draw::State)) {
++pub(crate) fn with_state(this: This, f: impl FnOnce(&crate::host::HostList, &mut crate::draw::State)) {
+     let Some(list) = host_list(this) else { return };
+     #[cfg(feature = "diagnostics")]
+     let started = std::time::Instant::now();
+@@ -2162,6 +2162,11 @@ const fn list_table(newer: bool) -> [*const (); 160] {
+         f[NEWER_METHODS[i].0] = NEWER_METHODS[i].1;
+         i += 1;
+     }
++    // 0x3a8 BuildRaytracingAccelerationStructure in either layout (Neonbridge rt patch).
++    #[cfg(windows)]
++    {
++        f[117] = crate::raytrace::build as *const ();
++    }
+     f
+ }
+ 
+diff --git a/crates/victory-gpu/src/pipeline/library.rs b/crates/victory-gpu/src/pipeline/library.rs
+index 7047331a..a44caec6 100644
+--- a/crates/victory-gpu/src/pipeline/library.rs
++++ b/crates/victory-gpu/src/pipeline/library.rs
+@@ -204,8 +204,8 @@ impl Blob {
+     /// The library file in `dir`: a library a save left beside it
+     /// ([`NEXT_FILE`]) takes its place first.
+     fn of(dir: &std::path::Path) -> Blob {
+-        let path = dir.join(LIBRARY_FILE);
+-        let next = dir.join(NEXT_FILE);
++        let path = dir.join(named(LIBRARY_FILE));
++        let next = dir.join(named(NEXT_FILE));
+         if next.exists() && std::fs::rename(&next, &path).is_err() {
+             tracing::warn!("the host pipeline library saved last could not take the old one's place");
+         }
+@@ -431,6 +431,44 @@ const LIBRARY_FILE: &str = "host-pipelines.bin";
+ /// start renames it over the library first ([`Blob::of`]).
+ const NEXT_FILE: &str = "host-pipelines.next";
+ const EARLY_FILE: &str = "early-pipelines.txt";
++
++/// `base` with this runtime's name before its extension
++/// (`host-pipelines-<id>.bin`): one shared cache folder serves every
++/// runtime of the victory family (Neonbridge shared cache).
++fn named(base: &str) -> String {
++    match base.rsplit_once('.') {
++        Some((stem, ext)) => format!("{stem}-{}.{ext}", runtime_id()),
++        None => format!("{base}-{}", runtime_id()),
++    }
++}
++
++/// Neonbridge shared cache: the name every runtime of the victory family
++/// gives its own files in one shared cache folder (`VICTORY_CACHE_DIR`), so
++/// that their fixed-name files do not clash: `NEONBRIDGE_RUNTIME` (the
++/// launcher sets it to the tree name), else the first 12 hex digits of a
++/// hash of this executable (a build identity).
++pub fn runtime_id() -> &'static str {
++    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    ID.get_or_init(|| {
++        if let Ok(v) = std::env::var("NEONBRIDGE_RUNTIME") {
++            let v: String = v
++                .trim()
++                .chars()
++                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
++                .collect();
++            if !v.is_empty() {
++                return v;
++            }
++        }
++        let bytes = std::env::current_exe().and_then(std::fs::read).unwrap_or_default();
++        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
++        for b in bytes {
++            h ^= u64::from(b);
++            h = h.wrapping_mul(0x0100_0000_01b3);
++        }
++        format!("{:012x}", h >> 16)
++    })
++}
+ /// Title pipelines listed for an early start, at most.
+ const EARLY_MAX: usize = 8192;
+ 
+@@ -578,7 +616,7 @@ pub(crate) fn save(now: bool) {
+         tracing::warn!(error = %e, "host pipeline library not saved");
+         return;
+     }
+-    let tmp = dir.join(LIBRARY_FILE).with_extension("tmp");
++    let tmp = dir.join(named(LIBRARY_FILE)).with_extension("tmp");
+     // The bytes of the library written to `tmp`; 0 when no pipeline was
+     // added: the library on disk is then what it was, and only the early
+     // list is written (a title pipeline first drawn with wrote all 1,352 MB
+@@ -611,7 +649,7 @@ pub(crate) fn save(now: bool) {
+     let library_written = if bytes > 0 { replace_library(dir, &tmp) } else { Ok(()) };
+     if bytes > 0 && library_written.is_ok() {
+         // In place unless the system refused and the new one waits beside it.
+-        let in_place = !dir.join(NEXT_FILE).exists();
++        let in_place = !dir.join(named(NEXT_FILE)).exists();
+         if in_place && VIEW[0].load(Ordering::Relaxed) != 0 {
+             REPLACED[1].store(crate::host::now_ms(), Ordering::Relaxed);
+             REPLACED[0].fetch_add(1, Ordering::Relaxed);
+@@ -624,7 +662,7 @@ pub(crate) fn save(now: bool) {
+         });
+     }
+     let written = library_written
+-        .and_then(|()| write_atomically(&dir.join(EARLY_FILE), used.join("\n").as_bytes()));
++        .and_then(|()| write_atomically(&dir.join(named(EARLY_FILE)), used.join("\n").as_bytes()));
+     match written {
+         Ok(()) => tracing::info!(
+             bytes,
+@@ -664,7 +702,7 @@ fn serialise(library: &ID3D12PipelineLibrary1, tmp: &std::path::Path, size: usiz
+ /// stay: the rest read as zeros). Where a system refuses, the new library
+ /// is left beside it as [`NEXT_FILE`] for the next start.
+ fn replace_library(dir: &std::path::Path, tmp: &std::path::Path) -> std::io::Result<()> {
+-    std::fs::rename(tmp, dir.join(LIBRARY_FILE)).or_else(|_| std::fs::rename(tmp, dir.join(NEXT_FILE)))
++    std::fs::rename(tmp, dir.join(named(LIBRARY_FILE))).or_else(|_| std::fs::rename(tmp, dir.join(named(NEXT_FILE))))
+ }
+ 
+ /// Writes `bytes` to a temporary file beside `path`, then renames it over
+@@ -684,7 +722,7 @@ fn used() -> std::sync::MutexGuard<'static, Option<HashSet<String>>> {
+     if used.is_none() {
+         let listed = DIR
+             .get()
+-            .and_then(|d| std::fs::read_to_string(d.join(EARLY_FILE)).ok())
++            .and_then(|d| std::fs::read_to_string(d.join(named(EARLY_FILE))).ok())
+             .unwrap_or_default();
+         let set: HashSet<String> = listed.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+         tracing::info!(pipelines = set.len(), "title pipelines to start early");
+@@ -740,7 +778,7 @@ mod tests {
+     #[test]
+     fn the_library_file_is_mapped_and_replaced() {
+         let dir = tempfile::tempdir().unwrap();
+-        let path = dir.path().join(LIBRARY_FILE);
++        let path = dir.path().join(named(LIBRARY_FILE));
+         assert!(matches!(Blob::of(dir.path()), Blob::None), "no file yet");
+         std::fs::write(&path, b"").unwrap();
+         assert!(matches!(Blob::of(dir.path()), Blob::None), "an empty file");
+@@ -764,7 +802,7 @@ mod tests {
+         drop(blob);
+         // The next start reads the new one, wherever the save left it.
+         assert_eq!(Blob::of(dir.path()).bytes(), &new[..]);
+-        assert!(!dir.path().join(NEXT_FILE).exists());
++        assert!(!dir.path().join(named(NEXT_FILE)).exists());
+     }
+ 
+     /// The bytes at `at` of the pattern the test below writes.
+@@ -816,7 +854,7 @@ mod tests {
+     fn a_replaced_library_file_still_reads_from_the_disk() {
+         const LEN: usize = 8 << 20;
+         let dir = tempfile::tempdir().unwrap();
+-        let path = dir.path().join(LIBRARY_FILE);
++        let path = dir.path().join(named(LIBRARY_FILE));
+         if !write_uncached(&path, LEN) {
+             return; // no uncached writes here: nothing to show
+         }
+diff --git a/crates/victory-gpu/src/raytrace.rs b/crates/victory-gpu/src/raytrace.rs
+new file mode 100644
+index 00000000..ba11e64b
+--- /dev/null
++++ b/crates/victory-gpu/src/raytrace.rs
+@@ -0,0 +1,542 @@
++//! Neonbridge rt patch: ID3D12GraphicsCommandList4::BuildRaytracingAccelerationStructure
++//! (list slot 117, 0x3a8) recorded into the host list.
++//!
++//! Ported from TuxBox runtime/d3d12 commands/build_raytracing.rs (GPL-3.0):
++//! the desc is copied, every title GPU address in it is translated, and
++//! postbuild kinds the host cannot serve are dropped. Here title addresses are
++//! translated through the host copies of title buffers (`crate::shadow`), as a
++//! draw's vertex and index buffers are; the destination of each build is an
++//! acceleration structure buffer of our own (DXR needs the
++//! RAYTRACING_ACCELERATION_STRUCTURE state, which title memory copies never
++//! hold), named by the title's destination address, and a TLAS's instance
++//! records are copied at submission with their BLAS addresses mapped to those
++//! buffers. A build that cannot be translated is skipped and logged once per
++//! reason.
++//!
++//! Shaders that read a TLAS through a descriptor (an SRV of dimension
++//! RAYTRACING_ACCELERATION_STRUCTURE) or a root SRV are given our buffer for
++//! the title's address too ([`view`], [`root_view`]).
++
++use std::collections::BTreeMap;
++use std::sync::Mutex;
++
++use windows::Win32::Graphics::Direct3D12::*;
++use windows::Win32::Graphics::Dxgi::Common::*;
++use windows::core::Interface;
++
++use crate::object::This;
++
++type Desc = D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC;
++type Postbuild = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC;
++
++/// Our acceleration structure buffer for a title destination address.
++struct Built {
++    buffer: ID3D12Resource,
++    gpu: u64,
++    size: u64,
++    /// A build here wrote it (a buffer made for a view first holds nothing
++    /// an instance or update may name).
++    built: bool,
++}
++// SAFETY: D3D12 resources are free-threaded.
++unsafe impl Send for Built {}
++
++static BUILT: Mutex<BTreeMap<u64, Built>> = Mutex::new(BTreeMap::new());
++
++/// Buffers replaced by bigger ones for the same title address. TLASes built
++/// earlier name the old BLAS buffer by its GPU address, and nothing tracks
++/// which, so a replaced buffer is never released during the run.
++static RETIRED: Mutex<Vec<ID3D12Resource>> = Mutex::new(Vec::new());
++
++/// The host address of a title acceleration structure address, if a build
++/// here wrote one at exactly that address. Host sizes are not the console's,
++/// so a range lookup could resolve an address no build here made into the
++/// middle of a neighbour's buffer.
++fn host_as(title: u64) -> Option<u64> {
++    let built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
++    built.get(&title).filter(|b| b.built).map(|b| b.gpu)
++}
++
++/// Largest buffer made for a view of an address no build reached yet.
++const VIEW_SIZE_CAP: u64 = 64 << 20;
++
++/// Our buffer for title address `title` as a shader reads it through a view:
++/// the one a build here made, or, when none has yet (titles make the view of
++/// a TLAS before its first build), one made now, as big as the title memory
++/// left at the address (capped), which the build at that address then uses.
++/// `None` if the address is in no title buffer.
++pub(crate) fn view(title: u64) -> Option<(u64, ID3D12Resource)> {
++    if title == 0 {
++        return None;
++    }
++    let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
++    if let Some(b) = built.get(&title) {
++        return Some((b.gpu, b.buffer.clone()));
++    }
++    let size = crate::shadow::find_any(title, 1)?.left(title).min(VIEW_SIZE_CAP);
++    let host = crate::host::host()?;
++    let buffer = as_buffer(&host.device, size)?;
++    crate::host::name(&buffer, || format!("acceleration structure for title {title:#x} (view)"));
++    // SAFETY: a live buffer.
++    let gpu = unsafe { buffer.GetGPUVirtualAddress() };
++    built.insert(title, Built { buffer: buffer.clone(), gpu, size, built: false });
++    Some((gpu, buffer))
++}
++
++/// A root SRV at title address `address`: our buffer's address if a build
++/// here or a view made one for exactly that address, kept alive with `list`.
++pub(crate) fn root_view(list: &crate::host::HostList, address: u64) -> Option<u64> {
++    let built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
++    let b = built.get(&address)?;
++    list.keep(&b.buffer);
++    Some(b.gpu)
++}
++
++/// Whether `address` is exactly a destination of ours.
++pub(crate) fn is_destination(address: u64) -> bool {
++    BUILT.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&address)
++}
++
++fn once(what: &'static str, desc: &Desc) {
++    static SEEN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
++    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
++    if !seen.contains(&what) {
++        seen.push(what);
++        tracing::warn!(
++            r#type = desc.Inputs.Type.0,
++            dest = format_args!("{:#x}", desc.DestAccelerationStructureData),
++            descs = desc.Inputs.NumDescs,
++            "ray-tracing build skipped: {what} (first time; Neonbridge rt patch)"
++        );
++    }
++}
++
++/// The host address of `len` title bytes at `address`, brought up to date
++/// when the list is submitted; 0 stays 0.
++fn translate(list: &crate::host::HostList, address: u64, len: u64) -> Option<u64> {
++    if address == 0 {
++        return Some(0);
++    }
++    let shadow = crate::shadow::find_any(address, len.max(1))?;
++    shadow.refresh(list, address, len.max(1));
++    Some(shadow.gpu(address))
++}
++
++fn vertex_bytes(format: DXGI_FORMAT) -> u64 {
++    match format {
++        DXGI_FORMAT_R32G32B32_FLOAT => 12,
++        DXGI_FORMAT_R32G32_FLOAT | DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_SNORM => 8,
++        DXGI_FORMAT_R16G16_FLOAT | DXGI_FORMAT_R16G16_SNORM => 4,
++        _ => 16,
++    }
++}
++
++fn geometry(list: &crate::host::HostList, g: &mut D3D12_RAYTRACING_GEOMETRY_DESC) -> Result<(), &'static str> {
++    if g.Type == D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES {
++        // SAFETY: the type says which member.
++        let t = unsafe { &mut g.Anonymous.Triangles };
++        let count = u64::from(t.VertexCount);
++        let stride = t.VertexBuffer.StrideInBytes;
++        let len = if count == 0 { 0 } else { (count - 1) * stride + vertex_bytes(t.VertexFormat).min(stride.max(1)) };
++        t.VertexBuffer.StartAddress =
++            translate(list, t.VertexBuffer.StartAddress, len).ok_or("vertices outside title buffers")?;
++        let index = match t.IndexFormat {
++            DXGI_FORMAT_UNKNOWN => 0,
++            DXGI_FORMAT_R16_UINT => 2,
++            _ => 4,
++        };
++        t.IndexBuffer = translate(list, t.IndexBuffer, index * u64::from(t.IndexCount)).ok_or("indices outside title buffers")?;
++        t.Transform3x4 = translate(list, t.Transform3x4, 48).ok_or("transform outside title buffers")?;
++        Ok(())
++    } else if g.Type == D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS {
++        // SAFETY: the type says which member.
++        let a = unsafe { &mut g.Anonymous.AABBs };
++        let count = u64::from(a.AABBCount);
++        let len = if count == 0 { 0 } else { (count - 1) * a.AABBs.StrideInBytes + 24 };
++        a.AABBs.StartAddress = translate(list, a.AABBs.StartAddress, len).ok_or("AABBs outside title buffers")?;
++        Ok(())
++    } else {
++        Err("a geometry type the host does not know")
++    }
++}
++
++/// List slot 117 (0x3a8): `(desc, postbuild count, postbuild descs)`.
++pub(crate) extern "system" fn build(this: This, desc: *const Desc, count: u32, post: *const Postbuild) {
++    // VICTORY_RAYTRACING=0 (ScarlettPort's launcher default, engine.rs:80):
++    // the title was told there is no ray tracing, so its builds are left
++    // unrecorded and the run stays on the leader's own code path.
++    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    if *OFF.get_or_init(|| std::env::var("VICTORY_RAYTRACING").is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "off" | "0" | "false" | "no"))) {
++        return;
++    }
++    static FIRST: std::sync::Once = std::sync::Once::new();
++    FIRST.call_once(|| tracing::info!("ray-tracing builds recorded on the host (Neonbridge rt patch)"));
++    // SAFETY: the title passes its desc or null.
++    let Some(desc) = (unsafe { desc.as_ref() }) else { return };
++    let Some(host) = crate::host::host() else {
++        return;
++    };
++    let post = if count == 0 || post.is_null() {
++        &[][..]
++    } else {
++        // SAFETY: the title passes `count` descs for the call.
++        unsafe { std::slice::from_raw_parts(post, count as usize) }
++    };
++    crate::list::with_state(this, |list, state| {
++        if let Err(why) = record(list, state, host, desc, post) {
++            once(why, desc);
++        }
++    });
++}
++
++fn record(
++    list: &crate::host::HostList,
++    state: &mut crate::draw::State,
++    host: &crate::host::Host,
++    desc: &Desc,
++    post: &[Postbuild],
++) -> Result<(), &'static str> {
++    let l4 = list.list.cast::<ID3D12GraphicsCommandList4>().map_err(|_| "no host ID3D12GraphicsCommandList4")?;
++    let device = host.device.cast::<ID3D12Device5>().map_err(|_| "no host ID3D12Device5")?;
++    if desc.DestAccelerationStructureData == 0 {
++        return Err("no destination");
++    }
++    let mut b = *desc;
++    let n = b.Inputs.NumDescs as usize;
++    let mut geometries = Vec::new();
++    let top = b.Inputs.Type == D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
++    if !top && n != 0 {
++        // SAFETY: the title passes NumDescs descs (or pointers to them) in the layout it names.
++        unsafe {
++            if b.Inputs.DescsLayout == D3D12_ELEMENTS_LAYOUT_ARRAY {
++                let p = b.Inputs.Anonymous.pGeometryDescs;
++                if p.is_null() {
++                    return Err("null geometry descs");
++                }
++                geometries.extend_from_slice(std::slice::from_raw_parts(p, n));
++            } else {
++                let p = b.Inputs.Anonymous.ppGeometryDescs;
++                if p.is_null() {
++                    return Err("null geometry desc pointers");
++                }
++                for &g in std::slice::from_raw_parts(p, n) {
++                    geometries.push(*g.as_ref().ok_or("null geometry desc")?);
++                }
++            }
++        }
++        for g in &mut geometries {
++            geometry(list, g)?;
++        }
++        b.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
++        b.Inputs.Anonymous.pGeometryDescs = geometries.as_ptr();
++    }
++    // Earlier shader writes this list made to the inputs (skinned vertices,
++    // instance records) are seen by the build. The host copies stay in the
++    // common state; a buffer there is promoted to the read state the build
++    // needs (NON_PIXEL_SHADER_RESOURCE) by itself.
++    // SAFETY: an open list.
++    unsafe { l4.ResourceBarrier(&[uav_barrier()]) };
++    if top && n != 0 {
++        // SAFETY: the type says which member.
++        let title = unsafe { b.Inputs.Anonymous.InstanceDescs };
++        if title == 0 {
++            return Err("null instance descs");
++        }
++        // SAFETY: a live buffer.
++        b.Inputs.Anonymous.InstanceDescs = if b.Inputs.DescsLayout == D3D12_ELEMENTS_LAYOUT_ARRAY {
++            // Read on the card from the title buffer's host copy, which is
++            // current whoever wrote the records: refreshed from title memory
++            // at submission where the CPU wrote them, and left as the title's
++            // own GPU passes wrote them where those did (a range shaders
++            // write is not refreshed over until it is copied back).
++            instances_on_card(list, state, host, &l4, title, n)?
++        } else {
++            // Pointers to records anywhere in title memory: read at
++            // submission from title memory.
++            // shortcut: records a title GPU pass wrote and not yet copied
++            // back are read stale here.
++            let (buffer, data) = list.upload(host, (n * 64) as u64).ok_or("no upload buffer for instances")?;
++            let data = data as usize;
++            list.defer_host(move || instances(title, n, data as *mut u8));
++            unsafe { buffer.GetGPUVirtualAddress() }
++        };
++        b.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
++    }
++    let mut info = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO::default();
++    // SAFETY: translated inputs; geometries outlive the call.
++    unsafe { device.GetRaytracingAccelerationStructurePrebuildInfo(&b.Inputs, &mut info) };
++    if info.ResultDataMaxSizeInBytes == 0 {
++        return Err("the host sized it zero");
++    }
++    let update = b.Inputs.Flags.contains(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE);
++    if b.SourceAccelerationStructureData != 0 {
++        b.SourceAccelerationStructureData =
++            host_as(b.SourceAccelerationStructureData).ok_or("an update source no build here made")?;
++    } else if update {
++        return Err("an update without a source");
++    }
++    // Destination: ours, made (or grown) for the title's address.
++    {
++        let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
++        let key = desc.DestAccelerationStructureData;
++        if built.get(&key).is_none_or(|b| b.size < info.ResultDataMaxSizeInBytes) {
++            let buffer = as_buffer(&host.device, info.ResultDataMaxSizeInBytes).ok_or("no acceleration structure buffer")?;
++            crate::host::name(&buffer, || format!("acceleration structure for title {key:#x}"));
++            // SAFETY: a live buffer.
++            let gpu = unsafe { buffer.GetGPUVirtualAddress() };
++            // A replaced one stays alive for the run: TLASes built over it
++            // still name it (`RETIRED`).
++            if let Some(old) = built.insert(key, Built { buffer, gpu, size: info.ResultDataMaxSizeInBytes, built: true }) {
++                if !old.built {
++                    once("a view's buffer was too small; views made of it read the old buffer", desc);
++                }
++                RETIRED.lock().unwrap_or_else(|e| e.into_inner()).push(old.buffer);
++            }
++        }
++        let d = built.get_mut(&key).ok_or("no destination")?;
++        d.built = true;
++        list.keep(&d.buffer);
++        b.DestAccelerationStructureData = d.gpu;
++    }
++    // Scratch: ours too; its contents are nothing the title reads.
++    let scratch_len = if update { info.UpdateScratchDataSizeInBytes } else { info.ScratchDataSizeInBytes };
++    b.ScratchAccelerationStructureData = 0;
++    if scratch_len != 0 {
++        let scratch = host.uav_buffer(scratch_len).ok_or("no scratch buffer")?;
++        list.keep(&scratch);
++        // SAFETY: an open list and a live buffer, just made in the common state.
++        unsafe {
++            l4.ResourceBarrier(&[crate::host::transition(
++                &scratch,
++                D3D12_RESOURCE_STATE_COMMON,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++            )]);
++            b.ScratchAccelerationStructureData = scratch.GetGPUVirtualAddress();
++        }
++    }
++    // Postbuild sizes the host serves (compacted, current): written into the
++    // title buffer's copy and copied back after the list ran. Others dropped.
++    let mut outputs = Vec::new();
++    for p in post {
++        let served = p.InfoType == D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_COMPACTED_SIZE
++            || p.InfoType == D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_CURRENT_SIZE;
++        let shadow = served.then(|| crate::shadow::find(p.DestBuffer, 8)).flatten();
++        let Some(shadow) = shadow else {
++            once("a postbuild request dropped (the build still runs)", desc);
++            continue;
++        };
++        shadow.refresh(list, p.DestBuffer, 8);
++        shadow.gpu_writes(list, p.DestBuffer, 8);
++        outputs.push(Postbuild { DestBuffer: shadow.gpu(p.DestBuffer), InfoType: p.InfoType });
++    }
++    // SAFETY: an open list; every address in `b` names a live host buffer.
++    unsafe {
++        l4.BuildRaytracingAccelerationStructure(&b, (!outputs.is_empty()).then_some(&outputs[..]));
++        // Later builds (a TLAS over this BLAS) and traces read the result.
++        l4.ResourceBarrier(&[uav_barrier()]);
++    }
++    Ok(())
++}
++
++fn uav_barrier() -> D3D12_RESOURCE_BARRIER {
++    D3D12_RESOURCE_BARRIER {
++        Type: D3D12_RESOURCE_BARRIER_TYPE_UAV,
++        Flags: D3D12_RESOURCE_BARRIER_FLAG_NONE,
++        Anonymous: D3D12_RESOURCE_BARRIER_0 {
++            UAV: std::mem::ManuallyDrop::new(D3D12_RESOURCE_UAV_BARRIER {
++                pResource: std::mem::ManuallyDrop::new(None),
++            }),
++        },
++    }
++}
++
++/// Copies 64-byte instance records from the title buffer's host copy (t0)
++/// into ours (u0), each BLAS address (bytes 56..64) looked up exactly in a
++/// sorted table of (title, host) address pairs (t1); one no build here made
++/// becomes 0, an inactive instance.
++const REMAP: &str = r#"
++#define RS "RootConstants(num32BitConstants=2, b0), SRV(t0), SRV(t1), UAV(u0)"
++cbuffer C : register(b0) { uint count; uint entries; };
++ByteAddressBuffer src : register(t0);
++ByteAddressBuffer map : register(t1);
++RWByteAddressBuffer dst : register(u0);
++[RootSignature(RS)]
++[numthreads(64, 1, 1)]
++void main(uint3 id : SV_DispatchThreadID) {
++    uint i = id.x;
++    if (i >= count) return;
++    uint at = i * 64;
++    [unroll] for (uint w = 0; w < 64; w += 16) dst.Store4(at + w, src.Load4(at + w));
++    uint2 blas = src.Load2(at + 56);
++    uint lo = 0, hi = entries;
++    while (lo < hi) {
++        uint mid = (lo + hi) / 2;
++        uint2 k = map.Load2(mid * 16);
++        if (k.y < blas.y || (k.y == blas.y && k.x < blas.x)) lo = mid + 1; else hi = mid;
++    }
++    uint2 host = uint2(0, 0);
++    if (lo < entries) {
++        uint4 e = map.Load4(lo * 16);
++        if (e.x == blas.x && e.y == blas.y) host = e.zw;
++    }
++    dst.Store2(at + 56, host);
++}
++"#;
++
++struct Remap {
++    root: ID3D12RootSignature,
++    pso: ID3D12PipelineState,
++}
++// SAFETY: D3D12 objects are free-threaded.
++unsafe impl Send for Remap {}
++unsafe impl Sync for Remap {}
++
++fn remap(device: &ID3D12Device) -> Option<&'static Remap> {
++    static MADE: std::sync::OnceLock<Option<Remap>> = std::sync::OnceLock::new();
++    MADE.get_or_init(|| {
++        let made = (|| -> windows::core::Result<Remap> {
++            let bytes = crate::host::compile(REMAP, windows::core::s!("main"), windows::core::s!("cs_5_1"))?;
++            // SAFETY: the shader's own bytes; the root signature is inside it.
++            unsafe {
++                let root: ID3D12RootSignature = device.CreateRootSignature(0, &bytes)?;
++                let pso = device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
++                    pRootSignature: std::mem::transmute_copy(&root),
++                    CS: D3D12_SHADER_BYTECODE { pShaderBytecode: bytes.as_ptr().cast(), BytecodeLength: bytes.len() },
++                    ..Default::default()
++                })?;
++                Ok(Remap { root, pso })
++            }
++        })();
++        made.map_err(|e| tracing::warn!(error = %e, "no instance remap pass: TLAS builds are skipped")).ok()
++    })
++    .as_ref()
++}
++
++/// Records the pass that makes `n` host instance records from the title's
++/// at `title` (array layout) on the card; their host address.
++fn instances_on_card(
++    list: &crate::host::HostList,
++    state: &mut crate::draw::State,
++    host: &crate::host::Host,
++    l4: &ID3D12GraphicsCommandList4,
++    title: u64,
++    n: usize,
++) -> Result<u64, &'static str> {
++    let len = 64 * n as u64;
++    if title % 16 != 0 {
++        return Err("instance records not on 16 bytes");
++    }
++    let shadow = crate::shadow::find_any(title, len).ok_or("instances outside title buffers")?;
++    if shadow.left(title) < len {
++        return Err("instances past their title buffer");
++    }
++    shadow.refresh(list, title, len);
++    let pass = remap(&host.device).ok_or("no instance remap pass")?;
++    // The address table as it is now (builds recorded before this one),
++    // sorted by title address; at least one entry's room.
++    let table: Vec<[u64; 2]> = BUILT
++        .lock()
++        .unwrap_or_else(|e| e.into_inner())
++        .iter()
++        .filter(|(_, b)| b.built)
++        .map(|(&t, b)| [t, b.gpu])
++        .collect();
++    let (map_gpu, map) = list.scratch(16 * table.len().max(1) as u64).ok_or("no upload memory for the address table")?;
++    // SAFETY: scratch memory of that many bytes, ours until the list is reset.
++    unsafe { std::ptr::copy_nonoverlapping(table.as_ptr().cast::<u8>(), map, 16 * table.len()) };
++    let out = host.uav_buffer(len).ok_or("no instance buffer")?;
++    crate::host::name(&out, || format!("instances of title {title:#x}"));
++    list.keep(&out);
++    let constants = [n as u32, table.len() as u32];
++    // SAFETY: an open list; our pipeline; live buffers (the copy is kept
++    // with the list by its refresh, the table by the list's scratch).
++    unsafe {
++        l4.ResourceBarrier(&[crate::host::transition(
++            &out,
++            D3D12_RESOURCE_STATE_COMMON,
++            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++        )]);
++        l4.SetComputeRootSignature(&pass.root);
++        l4.SetPipelineState(&pass.pso);
++        l4.SetComputeRoot32BitConstants(0, 2, constants.as_ptr().cast(), 0);
++        l4.SetComputeRootShaderResourceView(1, shadow.gpu(title));
++        l4.SetComputeRootShaderResourceView(2, map_gpu);
++        l4.SetComputeRootUnorderedAccessView(3, out.GetGPUVirtualAddress());
++        l4.Dispatch((n as u32).div_ceil(64), 1, 1);
++        l4.ResourceBarrier(&[
++            uav_barrier(),
++            crate::host::transition(
++                &out,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++            ),
++        ]);
++    }
++    // The title's next dispatch sets its own pipeline and root signature again.
++    state.forget_compute();
++    // SAFETY: a live buffer.
++    Ok(unsafe { out.GetGPUVirtualAddress() })
++}
++
++/// At submission: `n` title instance records through the pointers at
++/// `title` into `out`, BLAS addresses mapped exactly; one at an address no
++/// build here made is left inactive (address 0).
++fn instances(title: u64, n: usize, out: *mut u8) {
++    let mut record = [0u8; 64];
++    for i in 0..n {
++        let mut p = [0u8; 8];
++        let at = if crate::host::read_into((title + 8 * i as u64) as *const u8, &mut p) {
++            u64::from_le_bytes(p)
++        } else {
++            0
++        };
++        if at == 0 || !crate::host::read_into(at as *const u8, &mut record) {
++            record = [0; 64];
++        }
++        let blas = u64::from_le_bytes(record[56..].try_into().unwrap_or_default());
++        let mapped = host_as(blas).unwrap_or_else(|| {
++            if blas != 0 {
++                static ONCE: std::sync::Once = std::sync::Once::new();
++                ONCE.call_once(|| tracing::warn!(blas = format_args!("{blas:#x}"), "a TLAS instance names a BLAS no build here made: left inactive (first time)"));
++            }
++            0
++        });
++        record[56..].copy_from_slice(&mapped.to_le_bytes());
++        // SAFETY: `out` is the mapped upload buffer of n records.
++        unsafe { std::ptr::copy_nonoverlapping(record.as_ptr(), out.add(64 * i), 64) };
++    }
++}
++
++fn as_buffer(device: &ID3D12Device, size: u64) -> Option<ID3D12Resource> {
++    let heap = D3D12_HEAP_PROPERTIES { Type: D3D12_HEAP_TYPE_DEFAULT, ..Default::default() };
++    let desc = D3D12_RESOURCE_DESC {
++        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
++        Width: size,
++        Height: 1,
++        DepthOrArraySize: 1,
++        MipLevels: 1,
++        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
++        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
++        Flags: D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
++        ..Default::default()
++    };
++    let mut buffer: Option<ID3D12Resource> = None;
++    // SAFETY: plain creation of a device-local buffer.
++    let made = unsafe {
++        device.CreateCommittedResource(
++            &heap,
++            D3D12_HEAP_FLAG_NONE,
++            &desc,
++            D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
++            None,
++            &mut buffer,
++        )
++    };
++    match made {
++        Ok(()) => buffer,
++        Err(e) => {
++            tracing::warn!(error = %e, size, "no acceleration structure buffer");
++            None
++        }
++    }
++}

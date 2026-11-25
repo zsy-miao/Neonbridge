@@ -1,0 +1,42 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "video_sha256": "bac74a082a9baf114564df5db4b7bd4541087a11d3131989e3fffe674ec32a53",
+  "video": "LOGO_VID_HEVC.mp4",
+  "gpu_sample": "IMFDXGIBuffer, ID3D12Resource NV12, IMFD3D12SynchronizationObjectCommands",
+  "decode": "Original packaged Microsoft HEVC decoder, software transform",
+  "size": [
+    3840,
+    2160
+  ],
+  "register_flags": 1,
+  "frames": {
+    "0": {
+      "ffmpeg_sha256": "cbf4921aa347ee2d3b3bc9b4dc81e30f914948a5a19210736bc048df7d43906e",
+      "cpu_sha256": "cbf4921aa347ee2d3b3bc9b4dc81e30f914948a5a19210736bc048df7d43906e",
+      "gpu_sha256": "cbf4921aa347ee2d3b3bc9b4dc81e30f914948a5a19210736bc048df7d43906e"
+    },
+    "12": {
+      "ffmpeg_sha256": "e00a18d0e72641d9eb094a61489f933e3a105d6cdc8476425466e049a6cc0c6d",
+      "cpu_sha256": "e00a18d0e72641d9eb094a61489f933e3a105d6cdc8476425466e049a6cc0c6d",
+      "gpu_sha256": "e00a18d0e72641d9eb094a61489f933e3a105d6cdc8476425466e049a6cc0c6d"
+    },
+    "13": {
+      "ffmpeg_sha256": "881d0fc9dfb1966a381a14420f8e3519cdf5966c1b29fab047596a3e18abf723",
+      "cpu_sha256": "881d0fc9dfb1966a381a14420f8e3519cdf5966c1b29fab047596a3e18abf723",
+      "gpu_sha256": "881d0fc9dfb1966a381a14420f8e3519cdf5966c1b29fab047596a3e18abf723"
+    },
+    "14": {
+      "ffmpeg_sha256": "e03a056eed165cc9de02632afeae4d8d36edffbb1753ae7c20f24028cc66baaf",
+      "cpu_sha256": "e03a056eed165cc9de02632afeae4d8d36edffbb1753ae7c20f24028cc66baaf",
+      "gpu_sha256": "e03a056eed165cc9de02632afeae4d8d36edffbb1753ae7c20f24028cc66baaf"
+    }
+  },
+  "dll_sha256": {
+    "frosty_hevc.dll": "7b42c1e07dc52f605f1cd0593595b43a2bfcc75d22a7d13fb6ead4f722d33622",
+    "mfhevcdec.dll": "fecc135bf0387f68c304542af3cb2c4aaed1267a06027f5198223f585678cd0d",
+    "mfplat.dll": "60f27ba98edb4218234399f94c3a44c643bb28dbbfd752a3064944bc6e44030a",
+    "mfplat_sys.dll": "3df8aff6ca29903c6a9109b8154d36d9133d2fa371aaab2fa4be564dbba8bb1b",
+    "mfplat_tombox.dll": "04a56adec588bce9536aff7603790794edbbcfaadd0c472aa35686b193e9a978",
+    "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f"
+  }
+}

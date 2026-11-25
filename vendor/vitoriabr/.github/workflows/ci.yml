@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      # The version and components pinned in rust-toolchain.toml.
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy, diagnostics build
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # Includes xtask's repository_passes_policy, the asset-policy check.
+      - name: Tests
+        run: cargo test --workspace --locked
+
+  # The crates that do not need Windows (the shader translator, formats,
+  # PE reader, cache, config, title formats and the asset-policy check),
+  # on Linux: fast feedback for translator work, and a way to run these
+  # tests without a Windows machine. GPU and validator tests stay on the
+  # Windows job (they are compiled out here).
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PORTABLE: >-
+        -p victory-core -p victory-pe -p victory-pipeline -p victory-shader
+        -p victory-formats -p victory-game -p xtask
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy $PORTABLE --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test $PORTABLE --locked

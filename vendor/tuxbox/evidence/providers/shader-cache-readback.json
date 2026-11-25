@@ -1,0 +1,82 @@
+{
+  "scope": "One retail ClearCS compute pipeline created through Xbox device slot 62 on stock Proton. Each timing is one pipeline creation in a new guest process. The driver cache was warm for the two persistent-cache comparisons.",
+  "probe": "tools/check_frosty_clear.py",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "69a64840b95534400cf96e4a0acb494c2496fc8628a4fbba2c13030fd341259b",
+  "guest_sha256": "69489478a1eb4c8f921151369baa26424ba52188d047fc4a8c84f024af58156d",
+  "cooked_sha256": "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e",
+  "dxil_sha256": "fcdc72628cbfcf831eb981c41e4d42c67b12cc9962cc57b6086254a08b823c48",
+  "adapters": {
+    "10de:2705": {
+      "on_demand_cold": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 77384,
+        "matched_words": 1400
+      },
+      "on_demand_warm_worker": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 52132,
+        "matched_words": 1400
+      },
+      "on_demand_warm": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 815,
+        "matched_words": 1400
+      },
+      "direct_no_worker": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 870,
+        "matched_words": 1400
+      },
+      "bad_persistent_checksum": {
+        "pipeline_hr": "0x80004005",
+        "pipeline_us": 796,
+        "matched_words": 0
+      }
+    },
+    "1002:13c0": {
+      "on_demand_cold": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 76530,
+        "matched_words": 1400
+      },
+      "on_demand_warm_worker": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 26140,
+        "matched_words": 1400
+      },
+      "on_demand_warm": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 1622,
+        "matched_words": 1400
+      },
+      "direct_no_worker": {
+        "pipeline_hr": "0x00000000",
+        "pipeline_us": 837,
+        "matched_words": 1400
+      },
+      "bad_persistent_checksum": {
+        "pipeline_hr": "0x80004005",
+        "pipeline_us": 1360,
+        "matched_words": 0
+      }
+    }
+  },
+  "warm_worker_control": "The host worker had the same compiler and valid persistent result. Withholding its compiler-id from the guest exercised the request/reply path.",
+  "host_request_wakeup": {
+    "scope": "One Linux process atomically renames the retail global/402 source into an idle worker's request directory. Time ends when the validated DXIL reply appears. Each worker uses the checkout compiler and isolated cache. Cold trials remove the persistent result before submitting the next request. Polling and notification workers alternate first place for 20 pairs of trials, with staggered arrival phases. These timings exclude the game, Wine and GPU.",
+    "shader_compiler_sha256": "e4d2f24b6acb9c12dc6d4da2c8f3b4bf0f6ee3991dac671e3cfd12783b76e0e1",
+    "trials_per_case": 20,
+    "median_ms": {
+      "polling": {
+        "cold_compile": 46.942,
+        "existing_worker_cache": 26.365
+      },
+      "rename_event": {
+        "cold_compile": 18.155,
+        "existing_worker_cache": 1.038
+      }
+    },
+    "output_dxil_sha256": "fcdc72628cbfcf831eb981c41e4d42c67b12cc9962cc57b6086254a08b823c48"
+  }
+}

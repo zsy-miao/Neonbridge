@@ -1,0 +1,11 @@
+LIBRARY tuxbox_xhttp
+EXPORTS
+    XbSetWinHttpHooks @8
+    __RedirectionInformation__ @9 DATA
+    WinHttpOpen=guest_WinHttpOpen
+    WinHttpConnect=guest_WinHttpConnect
+    WinHttpOpenRequest=guest_WinHttpOpenRequest
+    WinHttpWebSocketCompleteUpgrade=guest_WinHttpWebSocketCompleteUpgrade
+    WinHttpCloseHandle=guest_WinHttpCloseHandle
+    WinHttpReceiveResponse=guest_WinHttpReceiveResponse
+    WinHttpSetOption=guest_WinHttpSetOption

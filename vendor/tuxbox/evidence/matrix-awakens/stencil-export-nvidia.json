@@ -1,0 +1,26 @@
+{
+  "adapter": "10de:2705",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "guest_sha256": "d4bcf6773f66732015e097384d673b3e26755f43baa500fdf95c047787fb4df9",
+  "shaders": [
+    {
+      "entry": 1748,
+      "source_sha256": "078b54eab6d1e676a891bc7239cfb0500898c648d1414d4a53b5731ee01b0e42",
+      "path": "R8_UINT stencil-plane copy",
+      "dxil_sha256": "1e48e0c23b3538a0e697f558e16476a9f5e7bf6aba6a7c337217ca1cd2736661",
+      "matching_texels": 128,
+      "readback_sha256": "811fc6eef5fecae6b8874c8ab5636962376b649a39d11956b56edd124f8bac39"
+    },
+    {
+      "entry": 1763,
+      "source_sha256": "4dbeb7e58ba2610862b819e631b4128bde9cfeda006a2f93b44bd681ee073e7e",
+      "path": "R8_UINT stencil-plane copy",
+      "dxil_sha256": "f198d6edc190a63d7a8e37f779a9b2abba743a3ff165a0f7b9668075fa440b4b",
+      "matching_texels": 128,
+      "readback_sha256": "811fc6eef5fecae6b8874c8ab5636962376b649a39d11956b56edd124f8bac39"
+    }
+  ]
+}

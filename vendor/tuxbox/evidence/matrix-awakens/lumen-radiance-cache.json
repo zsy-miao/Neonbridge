@@ -1,0 +1,171 @@
+{
+  "archive": "global",
+  "entry": 323,
+  "export": "LumenRadianceCacheHardwareRayTracingRGS_8c299e02",
+  "dispatch": [
+    64,
+    1,
+    1
+  ],
+  "tile": [
+    8,
+    8
+  ],
+  "output": "One 8-byte structured UAV row per ray, containing four binary16 values for R, G, B and distance. A 65th row guards the boundary.",
+  "cases": {
+    "empty": "Allocator contains zero.",
+    "tile": "Allocator contains 64; probe origin (20,20,20); six sky faces have RGB (face+1,face+2,face+3); miss distance 17.",
+    "geometry": "Allocator contains 64; probe moved to (-1,0,-0.125) beside a real triangle with TMin=0.001. Hit RGB is black with the empty surface cache."
+  },
+  "adapters": [
+    {
+      "adapter": "1002:13c0",
+      "cases": {
+        "empty": {
+          "hits": 0,
+          "misses": 0,
+          "miss_cube_faces": {},
+          "max_half_distance_error": 0,
+          "output_sha256": "ee73b0e0c67e190e8f9f6588139630e4d448147a89a7cedfd2f9f1aee46fbc68"
+        },
+        "tile": {
+          "hits": 0,
+          "misses": 64,
+          "miss_cube_faces": {
+            "0": 8,
+            "1": 8,
+            "2": 12,
+            "3": 12,
+            "4": 12,
+            "5": 12
+          },
+          "max_half_distance_error": 0,
+          "output_sha256": "d3920da0628543ab99ed136e2394658762d7a056a4b0fa66b2fda5fa9b9b47df"
+        },
+        "geometry": {
+          "hits": 18,
+          "misses": 46,
+          "miss_cube_faces": {
+            "0": 8,
+            "1": 8,
+            "2": 10,
+            "3": 8,
+            "5": 12
+          },
+          "max_half_distance_error": 6.193062499998403e-05,
+          "output_sha256": "1bfdd8cb4d24b9d513c671140c9df4ef5d15b784dff912f4874f83c0ab465824"
+        }
+      }
+    },
+    {
+      "adapter": "10de:2705",
+      "cases": {
+        "empty": {
+          "hits": 0,
+          "misses": 0,
+          "miss_cube_faces": {},
+          "max_half_distance_error": 0,
+          "output_sha256": "ee73b0e0c67e190e8f9f6588139630e4d448147a89a7cedfd2f9f1aee46fbc68"
+        },
+        "tile": {
+          "hits": 0,
+          "misses": 64,
+          "miss_cube_faces": {
+            "0": 8,
+            "1": 8,
+            "2": 12,
+            "3": 12,
+            "4": 12,
+            "5": 12
+          },
+          "max_half_distance_error": 0,
+          "output_sha256": "d3920da0628543ab99ed136e2394658762d7a056a4b0fa66b2fda5fa9b9b47df"
+        },
+        "geometry": {
+          "hits": 18,
+          "misses": 46,
+          "miss_cube_faces": {
+            "0": 8,
+            "1": 8,
+            "2": 10,
+            "3": 8,
+            "5": 12
+          },
+          "max_half_distance_error": 6.190062499999982e-05,
+          "output_sha256": "1bfdd8cb4d24b9d513c671140c9df4ef5d15b784dff912f4874f83c0ab465824"
+        }
+      }
+    }
+  ],
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "library": {
+    "state_sha256": "320fd9aac520d4fd2e1b0492588c1fdf05a7383daaaad84bf5fc2dabd1162ddb",
+    "dxil_sha256": "8a4d4c75c573c62b9dc5be0ef68dd869b3db955eca2f8a6dd64daa702d7591bb"
+  },
+  "guest_sha256": "5f19dd910ba556a82c5c04f135e83986957d24534cf70190e5e4babd93d389cd",
+  "additional_permutations": {
+    "adapter": "1002:13c0",
+    "host": "1789159601 experimental-11.0-20260910b-x86_64",
+    "guest_sha256": "399ec7a5a921f92780c0a051f1fdd28f510d04a0c60e1321eb1cd394d22a900f",
+    "dispatch": [
+      64,
+      1,
+      1
+    ],
+    "cases": {
+      "264": {
+        "state_sha256": "c66a4663ff40c4b24a2c05385640bb5767615f320ea57c7de0a7bfebd6c4e0ec",
+        "dxil_sha256": "5667ea7afae686dbc0a87767723c339bc5c26ff226399582e91cf89dc2be3bc1",
+        "texture_rows": 64,
+        "guard_rows": 1,
+        "hits": 0,
+        "misses": 128,
+        "output_sha256": "d3920da0628543ab99ed136e2394658762d7a056a4b0fa66b2fda5fa9b9b47df",
+        "trace": "All 64 invocations return from two real rays and use the expected sky cube face and distance."
+      },
+      "266": {
+        "state_sha256": "2c35ebc32e19056e540cc6dcacc842a8ccf9b2ca84923e48c4d973b6208d40f7",
+        "dxil_sha256": "184d7f3ccb74aff0ed8021bff16ec3a27f0312596df7a33dd47b0bf9ed8b20e4",
+        "texture_rows": 64,
+        "guard_rows": 1,
+        "hits": 0,
+        "misses": 0,
+        "output_sha256": "d3920da0628543ab99ed136e2394658762d7a056a4b0fa66b2fda5fa9b9b47df",
+        "pack": "All six sky colors, radius 17 and 64 five-word retrace records matched the CPU octahedral projection and packing reference. No traversal callbacks.",
+        "retrace_sha256": "f18f89d9396b94be8b9f7854e83ef0a77a6b9b1af9e69e7e26fa46b7638d8d51"
+      },
+      "299": {
+        "state_sha256": "bdd2b57829d4e4d8d13b9057f6b225251845c209196e0643d66636f4df2bee29",
+        "dxil_sha256": "71a2a613f049652704d8adf6df559d1e2819550ff95c9371df8b7ea0944482a6",
+        "geometry": {
+          "hits": 18,
+          "misses": 46,
+          "radiance_and_distance_sha256": "1bfdd8cb4d24b9d513c671140c9df4ef5d15b784dff912f4874f83c0ab465824",
+          "retrace_records_sha256": "e5ddec0269a61e099cc022e1c42376d7d254360ce30cc42a2187332761f6e916"
+        },
+        "tile": {
+          "hits": 0,
+          "misses": 64,
+          "radiance_and_distance_sha256": "d3920da0628543ab99ed136e2394658762d7a056a4b0fa66b2fda5fa9b9b47df",
+          "retrace_records_sha256": "aca1acaa532296a936db3f338d3db36f1f0bf4fbe7baa6e225e3bc755f3d7f3e"
+        }
+      },
+      "311": {
+        "state_sha256": "b847d35c8c97dff4034f79659046a95f9457aa78a7e7de844fc0825fd054f490",
+        "dxil_sha256": "a75854724b791bedd211db49587b6f43d5df540f428026f1bd970b163c066d6d",
+        "geometry": {
+          "hits": 18,
+          "misses": 46,
+          "radiance_and_distance_sha256": "1bfdd8cb4d24b9d513c671140c9df4ef5d15b784dff912f4874f83c0ab465824",
+          "retrace_records_sha256": "c7f6f94b318498f0bce9e57036d1087ad1b29fdb9f7d36a69801100da5dd7fc5"
+        },
+        "tile": {
+          "hits": 0,
+          "misses": 64,
+          "radiance_and_distance_sha256": "d3920da0628543ab99ed136e2394658762d7a056a4b0fa66b2fda5fa9b9b47df",
+          "retrace_records_sha256": "c7f6f94b318498f0bce9e57036d1087ad1b29fdb9f7d36a69801100da5dd7fc5"
+        }
+      }
+    }
+  }
+}

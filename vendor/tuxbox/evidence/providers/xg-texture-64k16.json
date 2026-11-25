@@ -1,0 +1,28 @@
+{
+  "scope": "XGCreateTextureComputer (ordinal 11) with default layout 0 for a bounded subset. Identical guest and XMem dependency; complete layouts and sampled element addresses compared against the supplied Xbox XG DLL.",
+  "subset": "four 16-byte color formats; five square and rectangular shapes from 4x4 through 1024x1024 including the Frosty 1024x1024 descriptor; one mip and slice, one sample, layout 0, flags 0xc00001 or 0xc00005, zero alignment and quality. Other combinations are unsupported.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "05db8c04dd84eedf0b20882ea23ade51057fde0703e156e62d54556ab57129a4",
+  "guest_source_sha256": "5249b4f023291217bf392dcd132914adcc6895d72170825caaeae4bd6a27e81e",
+  "xmem_sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+  "layouts": 40,
+  "sampled_element_addresses": 25920,
+  "checks": [
+    "complete layouts",
+    "324 sampled addresses per plane",
+    "output guards",
+    "unverified flags rejected by provider"
+  ],
+  "runs": {
+    "original": {
+      "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "guest_receipt": "xg-64k16 PASS 40 layouts 25920 element addresses",
+      "result_sha256": "b500dab28f6fe68295e4a41ee5d9a7c9b4eef34f4b396be0fa5e6b12e4d70536"
+    },
+    "tuxbox": {
+      "dll_sha256": "433ce268a0355aa9824336c6d305364f41d5df14ebdbb5480b7813ee858654a7",
+      "guest_receipt": "xg-64k16 PASS 40 layouts 25920 element addresses",
+      "result_sha256": "b500dab28f6fe68295e4a41ee5d9a7c9b4eef34f4b396be0fa5e6b12e4d70536"
+    }
+  }
+}

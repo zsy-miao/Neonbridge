@@ -1,0 +1,253 @@
+{
+  "scope": "An experimental two-segment RayQuery with widened TMin=0 and explicit nonopaque triangle candidate filtering, compared alongside the translated 218 synthetic callback control. This is not 219 execution or a complete translation.",
+  "spec": "https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html#ray-extents",
+  "probe": "tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "tools/reference/blas/card_candidate.hlsl": "5962497a3ce8354cc782bbf31815c413e6536b808c90768a8b59ef9bd39d56f5",
+    "tools/reference/blas/card_tile_probe.h": "306609deec49f87887d0e8c90336a4372105d65f3831fb9d3f5bdff137ad0c15",
+    "tools/reference/blas/guest.cpp": "f3fa0cc500d6a140946aae773193cb9a3806effd8ae57e8048ce739ecb21e68a",
+    "tools/reference/blas/occlusion_observer.hlsl": "e4182155d773d5b12f08171be42283385b3a0be3dd8a7e078f39a30a899d8276"
+  },
+  "cases": [
+    {
+      "scenario": 1,
+      "first_interval": [
+        0.5,
+        2
+      ],
+      "second_interval": [
+        0,
+        0.5
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 2,
+      "first_interval": [
+        1,
+        2
+      ],
+      "second_interval": [
+        0,
+        1
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 3,
+      "first_interval": [
+        1.25,
+        2
+      ],
+      "second_interval": [
+        0,
+        1.25
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 4,
+      "first_interval": [
+        2,
+        3
+      ],
+      "second_interval": [
+        0,
+        2
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 5,
+      "first_interval": [
+        0,
+        0.5
+      ],
+      "second_interval": [
+        0,
+        0
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 6,
+      "first_interval": [
+        0,
+        1
+      ],
+      "second_interval": [
+        0,
+        0
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 7,
+      "first_interval": [
+        0,
+        2
+      ],
+      "second_interval": [
+        0,
+        0
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 8,
+      "first_interval": [
+        0,
+        2
+      ],
+      "second_interval": [
+        0,
+        0
+      ],
+      "origin": [
+        20,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 9,
+      "first_interval": [
+        1.25,
+        2
+      ],
+      "second_interval": [
+        0,
+        1.25
+      ],
+      "origin": [
+        20,
+        0,
+        -1
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 10,
+      "first_interval": [
+        0,
+        2
+      ],
+      "second_interval": [
+        0,
+        0
+      ],
+      "origin": [
+        -1,
+        0,
+        0
+      ],
+      "scene": "one triangle under the ray or off-geometry"
+    },
+    {
+      "scenario": 11,
+      "first_interval": [
+        1.25,
+        3
+      ],
+      "second_interval": [
+        0,
+        1.25
+      ],
+      "origin": [
+        -1,
+        0,
+        -1
+      ],
+      "scene": "stacked triangle instances at t=1 and t=2"
+    }
+  ],
+  "filtered_bits": "bit 0 first segment hit, bit 1 second segment hit, bit 2 at least one first-segment candidate rejected by explicit filtering",
+  "limitations": [
+    "Near=1 hit is exposed by widening to 0 and included by the explicit comparison, unlike direct RayQuery and translated 218 in this fixture.",
+    "A ray originating on the triangle yields t=0; native RayQuery does not expose that candidate with TMin=0 on either adapter. DXR requires nonnegative TMin and open triangle bounds, so using negative TMin is undefined.",
+    "The stacked case observes and rejects t=1 and accepts t=2; this tests continuation after candidate rejection, not general traversal order, all candidate tie cases, or full geometry/instance flags.",
+    "The control forces nonopaque candidates and commits them unconditionally after filtering. Opacity, culling, geometry/instance masks, Xbox hardware triangle arithmetic, invalid values, and the raw-SRV-to-native-TLAS binding are not proven."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "2b7e00eebea1ba34d3b273b83335edd2b88f7afd9d539110b3bb59068c4aa8a7",
+      "translated_218": {
+        "state_sha256": "7d8bbcef8d2b310caf71240bff586b48eca6e7dad8b59548c55f94348098ce11",
+        "dxil_sha256": "251d7b41aab9afe0a1ad7adc3703350b067f0fbb1d2719319a81364f1775bc19"
+      },
+      "cases": {
+        "1": "first 1; second 0; candidate 3; original mask 0000fffe; filtered 1; match 1",
+        "2": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 1; match 1",
+        "3": "first 0; second 1; candidate 3; original mask 0000fffe; filtered 6; match 1",
+        "4": "first 0; second 1; candidate 3; original mask 0000fffe; filtered 6; match 1",
+        "5": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "6": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "7": "first 1; second 0; candidate 3; original mask 0000fffe; filtered 1; match 1",
+        "8": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "9": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "10": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "11": "first 1; second 0; candidate 3; original mask 0000fffe; filtered 5; match 1"
+      }
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "2b7e00eebea1ba34d3b273b83335edd2b88f7afd9d539110b3bb59068c4aa8a7",
+      "translated_218": {
+        "state_sha256": "7d8bbcef8d2b310caf71240bff586b48eca6e7dad8b59548c55f94348098ce11",
+        "dxil_sha256": "251d7b41aab9afe0a1ad7adc3703350b067f0fbb1d2719319a81364f1775bc19"
+      },
+      "cases": {
+        "1": "first 1; second 0; candidate 3; original mask 0000fffe; filtered 1; match 1",
+        "2": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 1; match 1",
+        "3": "first 0; second 1; candidate 3; original mask 0000fffe; filtered 6; match 1",
+        "4": "first 0; second 1; candidate 3; original mask 0000fffe; filtered 6; match 1",
+        "5": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "6": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "7": "first 1; second 0; candidate 3; original mask 0000fffe; filtered 1; match 1",
+        "8": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "9": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "10": "first 0; second 0; candidate 2; original mask 0000aaaa; filtered 0; match 1",
+        "11": "first 1; second 0; candidate 3; original mask 0000fffe; filtered 5; match 1"
+      }
+    }
+  }
+}

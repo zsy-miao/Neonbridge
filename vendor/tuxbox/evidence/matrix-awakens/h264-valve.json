@@ -1,0 +1,93 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "title_call": {
+    "rva": "0x1986b45",
+    "function": "Electra::FVideoDecoderH264_XboxCommon::InternalDecoderCreate",
+    "clsid": "62ce7e72-4c71-4d20-b15d-452831a87d9d",
+    "requested_iid": "bf94c121-5b05-4e6f-8000-ba598961414d",
+    "context": "CLSCTX_INPROC_SERVER"
+  },
+  "adapter_sha256": "1c3e5c416ce6fedfb74111e23a6d3dd668092f5725cc371f60f7f96845fca130",
+  "packaged_decoder_sha256": "9db2936779eec00c69c9a549e7ec4ab2af717b64b95454065e80dfa5c5a439ac",
+  "gpu_sample": "D3D12 NV12 via IMFDXGIBuffer and IMFD3D12SynchronizationObjectCommands",
+  "extent": [
+    1024,
+    512
+  ],
+  "videos": {
+    "Sandbox.mp4": {
+      "compressed_sha256": "cf2e681f5ade60277890727e6e6012513cd2f97e030afad267008bf572e1cc4a",
+      "frames": {
+        "0": {
+          "reference_y_sha256": "a368548919c3e5a96d82921406042af0ccbc9cda28b8af2d253b3b89f115f293",
+          "reference_uv_sha256": "78ff11108c24243258242754263778d50c4beba36505992eef95792cedfd7c4b",
+          "cpu_y_sha256": "a368548919c3e5a96d82921406042af0ccbc9cda28b8af2d253b3b89f115f293",
+          "cpu_uv_sha256": "78ff11108c24243258242754263778d50c4beba36505992eef95792cedfd7c4b",
+          "gpu_y_sha256": "a368548919c3e5a96d82921406042af0ccbc9cda28b8af2d253b3b89f115f293",
+          "gpu_uv_sha256": "78ff11108c24243258242754263778d50c4beba36505992eef95792cedfd7c4b"
+        },
+        "12": {
+          "reference_y_sha256": "ae0202023057ddc8b134e5a7bb72096004f4adbd41cb9df82f6fccd2bb249c13",
+          "reference_uv_sha256": "a52ded1bb628259c62afe71673b23474a3e385cde6c10f97e3a7ffbfb77474a6",
+          "cpu_y_sha256": "ae0202023057ddc8b134e5a7bb72096004f4adbd41cb9df82f6fccd2bb249c13",
+          "cpu_uv_sha256": "a52ded1bb628259c62afe71673b23474a3e385cde6c10f97e3a7ffbfb77474a6",
+          "gpu_y_sha256": "ae0202023057ddc8b134e5a7bb72096004f4adbd41cb9df82f6fccd2bb249c13",
+          "gpu_uv_sha256": "a52ded1bb628259c62afe71673b23474a3e385cde6c10f97e3a7ffbfb77474a6"
+        },
+        "13": {
+          "reference_y_sha256": "a758be557cf3f3c47fcbf4dea185e4c8183a07367ebb62c4debc461ae6c5cbf5",
+          "reference_uv_sha256": "23f65ab1dd87407761e12b57e8d4045538ce9e8ddf39300c0f2b92f24c8aee79",
+          "cpu_y_sha256": "a758be557cf3f3c47fcbf4dea185e4c8183a07367ebb62c4debc461ae6c5cbf5",
+          "cpu_uv_sha256": "23f65ab1dd87407761e12b57e8d4045538ce9e8ddf39300c0f2b92f24c8aee79",
+          "gpu_y_sha256": "a758be557cf3f3c47fcbf4dea185e4c8183a07367ebb62c4debc461ae6c5cbf5",
+          "gpu_uv_sha256": "23f65ab1dd87407761e12b57e8d4045538ce9e8ddf39300c0f2b92f24c8aee79"
+        },
+        "14": {
+          "reference_y_sha256": "9a76d141d8e9e310f9adb53e00ae3c57769f1303b4d0df40d45d6e9cf1bb7221",
+          "reference_uv_sha256": "cfae6caf0ad1df3fd50622b67ac44e5ab467496884595335139890c17d6c7d4f",
+          "cpu_y_sha256": "9a76d141d8e9e310f9adb53e00ae3c57769f1303b4d0df40d45d6e9cf1bb7221",
+          "cpu_uv_sha256": "cfae6caf0ad1df3fd50622b67ac44e5ab467496884595335139890c17d6c7d4f",
+          "gpu_y_sha256": "9a76d141d8e9e310f9adb53e00ae3c57769f1303b4d0df40d45d6e9cf1bb7221",
+          "gpu_uv_sha256": "cfae6caf0ad1df3fd50622b67ac44e5ab467496884595335139890c17d6c7d4f"
+        }
+      }
+    },
+    "Chase.mp4": {
+      "compressed_sha256": "127b8ebd0fb530a2b7a782eba325ac34894670554350f1b0171d0c484cb42cb5",
+      "frames": {
+        "0": {
+          "reference_y_sha256": "9e2eb77d952b6f4df737b8a844e170e54fd83c84f748c5d14ff73b1e987c361c",
+          "reference_uv_sha256": "28c907d62896a71c60f823fba1bdec4f72222db32d27f7915e476eea484bc431",
+          "cpu_y_sha256": "9e2eb77d952b6f4df737b8a844e170e54fd83c84f748c5d14ff73b1e987c361c",
+          "cpu_uv_sha256": "28c907d62896a71c60f823fba1bdec4f72222db32d27f7915e476eea484bc431",
+          "gpu_y_sha256": "9e2eb77d952b6f4df737b8a844e170e54fd83c84f748c5d14ff73b1e987c361c",
+          "gpu_uv_sha256": "28c907d62896a71c60f823fba1bdec4f72222db32d27f7915e476eea484bc431"
+        },
+        "12": {
+          "reference_y_sha256": "c6d8e454cd6f297aeb1ed6418611e49691dfe8aed6e90624872ab8ae7c401bb7",
+          "reference_uv_sha256": "9832dec2a648489218f1f4747ab8083bd4772b3fad15d866d98667ae7fea7c80",
+          "cpu_y_sha256": "c6d8e454cd6f297aeb1ed6418611e49691dfe8aed6e90624872ab8ae7c401bb7",
+          "cpu_uv_sha256": "9832dec2a648489218f1f4747ab8083bd4772b3fad15d866d98667ae7fea7c80",
+          "gpu_y_sha256": "c6d8e454cd6f297aeb1ed6418611e49691dfe8aed6e90624872ab8ae7c401bb7",
+          "gpu_uv_sha256": "9832dec2a648489218f1f4747ab8083bd4772b3fad15d866d98667ae7fea7c80"
+        },
+        "13": {
+          "reference_y_sha256": "9a994535c4aa82f32314e50dea932f524d48280b8b1f02a2124ee5a034e99b5f",
+          "reference_uv_sha256": "81b773b1016963fcc4b73211f4fae23f3ae561d2d3d0784135e061d989c0e898",
+          "cpu_y_sha256": "9a994535c4aa82f32314e50dea932f524d48280b8b1f02a2124ee5a034e99b5f",
+          "cpu_uv_sha256": "81b773b1016963fcc4b73211f4fae23f3ae561d2d3d0784135e061d989c0e898",
+          "gpu_y_sha256": "9a994535c4aa82f32314e50dea932f524d48280b8b1f02a2124ee5a034e99b5f",
+          "gpu_uv_sha256": "81b773b1016963fcc4b73211f4fae23f3ae561d2d3d0784135e061d989c0e898"
+        },
+        "14": {
+          "reference_y_sha256": "2c7bedd38d94e1c9886a28be0c329d761fffa4fc92aac40b7952839f2585add4",
+          "reference_uv_sha256": "0bb9f0b18d1e988b5de2f100fb14719ab70f3f82385bff4da3e8b284e143fc4b",
+          "cpu_y_sha256": "2c7bedd38d94e1c9886a28be0c329d761fffa4fc92aac40b7952839f2585add4",
+          "cpu_uv_sha256": "0bb9f0b18d1e988b5de2f100fb14719ab70f3f82385bff4da3e8b284e143fc4b",
+          "gpu_y_sha256": "2c7bedd38d94e1c9886a28be0c329d761fffa4fc92aac40b7952839f2585add4",
+          "gpu_uv_sha256": "0bb9f0b18d1e988b5de2f100fb14719ab70f3f82385bff4da3e8b284e143fc4b"
+        }
+      }
+    }
+  }
+}

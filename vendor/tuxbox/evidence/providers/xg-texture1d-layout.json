@@ -1,0 +1,28 @@
+{
+  "scope": "XGComputeTexture1DLayout (ordinal 4) and XGCreateTexture1DComputer (ordinal 8) for a bounded subset. Identical guest and XMem dependency; complete layouts and sampled element addresses compared against the supplied Xbox XG DLL.",
+  "subset": "57 uncompressed color formats; seven widths including 1, 2 and 16,384; one or three mips and slices; shader-resource bind; linear swizzle with default, immutable or staging usage; no CPU access flags, misc flags or explicit pitch. Block-compressed formats and other combinations are unsupported.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "ca5ea44a539618f206cc30e65ee00b472fadfe3fa6c3db3fd6b07a6c8e318d8b",
+  "guest_source_sha256": "e6a319617b8b0ca204e51de1a61ce03840e15d41a21c2135cb7d20974d0b3498",
+  "xmem_sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+  "layouts": 4104,
+  "sampled_element_addresses": 45144,
+  "checks": [
+    "both exports and complete layouts",
+    "sampled mip and array-slice addresses",
+    "null arguments and guards",
+    "unverified usage rejected by provider"
+  ],
+  "runs": {
+    "original": {
+      "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "guest_receipt": "xg-1d PASS 4104 layouts 45144 element addresses",
+      "result_sha256": "89311f82257dc64bd0aa2b2f26464725caec213a19ed55517ca414d044282677"
+    },
+    "tuxbox": {
+      "dll_sha256": "515a6e5436869514aafe909677d3d0f225747b29406aadb345cc9b716b3e3dc5",
+      "guest_receipt": "xg-1d PASS 4104 layouts 45144 element addresses",
+      "result_sha256": "89311f82257dc64bd0aa2b2f26464725caec213a19ed55517ca414d044282677"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+LIBRARY xg_xs
+EXPORTS
+ XGComputeBufferLayout=xg_reference.XGComputeBufferLayout @1
+ XGComputeOptimalDepthStencilSwizzleMode=xg_reference.XGComputeOptimalDepthStencilSwizzleMode @2
+ XGComputeOptimalSwizzleMode=xg_reference.XGComputeOptimalSwizzleMode @3
+ XGComputeTexture1DLayout=xg_reference.XGComputeTexture1DLayout @4
+ XGComputeTexture2DLayout=xg_reference.XGComputeTexture2DLayout @5
+ XGComputeTexture3DLayout=xg_reference.XGComputeTexture3DLayout @6
+ XGComputeTileShape=xg_reference.XGComputeTileShape @7
+ XGCreateTexture1DComputer=xg_reference.XGCreateTexture1DComputer @8
+ XGCreateTexture2DComputer=xg_reference.XGCreateTexture2DComputer @9
+ XGCreateTexture3DComputer=xg_reference.XGCreateTexture3DComputer @10
+ XGCreateTextureComputer @11
+ XGCreateTextureComputerFromDescriptor=xg_reference.XGCreateTextureComputerFromDescriptor @12
+ XGDecodeDCC=xg_reference.XGDecodeDCC @13
+ XGEnableExclusiveLocking=xg_reference.XGEnableExclusiveLocking @14
+ XGEncodeDCC=xg_reference.XGEncodeDCC @15
+ XGEnterExclusiveLock=xg_reference.XGEnterExclusiveLock @16
+ XGInitializeLibrary=xg_reference.XGInitializeLibrary @17
+ XGLeaveExclusiveLock=xg_reference.XGLeaveExclusiveLock @18
+ XGSetHardwareVersion=xg_reference.XGSetHardwareVersion @19
+ XGTerminateLibrary=xg_reference.XGTerminateLibrary @20
+ XGValidateDepthStencilSwizzleMode=xg_reference.XGValidateDepthStencilSwizzleMode @21

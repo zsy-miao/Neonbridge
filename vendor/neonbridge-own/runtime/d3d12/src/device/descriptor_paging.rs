@@ -1,0 +1,695 @@
+//! A writable Xbox descriptor arena can exceed the shader-visible heap limit.
+//! Store all native descriptors in a CPU heap and materialize bounded root
+//! tables in a shader-visible heap when the command list references them.
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, Weak, atomic::{AtomicU64, Ordering}},
+};
+use windows::Win32::Foundation::{E_INVALIDARG, E_OUTOFMEMORY};
+use windows::Win32::Graphics::Direct3D12::*;
+use windows::core::Result;
+
+use super::title_memory::GuestMemory;
+mod index_map;
+pub(crate) use index_map::index_map;
+mod retire;
+mod identity;
+pub(crate) mod texture_queue;
+pub(crate) use retire::{Lease, submitted};
+
+#[derive(Default)]
+pub(crate) struct Registry {
+    arenas: Mutex<BTreeMap<usize, Weak<Arena>>>,
+    count: std::sync::atomic::AtomicUsize,
+    next_version: AtomicU64,
+    /// Identity index maps by heap size (0: unclamped, the shared one).
+    identity_map: Mutex<std::collections::HashMap<u32, ID3D12Resource>>,
+}
+impl Registry {
+    pub(crate) fn find(&self, address: usize) -> Option<Arc<Arena>> {
+        if self.count.load(std::sync::atomic::Ordering::Acquire) == 0 {
+            return None;
+        }
+        let entries = self.arenas.lock().unwrap_or_else(|e| e.into_inner());
+        let arena = entries.range(..=address).next_back()?.1.upgrade()?;
+        (address - arena.base() < arena.count as usize * arena.stride).then_some(arena)
+    }
+    pub(super) fn copy_source(&self, handle: D3D12_CPU_DESCRIPTOR_HANDLE) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+        let Some(arena) = self.find(handle.ptr) else { return handle; };
+        if arena.inline && (handle.ptr - arena.base()).is_multiple_of(arena.stride) {
+            if let Some(source) = arena.resolve_inline(arena.inline_record(handle.ptr)) {
+                return source;
+            }
+        }
+        arena.cpu(handle.ptr)
+    }
+
+
+}
+
+// Only the opaque record lives in guest-writable memory. The host descriptor
+// stays in a CPU-only heap and is never edited by the guest's 32-byte copies.
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct InlineDescriptor {
+    source: usize,
+    version: u64,
+    reserved: [u64; 2],
+}
+const INLINE_BYTES: usize = size_of::<InlineDescriptor>();
+
+pub(crate) struct Arena {
+    memory: GuestMemory,
+    registry: Arc<Registry>,
+    imported: super::placement::DescriptorRange<super::views::DescriptorBacking>,
+    placed: super::placement::DescriptorRange<super::placement::PlacedView>,
+    scenes: super::placement::DescriptorRange<super::blas::SceneView>,
+    staging: ID3D12DescriptorHeap,
+    visible: ID3D12DescriptorHeap,
+    device: ID3D12Device,
+    stride: usize,
+    count: u32,
+    limit: u32,
+    /// The shader-visible slot kept null for guest indices with no table
+    /// (see null_tail); None when off or for a sampler heap.
+    null_slot: Option<u32>,
+    inline: bool,
+    authored: Mutex<BTreeMap<usize, u64>>,
+    // Guest ranges can overlap. Keep stable slots for every table that has
+    // been referenced; a CPU descriptor update is published to each alias.
+    tables: Mutex<Tables>,
+    /// Lease clock for freeing table ranges (retire.rs).
+    clock: retire::Clock,
+    /// The submit id of the last rescan_submit, so each submit walks once.
+    rescanned: AtomicU64,
+    /// The title-order shader-visible heap ztrx shaders index (identity.rs).
+    identity: Mutex<Option<identity::Identity>>,
+}
+#[derive(Default)]
+struct Tables {
+    used: u32,
+    ranges: BTreeMap<(u32, u32), u32>,
+    /// The longest range in `ranges`, bounding which can hold a slot.
+    longest: u32,
+    direct: index_map::Direct,
+    resident_records: BTreeMap<usize, InlineDescriptor>,
+    /// The clock stamp of each range's last use (retire.rs).
+    stamps: std::collections::HashMap<(u32, u32), u64>,
+    /// Slots below `used` given back by freed ranges.
+    free: retire::FreeSlots,
+    /// Per shader-visible slot: a fingerprint of the guest record it last
+    /// held at a submit rescan (0: never looked at). See rescan_submit.
+    fingerprints: Vec<u64>,
+}
+impl Drop for Arena {
+    fn drop(&mut self) {
+        let mut entries = self.registry.arenas.lock().unwrap_or_else(|e| e.into_inner());
+        if entries
+            .get(&self.base())
+            .is_some_and(|entry| std::ptr::eq(entry.as_ptr(), self))
+        {
+            entries.remove(&self.base());
+            self.registry
+                .count
+                .store(entries.len(), std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+/// Guest heap indices with no table read a null slot: the index map gets
+/// count + 1 entries, every unpublished one and the last (where xshader's
+/// tb_heap_index clamps a stray index, 932afdd) naming a shader-visible slot
+/// kept null, instead of whatever an unwritten map word held. On by default;
+/// TUXBOX_HEAP_NULL_TAIL=0 maps count entries as before.
+pub(super) fn null_tail() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("TUXBOX_HEAP_NULL_TAIL").map_or(true, |v| v.trim() != "0"));
+    *ON
+}
+
+impl Arena {
+    pub(super) fn create(
+        owner: &super::Device,
+        desc: &D3D12_DESCRIPTOR_HEAP_DESC,
+        limit: u32,
+    ) -> Result<Arc<Self>> {
+        let registry = &owner.state.descriptor_arenas;
+        let device = &owner.native;
+        let cpu = D3D12_DESCRIPTOR_HEAP_DESC {
+            Flags: D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+            ..*desc
+        };
+        let gpu = D3D12_DESCRIPTOR_HEAP_DESC {
+            NumDescriptors: limit,
+            ..*desc
+        };
+        let staging: ID3D12DescriptorHeap = unsafe { device.CreateDescriptorHeap(&cpu)? };
+        // Tables copy unwritten staging slots too; their host contents are undefined.
+        if desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV {
+            super::null_kinds::fill(device, &staging, desc.NumDescriptors, false);
+        }
+        let tail = null_tail() && desc.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+            && desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        let (visible, limit, null_slot) = if !tail {
+            let visible = if desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE {
+                unsafe { device.CreateDescriptorHeap(&gpu)? }
+            } else {
+                staging.clone()
+            };
+            (visible, limit, None)
+        } else {
+            // The heap's last slot is the null one; tables use the rest. The
+            // heap keeps `limit` descriptors: its size is read back as the
+            // guest heap's (the descriptors.rs stride, compute_bindings, the
+            // view-format table), and a limit+1 heap broke those (ad6ecbe).
+            let visible: ID3D12DescriptorHeap = unsafe { device.CreateDescriptorHeap(&gpu)? };
+            let usable = limit.saturating_sub(1);
+            let start = unsafe { visible.GetCPUDescriptorHandleForHeapStart() };
+            let stride = unsafe { device.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
+            super::null_kinds::NullKind::DEFAULT.write(device, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + usable as usize * stride });
+            (visible, usable, Some(usable))
+        };
+        let stride = unsafe { device.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
+        let bytes = stride
+            .checked_mul(desc.NumDescriptors as usize)
+            .ok_or(E_OUTOFMEMORY)?;
+        let memory = GuestMemory::allocate(bytes, 0x0480_0004)?;
+        let arena = Arc::new(Self {
+            imported: owner.state.imported_views.heap(device, &staging, &cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV).ok_or(E_INVALIDARG)?,
+            placed: owner
+                .state
+                .placements
+                .views
+                .heap(
+                    device,
+                    &staging,
+                    &cpu,
+                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                )
+                .ok_or(E_INVALIDARG)?,
+            scenes: owner
+                .state
+                .blas
+                .views
+                .heap(
+                    device,
+                    &staging,
+                    &cpu,
+                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                )
+                .ok_or(E_INVALIDARG)?,
+            memory,
+            registry: registry.clone(),
+            staging,
+            visible,
+            device: device.clone(),
+            stride,
+            count: desc.NumDescriptors,
+            limit,
+            null_slot,
+            inline: owner.state.device11_queue && stride >= INLINE_BYTES && stride.is_multiple_of(INLINE_BYTES),
+            authored: Mutex::default(),
+            tables: Mutex::new(Tables::default()),
+            clock: retire::Clock::default(),
+            rescanned: AtomicU64::new(0),
+            identity: Mutex::new(None),
+        });
+        let mut entries = registry.arenas.lock().unwrap_or_else(|e| e.into_inner());
+        entries.insert(arena.base(), Arc::downgrade(&arena));
+        registry
+            .count
+            .store(entries.len(), std::sync::atomic::Ordering::Release);
+        Ok(arena)
+    }
+    pub(crate) fn uses_inline_records(&self) -> bool { self.inline }
+
+    /// A recording's hold on this arena's table slots (retire.rs).
+    pub(crate) fn lease(self: &Arc<Self>) -> Lease {
+        Lease { arena: self.clone(), state: self.clock.lease() }
+    }
+
+    /// Frees every range no live lease may read and that the index map does
+    /// not name (VIctory HostHeap release, GPL-3.0): its slots go back to
+    /// `tables.free`, its resident records are dropped.
+    fn reclaim(&self, tables: &mut Tables) -> u32 {
+        let horizon = self.clock.horizon();
+        let Tables { ranges, stamps, free, resident_records, direct, .. } = tables;
+        let mut freed = 0;
+        ranges.retain(|&(first, length), &mut slot| {
+            let stamp = stamps.get(&(first, length)).copied().unwrap_or(0);
+            if stamp > horizon || direct.references(first, length, slot) {
+                return true;
+            }
+            stamps.remove(&(first, length));
+            free.give_back(slot, length);
+            for s in slot..slot + length {
+                resident_records.remove(&(s as usize));
+            }
+            freed += length;
+            false
+        });
+        tables.longest = tables.ranges.keys().map(|&(_, l)| l).max().unwrap_or(0);
+        freed
+    }
+
+    pub(crate) fn base(&self) -> usize {
+        self.memory.address
+    }
+    pub(crate) fn contains(&self, address: u64) -> bool {
+        address
+            .checked_sub(self.base() as u64)
+            .is_some_and(|offset| offset < self.count as u64 * self.stride as u64)
+    }
+    pub(crate) fn visible(&self) -> &ID3D12DescriptorHeap {
+        &self.visible
+    }
+    pub(crate) fn cpu(&self, address: usize) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+        let base = unsafe { self.staging.GetCPUDescriptorHandleForHeapStart() };
+        D3D12_CPU_DESCRIPTOR_HANDLE {
+            ptr: base.ptr + (address - self.base()),
+        }
+    }
+    fn inline_record(&self, address: usize) -> InlineDescriptor {
+        // The arena owns this committed memory. Bounds are checked by callers
+        // for the whole record, and the title synchronizes descriptor writes.
+        unsafe { (address as *const InlineDescriptor).read_unaligned() }
+    }
+
+    pub(super) fn author(&self, address: usize, count: u32) {
+        if !self.inline || !self.contains(address as u64)
+            || !(address - self.base()).is_multiple_of(self.stride)
+            || count as usize > self.count as usize - (address - self.base()) / self.stride
+        {
+            return;
+        }
+        let mut versions = self.authored.lock().unwrap_or_else(|e| e.into_inner());
+        for slot in 0..count as usize {
+            let source = address + slot * self.stride;
+            let version = self.registry.next_version.fetch_add(1, Ordering::Relaxed) + 1;
+            versions.insert(source, version);
+            let record = InlineDescriptor { source, version, reserved: [0; 2] };
+            // The caller validated the destination span through the heap API.
+            unsafe { (source as *mut InlineDescriptor).write_unaligned(record) };
+        }
+    }
+
+    fn resolve_inline(&self, record: InlineDescriptor) -> Option<D3D12_CPU_DESCRIPTOR_HANDLE> {
+        if record.source == 0 || record.version == 0 { return None; }
+        let source = self.registry.find(record.source)?;
+        let versions = source.authored.lock().unwrap_or_else(|e| e.into_inner());
+        (versions.get(&record.source) == Some(&record.version)).then(|| source.cpu(record.source))
+    }
+
+    fn copy_native_view(&self, to: D3D12_CPU_DESCRIPTOR_HANDLE, from: D3D12_CPU_DESCRIPTOR_HANDLE) {
+        let stride = self.stride;
+        self.imported.copy_to(stride, to.ptr, from.ptr, 1);
+        super::placement::pages::views_copied(stride, std::iter::once((to.ptr, 1)), std::iter::once((from.ptr, 1)));
+        self.placed.copy_to(stride, to.ptr, from.ptr, 1);
+        self.scenes.copy_to(stride, to.ptr, from.ptr, 1);
+        crate::diagnostics::display::copy_texture_views(to.ptr, from.ptr, 1, stride);
+        super::view_formats::copy(to.ptr, from.ptr, 1, stride);
+        unsafe { self.device.CopyDescriptorsSimple(1, to, from, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) };
+    }
+
+    fn copy(&self, src: u32, dst: u32, count: u32) {
+        let from = self.cpu(self.base() + src as usize * self.stride);
+        let start = unsafe { self.visible.GetCPUDescriptorHandleForHeapStart() };
+        let to = D3D12_CPU_DESCRIPTOR_HANDLE {
+            ptr: start.ptr + dst as usize * self.stride,
+        };
+        self.imported.copy_to(self.stride, to.ptr, from.ptr, count);
+        self.placed.copy_to(self.stride, to.ptr, from.ptr, count);
+        self.scenes.copy_to(self.stride, to.ptr, from.ptr, count);
+        crate::diagnostics::display::copy_texture_views(to.ptr, from.ptr, count, self.stride);
+        super::view_formats::copy(to.ptr, from.ptr, count as usize, self.stride);
+        unsafe {
+            self.device.CopyDescriptorsSimple(
+                count,
+                to,
+                from,
+                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+            )
+        };
+    }
+    pub(crate) fn publish(&self, address: usize, count: u32) {
+        let first = ((address - self.base()) / self.stride) as u32;
+        let end = first.saturating_add(count);
+        if end > self.count || count == 0 {
+            return;
+        }
+        self.identity_publish(first..end);
+        let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+        let Tables { direct, used, ranges, longest, resident_records, .. } = &mut *tables;
+        direct.publish(self, first..end, used);
+        // test86: a title thread spent most of its time here and waiting on
+        // this lock: every descriptor write walked every resident table. Only
+        // tables starting within the longest table's length before `first`
+        // can hold these slots. TUXBOX_PUBLISH_SCAN_ALL=1 walks them all.
+        let lower = if crate::env_toggle!("TUXBOX_PUBLISH_SCAN_ALL") == Some("1") { 0 } else { first.saturating_sub(*longest) };
+        for (&(start, length), &resident) in ranges.range((lower, 0)..(end, 0)) {
+            if self.inline && self.stride != INLINE_BYTES {
+                let offset = (first as usize).saturating_sub(start as usize) * self.stride / INLINE_BYTES;
+                if first >= start && offset < length as usize {
+                    let count = u32::try_from((length as usize - offset).div_ceil(self.stride / INLINE_BYTES)).unwrap_or(0).min(count);
+                    for step in 0..count as usize {
+                        let slot = resident as usize + offset + step * (self.stride / INLINE_BYTES);
+                        self.copy(first + step as u32, slot as u32, 1);
+                        resident_records.remove(&slot);
+                    }
+                }
+                continue;
+            }
+            let lo = start.max(first);
+            let hi = (start + length).min(end);
+            if lo < hi {
+                let destination = resident + lo - start;
+                self.copy(lo, destination, hi - lo);
+                if self.inline {
+                    for slot in destination..destination + hi - lo {
+                        resident_records.remove(&(slot as usize));
+                    }
+                }
+            }
+        }
+    }
+    pub(crate) fn gpu(&self, address: u64, length: u32) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
+        self.gpu_table(address, length, &[0..length], None)
+    }
+
+    pub(crate) fn resident_gpu(&self, address: u64, length: u32) -> Option<D3D12_GPU_DESCRIPTOR_HANDLE> {
+        let offset = (address as usize).checked_sub(self.base())?;
+        let first = u32::try_from(offset / self.stride).ok()?;
+        let tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+        let slot = tables.ranges.get(&(first, length)).copied().or_else(|| tables.direct.contiguous(first, length))?;
+        Some(self.gpu_handle(slot))
+    }
+
+    fn gpu_handle(&self, slot: u32) -> D3D12_GPU_DESCRIPTOR_HANDLE {
+        let base = unsafe { self.visible.GetGPUDescriptorHandleForHeapStart() }.ptr;
+        D3D12_GPU_DESCRIPTOR_HANDLE { ptr: base + u64::from(slot) * self.stride as u64 }
+    }
+
+    /// `kinds` gives the null descriptor each unwritten slot of this table
+    /// (root parameter) needs for the bound pipeline's shaders.
+    pub(crate) fn gpu_table(
+        &self,
+        address: u64,
+        length: u32,
+        active: &[std::ops::Range<u32>],
+        kinds: Option<(&super::null_kinds::NullKinds, usize)>,
+    ) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
+        let result = self.gpu_table_inner(address, length, active, kinds);
+        if result.is_err() && self.inline {
+            let slots: u32 = active.iter().map(|r| r.end.min(length).saturating_sub(r.start)).sum();
+            crate::diagnostics::null_causes::note(crate::diagnostics::null_causes::Cause::Buffer, u64::from(slots));
+        }
+        result
+    }
+
+    fn gpu_table_inner(
+        &self,
+        address: u64,
+        length: u32,
+        active: &[std::ops::Range<u32>],
+        kinds: Option<(&super::null_kinds::NullKinds, usize)>,
+    ) -> Result<D3D12_GPU_DESCRIPTOR_HANDLE> {
+        let offset = (address as usize)
+            .checked_sub(self.base())
+            .ok_or(E_INVALIDARG)?;
+        if length == 0 || !offset.is_multiple_of(self.stride) {
+            return Err(E_INVALIDARG.into());
+        }
+        let first = u32::try_from(offset / self.stride).map_err(|_| E_INVALIDARG)?;
+        if first.checked_add(length).is_none_or(|end| end > self.count) {
+            return Err(E_INVALIDARG.into());
+        }
+        let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+        let key = (first, length);
+        let freeing = retire::enabled();
+        let resident = if let Some(index) = tables.ranges.get(&key) {
+            let index = *index;
+            if freeing {
+                tables.stamps.insert(key, self.clock.stamp());
+            }
+            index
+        } else if !self.inline && let Some(index) = tables.direct.contiguous(first, length) {
+            index
+        } else if freeing && let Some(index) = tables.free.take(length).or_else(|| {
+            // Full: free what no list in flight reads, then search again.
+            (tables.used.checked_add(length).is_none_or(|end| end > self.limit)
+                && self.reclaim(&mut tables) != 0)
+                .then(|| tables.free.take(length)).flatten()
+        }) {
+            if !self.inline {
+                self.copy(first, index, length);
+            }
+            tables.ranges.insert(key, index);
+            tables.stamps.insert(key, self.clock.stamp());
+            tables.longest = tables.longest.max(length);
+            index
+        } else {
+            let index = tables.used;
+            let Some(end) = index.checked_add(length).filter(|&n| n <= self.limit) else {
+                // rebox f516dfb (idea): its view tail ran out silently and the
+                // rest of a world's textures bound nothing. A full shader-visible
+                // table area here refuses every new table range, so say so.
+                static FULL: AtomicU64 = AtomicU64::new(0);
+                let n = FULL.fetch_add(1, Ordering::Relaxed) + 1;
+                if n <= 4 || n.is_power_of_two() {
+                    crate::diagnostics::log_line(format_args!(
+                        "descriptor arena at {:#x} is full: its shader-visible table area holds {} of {} slots in {} ranges (longest {}); a new {length}-slot table at slot {first} is refused and binds null ({n} so far)",
+                        self.base(), index, self.limit, tables.ranges.len(), tables.longest));
+                }
+                return Err(E_OUTOFMEMORY.into());
+            };
+            if !self.inline {
+                self.copy(first, index, length);
+            }
+            tables.ranges.insert(key, index);
+            if freeing {
+                tables.stamps.insert(key, self.clock.stamp());
+            }
+            tables.longest = tables.longest.max(length);
+            tables.used = end;
+            index
+        };
+        if self.inline {
+            let start = unsafe { self.visible.GetCPUDescriptorHandleForHeapStart() };
+            let mut materialized = 0;
+            for index in active.iter().flat_map(|range| range.clone().take_while(|&i| i < length)) {
+                let index = index as usize;
+                let cell = address as usize + index * INLINE_BYTES;
+                let record = self.inline_record(cell);
+                let slot = resident as usize + index;
+                // An unwritten slot is resident as the null kind it was made as.
+                let null = (record == InlineDescriptor::default()).then(|| {
+                    kinds
+                        .and_then(|(kinds, parameter)| kinds.get(parameter, index as u32))
+                        .unwrap_or(super::null_kinds::NullKind::DEFAULT)
+                });
+                if null.is_some() {
+                    crate::diagnostics::null_causes::note(crate::diagnostics::null_causes::Cause::Entry, 1);
+                }
+                let resident_key = null.map_or(record, |kind| InlineDescriptor { reserved: [kind.code(), 0], ..record });
+                if tables.resident_records.get(&slot) == Some(&resident_key) {
+                    continue;
+                }
+                let destination = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + slot * self.stride };
+                if let Some(source) = self.resolve_inline(record) {
+                    self.copy_native_view(destination, source);
+                    materialized += usize::from(record.source != cell || INLINE_BYTES != self.stride);
+                } else if let Some(kind) = null {
+                    // Inactive slots have no resource. Use a null view of the
+                    // kind the shader reads there (VIctory 8c26061) rather
+                    // than copying an uninitialized host descriptor.
+                    self.imported.copy_to(self.stride, destination.ptr, 0, 1);
+                    self.placed.copy_to(self.stride, destination.ptr, 0, 1);
+                    self.scenes.copy_to(self.stride, destination.ptr, 0, 1);
+                    crate::diagnostics::display::texture_view(destination.ptr, None, None);
+                    super::view_formats::write(destination.ptr, 0);
+                    kind.write(&self.device, destination);
+                } else {
+                    // A stale record (its source was rewritten or freed) used to
+                    // fail the whole command list, and the queue then dropped
+                    // every later batch: frames kept presenting, all black.
+                    // Bind a null of the kind the shader reads instead, and
+                    // leave the slot uncached so a later resolution replaces it.
+                    static UNRESOLVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let n = UNRESOLVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    {
+                        use crate::diagnostics::null_causes::{Cause, note};
+                        let cause = if record.source == 0 || record.version == 0 {
+                            Cause::Entry
+                        } else if self.registry.find(record.source).is_none() {
+                            Cause::Token
+                        } else {
+                            Cause::Wrapper
+                        };
+                        note(cause, 1);
+                    }
+                    if n < 4 || (n + 1).is_power_of_two() {
+                        crate::diagnostics::log_line(format_args!(
+                            "unresolved inline descriptor at {cell:#x}, source {:#x}, version {} (table entry {index}/{length}); bound null ({} so far)",
+                            record.source, record.version, n + 1,
+                        ));
+                    }
+                    let kind = kinds
+                        .and_then(|(kinds, parameter)| kinds.get(parameter, index as u32))
+                        .unwrap_or(super::null_kinds::NullKind::DEFAULT);
+                    self.imported.copy_to(self.stride, destination.ptr, 0, 1);
+                    self.placed.copy_to(self.stride, destination.ptr, 0, 1);
+                    self.scenes.copy_to(self.stride, destination.ptr, 0, 1);
+                    crate::diagnostics::display::texture_view(destination.ptr, None, None);
+                    super::view_formats::write(destination.ptr, 0);
+                    kind.write(&self.device, destination);
+                    tables.resident_records.remove(&slot);
+                    continue;
+                }
+                tables.resident_records.insert(slot, resident_key);
+            }
+            if materialized != 0 {
+                static FIRST: std::sync::Once = std::sync::Once::new();
+                crate::diagnostics::log_once(&FIRST, || format!("materialized {materialized} CPU-authored descriptor records (table length {length}, native stride {})", self.stride));
+            }
+        }
+        Ok(self.gpu_handle(resident))
+    }
+}
+
+/// TUXBOX_SUBMIT_DESC_RESCAN (default on, =0 off): a title memcpys inline
+/// descriptor records into its heap as bytes; gpu_table only re-reads them
+/// when a root table is set, so a record copied after the bind and before
+/// ExecuteCommandLists bound the old view. Before each submit every resident
+/// range of each arena a submitted list leased is walked once and records
+/// whose bytes changed are re-materialized. Modelled on VIctory-fxceless
+/// a26859f/9376fd6 crates/victory-gpu/src/descriptor/host.rs
+/// HostHeap::mirror_copied (per-slot fingerprint, 0 = never looked at, |1;
+/// after upstream VIctory 86a5ed6 / PR #305 by Flyander), GPL-3.0, credit to
+/// fxceless and the VIctory authors. Non-inline arenas are not walked: their
+/// guest memory never holds native descriptors (author/publish go through
+/// the API), so a byte copy there carries nothing to mirror.
+pub(crate) fn submit_rescan() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| crate::env_toggle!("TUXBOX_SUBMIT_DESC_RESCAN") != Some("0"));
+    *ON
+}
+/// A fresh id for one ExecuteCommandLists (rescan_submit dedupe).
+pub(crate) fn next_submit() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+fn fingerprint(record: &InlineDescriptor) -> u64 {
+    let words = [record.source as u64, record.version, record.reserved[0], record.reserved[1]];
+    let mut bytes = [0u8; INLINE_BYTES];
+    for (chunk, w) in bytes.chunks_exact_mut(8).zip(words) {
+        chunk.copy_from_slice(&w.to_le_bytes());
+    }
+    // Never 0, which is "never looked at" (mirror_copied: `record_print | 1`).
+    record_print(&bytes) | 1
+}
+/// Copied from VItoriaBr crates/victory-gpu/src/descriptor/host.rs
+/// record_print (GPL-3.0, credit to fxceless and the VIctory authors): a
+/// multiply-and-fold over the record's words.
+fn record_print(record: &[u8]) -> u64 {
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut h = K ^ record.len() as u64;
+    let mut words = record.chunks_exact(8);
+    for word in &mut words {
+        let w = u64::from_le_bytes(word.try_into().unwrap_or([0; 8]));
+        h = (h ^ w).wrapping_mul(K);
+        h ^= h >> 29;
+    }
+    for &b in words.remainder() {
+        h = (h ^ u64::from(b)).wrapping_mul(K);
+    }
+    h ^ (h >> 32)
+}
+impl Arena {
+    /// Re-materialize resident inline slots whose guest record changed since
+    /// they were made (submit_rescan). O(resident slots); once per `submit`.
+    pub(crate) fn rescan_submit(&self, submit: u64) {
+        if self.rescanned.load(Ordering::Acquire) != submit {
+            self.identity_rescan();
+        }
+        if !self.inline || !submit_rescan() || self.rescanned.swap(submit, Ordering::AcqRel) == submit {
+            return;
+        }
+        let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+        let Tables { ranges, resident_records, fingerprints, .. } = &mut *tables;
+        if fingerprints.len() < self.limit as usize {
+            fingerprints.resize(self.limit as usize, 0);
+        }
+        let start = unsafe { self.visible.GetCPUDescriptorHandleForHeapStart() };
+        let mut changed = 0u64;
+        for (&(first, length), &resident) in ranges.iter() {
+            let address = self.base() + first as usize * self.stride;
+            let cells = (length as usize).min((self.count as usize * self.stride - (address - self.base())) / INLINE_BYTES);
+            for index in 0..cells {
+                let slot = resident as usize + index;
+                let Some(&key) = resident_records.get(&slot) else { continue; };
+                let record = self.inline_record(address + index * INLINE_BYTES);
+                let print = fingerprint(&record);
+                let Some(last) = fingerprints.get_mut(slot) else { continue; };
+                // mirror_copied (VItoriaBr descriptor/host.rs): a slot never
+                // looked at that holds nothing is as it was.
+                if *last == print || (*last == 0 && record == InlineDescriptor::default()) {
+                    continue;
+                }
+                *last = print;
+                // A null-made slot keeps its kind in reserved[0].
+                let made_as = if key.reserved[0] != 0 && record == InlineDescriptor::default() {
+                    InlineDescriptor { reserved: key.reserved, ..record }
+                } else {
+                    record
+                };
+                if made_as == key {
+                    continue;
+                }
+                changed += 1;
+                if let Some(source) = self.resolve_inline(record) {
+                    let destination = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + slot * self.stride };
+                    self.copy_native_view(destination, source);
+                    resident_records.insert(slot, record);
+                } else {
+                    // Unresolvable or cleared: the next bind remakes it with
+                    // the shader's null kind (gpu_table_inner).
+                    resident_records.remove(&slot);
+                }
+            }
+        }
+        drop(tables);
+        if changed != 0 {
+            static TOTAL: AtomicU64 = AtomicU64::new(0);
+            let before = TOTAL.fetch_add(changed, Ordering::Relaxed);
+            let after = before + changed;
+            if before == 0 || (u64::BITS - before.leading_zeros()) != (u64::BITS - after.leading_zeros()) {
+                crate::diagnostics::log_line(format_args!(
+                    "submit descriptor rescan: arena {:#x} re-materialized {changed} byte-copied inline records ({after} so far; TUXBOX_SUBMIT_DESC_RESCAN=0 off)",
+                    self.base()));
+            }
+        }
+    }
+}
+
+// Keep the logical slot and publish descriptor writes after the host call.
+pub(super) struct Write {
+    arena: Option<Arc<Arena>>,
+    address: usize,
+}
+impl Write {
+    pub(super) fn new(registry: &Registry, handle: &mut D3D12_CPU_DESCRIPTOR_HANDLE) -> Self {
+        let address = handle.ptr;
+        let arena = registry.find(address);
+        if let Some(a) = &arena {
+            *handle = a.cpu(address);
+        }
+        Self { arena, address }
+    }
+}
+impl Drop for Write {
+    fn drop(&mut self) {
+        if let Some(arena) = &self.arena {
+            arena.author(self.address, 1);
+            arena.publish(self.address, 1);
+        }
+    }
+}

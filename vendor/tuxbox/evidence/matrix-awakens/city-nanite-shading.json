@@ -1,0 +1,54 @@
+{
+  "game": "The Matrix Awakens (Frosty)",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (10de:2705)",
+  "game_args": [
+    "-DisablePlugins=XboxCommonGDKMoviePlayer",
+    "-nosound",
+    "-gauntlet=FrostyTestControllerAutoTest",
+    "-FrostyTest.PreferSandbox"
+  ],
+  "settings": "Both desktop runs used the reduced-effects profile with r.Nanite=1 and MangoHud. The final run used tools/run_frosty.sh --desktop --nanite.",
+  "measurement": "Separate runs at the same plaza. On each 960 x 540 capture, measure the fraction of pixels with red, green and blue all at or below 12/255 in rows 100 through 499. This crop excludes the performance overlay and the bottom edge. Take the capture nearest 20 seconds after the intro and report the median across available captures 12 to 35 seconds after the intro.",
+  "baseline": {
+    "d3d12_xs_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+    "shader_compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+    "proton_log_sha256": "22abbcf25a559b212faf98341bca920feb78ec764cd8d852da8d2aee1aeff473",
+    "sandbox_intro_finished_utc": "2026-11-22T02:16:30.609+00:00",
+    "gauntlet_exit_code": 0,
+    "invalid_pipeline_topology_0x13_messages": 239,
+    "unhandled_ia_topology_0x11_messages": 3384,
+    "image": "city-nanite-before.jpg",
+    "image_sha256": "558a7db263a6bb40103f1442c998f153a607e523187b02a7539fa1761dcf3332",
+    "capture_seconds_after_intro": 19.391,
+    "near_black_percent": 69.74,
+    "samples": 5,
+    "median_near_black_percent": 69.69
+  },
+  "updated": {
+    "d3d12_xs_sha256": "332f2f9b4fb85d04f7a7dfca3180c63b6d005db1381e24b6f03fd5d359dd10db",
+    "shader_compiler_sha256": "eecd3706084e5712286c6d2620c87a6c259a65a6a8616f9f33c2177e2f568c3a",
+    "proton_log_sha256": "249899363c0affe8d634ec54ae8bf529bc5c28d9b7970cc17759fc41c72b81c7",
+    "sandbox_intro_finished_utc": "2026-11-22T02:42:51.000+00:00",
+    "gauntlet_exit_code": 0,
+    "invalid_pipeline_topology_0x13_messages": 0,
+    "unhandled_ia_topology_0x11_messages": 0,
+    "image": "city-nanite-after.jpg",
+    "image_sha256": "08844c2c54a2cfca24c52271be5c48d550154f6b32e9942b8268be17fa7c169b",
+    "capture_seconds_after_intro": 19.0,
+    "near_black_percent": 3.32,
+    "samples": 6,
+    "median_near_black_percent": 3.25,
+    "mangohud": {
+      "scope": "Entire desktop test, including startup, loading and shutdown.",
+      "csv_sha256": "9b7d89cfa7067f0522d3a3e001b1568b2300ca6e15a0e74a7646529557488fa3",
+      "frames": 1287,
+      "frametime_ms": {
+        "p50": 23.0006,
+        "p95": 262.733,
+        "p99": 8700.02,
+        "max": 84314.4
+      }
+    }
+  }
+}

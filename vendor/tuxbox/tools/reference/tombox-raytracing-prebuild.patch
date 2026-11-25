@@ -1,0 +1,52 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -646,6 +646,41 @@
+     unsafe { create(real, desc, root, iid, out) }
+ }
+ 
++/// Frosty's slot 102 takes D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS
++/// and writes the three u64 sizes of D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO.
++/// Its geometry array uses the desktop D3D12_RAYTRACING_GEOMETRY_DESC stride (56).
++unsafe extern "system" fn raytracing_prebuild_info(
++    this: *mut DeviceWrapper, inputs: *const c_void, sizes: *mut [u64; 3],
++) {
++    if sizes.is_null() { return; }
++    unsafe { sizes.write([0; 3]) };
++    if inputs.is_null() { return; }
++    let base = unsafe { (*this).real };
++    let query: unsafe extern "system" fn(*mut c_void, &Guid, *mut *mut c_void) -> i32 =
++        unsafe { core::mem::transmute(*real_vtbl(base)) };
++    let mut device5 = core::ptr::null_mut();
++    if unsafe { query(base, &DEVICE_IIDS[5], &mut device5) } < 0 || device5.is_null() {
++        record("d3d12_xs", "GetRaytracingAccelerationStructurePrebuildInfo", "host Device5 unavailable");
++        return;
++    }
++    // SAFETY: query returned a live ID3D12Device5. Its slot 63 takes the
++    // standard inputs and produces the three sizes synchronously.
++    let methods = unsafe { real_vtbl(device5) };
++    let prebuild: unsafe extern "system" fn(*mut c_void, *const c_void, *mut [u64; 3]) =
++        unsafe { core::mem::transmute(*methods.add(63)) };
++    let release: unsafe extern "system" fn(*mut c_void) -> u32 =
++        unsafe { core::mem::transmute(*methods.add(2)) };
++    unsafe {
++        prebuild(device5, inputs, sizes);
++        release(device5);
++    }
++    static CALLS: AtomicU32 = AtomicU32::new(0);
++    if CALLS.fetch_add(1, Ordering::Relaxed) < 8 {
++        record("d3d12_xs", "GetRaytracingAccelerationStructurePrebuildInfo",
++               &format!("result/scratch/update={:?}", unsafe { *sizes }));
++    }
++}
++
+ // Forwarding thunk: this(rcx) -> this->real; jmp real->vtbl[slot].
+ macro_rules! fwd {
+     ($name:ident, $slot:expr) => {
+@@ -1395,6 +1430,7 @@
+         v[27] = create_committed_resource as usize; // CreateCommittedResource (IID subst)
+         v[67] = deserialize_compute_pso_x as usize;
+         v[76] = create_committed_resource_x as usize;
++        v[102] = raytracing_prebuild_info as *const () as usize;
+         v[73] = create_command_list_x as usize;  // Xbox command-list create
+         if crate::rtcap::enabled() {
+             v[20] = create_rtv_traced as usize;

@@ -1,0 +1,49 @@
+{
+  "platform": "x86-64 Linux, Valve Proton Experimental",
+  "reference_xmem_sha256": "adc182acae5340b0618a3d57a239ed2e8deb305dbefc49439cb8a2d06c7ce812",
+  "virtual_query": {
+    "guest": "runtime/xmem/guest.c --query",
+    "implementation": "runtime/xmem/src/virtual_memory.rs",
+    "reference_control": "The supplied DLL used its original code and companion xcrdapi.dll. A test-only CPU heap shim supplied the title partition ID from host VirtualQuery. It did not supply privileged partition handles.",
+    "reference_results": "Released reservations reached the native success path in three trials. Its 48-byte MEMORY_BASIC_INFORMATION prefix matched the host, followed by title flags 1 and tag 0. Native reserved, committed, image and write-watch queries returned ERROR_INVALID_PARAMETER under Proton.",
+    "provider_results": "The static guest compares host fields on supported CPU mappings, checks the write-watch state without consuming dirty addresses, released reservations, unsupported ranges, guards and invalid null output."
+  },
+  "http": {
+    "guest": "runtime/xmem/http_control.cpp",
+    "implementation": "runtime/xmem/http/src/lib.rs",
+    "checks": [
+      "Check Xbox version-1 import-table layout, seven symbol names and addresses against static Windows SDK imports from tuxbox_xhttp.dll.",
+      "Set all seven callbacks through the XMemSetWinHttpHooks export, pass checked arguments and consume callback results.",
+      "Reset hooks from within the close callback and open and close a local host WinHTTP session without issuing a network request."
+    ],
+    "integration": "The source-built guest binds these APIs to the named companion import library. A retail guest importing desktop WINHTTP.dll uses its normal loader resolution unless the loader supports the Xbox import table."
+  },
+  "test_runs": {
+    "valve": {
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "receipts": [
+        "xmem-http PASS callbacks=7 host-session=1",
+        "xmem-query PASS cpu=5 released=1 unsupported=3 guards=2 null=1"
+      ],
+      "binaries_sha256": {
+        "xmem-smoke/xmem-smoke.exe": "1b05b6f1543c6020bb98e23d8ce35a396aaf6548cd6e4d7edd1337ad139c2d2e",
+        "xmem-smoke/xmem.dll": "504f7ec8e974e2effe8a7f5ca767acac6a644b62227f50dcf5e706b85214f324",
+        "xmem-smoke/xmem-http.exe": "e54dfac0855e7e4e8c85f2b0ef95dd43e84fdf0c1fa57e50cc2dd05e44b5654b",
+        "xmem-smoke/tuxbox_xhttp.dll": "4a51d32c7c9c85cb8347baf40c0c94b611fa42e038531bec6b958dba3575533c"
+      }
+    },
+    "ge": {
+      "proton": "1792432585 GE-Proton11-11",
+      "receipts": [
+        "xmem-http PASS callbacks=7 host-session=1",
+        "xmem-query PASS cpu=5 released=1 unsupported=3 guards=2 null=1"
+      ],
+      "binaries_sha256": {
+        "xmem-smoke/xmem-smoke.exe": "1b05b6f1543c6020bb98e23d8ce35a396aaf6548cd6e4d7edd1337ad139c2d2e",
+        "xmem-smoke/xmem.dll": "504f7ec8e974e2effe8a7f5ca767acac6a644b62227f50dcf5e706b85214f324",
+        "xmem-smoke/xmem-http.exe": "e54dfac0855e7e4e8c85f2b0ef95dd43e84fdf0c1fa57e50cc2dd05e44b5654b",
+        "xmem-smoke/tuxbox_xhttp.dll": "4a51d32c7c9c85cb8347baf40c0c94b611fa42e038531bec6b958dba3575533c"
+      }
+    }
+  }
+}

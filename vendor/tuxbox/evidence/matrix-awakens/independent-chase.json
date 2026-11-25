@@ -1,0 +1,223 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "configuration": {
+    "proton": "1795317580 experimental-11.0-20261027b-2-g9b0a6ae",
+    "renderer": "default reduced-effects profile",
+    "audio": "muted",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "shader_preparation": "menu",
+    "initial_prepared": {
+      "compiled": 5,
+      "reused": 218
+    }
+  },
+  "shader_requests": {
+    "trace": {
+      "log_sha256": "9c3ee57f0cf586047777d107abb4e6046a68f51cafeda6945c9fd2cfbe6b3b63",
+      "trace": "per-source",
+      "unique_sources": 1396
+    },
+    "compiler_sha256": "1c03be7dfc16717941b819c52e05e2ff64a24a8a8743f9577021a3ad4971e991",
+    "strict_compiler_sha256": "1112512021c2c8eb77679e554003e8d879fc01211b09799b62e81caab38e010f",
+    "runtime_cache_fingerprint": "e73e79d692fb042cf8b20993e6bccc022af9bc63eafe0f0678541853d4fc02c0",
+    "requested_by_stage": {
+      "Compute": 59,
+      "Vertex": 508,
+      "Pixel": 827,
+      "Geometry": 2
+    },
+    "verified_independent_requests": [
+      {
+        "source_sha256": "1487930038fb61f11a9f8feca4ef06eda9e3b7515792d4ae52649be61ee16dbc",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "3665b55e96faf06d62bf165bf65400b8877a99718e39e307a1aa23f081d948d2",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "a264326f5f1e59539349b4c1cb6e65e296a985966aa352eb89f9ba54f46a037e"
+      },
+      {
+        "source_sha256": "379e732b8084631ced00059b2ec6030c463b05c1fc68cb3d80ad69b6cf46af27",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+      },
+      {
+        "source_sha256": "3ca45139817062553ab3bb8cb6f429211dc7c944458312cce8b64c872959f33d",
+        "stage": "Pixel",
+        "cache": "prepared",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "4f84767d5360f5715f6e96faa98871c9a07eca698eb1ffb432b163d09d2dbdf6",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+      },
+      {
+        "source_sha256": "a9092cd30baa1fd5f08b944c01bc754ac496ede7eb06452d899a8f22d90a279f",
+        "stage": "Pixel",
+        "cache": "prepared",
+        "dxil_sha256": "a264326f5f1e59539349b4c1cb6e65e296a985966aa352eb89f9ba54f46a037e"
+      },
+      {
+        "source_sha256": "aa98a3aa2b1a12124a4b7cf7100fb4a8e964576da06cff04bc33bf75ae3151c8",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "ae0d925ed03e21906cd9d923a220ed4f17d150bf70763bd90fd67cdd8a8f943d",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "b9017929607c437d45eb6b440dfba76c1d12b6c367bc42009e9bfa4b7dc192c6",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "bf482c8fbc3afb7d8fa458dfa1e0331aec3eccec4707f5bfbcf8c073331daabb",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "c3f9ebc5ae947c7ab74a3f3588379a14ebb33a01091e779e977d0a96f10a5973",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "f32ec39db9e94895f7a2478315e23422d3c1146d069da4a0d1d6969f1a4ddc2c"
+      },
+      {
+        "source_sha256": "cafe4a3b0be1d11a9b711c07e8d27cdf7d6275fd1f4ef8a0d94dc1031428dc95",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "a264326f5f1e59539349b4c1cb6e65e296a985966aa352eb89f9ba54f46a037e"
+      },
+      {
+        "source_sha256": "cd7c806c7e9580573c61284651e4c4eb18d876ddf060f7f77576a9d83aa89cdf",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "f32ec39db9e94895f7a2478315e23422d3c1146d069da4a0d1d6969f1a4ddc2c"
+      },
+      {
+        "source_sha256": "d5aebdea24174edaeb82e105895950f920e2f1e2e7b2019a3daf185c6d5543d5",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "a264326f5f1e59539349b4c1cb6e65e296a985966aa352eb89f9ba54f46a037e"
+      },
+      {
+        "source_sha256": "e75b96d707d41580496180b65314ce44896e14653d6cadf679dd7fc4026be3d5",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "bf4167859f84207361f16881e5c4f8e56ab6816a1b38aa9bc3b42459095f25b6"
+      },
+      {
+        "source_sha256": "f3565c0fbb42a7686377fe6c5aba27bc3e710daa93e3e7459e699d5c9e3cf29f",
+        "stage": "Pixel",
+        "cache": "on_demand",
+        "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+      },
+      {
+        "source_sha256": "f8a14574b77c6455944784aa1084c3fc625f7683c8ed5b4788de6027ce68680e",
+        "stage": "Pixel",
+        "cache": "prepared",
+        "dxil_sha256": "f32ec39db9e94895f7a2478315e23422d3c1146d069da4a0d1d6969f1a4ddc2c"
+      }
+    ]
+  },
+  "runtime_compilations_logged": {
+    "standalone": 1235,
+    "linked_or_specialized": 190
+  },
+  "gameplay": {
+    "selection_utc": "2026-11-22T03:51:00+00:00",
+    "capture_seconds_after_selection": 1491.0,
+    "profile": "XSX_ChaseGameplay",
+    "layer": "Chase_Gameplay_Frogger",
+    "hud": [
+      "Switch Targets",
+      "Shoot"
+    ],
+    "capture": "independent-chase-tutorial.jpg",
+    "capture_sha256": "327ee86cfe6c1731241bc7fd50b1ea3dbda76e89c8dc4913144f1f40f4873e77",
+    "input_response_verified": false
+  },
+  "window_close": {
+    "requested": "WM_DELETE_WINDOW",
+    "guest_exit_code": 1,
+    "viewport_hresult": "0x887A0026",
+    "name": "DXGI_ERROR_ACCESS_LOST"
+  },
+  "mangohud": {
+    "csv": "Frosty-XSX-Shipping_2026-11-22_03-49-47.csv",
+    "frames": 15830,
+    "skipped_rows": 0,
+    "sampled_seconds": 1577.4992609409999,
+    "mean_fps": 10.034869994523604,
+    "frametime_ms": {
+      "p50": 6.51891,
+      "p95": 49.0278,
+      "p99": 1001.39,
+      "max": 44192.2
+    }
+  },
+  "chase_preparation_after_play": {
+    "cache_fingerprint": "e73e79d692fb042cf8b20993e6bccc022af9bc63eafe0f0678541853d4fc02c0",
+    "pass": {
+      "seconds": 17.391,
+      "guest_launches": 0,
+      "counts": {
+        "compiled": 197,
+        "reused": 1504,
+        "programs": {
+          "checked": 1271,
+          "compiled": 159
+        },
+        "links": {
+          "checked": 207,
+          "compiled": 38
+        }
+      },
+      "runtime": {
+        "entries": 1622,
+        "csos_sha256": "91a8c1aba86d74ad0be642e48b03fe71b5165905155df8de553b6a147503e903",
+        "kinds": {
+          "direct": 1394,
+          "linked": 228
+        }
+      },
+      "log_sha256": "59aec7da37af073da42238dd6741b950ed0166c936d2560243bb5c29f23216d2"
+    },
+    "repeat": {
+      "seconds": 1.106,
+      "guest_launches": 0,
+      "counts": {
+        "compiled": 0,
+        "reused": 1701,
+        "programs": {
+          "checked": 1271,
+          "compiled": 0
+        },
+        "links": {
+          "checked": 207,
+          "compiled": 0
+        }
+      },
+      "runtime": {
+        "entries": 1622,
+        "csos_sha256": "91a8c1aba86d74ad0be642e48b03fe71b5165905155df8de553b6a147503e903",
+        "kinds": {
+          "direct": 1394,
+          "linked": 228
+        }
+      },
+      "log_sha256": "3712610905738ff495dd5addc1e2e01d786a9187d14d95d62034d35448729390"
+    }
+  }
+}

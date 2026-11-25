@@ -1,0 +1,385 @@
+{
+  "passed": true,
+  "scope": "Synthetic native wave64 guarded reductions, instrumented inputs and outputs only",
+  "guest_wave_width": 64,
+  "adapter": "10de:2704",
+  "proton": "1794497090 experimental-11.0-20261112-x86_64",
+  "guest_exit": 0,
+  "cases": 70,
+  "compared_words": 26880,
+  "result_words": 8960,
+  "input_and_guard_words": 17920,
+  "emitter_sha256": "ebda12b329815231ecbc13236dddd10441bdbedb5a3dddf40e99d9a6c07ea876",
+  "shaders": {
+    "values": {
+      "hlsl_sha256": "3be50174ab8162ce3f02c0b410ac9302a5ff4a936f28eb4d6ad5b2371d8f8156",
+      "dxil_sha256": "dbd445d63758e2c4cb60baeb06ea42e1d3be3573410bc72e5923ed9f801e729e",
+      "profile": "cs_6_0"
+    },
+    "state": {
+      "hlsl_sha256": "500e9333ff6debb990540eb81f1f33db7f90b17d3ccf096d955c3c7a609290a9",
+      "dxil_sha256": "1862e7d39efcea351a888a3b82d3080b40b48ab6e8a13684581cdff2fde0e459",
+      "profile": "cs_6_0"
+    }
+  },
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+  "d3d12_dlls": {
+    "d3d12.dll": "fc2bbef02509fb11c334cc96dd211f64def94bb7b4eb82082a4808e6e0549543",
+    "d3d12core.dll": "9356501320114773be279506644aabd9a1717ff451d480ac802a4fd4e94b2576"
+  },
+  "rows": [
+    {
+      "case": "values_full",
+      "matched": true,
+      "readback_sha256": "ee3a32de22a65d152a2b81342a3c34d1058fe3e55b0913f5b98aec0bec376113"
+    },
+    {
+      "case": "values_empty",
+      "matched": true,
+      "readback_sha256": "d93a4d06e82002ae777a9be0aca203e9a4886ee681a6d45e71342a226d7265be"
+    },
+    {
+      "case": "values_odd",
+      "matched": true,
+      "readback_sha256": "b5502ec3a0f01794376d76f6ef2b4e77c763568c497e3efe760a3c28f07f79a7"
+    },
+    {
+      "case": "values_last",
+      "matched": true,
+      "readback_sha256": "6656b7cd0c796480b8f99ab4fb86e69e4c6f16e6b3b098ba07d54362bdd01dcb"
+    },
+    {
+      "case": "values_zero_sum",
+      "matched": true,
+      "readback_sha256": "55d9d4f55651745197a10fd34e8cea550276f12c301b857558bdb6a4e43b4aa6"
+    },
+    {
+      "case": "values_wrap_zero",
+      "matched": true,
+      "readback_sha256": "69bfeee4c27d1c9216d89888bd81839601ab7861b59b46cc43790553c54da56e"
+    },
+    {
+      "case": "values_wrap_nonzero",
+      "matched": true,
+      "readback_sha256": "e0343c80eaef7c866c1b7ee4a19e90d3a2eaaf1e997c6d1ca6af0b5f20d8e72d"
+    },
+    {
+      "case": "values_lane_zero",
+      "matched": true,
+      "readback_sha256": "99fccc88e8acd0783639cc4f4c41cbc2d7017d5bd99cf36d9e19a85dcd9a64a1"
+    },
+    {
+      "case": "values_upper_half",
+      "matched": true,
+      "readback_sha256": "6e76cbcf77d833ac78d2264756e942c03ff5d3087a7ada540f5ddefa231336ed"
+    },
+    {
+      "case": "values_lower_half",
+      "matched": true,
+      "readback_sha256": "4b466889ff0bbc757fe3aece5d0289cebbf0b6cc9e02bc70d732b5ddc2ec5267"
+    },
+    {
+      "case": "values_two_halves",
+      "matched": true,
+      "readback_sha256": "918fd52e47d67e6409dea7ff3447d0f6ed5453d68b17b3b900b97ab45e7c2110"
+    },
+    {
+      "case": "values_random00",
+      "matched": true,
+      "readback_sha256": "da3d60b186c7c7c6a4ec184925a491df954e198deeb8fc1fa277aaa45f439573"
+    },
+    {
+      "case": "values_random01",
+      "matched": true,
+      "readback_sha256": "44ea33663908adc0b1b46e7eabd983aa0770ca6db52b7485f46918776794be6e"
+    },
+    {
+      "case": "values_random02",
+      "matched": true,
+      "readback_sha256": "23f466e50bd0b3c45db72f1725f21418993f26021ee1676e659450712c013e5f"
+    },
+    {
+      "case": "values_random03",
+      "matched": true,
+      "readback_sha256": "b362b6dd21ad68623bd3d3fc2c5a6337f70187340633d04bdf88474979e3885d"
+    },
+    {
+      "case": "values_random04",
+      "matched": true,
+      "readback_sha256": "017bd3654ca0fad5c98a59e49a405945a81f28133b6335b9bf6a38f9dc9b3e0f"
+    },
+    {
+      "case": "values_random05",
+      "matched": true,
+      "readback_sha256": "12720ed2b1f662790c687d382a31e8faa2f6dd76a5a163392072bc2b4628e45b"
+    },
+    {
+      "case": "values_random06",
+      "matched": true,
+      "readback_sha256": "2532905e4cd204c90efc8c3fed0b3ec250f3b6da0649b645e26a2e2730598db3"
+    },
+    {
+      "case": "values_random07",
+      "matched": true,
+      "readback_sha256": "01f52f31e2f6515085ffce496331e0e8d7a4e9b8515f484aab6ad4df65a9cd0a"
+    },
+    {
+      "case": "values_random08",
+      "matched": true,
+      "readback_sha256": "2a699f75cb52108585071bef488b40d19e718b2e9ae6943ea5bf6220854f236b"
+    },
+    {
+      "case": "values_random09",
+      "matched": true,
+      "readback_sha256": "6d55198e75b55a60dcbee3997d923034919fcbb78c3e88ee851ceeb6b02dab6e"
+    },
+    {
+      "case": "values_random10",
+      "matched": true,
+      "readback_sha256": "5a771373df7451f7ce5dcb24cd40d9f1c30bfab803f402e1aed8556bab667fd9"
+    },
+    {
+      "case": "values_random11",
+      "matched": true,
+      "readback_sha256": "8668eca2c35e5fc23251f0f2e5ebf8f2509705e66574b6a5dc420458cbd02462"
+    },
+    {
+      "case": "values_random12",
+      "matched": true,
+      "readback_sha256": "c6617c537ba046fa45175ea1ad10917d4ec9bc0b359222d8c965381ceb533e78"
+    },
+    {
+      "case": "values_random13",
+      "matched": true,
+      "readback_sha256": "c1e3ccc87d1745eb17fa402dca092b1cdc9a9edd45e202eefee0990bd2fa4519"
+    },
+    {
+      "case": "values_random14",
+      "matched": true,
+      "readback_sha256": "9588fd06c6f6625f357b13a2154b08c9f38969f9eedb4d6b65bbc765eaad557e"
+    },
+    {
+      "case": "values_random15",
+      "matched": true,
+      "readback_sha256": "d302c51f43c6d9242d215271497b77dd79b73c1f572f17901927029338cf08b6"
+    },
+    {
+      "case": "values_random16",
+      "matched": true,
+      "readback_sha256": "98a06d5738aa7f0f0ea7e4d884f771f773a9d5c12735f4a14aa760676447c24d"
+    },
+    {
+      "case": "values_random17",
+      "matched": true,
+      "readback_sha256": "4db2fa57da5c2cdf510fa730b9c8ab58a138a703a85d576a4f855cf4cf642821"
+    },
+    {
+      "case": "values_random18",
+      "matched": true,
+      "readback_sha256": "5d61179f32240a1a04db22c29fe700194521e94a17bae8699a180530abf9a184"
+    },
+    {
+      "case": "values_random19",
+      "matched": true,
+      "readback_sha256": "c91890ccbab792f557464980b7df0f35389718bfb47e8cf7ae144cd147047f4a"
+    },
+    {
+      "case": "values_random20",
+      "matched": true,
+      "readback_sha256": "a86d1d2f4adbe3d5ffef7ec02b775f9d96a0c771e0a29e86570df3a8f3344ade"
+    },
+    {
+      "case": "values_random21",
+      "matched": true,
+      "readback_sha256": "f7d9ef1a215fcea8a2d4c13b0e9c1daeb4a33ec9edf186a270db3f22a63ef89e"
+    },
+    {
+      "case": "values_random22",
+      "matched": true,
+      "readback_sha256": "2a8fe4cd1f2bae62aa616b6e19af3f5fbdad4d13bbb38c531601e6d958de7320"
+    },
+    {
+      "case": "values_random23",
+      "matched": true,
+      "readback_sha256": "a5c0f01ab1986bc77227b4802c4820e097c9f52d644d3feb66ec1d5cbe1a2155"
+    },
+    {
+      "case": "state_full",
+      "matched": true,
+      "readback_sha256": "a4e333560cf3d3b4e30438e02da08470e22fd2d2837496d58b7bba73a02d51c7"
+    },
+    {
+      "case": "state_empty",
+      "matched": true,
+      "readback_sha256": "9367694fc3ac3406b6ab0797fdf704a640ec506b5e47c01595a205bb09b3a60f"
+    },
+    {
+      "case": "state_odd",
+      "matched": true,
+      "readback_sha256": "771579a4b39b77e23794cdf4f6737d636637a39de1dbc96a9f34a12fdce9f0ff"
+    },
+    {
+      "case": "state_last",
+      "matched": true,
+      "readback_sha256": "7955a12978890b0e9c6363a0b0eacf239ccdada0e9287d15e2e23612d16d8f93"
+    },
+    {
+      "case": "state_zero_sum",
+      "matched": true,
+      "readback_sha256": "a37bb5cb61b9dc84e79622af44db03ee27112218b7bafb363fbb4840e5f67a73"
+    },
+    {
+      "case": "state_wrap_zero",
+      "matched": true,
+      "readback_sha256": "8417ccf12429aeb401630438cec7e306ac328250d58510cd7e9af1be480ed292"
+    },
+    {
+      "case": "state_wrap_nonzero",
+      "matched": true,
+      "readback_sha256": "9cb74c49b8c21c940ab80bd87aee29cd7c1b115cd0dbfba9dc47abf48c55e030"
+    },
+    {
+      "case": "state_lane_zero",
+      "matched": true,
+      "readback_sha256": "d13c00d2edd52c8868a2b8485784da5e3305493be1c397638671097a3cc32907"
+    },
+    {
+      "case": "state_upper_half",
+      "matched": true,
+      "readback_sha256": "91d93b7fe43e1eed2864b1d2967ed4f6df8d9dd631c95f208c5368d18b431324"
+    },
+    {
+      "case": "state_lower_half",
+      "matched": true,
+      "readback_sha256": "15690a637126cb9e2f9d6a23f2c8a614211998bad428de90bb758de92941f734"
+    },
+    {
+      "case": "state_two_halves",
+      "matched": true,
+      "readback_sha256": "5804938243eac5cfcf23e29a411fe65a5649dce993ea43ce801520c619c3f204"
+    },
+    {
+      "case": "state_random00",
+      "matched": true,
+      "readback_sha256": "08487fdaa5ca26386f6a2563d076246db88ee45ecbd3b82d323f7ee5bc246c16"
+    },
+    {
+      "case": "state_random01",
+      "matched": true,
+      "readback_sha256": "81d1bdafe83d66b87c12654fde5621797dc5d93f493687f338e05051532c5198"
+    },
+    {
+      "case": "state_random02",
+      "matched": true,
+      "readback_sha256": "4526cf3ba1b988db8992e4eaf8acf83005ab38518e35e4121f362a0a6410ef86"
+    },
+    {
+      "case": "state_random03",
+      "matched": true,
+      "readback_sha256": "f31dba423115b701946cff6f7a40414f548ed0e4a652ef1c6bbe59ab7547aa09"
+    },
+    {
+      "case": "state_random04",
+      "matched": true,
+      "readback_sha256": "9dadbb57ce688aab7178e1273aab71a7929ec7c751d4e2515a72a0f0e664b851"
+    },
+    {
+      "case": "state_random05",
+      "matched": true,
+      "readback_sha256": "41585651f1e41b3d011e084f89c8d78ee65a85234a7cf8294867d913da78f300"
+    },
+    {
+      "case": "state_random06",
+      "matched": true,
+      "readback_sha256": "2a3be543ab6f9fbf093af9a25b13a34d7e75f8c6f7ec670296dec4d13ed1a926"
+    },
+    {
+      "case": "state_random07",
+      "matched": true,
+      "readback_sha256": "56bd9aace12b4541e2decd806704d6081d0342396380ac1f153e4669e676fc46"
+    },
+    {
+      "case": "state_random08",
+      "matched": true,
+      "readback_sha256": "fb48dbaa780bb12ea5ed09524fea4dac9aa7b521c9107940025fb1f53978365c"
+    },
+    {
+      "case": "state_random09",
+      "matched": true,
+      "readback_sha256": "a637dbeea8338bb3eb336e47867c6bd94bf2ac669d118c69ea5f62139e839a95"
+    },
+    {
+      "case": "state_random10",
+      "matched": true,
+      "readback_sha256": "2402db12c84fe6468f9345609619f17892d3de0182b8592d201c5bdc12b8c538"
+    },
+    {
+      "case": "state_random11",
+      "matched": true,
+      "readback_sha256": "666edfba4b880b047ea2eb515b749fbcb989d3d27129160590dbc73cd85fd888"
+    },
+    {
+      "case": "state_random12",
+      "matched": true,
+      "readback_sha256": "ad412477afd48264748927933a9c100dbede0d9395da93614e9f7b642e189882"
+    },
+    {
+      "case": "state_random13",
+      "matched": true,
+      "readback_sha256": "cb3c020617af5666c6359c6916537868a364f43dbaab1c9de40b4e6a1539bebe"
+    },
+    {
+      "case": "state_random14",
+      "matched": true,
+      "readback_sha256": "1cd03287a64e6eb4332b4e8220a3c80ca4c5552fd3ac370d4bd644bdb5253b51"
+    },
+    {
+      "case": "state_random15",
+      "matched": true,
+      "readback_sha256": "69526e6efb52752f17d1ef3c04cc1fbcc65b8c7e91035a08e232695169ffaeb9"
+    },
+    {
+      "case": "state_random16",
+      "matched": true,
+      "readback_sha256": "b88f739a116915f9df416715406cdbaeb56c10c5ec455d0fa40ee446b7a20e0e"
+    },
+    {
+      "case": "state_random17",
+      "matched": true,
+      "readback_sha256": "05649488013ab345b2d90bcdc49de822894edccf63a3e6d3259a4d47238c8438"
+    },
+    {
+      "case": "state_random18",
+      "matched": true,
+      "readback_sha256": "2c69280aeb96bc69cff40c17ed096af060e07dde7e437c57c2b8a917aab8e42a"
+    },
+    {
+      "case": "state_random19",
+      "matched": true,
+      "readback_sha256": "843a5f6d85128215f96996dc11c170799b8a9608d743f21064a29769f07fcd48"
+    },
+    {
+      "case": "state_random20",
+      "matched": true,
+      "readback_sha256": "36d9d828b136176c422f45d719254d50dec22ebfaf223cf083c972d30a41c34f"
+    },
+    {
+      "case": "state_random21",
+      "matched": true,
+      "readback_sha256": "24ec97e71e9773ea0d265291237569a6a37b6d975702cf68b5bbcfbb52eb6e40"
+    },
+    {
+      "case": "state_random22",
+      "matched": true,
+      "readback_sha256": "d56c853261b27278085ef9c418a104a1d5c7a21cc6fadcf3cc6edd08c8322841"
+    },
+    {
+      "case": "state_random23",
+      "matched": true,
+      "readback_sha256": "83ed79d9d1f909980cb49ae9648a35ee29a7e02a6492ce6915fb3b597ae95c20"
+    }
+  ],
+  "hardware": "GeForce RTX 4080",
+  "test_date_utc": "2026-11-24"
+}

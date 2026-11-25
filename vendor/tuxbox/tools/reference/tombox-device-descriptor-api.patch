@@ -1,0 +1,28 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -50,7 +50,13 @@
+     vtable: *const usize,
+     real: *mut c_void,
+     refs: AtomicU32,
+-}
++    _reserved: u32,
++    // The Scarlett inline descriptor helpers read this byte before choosing
++    // between a 32-byte CPU memcpy and device slot 24. Desktop handles are opaque.
++    use_descriptor_api: u8,
++}
++
++const _: () = assert!(core::mem::offset_of!(DeviceWrapper, use_descriptor_api) == 0x18);
+ 
+ fn guid_str(g: &Guid) -> String {
+     format!(
+@@ -1748,7 +1754,9 @@
+     if crate::rtcap::enabled() && !real.is_null() {
+         unsafe { patch_real_device(real) };
+     }
+-    let w = Box::new(DeviceWrapper { vtable: vtable(), real, refs: AtomicU32::new(1) });
++    let w = Box::new(DeviceWrapper {
++        vtable: vtable(), real, refs: AtomicU32::new(1), _reserved: 0, use_descriptor_api: 1,
++    });
+     Box::into_raw(w) as *mut c_void
+ }
+ 

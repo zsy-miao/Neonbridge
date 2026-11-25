@@ -1,0 +1,191 @@
+{
+  "passed": true,
+  "scope": "Synthetic native wave32 guarded reductions, instrumented inputs and outputs only",
+  "guest_wave_width": 32,
+  "variant": "original",
+  "adapter": "1002:73a5",
+  "proton": "1794497090 experimental-11.0-20261112-x86_64",
+  "guest_exit": 0,
+  "cases": 32,
+  "compared_words": 12288,
+  "result_words": 4096,
+  "input_and_guard_words": 8192,
+  "emitter_sha256": "07dab86db6cea59533e6440f054dd6f18206e9c6cb80da3f60fb9ae3a5e1b3f2",
+  "shaders": {
+    "all": {
+      "hlsl_sha256": "993d18cdcaeab15b459299404b22277c7fd37965b92a1a38896edd346be8ac2c",
+      "dxil_sha256": "8bb04a8c5aef5f9721ceb513d5ffb2e978d93afd610a611d32a5832adadc851a",
+      "profile": "cs_6_6"
+    }
+  },
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+  "d3d12_dlls": {
+    "d3d12.dll": "fc2bbef02509fb11c334cc96dd211f64def94bb7b4eb82082a4808e6e0549543",
+    "d3d12core.dll": "9356501320114773be279506644aabd9a1717ff451d480ac802a4fd4e94b2576"
+  },
+  "rows": [
+    {
+      "case": "all_full",
+      "matched": true,
+      "readback_sha256": "1fb23b534dae78493f4f0c1e28807723641be1399f9185f0838111cf67993563"
+    },
+    {
+      "case": "all_empty",
+      "matched": true,
+      "readback_sha256": "b7affaf9c72ca1a6f6bb62270c8fd7c76379449509161533762c97130a301a09"
+    },
+    {
+      "case": "all_odd",
+      "matched": true,
+      "readback_sha256": "cbe2c1e510756d05160570891535aa02f67c32e3307307108545d8ad4bb44402"
+    },
+    {
+      "case": "all_last",
+      "matched": true,
+      "readback_sha256": "ce4fcaf64e88410279af96d018d85d7c34be301ef00033a65a31178db289796f"
+    },
+    {
+      "case": "all_zero_sum",
+      "matched": true,
+      "readback_sha256": "6464f5f46adcea39cf899108aabd178b3eaa5e58cf4b9b2651c0a27259d5cad3"
+    },
+    {
+      "case": "all_wrap_zero",
+      "matched": true,
+      "readback_sha256": "44dd482869c479e33efb1d7bf6e7657038bb6105692451b1542ea643e8362f14"
+    },
+    {
+      "case": "all_wrap_nonzero",
+      "matched": true,
+      "readback_sha256": "2c0415fcdf4ff6d90d81a36a04ff3df2b92d30abb054dfc8aaa9e3c67697de96"
+    },
+    {
+      "case": "all_lane_zero",
+      "matched": true,
+      "readback_sha256": "efdc841e7d01bae5d40ab4d45b0120a33bea2e6390281656191615c4d62a803c"
+    },
+    {
+      "case": "all_random00",
+      "matched": true,
+      "readback_sha256": "27c845e27987ef831ad8308972264df39c466fe0abd5dde2550807bed9b5aaab"
+    },
+    {
+      "case": "all_random01",
+      "matched": true,
+      "readback_sha256": "d4dfb6728d3828f0aef2699989230086acc6ba6a00ce1e223b8204faeb364336"
+    },
+    {
+      "case": "all_random02",
+      "matched": true,
+      "readback_sha256": "53eefc155773aff92db3d095ce6d7253d854cce5c7ab4752a99aecd9712088e6"
+    },
+    {
+      "case": "all_random03",
+      "matched": true,
+      "readback_sha256": "6a3b78e117ceef57c8b52ef214204a2a687de6e6b77bd30950bffd8eb59ecb76"
+    },
+    {
+      "case": "all_random04",
+      "matched": true,
+      "readback_sha256": "168871298320eae395975b9fb9358e5bc5d366df85823c40fc025e36e3d5ce4b"
+    },
+    {
+      "case": "all_random05",
+      "matched": true,
+      "readback_sha256": "f638e4dfb4ad2c65bd82ad76574ce94af3718a971824b13aabcedbf7b5f8f3db"
+    },
+    {
+      "case": "all_random06",
+      "matched": true,
+      "readback_sha256": "7cc6d384775f692c984e4bb9c3bbb9b046c2fc563f26f320700ecc43d76a320b"
+    },
+    {
+      "case": "all_random07",
+      "matched": true,
+      "readback_sha256": "b6eace62c117ae3f244a2c01a99459b5c156ff7bac67ad0f5c3bc7bd21a6e365"
+    },
+    {
+      "case": "all_random08",
+      "matched": true,
+      "readback_sha256": "88a739a777b36b9394dbf91ce23f1bb94aa00742ea9fea29e826a49d9f50bcba"
+    },
+    {
+      "case": "all_random09",
+      "matched": true,
+      "readback_sha256": "0db11db96c1d9fa5b6aee942e2dbf179d1c5cad6be2c0d8c11f18b9c0a2c4a45"
+    },
+    {
+      "case": "all_random10",
+      "matched": true,
+      "readback_sha256": "a18e152e3339de0408b832508f8e44ca2837879843aa81acfab3137c76069546"
+    },
+    {
+      "case": "all_random11",
+      "matched": true,
+      "readback_sha256": "7d9dd3271104c4ebdcaea9126675cd4b38557ae5320b8b627991ef99a0cce814"
+    },
+    {
+      "case": "all_random12",
+      "matched": true,
+      "readback_sha256": "f9686a09babba539624987bcd24fafd999fb9814b33d7f79723a38b46cc25ac5"
+    },
+    {
+      "case": "all_random13",
+      "matched": true,
+      "readback_sha256": "61371728917d60e7f3a409894db9bb8b88b3950fa0c87d201fe60a6409fd6010"
+    },
+    {
+      "case": "all_random14",
+      "matched": true,
+      "readback_sha256": "90486e2c541c585202882533b99ea6729a79c35c9230047afdd444e434c3fab1"
+    },
+    {
+      "case": "all_random15",
+      "matched": true,
+      "readback_sha256": "2e95b70516c6e7499aeab27998892782ba53d692cf56d3c75a4a190e4c4a547e"
+    },
+    {
+      "case": "all_random16",
+      "matched": true,
+      "readback_sha256": "21c9c07520e91971be6297355ddb35e0517eb784a49e09989ef70d12371b2b9b"
+    },
+    {
+      "case": "all_random17",
+      "matched": true,
+      "readback_sha256": "2ef85e2f7c69f36c70121f080a1764fb35847fba0df0eda254d7bc10e6d03a08"
+    },
+    {
+      "case": "all_random18",
+      "matched": true,
+      "readback_sha256": "dfbe479a71460f6866c8d399597f48d1efb103383e6327d87bcde44609d5d721"
+    },
+    {
+      "case": "all_random19",
+      "matched": true,
+      "readback_sha256": "895175289c24838e42ed9172043e36654bf628690c45afc66c766d6f4cb27836"
+    },
+    {
+      "case": "all_random20",
+      "matched": true,
+      "readback_sha256": "76ae83e5cf95b9cf1519a18e6789ae32fb3594d33a1ba9e9fa8b0b63554adcef"
+    },
+    {
+      "case": "all_random21",
+      "matched": true,
+      "readback_sha256": "cb9e2cdff566d21f7ad27043859f26aba7fbf016fc4bd4d7edd60c6548bc4694"
+    },
+    {
+      "case": "all_random22",
+      "matched": true,
+      "readback_sha256": "e00c3907425434f0277e6c2e76acd4148ecdca8ca08126bf4091d46bd56fbd88"
+    },
+    {
+      "case": "all_random23",
+      "matched": true,
+      "readback_sha256": "7a4b21903e6efe9435d73ba042f3ef923523cff5b2c21cbec27860fe7dc48210"
+    }
+  ],
+  "hardware": "AMD Radeon RX 6950 XT",
+  "test_date_utc": "2026-11-24"
+}

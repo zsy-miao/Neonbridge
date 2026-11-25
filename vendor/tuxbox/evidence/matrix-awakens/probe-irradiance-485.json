@@ -1,0 +1,36 @@
+{
+  "scope": "Packaged global 485 probe irradiance, both output textures: portable execution versus native Radeon wave64. The reference uses the same translated shader with native wave operations and does not independently validate the rest of the translation.",
+  "source_sha256": "3e0297f2e27cee107ce787a1e877f3916aca1069090fbff0a507669be9ff2b18",
+  "compiler_sha256": "6077a36ef5fddddc58fef2e744f51010ba0eb9c0b6c301263ef3d47e831a56f7",
+  "cases": [
+    "active",
+    "width1",
+    "width2",
+    "width3",
+    "partial",
+    "quarter",
+    "empty",
+    "rejected"
+  ],
+  "tolerance": 1e-06,
+  "runs": {
+    "native_amd": {
+      "adapter": "adapter=1002:13c0",
+      "cases": 8,
+      "outputs": 2,
+      "compared_words_per_output": 512
+    },
+    "portable_amd": {
+      "adapter": "adapter=1002:13c0",
+      "cases": 8,
+      "outputs": 2,
+      "compared_words_per_output": 512
+    },
+    "portable_nvidia": {
+      "adapter": "adapter=10de:2705",
+      "cases": 8,
+      "outputs": 2,
+      "compared_words_per_output": 512
+    }
+  }
+}

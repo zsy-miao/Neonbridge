@@ -1,0 +1,95 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "d3d12_xs_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "gameinput_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+  "engine_ini_sha256": "1f10954392a7401137094c59c91fe980e42b7426cc0e43918cf50b0443e359ca",
+  "launcher": "tools/run_frosty.sh",
+  "shader_prep": "chase",
+  "shader_compiler_sha256": "961572056d90f963f27e0610edd253982690936dfc47dc7111569cbf77f9939b",
+  "adapter": "10de:2705",
+  "guest_arguments": [
+    "-DisablePlugins=XboxCommonGDKMoviePlayer",
+    "-gauntlet=FrostyTestControllerAutoTest",
+    "-FrostyTest.PreferSandbox"
+  ],
+  "launch_utc": "2026-11-22T01:40:15Z",
+  "run_seconds": 273.4,
+  "guest_exit_code": 0,
+  "gauntlet_exit_code": 0,
+  "first_menu_utc": "2026-11-22T01:40:32.272+00:00",
+  "sandbox_state_utc": "2026-11-22T01:40:59.680+00:00",
+  "intro_finished_utc": "2026-11-22T01:42:41.652+00:00",
+  "test_finished_utc": "2026-11-22T01:44:55.316+00:00",
+  "controls": {
+    "initial": {
+      "utc": "2026-11-22T01:44:15.602670+00:00",
+      "rotation": [
+        0.0,
+        13.0904,
+        0.0
+      ],
+      "pawn_name": "BP_FrostyPlayerCharacter_C",
+      "pawn": "0x27c6c940",
+      "location": [
+        -71765.0156,
+        -38701.8711,
+        203.5259
+      ]
+    },
+    "forward": {
+      "utc": "2026-11-22T01:44:19.857926+00:00",
+      "rotation": [
+        0.0,
+        13.0904,
+        0.0
+      ],
+      "pawn_name": "BP_FrostyPlayerCharacter_C",
+      "pawn": "0x27c6c940",
+      "location": [
+        -71646.3672,
+        -38674.2695,
+        203.5259
+      ]
+    },
+    "idle_after_forward": {
+      "utc": "2026-11-22T01:44:21.459374+00:00",
+      "rotation": [
+        0.0,
+        13.0904,
+        0.0
+      ],
+      "pawn_name": "BP_FrostyPlayerCharacter_C",
+      "pawn": "0x27c6c940",
+      "location": [
+        -71646.3672,
+        -38674.2695,
+        203.5259
+      ]
+    },
+    "back": {
+      "utc": "2026-11-22T01:44:26.319346+00:00",
+      "rotation": [
+        0.0,
+        13.0042,
+        0.0
+      ],
+      "pawn_name": "BP_FrostyPlayerCharacter_C",
+      "pawn": "0x27c6c940",
+      "location": [
+        -72326.375,
+        -38832.0938,
+        204.0142
+      ]
+    },
+    "forward_distance": 121.81662918140938,
+    "back_distance": 698.0824576877284,
+    "movement_verified": true
+  },
+  "device": "Linux uinput Xbox 360 controller through Proton XInput",
+  "memory_peak_sampled_bytes": 5017731072,
+  "oom_kills": 0,
+  "image": "sandbox-street.jpg",
+  "image_sha256": "f54b6213c2a03fd670f1960003bfb93813165d1dc1ce36c98528de6674a7f4e5",
+  "image_capture_utc": "2026-11-22T01:43:43.998027+00:00",
+  "observation": "The authored Gauntlet controller selected Sandbox from the main menu. After its intro finished, the street HUD showed Fly and Sprint. Opposite left-stick inputs moved the same walking character in opposing directions. The authored test then requested shutdown. Some buildings, vehicles and the character have missing surfaces."
+}

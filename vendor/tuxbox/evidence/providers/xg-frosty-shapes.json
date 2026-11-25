@@ -1,0 +1,105 @@
+{
+  "kind": "XG layout and element-offset comparison with Frosty resource descriptions",
+  "trace_record": "evidence/matrix-awakens/chase-retail.json, trials.chase-placed",
+  "retail_title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider_log_sha256": "835521ed3d68934e92646ba507020670f78d87ef36c66fe7e65ebd7a292dae4d",
+  "proton": "1789159601 experimental-11.0-20260910b-x86_64",
+  "console_xg_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "guest_sha256": "d77bd6446f123c33a51d72a69af8ba7b46cb04d493720cabf2497ad5037133f0",
+  "probe": "Same guest DLL import on each side. Prefill the layout at two different byte values, check repeatability and guards, compare all 0x1b40 layout bytes and every valid mip element offset. For the block-compressed formats X and Y are block coordinates. All returned bit positions are zero.",
+  "note": "The retail graphics trace recorded placed-resource creation, not an XG call. It logged one sample but omitted sample quality; the comparison uses quality zero.",
+  "cases": [
+    {
+      "placed_resource_instance": 1,
+      "line": 16793,
+      "desc": {
+        "width": 32,
+        "height": 32,
+        "depth_or_slices": 1,
+        "mips": 6,
+        "format": 90,
+        "sample_count": 1,
+        "sample_quality": 0,
+        "layout": 261,
+        "alignment": 0,
+        "dimension": 3,
+        "flags": 0
+      },
+      "layout_size_bytes": 8192,
+      "layout_hash_fnv1a64": "ba76c744255a51ae",
+      "offset_hash_fnv1a64": "f62c0a92129835b4",
+      "layout_sha256": "ef35534d95a115005b34a28eac30ebf478fb88295d51a137210834483434ea84",
+      "offsets_sha256": "2d71be1d1b97f00694e6c156d34d714d2576e7d817a82c7ac5a421244e598076",
+      "element_count": 1365
+    },
+    {
+      "placed_resource_instance": 11,
+      "line": 16963,
+      "desc": {
+        "width": 843,
+        "height": 5,
+        "depth_or_slices": 1,
+        "mips": 1,
+        "format": 90,
+        "sample_count": 1,
+        "sample_quality": 0,
+        "layout": 261,
+        "alignment": 0,
+        "dimension": 3,
+        "flags": 0
+      },
+      "layout_size_bytes": 110592,
+      "layout_hash_fnv1a64": "3d34d55e54e1d625",
+      "offset_hash_fnv1a64": "7f4f57f937403266",
+      "layout_sha256": "663ba5e6f553ab286ad63fe3a6f2d6bd2b467c4820fde8ccb67380d2679fdc4a",
+      "offsets_sha256": "b5f0fc5b3a90cf10d61b5484eac7fcc173ac7608613f89b0924a73cbc7cfbdc1",
+      "element_count": 4215
+    },
+    {
+      "placed_resource_instance": 3,
+      "line": 16826,
+      "desc": {
+        "width": 512,
+        "height": 512,
+        "depth_or_slices": 1,
+        "mips": 10,
+        "format": 76,
+        "sample_count": 1,
+        "sample_quality": 0,
+        "layout": 261,
+        "alignment": 0,
+        "dimension": 3,
+        "flags": 0
+      },
+      "layout_size_bytes": 352256,
+      "layout_hash_fnv1a64": "57dcba197e218104",
+      "offset_hash_fnv1a64": "43df594108211cfe",
+      "layout_sha256": "fdb307e607837265c98df36112d86ac64735bf90e6bba0398f6be418f1635f01",
+      "offsets_sha256": "5e10e75e5e8213c8a41beb83302a503f1d416040c9b33c38cfa46b75d0de3f6e",
+      "element_count": 21847
+    },
+    {
+      "placed_resource_instance": 4,
+      "line": 16832,
+      "desc": {
+        "width": 256,
+        "height": 256,
+        "depth_or_slices": 1,
+        "mips": 9,
+        "format": 83,
+        "sample_count": 1,
+        "sample_quality": 0,
+        "layout": 261,
+        "alignment": 0,
+        "dimension": 3,
+        "flags": 0
+      },
+      "layout_size_bytes": 90112,
+      "layout_hash_fnv1a64": "733a03937023d402",
+      "offset_hash_fnv1a64": "eaccc2ed7a2c7afe",
+      "layout_sha256": "f43486680cdda20409fb405998cf4180edd545095cd2f2a03899b53c8b17ec87",
+      "offsets_sha256": "edea8e4b49ab53ad19d7e465abf84cc4a643b0ca395da2902942394bdfe8b82f",
+      "element_count": 5463
+    }
+  ]
+}

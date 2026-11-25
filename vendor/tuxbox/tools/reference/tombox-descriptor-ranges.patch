@@ -1,0 +1,84 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -721,6 +721,35 @@
+     }
+ }
+ 
++struct DescriptorRanges<'a> {
++    starts: &'a [u64],
++    sizes: Option<&'a [u32]>,
++}
++
++impl DescriptorRanges<'_> {
++    // SAFETY: each non-null input array contains count elements for this call.
++    unsafe fn from_raw<'a>(count: u32, starts: *const u64, sizes: *const u32) -> Option<DescriptorRanges<'a>> {
++        if count == 0 { return Some(DescriptorRanges { starts: &[], sizes: None }); }
++        if starts.is_null() { return None; }
++        let len = count as usize;
++        Some(DescriptorRanges {
++            starts: unsafe { core::slice::from_raw_parts(starts, len) },
++            sizes: (!sizes.is_null()).then(|| unsafe { core::slice::from_raw_parts(sizes, len) }),
++        })
++    }
++
++    fn count(&self) -> u64 {
++        self.sizes.map_or(self.starts.len() as u64, |sizes| sizes.iter().map(|&n| u64::from(n)).sum())
++    }
++
++    fn handles(&self, increment: u64) -> impl Iterator<Item = u64> + '_ {
++        self.starts.iter().enumerate().flat_map(move |(index, &base)| {
++            let size = self.sizes.map_or(1, |sizes| sizes[index]);
++            (0..size).map(move |i| base + increment * u64::from(i))
++        })
++    }
++}
++
+ unsafe extern "system" fn copy_descriptors(
+     this: *mut DeviceWrapper,
+     dst_count: u32, dst: *const u64, dst_sizes: *const u32,
+@@ -728,21 +757,31 @@
+ ) {
+     let real = unsafe { (*this).real };
+     let methods = unsafe { real_vtbl(real) };
+-    // A null sizes array means every range contains exactly one descriptor.
+-    // Use the equivalent desktop single-descriptor copy for this common shape.
+-    if dst_count == 1 && src_count == 1 && !dst.is_null() && !src.is_null()
+-        && (dst_sizes.is_null() || unsafe { *dst_sizes == 1 })
+-        && (src_sizes.is_null() || unsafe { *src_sizes == 1 })
+-    {
+-        let simple: unsafe extern "system" fn(*mut c_void, u32, u64, u64, u32) =
+-            unsafe { core::mem::transmute(*methods.add(24)) };
+-        unsafe { simple(real, 1, *dst, *src, heap_type) };
+-    } else {
+-        let copy: unsafe extern "system" fn(
+-            *mut c_void, u32, *const u64, *const u32, u32, *const u64, *const u32, u32,
+-        ) = unsafe { core::mem::transmute(*methods.add(23)) };
+-        unsafe { copy(real, dst_count, dst, dst_sizes, src_count, src, src_sizes, heap_type) };
++    let destination = unsafe { DescriptorRanges::from_raw(dst_count, dst, dst_sizes) };
++    let source = unsafe { DescriptorRanges::from_raw(src_count, src, src_sizes) };
++    if let (Some(destination), Some(source)) = (destination, source) {
++        let count = destination.count();
++        if heap_type <= 3 && count == source.count() {
++            if count == 0 { return; }
++            // The two streams can have different range boundaries. The desktop
++            // increment depends on heap type and device. A zero-length range
++            // contributes no handles, including when its start handle is zero.
++            let increment: unsafe extern "system" fn(*mut c_void, u32) -> u32 =
++                unsafe { core::mem::transmute(*methods.add(15)) };
++            let step = u64::from(unsafe { increment(real, heap_type) });
++            let simple: unsafe extern "system" fn(*mut c_void, u32, u64, u64, u32) =
++                unsafe { core::mem::transmute(*methods.add(24)) };
++            for (to, from) in destination.handles(step).zip(source.handles(step)) {
++                unsafe { simple(real, 1, to, from, heap_type) };
++            }
++            return;
++        }
+     }
++    // Preserve desktop validation for malformed inputs.
++    let copy: unsafe extern "system" fn(
++        *mut c_void, u32, *const u64, *const u32, u32, *const u64, *const u32, u32,
++    ) = unsafe { core::mem::transmute(*methods.add(23)) };
++    unsafe { copy(real, dst_count, dst, dst_sizes, src_count, src, src_sizes, heap_type) };
+ }
+ 
+ /// Frosty's graphics stream contains desktop-compatible state followed by an

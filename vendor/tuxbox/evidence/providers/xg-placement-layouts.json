@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "xg/xg-texture.exe": "3d134c9f7b5143cf5b30f78aed8d61beac857d13caa875ebd7ea449a9f23adfc",
+    "xg/xg_xs.dll": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+    "xmem-smoke/xmem.dll": "ac3e68c658c9ff8684d5e9c0d991900f0102e5a90f234976fa8875acd3fdd5f3",
+    "xg-provider/xg-texture.exe": "3d134c9f7b5143cf5b30f78aed8d61beac857d13caa875ebd7ea449a9f23adfc",
+    "xg-provider/xg_xs.dll": "adeeb9addba80435687581ceb8f0e01cb04108380b76addb64ca9b25e9b7d8bf"
+  },
+  "checks": [
+    {
+      "gate": "xg-native-layout",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS descriptors=4 layout-queries=8 plane-records=4 releases=4"
+    },
+    {
+      "gate": "xg-native-addresses",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS layouts=18 traced-descriptors=8 element-addresses=872759"
+    },
+    {
+      "gate": "xg-native-formats",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-formats PASS formats=78 layouts=156 element-addresses=9231018"
+    },
+    {
+      "gate": "xg-addresses",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS layouts=18 traced-descriptors=8 element-addresses=872759"
+    },
+    {
+      "gate": "xg-formats",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-formats PASS formats=78 layouts=156 element-addresses=9231018"
+    }
+  ],
+  "benchmark": {
+    "workload": "The same guest enumerates and checks all 9,231,018 logical addresses across 156 layouts per sample using QueryPerformanceCounter. Times apply to address calculation on this host.",
+    "original": {
+      "frequency_hz": 10000000,
+      "samples_ticks": [
+        3688727,
+        3740824,
+        3710672,
+        3722191,
+        3896843,
+        3779223,
+        3834377
+      ],
+      "median_ms": 374.0824
+    },
+    "tuxbox": {
+      "frequency_hz": 10000000,
+      "samples_ticks": [
+        653391,
+        631442,
+        635720,
+        685716,
+        629467,
+        642454,
+        631356
+      ],
+      "median_ms": 63.572
+    }
+  }
+}

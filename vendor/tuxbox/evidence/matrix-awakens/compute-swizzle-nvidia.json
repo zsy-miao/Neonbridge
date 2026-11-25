@@ -1,0 +1,29 @@
+{
+  "archive_entry": 2227,
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "cooked_sha256": "d6ce4f1984b92b4106c31b052c92e1e5dccd60943a06da7a250fcb132c28d12b",
+  "native_instructions": 769,
+  "group": [
+    8,
+    8,
+    1
+  ],
+  "swizzles": 33,
+  "op": "DS_SWIZZLE_B32",
+  "modes": [
+    "0x041f",
+    "0x201f"
+  ],
+  "readback": {
+    "retail_dispatch_groups": "4",
+    "matched": "8448"
+  },
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+  ],
+  "scope": "Full retail compute PSO created via Xbox slot 62 and dispatched with zero constants, null texture views and valid sampler. Each original emitted exchange separately executed with distinct lane words and full, sparse, partial and zero EXEC masks; compared to CPU, including unchanged destinations.",
+  "guest_sha256": "c8ab5e6eb896ac80bd6d3511c1e992921851cce94379627fea3f152115b2daa2",
+  "provider_sha256": "b34b1c59280ba7b1b8b74c39bb1902215a259e1ec6da91819c1fa834071a82d5",
+  "patch_sha256": "3bf19460d9b25a361d5ed2381d8f1f87bd180196c93b4985ffe4e232d7b8ed17",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+}

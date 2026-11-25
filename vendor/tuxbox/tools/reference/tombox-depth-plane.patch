@@ -1,0 +1,569 @@
+--- a/crates/compat/d3d12_xs/src/lib.rs
++++ b/crates/compat/d3d12_xs/src/lib.rs
+@@ -15,6 +15,7 @@
+ mod dxgi_device;
+ mod heap_wrap;
+ mod barriers;
++mod depth;
+ mod cmdlist_wrap;
+ mod gxdk_edition;
+ mod shader_xlat;
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -495,7 +495,7 @@
+ }
+ 
+ /// PC IID_ID3D12Resource = {696442be-a72e-4059-bc79-5b5c98040fad}
+-static IID_ID3D12RESOURCE: Guid = Guid {
++pub(super) static IID_ID3D12RESOURCE: Guid = Guid {
+     d1: 0x6964_42be, d2: 0xa72e, d3: 0x4059, d4: [0xbc, 0x79, 0x5b, 0x5c, 0x98, 0x04, 0x0f, 0xad],
+ };
+ 
+@@ -504,6 +504,30 @@
+ /// resource IID doesn't make the real call return a null resource.
+ /// Args (system ABI): rcx=this, rdx=pHeapProps, r8=HeapFlags, r9=pDesc, then
+ /// stack: InitialState, pOptimizedClearValue, riid, ppvResource.
++unsafe extern "system" fn create_uav_x(
++    this: *mut DeviceWrapper, resource: *mut c_void, counter: *mut c_void, desc: *const u32, handle: u64,
++) {
++    let device = unsafe { (*this).real };
++    let create: unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void, *const u32, u64) =
++        unsafe { core::mem::transmute(*real_vtbl(device).add(19)) };
++    // R32_FLOAT_X8X24_TYPELESS selects only the float depth plane. The
++    // corresponding UAV on the companion image is a typed R32_FLOAT view.
++    if counter.is_null() && !desc.is_null() && unsafe { *desc == 21 && *desc.add(1) == 4 &&
++        *desc.add(2) == 0 && *desc.add(3) == 0 }
++    {
++        if let Some(image) = unsafe { crate::depth::uav(resource) } {
++            #[repr(align(8))]
++            struct View([u32; 10]);
++            let mut view = View([0; 10]);
++            view.0[0] = 41;
++            view.0[1] = 4;
++            unsafe { create(device, image.0, counter, view.0.as_ptr(), handle) };
++            return;
++        }
++    }
++    unsafe { create(device, resource, counter, desc, handle) }
++}
++
+ unsafe extern "system" fn create_committed_resource(
+     this: *mut DeviceWrapper, pheap: *const u32, heap_flags: u32, pdesc: *const u32,
+     init_state: u32, pclear: *const c_void, riid: *const Guid, ppv: *mut *mut c_void,
+@@ -518,6 +542,7 @@
+     struct AlignedDesc([u8; 0x38]);
+     let mut storage = AlignedDesc([0; 0x38]);
+     let desc_copy = &mut storage.0;
++    let paired = unsafe { crate::depth::matches(pheap, heap_flags, pdesc, init_state) };
+     let desc_ptr = if pdesc.is_null() {
+         pdesc
+     } else {
+@@ -535,6 +560,7 @@
+         }
+         const PC_RESOURCE_FLAGS: u32 = 0xFF; // RT|DSV|UAV|DENY_SRV|CROSS_ADAPTER|SIMUL|VIDEO*
+         desc_copy[0x30..0x34].copy_from_slice(&(flags & PC_RESOURCE_FLAGS).to_le_bytes());
++        if paired { desc_copy[48..52].copy_from_slice(&2u32.to_le_bytes()); }
+         desc_copy.as_ptr() as *const u32
+     };
+     let pc_state = if pdesc.is_null() { init_state } else {
+@@ -542,6 +568,14 @@
+     };
+     let hr = unsafe { f(real, pheap, heap_flags, desc_ptr, pc_state, pclear, use_riid, ppv) };
+     if hr >= 0 && !ppv.is_null() && !pdesc.is_null() {
++        if paired {
++            if let Err(error) = unsafe { crate::depth::attach(real, *ppv, pheap, desc_copy) } {
++                // The result belongs to the caller only after creation of both
++                // representations and transfer storage succeeds.
++                unsafe { drop(crate::depth::Owned(*ppv)); ppv.write(core::ptr::null_mut()); }
++                return error;
++            }
++        }
+         if let Some(sites) = crate::resource_map::sites() {
+             if !pheap.is_null() && heap_flags & crate::resource_map::CREATE_NOT_ZEROED == 0
+                 && unsafe { crate::resource_map::gpu_only(*pheap, *pheap.add(1)) }
+@@ -1639,6 +1673,7 @@
+         v[67] = deserialize_compute_pso_x as usize;
+         v[76] = create_committed_resource_x as usize;
+         v[102] = raytracing_prebuild_info as *const () as usize;
++        v[19] = create_uav_x as *const () as usize;
+         v[23] = copy_descriptors as *const () as usize;
+         v[86] = create_pipeline_stream as *const () as usize;
+         v[73] = create_command_list_x as usize;  // Xbox command-list create
+--- a/crates/compat/d3d12_xs/src/cmdlist_wrap.rs
++++ b/crates/compat/d3d12_xs/src/cmdlist_wrap.rs
+@@ -83,6 +83,8 @@
+             // Its discard job at RVA 0x6dcb calls slot 55 with the resource and null region
+             // after flushing barriers, matching PC DiscardResource (51).
+             for i in 51..=55 { xbox[i].store(pc[i - 4], Ordering::Relaxed); }
++            xbox[53].store(clear_uav_uint as *const () as usize, Ordering::Relaxed);
++            xbox[54].store(clear_uav_float as *const () as usize, Ordering::Relaxed);
+             xbox[67].store(flush_texture_cache_x as usize, Ordering::Relaxed);
+             // Xbox 68 = OMSetDepthBounds (PC ID3D12GraphicsCommandList1 slot 62): called from
+             // FD3D12StateCacheBase::ApplyState (EXE+0x4e0480) with the two cached depth-bound
+@@ -133,6 +135,25 @@
+     refs
+ }
+ 
++// ClearUnorderedAccessView receives the resource separately from its CPU/GPU
++// descriptors. All three must name the same physical image on the host.
++unsafe fn clear_uav(list: *mut c_void, gpu: u64, cpu: usize, resource: *mut c_void,
++    values: *const u32, count: u32, rects: *const c_void, slot: usize) {
++    let clear: unsafe extern "system" fn(*mut c_void, u64, usize, *mut c_void, *const u32, u32, *const c_void) =
++        unsafe { core::mem::transmute(*REAL_VT_PTR.add(slot)) };
++    let companion = unsafe { crate::depth::uav(resource) };
++    let target = companion.as_ref().map_or(resource, |image| image.0);
++    unsafe { clear(list, gpu, cpu, target, values, count, rects) };
++}
++unsafe extern "system" fn clear_uav_uint(list: *mut c_void, gpu: u64, cpu: usize, resource: *mut c_void,
++    values: *const u32, count: u32, rects: *const c_void) {
++    unsafe { clear_uav(list, gpu, cpu, resource, values, count, rects, 49) };
++}
++unsafe extern "system" fn clear_uav_float(list: *mut c_void, gpu: u64, cpu: usize, resource: *mut c_void,
++    values: *const u32, count: u32, rects: *const c_void) {
++    unsafe { clear_uav(list, gpu, cpu, resource, values, count, rects, 50) };
++}
++
+ unsafe extern "system" fn resource_barrier_traced(this: *mut c_void, n: u32, barriers: *const u8) {
+     let forward: unsafe extern "system" fn(*mut c_void, u32, *const u8) = core::mem::transmute(*REAL_VT_PTR.add(26));
+     if n == 0 || barriers.is_null() {
+@@ -152,7 +173,7 @@
+             }
+         }
+     }
+-    forward(this, host.len() as u32, host.as_ptr().cast());
++    crate::depth::barriers(this, &host);
+ }
+ 
+ // Draw-trace hooks (installed only with the diagnostic capture): note, then forward.
+--- a/crates/compat/d3d12_xs/src/barriers.rs
++++ b/crates/compat/d3d12_xs/src/barriers.rs
+@@ -32,6 +32,17 @@
+ const _: () = assert!(size_of::<Barrier>() == 32 && align_of::<Barrier>() == 8);
+ 
+ impl Barrier {
++    pub(super) fn new_transition(resource: *mut c_void, subresource: u32, before: u32, after: u32) -> Self {
++        Self { kind: 0, flags: 0, payload: Payload { transition: Transition { resource, subresource, before, after } } }
++    }
++    pub(super) fn new_uav(resource: *mut c_void) -> Self {
++        Self { kind: 2, ..Self::new_transition(resource, 0, 0, 0) }
++    }
++    pub(super) fn uav_resource(&self) -> Option<*mut c_void> {
++        (self.kind == 2).then(|| unsafe { self.payload.transition.resource })
++    }
++    pub(super) fn begin_only(&self) -> bool { self.flags == 1 }
++
+     pub fn transition(&self) -> Option<Transition> {
+         // D3D12_RESOURCE_BARRIER_TYPE_TRANSITION selects the active union member.
+         (self.kind == 0).then(|| unsafe { self.payload.transition })
+diff --git a/crates/compat/d3d12_xs/src/depth.rs b/crates/compat/d3d12_xs/src/depth.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/compat/d3d12_xs/src/depth.rs
+@@ -0,0 +1,407 @@
++//! Xbox depth-plane unordered access on desktop D3D12. A single-sample,
++//! single-subresource typeless D32/S8 image retains both hardware depth planes.
++//! Its float UAV lives on a second image. Transitions to/from UAV copy plane 0
++//! through a default-heap buffer; the stencil plane stays on the depth image.
++use crate::barriers::Barrier;
++use crate::device_wrap::{Guid, IID_ID3D12RESOURCE};
++use core::{ffi::c_void, mem, ptr};
++use std::sync::atomic::{AtomicBool, Ordering};
++
++type Object = *mut c_void;
++const COPY_DEST: u32 = 0x400;
++const COPY_SOURCE: u32 = 0x800;
++const UAV: u32 = 8;
++const ALL: u32 = u32::MAX;
++const E_INVALIDARG: i32 = 0x80070057u32 as i32;
++static ACTIVE: AtomicBool = AtomicBool::new(false);
++
++const fn key(id: u32) -> Guid {
++    Guid {
++        d1: id,
++        d2: 0x4e23,
++        d3: 0x486b,
++        d4: [0x84, 0xa2, 0x6f, 0x86, 0x3b, 0xe9, 0x41, 0xcd],
++    }
++}
++const IMAGE: Guid = key(0xfd5d62d1);
++const BUFFER: Guid = key(0xfd5d62d2);
++const LAYOUT: Guid = key(0xfd5d62d3);
++
++unsafe fn method(object: Object, index: usize) -> usize {
++    unsafe { *(*object.cast::<*const usize>()).add(index) }
++}
++
++// Every instance owns one COM reference, either from creation or GetPrivateData.
++pub(super) struct Owned(pub(super) Object);
++impl Drop for Owned {
++    fn drop(&mut self) {
++        let release: unsafe extern "system" fn(Object) -> u32 =
++            unsafe { mem::transmute(method(self.0, 2)) };
++        unsafe { release(self.0) };
++    }
++}
++
++unsafe fn private_interface(object: Object, tag: &Guid) -> Option<Owned> {
++    if !ACTIVE.load(Ordering::Acquire) || object.is_null() {
++        return None;
++    }
++    let get: unsafe extern "system" fn(Object, &Guid, &mut u32, *mut Object) -> i32 =
++        unsafe { mem::transmute(method(object, 3)) };
++    let mut value = ptr::null_mut();
++    let mut size = mem::size_of::<Object>() as u32;
++    (unsafe { get(object, tag, &mut size, &mut value) } >= 0 && !value.is_null())
++        .then(|| Owned(value))
++}
++
++pub(super) unsafe fn uav(object: Object) -> Option<Owned> {
++    unsafe { private_interface(object, &IMAGE) }
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Default)]
++struct Footprint {
++    offset: u64,
++    format: u32,
++    width: u32,
++    height: u32,
++    depth: u32,
++    pitch: u32,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Default)]
++struct Layout {
++    depth: Footprint,
++    color: Footprint,
++}
++
++#[repr(C, align(8))]
++struct Description([u32; 14]);
++
++pub(super) unsafe fn matches(heap: *const u32, flags: u32, desc: *const u32, state: u32) -> bool {
++    if heap.is_null() || desc.is_null() || flags != 0 || state & UAV != 0 {
++        return false;
++    }
++    // A D3D12_RESOURCE_DESC contains 13 defined words including its flags.
++    let d = unsafe { core::slice::from_raw_parts(desc, 13) };
++    (unsafe { *heap == 1 })
++        && d[0] == 3
++        && d[7] == 0x0001_0001
++        && d[8] == 19
++        && d[9] == 1
++        && d[10] == 0
++        && d[11] == 0
++        && d[12] == 0x01000006
++}
++
++unsafe fn create(
++    device: Object,
++    heap: *const u32,
++    desc: &Description,
++    state: u32,
++) -> Result<Owned, i32> {
++    let make: unsafe extern "system" fn(
++        Object,
++        *const u32,
++        u32,
++        &Description,
++        u32,
++        *const c_void,
++        &Guid,
++        *mut Object,
++    ) -> i32 = unsafe { mem::transmute(method(device, 27)) };
++    let mut object = ptr::null_mut();
++    let hr = unsafe {
++        make(
++            device,
++            heap,
++            0,
++            desc,
++            state,
++            ptr::null(),
++            &IID_ID3D12RESOURCE,
++            &mut object,
++        )
++    };
++    if hr < 0 {
++        Err(hr)
++    } else if object.is_null() {
++        Err(E_INVALIDARG)
++    } else {
++        Ok(Owned(object))
++    }
++}
++
++unsafe fn footprint(device: Object, desc: &Description) -> Result<Footprint, i32> {
++    let get: unsafe extern "system" fn(
++        Object,
++        &Description,
++        u32,
++        u32,
++        u64,
++        &mut Footprint,
++        &mut u32,
++        &mut u64,
++        &mut u64,
++    ) = unsafe { mem::transmute(method(device, 38)) };
++    let (mut rows, mut row_bytes, mut bytes) = (0, 0, 0);
++    let mut layout = Footprint::default();
++    unsafe {
++        get(
++            device,
++            desc,
++            0,
++            1,
++            0,
++            &mut layout,
++            &mut rows,
++            &mut row_bytes,
++            &mut bytes,
++        )
++    };
++    if bytes == u64::MAX
++        || layout.depth != 1
++        || row_bytes != u64::from(layout.width) * 4
++        || rows != layout.height
++    {
++        return Err(E_INVALIDARG);
++    }
++    Ok(layout)
++}
++
++pub(super) unsafe fn attach(
++    device: Object,
++    primary: Object,
++    heap: *const u32,
++    desc: &[u8],
++) -> Result<(), i32> {
++    let mut d = Description([0; 14]);
++    unsafe { ptr::copy_nonoverlapping(desc.as_ptr(), d.0.as_mut_ptr().cast(), 52) };
++    let mut depth = unsafe { footprint(device, &d)? };
++    d.0[8] = 41; // DXGI_FORMAT_R32_FLOAT
++    d.0[12] = 4; // D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
++    let mut color = unsafe { footprint(device, &d)? };
++    if depth.format != 39
++        || color.format != 41
++        || (depth.width, depth.height) != (color.width, color.height)
++    {
++        return Err(E_INVALIDARG);
++    }
++    let pitch = depth.pitch.max(color.pitch);
++    depth.pitch = pitch;
++    color.pitch = pitch;
++    let image = unsafe { create(device, heap, &d, UAV)? };
++    // A dedicated transfer buffer for this texture. Queue ownership and ordering
++    // follow the same application barriers/fences as the original depth resource.
++    let bytes = u64::from(pitch) * u64::from(depth.height);
++    let buffer_desc = Description([
++        1,
++        0,
++        0,
++        0,
++        bytes as u32,
++        (bytes >> 32) as u32,
++        1,
++        0x00010001,
++        0,
++        1,
++        0,
++        1,
++        0,
++        0,
++    ]);
++    let buffer = unsafe { create(device, heap, &buffer_desc, COPY_DEST)? };
++    let set: unsafe extern "system" fn(Object, &Guid, Object) -> i32 =
++        unsafe { mem::transmute(method(primary, 5)) };
++    let data: unsafe extern "system" fn(Object, &Guid, u32, *const Layout) -> i32 =
++        unsafe { mem::transmute(method(primary, 4)) };
++    for (tag, object) in [(&IMAGE, image.0), (&BUFFER, buffer.0)] {
++        let hr = unsafe { set(primary, tag, object) };
++        if hr < 0 {
++            return Err(hr);
++        }
++    }
++    let hr = unsafe {
++        data(
++            primary,
++            &LAYOUT,
++            mem::size_of::<Layout>() as u32,
++            &Layout { depth, color },
++        )
++    };
++    if hr < 0 {
++        return Err(hr);
++    }
++    ACTIVE.store(true, Ordering::Release);
++    Ok(())
++}
++
++#[repr(C)]
++struct CopyLocation {
++    resource: Object,
++    kind: u32,
++    pad: u32,
++    footprint: Footprint,
++}
++
++unsafe fn copy(
++    list: Object,
++    texture: Object,
++    buffer: Object,
++    footprint: Footprint,
++    to_buffer: bool,
++) {
++    let submit: unsafe extern "system" fn(
++        Object,
++        &CopyLocation,
++        u32,
++        u32,
++        u32,
++        &CopyLocation,
++        *const c_void,
++    ) = unsafe { mem::transmute(method(list, 16)) };
++    let tex = CopyLocation {
++        resource: texture,
++        kind: 0,
++        pad: 0,
++        footprint: Footprint::default(),
++    };
++    let linear = CopyLocation {
++        resource: buffer,
++        kind: 1,
++        pad: 0,
++        footprint,
++    };
++    let (dst, src) = if to_buffer {
++        (&linear, &tex)
++    } else {
++        (&tex, &linear)
++    };
++    unsafe { submit(list, dst, 0, 0, 0, src, ptr::null()) };
++}
++
++type Forward = unsafe extern "system" fn(Object, u32, *const Barrier);
++unsafe fn transition(
++    list: Object,
++    submit: Forward,
++    object: Object,
++    sub: u32,
++    before: u32,
++    after: u32,
++) {
++    if before != after {
++        unsafe {
++            submit(
++                list,
++                1,
++                &Barrier::new_transition(object, sub, before, after),
++            )
++        };
++    }
++}
++
++unsafe fn translate(list: Object, submit: Forward, barrier: &Barrier) -> bool {
++    if let Some(resource) = barrier.uav_resource() {
++        if let Some(image) = unsafe { uav(resource) } {
++            unsafe { submit(list, 1, &Barrier::new_uav(image.0)) };
++            return true;
++        }
++        return false;
++    }
++    let Some(t) = barrier.transition() else {
++        return false;
++    };
++    if t.before != UAV && t.after != UAV {
++        return false;
++    }
++    let Some(image) = (unsafe { uav(t.resource) }) else {
++        return false;
++    };
++    // Complete split transitions at END_ONLY. D3D12 disallows using the
++    // affected subresource between the matching begin and end.
++    if barrier.begin_only() || t.before == t.after {
++        return true;
++    }
++    let entering = t.after == UAV;
++    if t.subresource == ALL || t.subresource == 1 {
++        // Park stencil in COMMON during the logical UAV state. No copy or
++        // clear ever touches the stencil contents.
++        let (from, to) = if entering {
++            (t.before, 0)
++        } else {
++            (0, t.after)
++        };
++        unsafe { transition(list, submit, t.resource, 1, from, to) };
++    }
++    if t.subresource == 1 {
++        return true;
++    }
++    if t.subresource != 0 && t.subresource != ALL {
++        return false;
++    }
++    let Some(buffer) = (unsafe { private_interface(t.resource, &BUFFER) }) else {
++        return false;
++    };
++    let get: unsafe extern "system" fn(Object, &Guid, &mut u32, *mut Layout) -> i32 =
++        unsafe { mem::transmute(method(t.resource, 3)) };
++    let mut size = mem::size_of::<Layout>() as u32;
++    let mut layout = Layout::default();
++    if unsafe { get(t.resource, &LAYOUT, &mut size, &mut layout) } < 0 {
++        return false;
++    }
++    // Canonical physical states in the logical UAV phase: depth=COPY_SOURCE,
++    // image=UAV, staging=COPY_DEST. In the other phases the image stays in UAV.
++    let (source, src_fp, dest, dst_fp) = if entering {
++        unsafe {
++            transition(list, submit, t.resource, 0, t.before, COPY_SOURCE);
++            transition(list, submit, image.0, 0, UAV, COPY_DEST);
++        }
++        (t.resource, layout.depth, image.0, layout.color)
++    } else {
++        unsafe {
++            transition(list, submit, image.0, 0, UAV, COPY_SOURCE);
++            transition(list, submit, t.resource, 0, COPY_SOURCE, COPY_DEST);
++        }
++        (image.0, layout.color, t.resource, layout.depth)
++    };
++    unsafe {
++        copy(list, source, buffer.0, src_fp, true);
++        transition(list, submit, buffer.0, ALL, COPY_DEST, COPY_SOURCE);
++        copy(list, dest, buffer.0, dst_fp, false);
++        transition(list, submit, buffer.0, ALL, COPY_SOURCE, COPY_DEST);
++        if entering {
++            transition(list, submit, image.0, 0, COPY_DEST, UAV);
++        } else {
++            transition(list, submit, image.0, 0, COPY_SOURCE, UAV);
++            transition(list, submit, t.resource, 0, COPY_DEST, t.after);
++        }
++    }
++    true
++}
++
++pub(super) unsafe fn barriers(list: Object, host: &[Barrier]) {
++    let submit: Forward = unsafe { mem::transmute(method(list, 26)) };
++    let mut first = 0;
++    if ACTIVE.load(Ordering::Acquire) {
++        for (index, barrier) in host.iter().enumerate() {
++            // Preserve ordering without splitting ordinary batches by emitting
++            // the pending prefix before a possible depth handoff.
++            let candidate = barrier
++                .transition()
++                .is_some_and(|t| t.before == UAV || t.after == UAV)
++                || barrier.uav_resource().is_some();
++            if candidate {
++                if first < index {
++                    unsafe { submit(list, (index - first) as u32, host[first..].as_ptr()) };
++                }
++                first = index;
++                if unsafe { translate(list, submit, barrier) } {
++                    first += 1;
++                }
++            }
++        }
++    }
++    if first < host.len() {
++        unsafe { submit(list, (host.len() - first) as u32, host[first..].as_ptr()) };
++    }
++}

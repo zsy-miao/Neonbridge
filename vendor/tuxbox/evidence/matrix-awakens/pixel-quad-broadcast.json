@@ -1,0 +1,122 @@
+{
+  "title": "The Matrix Awakens",
+  "title_version": "1.20.1831.3754",
+  "scene": "Main menu, green code material before bloom and tone mapping",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "620.70.6",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "vkd3d_proton": "cae2e003bb82516",
+  "capture_tool": "RenderDoc 1.46",
+  "capture_frame": 1330,
+  "draw_event": 10076,
+  "native": {
+    "archive": "material",
+    "entry": 3530,
+    "dxbc_sha256": "66582875b1cc75c3429a6fa0efcf878affb89d5ca52fbc33e68aa0690e018c99",
+    "stage": "ps_6_1",
+    "instructions": "DS_SWIZZLE_B32 in quad mode",
+    "selectors": {
+      "0x00": 14,
+      "0x55": 14
+    }
+  },
+  "method": "Compile both translations with DXC and validate with DXV. Create each graphics pipeline with the original root signature on stock Proton and dump its Vulkan shader module. The baseline module exactly matches the one in this capture. Replay the same draw with its captured inputs and each production module. Read the entire color target and query RenderDoc EventGPUDuration for that draw after each replay.",
+  "before": {
+    "dxil_sha256": "bbc0fd0da21e73fc8792054fbdb8966daba7546492fba8bb84fade8cf5b39d60",
+    "dxil_bytes": 59912,
+    "spirv_sha256": "24a922330b91d8207e60bdd624ec1352e484e189d0bb2e1e814d51c2dafe2759",
+    "spirv_quad_broadcast_count": 112,
+    "draw_gpu_microseconds": [
+      1034.24,
+      1022.976,
+      1020.928,
+      1004.544,
+      1016.832,
+      1022.976,
+      1021.952,
+      1024.0
+    ],
+    "median_draw_gpu_microseconds": 1022.464
+  },
+  "after": {
+    "dxil_sha256": "e70ad7e1342cefc87d7ded0ec5242c1a79abb1d289a11aa4f342eb5a531a0338",
+    "dxil_bytes": 56908,
+    "spirv_sha256": "46c6125b29eade00d440728a0473ca5b3ae37283575cbcb781db42ab58cefdbe",
+    "spirv_quad_broadcast_count": 28,
+    "draw_gpu_microseconds": [
+      933.888,
+      943.104,
+      942.08,
+      926.72,
+      926.72,
+      942.08,
+      942.08,
+      940.032
+    ],
+    "median_draw_gpu_microseconds": 941.056
+  },
+  "replay_order": [
+    "before",
+    "after",
+    "after",
+    "before",
+    "after",
+    "before",
+    "before",
+    "after",
+    "after",
+    "before",
+    "before",
+    "after",
+    "before",
+    "after",
+    "after",
+    "before"
+  ],
+  "color_target": {
+    "size": [
+      2560,
+      1440
+    ],
+    "format": "R16G16B16A16_FLOAT",
+    "bytes": 29491200,
+    "sha256": "c98a7f60b5a1fd0f3df405ee5942ba6be1eaca5d64116bbc229e8ead24ef28d6",
+    "identical_readbacks": 16
+  },
+  "preparation": {
+    "standalone_and_aliases": 216,
+    "linked": 8,
+    "changed_pixel_translations": 35,
+    "changed_linked_translations": 0,
+    "cold_compiled": 213,
+    "cold_reused_matching_translations": 11,
+    "warm_compiled": 0,
+    "warm_reused": 224,
+    "stale_pixel_entries_rebuilt": 35,
+    "stale_rebuild_followed_by_warm_reuse": 216
+  },
+  "atlas": {
+    "format": "BC1_SRGB",
+    "size": [
+      4096,
+      4096
+    ],
+    "mip_count": 13,
+    "filter": "Linear minification, magnification, and mip interpolation",
+    "sampler_mip_bias": 0.0,
+    "explicit_gradient_taps": 12,
+    "leading_red_taps": [
+      "0xc44",
+      "0xe18",
+      "0x17cc"
+    ],
+    "leading_median_lod": 6.333,
+    "other_taps_median_lod": [
+      4.011,
+      4.234
+    ],
+    "leading_material_gradient_scale": 5.0,
+    "view_gradient_multiplier": 1.0,
+    "observation": "In this capture the material requests a broader mip footprint for the bright tips. Returning mip zero from only the three leading red-channel samples reveals the glyph strokes. Keeping those three at their original footprint while forcing the other nine to mip zero leaves the box shapes visible. These diagnostic substitutions were used only during replay."
+  }
+}

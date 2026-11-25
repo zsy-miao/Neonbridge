@@ -1,0 +1,9 @@
+{
+  "scope": "Frosty global 4287 HZBTestPS explicit mip gather",
+  "native_sha256": "86ffa859b03e4f657e0d8a821b4db44321d5f93cc2599d03e866a0b6253e1e9b",
+  "hlsl_sha256": "052d39c686da2e27242cd892007dabfc3141d051f529a396c9e941ec27b6de62",
+  "dxil_sha256": "1f8b68d99950ca2a8a3e9c0785c58c63e624021e274266a8b5e7906a75c9d4aa",
+  "translation": "Pixel shader model 6.1, DXC and DXV validated. vkd3d SPIR-V validated for Vulkan 1.2.",
+  "gpu_control": "The emitted four-tap gather statements executed in a compute fixture with 8x8, 4x4 and 2x2 R32_FLOAT mip levels and a point-clamp sampler. 64 coordinates including edges and all three mips, 256 sampled values and 768 output guards matched the CPU model on Radeon 1002:13c0 and GeForce 10de:2705.",
+  "limitations": "The GPU fixture tests the emitted gather in a compute dispatch. Complete HZBTestPS raster output and other sampler modes have not been checked."
+}

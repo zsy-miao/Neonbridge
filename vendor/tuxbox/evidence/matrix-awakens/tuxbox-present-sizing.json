@@ -1,0 +1,127 @@
+{
+  "source": "3840 x 2160 Xbox RGB10A2 resource, two GPU command lists, direct queue PresentX at slot 30",
+  "display": "Linux, NVIDIA 10de:2705, isolated 1920x1080 Xvfb",
+  "comparison": "GPU readback checks every channel of two complete 4K snapshots. Screen sampling checks the four corners and center in client-to-desktop coordinates after each present. The size test also checks the monitor work area and 16:9 aspect ratio.",
+  "reference": {
+    "scope": "Previously captured retail PresentX log",
+    "title_window": "UnrealWindowGDK",
+    "source": [
+      3840,
+      2160
+    ],
+    "client": [
+      1280,
+      720
+    ],
+    "provider_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439"
+  },
+  "before": {
+    "provider_sha256": "31de0adc0dfed092e42b589fb678141c0f634326db466ead21ec975cc716163a",
+    "trials": [
+      "owned 1 xbox-frame failed: off-screen presentation client=1924x1058 origin=4,30 monitor=1920x1080",
+      "oversized 1 xbox-frame failed: off-screen presentation client=3840x2160 origin=24,24 monitor=1920x1080",
+      "fit 0 xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=960x540 origin=24,24 monitor=1920x1080"
+    ]
+  },
+  "after": [
+    {
+      "schema": 1,
+      "type": "homebrew",
+      "date_utc": "2026-11-21",
+      "host": "Linux",
+      "os_release": "7.3.4-1-cachyos",
+      "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+      "machine": "x86_64",
+      "backend": "proton",
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "binaries_sha256": {
+        "d3d12-smoke/xbox-frame.exe": "28f693c54f12cc98c1333d7e143fbd39043f82360f75ed8a2707bcfdea666fc7",
+        "d3d12-smoke/d3d12_xs.dll": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+        "d3d12-smoke/xbox-frame-rgb10.exe": "a022f37bb1c5b927bdd807b0d2fffb95ad65df618e915b4b4a1ec65fe73878e6",
+        "d3d12-smoke/xbox-frame-4k.exe": "d9a150d007a217d449e6117033250d7bedaf3b6bff7090c1814b7679bf23523f"
+      },
+      "checks": [
+        {
+          "gate": "guest-present",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
+        },
+        {
+          "gate": "guest-present-rgb10",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2"
+        },
+        {
+          "gate": "guest-present-4k-owned",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=1859x1045 origin=30,30 monitor=1920x1080"
+        },
+        {
+          "gate": "guest-present-4k-oversized",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=1920x1080 origin=0,0 monitor=1920x1080"
+        },
+        {
+          "gate": "guest-present-4k-fit",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=960x540 origin=24,24 monitor=1920x1080"
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "type": "homebrew",
+      "date_utc": "2026-11-21",
+      "host": "Linux",
+      "os_release": "7.3.4-1-cachyos",
+      "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+      "machine": "x86_64",
+      "backend": "proton",
+      "provider": "1792432585 GE-Proton11-11",
+      "binaries_sha256": {
+        "d3d12-smoke/xbox-frame.exe": "28f693c54f12cc98c1333d7e143fbd39043f82360f75ed8a2707bcfdea666fc7",
+        "d3d12-smoke/d3d12_xs.dll": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+        "d3d12-smoke/xbox-frame-rgb10.exe": "a022f37bb1c5b927bdd807b0d2fffb95ad65df618e915b4b4a1ec65fe73878e6",
+        "d3d12-smoke/xbox-frame-4k.exe": "d9a150d007a217d449e6117033250d7bedaf3b6bff7090c1814b7679bf23523f"
+      },
+      "checks": [
+        {
+          "gate": "guest-present",
+          "passed": false,
+          "exit_code": 1,
+          "receipt": "xbox-frame failed: screen colors on frame 1: 0xf5f5f5/0xf5f5f5/0xf5f5f5/0xf5f5f5/0xf5f5f5, expected 0xcb5b11 border and 0xcb5b11 center"
+        },
+        {
+          "gate": "guest-present-rgb10",
+          "passed": false,
+          "exit_code": 1,
+          "receipt": "xbox-frame failed: screen colors on frame 1: 0xf5f5f5/0xf5f5f5/0xf5f5f5/0xf5f5f5/0xf5f5f5, expected 0xffff00 border and 0xffff00 center"
+        },
+        {
+          "gate": "guest-present-4k-owned",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=1859x1045 origin=30,30 monitor=1920x1080"
+        },
+        {
+          "gate": "guest-present-4k-oversized",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=1920x1080 origin=0,0 monitor=1920x1080"
+        },
+        {
+          "gate": "guest-present-4k-fit",
+          "passed": false,
+          "exit_code": 1,
+          "receipt": "xbox-frame failed: screen colors on frame 1: 0xf5f5f5/0xf5f5f5/0xf5f5f5/0xf5f5f5/0xf5f5f5, expected 0xffff00 border and 0xffff00 center client=960x540 origin=24,24 monitor=1920x1080"
+        }
+      ]
+    }
+  ],
+  "run": "xvfb-run -a -s \"-screen 0 1920x1080x24\" python tuxbox.py verify --only present --proton /path/to/proton --prefix /path/to/private/prefix --adapter 10de:2705"
+}

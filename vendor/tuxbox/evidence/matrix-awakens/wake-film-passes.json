@@ -1,0 +1,137 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "film": "WU_VID_0010_HEVC.mp4",
+  "film_sha256": "c511dd82465e2875193b38d4d4d3c5dc4bcbae6fd680cc33230bde4a67bb2ebd",
+  "diagnostic_dll_sha256": "8e441ab14b2f3e2c540618cf9c0d2120dc5436f4298e6034132f57ccd98448f8",
+  "diagnostic_patch": "tools/reference/tombox-movie-draw-trace.patch",
+  "trigger": "TOMBOX_RTCAP=1 TUXBOX_MOVIE_TRACE=1, movie in %TEMP%/tombox_capture_now",
+  "captures": {
+    "0": {
+      "matching_ffmpeg_frame": 121,
+      "full_luma_sha256": "60296428d5f5235f1762e1ad861eed099b877984ced4b36980a221963a41e41e",
+      "full_chroma_sha256": "3b9f06977ee18756d9853d5e64f0a6ff40e8aebb551b30404a1ce4ddc45ef199",
+      "y_range": [
+        18,
+        238
+      ],
+      "u_range": [
+        84,
+        173
+      ],
+      "v_range": [
+        50,
+        158
+      ],
+      "target_sampling": "Rtcap downsamples the render targets to <=960 pixels wide for min/max/mean. Y and UV hashes compare every input byte.",
+      "targets": [
+        "#001 3840x2160 fmt=24 flags=0x1 state=0x4 rgb10a2: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.3118 mean 0.1976] [0.0000 .. 1.0000 mean 0.2593] nan=0 inf=0 |v|>100: 0",
+        "#002 3840x2160 fmt=24 flags=0x1 state=0x4 rgb10a2: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 1.0000 mean 0.2593] nan=0 inf=0 |v|>100: 0",
+        "#101 2976x1676 fmt=90 flags=0x1 state=0x4 bgra8: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.9451 mean 0.7012] [0.0000 .. 1.0000 mean 0.9852] nan=0 inf=0 |v|>100: 0",
+        "#102 3840x1600 fmt=90 flags=0x1 state=0xc0 bgra8: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.0000 mean 0.0000] [0.9137 .. 1.0000 mean 0.9577] [1.0000 .. 1.0000 mean 1.0000] nan=0 inf=0 |v|>100: 0",
+        "#10000 3840x1600 fmt=61 flags=0x0 state=0xc0 r8: [0.0706 .. 0.9255 mean 0.2488] nan=0 inf=0 |v|>100: 0 | nonzero 384000/384000 smallest-positive 7.058824e-2 max 9.254902e-1 mean 2.4880909556074765e-1",
+        "#10001 1920x800 fmt=49 flags=0x0 state=0xc0 rg8: [0.3294 .. 0.6706 mean 0.4999] [0.1961 .. 0.6196 mean 0.4162] nan=0 inf=0 |v|>100: 0"
+      ]
+    },
+    "1": {
+      "matching_ffmpeg_frame": 240,
+      "full_luma_sha256": "a84d9fc22465ee4c777efcd1e204519d9205f9bb67c1d76df70ffff859a19604",
+      "full_chroma_sha256": "089ca171f3cb844b2a1108f934d89fafeed25215723e78bd20054769d8a6c09e",
+      "y_range": [
+        17,
+        238
+      ],
+      "u_range": [
+        52,
+        201
+      ],
+      "v_range": [
+        31,
+        212
+      ],
+      "target_sampling": "Rtcap downsamples the render targets to <=960 pixels wide for min/max/mean. Y and UV hashes compare every input byte.",
+      "targets": [
+        "#001 3840x2160 fmt=24 flags=0x1 state=0x4 rgb10a2: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 1.0000 mean 0.7407] [0.0000 .. 0.9374 mean 0.6944] [0.0000 .. 1.0000 mean 0.2593] nan=0 inf=0 |v|>100: 0",
+        "#002 3840x2160 fmt=24 flags=0x1 state=0x4 rgb10a2: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 0.2502 mean 0.1854] [0.0000 .. 0.2346 mean 0.1738] [0.0000 .. 1.0000 mean 0.2593] nan=0 inf=0 |v|>100: 0",
+        "#101 2976x1676 fmt=90 flags=0x1 state=0x4 bgra8: [0.0000 .. 0.0000 mean 0.0000] [0.0000 .. 1.0000 mean 0.7419] [0.0000 .. 0.9373 mean 0.6954] [0.0000 .. 1.0000 mean 0.9852] nan=0 inf=0 |v|>100: 0",
+        "#102 3840x1600 fmt=90 flags=0x1 state=0xc0 bgra8: [0.0000 .. 0.0000 mean 0.0000] [1.0000 .. 1.0000 mean 1.0000] [0.9333 .. 0.9451 mean 0.9364] [1.0000 .. 1.0000 mean 1.0000] nan=0 inf=0 |v|>100: 0",
+        "#10000 3840x1600 fmt=61 flags=0x0 state=0xc0 r8: [0.0667 .. 0.9294 mean 0.3971] nan=0 inf=0 |v|>100: 0 | nonzero 384000/384000 smallest-positive 6.666667e-2 max 9.2941177e-1 mean 3.971401314093188e-1",
+        "#10001 1920x800 fmt=49 flags=0x0 state=0xc0 rg8: [0.2118 .. 0.7843 mean 0.5073] [0.1216 .. 0.8235 mean 0.4506] nan=0 inf=0 |v|>100: 0"
+      ]
+    }
+  },
+  "nv12_conversion": {
+    "vs": "b9f7db4c02b614c2/b67c1f7cb69396c3",
+    "ps": "5eaff298342f95bf/4b16dcdd9211ad06",
+    "vs_inputs": {
+      "slot": 0,
+      "stride": 32,
+      "positions": [
+        [
+          -1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          -1,
+          -1,
+          1,
+          1
+        ],
+        [
+          1,
+          -1,
+          1,
+          1
+        ]
+      ],
+      "texcoords": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ]
+    },
+    "samplers": [
+      {
+        "filter": 20,
+        "address": "CLAMP"
+      },
+      {
+        "filter": 0,
+        "address": "CLAMP"
+      }
+    ]
+  },
+  "next_fullscreen_pass": {
+    "vs": "9f458aafccd77c8f/662979e772cfd5c0",
+    "ps": "ca92d040b7189a12/4a32d015ad6345bf",
+    "isolated_quad_gpu_readback": [
+      "adapter=10de:2705",
+      "pixel_4_4=ff0000ff",
+      "pixel_12_4=ff00ff00",
+      "pixel_4_12=ffff0000",
+      "pixel_12_12=ffffffff",
+      "matching=256"
+    ]
+  },
+  "finding": "Both full GPU planes bound by the retail draw match the source decoded by FFmpeg. The first 3840x1600 BGRA output is nearly uniform before letterboxing/presentation."
+}

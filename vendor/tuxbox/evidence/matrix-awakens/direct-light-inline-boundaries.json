@@ -1,0 +1,24 @@
+{
+  "scope": "Static instruction inspection of packaged compute shader 219, compared with the 218 RayQuery control. This does not execute shader 219 or establish a whole-shader difference.",
+  "shader_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+  "inspector": "tools/reference/blas/inspect_inline_bounds.rs verifies the four opcodes and source operands using the repository decoder; it does not verify the rest of the program",
+  "instruction_reference": "https://www.amd.com/content/dam/amd/en/documents/radeon-tech-docs/instruction-set-architectures/rdna2-shader-instruction-set-architecture.pdf",
+  "first_segment": {
+    "candidate_distance": "v46, computed at 0xa24",
+    "lower_test": "0xa34 v_cmp_nlt_f32 v46, v15: !(v46 < v15)",
+    "upper_test": "0xa50 v_cmp_nge_f32 v46, v23: !(v46 >= v23)",
+    "additional_tests": "0xa3c and 0xa5c are also required before the candidate is accepted at 0xa68-0xa70",
+    "ordinary_instance_cull_inference": "On the type-6 instance path, 0x9a0 multiplies by zero and 0x9a8 sets bit 4. The bit-field insert at 0x9b0 writes that value under mask 60, clearing v33 bits 2-3; later 0xa10 extracts those bits as signed zero. Consequently the product at 0xa28 is zero and the signed comparison at 0xa3c passes. This does not prove that an instance or triangle is reached, or that every other traversal condition passes."
+  },
+  "second_segment": {
+    "candidate_distance": "v38, computed at 0x11bc",
+    "lower_test": "0x11cc v_cmp_ngt_f32 0, v38: !(0 > v38)",
+    "upper_test": "0x11e8 v_cmp_nge_f32 v38, v15: !(v38 >= v15)",
+    "additional_tests": "0x11d4 and 0x11f4 are also required before the candidate is accepted at 0x1200-0x1208"
+  },
+  "finite_bounds_inference": "The explicit comparisons include the lower endpoint and exclude the upper endpoint. Negated comparisons are also true for unordered NaN operands; the other predicates and node behavior still matter.",
+  "host_comparison": "The separate translated-218 control with a triangle at distance 1 and intervals [1,2] and [0,1] misses both RayQuery segments on the tested AMD and NVIDIA drivers; see direct-light-two-query.json scenario 2.",
+  "native_node_control": "bvh-native-endpoints.json tests one synthetic TRI0 on gfx1036. Its numerator and denominator are both -1, so 219's reciprocal and product form distance 1; the same result was returned for maximum distances 0.5, 1, 2 and 100. The node operation has no near-distance input.",
+  "open_question": "A full 219 control must determine whether a valid endpoint candidate reaches these comparisons and whether all other conditions admit it. Do not infer complete 219 behavior or replace its traversal from the comparisons alone.",
+  "binding": "219 consumes a raw SRV at t5 space0; it is not a native acceleration-structure descriptor. The descriptor is loaded into s32-s35 at 0x98; 0x158 masks s32 with 0xffffff00 and 0x170 masks s33 with 0xff to form the effective base. The program reads base+48 at 0x3fc. A RayQuery implementation needs the corresponding native TLAS at that guest suballocation, correct command ordering, descriptor contents and GPU lifetime."
+}

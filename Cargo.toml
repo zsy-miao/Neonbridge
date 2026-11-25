@@ -1,0 +1,25 @@
+[package]
+name = "neonbridge"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "neonbridge"
+path = "src/main.rs"
+
+[workspace]
+exclude = ["vendor"]
+
+[profile.release]
+opt-level = 3
+
+[dependencies]
+neonbridge-feed = { path = "crates/feed" }
+sha2 = "0.10"
+# ztrx's translator, vendored unmodified (GPL-3.0-or-later), TB_ZTRX_SHADER.
+victory-shader = { path = "vendor/ztrx/victory-shader" }
+flate2 = "1"
+windows = { version = "0.61", features = ["Win32_Graphics_Direct3D_Dxc"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }

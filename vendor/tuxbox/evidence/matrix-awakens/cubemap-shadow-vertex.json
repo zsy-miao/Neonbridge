@@ -1,0 +1,90 @@
+{
+  "shader": {
+    "archive": "global",
+    "entry": 3341,
+    "name": "EmitCubemapShadowVS",
+    "xbox_sha256": "1ae3d0454e33d7976f1ce9fab40fbeb81b5c80237da9f74abe10a48453b31699",
+    "hlsl_sha256": "104c4dc5a7e93829e43eb93fbec8184040b271b917d4ff0d4ae272ede451d44b",
+    "dxil_sha256": "5447a46498a917ff585830e44c615a6fed249d2ca0a97a0870d502d4f61ade56",
+    "compile": [
+      "xshader input.dxbc --hlsl-out shader.hlsl",
+      "dxc -T vs_6_0 -E main -Fo shader.cso shader.hlsl",
+      "dxv shader.cso"
+    ]
+  },
+  "host": {
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "pci_id": "10de:2705",
+    "driver": "620.70.06",
+    "proton": "GE-Proton11-11",
+    "vkd3d_proton": "3.1.0 0bb64c56c8f0dcc+",
+    "guest_sha256": "a9b2136caf2701177275f72f4f395298d9f6503a55433b319dbbf3bf856908b5"
+  },
+  "control": {
+    "pipeline": "Desktop D3D12 vertex-only point list with stream output and rasterization disabled. Bind a vertex-visible root CBV at b0. Capture SV_Position.xyzw followed by SV_RenderTargetArrayIndex.x in a 20-byte record.",
+    "cb0_dwords": [
+      "0x3ffc1234",
+      "0x42102345",
+      "input",
+      "0x17f5"
+    ],
+    "draws": "For each input below, call DrawInstanced(3, 2, 0, startInstance) with startInstance 0 and 13. Compare six records per draw.",
+    "input_and_observed_layer": [
+      [
+        "0x0",
+        0
+      ],
+      [
+        "0x3",
+        3
+      ],
+      [
+        "0x401",
+        1025
+      ],
+      [
+        "0xa53c5803",
+        3
+      ],
+      [
+        "0xffffffff",
+        2047
+      ]
+    ],
+    "expected_positions_by_vertex_id": [
+      [
+        -1,
+        -1,
+        0.5,
+        1
+      ],
+      [
+        3,
+        -1,
+        0.5,
+        1
+      ],
+      [
+        -1,
+        3,
+        0.5,
+        1
+      ]
+    ],
+    "output_guard": "Every draw wrote exactly 120 bytes. The next 4 bytes retained their initial zero value."
+  },
+  "comparison": {
+    "before_binding_sv_vertexid": {
+      "draws": 10,
+      "vertices": 60,
+      "position_matches": 20,
+      "layer_matches": 60
+    },
+    "after_binding_sv_vertexid": {
+      "draws": 10,
+      "vertices": 60,
+      "position_matches": 60,
+      "layer_matches": 60
+    }
+  }
+}

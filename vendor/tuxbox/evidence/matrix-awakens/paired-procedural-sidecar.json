@@ -1,0 +1,57 @@
+{
+  "scope": "Experimental directory-indexed GPU AABB generation for paired TRI0/TRI1 leaves plus a synthetic procedural TLAS and candidate consumer. Not runtime integration or full shader 219 execution.",
+  "probe": "python tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "tools/reference/blas/sidecar_bounds.hlsl": "fc01f0dc399288809b2f76d790e5f97984666eaaf9915079dfe689d482c431f2",
+    "tools/reference/blas/sidecar_fixture.rs": "1e0880057d4df4d6965c7ea7524a3077ecf883f064d43d603a430990853aa890",
+    "tools/reference/blas/zero_aabb.hlsl": "a232b4372df47f1c46c1c022ae0b8f8dd118e912bf2ab0b13e4b32f3d2597676",
+    "tools/reference/blas/zero_aabb_probe.h": "6bff1962f1672689bb2f26f85bf6a84972d4b43d1bcf7cb611f122f88c5dc387",
+    "tools/reference/blas/inline219_candidate.hlsl": "57fe3f66a615d503b377815386c3df9f4a5bee8f12104cdd0bea803f6b4cd6cb",
+    "tools/reference/blas/inline219_probe.hlsl": "969e4a9d7e99f8554a743d007ca0e8715fb7b91a646c08d3fe4670bdb8372772",
+    "runtime/d3d12/src/device/blas/sidecar_directory.rs": "f0d5eb0c9dd0312416a95e1973ee0710fded8bc824bcdd7afe5e908b7df2343c",
+    "tools/check_frosty_blas.py": "8f8df75535f364a9ece5bf5352218a5c50e61e76c04dfee93426549fd5ff32a1",
+    "tools/reference/blas/guest.cpp": "2027965053a10a1f0da8087ba455c1aa0db1ea460dbbffa63e872ee3255d0366"
+  },
+  "native_mapping_control": "bvh-native-triangle-differential.json",
+  "fixture": "One synthetic paired leaf and one unpaired leaf produce three AABBs. The paired TRI1 has a distinct x/y extent so reusing TRI0 bounds fails the check. GPU candidates are mapped through the checked directory and tested on three masked/transformed instances.",
+  "retail": "One original paired leaf is extracted from a user-local Frosty sphere, passed through the same GPU converter for both sides, and compared with its original vertex bounds on the CPU. The leaf is kept in temporary files and not distributed.",
+  "limits": [
+    "Only candidate records whose reserved/type field is zero, and whose underlying leaf has supported flags and selectors, are accepted. The directory must still be built from a separately validated node graph; a zero tag cannot prove arbitrary bytes really are a TRI0 leaf.",
+    "Paired selector/winding handling and candidate math have sampled native controls only; other triangle types, flags, geometry, extreme values and full 219 semantics remain unproven.",
+    "AABB generation status is read after the synthetic command list finishes. The test never uses invalid generated AABBs for a build. Runtime fail-closed sequencing, version publication, guest descriptor association, concurrency and GPU lifetimes remain unresolved."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "7f3a899027bf41214125269156d4a3c16823c578b3207eac99151fa8220c0491",
+      "retail_leaf_sha256": "9706baef3d2052740276bc1938ebb618f5544e43ca671e22cf7def9c70840b22",
+      "sidecar_gpu_bounds_status": "0",
+      "sidecar_gpu_bounds_enclose": "3",
+      "sidecar_gpu_invalid": "status 2; untouched 1",
+      "sidecar_gpu_short": "status 1; untouched 1",
+      "sidecar_gpu_type": "status 1; untouched 1",
+      "sidecar_gpu_replay": "status 0; bounds 0; old 0; other 2,00070002; moved 0",
+      "sidecar_retail_pair": "status 0; enclosed 1",
+      "inline219_candidate_status": "0",
+      "inline219_invalid_directory_status": "2",
+      "tri1_candidate": "2,2,80000000,00070001"
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "7f3a899027bf41214125269156d4a3c16823c578b3207eac99151fa8220c0491",
+      "retail_leaf_sha256": "9706baef3d2052740276bc1938ebb618f5544e43ca671e22cf7def9c70840b22",
+      "sidecar_gpu_bounds_status": "0",
+      "sidecar_gpu_bounds_enclose": "3",
+      "sidecar_gpu_invalid": "status 2; untouched 1",
+      "sidecar_gpu_short": "status 1; untouched 1",
+      "sidecar_gpu_type": "status 1; untouched 1",
+      "sidecar_gpu_replay": "status 0; bounds 0; old 0; other 2,00070002; moved 0",
+      "sidecar_retail_pair": "status 0; enclosed 1",
+      "inline219_candidate_status": "0",
+      "inline219_invalid_directory_status": "2",
+      "tri1_candidate": "1,2,80000000,00070001"
+    }
+  }
+}

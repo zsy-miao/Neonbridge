@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-mesh.exe": "7e6a2b8dee3b882a00f8ff25edd456acc8165641719de8d6b026e34d2d3e6422",
+    "d3d12-smoke/d3d12_xs.dll": "847b82925c9311b93b4beaa8cf141959b2435f0f87c35de7bd818aa6e6357a6a"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-mesh",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-mesh PASS pci=10de:2705 tier=1 stream=680 direct=6 amplified=12 indirect=2 zero=0 pixels=256/256 guards=32 rejected=5"
+    }
+  ]
+}

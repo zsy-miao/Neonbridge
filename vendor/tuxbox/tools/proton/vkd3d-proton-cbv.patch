@@ -1,0 +1,57 @@
+diff --git a/README.md b/README.md
+index b60a643a1175d323947b6057e8f206eebe87553b..02dfe9febf465dc71d0faec8aa1a6df9ba3dc4ed 100644
+--- a/README.md
++++ b/README.md
+@@ -201,6 +201,10 @@ commas or semicolons.
+     - `dxr` - DXR is normally enabled automatically. This config forces it to be enabled even when considered unsafe.
+     - `dxr12` - Enables experimental support for DXR 1.2 if `VK_EXT_opacity_micromap` is available.
+     - `force_static_cbv` - Unsafe speed hack on NVIDIA. May or may not give a significant performance uplift.
++    - `cbv_16_byte_alignment` - Allow 16-byte aligned offsets in descriptor-table constant buffers
++      when using descriptor sets. On adapters with stricter uniform-buffer alignment this selects storage
++      buffers if the hardware supports the required alignment and descriptor indexing. For this path
++      set `VKD3D_DISABLE_EXTENSIONS=VK_EXT_descriptor_buffer`.
+     - `single_queue` - Do not use asynchronous compute or transfer queues.
+     - `no_upload_hvv` - Blocks any attempt to use host-visible VRAM (large/resizable BAR) for the UPLOAD heap.
+       May free up vital VRAM in certain critical situations, at cost of lower GPU performance.
+diff --git a/include/private/config_flag_decl.h b/include/private/config_flag_decl.h
+index f318bbc567c2c05a0d824bea2a3a74d24a183d1a..37cde46ef1ba629f54178609ea8a3def89ff54b5 100644
+--- a/include/private/config_flag_decl.h
++++ b/include/private/config_flag_decl.h
+@@ -75,3 +75,4 @@ VKD3D_DECL_CONFIG("fail_unsupported_state_template", FAIL_UNSUPPORTED_STATE_TEMP
+ VKD3D_DECL_CONFIG("ignore_shared_fence", IGNORE_SHARED_FENCE)
+ VKD3D_DECL_CONFIG("adreno_7xx_extra_compat", ADRENO_7XX_EXTRA_COMPAT)
+ VKD3D_DECL_CONFIG("descriptor_heap_robustness", DESCRIPTOR_HEAP_ROBUSTNESS)
++VKD3D_DECL_CONFIG("cbv_16_byte_alignment", CBV_16_BYTE_ALIGNMENT)
+diff --git a/include/private/config_flags.h b/include/private/config_flags.h
+index d44e0f162ca779670a702df168eee6bb2fec7751..a5768a306ba06329e433855f86a279c4c166c339 100644
+--- a/include/private/config_flags.h
++++ b/include/private/config_flags.h
+@@ -31,7 +31,7 @@ struct vkd3d_config_flags_bitfield
+ 	 * we may end up with stray uninitialized bits which can subtly break bitwise operations later.
+ 	 * Adding more configs will cause the static assert below to fail,
+ 	 * which indicates the need to subtract a reserved bit. */
+-	uint32_t reserved0 : 21;
++	uint32_t reserved0 : 20;
+ };
+ 
+ STATIC_ASSERT(sizeof(struct vkd3d_config_flags_bitfield) == 12);
+diff --git a/libs/vkd3d/state.c b/libs/vkd3d/state.c
+index 1945f15a5c7830eb12426455cff0158662e734b9..509eba84d99268f010f4642ae2cd5fb4b4caa36e 100644
+--- a/libs/vkd3d/state.c
++++ b/libs/vkd3d/state.c
+@@ -7828,6 +7828,15 @@ static uint32_t vkd3d_bindless_state_get_bindless_flags(struct d3d12_device *dev
+                 !device_info->vulkan_1_2_features.descriptorBindingUniformBufferUpdateAfterBind ||
+                 !device_info->vulkan_1_2_features.shaderUniformBufferArrayNonUniformIndexing)
+             flags |= VKD3D_BINDLESS_CBV_AS_SSBO;
++        else if (VKD3D_CONFIG_FLAG_IS_SET(CBV_16_BYTE_ALIGNMENT) &&
++                device_info->properties2.properties.limits.minUniformBufferOffsetAlignment > 16 &&
++                device_info->properties2.properties.limits.minStorageBufferOffsetAlignment <= 16 &&
++                device_info->vulkan_1_2_features.descriptorBindingStorageBufferUpdateAfterBind &&
++                device_info->vulkan_1_2_features.shaderStorageBufferArrayNonUniformIndexing)
++        {
++            INFO("Using storage buffers for 16-byte aligned descriptor-table CBVs.\n");
++            flags |= VKD3D_BINDLESS_CBV_AS_SSBO;
++        }
+     }
+ 
+     /* 16 is the cutoff due to requirements on ByteAddressBuffer.

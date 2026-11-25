@@ -1,0 +1,271 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -988,6 +988,45 @@
+         release(device2);
+         hr
+     };
++    if hr >= 0 && crate::rtcap::movie_trace() && !mesh {
++        let mut hashes = Vec::new();
++        let dir = std::env::temp_dir().join("tuxbox_movie_shaders");
++        let _ = std::fs::create_dir_all(&dir);
++        for (stage, at) in stages {
++            let len = word(at + 8);
++            if len == 0 { continue; }
++            // The same readable shader descriptor was validated above and lives through this call.
++            let shader = unsafe { std::slice::from_raw_parts(word(at) as *const u8, len) };
++            let hash = shader.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x100000001b3));
++            let host_ptr = usize::from_le_bytes(normalized.0[at..at+8].try_into().unwrap());
++            let host_len = usize::from_le_bytes(normalized.0[at+8..at+16].try_into().unwrap());
++            // The 'keep' array owns the normalized shader until this function returns.
++            let host = unsafe { std::slice::from_raw_parts(host_ptr as *const u8, host_len) };
++            let native = dir.join(format!("{hash:016x}.dxbc"));
++            if !native.exists() { let _ = std::fs::write(native, shader); }
++            let variant = host.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x100000001b3));
++            let cso = dir.join(format!("{hash:016x}-{variant:016x}.cso"));
++            if !cso.exists() { let _ = std::fs::write(cso, host); }
++            if stage == "PS" && hash == 0xca92d040b7189a12 { crate::rtcap::note_film_pipeline(unsafe { *out } as usize); }
++            if stage == "PS" && hash == 0x5eaff298342f95bf {
++                crate::rtcap::note_converter(unsafe { *out } as usize);
++                let elements = word(0x20) as *const u8;
++                for i in 0..u32_at(0x28).min(32) as usize {
++                    let elem = unsafe { core::slice::from_raw_parts(elements.add(i*32), 32) };
++                    let name = usize::from_le_bytes(elem[0..8].try_into().unwrap()) as *const i8;
++                    if name.is_null() { continue; }
++                    let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy();
++                    let n = |i| u32::from_le_bytes(elem[i..i+4].try_into().unwrap());
++                    record("d3d12_xs","movie-layout",&format!("{name}{} format={} slot={} offset={} class={} step={}",n(8),n(12),n(16),n(20),n(24),n(28)));
++                }
++            }
++            hashes.push(format!("{stage}={hash:016x}/{variant:016x}"));
++        }
++        let count = u32_at(fixed_state + 0x1ec).min(8);
++        let formats: Vec<u32> = (0..count).map(|i| u32_at(fixed_state + 0x1cc + i as usize * 4)).collect();
++        let pso = unsafe { *out } as usize;
++        record("d3d12_xs", "movie-pso", &format!("pso={pso:#x} RT={formats:?} {}", hashes.join(" ")));
++    }
+     record("d3d12_xs", "CreatePipelineState", &format!("stages={} numRT={} topo={} desktop hr={hr:#010x}",
+            active_stages, u32_at(fixed_state + 0x1ec), u32_at(if mesh { 0x1c } else { 0x3c })));
+     hr
+--- a/crates/compat/d3d12_xs/src/bindtrace.rs
++++ b/crates/compat/d3d12_xs/src/bindtrace.rs
+@@ -158,6 +158,58 @@
+             v[index as usize] = handle;
+         }
+     });
++}
++
++/// Pixel t0 and t1 used by the optional film readback.
++pub fn movie_inputs(list: usize) -> Option<[usize; 2]> {
++    with(|state| {
++        let handle = *state.tables.get(&(list, false))?.first()?;
++        let heap = state.heaps.iter().find(|heap| heap.gpu != 0 && heap.inc != 0
++            && handle >= heap.gpu && handle < heap.gpu + (heap.count * heap.inc) as u64)?;
++        let index = (handle - heap.gpu) as usize / heap.inc;
++        if index + 1 >= heap.count { return None; }
++        let mut planes = [0; 2];
++        for (slot, plane) in planes.iter_mut().enumerate() {
++            let entry = state.descs.get(&(heap.cpu + (index + slot) * heap.inc))?;
++            let Desc::Srv { res, .. } = &entry.d else { return None };
++            if *res == 0 { return None; }
++            *plane = *res;
++        }
++        Some(planes)
++    })
++}
++
++pub unsafe fn movie_vertices(list: usize, address: u64) -> String {
++    with(|state| {
++        let mut out = String::new();
++        if let Some((base, buf)) = state.buffers.range(..=address).next_back() {
++            let offset = address - base;
++            if buf.heap_type == 2 && offset + 128 <= buf.size {
++                let obj = buf.res as *mut c_void;
++                let map: unsafe extern "system" fn(*mut c_void, u32, *const c_void, *mut *mut u8) -> i32 = core::mem::transmute(*vt(obj).add(8));
++                let unmap: unsafe extern "system" fn(*mut c_void, u32, *const c_void) = core::mem::transmute(*vt(obj).add(9));
++                let mut data = core::ptr::null_mut();
++                if map(obj, 0, core::ptr::null(), &mut data) >= 0 && !data.is_null() {
++                    out.push_str(&fmt_words(core::slice::from_raw_parts(data.add(offset as usize), 128)));
++                    let empty = [0usize; 2];
++                    unmap(obj, 0, empty.as_ptr().cast());
++                }
++            } else { out.push_str(&format!("buffer heap={} offset={offset:#x} size={}\n", buf.heap_type, buf.size)); }
++        }
++        if let Some(tables) = state.tables.get(&(list, false)) {
++            for (param, &handle) in tables.iter().enumerate() {
++                let Some(heap) = state.heaps.iter().find(|h| h.gpu != 0 && h.inc != 0 && handle >= h.gpu && handle < h.gpu + (h.count*h.inc) as u64) else { continue };
++                let index = (handle-heap.gpu) as usize / heap.inc;
++                for slot in 0..2 {
++                    if index+slot >= heap.count { continue; }
++                    if let Some(Entry { d: Desc::Sampler { desc }, .. }) = state.descs.get(&(heap.cpu+(index+slot)*heap.inc)) {
++                        out.push_str(&format!("sampler [{param}]+{slot} = {desc:02x?}\n"));
++                    }
++                }
++            }
++        }
++        out
++    })
+ }
+ 
+ /// Called at every present: advances the frame counter and, now and then, drops buffers the
+--- a/crates/compat/d3d12_xs/src/rtcap.rs
++++ b/crates/compat/d3d12_xs/src/rtcap.rs
+@@ -49,6 +49,47 @@
+     })
+ }
+ 
++pub fn movie_trace() -> bool {
++    static SWITCH: OnceLock<bool> = OnceLock::new();
++    *SWITCH.get_or_init(|| std::env::var("TUXBOX_MOVIE_TRACE").as_deref() == Ok("1"))
++}
++
++static FILM_PSOS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
++static FILM_TARGETS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
++pub fn note_film_pipeline(pso: usize) {
++    FILM_PSOS.lock().unwrap().push(pso);
++}
++static CONVERTERS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
++static PLANES: Mutex<Vec<Target>> = Mutex::new(Vec::new());
++pub fn note_converter(pso: usize) {
++    CONVERTERS.lock().unwrap().push(pso);
++}
++
++/// The shader resource table rotates as decoded frames arrive. Retain just the
++/// two inputs for the most recent WakeUp draw and track subsequent transitions.
++unsafe fn track_film_planes(planes: [usize; 2]) {
++    let mut retained = PLANES.lock().unwrap();
++    if retained.iter().map(|t| t.res).eq(planes) { return; }
++    let mut pair = Vec::new();
++    for (slot, res) in planes.into_iter().enumerate() {
++        let mut desc = [0u8; 56];
++        vcall!(res as *mut c_void, 10, fn(*mut u8) -> *mut u8, desc.as_mut_ptr());
++        let width = u64::from_le_bytes(desc[16..24].try_into().unwrap());
++        let height = u32::from_le_bytes(desc[24..28].try_into().unwrap());
++        let fmt = u32::from_le_bytes(desc[32..36].try_into().unwrap());
++        if !matches!((slot,width,height,fmt), (0,3840,1600,60|61) | (1,1920,800,48|49)) { return; }
++        pair.push(Target { res, desc, order: 10000 + slot });
++    }
++    let mut states = STATES.lock().unwrap();
++    let states = states.get_or_insert_with(HashMap::new);
++    for target in &pair { vcall!(target.res as *mut c_void, 1, fn() -> u32); }
++    for old in retained.drain(..) {
++        states.remove(&old.res);
++        vcall!(old.res as *mut c_void, 2, fn() -> u32);
++    }
++    for target in &pair { states.insert(target.res, Some(0xc0)); }
++    *retained = pair;
++}
+ struct Target {
+     res: usize,
+     desc: [u8; 0x38],
+@@ -209,9 +250,9 @@
+     }
+     // The trigger may list target numbers ("raw 99 100"): those are also written in full
+     // resolution as little-endian f32 (4 per pixel, `rtNNN_WxH.f32`) for offline analysis.
+-    let raw_ids: Vec<usize> = std::fs::read_to_string(&trigger)
+-        .map(|t| t.split_whitespace().filter_map(|w| w.parse().ok()).collect())
+-        .unwrap_or_default();
++    let request = std::fs::read_to_string(&trigger).unwrap_or_default();
++    let movie_only = request.trim() == "movie";
++    let raw_ids: Vec<usize> = request.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+     let _ = std::fs::remove_file(&trigger);
+     static SEQ: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+     let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+@@ -240,7 +281,10 @@
+     vcall!(list, 9, fn() -> i32);
+     let mut fence_value = 0u64;
+ 
+-    let targets: Vec<(usize, [u8; 0x38], usize)> = TARGETS.lock().unwrap().iter().map(|t| (t.res, t.desc, t.order)).collect();
++    let mut targets: Vec<(usize, [u8; 0x38], usize)> = TARGETS.lock().unwrap().iter().map(|t| (t.res, t.desc, t.order)).collect();
++    // Keep both references through GPU readback while other lists may record.
++    let planes = PLANES.lock().unwrap();
++    if movie_only { targets.extend(planes.iter().map(|t| (t.res, t.desc, t.order))); }
+     let states = STATES.lock().unwrap().clone().unwrap_or_default();
+     let _ = writeln!(report, "{} render-target/depth textures known", targets.len());
+     let mut done = 0;
+@@ -248,6 +292,9 @@
+         let u32at = |o: usize| u32::from_le_bytes(d[o..o + 4].try_into().unwrap());
+         let (w, h) = (u64::from_le_bytes(d[0x10..0x18].try_into().unwrap()) as usize, u32at(0x18) as usize);
+         let (fmt, samples, flags) = (u32at(0x20), u32at(0x24), u32at(0x30));
++        if movie_only && !(order >= 10000 || w == 3840 && h == 1600 && matches!(fmt, 87 | 90 | 91)
++            || w == 3840 && h == 2160 && fmt == 24
++            || FILM_TARGETS.lock().unwrap().contains(&res)) { continue; }
+         let Some(state) = states.get(&res).copied().flatten() else {
+             let _ = writeln!(report, "#{order:03} subresource zero has no completed state - skipped");
+             continue;
+@@ -324,6 +371,14 @@
+             let _ = writeln!(report, "{head}: readback map failed hr={hr:#010x} (waited {spins} ms)");
+             vcall!(buf, 2, fn() -> u32);
+             continue;
++        }
++        if movie_only && order >= 10000 {
++            if let Ok(mut file) = std::fs::File::create(dir.join(format!("plane{order}_{w}x{h}.bin"))) {
++                for y in 0..h {
++                    let row = core::slice::from_raw_parts(data.add(y * pitch), w * bpp);
++                    if file.write_all(row).is_err() { break; }
++                }
++            }
+         }
+         if raw_ids.contains(&order) {
+             let mut out = Vec::with_capacity(w * h * 16);
+@@ -440,6 +495,7 @@
+     trace_hashes: Vec<u64>,
+     trace_pso: HashMap<usize, bool>,
+     trace_budget: u32,
++    movie_counts: HashMap<(usize, Vec<usize>, usize), u32>,
+     /// Last IASetVertexBuffers per list: (start slot, views as (address, size, stride)).
+     vbs: HashMap<usize, Vec<(u32, u64, u32, u32)>>,
+ }
+@@ -500,7 +556,53 @@
+ /// Log one traced draw or dispatch (see `trace_hashes`): its arguments, vertex buffers and
+ /// everything bound through descriptor tables (constant-buffer contents included).
+ pub fn trace_draw(list: usize, compute: bool, text: &str) {
++    if !compute && movie_trace() {
++        let converter = with_trace(|trace| trace.lists.get(&list).map(|s| s.pso));
++        if converter.is_some_and(|pso| CONVERTERS.lock().unwrap().contains(&pso)) {
++            if let Some(planes) = crate::bindtrace::movie_inputs(list) { unsafe { track_film_planes(planes); } }
++        }
++        let newly_seen = with_trace(|trace| {
++            let Some(list) = trace.lists.get(&list) else { return Vec::new() };
++            if !FILM_PSOS.lock().unwrap().contains(&list.pso) { return Vec::new(); }
++            let mut film_targets = FILM_TARGETS.lock().unwrap();
++            let mut additions = Vec::new();
++            for &resource in &list.rtv {
++                if resource != 0 && !film_targets.contains(&resource) {
++                    film_targets.push(resource);
++                    additions.push(resource);
++                }
++            }
++            additions
++        });
++        for resource in newly_seen {
++            if TARGETS.lock().unwrap().iter().any(|t| t.res==resource) { continue; }
++            let resource = resource as *mut c_void;
++            let mut desc = [0u8; 0x38];
++            // The draw currently binds this resource as a render target. Retain it
++            // for readback and let the normal barrier hooks track later transitions.
++            unsafe {
++                vcall!(resource, 10, fn(*mut u8) -> *mut u8, desc.as_mut_ptr());
++                register(resource, &desc, 4);
++            }
++        }
++    }
+     let line = with_trace(|t| {
++        if !compute && movie_trace() {
++            let state = t.lists.get(&list)?;
++            let key = (state.pso, state.rtv.clone(), state.dsv);
++            let count = t.movie_counts.entry(key).or_default();
++            *count = count.saturating_add(1);
++            if matches!(*count, 1 | 100 | 1000) {
++                if CONVERTERS.lock().unwrap().contains(&state.pso) {
++                    if let Some((_, address, _, _)) = t.vbs.get(&list).and_then(|v| v.iter().find(|b| b.0 == 0)) {
++                        record("d3d12_xs", "movie-vertices", &unsafe { crate::bindtrace::movie_vertices(list, *address) });
++                    }
++                }
++                return Some((format!("movie pso={:#x} count={} {} vb={:?}", state.pso, count, text, t.vbs.get(&list)),
++                             (state.rtv.clone(), state.dsv)));
++            }
++        }
++
+         if t.trace_hashes.is_empty() || t.trace_budget == 0 {
+             return None;
+         }

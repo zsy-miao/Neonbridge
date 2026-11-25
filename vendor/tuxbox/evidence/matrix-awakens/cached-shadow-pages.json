@@ -1,0 +1,60 @@
+{
+  "entry": 1228,
+  "shader": "CreateCachedPageMappings",
+  "source_sha256": "fad2f7ef189d28f20ebbda8b769fae8750909f2d0f975b9b82f716d5017cc43d",
+  "dxil_sha256": "666cc341153b929b23196cb93b986debaa89ea39655f22492c9603fbe3f0544c",
+  "guest_sha256": "63950faf8965874cf9ad26dc5177357a103ebac9b3c7226f23d333e534c5a0a1",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "cases": {
+    "split": {
+      "counters": [
+        185,
+        192,
+        201,
+        119,
+        126
+      ],
+      "checked_words": 88436
+    },
+    "shared": {
+      "counters": [
+        98,
+        105,
+        288,
+        119,
+        39
+      ],
+      "checked_words": 88436
+    },
+    "fresh": {
+      "counters": [
+        361,
+        368,
+        25,
+        382,
+        39
+      ],
+      "checked_words": 88436
+    },
+    "unmapped": {
+      "counters": [
+        11,
+        18,
+        25,
+        32,
+        39
+      ],
+      "checked_words": 88436
+    }
+  },
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "command": "python tools/check_frosty_cached_pages.py MOUNT --xshader XSHADER --proton PROTON --prefix PREFIX --output RECEIPT",
+  "dispatch": [
+    2,
+    2,
+    1
+  ]
+}

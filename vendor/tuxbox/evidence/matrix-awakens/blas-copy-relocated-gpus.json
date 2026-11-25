@@ -1,0 +1,48 @@
+{
+  "observed": {
+    "game": "The Matrix Awakens",
+    "scene": "ChaseSection-CityIntro",
+    "utc": "2026-11-23",
+    "command": "slot 119 COMPACT",
+    "source": "0x21aeec00",
+    "destination": "0x210ffc00",
+    "status": "0x80004001",
+    "limit": "The retail trace provides the HRESULT and guest addresses. The registrations and host source size were not logged."
+  },
+  "fixture": "tools/check_frosty_blas.py --promote-blas --single-build --ambiguous-as",
+  "inputs": "Two in-pool BLAS sources at offset 256 compacted into the same relocated destination, first cooked and then native-built. Each TLAS dispatch reads three rays with distinct triangle IDs and a miss. The test also replays the original pre-promotion and post-promotion lists.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "before": {
+    "provider_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc",
+    "adapter": "1002:13c0",
+    "result": "close direct to relocated COMPACT failed: 0x80004001"
+  },
+  "candidate_provider_sha256": "e21226570882308f194e971e263e7823093da191fbf971ba4fe0c5e7b4620a54",
+  "candidate_guest_sha256": "4c7856254b5b465666db378d6da6082fff51d8f9d383a064ac64926fb6bd778c",
+  "gpu_controls": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "exit": 0,
+      "direct_to_relocated_compact_rays": "1,0,miss;0,1,miss",
+      "promotion_first_primitive": "1,0,1,0",
+      "alias_rejections": 4,
+      "unique_after_alias_release": true,
+      "baseline_tree_compacted_bytes": [
+        448,
+        1600
+      ]
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "exit": 0,
+      "direct_to_relocated_compact_rays": "1,0,miss;0,1,miss",
+      "promotion_first_primitive": "1,0,1,0",
+      "alias_rejections": 4,
+      "unique_after_alias_release": true,
+      "baseline_tree_compacted_bytes": [
+        1152,
+        1280
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "scope": "XGComputeBufferLayout export, ordinal 1. Complete output bytes and HRESULTs compared against the supplied Xbox XG DLL; the same XMem provider and guest are used for both runs.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "335be77ee8b6046a833a81edf623e94e9adaf409655eddea4f37509ce02e9ffd",
+  "guest_source_sha256": "40702bb4fd693457c547728deec65f11942d30f35b65ac9177746d1aeb5ce8bd",
+  "xmem_sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+  "descriptors": 967,
+  "result_bytes_per_descriptor": 7044,
+  "checks": [
+    "zero, boundary and maximum sizes",
+    "each input flag bit",
+    "deterministic combinations and reserved fields",
+    "null pointers",
+    "unchanged output on invalid arguments",
+    "full layout and surrounding guards"
+  ],
+  "runs": {
+    "original": {
+      "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "guest_receipt": "xg-buffer PASS 967 descriptors, null arguments, complete layouts and guards",
+      "result_sha256": "58b36f6d9a7706eb87afb4f72eb43cf2201c6fde7f21874cf3c74ba6414d8ce9"
+    },
+    "tuxbox": {
+      "dll_sha256": "c28cafe1899f0587299a5b70eb9554419cf82ff18df16aa90ff29ecda4e8c0d1",
+      "guest_receipt": "xg-buffer PASS 967 descriptors, null arguments, complete layouts and guards",
+      "result_sha256": "58b36f6d9a7706eb87afb4f72eb43cf2201c6fde7f21874cf3c74ba6414d8ce9"
+    }
+  }
+}

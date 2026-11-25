@@ -1,0 +1,29 @@
+{
+  "scope": "Extracted global 638 ScreenProbeIntegrateCS shading model classification at ISA 0x1b48..0x1bc8. Per-invocation execution through stock Proton. Expected mask accepts material IDs 1, 2, 3, 4, 5, 6, 9, 10 in active lanes. Inactive lanes and IDs 0, 7, 8, 11 to 15 remain excluded. Checks predicate, saved EXEC, new EXEC, and SCC; it does not time or validate the complete dispatch.",
+  "dxbc_sha256": "058f46422fb57185706d3aaadf149ffa84ef26dfb6b1ab2b158aca18010f3085",
+  "checked_words": 262144,
+  "measured": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "old": {
+        "mismatched_words": 30720,
+        "control_dxil_sha256": "ef6d4dca110dccf28b336cc318ee10d817f86107ed442044fd8163ed4a51de37"
+      },
+      "corrected": {
+        "mismatched_words": 0,
+        "control_dxil_sha256": "d21fe22b3cd5e8d771c4673da3bdc4a8cba30e768b228c701db86d76e0142725"
+      }
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "old": {
+        "mismatched_words": 30720,
+        "control_dxil_sha256": "ef6d4dca110dccf28b336cc318ee10d817f86107ed442044fd8163ed4a51de37"
+      },
+      "corrected": {
+        "mismatched_words": 0,
+        "control_dxil_sha256": "d21fe22b3cd5e8d771c4673da3bdc4a8cba30e768b228c701db86d76e0142725"
+      }
+    }
+  }
+}

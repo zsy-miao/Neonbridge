@@ -1,0 +1,29 @@
+{
+  "scope": "Hardware ordering across Xbox command-list slot 67 with the existing indirect-dispatch control. Dependent GPU read/modify/write operations exercise the full address space, an allocated buffer range, a range starting at address zero, a zero-length range and a partial interval with the global mask. A CPU reference checks every output and guard word.",
+  "slot": 67,
+  "masks": [
+    "0x3000",
+    "0xc00000"
+  ],
+  "provider_sha256": "df46c0d42c68d40aa7111338d268cad42e11b39405464af2b7399565ee943587",
+  "guest_sha256": "a0e62b4fca765b9f70ff920de34b645c38400f12ee1b7191daf4b935e9ccaca6",
+  "results": {
+    "AMD": "d3d12-indirect PASS pci=1002:13c0 sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero flush=global,range,wake-up(0x3000:0+0xa30000),zero-length,global-range budget=default,rejected2 mesh=0x00000000 rays=0x00000000",
+    "NVIDIA": "d3d12-indirect PASS pci=10de:2705 sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero flush=global,range,wake-up(0x3000:0+0xa30000),zero-length,global-range budget=default,rejected2 mesh=0x00000000 rays=0x00000000"
+  },
+  "rejected": [
+    "unsupported mask (E_NOTIMPL)",
+    "64-bit address overflow (E_INVALIDARG)"
+  ],
+  "retail_caller": {
+    "range_call_rva": "0x5750f7c",
+    "full_space_call_rva": "0x5750f30",
+    "notes": "Frosty RHIFlushTextureCacheBOP reads the range address and byte count from independent fields of a texture object and tail-calls slot 67 without testing either value."
+  },
+  "retail_call": {
+    "mask": "0x3000",
+    "address": "0x0",
+    "bytes": "0xa30000",
+    "observed": "Wake Up"
+  }
+}

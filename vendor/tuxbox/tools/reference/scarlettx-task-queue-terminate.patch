@@ -1,0 +1,14 @@
+diff --git a/src/shims/xgameruntime_shim.cpp b/src/shims/xgameruntime_shim.cpp
+index 3c22b36ab2232948b92f1461c50cf201c3f27c96..05464a3fee32ba9e6701eb8f8bea33eaef3768b1 100644
+--- a/src/shims/xgameruntime_shim.cpp
++++ b/src/shims/xgameruntime_shim.cpp
+@@ -1842,0 +1843,6 @@
++XGameResult SCARLETTX_GDK_CALLBACK ApiImpl073B7DCB_Terminate(
++    void* /*self_ptr*/, XTaskQueueHandle queue, bool wait,
++    void* context, XTaskQueueTerminatedCallback* callback) {
++    return XTaskQueueTerminate(queue, wait, context, callback);
++}
++
+@@ -1880 +1886 @@
+-    reinterpret_cast<void*>(&ApiImpl073B7DCB_UnimplementedSlot<22>), // 22 (+0xB0)
++    reinterpret_cast<void*>(&ApiImpl073B7DCB_Terminate), // 22 (+0xB0)

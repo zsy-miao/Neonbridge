@@ -1,0 +1,226 @@
+{
+  "name": "MicropolyRasterize",
+  "entry": 3246,
+  "adapter": "10de:2705",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "source_sha256": "1e7aa6eec3deeeb634429870c7d8bfce63591c0e8c0bd28b08e3af0e76b865e1",
+  "dxil_sha256": "2c2eb532ad23da6bd6bec30940878f65588efc73ef24c06ffe30effe91d37eef",
+  "guest_sha256": "16429a9cd4e799bfe8d1a575a3bc1ddddd95dbf2fd2eedd80eb1ed5371e5cc68",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "cases": {
+    "empty": {
+      "checked_texels": 713,
+      "changed_texels": 0,
+      "fragment_words": [],
+      "readback_sha256": "e764fb73605ed31fda3c6a54269efffb27ec9e91763410a078d07b44f473733d"
+    },
+    "projected": {
+      "checked_texels": 713,
+      "changed_texels": 61,
+      "fragment_words": [
+        "3f40000000000080"
+      ],
+      "readback_sha256": "7907a3fbb04b2cc9c778329571a195a8a98148b2b1dfcc47eca08b156a1fff14"
+    },
+    "short-span": {
+      "checked_texels": 713,
+      "changed_texels": 5,
+      "fragment_words": [
+        "3f40000000000080"
+      ],
+      "readback_sha256": "d3b37951944535e0084fb09f8d756f4bfdb325032a6b867eb41e43f80d806c9d"
+    },
+    "viewport": {
+      "checked_texels": 713,
+      "changed_texels": 513,
+      "fragment_words": [
+        "3f40000000000080"
+      ],
+      "readback_sha256": "e890ea65c5bfeaf0b2f89e494484a8c6c43792102364feab4decdb004831ffa2"
+    },
+    "depth-plane": {
+      "checked_texels": 713,
+      "changed_texels": 32,
+      "fragment_words": [
+        "3f24000000000080",
+        "3f2c000000000080",
+        "3f34000000000080",
+        "3f3c000000000080",
+        "3f44000000000080",
+        "3f4c000000000080",
+        "3f54000000000080",
+        "3f5c000000000080"
+      ],
+      "readback_sha256": "b2fc5e265de610f03567241c34bebd9126fc222302a3483e9aad30d9517e9fc6"
+    },
+    "backface": {
+      "checked_texels": 713,
+      "changed_texels": 0,
+      "fragment_words": [],
+      "readback_sha256": "e764fb73605ed31fda3c6a54269efffb27ec9e91763410a078d07b44f473733d"
+    },
+    "offscreen": {
+      "checked_texels": 713,
+      "changed_texels": 0,
+      "fragment_words": [],
+      "readback_sha256": "e764fb73605ed31fda3c6a54269efffb27ec9e91763410a078d07b44f473733d"
+    },
+    "upper-lanes": {
+      "checked_texels": 713,
+      "changed_texels": 61,
+      "fragment_words": [
+        "3f400000000000e0"
+      ],
+      "readback_sha256": "33712f9405d167e0832bf984fdf18fb69e63d4ce1b905d012f5c632210240fbc"
+    },
+    "mixed-wave-spans": {
+      "checked_texels": 713,
+      "changed_texels": 61,
+      "fragment_words": [
+        "3f40000000000080",
+        "3f400000000000e0"
+      ],
+      "readback_sha256": "3973bf614c61849e964fe07451dd047ec529a57220ab4999f53b5b2d32025bd7"
+    },
+    "second-group": {
+      "checked_texels": 713,
+      "changed_texels": 61,
+      "fragment_words": [
+        "3f40000000000100"
+      ],
+      "readback_sha256": "e7a71098fa7286ab466ca17c85729d3d2054a270e757fef92be4444780ec7531"
+    },
+    "depth-wins": {
+      "checked_texels": 713,
+      "changed_texels": 61,
+      "fragment_words": [
+        "3f40000000000080"
+      ],
+      "readback_sha256": "7907a3fbb04b2cc9c778329571a195a8a98148b2b1dfcc47eca08b156a1fff14"
+    },
+    "equal-depth": {
+      "checked_texels": 713,
+      "changed_texels": 61,
+      "fragment_words": [
+        "3f40000000000100"
+      ],
+      "readback_sha256": "e7a71098fa7286ab466ca17c85729d3d2054a270e757fef92be4444780ec7531"
+    },
+    "protected": {
+      "checked_texels": 713,
+      "changed_texels": 38,
+      "fragment_words": [
+        "3f40000000000080"
+      ],
+      "readback_sha256": "2ad2707fb0a4f2f7531cb0369100d065089de1d22f8960c24f9b5cdf2dc0c21a"
+    }
+  },
+  "pipelines": {
+    "receipt": "micropoly-pipelines PASS pci=10de:2705 created=96",
+    "archive_entries": [
+      2762,
+      2766,
+      2775,
+      2781,
+      2788,
+      2791,
+      2794,
+      2796,
+      2805,
+      2808,
+      2810,
+      2817,
+      2818,
+      2823,
+      2824,
+      2827,
+      2830,
+      2831,
+      2832,
+      2833,
+      2841,
+      2843,
+      2844,
+      2848,
+      2852,
+      2865,
+      2868,
+      2873,
+      2874,
+      2877,
+      2882,
+      2883,
+      2891,
+      2892,
+      2897,
+      2909,
+      2917,
+      2926,
+      2928,
+      2934,
+      2950,
+      2958,
+      2959,
+      2966,
+      2967,
+      2968,
+      2970,
+      2974,
+      2976,
+      2979,
+      2985,
+      2994,
+      3005,
+      3010,
+      3013,
+      3015,
+      3021,
+      3023,
+      3028,
+      3041,
+      3044,
+      3045,
+      3052,
+      3054,
+      3062,
+      3064,
+      3067,
+      3071,
+      3076,
+      3078,
+      3083,
+      3086,
+      3106,
+      3109,
+      3113,
+      3119,
+      3121,
+      3122,
+      3123,
+      3127,
+      3131,
+      3142,
+      3143,
+      3144,
+      3155,
+      3164,
+      3175,
+      3177,
+      3188,
+      3213,
+      3214,
+      3220,
+      3246,
+      3250,
+      3251,
+      3254
+    ],
+    "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+    "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "program_manifest_sha256": "d304c0a3275f06e4cc7ae138bdf7df114cc17e3fff143b1ab977850b91750c30",
+    "manifest_format": "Archive index, source DXBC SHA-256 and validated DXIL SHA-256 in archive order, separated by spaces, one LF per row."
+  }
+}

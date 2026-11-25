@@ -1,0 +1,71 @@
+{
+  "title": "The Matrix Awakens, Xbox Series X|S, build 1.20.1831.3754",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "date_utc": "2026-11-21",
+  "host": "Linux, Valve Proton Experimental 1793301796",
+  "profile": "Existing reduced-effects configuration with Nanite and mesh shader rasterization enabled. Ray tracing and audio disabled.",
+  "user_engine_ini_sha256": "7107f7963b04c29ae3173591423b21736d240830b113f1ccc1aa1ed9e0b75f49",
+  "d3d12_xs_sha256": "847b82925c9311b93b4beaa8cf141959b2435f0f87c35de7bd818aa6e6357a6a",
+  "stages": [
+    {
+      "stage": "MS",
+      "entry_point": "HWRasterizeMS",
+      "entry": 3194,
+      "source_sha256": "0d4059821b7f492a8b6672e87fc9bdff6e4d826966b6bb5c78de9a37dc42dcb6"
+    },
+    {
+      "stage": "PS",
+      "entry_point": "HWRasterizePS",
+      "entry": 2853,
+      "source_sha256": "33c3a3b5c3045ac280b15ccaf78e951227c87833ec919c0fbb787c6316d970a6"
+    }
+  ],
+  "before": {
+    "trace_sha256": "f5d10b2f43ea8ea01ff38f877c3f3e60f720083a236c86aed40d17b6d23202d4",
+    "launcher_log_sha256": "090efb9515f91bf5f5b63eb228fa055230426d467a40abcc48b6c5b301a05bdd",
+    "exit_code": 1,
+    "runtime_seconds": 5.5,
+    "adapter": "10de:2705",
+    "d3d12_xs_sha256": "124318ee0e4e070d595b4d8da913acc5ebd7e03e332470121f90b34ba94bf703",
+    "result": "The 680-byte Xbox mesh stream returned E_NOTIMPL at device slot 86."
+  },
+  "nvidia": {
+    "trace_sha256": "19b74c26e966a054410ce4aa8cfe774604dc0474fe647b75622ff0acee45443d",
+    "launcher_log_sha256": "cac8f7e7eb21ad678786559ebaabad3e2f5acd5aef23346f65a00b02d361478b",
+    "exit_code": 1,
+    "runtime_seconds": 3.5,
+    "adapter": "10de:2705",
+    "display": "Xvfb",
+    "mesh_pipeline": "created Xbox mesh pipeline (680-byte stream, amplification=false)",
+    "following_pipeline": "712-byte vertex/pixel pipeline, E_INVALIDARG",
+    "vertex_sha256": "8ebb680749cdb4f2029b9024d403b56d5d13c7ae12feb55e6f7b35121b0a2a9c",
+    "pixel_sha256": "078b54eab6d1e676a891bc7239cfb0500898c648d1414d4a53b5731ee01b0e42",
+    "reason": "vkd3d-proton reports an unsupported pixel shader stencil-reference export."
+  },
+  "radeon": {
+    "trace_sha256": "181596774d49543d5b7a26c062c1dc157735c9f370ed88d0b2427b71f8b9b453",
+    "launcher_log_sha256": "4507155c49df5eb690139414557e7ad77a9aeb59cbe554af9f569d4a731e42be",
+    "exit_code": 1,
+    "runtime_seconds": 11.7,
+    "adapter": "1002:13c0",
+    "display": "Headless gamescope with Xwayland and DRI3",
+    "driver": "Mesa RADV 26.2.6",
+    "mesh_pipeline": "created Xbox mesh pipeline (680-byte stream, amplification=false)",
+    "present": "3840 x 2160",
+    "following_pipeline": "Compute pipeline, E_FAIL",
+    "compute_entry": 3444,
+    "entry_point": "InstanceCull",
+    "compute_sha256": "06444185d9d7411b6a4cdf41ce1bd9a549ed6ab66add5a04b06a6209874a760d",
+    "reason": "The Xbox shader compiler rejected an unverified EXEC election at native byte offset 0x1498."
+  },
+  "scope": "Retail traces establish pipeline creation. The paired draw fixtures verify pixel output on both GPUs. Neither Nanite-enabled title run reached the menu.",
+  "default_launch_control": {
+    "adapter": "10de:2705",
+    "nanite": false,
+    "user_engine_ini_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+    "trace_sha256": "38dafbb983c86c9f1a0c72d8859f0e955fcb39125bada3b0e2cf51e7875cf510",
+    "launcher_log_sha256": "62134734fe0c24824fa3de858788db7644867f272239d55ce24d49ceee61415e",
+    "menu_capture_sha256": "94d3389cdec3eb290ad7f688afbf81e4b3b83cc0a1bd32d1dc50603c8a2df23d",
+    "result": "The standard launcher reused all 215 prepared outputs and reached Start Chase and Settings with the green code background and video preview. The test stopped the game after collecting three menu frames."
+  }
+}

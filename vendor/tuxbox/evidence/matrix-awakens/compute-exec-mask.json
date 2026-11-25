@@ -1,0 +1,14 @@
+{
+  "threads": 256,
+  "matched_words": 768,
+  "groups": 3,
+  "source_sha256": "1c6f9f103ed000defe585dd7de1fc9b99779b862822f59c1496dc319fc910ee2",
+  "translated_sha256": "1ce260b0f9dcfd49ce081b51941c4bbcec25afc4d3b596b207a332ad2dba30a6",
+  "shader_sha256": "f070bc45250b8b5a826c8537c2745ded53f3d938dcaef5670774757905936b6a",
+  "shader_group_source_sha256": "67fbb0513186e25ce00486718e49c850dedb83259b3b0d4162709632efbcae52",
+  "guest_sha256": "c8ab5e6eb896ac80bd6d3511c1e992921851cce94379627fea3f152115b2daa2",
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+  ],
+  "scope": "Both alternating parity and modulo-five predicates, disabled destination preservation, write-after-write register dependencies, a UAV store and a predicated UAV read."
+}

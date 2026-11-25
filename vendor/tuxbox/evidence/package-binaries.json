@@ -1,0 +1,229 @@
+{
+  "packages": [
+    {
+      "package": "Frosty",
+      "xml_sha256": "0fe349f8cf39bee0e019832eacd0477d658087f340bdc856cb0647a177576bf7",
+      "binary_executable_declarations_match_xml": true,
+      "declared_executables_present": [
+        true
+      ],
+      "binary_files": [
+        {
+          "path": ".unsync/manifest.bin",
+          "sha256": "07e0517882b3ee8f25bf37865fc49ea8fc3f9d5569261b320f87f3316dab1492",
+          "kind": "Unsync build manifest",
+          "size_bytes": 17866758,
+          "version": 5
+        },
+        {
+          "path": "Catalog000.bin",
+          "sha256": "024f3d9b887b28b68fe6fa9b9bac2304dd6bac8ad953d18144c54a661148f76d",
+          "kind": "Xbox code catalog",
+          "size_bytes": 823296,
+          "machine": "0x8664",
+          "entry_rva": "0x0",
+          "sections": 1,
+          "executable_sections": false,
+          "subsystem": 17,
+          "code_bytes": 0,
+          "force_integrity": true
+        },
+        {
+          "path": "Frosty/Build/XSX/Symbols/Frosty-XSX-Shipping-symbols.bin",
+          "sha256": "b886b339a77da68874a44d107e366aeb4b7c16695dd67e8bbd44d6fcbab13c2c",
+          "kind": "Unreal symbol database",
+          "size_bytes": 10279997,
+          "module": "Frosty-XSX-Shipping.exe",
+          "symbol_count": 769032,
+          "unpacked_bytes": 77086430
+        },
+        {
+          "path": "Frosty/Build/XSX/Symbols/Frosty-XSX-Test-symbols.bin",
+          "sha256": "259e51669862792ec23e9e4485d8b796b3f1d2d98c8f048dda2d315804e8bfd1",
+          "kind": "Unreal symbol database",
+          "size_bytes": 11597185,
+          "module": "Frosty-XSX-Test.exe",
+          "symbol_count": 864474,
+          "unpacked_bytes": 86592728
+        },
+        {
+          "path": "Frosty/Build/XSX/Symbols/Frosty-symbols.bin",
+          "sha256": "bbededd5c0e3f535b8b7f44f4f6ba30a9e3609180be37db9498782d85a38d65a",
+          "kind": "Unreal symbol database",
+          "size_bytes": 15317162,
+          "module": "Frosty.exe",
+          "symbol_count": 1326791,
+          "unpacked_bytes": 139370433
+        },
+        {
+          "path": "Symbols/Frosty-Symbols.bin",
+          "sha256": "bbededd5c0e3f535b8b7f44f4f6ba30a9e3609180be37db9498782d85a38d65a",
+          "kind": "Unreal symbol database",
+          "size_bytes": 15317162,
+          "module": "Frosty.exe",
+          "symbol_count": 1326791,
+          "unpacked_bytes": 139370433
+        },
+        {
+          "path": "Symbols/Frosty-XSX-Shipping-Symbols.bin",
+          "sha256": "b886b339a77da68874a44d107e366aeb4b7c16695dd67e8bbd44d6fcbab13c2c",
+          "kind": "Unreal symbol database",
+          "size_bytes": 10279997,
+          "module": "Frosty-XSX-Shipping.exe",
+          "symbol_count": 769032,
+          "unpacked_bytes": 77086430
+        },
+        {
+          "path": "Symbols/Frosty-XSX-Test-Symbols.bin",
+          "sha256": "259e51669862792ec23e9e4485d8b796b3f1d2d98c8f048dda2d315804e8bfd1",
+          "kind": "Unreal symbol database",
+          "size_bytes": 11597185,
+          "module": "Frosty-XSX-Test.exe",
+          "symbol_count": 864474,
+          "unpacked_bytes": 86592728
+        },
+        {
+          "path": "microsoft_gameconfig.bin",
+          "sha256": "dc3051f37252a073b720dd1910b4cbed263f5a74aa75106b036c1540dc226f75",
+          "kind": "Xbox game configuration",
+          "size_bytes": 8192,
+          "game_config": {
+            "config_version": 0,
+            "identity": {},
+            "executables": [
+              {
+                "Name": "Frosty\\Binaries\\XSX\\Frosty-XSX-Shipping.exe",
+                "TargetDeviceFamily": "Scarlett",
+                "Id": "AppTheMatrixAwakensAnUnrealEngine5ExperienceShipping"
+              }
+            ],
+            "virtual_machine": {
+              "XboxAnacondaTitleMemory": "Advanced",
+              "SMTEnabled": 1
+            },
+            "title_id": "7D3CD3FE",
+            "store_id": "9NG8RK1F3HCC"
+          }
+        }
+      ]
+    },
+    {
+      "package": "ProjectScarlett",
+      "xml_sha256": "d0d5e4777460045916046619cd0fd433aa251d4a74f4d91e83987588f907f80c",
+      "binary_executable_declarations_match_xml": true,
+      "declared_executables_present": [
+        false
+      ],
+      "binary_files": [
+        {
+          "path": "Catalog000.bin",
+          "sha256": "4afbdbe22aad2bc338a5ba1ffe83cccb96e072eb4e92f6a5dd90b49b2e227c59",
+          "kind": "Xbox code catalog",
+          "size_bytes": 815104,
+          "machine": "0x8664",
+          "entry_rva": "0x0",
+          "sections": 1,
+          "executable_sections": false,
+          "subsystem": 17,
+          "code_bytes": 0,
+          "force_integrity": true
+        },
+        {
+          "path": "microsoft_gameconfig.bin",
+          "sha256": "27735d6ca90ff4eb8f432e3d3e701fd85f75303f1adade2cdbc4bef165159a0a",
+          "kind": "Xbox game configuration",
+          "size_bytes": 8192,
+          "game_config": {
+            "config_version": 1,
+            "identity": {
+              "Name": "RockstarGamesInc.28872443D20A7",
+              "Publisher": "CN=3164F9C2-2C28-4832-BBE3-A642A4EF0054",
+              "Version": "1.0.2.1"
+            },
+            "executables": [
+              {
+                "Name": "game_scarlett_master.exe",
+                "TargetDeviceFamily": "Scarlett",
+                "Id": "GTAO"
+              }
+            ],
+            "virtual_machine": {
+              "XboxAnacondaTitleMemory": "Advanced",
+              "SMTEnabled": 1,
+              "XboxLockhartTitleMemory": "Advanced"
+            },
+            "title_id": "7952987A",
+            "store_id": "9NL3WWNZLZZN"
+          }
+        }
+      ]
+    }
+  ],
+  "frosty_embedded_os_catalogs": [
+    {
+      "path": "Catalog000.bin",
+      "sha256": "2b0d6c43e985fc2924a4799674d369178fc768797a86cc1b4ba5e9a431275576",
+      "kind": "Xbox code catalog",
+      "size_bytes": 1138688,
+      "machine": "0x8664",
+      "entry_rva": "0x0",
+      "sections": 1,
+      "executable_sections": false,
+      "subsystem": 17,
+      "code_bytes": 0,
+      "force_integrity": true
+    },
+    {
+      "path": "Catalog001.bin",
+      "sha256": "2abcf1e026019febed58dd75146c55df364b84961e71ee381c7a35f157a0c818",
+      "kind": "Xbox code catalog",
+      "size_bytes": 81920,
+      "machine": "0x8664",
+      "entry_rva": "0x0",
+      "sections": 1,
+      "executable_sections": false,
+      "subsystem": 17,
+      "code_bytes": 0,
+      "force_integrity": true
+    },
+    {
+      "path": "Catalog002.bin",
+      "sha256": "97d70494e4470eaea3c9db98cf6c7f200fca9d44c00e2dc8cfb26eb40db11cb7",
+      "kind": "Xbox code catalog",
+      "size_bytes": 12288,
+      "machine": "0x8664",
+      "entry_rva": "0x0",
+      "sections": 1,
+      "executable_sections": false,
+      "subsystem": 17,
+      "code_bytes": 0,
+      "force_integrity": true
+    },
+    {
+      "path": "Catalog003.bin",
+      "sha256": "ea3413b840483a67e76727232748d146cc25fd0c4d3f918c0d4d07adb6536ba0",
+      "kind": "Xbox code catalog",
+      "size_bytes": 12288,
+      "machine": "0x8664",
+      "entry_rva": "0x0",
+      "sections": 1,
+      "executable_sections": false,
+      "subsystem": 17,
+      "code_bytes": 0,
+      "force_integrity": true
+    },
+    {
+      "path": "Catalog004.bin",
+      "sha256": "c834d556922814e42fe3495d7abe5f08420f49154055abedd82536a20291bf7e",
+      "kind": "Xbox code catalog",
+      "size_bytes": 36864,
+      "machine": "0x8664",
+      "entry_rva": "0x0",
+      "sections": 1,
+      "executable_sections": false,
+      "subsystem": 17,
+      "code_bytes": 0,
+      "force_integrity": true
+    }
+  ]
+}

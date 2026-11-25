@@ -1,0 +1,556 @@
+{
+  "scope": "Real isolated Linux process memory and synthetic MangoHud CSV comparisons; no GPU or title execution",
+  "memory": {
+    "reports": {
+      "baseline": {
+        "schema": 1,
+        "scope": "One Linux process; sampled memory, not allocation ownership or leak proof",
+        "capture_sha256": "dcfcdd58f59b3840d7f08bf2a64b70a89d2784657a6be42752246de90d673dcd",
+        "samples": 27,
+        "duration_seconds": 2.6001490950002335,
+        "capture_end": "duration_reached",
+        "metrics_kib": {
+          "rss_kib": {
+            "first_median": 10520.0,
+            "last_median": 10520.0,
+            "delta": 0.0,
+            "peak": 10520,
+            "peak_seconds": 0.0003716690007422585,
+            "min": 10520,
+            "last": 10520
+          },
+          "pss_kib": {
+            "first_median": 4025.0,
+            "last_median": 4025.0,
+            "delta": 0.0,
+            "peak": 4025,
+            "peak_seconds": 0.0003716690007422585,
+            "min": 4025,
+            "last": 4025
+          },
+          "private_resident_kib": {
+            "first_median": 3528.0,
+            "last_median": 3528.0,
+            "delta": 0.0,
+            "peak": 3528,
+            "peak_seconds": 0.0003716690007422585,
+            "min": 3528,
+            "last": 3528
+          },
+          "swap_kib": {
+            "first_median": 0.0,
+            "last_median": 0.0,
+            "delta": 0.0,
+            "peak": 0,
+            "peak_seconds": 0.0003716690007422585,
+            "min": 0,
+            "last": 0
+          },
+          "swap_pss_kib": {
+            "first_median": 0.0,
+            "last_median": 0.0,
+            "delta": 0.0,
+            "peak": 0,
+            "peak_seconds": 0.0003716690007422585,
+            "min": 0,
+            "last": 0
+          },
+          "pss_plus_swap_pss_kib": {
+            "first_median": 4025.0,
+            "last_median": 4025.0,
+            "delta": 0.0,
+            "peak": 4025,
+            "peak_seconds": 0.0003716690007422585,
+            "min": 4025,
+            "last": 4025
+          }
+        },
+        "interval_seconds": 0.1,
+        "max_gap_seconds": 0.10072976900119102,
+        "growth": {
+          "metric": "pss_plus_swap_pss_kib",
+          "threshold_kib": 16384,
+          "minimum_seconds": 2,
+          "tail_fraction_above_threshold": 0.0,
+          "result": "threshold_not_observed"
+        }
+      },
+      "retained": {
+        "schema": 1,
+        "scope": "One Linux process; sampled memory, not allocation ownership or leak proof",
+        "capture_sha256": "88037ae3f452b6ac04f08f9513212ff222ee36471b77af81d2d9832df6ccc020",
+        "samples": 27,
+        "duration_seconds": 2.600962571999844,
+        "capture_end": "duration_reached",
+        "metrics_kib": {
+          "rss_kib": {
+            "first_median": 10468.0,
+            "last_median": 43236.0,
+            "delta": 32768.0,
+            "peak": 43236,
+            "peak_seconds": 0.905725214000995,
+            "min": 10468,
+            "last": 43236
+          },
+          "pss_kib": {
+            "first_median": 3959.0,
+            "last_median": 36727.0,
+            "delta": 32768.0,
+            "peak": 36727,
+            "peak_seconds": 0.905725214000995,
+            "min": 3959,
+            "last": 36727
+          },
+          "private_resident_kib": {
+            "first_median": 3488.0,
+            "last_median": 36256.0,
+            "delta": 32768.0,
+            "peak": 36256,
+            "peak_seconds": 0.905725214000995,
+            "min": 3488,
+            "last": 36256
+          },
+          "swap_kib": {
+            "first_median": 0.0,
+            "last_median": 0.0,
+            "delta": 0.0,
+            "peak": 0,
+            "peak_seconds": 0.00038088899964350276,
+            "min": 0,
+            "last": 0
+          },
+          "swap_pss_kib": {
+            "first_median": 0.0,
+            "last_median": 0.0,
+            "delta": 0.0,
+            "peak": 0,
+            "peak_seconds": 0.00038088899964350276,
+            "min": 0,
+            "last": 0
+          },
+          "pss_plus_swap_pss_kib": {
+            "first_median": 3959.0,
+            "last_median": 36727.0,
+            "delta": 32768.0,
+            "peak": 36727,
+            "peak_seconds": 0.905725214000995,
+            "min": 3959,
+            "last": 36727
+          }
+        },
+        "interval_seconds": 0.1,
+        "max_gap_seconds": 0.10112383700106875,
+        "growth": {
+          "metric": "pss_plus_swap_pss_kib",
+          "threshold_kib": 16384,
+          "minimum_seconds": 2,
+          "tail_fraction_above_threshold": 1.0,
+          "result": "retained_growth_observed"
+        }
+      },
+      "released": {
+        "schema": 1,
+        "scope": "One Linux process; sampled memory, not allocation ownership or leak proof",
+        "capture_sha256": "345758bc4cd8cd776ff1ca8153c3c2da1f234155a194ea6c5fdbf9bf779f95be",
+        "samples": 27,
+        "duration_seconds": 2.599865600999692,
+        "capture_end": "duration_reached",
+        "metrics_kib": {
+          "rss_kib": {
+            "first_median": 10328.0,
+            "last_median": 10392.0,
+            "delta": 64.0,
+            "peak": 43096,
+            "peak_seconds": 0.9054370049998397,
+            "min": 10328,
+            "last": 10392
+          },
+          "pss_kib": {
+            "first_median": 3944.0,
+            "last_median": 3950.0,
+            "delta": 6.0,
+            "peak": 36712,
+            "peak_seconds": 0.9054370049998397,
+            "min": 3944,
+            "last": 3950
+          },
+          "private_resident_kib": {
+            "first_median": 3452.0,
+            "last_median": 3452.0,
+            "delta": 0.0,
+            "peak": 36220,
+            "peak_seconds": 0.9054370049998397,
+            "min": 3452,
+            "last": 3452
+          },
+          "swap_kib": {
+            "first_median": 0.0,
+            "last_median": 0.0,
+            "delta": 0.0,
+            "peak": 0,
+            "peak_seconds": 0.0005286079995130422,
+            "min": 0,
+            "last": 0
+          },
+          "swap_pss_kib": {
+            "first_median": 0.0,
+            "last_median": 0.0,
+            "delta": 0.0,
+            "peak": 0,
+            "peak_seconds": 0.0005286079995130422,
+            "min": 0,
+            "last": 0
+          },
+          "pss_plus_swap_pss_kib": {
+            "first_median": 3944.0,
+            "last_median": 3950.0,
+            "delta": 6.0,
+            "peak": 36712,
+            "peak_seconds": 0.9054370049998397,
+            "min": 3944,
+            "last": 3950
+          }
+        },
+        "interval_seconds": 0.1,
+        "max_gap_seconds": 0.10102385100071842,
+        "growth": {
+          "metric": "pss_plus_swap_pss_kib",
+          "threshold_kib": 16384,
+          "minimum_seconds": 2,
+          "tail_fraction_above_threshold": 0.0,
+          "result": "threshold_not_observed"
+        }
+      }
+    },
+    "retained_peak_gate": {
+      "metric": "pss_plus_swap_pss_kib",
+      "peak_delta_kib": 32702,
+      "allowed_peak_increase_kib": 16384,
+      "passed": false
+    }
+  },
+  "performance": {
+    "improved": {
+      "schema": 1,
+      "scope": "Paired recorded frame-time comparisons; supplied conditions are declarations, not independently verified; no causal bottleneck claim",
+      "context": {
+        "scenario": "synthetic-control",
+        "hardware": "synthetic-control",
+        "driver": "synthetic-control",
+        "backend": "synthetic-control",
+        "resolution": "synthetic-control",
+        "settings": "synthetic-control",
+        "cache_state": "synthetic-control"
+      },
+      "budgets": {
+        "mean_fps_drop_pct": 5,
+        "p95_increase_pct": 10,
+        "p99_increase_pct": 10,
+        "one_percent_low_drop_pct": 10,
+        "stutter_fraction_increase": 0.01
+      },
+      "stutter_ms": 50,
+      "min_frames": 100,
+      "max_skipped_fraction": 0.05,
+      "pairs": [
+        {
+          "pair": 1,
+          "baseline": {
+            "sha256": "0d4c20304ec6d6589a1d8c0066c73c949939b58fb4e329409678a80af89cdb13",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.0,
+            "mean_fps": 100.0,
+            "p50_ms": 10.0,
+            "p95_ms": 10.0,
+            "p99_ms": 10.0,
+            "max_ms": 10.0,
+            "one_percent_low_fps": 100.0,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "candidate": {
+            "sha256": "afd41017a7caf982cce50f9165f04483828669b84f4e3581c53370793526bb8e",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 9.0,
+            "mean_fps": 111.11111111111111,
+            "p50_ms": 9.0,
+            "p95_ms": 9.0,
+            "p99_ms": 9.0,
+            "max_ms": 9.0,
+            "one_percent_low_fps": 111.11111111111111,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "changes": {
+            "mean_fps_drop_pct": -11.111111111111112,
+            "p95_increase_pct": -10.0,
+            "p99_increase_pct": -10.0,
+            "one_percent_low_drop_pct": -11.111111111111112,
+            "stutter_fraction_increase": 0.0
+          },
+          "violations": []
+        },
+        {
+          "pair": 2,
+          "baseline": {
+            "sha256": "1f34381ac578b8724cf272f19905254b454d790f1f421bdc1630b5a7fb5f4278",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.0,
+            "mean_fps": 100.0,
+            "p50_ms": 10.0,
+            "p95_ms": 10.0,
+            "p99_ms": 10.0,
+            "max_ms": 10.0,
+            "one_percent_low_fps": 100.0,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "candidate": {
+            "sha256": "bb4ea15093ad3a6676758ebf8e45acf47fa16d9438c96a9296e119e6213c15e0",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 9.0,
+            "mean_fps": 111.11111111111111,
+            "p50_ms": 9.0,
+            "p95_ms": 9.0,
+            "p99_ms": 9.0,
+            "max_ms": 9.0,
+            "one_percent_low_fps": 111.11111111111111,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "changes": {
+            "mean_fps_drop_pct": -11.111111111111112,
+            "p95_increase_pct": -10.0,
+            "p99_increase_pct": -10.0,
+            "one_percent_low_drop_pct": -11.111111111111112,
+            "stutter_fraction_increase": 0.0
+          },
+          "violations": []
+        },
+        {
+          "pair": 3,
+          "baseline": {
+            "sha256": "ddb5032538ffb65d0d19d28b6254b0e9ed0f318cab8d9bca9d3019c893afd728",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.0,
+            "mean_fps": 100.0,
+            "p50_ms": 10.0,
+            "p95_ms": 10.0,
+            "p99_ms": 10.0,
+            "max_ms": 10.0,
+            "one_percent_low_fps": 100.0,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "candidate": {
+            "sha256": "e54e6ab76beb3477d068d77cd818e1ca8a703c7cedc15e7f4cafcaabad364b64",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 9.0,
+            "mean_fps": 111.11111111111111,
+            "p50_ms": 9.0,
+            "p95_ms": 9.0,
+            "p99_ms": 9.0,
+            "max_ms": 9.0,
+            "one_percent_low_fps": 111.11111111111111,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "changes": {
+            "mean_fps_drop_pct": -11.111111111111112,
+            "p95_increase_pct": -10.0,
+            "p99_increase_pct": -10.0,
+            "one_percent_low_drop_pct": -11.111111111111112,
+            "stutter_fraction_increase": 0.0
+          },
+          "violations": []
+        }
+      ],
+      "median_changes": {
+        "mean_fps_drop_pct": -11.111111111111112,
+        "p95_increase_pct": -10.0,
+        "p99_increase_pct": -10.0,
+        "one_percent_low_drop_pct": -11.111111111111112,
+        "stutter_fraction_increase": 0.0
+      },
+      "worst_changes": {
+        "mean_fps_drop_pct": -11.111111111111112,
+        "p95_increase_pct": -10.0,
+        "p99_increase_pct": -10.0,
+        "one_percent_low_drop_pct": -11.111111111111112,
+        "stutter_fraction_increase": 0.0
+      },
+      "passed": true
+    },
+    "tail_regression": {
+      "schema": 1,
+      "scope": "Paired recorded frame-time comparisons; supplied conditions are declarations, not independently verified; no causal bottleneck claim",
+      "context": {
+        "scenario": "synthetic-control",
+        "hardware": "synthetic-control",
+        "driver": "synthetic-control",
+        "backend": "synthetic-control",
+        "resolution": "synthetic-control",
+        "settings": "synthetic-control",
+        "cache_state": "synthetic-control"
+      },
+      "budgets": {
+        "mean_fps_drop_pct": 5,
+        "p95_increase_pct": 10,
+        "p99_increase_pct": 10,
+        "one_percent_low_drop_pct": 10,
+        "stutter_fraction_increase": 0.01
+      },
+      "stutter_ms": 50,
+      "min_frames": 100,
+      "max_skipped_fraction": 0.05,
+      "pairs": [
+        {
+          "pair": 1,
+          "baseline": {
+            "sha256": "0d4c20304ec6d6589a1d8c0066c73c949939b58fb4e329409678a80af89cdb13",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.0,
+            "mean_fps": 100.0,
+            "p50_ms": 10.0,
+            "p95_ms": 10.0,
+            "p99_ms": 10.0,
+            "max_ms": 10.0,
+            "one_percent_low_fps": 100.0,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "candidate": {
+            "sha256": "afd41017a7caf982cce50f9165f04483828669b84f4e3581c53370793526bb8e",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 9.0,
+            "mean_fps": 111.11111111111111,
+            "p50_ms": 9.0,
+            "p95_ms": 9.0,
+            "p99_ms": 9.0,
+            "max_ms": 9.0,
+            "one_percent_low_fps": 111.11111111111111,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "changes": {
+            "mean_fps_drop_pct": -11.111111111111112,
+            "p95_increase_pct": -10.0,
+            "p99_increase_pct": -10.0,
+            "one_percent_low_drop_pct": -11.111111111111112,
+            "stutter_fraction_increase": 0.0
+          },
+          "violations": []
+        },
+        {
+          "pair": 2,
+          "baseline": {
+            "sha256": "1f34381ac578b8724cf272f19905254b454d790f1f421bdc1630b5a7fb5f4278",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.0,
+            "mean_fps": 100.0,
+            "p50_ms": 10.0,
+            "p95_ms": 10.0,
+            "p99_ms": 10.0,
+            "max_ms": 10.0,
+            "one_percent_low_fps": 100.0,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "candidate": {
+            "sha256": "3f6be850f65b7a3653fcf23740a171bbceb643e973eba40cf33abcd454111853",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.82,
+            "mean_fps": 92.42144177449168,
+            "p50_ms": 9.0,
+            "p95_ms": 9.0,
+            "p99_ms": 100.0,
+            "max_ms": 100.0,
+            "one_percent_low_fps": 10.0,
+            "stutter_frames": 20,
+            "stutter_fraction": 0.02
+          },
+          "changes": {
+            "mean_fps_drop_pct": 7.578558225508317,
+            "p95_increase_pct": -10.0,
+            "p99_increase_pct": 900.0,
+            "one_percent_low_drop_pct": 90.0,
+            "stutter_fraction_increase": 0.02
+          },
+          "violations": [
+            "mean_fps_drop_pct",
+            "p99_increase_pct",
+            "one_percent_low_drop_pct",
+            "stutter_fraction_increase"
+          ]
+        },
+        {
+          "pair": 3,
+          "baseline": {
+            "sha256": "ddb5032538ffb65d0d19d28b6254b0e9ed0f318cab8d9bca9d3019c893afd728",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 10.0,
+            "mean_fps": 100.0,
+            "p50_ms": 10.0,
+            "p95_ms": 10.0,
+            "p99_ms": 10.0,
+            "max_ms": 10.0,
+            "one_percent_low_fps": 100.0,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "candidate": {
+            "sha256": "e54e6ab76beb3477d068d77cd818e1ca8a703c7cedc15e7f4cafcaabad364b64",
+            "frames": 1000,
+            "skipped_rows": 0,
+            "sampled_seconds": 9.0,
+            "mean_fps": 111.11111111111111,
+            "p50_ms": 9.0,
+            "p95_ms": 9.0,
+            "p99_ms": 9.0,
+            "max_ms": 9.0,
+            "one_percent_low_fps": 111.11111111111111,
+            "stutter_frames": 0,
+            "stutter_fraction": 0.0
+          },
+          "changes": {
+            "mean_fps_drop_pct": -11.111111111111112,
+            "p95_increase_pct": -10.0,
+            "p99_increase_pct": -10.0,
+            "one_percent_low_drop_pct": -11.111111111111112,
+            "stutter_fraction_increase": 0.0
+          },
+          "violations": []
+        }
+      ],
+      "median_changes": {
+        "mean_fps_drop_pct": -11.111111111111112,
+        "p95_increase_pct": -10.0,
+        "p99_increase_pct": -10.0,
+        "one_percent_low_drop_pct": -11.111111111111112,
+        "stutter_fraction_increase": 0.0
+      },
+      "worst_changes": {
+        "mean_fps_drop_pct": 7.578558225508317,
+        "p95_increase_pct": -10.0,
+        "p99_increase_pct": 900.0,
+        "one_percent_low_drop_pct": 90.0,
+        "stutter_fraction_increase": 0.02
+      },
+      "passed": false
+    }
+  },
+  "base": "3086e0b0451aafb7d74dac44b1ebf7786bea06d4",
+  "python_tests_passed": 136,
+  "allocation_query_control": "Unit test: interleaved IDs, duplicate item, invalid UINT64_MAX result, capped trace, appended session, missing descriptor."
+}

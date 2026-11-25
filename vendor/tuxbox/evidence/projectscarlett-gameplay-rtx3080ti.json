@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "date_utc": "2026-11-25",
+  "title": "ProjectScarlett",
+  "package_version": "1.0.2.1",
+  "executable_sha256": "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
+  "host": {
+    "os": "Bazzite",
+    "gpu": "GeForce RTX 3080 Ti",
+    "driver": "620.70.06",
+    "memory_gib": 93,
+    "backend": "stock Proton Experimental",
+    "version": "1794497090 experimental-11.0-20261112-x86_64"
+  },
+  "launch": {
+    "network": "disabled",
+    "environment": {
+      "TUXBOX_LARGE_COMPILES": "2",
+      "TUXBOX_TRACE_PRESENT": "600"
+    },
+    "windows_dxc": "dxcompiler.dll and dxil.dll from DXC v1.9.2609 beside the executable",
+    "source": "97b8ad3 plus an unmerged slot 148 handler that this run never called",
+    "d3d12_xs_sha256": "6340829ed3f43475b03dd0726956d88e7e5cda9bf6f2b63b600aaa7859eeee67",
+    "log_sha256": "891e348e023efff65d004592ee4083d33cc5282aa291645bff07b09322fea850"
+  },
+  "title_crash_report": {
+    "sha256": "bc633d89d789806d3c4b6ed2e21b203c03727d363d9c7b89e93584d6756d6f8b",
+    "game_state": "Game Running",
+    "running_time": "0h:12m:45s",
+    "frame": 21663,
+    "mission": "none",
+    "script_threads": 5,
+    "peds": "35/600 (24 real, 11 dummy)",
+    "vehicles": "195/700",
+    "player_health_state": "Healthy"
+  },
+  "result": {
+    "exit_code": 5,
+    "seconds": 770.5,
+    "frames_presented": 77292,
+    "screen": "loading artwork drawn to the display surface (draws=600 per 600 frames, lit=1.000)",
+    "memory_waits_released_after_5s": 0,
+    "exception": {
+      "code": "0xc0000005",
+      "faulting_rva": "0xf2cae9",
+      "access": "read outside any loaded module",
+      "faulting_thread_logged_before_crash": "page remap replaced imported range ... retired stale GPU import"
+    },
+    "crash_cause_established": false
+  },
+  "earlier_runs_same_day": [
+    {
+      "source": "97b8ad3",
+      "seconds": 207.1,
+      "exit_code": 2,
+      "stop": "unsupported D3D12.x vtable slot 148 called from XboxBvhBuilder.dll"
+    },
+    {
+      "source": "97b8ad3 plus slot 148 handler",
+      "seconds": 112.8,
+      "exit_code": 5
+    }
+  ],
+  "not_verified": [
+    "image correctness",
+    "input and audio during play",
+    "frame times",
+    "slot 148 handler (not reached in the recorded run)"
+  ]
+}

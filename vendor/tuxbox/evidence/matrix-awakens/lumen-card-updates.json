@@ -1,0 +1,233 @@
+{
+  "scope": "Actual 64-lane card update shaders with nonzero workload quantities and zero scene inputs. Checks two elected work counters and untouched buffers at lane boundaries; populated update-list output is not yet verified.",
+  "results": {
+    "1243_amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1243": {
+          "source_sha256": "4c63573f30f6b3f0a7a5c3b7f72de49c95d10bc67dfcad38020fa1afeaea1f02",
+          "dxil_sha256": "1674f06abde5740d9c8c2328af32f130c349d85586355063fa0f220fea351150"
+        }
+      },
+      "cases": {
+        "cards_1243_0": {
+          "cards": 0,
+          "expected_work": 0,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_1": {
+          "cards": 1,
+          "expected_work": 2,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_31": {
+          "cards": 31,
+          "expected_work": 62,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_32": {
+          "cards": 32,
+          "expected_work": 64,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_33": {
+          "cards": 33,
+          "expected_work": 66,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_64": {
+          "cards": 64,
+          "expected_work": 128,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "1243_nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1243": {
+          "source_sha256": "4c63573f30f6b3f0a7a5c3b7f72de49c95d10bc67dfcad38020fa1afeaea1f02",
+          "dxil_sha256": "1674f06abde5740d9c8c2328af32f130c349d85586355063fa0f220fea351150"
+        }
+      },
+      "cases": {
+        "cards_1243_0": {
+          "cards": 0,
+          "expected_work": 0,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_1": {
+          "cards": 1,
+          "expected_work": 2,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_31": {
+          "cards": 31,
+          "expected_work": 62,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_32": {
+          "cards": 32,
+          "expected_work": 64,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_33": {
+          "cards": 33,
+          "expected_work": 66,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1243_64": {
+          "cards": 64,
+          "expected_work": 128,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "1257_amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1257": {
+          "source_sha256": "accaae2c6693735d117a25136ef53120429f3a25c8fcf6930d375c0a4eb4bfa7",
+          "dxil_sha256": "c0cee22b3b64b9344b2f52e93a4099de7a9d9e1cb3fe1bc67af9813f26b2d8f6"
+        }
+      },
+      "cases": {
+        "cards_1257_0": {
+          "cards": 0,
+          "expected_work": 0,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_1": {
+          "cards": 1,
+          "expected_work": 2,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_31": {
+          "cards": 31,
+          "expected_work": 62,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_32": {
+          "cards": 32,
+          "expected_work": 64,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_33": {
+          "cards": 33,
+          "expected_work": 66,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_64": {
+          "cards": 64,
+          "expected_work": 128,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "1257_nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1257": {
+          "source_sha256": "accaae2c6693735d117a25136ef53120429f3a25c8fcf6930d375c0a4eb4bfa7",
+          "dxil_sha256": "c0cee22b3b64b9344b2f52e93a4099de7a9d9e1cb3fe1bc67af9813f26b2d8f6"
+        }
+      },
+      "cases": {
+        "cards_1257_0": {
+          "cards": 0,
+          "expected_work": 0,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_1": {
+          "cards": 1,
+          "expected_work": 2,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_31": {
+          "cards": 31,
+          "expected_work": 62,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_32": {
+          "cards": 32,
+          "expected_work": 64,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_33": {
+          "cards": 33,
+          "expected_work": 66,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "cards_1257_64": {
+          "cards": 64,
+          "expected_work": 128,
+          "checked_words": 24576,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "passed": true,
+  "provider_sha256": "7e50ad3af8c1b8efbdc142c97d72d7ec997c80b62b1c91e7cd458e053a11d2c2",
+  "guest_sha256": "3c4e97e2a3afea59dc88cc30ad46d2664513dfe1c3412eb4b767df48511288ff",
+  "adapters": [
+    "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "retail_gpuva": "0x1d5235c0",
+  "size_bytes": 768,
+  "retail_b0_fields": [
+    "cb0[37].x",
+    "cb0[37].y",
+    "cb0[38].z",
+    "cb0[38].w"
+  ],
+  "expected_ieee754": "00000000,00000000,39b02c0b,3a53680d",
+  "scope": "Guest CBV creation, guest descriptor range copy, shader-visible heap fetch, post-recording upload update, all 48 registers read by a compute control.",
+  "readback": {
+    "offset_0_words": "192",
+    "offset_0_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_16_words": "192",
+    "offset_16_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_32_words": "192",
+    "offset_32_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_48_words": "192",
+    "offset_48_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_64_words": "192",
+    "offset_64_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_80_words": "192",
+    "offset_80_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_96_words": "192",
+    "offset_96_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_112_words": "192",
+    "offset_112_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_128_words": "192",
+    "offset_128_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_144_words": "192",
+    "offset_144_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_160_words": "192",
+    "offset_160_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_176_words": "192",
+    "offset_176_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_192_words": "192",
+    "offset_192_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_208_words": "192",
+    "offset_208_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_224_words": "192",
+    "offset_224_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_240_words": "192",
+    "offset_240_fields": "00000000,00000000,39b02c0b,3a53680d"
+  },
+  "layer": {
+    "name": "VK_LAYER_TUXBOX_console_cbv",
+    "library_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "disabled_extensions": "VK_EXT_descriptor_buffer",
+    "vkd3d_config": ""
+  }
+}

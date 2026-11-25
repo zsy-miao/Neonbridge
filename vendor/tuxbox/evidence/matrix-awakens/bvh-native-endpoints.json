@@ -1,0 +1,158 @@
+{
+  "scope": "One synthetic gfx1036 TRI0 candidate; not full shader traversal or a game execution",
+  "sources_sha256": {
+    "tools/reference/bvh-node/native/probe.c": "bba10f28e823b11b7505fe106ba14486aa0094c9dab584c10beb935aa9324f1a",
+    "tools/reference/bvh-node/native/probe.cl": "868c70c9586c201726c2942654d9702ea49d5214739465f98ea5beed24cd66d6"
+  },
+  "node_vertices": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ]
+  ],
+  "node_type": 0,
+  "descriptor_words": [
+    "00000000",
+    "80000000",
+    "ffffffff",
+    "890003ff"
+  ],
+  "origin": [
+    0.25,
+    0.25,
+    -1.0
+  ],
+  "direction": [
+    0,
+    0,
+    1
+  ],
+  "maximum_distance_inputs": [
+    0.5,
+    1.0,
+    2.0,
+    100.0
+  ],
+  "inputs": "Host-seeded GPU buffer read dynamically for origin and maximum distances",
+  "output_words_each": [
+    "bf800000",
+    "bf800000",
+    "be800000",
+    "be800000"
+  ],
+  "inference": "The finite numerator and denominator are both -1, so this node produces a distance-1 candidate even when its maximum-distance operand is 0.5. The instruction has no near-distance operand. This does not establish full shader 219 behavior.",
+  "reproduce": "Follow the build and execution commands in tools/reference/bvh-node/native/README.md; check the four triangle_endpoint_max lines and exit status.",
+  "zero_distance_control": {
+    "maximum_distance": 2.0,
+    "rays": [
+      [
+        0.25,
+        0.25,
+        1
+      ],
+      [
+        0.25,
+        0.25,
+        -1
+      ],
+      [
+        0,
+        0.5,
+        1
+      ],
+      [
+        0,
+        0.5,
+        -1
+      ],
+      [
+        0.5,
+        0,
+        1
+      ],
+      [
+        0.5,
+        0,
+        -1
+      ],
+      [
+        0.5,
+        0.5,
+        1
+      ],
+      [
+        0.5,
+        0.5,
+        -1
+      ]
+    ],
+    "ray_format": "origin x, origin y, direction z; origin z=0, direction x=y=0",
+    "output_words": [
+      [
+        "00000000",
+        "bf800000",
+        "be800000",
+        "be800000"
+      ],
+      [
+        "00000000",
+        "3f800000",
+        "3e800000",
+        "3e800000"
+      ],
+      [
+        "00000000",
+        "bf800000",
+        "00000000",
+        "bf000000"
+      ],
+      [
+        "00000000",
+        "3f800000",
+        "00000000",
+        "3f000000"
+      ],
+      [
+        "ff800000",
+        "bf800000",
+        "bf000000",
+        "00000000"
+      ],
+      [
+        "00000000",
+        "3f800000",
+        "3f000000",
+        "00000000"
+      ],
+      [
+        "ff800000",
+        "bf800000",
+        "bf000000",
+        "bf000000"
+      ],
+      [
+        "7f800000",
+        "3f800000",
+        "3f000000",
+        "3f000000"
+      ]
+    ],
+    "scope": "Triangle-node output only; no shader cull or distance comparisons. Edge ownership and output signs are specific to this geometry and GPU."
+  }
+}

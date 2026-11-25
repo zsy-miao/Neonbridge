@@ -1,0 +1,62 @@
+{
+  "areas": [
+    {
+      "key": "loader",
+      "title": "Imports of the package DLLs that resolve in the loader",
+      "height": 80,
+      "groups": [
+        { "name": "mapped or system", "done": 784, "partial": 0, "todo": 0, "note": "bound to a mapped package DLL or to System32" },
+        { "name": "shim", "done": 0, "partial": 41, "todo": 0, "note": "bound to a C# shim" }
+      ]
+    },
+    {
+      "key": "gdk",
+      "title": "GDK runtime functions (xgameruntime shim)",
+      "height": 110,
+      "groups": [
+        { "name": "real", "done": 24, "partial": 0, "todo": 0, "note": "XTaskQueue and XAsync: real in-process implementations" },
+        { "name": "offline stand-ins", "done": 0, "partial": 93, "todo": 0, "note": "user, save, package, store and system calls answered offline" },
+        { "name": "not implemented", "done": 0, "partial": 0, "todo": 224, "note": "stub returns E_NOTIMPL or 0 and logs its first call" }
+      ]
+    },
+    {
+      "key": "tests",
+      "title": "Translator tests on D3D12 WARP",
+      "height": 90,
+      "groups": [
+        { "name": "PS", "done": 53, "partial": 0, "todo": 1, "note": "1 failing" },
+        { "name": "CS", "done": 23, "partial": 0, "todo": 4, "note": "4 skipped: need a full 32 or 64-lane wave" },
+        { "name": "BVH", "done": 11, "partial": 0, "todo": 0, "note": "image_bvh_intersect_ray emulation, bit-exact" },
+        { "name": "GS", "done": 4, "partial": 0, "todo": 0 },
+        { "name": "MS fallback", "done": 3, "partial": 0, "todo": 0 },
+        { "name": "MS", "done": 1, "partial": 0, "todo": 0 },
+        { "name": "VS", "done": 1, "partial": 0, "todo": 0 }
+      ]
+    }
+  ],
+  "stillNeeded": [
+    {
+      "area": "Needs the executable",
+      "items": [
+        { "name": "Archive table of contents", "note": "entry names and boundaries are encrypted" },
+        { "name": "GDK call table", "note": "maps the COM slots the game calls to functions" }
+      ]
+    },
+    {
+      "area": "Research",
+      "items": [
+        { "name": "BCPack decoder", "note": "blocks every BCPack texture" }
+      ]
+    },
+    {
+      "area": "Engineering",
+      "items": [
+        { "name": "D3D12.X runtime", "note": "device, command lists, descriptors, memory" },
+        { "name": "Shader linking", "note": "outputs must take the pixel shader's interpolation modes" },
+        { "name": "Wave64 emulation", "note": "1,226 programs index 64 lanes" },
+        { "name": "Structured control flow" },
+        { "name": "First frame", "note": "swap chain and a real draw" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+# Vendored unmodified from VItoriaBr (crates/victory-shader at a93b052; the ztrx /
+# VIctory-fxceless line, newest of the three), GPL-3.0-or-later, by their authors. Only this manifest is ours: the workspace
+# values VItoriaBr's root supplies are written in, and `[workspace]` keeps it its own.
+[package]
+name = "victory-shader"
+description = "Xbox shader containers (DXBC/DXIL + precompiled GFX10) to host shaders."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+thiserror = "2.0.21"
+zlib-rs = { version = "0.6.8", default-features = false, features = ["std"] }
+
+[features]
+host = ["dep:windows"]
+diagnostics = []
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_LibraryLoader"] }
+windows = { version = "0.62.2", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"

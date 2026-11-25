@@ -1,0 +1,73 @@
+{
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "shaders": [
+    {
+      "entry": 3643,
+      "profile": "vs_6_0",
+      "cooked_fnv1a64": "8e9e3b832c7dd2ae",
+      "cooked_sha256": "a6a07f696416504069eb3a7a4e77026b6e851f0ab0bf143f3bec14a9f8b6ae30",
+      "hlsl_sha256": "1c0e7009428d07791e458ff94ce8ec0b60877f36b987fad51ff550e266b247ba",
+      "cache_file": "a6a07f696416504069eb3a7a4e77026b6e851f0ab0bf143f3bec14a9f8b6ae30.cso",
+      "desktop_sha256": "cfe98a5eb6ed2962185e1c3a1648fc1b163c2334400ef54edb243900725a12b3"
+    },
+    {
+      "entry": 785,
+      "profile": "ps_6_1",
+      "cooked_fnv1a64": "01dadaebf074d085",
+      "cooked_sha256": "ee88f1048770d72114cc7600f7b48ec42df225493b1745c2c62d7a48e86b62d0",
+      "hlsl_sha256": "b55661a6a254bc591899e7c0ba2404178841fbe835c82c182547d62719ede828",
+      "cache_file": "ee88f1048770d72114cc7600f7b48ec42df225493b1745c2c62d7a48e86b62d0.cso",
+      "desktop_sha256": "d22918e1f6990aba2281f7dfa0ecf37dc19d7d95797739e9b1b4e61568e2e33c"
+    },
+    {
+      "entry": 792,
+      "profile": "ps_6_1",
+      "cooked_fnv1a64": "f6d1b9eafc4e1bd3",
+      "cooked_sha256": "0e96489778ac82f57f691ddafb4c901606812031555de7f4d4b082c249a4459e",
+      "hlsl_sha256": "3ab5cf918d5cab6e4814b04adcc036dec71a716d494443ec367eeddd786fd507",
+      "cache_file": "0e96489778ac82f57f691ddafb4c901606812031555de7f4d4b082c249a4459e.cso",
+      "desktop_sha256": "f6bd6623f884ca5822e76bdfd64b824eb22242a7371de71c1f0379c74b6276cd"
+    }
+  ],
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "5d31fb1b690a8ea7ce94474fa34811c3355e47ed68ca00448493087e2080267d",
+  "extent": [
+    16,
+    16
+  ],
+  "scissor": [
+    3,
+    2,
+    12,
+    11
+  ],
+  "vertex_count": 3,
+  "scope": "Original cooked vertex and pixel shaders submitted to Xbox slot 86 with first-boot DXIL",
+  "readback": {
+    "adapter": "10de:2705",
+    "entry_785_pipeline": "0x00000000",
+    "entry_785_drawn_red": "81",
+    "entry_785_guard_blue": "175",
+    "entry_785_center": "ff0000ff",
+    "entry_792_pipeline": "0x00000000",
+    "entry_792_drawn_red": "81",
+    "entry_792_guard_blue": "175",
+    "entry_792_center": "ff0000ff"
+  },
+  "exit": 0,
+  "provider_sha256": "9be0c223156bf5685738b05419db9ace86b77e75ec618e1969978ef2cd9820ba",
+  "negative_controls": {
+    "missing_pixel": {
+      "exit": 1,
+      "adapter": "10de:2705",
+      "entry_785_pipeline": "0x80004005",
+      "error": "slot 86 failed: 0x80004005"
+    },
+    "vertex_filed_as_pixel": {
+      "exit": 1,
+      "adapter": "10de:2705",
+      "entry_785_pipeline": "0x80004005",
+      "error": "slot 86 failed: 0x80004005"
+    }
+  }
+}

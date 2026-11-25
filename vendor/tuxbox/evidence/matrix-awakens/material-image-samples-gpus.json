@@ -1,0 +1,29 @@
+{
+  "scope": "Twelve image-operation readbacks from five packaged material states and 36 shader-literal lookup readbacks from a sixth. The compute wrapper uses original image operations, SRV/sampler slots and three original PC-relative base calculations. Image tags and literal results are checked independently.",
+  "method": "tools/check_frosty_ray_samples.py",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "state_sha256": {
+    "374": "198ae1b70264b3a2656456bf6fb96f2a00f37591dfb3c539a39d9ff0b84217ed",
+    "2129": "9594727421e493f5d90797e1a5616d9373851148e82019bcc635c33a50dc71ab",
+    "3148": "e9e40685a1518070ed721368886083a64129d0601bd0b9da050e582a6624f319",
+    "4364": "4e129d2b3fc75ea5e816bc0011acaebcb842b7c5a25b99cf89ca83d3f95fc121",
+    "1671": "b3719c89f1600d20ac530556bc872e3e6be4e5832e7e760a6a0970dd35beade1",
+    "363": "59358c152c9ec69c5db98a2c9b4e5a1909ead0c0aa00e802c269c42ebe14a43e"
+  },
+  "shader_sha256": "13fa0bea91590743ea344d0b5468ba8987cf598b1181de72dc7be8e8f097b7ea",
+  "readback_sha256": "d679bd34cc7f7bf7b86bf21f2680feaa0eb2c0e710dceffc8c93f941c160d38a",
+  "cases": {
+    "374": "Volume sample at (2,6,2) fetched all four channels.",
+    "2129": "Each cube face sampled column 5, row 2. Face 0 through 5 selected six different subresources.",
+    "3148": "Array layer 2 returned RGB at (4,1).",
+    "4364": "Explicit gradients selected mip 0 at (5,2), mip 1 at (2,1) and mip 2 at (1,0).",
+    "1671": "Integer image load at (3,5), channel W, returned 12372.",
+    "363": "Executed the complete material block at 43704 with indices 0 through 35. Each case computes three PC-relative addresses, reads the index table, scales the selected entry, and loads two coordinate components. The last load overwrites its own address register. Every result matched the original packaged 32-word table across two 18-index cycles."
+  },
+  "mismatches": 0,
+  "limits": "The wrapper isolates the material image instruction and its emitted resource declaration. Full material shading and retail scene output require separate measurements."
+}

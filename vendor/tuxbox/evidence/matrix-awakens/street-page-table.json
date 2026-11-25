@@ -1,0 +1,382 @@
+{
+  "title": "The Matrix Awakens",
+  "title_version": "1.20.1831.3754",
+  "scene": "Sandbox fly-in",
+  "frame": 1204,
+  "capture": "RenderDoc 1.46, stock Valve Proton Experimental, NVIDIA GeForce RTX 4070 Ti SUPER",
+  "cases": [
+    {
+      "archive_entry": "material/17718",
+      "source_sha256": "c48f20a07a81ae31a458b6821e73ad0b8886ce0c72005986422e794a22642ec6",
+      "draw_commands_recorded": 54,
+      "captured_pipeline": 61446,
+      "module_fnv1": "9d4b461ff1fb2776",
+      "captured_spirv_sha256": "cb2d3a822c046e70252919afa92db6d5476095c9ba270ab403d1b82b01057b7a",
+      "diagnostic_spirv_sha256": "5506d3a5d27e3d4394e12d2744b7090d349de7b3ecc0cc19011cd575744a767a",
+      "shader_descriptor_set": 1,
+      "binding": 2,
+      "array_index": 342238,
+      "captured_descriptor_set": 365,
+      "sampled_image_view": 4123,
+      "prototype_hlsl_sha256": "ed40c097eee0578bf2a3d56c0557a633b2e728baf80099523b27dbcf29faafec",
+      "prototype_dxil_sha256": "9ba5da1eca9f95b43875d3bff889175a017747db20ee5a8ff1d0c6f44bf6de7a",
+      "prototype_dxv_validated": true
+    },
+    {
+      "archive_entry": "material/17736",
+      "source_sha256": "79d8f6663c0469780d0f9256143df100ea1cf3ae54ba9318113bbf06da3cda73",
+      "draw_commands_recorded": 13,
+      "captured_pipeline": 61347,
+      "module_fnv1": "c4477b9495a35151",
+      "captured_spirv_sha256": "30c6a188b8958cc440d69e7dd9d2a0de87c85d4d84eaaace5f7d506e13011818",
+      "diagnostic_spirv_sha256": "77280eb86763fd96675a2e4e7306f1b009250ee748bc04649e2dd72c2cacd8b8",
+      "shader_descriptor_set": 1,
+      "binding": 2,
+      "array_index": 36856,
+      "captured_descriptor_set": 365,
+      "sampled_image_view": 4123,
+      "prototype_hlsl_sha256": "54166b24ce0778aa097354d609a2f660f85320d01f47fb32abdec2935813bf85",
+      "prototype_dxil_sha256": "b35b3bc95574a3a1edfd7cd01f75dfef36542dd296906cd1845f63540fd192f9",
+      "prototype_dxv_validated": true
+    }
+  ],
+  "descriptor_proof": {
+    "method": "Match the FNV-1 of the original DXIL to its SPIR-V module in the capture. Follow graphics pipeline binds, push constants and descriptor sets for each recorded draw. Both shaders address set 1, binding 2 at push-constant word 0 plus 19. Both descriptor copies come from set 4035, binding 2, array index 951. The layout has two preceding single-descriptor bindings, so the source is initial descriptor 953. Scan all 193388 descriptor updates for overlapping writes and copies. The source has no overwrites and each destination has exactly one copy before use. RenderDoc structured export independently decodes the layout, copy and view metadata.",
+    "source_set": 4035,
+    "source_array_index": 951,
+    "image_resource": 4109,
+    "view_resource": 4123,
+    "format": "VK_FORMAT_R32_UINT",
+    "size": [
+      2048,
+      2048
+    ],
+    "mip_levels": 12,
+    "base_mip_unique_uints": 11215,
+    "base_mip_texels_exceeding_15": 3391488,
+    "base_mip_total_texels": 4194304,
+    "captured_fetch": "OpImageFetch with a 32-bit floating-point image result",
+    "diagnostic_fetch": "OpImageFetch with a 32-bit unsigned image result. Five SPIR-V instructions change in each capture-derived diagnostic module. Originals and replacements pass SPIR-V validation for Vulkan 1.2.",
+    "additional_observations": "Two further affected materials read the same view in ten draw commands. We matched their cached DXIL to captured SPIR-V by FNV-1, followed each floating fetch to its push-constant-derived array index, and verified the descriptor copies and image view. Across the four pipelines, all 77 recorded draw commands reference this unsigned image."
+  },
+  "compiler_survey": {
+    "method": "Inspect decoded ISA in all distinct native raster and compute programs for readfirstlane and an unsigned ordered comparison. Translate all programs containing both with each compiler and compare the emitted HLSL. Compile and validate every changed program.",
+    "native_programs_checked": 35442,
+    "emitter_pairs_compared": 2061,
+    "changed_programs": 147,
+    "changed_stages": {
+      "ps": 147
+    },
+    "changed_programs_passing_dxv": 147,
+    "changed_previously_observed": 15,
+    "changed_startup_or_menu_programs": 1,
+    "production_compiler_sha256": "f42f9d916e6fe267d4e723efd3938eab5d8db8da2dde799eef4fb3d560f8ff19",
+    "baseline_compiler_sha256": "14bf0bb7659602d596c87a26a6716878a5af181638361fda457e2f115f6a88b3",
+    "production_hlsl_matches_validated_outputs": 147
+  },
+  "other_captured_materials": [
+    {
+      "archive_entry": "material/17540",
+      "source_sha256": "44a2e98256673fbaefda305d848b95c6b510196b570b626813063d159d516a25",
+      "register": "t21",
+      "captured_pipeline": 61864,
+      "captured_descriptor_set": 365,
+      "binding": 2,
+      "array_index": 36592,
+      "draw_commands_recorded": 5,
+      "sampled_image_view": 4123,
+      "captured_spirv_sha256": "dfd0908c562bb63600d32187dcd64ceadab821f15d8d5e1af28234cb5832cb2b"
+    },
+    {
+      "archive_entry": "material/17579",
+      "source_sha256": "62f9492b5a07db9f716dd3e21f4e27f1d5decaa750dce1359059fdf54ddc9c57",
+      "register": "t20",
+      "captured_pipeline": 61869,
+      "captured_descriptor_set": 365,
+      "binding": 2,
+      "array_index": 226162,
+      "draw_commands_recorded": 5,
+      "sampled_image_view": 4123,
+      "captured_spirv_sha256": "7d91dcf188a0705c286e781924aa0e148beaed252ea65dea534bd1aaf549d1ba"
+    }
+  ],
+  "retail_draw_replay": {
+    "capture_frame_sha256": "d264c0713eaed4ff1ab9e731ed4a7e20a2672610232b121e3b979c76cf462589",
+    "capture_frame": 1204,
+    "archive_entry": "material/17718",
+    "source_sha256": "c48f20a07a81ae31a458b6821e73ad0b8886ce0c72005986422e794a22642ec6",
+    "vk_pipeline_resource": 61446,
+    "event_id": 218583,
+    "indices": 10656,
+    "instances": 5,
+    "original_spirv_sha256": "cb2d3a822c046e70252919afa92db6d5476095c9ba270ab403d1b82b01057b7a",
+    "uint_spirv_sha256": "5506d3a5d27e3d4394e12d2744b7090d349de7b3ecc0cc19011cd575744a767a",
+    "actual_descriptor": {
+      "descriptor_set": "ResourceId::365",
+      "binding": 2,
+      "array_element": 342238,
+      "descriptor_image_view": "ResourceId::4123",
+      "underlying_resource": "ResourceId::4109",
+      "view_format": "R32_UINT",
+      "first_mip": 0,
+      "mips": 12,
+      "width": 2048,
+      "height": 2048,
+      "texels": 4194304,
+      "nonzero_texels": 3391488,
+      "max_word": 489331,
+      "sha256": "993b7a86b719e2c401adef6910033eb2ed9c3d796f1ac866edafae1aa2f77e4d",
+      "min_word": 0
+    },
+    "single_controller_six_replays": {
+      "ordering": [
+        "baseline",
+        "uint",
+        "uint",
+        "baseline",
+        "baseline",
+        "uint"
+      ],
+      "method": "Three runs of each shader replacement retain only pixels with bitwise stable pre- and post-draw bytes within each shader and identical starting bytes between shaders. Baseline is the captured module reinstalled through the same replacement path.",
+      "attachments": [
+        {
+          "index": 0,
+          "format": "R16G16B16A16_FLOAT",
+          "matched_start_stable_draw_pixels": 2,
+          "changed_end_on_those_pixels": 2
+        },
+        {
+          "index": 1,
+          "format": "R10G10B10A2_UNORM",
+          "matched_start_stable_draw_pixels": 0,
+          "changed_end_on_those_pixels": 0
+        },
+        {
+          "index": 2,
+          "format": "B8G8R8A8_UNORM",
+          "matched_start_stable_draw_pixels": 2,
+          "changed_end_on_those_pixels": 2
+        },
+        {
+          "index": 3,
+          "format": "B8G8R8A8_SRGB",
+          "matched_start_stable_draw_pixels": 0,
+          "changed_end_on_those_pixels": 0
+        },
+        {
+          "index": 4,
+          "format": "B8G8R8A8_UNORM",
+          "matched_start_stable_draw_pixels": 0,
+          "changed_end_on_those_pixels": 0
+        }
+      ],
+      "repeatable_present_pixels": 231589,
+      "changed_at_present": 81
+    },
+    "independent_controllers": {
+      "method": "Four fresh RenderDoc processes opened the same frame, disabled replay optimisation, selected the same event, used the original or UINT SPIR-V via the same ReplaceResource API, and read the same pre-draw, post-draw and present images. The original and UINT each ran twice in ABBA order. Matching-start/stable pixels have identical pre-draw bytes in all four trials and identical post-draw bytes within each arm. The readback compares the union of pixels changed on this draw in either arm.",
+      "order": [
+        "sham-A",
+        "uint-A",
+        "uint-B",
+        "sham-B"
+      ],
+      "attachments": [
+        {
+          "index": 0,
+          "format": "R16G16B16A16_FLOAT",
+          "reproducible_draw_pixels_on_matching_inputs": 460,
+          "changed_in_those_pixels": 459,
+          "baseline_unstable_pixels": 49212,
+          "uint_unstable_pixels": 256951,
+          "sha256_before": {
+            "sham-A": "8c5dd278f40bbc1b0b754d8eae22733d4261c0087a73b6977ce8e3080ea3bae6",
+            "uint-A": "8c4b7d4b3ee350b7699b0f48b86d16677700e5ede29aaab0f441006d56afc202",
+            "uint-B": "8ebf6af331303fa550f467ea36425f58ea1bf494e21f9ef45dce20997acd9109",
+            "sham-B": "405ad9c97896b5f27ff3210bfe61fa1af23f9e4a366989347277f9bc9a52c6cb"
+          },
+          "sha256_after": {
+            "sham-A": "8ec86691cb7ed0a99f39c984c8b7172fde65c873c5877901a446efb419318422",
+            "uint-A": "68183400530b31a10b2fc6a332f9fc4cac630f25d1d8507a25e89b3afc06a717",
+            "uint-B": "a2ef95d75d72f4f6587651fec4218bc9881336296ffbf3b1aaf10a75593d8bdb",
+            "sham-B": "7bf9bac78140622ba418d0cc8305ae1a952f2758a443a009c5f7bcf58906dbf5"
+          }
+        },
+        {
+          "index": 1,
+          "format": "R10G10B10A2_UNORM",
+          "reproducible_draw_pixels_on_matching_inputs": 487,
+          "changed_in_those_pixels": 487,
+          "baseline_unstable_pixels": 125662,
+          "uint_unstable_pixels": 328421,
+          "sha256_before": {
+            "sham-A": "d681a697d6bc13a11f361b67a4be35c40cff15cfd72fa406e9b206950610e3cf",
+            "uint-A": "96cb5a7fd6cd5fd3d8963fb1ad810998ba12f949e08fde6dc305f48fd81d1cf3",
+            "uint-B": "7d6ab658ae8079be40d713ca7f0b4e77ce021efa24b0a86ed4d169ccbcc905ef",
+            "sham-B": "fb81a06c32ffd58d045b13a8e0d2275c5ec035c633bf383f8be38a7ec9d666f6"
+          },
+          "sha256_after": {
+            "sham-A": "e8e32ed49037dd6ed24efacfe4a46eefbe6b21e64c3dc6e95da2fc4473572349",
+            "uint-A": "06e336adcfde9f76c97fd2006d6e27b6591bb872dcefc4be5a3dc6d94a2d2fa6",
+            "uint-B": "ce769ce6fc7a913516337ecbf727af09139122e2eab0c2f3d0cf40eff4616d7a",
+            "sham-B": "536c816b8e54ffbf3a96913438198c71dbde9ebd54d75f24c85bde60150df4b3"
+          }
+        },
+        {
+          "index": 2,
+          "format": "B8G8R8A8_UNORM",
+          "reproducible_draw_pixels_on_matching_inputs": 495,
+          "changed_in_those_pixels": 495,
+          "baseline_unstable_pixels": 125776,
+          "uint_unstable_pixels": 326373,
+          "sha256_before": {
+            "sham-A": "9d84a93811f398fa581846a7edcfb474d0ba0eed7c3449479079869a167b854f",
+            "uint-A": "8840a6862006f71f9e042c606b16f840df71c4175b2ed4cae7432f3911fa51c6",
+            "uint-B": "b09a09bca9093c5f0856b4a0e64008b24e7b97374de2477342b04b80b0db3e09",
+            "sham-B": "60a4a5be5cf04fe2853464fc8258ac480e69af1579b95eb5d4b202b3a447338b"
+          },
+          "sha256_after": {
+            "sham-A": "d2ada5b86b5a3d19f81a51fc1d63ee1ce8423578d0059c308bde3836bed41838",
+            "uint-A": "d88f1adb7c5a121af591fd639363c34440861bc7c5937f95a8ce1fc985dd6d65",
+            "uint-B": "410936af55a4a5e397e7e56297dda87298059b358e7fab9c534496f17a277199",
+            "sham-B": "22e9847efda049324011f24df003d692a9018e359b0c8a51d784f54cf7e19b65"
+          }
+        },
+        {
+          "index": 3,
+          "format": "B8G8R8A8_SRGB",
+          "reproducible_draw_pixels_on_matching_inputs": 495,
+          "changed_in_those_pixels": 495,
+          "baseline_unstable_pixels": 126627,
+          "uint_unstable_pixels": 327927,
+          "sha256_before": {
+            "sham-A": "9db2e8296c36df734064c11c859eee7c67b6fa28d0a0b41cf00f25e74b36c27c",
+            "uint-A": "56ca95eb432edcbe61c5c0365ae49c9f66fd9cfd66cadc0027df525df2e3a1d5",
+            "uint-B": "fa98bbfcdae19a085c0336b9ab482c1273a606c878de79cc61acc4b530000bd3",
+            "sham-B": "42fc2ffb50e058895907350ee1df7dac4f538a142d1999f0530fa9e914ce5161"
+          },
+          "sha256_after": {
+            "sham-A": "a7cf94451e64e05c1ff66da197d9df32032cbdc3440be4eb81acd0d90501b002",
+            "uint-A": "ce974ddfd9ce342123edb5d0b11b238213310010a78f346b6d2a61494f4f0f21",
+            "uint-B": "9303f1b124eb9cb5884997e9273b5411bf07c4b70466e232ffb2fc74e2382557",
+            "sham-B": "4f4ae10af83d34138a1cd305593892b90adc4b8f1dacc8e08e7ecd34ba4848e0"
+          }
+        },
+        {
+          "index": 4,
+          "format": "B8G8R8A8_UNORM",
+          "reproducible_draw_pixels_on_matching_inputs": 2,
+          "changed_in_those_pixels": 2,
+          "baseline_unstable_pixels": 1367,
+          "uint_unstable_pixels": 4053,
+          "sha256_before": {
+            "sham-A": "86d3959e35158ecb4bbb83433d440514ffe44ba096e43c133fec16f33205ebf8",
+            "uint-A": "ffc21441fa8be13f1f44b74b00a108db2d9ef334a9c518cb3635125c32ac3a0b",
+            "uint-B": "ff5efc8c19e2aad0449405c88f4105772c25786c089990592c2ad0b96867f2a3",
+            "sham-B": "1e234c919c41e1923e198f9f7878d50e20f7cd829e7409005b8709e9c0d1a883"
+          },
+          "sha256_after": {
+            "sham-A": "4c32d0f25ab72e7bc5656566ee517c17e921a3888ecf3f851d1f43bfd4693e3e",
+            "uint-A": "999d84bdd8d466b8b761826f3ed4f3a288d37bf30a16fe84635bf33066e3c339",
+            "uint-B": "b427a000d3965bd236070d93e40d0ccd94aa1b37402fca0a322b6cb9d35e4a64",
+            "sham-B": "2ee5e31ad3ff9c479581cef6fa02ba6afd0b19b7d47a7de7cb1ea0b16ba6d015"
+          }
+        }
+      ],
+      "present": {
+        "width": 1859,
+        "height": 1045,
+        "total_pixels": 1942655,
+        "stable_under_both_repeats": 272441,
+        "changed_between_arms_among_stable": 12148,
+        "unstable_in_baseline": 1635160,
+        "unstable_in_candidate": 431211,
+        "sha256_per_trial": {
+          "sham-A": "9a6f88e569dbbbdf2a42cbd78e31495dd330e079ab1a5f53658702d8c0deab09",
+          "uint-A": "4eef33248ef2520745ab992e1669be2b503c2a65e5ae46b01ba98d498499560d",
+          "uint-B": "521319090373e40850c6bf196b1298bfd86b1a2579c8213ec4df414aec6118c4",
+          "sham-B": "d7e0afc8a7647e4d6ce76f02b86e11757bc2ab11ce30baefb4deffed543cf692"
+        }
+      }
+    },
+    "pavement_patch": {
+      "region_xyxy": [
+        1100,
+        610,
+        1350,
+        750
+      ],
+      "description": "Final presented road surface to the right of the player character. Percentage of pixels with all three 8-bit colour channels <8. This region was selected on visual inspection to investigate the conspicuous black surface.",
+      "black_pixel_percent": {
+        "sham": 0.07,
+        "sham2": 0.05,
+        "sham3": 98.64,
+        "uint": 98.64,
+        "uint2": 0.05,
+        "uint3": 17.82,
+        "sham-A": 98.64,
+        "uint-A": 98.64,
+        "uint-B": 98.64,
+        "sham-B": 0.05
+      }
+    },
+    "shader_replacement_scope": "Isolate the fetch type in the original captured Vulkan module. The production compiler changes the corresponding Xbox translation to an unsigned texture and unsigned load. DXC and DXV validated the production outputs."
+  },
+  "live_sandbox": {
+    "title": "The Matrix Awakens 1.20.1831.3754",
+    "proton": "Valve Proton Experimental",
+    "driver": "NVIDIA GeForce RTX 4070 Ti SUPER, 620.70.06",
+    "compiler_sha256": "f42f9d916e6fe267d4e723efd3938eab5d8db8da2dde799eef4fb3d560f8ff19",
+    "provider_sha256": "69a64840b95534400cf96e4a0acb494c2496fc8628a4fbba2c13030fd341259b",
+    "profile_sha256": "eb10eff360b8d05b7c3dd8dec05321b7502fe08ad4f1cd8a15c895066e43530f",
+    "prepared_entries": 2509,
+    "guest_arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer",
+      "-nosound",
+      "-UseFixedTimeStep",
+      "-gauntlet=FrostyTestControllerAutoTest",
+      "-FrostyTest.PreferSandbox"
+    ],
+    "runtime_log_sha256": "062e3e754d1df1de598a4a15600566cdf93e609aa725ffd21533eb74bd722e1c",
+    "host_driver_environment": "The test process loaded the packaged userspace driver matching the running kernel module through a private mount namespace after the host updated its graphics packages.",
+    "requested_materials_with_verified_prepared_outputs": [
+      {
+        "archive_entry": "material/17718",
+        "source_sha256": "c48f20a07a81ae31a458b6821e73ad0b8886ce0c72005986422e794a22642ec6",
+        "prepared_dxil_sha256": "9ba5da1eca9f95b43875d3bff889175a017747db20ee5a8ff1d0c6f44bf6de7a"
+      },
+      {
+        "archive_entry": "material/17736",
+        "source_sha256": "79d8f6663c0469780d0f9256143df100ea1cf3ae54ba9318113bbf06da3cda73",
+        "prepared_dxil_sha256": "b35b3bc95574a3a1edfd7cd01f75dfef36542dd296906cd1845f63540fd192f9"
+      },
+      {
+        "archive_entry": "material/17540",
+        "source_sha256": "44a2e98256673fbaefda305d848b95c6b510196b570b626813063d159d516a25",
+        "prepared_dxil_sha256": "36f26436d4fc261f8fbe088985ee84765ba099246cb61c27535f91a01cbeb886"
+      },
+      {
+        "archive_entry": "material/17579",
+        "source_sha256": "62f9492b5a07db9f716dd3e21f4e27f1d5decaa750dce1359059fdf54ddc9c57",
+        "prepared_dxil_sha256": "6025eda12facd8ed34d18f7de81bc99503dde075a0feac1afdef910fd33bba34"
+      }
+    ],
+    "sandbox_intro_finished_utc": "2026.11.22-10.24.58:532",
+    "screenshot": "street-page-table.jpg",
+    "screenshot_sha256": "75fa2a607d91b6136d00d916bc52afa0d401bf0e4f7ed3664ded73874cb46e84",
+    "screenshot_utc": "2026-11-22T10:25:47.107+00:00",
+    "observation": "Frosty entered the city on foot. The player, vehicles, HUD and pavement are visible. Gaps persist in the street and buildings. The title completed its Sandbox test and exited with code 0 after 180.2 seconds.",
+    "mangohud": {
+      "scope": "Twenty wall seconds on the street during the title\u2019s fixed-step Sandbox test. The game had focus and an uncovered window on the powered active workspace throughout. Include only complete present intervals ending at MangoHud CSV birth time plus elapsed nanoseconds. Percentiles use the nearest rank.",
+      "csv_sha256": "017acf8f44569b112388bad310e9eebf8ed6cc072d650d9bd934e5e0ab70f9ba",
+      "start_utc": "2026-11-22T10:26:15.625+00:00",
+      "end_utc": "2026-11-22T10:26:35.625+00:00",
+      "frames": 143,
+      "presented_seconds": 17.853,
+      "fps_over_presented_seconds": 8.01,
+      "p50_ms": 113.38,
+      "p95_ms": 128.95,
+      "max_ms": 829.09
+    }
+  }
+}

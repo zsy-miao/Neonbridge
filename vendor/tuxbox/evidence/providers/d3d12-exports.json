@@ -1,0 +1,76 @@
+{
+  "scope": "Guest calls for D3D10CreateBlob, D3D12GetDebugInterface and four legacy DXGIX exports, plus their name and ordinal lookups.",
+  "debug": "Repeated factory and interface queries return the same Xbox object. A rejected IUnknown query preserves the output. The second table implements the observed constant reference counts. Setting the flags through the first table updates the masked process getter.",
+  "blob": "Create, query ID3DBlob, write and read 257 bytes, AddRef and release to zero. The provider forwards to D3DCreateBlob in d3dcompiler_47.",
+  "legacy_dxgix": "The Series DLL aliases DXGIXGetFrameStatistics, DXGIXPresentArray, DXGIXSetFrameNotification and DXGIXSetVLineNotification. All return DXGI_ERROR_UNSUPPORTED for null arguments and for pointers to a guarded value.",
+  "reference_setup": "App-local d3d12_xs.dll and xgs12_10.dll from the Series package, plus TuxBox xmem.dll. The control pins the UMD for the lifetime of its blob.",
+  "xmem": {
+    "sha256": "ac3e68c658c9ff8684d5e9c0d991900f0102e5a90f234976fa8875acd3fdd5f3",
+    "allocation_attributes": {
+      "0x04800092": "UMD initialization",
+      "0x04800040": "32-byte blob object",
+      "0x04800078": "257-byte blob data"
+    },
+    "checks": [
+      {
+        "gate": "xmem-default",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-default: PASS (allocator pairs 1/6 and 2/7, ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+      },
+      {
+        "gate": "xmem-pages",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-pages PASS cpu-pages=2 remapped-bytes=131072 stale-and-foreign-rejected=1"
+      }
+    ]
+  },
+  "variants": [
+    {
+      "reference": "d3d12_xs.dll",
+      "reference_sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+      "umd": "xgs12_10.dll",
+      "umd_sha256": "036b9a0d8569ba662e52e2f7454c3f0e6506415b3b4f7423d51f3c7e31a3a288",
+      "guest_sha256": "168d373032c4be63f4b9a7b0f6efd7fb8b9d7021e187094d322ce86e49da9155",
+      "provider_sha256": "300af24ae01e907accfe7ea48e8cac215a0e193146b915bc9fca409a62bb4f82",
+      "matched_named_ordinals": 46,
+      "total_reference_exports": 54,
+      "original_run": {
+        "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+        "checks": [
+          {
+            "gate": "d3d12-exports",
+            "passed": true,
+            "exit_code": 0,
+            "receipt": "d3d12-exports PASS debug=1 blob=1 dxgix=4"
+          }
+        ]
+      },
+      "provider_runs": [
+        {
+          "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+          "checks": [
+            {
+              "gate": "d3d12-exports",
+              "passed": true,
+              "exit_code": 0,
+              "receipt": "d3d12-exports PASS debug=1 blob=1 dxgix=4"
+            }
+          ]
+        },
+        {
+          "provider": "1792432585 GE-Proton11-11",
+          "checks": [
+            {
+              "gate": "d3d12-exports",
+              "passed": true,
+              "exit_code": 0,
+              "receipt": "d3d12-exports PASS debug=1 blob=1 dxgix=4"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

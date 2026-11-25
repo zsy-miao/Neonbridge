@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-copy-resource.exe": "2be748cb187c8931997a1fbb1e8a43889c68d9c2a05738f352914059ccb89c17",
+    "d3d12-smoke/d3d12_xs.dll": "124318ee0e4e070d595b4d8da913acc5ebd7e03e332470121f90b34ba94bf703"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-copy-resource",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-copy-resource PASS pci=1002:13c0 slot=84 buffer_bytes=1028 texture_subresources=8 nonzero_option=E_NOTIMPL self_copy=E_INVALIDARG source_and_destination=verified placed_uploads=2 placed_dst=verified same_va_alias=verified cpu_writeback=verified partial_copy_texels=2 overlap_mips=4 pending_reader=verified"
+    }
+  ],
+  "driver": "Mesa RADV 26.2.6-arch3.1",
+  "reproduce": "python tuxbox.py verify --adapter 1002:13c0 --only d3d12-copy-resource --output build/command-list-copy-amd.json",
+  "driver_selection": "This run selected a local RADV bundle. VK_DRIVER_FILES and VK_ICD_FILENAMES pointed to its ICD manifest, PRESSURE_VESSEL_FILESYSTEMS_RO included the driver directory, and DXVK_FILTER_DEVICE_NAME and VKD3D_FILTER_DEVICE_NAME were set to AMD."
+}

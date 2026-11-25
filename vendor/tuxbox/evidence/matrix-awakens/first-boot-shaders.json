@@ -1,0 +1,113 @@
+{
+  "plan_sha256": "848d5f05d29f28dc6aeb6a9dc674bfbe0c9ad65318b28b79486d590ad0c5870e",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+  "native_xshader_sha256": "9b05317a360122d073e82d37f56af9ff2d4d36cf6f66f442c90876eeb6c658e0",
+  "native_dxcompiler_sha256": "d40e4a7b3b46490313f4bfd08101946483a673831b3ea65c93d746de1c2f9216",
+  "native_dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+  "trials": [
+    {
+      "stage": "cold",
+      "seconds": 46.479,
+      "compiled": 11,
+      "reused": 0
+    },
+    {
+      "stage": "warm",
+      "seconds": 0.001,
+      "compiled": 0,
+      "reused": 11
+    }
+  ],
+  "comparison": "Native DXC -dumpbin output for each fresh entry compared against the corresponding cached program staged in the retail prefix. Only shader-hash comments and compiler-identification metadata were excluded. Every new file passed native dxv before publication. Duration covers CPU compilation, validation and installation in an empty DXIL cache; GPU pipelines and game frame times are independent.",
+  "programs": [
+    {
+      "entry": 379,
+      "archive": "global",
+      "cache_file": "268dfce413c63fa3.cso",
+      "compiled_sha256": "fcdc72628cbfcf831eb981c41e4d42c67b12cc9962cc57b6086254a08b823c48",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "1fdeb5725957d039c8bab0e3f263d4c499d80e5e2dc87289077401452681d9dd"
+    },
+    {
+      "entry": 3643,
+      "archive": "global",
+      "cache_file": "1da7a0560d50e4d6.cso",
+      "compiled_sha256": "cfe98a5eb6ed2962185e1c3a1648fc1b163c2334400ef54edb243900725a12b3",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "231b5c57b4d2d80507ee74c308a2ddad14c03def487a1729508fa6611f74dd73"
+    },
+    {
+      "entry": 785,
+      "archive": "global",
+      "cache_file": "f11c7f0b46cdc289.cso",
+      "compiled_sha256": "d22918e1f6990aba2281f7dfa0ecf37dc19d7d95797739e9b1b4e61568e2e33c",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "1d3e87dbadfea436cee9ed2b978ee611ebc6ad440084817fd0a91d1ebf424cb2"
+    },
+    {
+      "entry": 792,
+      "archive": "global",
+      "cache_file": "c28ea1319190ae6e.cso",
+      "compiled_sha256": "f6bd6623f884ca5822e76bdfd64b824eb22242a7371de71c1f0379c74b6276cd",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "03561712b5492d3e5310b1bd77c5507ae1df410897a75beb223b9a129e2045d9"
+    },
+    {
+      "entry": 2227,
+      "archive": "global",
+      "cache_file": "cd212d3ca9b64f27.cso",
+      "compiled_sha256": "d6f87f5cf9ec443e69904ec501617065bd4fff2b15a1c2836555089aaea00a3e",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "2672d709a173519e615f07e9944126b6747924d6b6d0d022c62560d660859f95"
+    },
+    {
+      "entry": 3333,
+      "archive": "global",
+      "cache_file": "3a670d30b3c9baf6.cso",
+      "compiled_sha256": "7baadd49aa5de068d8d6fc4b8033b83e932397147f44dd56228a087a76652450",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "816207291be87cc5f175b96ac9b53b545da523474d3c2607876dd58e81274c31"
+    },
+    {
+      "entry": 2696,
+      "archive": "global",
+      "cache_file": "1a9afce1ceb13d8a.cso",
+      "compiled_sha256": "fa5f96dbf08c42a6ca7c9d5f75f79faebe087c69488ea2a44e06609fcbcbc487",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "060e143a946c9fca8f55fb4ec8ff214f669e31820c21afa3fa527bd5ee7d49f7"
+    },
+    {
+      "entry": 856,
+      "archive": "global",
+      "cache_file": "a4a920fc149b2cb5.cso",
+      "compiled_sha256": "10b384e9b46dc89efdf669c8a82275bfaeb0405899949498a197effcf621b97c",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "992b3b512a9330ee3bcf37d86b1249cec75e0e269bcf00ded7ec31764d4cf214"
+    },
+    {
+      "entry": 506,
+      "archive": "global",
+      "cache_file": "4a15194f65d2d3b3.cso",
+      "compiled_sha256": "3d05a4dc85cfa978048412609a5b86d4080fd8c0c656d3e46a4a4fa20674d3cd",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "0c61afb71e8291984fc7a962551f2d40e2e7a98877d3832bd16e98576ff2d9c7"
+    },
+    {
+      "entry": 37635,
+      "archive": "material",
+      "cache_file": "ae317f994ffc8199.cso",
+      "compiled_sha256": "956b32ea59b0f4396c80cb0ba20b4f66ec53e0a7be1299ac0bf8755b6a961353",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "cb3688a28b44ecd3113a2fdb808cb5eae98574fc0c108ef29bcda0d6192b83cc"
+    },
+    {
+      "entry": 15458,
+      "archive": "material",
+      "cache_file": "48a0179e7527a748.cso",
+      "compiled_sha256": "74a56601351fee1fe03c48bb514244f1752ebae6a006b33ea8490491a4b865fa",
+      "normalized_ir_matches_runtime": true,
+      "normalized_ir_sha256": "776543b945656a45e66f545e4e6ede146f05cca71925f2045d4419eacdd79b12"
+    }
+  ]
+}

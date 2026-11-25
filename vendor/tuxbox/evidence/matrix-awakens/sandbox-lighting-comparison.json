@@ -1,0 +1,219 @@
+{
+  "scene": "Sandbox, stationary player at the same downtown intersection",
+  "sample": "15\u201329 seconds after the title reported SandboxIntroFinished. Three 5-second desktop captures per run where available. RGB images normalized to 1920\u00d71080 for fixed region measurements.",
+  "files": {
+    "before": "street-lighting.jpg",
+    "after": "sandbox-daylight.webp",
+    "comparison": "sandbox-lighting-comparison.webp",
+    "after_webp_sha256": "f208402cbef369c3f6bcddac7b8c6b0aa2e52ab600ddbe5f5e34fbde7264390c",
+    "comparison_sha256": "513523020842ecf1e14843ec2f20a27d75d6b1d436a0c879948b5d861a9c883b"
+  },
+  "thresholds": "Saturated highlights require a maximum RGB channel above 0.70 and a range above 0.36 (normalized display RGB). Near-black pixels have display luma below 0.045.",
+  "target": "NVIDIA GeForce RTX 4070 Ti SUPER using Proton Experimental, original Xbox game settings, desktop window and MangoHud.",
+  "corrected_shader_dxil": "c151cf41eed634477de8ad9db3d2588be4502c94f1b23efa205a021088c9c6d6",
+  "loaded_provider": "e21226570882308f194e971e263e7823093da191fbf971ba4fe0c5e7b4620a54",
+  "timing_context": "The original baseline included per-pipeline GPU instrumentation. The later runs used different shader value probes, shader builds and cache states. These timings describe each run and do not isolate optimization gains.",
+  "runs": {
+    "initial_profiled": {
+      "sandbox_intro_finished_utc": "2026-11-23T11:53:01.242000+00:00",
+      "captured_image_resolution": [
+        1920,
+        1080
+      ],
+      "original_png_sha256": "e609a81182f3f5358d635107b8c61dd76f117c5c17419f3513c92c330c51b297",
+      "mangohud": {
+        "complete_presents": 33,
+        "mean_fps": 2.451,
+        "frametime_ms": {
+          "p50": 348.234,
+          "p95": 717.086,
+          "p99": 733.469,
+          "worst": 733.469
+        },
+        "system_cpu_percent_p50": 32.7386,
+        "gpu_percent_p50": 52.0
+      },
+      "compositor": {
+        "samples": 3,
+        "visible": 3,
+        "focused": 0
+      },
+      "median_image_regions": {
+        "left_facade": {
+          "saturated_highlight_percent": 0.677,
+          "magenta_percent": 0.039,
+          "near_black_percent": 13.22,
+          "luma_p50": 0.1963
+        },
+        "upper_right_facade": {
+          "saturated_highlight_percent": 1.649,
+          "magenta_percent": 0.38,
+          "near_black_percent": 11.696,
+          "luma_p50": 0.1513
+        },
+        "asphalt_and_sidewalk": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 2.42,
+          "luma_p50": 0.7221
+        },
+        "avatar_coat": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 91.606,
+          "luma_p50": 0.0347
+        },
+        "left_roofline": {
+          "saturated_highlight_percent": 3.717,
+          "magenta_percent": 0.011,
+          "near_black_percent": 0.026,
+          "luma_p50": 0.4315
+        },
+        "right_upper_windows": {
+          "saturated_highlight_percent": 3.463,
+          "magenta_percent": 1.155,
+          "near_black_percent": 6.638,
+          "luma_p50": 0.1936
+        }
+      }
+    },
+    "before": {
+      "sandbox_intro_finished_utc": "2026-11-23T12:07:57.807000+00:00",
+      "captured_image_resolution": [
+        1920,
+        1058
+      ],
+      "original_png_sha256": "3428883f1a65041e81f828fe2aceca4745d9793e8e93af9ee0967669bfa58f82",
+      "mangohud": {
+        "complete_presents": 41,
+        "mean_fps": 3.064,
+        "frametime_ms": {
+          "p50": 317.926,
+          "p95": 380.904,
+          "p99": 497.297,
+          "worst": 497.297
+        },
+        "system_cpu_percent_p50": 34.891,
+        "gpu_percent_p50": 65.0
+      },
+      "compositor": {
+        "samples": 3,
+        "visible": 3,
+        "focused": 0
+      },
+      "median_image_regions": {
+        "left_facade": {
+          "saturated_highlight_percent": 0.911,
+          "magenta_percent": 0.041,
+          "near_black_percent": 13.303,
+          "luma_p50": 0.1956
+        },
+        "upper_right_facade": {
+          "saturated_highlight_percent": 1.249,
+          "magenta_percent": 0.193,
+          "near_black_percent": 11.609,
+          "luma_p50": 0.1527
+        },
+        "asphalt_and_sidewalk": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 2.533,
+          "luma_p50": 0.7198
+        },
+        "avatar_coat": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 93.05,
+          "luma_p50": 0.0347
+        },
+        "left_roofline": {
+          "saturated_highlight_percent": 4.708,
+          "magenta_percent": 0.0,
+          "near_black_percent": 0.0,
+          "luma_p50": 0.4391
+        },
+        "right_upper_windows": {
+          "saturated_highlight_percent": 2.34,
+          "magenta_percent": 0.53,
+          "near_black_percent": 7.042,
+          "luma_p50": 0.1785
+        }
+      }
+    },
+    "after": {
+      "sandbox_intro_finished_utc": "2026-11-23T13:29:46.723000+00:00",
+      "captured_image_resolution": [
+        1920,
+        1080
+      ],
+      "original_png_sha256": "0640eef2162601c9dec41dfe9475eed20b26bc77f7a52e9611d53e5039f96ee4",
+      "mangohud": {
+        "complete_presents": 54,
+        "mean_fps": 3.901,
+        "frametime_ms": {
+          "p50": 246.496,
+          "p95": 273.238,
+          "p99": 601.914,
+          "worst": 601.914
+        },
+        "system_cpu_percent_p50": 23.3939,
+        "gpu_percent_p50": 33.0
+      },
+      "compositor": {
+        "samples": 3,
+        "visible": 3,
+        "focused": 3
+      },
+      "median_image_regions": {
+        "left_facade": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 16.869,
+          "luma_p50": 0.1709
+        },
+        "upper_right_facade": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 15.861,
+          "luma_p50": 0.1354
+        },
+        "asphalt_and_sidewalk": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 1.6,
+          "luma_p50": 0.752
+        },
+        "avatar_coat": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 83.293,
+          "luma_p50": 0.0386
+        },
+        "left_roofline": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 1.06,
+          "luma_p50": 0.3712
+        },
+        "right_upper_windows": {
+          "saturated_highlight_percent": 0.0,
+          "magenta_percent": 0.0,
+          "near_black_percent": 17.951,
+          "luma_p50": 0.1334
+        }
+      },
+      "natural_exit": {
+        "gauntlet": 0,
+        "launcher": 0,
+        "elapsed_seconds": 549.9,
+        "utc": "2026-11-23T13:34:15Z"
+      }
+    }
+  },
+  "remaining": "The avatar and vehicles remain dark. Building surfaces have holes or broken texture and geometry.",
+  "retail_graphics_configuration": {
+    "source_has_user_engine_ini": false,
+    "stage_has_user_engine_ini": false,
+    "source_command_line_matches_stage": true
+  }
+}

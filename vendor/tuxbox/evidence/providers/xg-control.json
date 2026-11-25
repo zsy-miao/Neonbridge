@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1789159601 experimental-11.0-20260910b-x86_64",
+  "binaries_sha256": {
+    "xg/xg-texture.exe": "93fa9538494a4f1bdb6e51c4dbf31b37a15e888388cf19dac138f0cde0179788",
+    "xg/xg_xs.dll": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+    "xmem-smoke/xmem.dll": "b8dd12c7fb279d582a3839ee19517c5f6356908267fbbcab4bb6ea17131e71f1"
+  },
+  "checks": [
+    {
+      "gate": "xg-native-layout",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS descriptors=4 layout-queries=8 plane-records=4 releases=4"
+    },
+    {
+      "gate": "xg-native-addresses",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS layouts=13 traced-descriptors=4 element-addresses=273263"
+    }
+  ]
+}

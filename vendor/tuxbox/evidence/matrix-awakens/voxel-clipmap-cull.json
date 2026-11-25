@@ -1,0 +1,107 @@
+{
+  "scope": "Global 2138 CullToVoxelClipmapCS translated from the supplied package and dispatched through its original root signature. One wave per case checks intersecting, distant and small AABBs, compacted indices, and guard words.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 2138,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "2138": {
+          "source_sha256": "5578f45257d10bd7de86b71c3695a03f0b03225e18c9e9c1156f85f2f07f743f",
+          "dxil_sha256": "2a2b24ad936b69007afa3ba3721852e9c3091d66c39483107f9171c69a138285"
+        }
+      },
+      "cases": {
+        "voxel_empty": {
+          "count": 64,
+          "selected": 0,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_sparse": {
+          "count": 64,
+          "selected": 6,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_partial": {
+          "count": 33,
+          "selected": 4,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_small": {
+          "count": 64,
+          "selected": 4,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_full": {
+          "count": 64,
+          "selected": 64,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "2138": {
+          "source_sha256": "5578f45257d10bd7de86b71c3695a03f0b03225e18c9e9c1156f85f2f07f743f",
+          "dxil_sha256": "2a2b24ad936b69007afa3ba3721852e9c3091d66c39483107f9171c69a138285"
+        }
+      },
+      "cases": {
+        "voxel_empty": {
+          "count": 64,
+          "selected": 0,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_sparse": {
+          "count": 64,
+          "selected": 6,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_partial": {
+          "count": 33,
+          "selected": 4,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_small": {
+          "count": 64,
+          "selected": 4,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "voxel_full": {
+          "count": 64,
+          "selected": 64,
+          "checked_words": 82,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

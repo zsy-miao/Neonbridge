@@ -1,0 +1,24 @@
+{
+  "activated": "1",
+  "rate": "48000",
+  "channels": "6",
+  "bits": "32",
+  "float": "1",
+  "access_units": "96",
+  "pcm_bytes": "2359296",
+  "host": "1792432585 GE-Proton11-11",
+  "source_sha256": "bac74a082a9baf114564df5db4b7bd4541087a11d3131989e3fffe674ec32a53",
+  "decoder_sha256": "810c007551ec389a2c7dd0f0066747e453b5c3d1efb3cdc62cc1f22a76c5b454",
+  "guest_sha256": "bfa1835330d35cafc10b6d2e088e62f5ca0eee5f2478fc042d0a8660bae38a63",
+  "pcm_sha256": "1e69f326e9b048c0a7440ac1e81f8fdee5e1facf2371df39610262ad47132437",
+  "ffmpeg_sha256": "744a9ebe58044c5f2b4241768e74b43091faee12c2fad9152a8e9857a623e918",
+  "pcm_max_absolute_error": 2.4719432985875756e-05,
+  "channel_cosine_similarity": [
+    0.9999999999411289,
+    0.9999999999402098,
+    0.999999993147535,
+    0.9999999999999084,
+    0.9999999998274682,
+    0.9999999997115895
+  ]
+}

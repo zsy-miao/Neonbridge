@@ -1,0 +1,100 @@
+{
+  "scope": "Three resource-free Frosty vertex programs translated by TuxBox, validated by DXV and executed through a desktop D3D12 stream-output pipeline. The expected register mapping is inferred from the Xbox shader signatures and native instructions.",
+  "physical_console_comparison": false,
+  "game_launched": false,
+  "proton": {
+    "distribution": "Valve Proton Experimental",
+    "version": "1793301796 experimental-11.0-20261027b-x86_64",
+    "vkd3d_config": "",
+    "vkd3d_disable_extensions": "",
+    "d3d12_dlls": {
+      "d3d12.dll": "f728f7f04364b5761863428131317008f61b627d8335fcd8db9fd75715fc1278",
+      "d3d12core.dll": "5edbb1df81ce270e2263e4472e1dcddaeaccdd8624af561a00eea865926f3c40"
+    }
+  },
+  "tools": {
+    "translator": "tools/shader-compiler (default legacy-hlsl feature)",
+    "compiler_sha256": "1c03be7dfc16717941b819c52e05e2ff64a24a8a8743f9577021a3ad4971e991",
+    "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "guest": "tools/reference/independent-shaders/vertex-fetch.cpp",
+    "guest_exe_sha256": "f1c0f4f09fa411251f4fce2881ec84f8bcfa1b98006cc680efc8631d7b4badfb"
+  },
+  "adapters": [
+    {
+      "name": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+      "pci_id": "10de:2705",
+      "guest_exit": 0,
+      "draws_matched": 6
+    },
+    {
+      "name": "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+      "pci_id": "1002:13c0",
+      "guest_exit": 0,
+      "draws_matched": 6
+    }
+  ],
+  "input_and_readback": {
+    "layouts": [
+      "interleaved",
+      "split"
+    ],
+    "draw": "Three point vertices starting at input record 1 of 5. Each input component has a distinct value within each tested vertex.",
+    "interleaved": "ATTRIBUTE0 at offset 16 and ATTRIBUTE1 at 4 in a 48-byte record.",
+    "split": "ATTRIBUTE0 uses slot 1 at offset 8 with stride 32. ATTRIBUTE1 uses slot 0 at offset 4 with stride 24.",
+    "guards": "Each 128-byte output starts filled with 0xcd except for the zeroed 8-byte counter at offset 112. Exports start at offset 16. All 128 bytes, including the final counter and adjacent guards, matched for every draw."
+  },
+  "shaders": [
+    {
+      "entry": "global/1007",
+      "expected": [
+        "SV_Position = (ATTRIBUTE0.xyz, 1)"
+      ],
+      "source_sha256": "4d6f9f263fc79575a9de22349ccb4c376913596b7491615c7d08b9d459b34761",
+      "hlsl_sha256": "4e6e0b951ac99292b288b1bf7c4dd5f7394fa83731d47ca50050956816a3db50",
+      "dxil_sha256": "f70075c2fe175f90f1957272f711006495a4cb0939a49552da26d183c534ec0c",
+      "payload_bytes": 48,
+      "whole_buffer_sha256": "0cdcdfe47eb722fbb847009d7f2f40dcea7662445c024352dbbdb687ad88cb8d"
+    },
+    {
+      "entry": "global/2450",
+      "expected": [
+        "SV_Position = ATTRIBUTE0.xyzw",
+        "TEXCOORD0 = ATTRIBUTE1.xy"
+      ],
+      "source_sha256": "f098dbdd214359e69414b6e0b52e2ec13f7b31ae4fe2e6d562d1d84ccbfc6103",
+      "hlsl_sha256": "d4cec28127ff77e22250fc4db9eb74725e937b8aeccbfe1d44002d3b6c4c2e51",
+      "dxil_sha256": "581c08932ef227c644cee97abe9a04f9dbb15fa15ed42f0ccfd3e82ce6ecb54c",
+      "payload_bytes": 72,
+      "whole_buffer_sha256": "6a0b3f5610ea2d178a8b329ef4179ec0d68209a67b82e7a4b1faf55239ccebb2"
+    },
+    {
+      "entry": "global/2751",
+      "expected": [
+        "SV_Position = (2 * ATTRIBUTE0.x - 1, 1 - 2 * ATTRIBUTE0.y, 0, 1)"
+      ],
+      "source_sha256": "8ebb680749cdb4f2029b9024d403b56d5d13c7ae12feb55e6f7b35121b0a2a9c",
+      "hlsl_sha256": "f00386a02f14bac71592d44e5bd575de9704067bffad43c450759e5503fe569d",
+      "dxil_sha256": "a18cf74a7d22e77e93ab2563417d27ca3628089a63f3054ad1f12ab1e5dad18e",
+      "payload_bytes": 48,
+      "whole_buffer_sha256": "0f7577e0755fdadfc577570faeb8337761ae8d3aca22db3c07aad3122aeeccbe"
+    }
+  ],
+  "sensitivity_check": {
+    "adapter": "10de:2705",
+    "change": "A temporary control swapped TEXCOORD0.x and TEXCOORD0.y in the emitted HLSL for global/2450.",
+    "guest_exit": 0,
+    "runner_exit": 1,
+    "draws_matched": 4,
+    "mismatches": [
+      "global/2450 interleaved",
+      "global/2450 split"
+    ],
+    "observed": "Only the two UV components of each of the three vertices changed in both failing draws."
+  },
+  "reproduce": {
+    "runner": "tools/check_frosty_vertex_fetch.py",
+    "command": "VKD3D_FILTER_DEVICE_NAME=\"$GPU_NAME\" DXVK_FILTER_DEVICE_NAME=\"$GPU_NAME\" VK_DRIVER_FILES=\"$ICD\" python tools/check_frosty_vertex_fetch.py --stage \"$STAGE\" --proton \"$VALVE_PROTON\" --compiler \"$XSHADER\" --adapter \"$PCI_ID\" --work \"$WORK\"",
+    "inputs": "Use the local prepared Frosty stage, stock Valve Proton Experimental, a TuxBox xshader build and the matching Vulkan ICD. Select NVIDIA or AMD and its listed adapter ID, with a separate work directory per GPU."
+  }
+}

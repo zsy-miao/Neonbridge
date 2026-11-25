@@ -1,0 +1,34 @@
+{
+  "scope": "Results of the actual TuxBox ray ALU lowering in a host compute shader. LLVM assembled the four input instructions for gfx1013. Expected words were independently computed for the inputs below.",
+  "operations": [
+    "v_mad_f32, separately rounded product and sum, cancellation and ordinary product",
+    "v_mad_legacy_f32, both signed zero times infinity and NaN times zero, plus 2",
+    "v_cvt_i32_f32_sdwa, signed conversion to padded high byte for -37.5 and 8.75",
+    "v_cmp_neq_f32, unordered NaN and signed zero comparisons"
+  ],
+  "reference_words_per_pair": [
+    "00000000",
+    "40000000",
+    "08000000",
+    "00000000",
+    "40000000",
+    "40000000",
+    "db000000",
+    "ffffffff"
+  ],
+  "dxil_sha256": "b93fd71fd109ced6ec7a16bd6111df9fdb2d2577040c77232382c0b05804eba9",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "threads": "65536",
+      "repeats": "4",
+      "mismatched_words": "0"
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "threads": "65536",
+      "repeats": "4",
+      "mismatched_words": "0"
+    }
+  }
+}

@@ -1,0 +1,241 @@
+{
+  "scope": "Globals 990 and 996 indirect single-sample hair visibility compaction through TuxBox\u2019s D3D12 provider and runtime shader worker. Seven CPU-modeled cases per shader on each GPU check all five outputs, including nonzero tile coordinates and empty tile lists. This is not an end-to-end rendering check.",
+  "results": {
+    "amd": {
+      "scope": "Two indirect-tile hair visibility compaction shaders through TuxBox\u2019s provider and runtime shader worker, with CPU-modeled GPU readback. Does not validate rendered hair.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "fa510e8fb9819761b997de43e960b9cf462e7d1fb027c3c0f8d22b934d31fb15",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "guest_sha256": "543d23d5b3dadda60cfbee7d6152ac6a01a034829acb784eb04c456cdb4b55d6",
+      "shaders": {
+        "990": {
+          "cooked_sha256": "2cd7b9d37e5a7749f794e3281cb3623f5c7725827d5c8913be0ca6e4fe12f801",
+          "workgroup": [
+            8,
+            8,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 64,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 8,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "offset": {
+              "active_pixels": 5,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "notile": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        },
+        "996": {
+          "cooked_sha256": "2fbe1948ea24cc99f921b815fa8ee2df55ac4b269caf7f19f0ed8a6fdbc75399",
+          "workgroup": [
+            8,
+            4,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 32,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 5,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "offset": {
+              "active_pixels": 5,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "notile": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        }
+      }
+    },
+    "nvidia": {
+      "scope": "Two indirect-tile hair visibility compaction shaders through TuxBox\u2019s provider and runtime shader worker, with CPU-modeled GPU readback. Does not validate rendered hair.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "fa510e8fb9819761b997de43e960b9cf462e7d1fb027c3c0f8d22b934d31fb15",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "guest_sha256": "543d23d5b3dadda60cfbee7d6152ac6a01a034829acb784eb04c456cdb4b55d6",
+      "shaders": {
+        "990": {
+          "cooked_sha256": "2cd7b9d37e5a7749f794e3281cb3623f5c7725827d5c8913be0ca6e4fe12f801",
+          "workgroup": [
+            8,
+            8,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 64,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 8,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "offset": {
+              "active_pixels": 5,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "notile": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        },
+        "996": {
+          "cooked_sha256": "2fbe1948ea24cc99f921b815fa8ee2df55ac4b269caf7f19f0ed8a6fdbc75399",
+          "workgroup": [
+            8,
+            4,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 32,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 5,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "offset": {
+              "active_pixels": 5,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "notile": {
+              "active_pixels": 0,
+              "image_pixels_checked": 256,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        }
+      }
+    }
+  },
+  "negative_control": "Changing one native ISA bit makes both programs reject the unverified election at 0x1c0.",
+  "regression": "Global 979 produces byte-identical translated HLSL to the previous validated compiler."
+}

@@ -1,0 +1,29 @@
+{
+  "guest_sha256": "5ca022902cc584043ae48d74da53165dbafbdfe04fe503a995e591f5efb6e2b6",
+  "host": "Valve Proton Experimental",
+  "input_device": "Linux uinput Xbox 360-style USB controller (045e:028e)",
+  "checks": [
+    "Clicking the left, own and right lanes gave the same board pixels as Left, Space and Right",
+    "Hot-plugged uinput gamepad through XInput",
+    "D-pad left/right, left stick right and A match keyboard pixels",
+    "Holding controls produced one turn per action",
+    "Start restored the initial board after each test"
+  ],
+  "sample_board_hashes": {
+    "initial": "b81a753a0e9a9b0516a55c6cc2c37279229ececb2ea17fe8c5bcccf3171e05e5",
+    "Right": "dfe8861d931ca21643d2c5a2e22dcf8c0da864b994a8c4906d8708956291a5a4",
+    "Left": "f4237a62009db239e0848273b964b98d4c272f83e5901b7168a1b8b7820197fd",
+    "space": "1db488e06fd4e754fe41dd4ce40f3a6f2e12ac50033646ea2f8eea232d237f72"
+  },
+  "edge_regression": {
+    "guest_sha256": "5ca022902cc584043ae48d74da53165dbafbdfe04fe503a995e591f5efb6e2b6",
+    "entry": "--app-id Lanes --replay",
+    "verified": [
+      "Held A at connection is suppressed",
+      "Pressing A during a held direction advances exactly once",
+      "Releasing A does not repeat the held direction",
+      "Stick jitter inside the hysteresis band produces no extra moves"
+    ],
+    "replay": "lanes-replay PASS pci=10de:2705 course=16/16 win=16/16 safe-miss=1 collision=1"
+  }
+}

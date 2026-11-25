@@ -1,0 +1,1218 @@
+{
+  "title": "The Matrix Awakens",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider_sha256": "25b45d2421190e2573912d91b7aaf67121824a94597324c404da71acf12a5f34",
+  "shader_worker_sha256": "7f502654627fd947d9e678313dad92ad7c3a4c3fbdbd19641c2b943d300b0844",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "host": {
+    "os": "Linux 7.3.5-2-cachyos-bore x86_64",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "620.73.4"
+  },
+  "capture": {
+    "instrument": "VulkanProfiler 2026.3.402",
+    "release_archive_sha256": "8e49f67bdd0490c1da40b6b52731247c250f2d371cb5ebcf0637e8dc9136859d",
+    "sampling_mode": "pipeline",
+    "delimiter": "present",
+    "presentation": "1920x1080 visible desktop window",
+    "controls": "Existing staged settings and warm shader cache. Both launches used -nosound, no menu input, MangoHud, shader dumps and debug_utils.",
+    "phase_matching": "The Unreal logo is visible around frames 90\u201395 in both runs. Steady-menu windows start about 11 seconds after the first two button crops match earlier menu captures. A wall-clock observer tracked completed trace frames to align MangoHud presents.",
+    "scope": "One capture per treatment. Profiling adds overhead. Pass timings sum ranges across queues and can overlap. Copy Pass includes barriers, waits and unnamed operations. Pipeline sampling timestamps at state changes can move elapsed work between adjacent labels. Small reversed ranges are counted and excluded."
+  },
+  "baseline": {
+    "launcher_log_sha256": "84784f8047c25618d699accdd68c34d5a5050314036bff5aec3474a3d4715188",
+    "gpu_trace_sha256": "6cd1cc4db1f6c9d472e6340988e3b2a774d336cff33d862a359000bb9e617f5d",
+    "menu_capture_sha256": "74fcc78333bbce4d5b10f10c33b86ec7802a84c05f19912af109af821d6dc767",
+    "startup_logo": {
+      "frame_interval_inclusive": [
+        90,
+        95
+      ],
+      "frame_count": 6,
+      "command_buffer_active_ms_p50": 1325.76,
+      "first_to_last_gpu_timestamp_ms_p50": 3608.504,
+      "reversed_ranges_skipped": 0,
+      "top_pipelines": [
+        {
+          "name": "CS=0753D514 (main)",
+          "mean_ms_per_frame": 691.141,
+          "max_ms_per_frame": 691.84
+        },
+        {
+          "name": "CS=CC30A585 (main)",
+          "mean_ms_per_frame": 498.115,
+          "max_ms_per_frame": 544.4
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 6.632,
+          "max_ms_per_frame": 7.44
+        },
+        {
+          "name": "VS=38F54696 (main), PS=68349965 (main)",
+          "mean_ms_per_frame": 5.373,
+          "max_ms_per_frame": 7.36
+        },
+        {
+          "name": "CS=C21B87E4 (main)",
+          "mean_ms_per_frame": 3.216,
+          "max_ms_per_frame": 3.808
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 3.099,
+          "max_ms_per_frame": 3.552
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 1219.219,
+          "max_ms_per_frame": 1263.824
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 15.2,
+          "max_ms_per_frame": 17.184
+        },
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 1.437,
+          "max_ms_per_frame": 1.712
+        },
+        {
+          "name": "VkRenderPass 0x00007f186c2cc430",
+          "mean_ms_per_frame": 0.069,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.037,
+          "max_ms_per_frame": 0.048
+        }
+      ],
+      "example_frame": {
+        "frame": 93,
+        "first_to_last_gpu_timestamp_ms": 3846.688,
+        "command_buffer_active_ms": 1345.856,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=0753D514 (main)": 690.704,
+          "CS=CC30A585 (main)": 524.752,
+          "CS=FCCBAE50 (main)": 6.352
+        }
+      }
+    },
+    "menu": {
+      "frame_interval_inclusive": [
+        250,
+        419
+      ],
+      "frame_count": 170,
+      "command_buffer_active_ms_p50": 191.36,
+      "first_to_last_gpu_timestamp_ms_p50": 197.44,
+      "reversed_ranges_skipped": 62,
+      "top_pipelines": [
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 3.635,
+          "max_ms_per_frame": 4.4
+        },
+        {
+          "name": "CS=AF1BAD6C (main)",
+          "mean_ms_per_frame": 2.077,
+          "max_ms_per_frame": 2.592
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 2.018,
+          "max_ms_per_frame": 3.056
+        },
+        {
+          "name": "CS=C61B8BF5 (main)",
+          "mean_ms_per_frame": 1.679,
+          "max_ms_per_frame": 2.368
+        },
+        {
+          "name": "VS=81161121 (main), PS=73CC97A6 (main)",
+          "mean_ms_per_frame": 0.881,
+          "max_ms_per_frame": 0.944
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 0.731,
+          "max_ms_per_frame": 1.424
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 82.336,
+          "max_ms_per_frame": 103.44
+        },
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 15.251,
+          "max_ms_per_frame": 19.264
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 2.925,
+          "max_ms_per_frame": 3.824
+        },
+        {
+          "name": "VkRenderPass 0x00007f186c2cc430",
+          "mean_ms_per_frame": 0.07,
+          "max_ms_per_frame": 0.096
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.037,
+          "max_ms_per_frame": 0.064
+        }
+      ],
+      "example_frame": {
+        "frame": 335,
+        "first_to_last_gpu_timestamp_ms": 190.176,
+        "command_buffer_active_ms": 187.344,
+        "reversed_ranges_skipped": 2,
+        "top_pipelines_ms": {
+          "CS=38F6C87A (main)": 3.456,
+          "CS=FCCBAE50 (main)": 2.048,
+          "CS=AF1BAD6C (main)": 1.968
+        }
+      },
+      "sample_utc": [
+        "2026-11-23T10:29:37.869935+00:00",
+        "2026-11-23T10:29:56.275648+00:00"
+      ],
+      "mangohud": {
+        "complete_presents": 164,
+        "mean_fps": 9.021,
+        "frametime_ms": {
+          "p50": 109.302,
+          "p95": 122.706,
+          "p99": 230.652,
+          "worst": 265.371
+        },
+        "system_cpu_percent_p50": 15.3197,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "b8c2d3b7a532215737ae510ea22d40c60363d3b3f3821d98d0d88ef59031d35e"
+      },
+      "copy_queue": {
+        "name": "0x555591492F30",
+        "mean_ms_per_frame": 81.201,
+        "mean_groups_per_frame": 2.647,
+        "frame_301_longest_group_ms": 82.336,
+        "command_buffer_count": 16,
+        "submissions": 450,
+        "matched_previous_handle_at_lag_16": 434,
+        "eligible_submissions_at_lag_16": 434,
+        "thread_mean_ms_per_frame": {
+          "2138753": 71.353,
+          "2135525": 9.849
+        },
+        "attribution": "All 450 submissions advance in strict round-robin order through 16 GPU command buffers. This pattern matches vkd3d-proton\u2019s memory-transfer queue. Pipeline mode omits individual fill and copy commands."
+      }
+    },
+    "launch_utc": "2026-11-23T10:25:35.786936Z",
+    "first_menu_match_utc": "2026-11-23T10:29:26.522738Z",
+    "closed_utc": "2026-11-23T10:30:01.994224Z",
+    "intro_pipeline_ranges_ms": {
+      "early_logo": {
+        "CS=0753D514 (main)": {
+          "mean_ms": 643.134,
+          "frames_with_range": 7
+        },
+        "CS=CC30A585 (main)": {
+          "mean_ms": 480.829,
+          "frames_with_range": 7
+        },
+        "CS=8E39276A (main)": {
+          "mean_ms": 0.002,
+          "frames_with_range": 7
+        },
+        "Compute Pass": {
+          "mean_ms": 1154.465,
+          "frames_with_range": 7
+        },
+        "frame_interval_inclusive": [
+          56,
+          62
+        ]
+      },
+      "unreal_logo": {
+        "CS=0753D514 (main)": {
+          "mean_ms": 691.141,
+          "frames_with_range": 6
+        },
+        "CS=CC30A585 (main)": {
+          "mean_ms": 498.115,
+          "frames_with_range": 6
+        },
+        "CS=8E39276A (main)": {
+          "mean_ms": 0.0,
+          "frames_with_range": 6
+        },
+        "Compute Pass": {
+          "mean_ms": 1219.219,
+          "frames_with_range": 6
+        },
+        "frame_interval_inclusive": [
+          90,
+          95
+        ]
+      }
+    }
+  },
+  "two_shader_override": {
+    "launcher_log_sha256": "2056e7ce13a5bf4cb4580a20f11aa3a16768dc69f5c5228f7cee1c1b1efc848c",
+    "gpu_trace_sha256": "c8d458f1024cd25d64534f54d993c40895183ea7575be5a5219075c90a83e729",
+    "menu_capture_sha256": "6f2c92efb6d22dd753b03e6fd4f5a19cdafddee557a7250ea0b06a8138159ff8",
+    "startup_logo": {
+      "frame_interval_inclusive": [
+        90,
+        95
+      ],
+      "frame_count": 6,
+      "command_buffer_active_ms_p50": 712.476,
+      "first_to_last_gpu_timestamp_ms_p50": 1564.5720000000001,
+      "reversed_ranges_skipped": 4,
+      "top_pipelines": [
+        {
+          "name": "CS=8E39276A (main)",
+          "mean_ms_per_frame": 612.464,
+          "max_ms_per_frame": 687.056
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 6.451,
+          "max_ms_per_frame": 6.888
+        },
+        {
+          "name": "VS=38F54696 (main), PS=68349965 (main)",
+          "mean_ms_per_frame": 6.049,
+          "max_ms_per_frame": 7.656
+        },
+        {
+          "name": "CS=C21B87E4 (main)",
+          "mean_ms_per_frame": 3.504,
+          "max_ms_per_frame": 3.544
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 2.755,
+          "max_ms_per_frame": 3.68
+        },
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 2.532,
+          "max_ms_per_frame": 2.696
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 636.756,
+          "max_ms_per_frame": 712.04
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 15.611,
+          "max_ms_per_frame": 17.376
+        },
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 1.349,
+          "max_ms_per_frame": 1.84
+        },
+        {
+          "name": "VkRenderPass 0x00007f80142ee4f0",
+          "mean_ms_per_frame": 0.068,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.033,
+          "max_ms_per_frame": 0.04
+        }
+      ],
+      "example_frame": {
+        "frame": 93,
+        "first_to_last_gpu_timestamp_ms": 1508.952,
+        "command_buffer_active_ms": 703.056,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=8E39276A (main)": 571.512,
+          "VS=38F54696 (main), PS=68349965 (main)": 7.56,
+          "CS=FCCBAE50 (main)": 6.616
+        }
+      }
+    },
+    "menu": {
+      "frame_interval_inclusive": [
+        268,
+        437
+      ],
+      "frame_count": 170,
+      "command_buffer_active_ms_p50": 184.952,
+      "first_to_last_gpu_timestamp_ms_p50": 190.448,
+      "reversed_ranges_skipped": 42,
+      "top_pipelines": [
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 3.478,
+          "max_ms_per_frame": 4.032
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 2.144,
+          "max_ms_per_frame": 2.432
+        },
+        {
+          "name": "CS=AF1BAD6C (main)",
+          "mean_ms_per_frame": 2.005,
+          "max_ms_per_frame": 2.256
+        },
+        {
+          "name": "CS=C61B8BF5 (main)",
+          "mean_ms_per_frame": 1.606,
+          "max_ms_per_frame": 1.856
+        },
+        {
+          "name": "VS=81161121 (main), PS=73CC97A6 (main)",
+          "mean_ms_per_frame": 0.863,
+          "max_ms_per_frame": 0.896
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 0.765,
+          "max_ms_per_frame": 0.912
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 78.575,
+          "max_ms_per_frame": 95.472
+        },
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 12.868,
+          "max_ms_per_frame": 15.408
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 2.891,
+          "max_ms_per_frame": 3.088
+        },
+        {
+          "name": "VkRenderPass 0x00007f80142ee4f0",
+          "mean_ms_per_frame": 0.068,
+          "max_ms_per_frame": 0.096
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.036,
+          "max_ms_per_frame": 0.064
+        }
+      ],
+      "example_frame": {
+        "frame": 353,
+        "first_to_last_gpu_timestamp_ms": 190.32,
+        "command_buffer_active_ms": 187.792,
+        "reversed_ranges_skipped": 2,
+        "top_pipelines_ms": {
+          "CS=38F6C87A (main)": 3.408,
+          "CS=FCCBAE50 (main)": 2.304,
+          "CS=AF1BAD6C (main)": 1.984
+        }
+      },
+      "sample_utc": [
+        "2026-11-23T10:36:25.100543+00:00",
+        "2026-11-23T10:36:43.505911+00:00"
+      ],
+      "mangohud": {
+        "complete_presents": 169,
+        "mean_fps": 9.319,
+        "frametime_ms": {
+          "p50": 105.685,
+          "p95": 115.147,
+          "p99": 232.221,
+          "worst": 274.399
+        },
+        "system_cpu_percent_p50": 13.9326,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "ff632b3b76ea5b6c15dd5303b6ab51043885b96319f10934ecf466b10c590bbb"
+      }
+    },
+    "launch_utc": "2026-11-23T10:33:26.983887Z",
+    "first_menu_match_utc": "2026-11-23T10:36:13.350761Z",
+    "closed_utc": "2026-11-23T10:36:49.834584Z",
+    "intro_pipeline_ranges_ms": {
+      "early_logo": {
+        "CS=CDA094D8 (main)": {
+          "mean_ms": 649.224,
+          "frames_with_range": 7
+        },
+        "CS=DA133CBB (main)": {
+          "mean_ms": 0.158,
+          "frames_with_range": 7
+        },
+        "CS=8E39276A (main)": {
+          "mean_ms": 0.002,
+          "frames_with_range": 7
+        },
+        "Compute Pass": {
+          "mean_ms": 679.543,
+          "frames_with_range": 7
+        },
+        "frame_interval_inclusive": [
+          56,
+          62
+        ]
+      },
+      "unreal_logo": {
+        "CS=CDA094D8 (main)": {
+          "mean_ms": 0.005,
+          "frames_with_range": 6
+        },
+        "CS=DA133CBB (main)": {
+          "mean_ms": 0.001,
+          "frames_with_range": 6
+        },
+        "CS=8E39276A (main)": {
+          "mean_ms": 612.464,
+          "frames_with_range": 6
+        },
+        "Compute Pass": {
+          "mean_ms": 636.756,
+          "frames_with_range": 6
+        },
+        "frame_interval_inclusive": [
+          90,
+          95
+        ]
+      }
+    },
+    "private_cache": {
+      "original_file_count": 216,
+      "original_inventory_sha256": "07d2c78f2373360f5dd3740d86d2541f5a155bd6bf91ad2c1e97710d4acad06f",
+      "original_unchanged_after_capture": true,
+      "overrides": {
+        "29": {
+          "source_sha256": "a555da29c95724b1fa05910c98726acba56941830dc2ae69f33e8eeef06f544e",
+          "compiled_sha256": "88bd197984aa2fbc7ad7ea46111d40dbdc07252f9732cc3295b8e0bf46843c61",
+          "vkd3d_shader_dump": "3037a07375f90cd5.dxil"
+        },
+        "638": {
+          "source_sha256": "058f46422fb57185706d3aaadf149ffa84ef26dfb6b1ab2b158aca18010f3085",
+          "compiled_sha256": "4afd625fd686ecea7f1a124fb42bf53509af58abc5733cae2f63dbd83a1c7022",
+          "vkd3d_shader_dump": "9824fa9f13d8959e.dxil"
+        }
+      }
+    }
+  },
+  "global_compute_pipelines": {
+    "CS=0753D514 (main)": "baseline 638, ScreenProbeIntegrateCS",
+    "CS=CDA094D8 (main)": "modified 638, ScreenProbeIntegrateCS",
+    "CS=CC30A585 (main)": "baseline 29, LumenScreenProbeImportanceSampling",
+    "CS=DA133CBB (main)": "modified 29, LumenScreenProbeImportanceSampling",
+    "CS=8E39276A (main)": "631, another ScreenProbeIntegrateCS permutation. Its compiled shader was unchanged in the two-shader comparison."
+  },
+  "active_shader_and_placement_changes": {
+    "launcher_log_sha256": "028a0ff097891033a68a8aa421c630016c669d84df2b0c1ec2f432dfe3127f72",
+    "gpu_trace_sha256": "f2f969d5bd3d503177221428ac6e0865c073150b9e7693e6ea4f861bbdf1dd28",
+    "menu_capture_sha256": "e7449f2e11fed8a61958d7240446033450d07dddbb8fa71403f29914e868af63",
+    "startup_logo": {
+      "frame_interval_inclusive": [
+        90,
+        95
+      ],
+      "frame_count": 6,
+      "command_buffer_active_ms_p50": 136.232,
+      "first_to_last_gpu_timestamp_ms_p50": 246.152,
+      "reversed_ranges_skipped": 4,
+      "top_pipelines": [
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 5.727,
+          "max_ms_per_frame": 6.424
+        },
+        {
+          "name": "VS=38F54696 (main), PS=68349965 (main)",
+          "mean_ms_per_frame": 5.287,
+          "max_ms_per_frame": 6.32
+        },
+        {
+          "name": "CS=C21B87E4 (main)",
+          "mean_ms_per_frame": 3.58,
+          "max_ms_per_frame": 3.656
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 2.671,
+          "max_ms_per_frame": 3.84
+        },
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 2.611,
+          "max_ms_per_frame": 2.808
+        },
+        {
+          "name": "CS=AF1BAD6C (main)",
+          "mean_ms_per_frame": 1.624,
+          "max_ms_per_frame": 2.048
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 26.171,
+          "max_ms_per_frame": 28.544
+        },
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 14.949,
+          "max_ms_per_frame": 82.664
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 14.812,
+          "max_ms_per_frame": 15.888
+        },
+        {
+          "name": "VkRenderPass 0x00007faf642f91c0",
+          "mean_ms_per_frame": 0.069,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.033,
+          "max_ms_per_frame": 0.04
+        }
+      ],
+      "example_frame": {
+        "frame": 93,
+        "first_to_last_gpu_timestamp_ms": 351.656,
+        "command_buffer_active_ms": 131.424,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=FCCBAE50 (main)": 5.264,
+          "VS=38F54696 (main), PS=68349965 (main)": 4.896,
+          "CS=C21B87E4 (main)": 3.656
+        }
+      }
+    },
+    "menu": {
+      "frame_interval_inclusive": [
+        286,
+        455
+      ],
+      "frame_count": 170,
+      "command_buffer_active_ms_p50": 186.74,
+      "first_to_last_gpu_timestamp_ms_p50": 193.62,
+      "reversed_ranges_skipped": 96,
+      "top_pipelines": [
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 3.49,
+          "max_ms_per_frame": 3.976
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 2.187,
+          "max_ms_per_frame": 2.696
+        },
+        {
+          "name": "CS=AF1BAD6C (main)",
+          "mean_ms_per_frame": 2.01,
+          "max_ms_per_frame": 2.272
+        },
+        {
+          "name": "CS=C61B8BF5 (main)",
+          "mean_ms_per_frame": 1.614,
+          "max_ms_per_frame": 1.896
+        },
+        {
+          "name": "VS=81161121 (main), PS=D2C2507F (main)",
+          "mean_ms_per_frame": 0.863,
+          "max_ms_per_frame": 0.88
+        },
+        {
+          "name": "CS=0D7C06B5 (main)",
+          "mean_ms_per_frame": 0.83,
+          "max_ms_per_frame": 0.92
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 79.256,
+          "max_ms_per_frame": 95.256
+        },
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 11.399,
+          "max_ms_per_frame": 12.752
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 2.913,
+          "max_ms_per_frame": 3.08
+        },
+        {
+          "name": "VkRenderPass 0x00007faf642f91c0",
+          "mean_ms_per_frame": 0.067,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.038,
+          "max_ms_per_frame": 0.168
+        }
+      ],
+      "example_frame": {
+        "frame": 371,
+        "first_to_last_gpu_timestamp_ms": 195.144,
+        "command_buffer_active_ms": 189.4,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=38F6C87A (main)": 3.432,
+          "CS=AF1BAD6C (main)": 1.976,
+          "CS=FCCBAE50 (main)": 1.832
+        }
+      },
+      "sample_utc": [
+        "2026-11-23T10:50:20.051131+00:00",
+        "2026-11-23T10:50:37.656899+00:00"
+      ],
+      "mangohud": {
+        "complete_presents": 164,
+        "mean_fps": 9.379,
+        "frametime_ms": {
+          "p50": 105.832,
+          "p95": 115.767,
+          "p99": 185.514,
+          "worst": 191.785
+        },
+        "system_cpu_percent_p50": 14.3204,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "03db7599f1359af4475d31d19ecf8a07ca69654dd7c2c5200ad244aa996af066"
+      },
+      "vkd3d_allocation_clears": {
+        "monotonic_start": 87409.965,
+        "monotonic_end": 87427.57,
+        "count_by_hex_windows_tid_and_size_bytes": {
+          "0634": {
+            "786432": 247
+          },
+          "0294": {
+            "786432": 38,
+            "196608": 165
+          }
+        },
+        "h264_decoder_tid": "0634"
+      }
+    },
+    "launch_utc": "2026-11-23T10:48:29.832268Z",
+    "first_menu_visually_confirmed_utc": "2026-11-23T10:50:07.971744Z",
+    "closed_utc": "2026-11-23T10:50:54.590612Z",
+    "provider_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc",
+    "process_observation": {
+      "pid": 2161367,
+      "mapped_provider_inode": 963774,
+      "private_provider_inode": 963774,
+      "namespace_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc"
+    },
+    "private_source_overrides": 24,
+    "exact_runtime_dxil_matches": 24,
+    "stock_media": true,
+    "original_stage_inventories_unchanged": true,
+    "extra_instrumentation": "Four SPIR-V pixel output probes, vkd3d info messages and allocation-size logging. Timings include their overhead."
+  },
+  "active_shader_placement_and_media_changes": {
+    "launcher_log_sha256": "9a27c3e5ca2a6ed1f1b83fee48ecd1d6dca1769b80203777148cb33aeda88be2",
+    "gpu_trace_sha256": "1e6b224ad97a547c34365e6ddf44f68e74eae11a25caf018b85f8d8f1e4677dd",
+    "menu_capture_sha256": "abf49425b7d1a338f56cc06e11bac6a2bbddf3900c70b8d2a64898ac4baf78f8",
+    "startup_logo": {
+      "frame_interval_inclusive": [
+        90,
+        95
+      ],
+      "frame_count": 6,
+      "command_buffer_active_ms_p50": 132.108,
+      "first_to_last_gpu_timestamp_ms_p50": 242.124,
+      "reversed_ranges_skipped": 2,
+      "top_pipelines": [
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 6.092,
+          "max_ms_per_frame": 7.008
+        },
+        {
+          "name": "VS=38F54696 (main), PS=68349965 (main)",
+          "mean_ms_per_frame": 5.06,
+          "max_ms_per_frame": 5.752
+        },
+        {
+          "name": "CS=C21B87E4 (main)",
+          "mean_ms_per_frame": 3.497,
+          "max_ms_per_frame": 3.592
+        },
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 2.527,
+          "max_ms_per_frame": 2.984
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 2.48,
+          "max_ms_per_frame": 2.768
+        },
+        {
+          "name": "VS=38F54696 (main), PS=0F512A2D (main)",
+          "mean_ms_per_frame": 1.615,
+          "max_ms_per_frame": 1.632
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 29.401,
+          "max_ms_per_frame": 30.856
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 14.665,
+          "max_ms_per_frame": 15.176
+        },
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 14.099,
+          "max_ms_per_frame": 77.272
+        },
+        {
+          "name": "VkRenderPass 0x00007fe3302c4c50",
+          "mean_ms_per_frame": 0.067,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.033,
+          "max_ms_per_frame": 0.04
+        }
+      ],
+      "example_frame": {
+        "frame": 93,
+        "first_to_last_gpu_timestamp_ms": 246.944,
+        "command_buffer_active_ms": 132.416,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=FCCBAE50 (main)": 7.008,
+          "VS=38F54696 (main), PS=68349965 (main)": 4.904,
+          "CS=C21B87E4 (main)": 3.456
+        }
+      }
+    },
+    "menu": {
+      "frame_interval_inclusive": [
+        286,
+        455
+      ],
+      "frame_count": 170,
+      "command_buffer_active_ms_p50": 184.956,
+      "first_to_last_gpu_timestamp_ms_p50": 197.332,
+      "reversed_ranges_skipped": 98,
+      "top_pipelines": [
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 3.533,
+          "max_ms_per_frame": 4.008
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 2.172,
+          "max_ms_per_frame": 2.608
+        },
+        {
+          "name": "CS=AF1BAD6C (main)",
+          "mean_ms_per_frame": 2.027,
+          "max_ms_per_frame": 2.352
+        },
+        {
+          "name": "VS=81161121 (main), PS=73CC97A6 (main)",
+          "mean_ms_per_frame": 0.863,
+          "max_ms_per_frame": 0.88
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 0.774,
+          "max_ms_per_frame": 0.928
+        },
+        {
+          "name": "VS=8F1F6E08 (main), PS=95099AFF (main)",
+          "mean_ms_per_frame": 0.543,
+          "max_ms_per_frame": 0.56
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 79.976,
+          "max_ms_per_frame": 186.2
+        },
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 9.268,
+          "max_ms_per_frame": 11.792
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 2.945,
+          "max_ms_per_frame": 3.224
+        },
+        {
+          "name": "VkRenderPass 0x00007fe3302c4c50",
+          "mean_ms_per_frame": 0.068,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.036,
+          "max_ms_per_frame": 0.048
+        }
+      ],
+      "example_frame": {
+        "frame": 371,
+        "first_to_last_gpu_timestamp_ms": 202.624,
+        "command_buffer_active_ms": 187.0,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=38F6C87A (main)": 3.624,
+          "CS=FCCBAE50 (main)": 2.304,
+          "CS=AF1BAD6C (main)": 1.992
+        }
+      },
+      "sample_utc": [
+        "2026-11-23T10:58:16.829516+00:00",
+        "2026-11-23T10:58:36.035379+00:00"
+      ],
+      "mangohud": {
+        "complete_presents": 177,
+        "mean_fps": 9.232,
+        "frametime_ms": {
+          "p50": 106.557,
+          "p95": 187.775,
+          "p99": 200.001,
+          "worst": 234.472
+        },
+        "system_cpu_percent_p50": 13.4045,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "7d4e06c5f93feea90d9af8cef660b0093a3cc2e2823201778b4665204a0cf976"
+      },
+      "vkd3d_allocation_clears": {
+        "monotonic_start": 87886.743,
+        "monotonic_end": 87905.949,
+        "count_by_hex_windows_tid_and_size_bytes": {
+          "0294": {
+            "196608": 157
+          },
+          "0644": {
+            "196608": 21
+          }
+        },
+        "h264_decoder_tid": "0644"
+      },
+      "temporal_upscaling_interval": {
+        "frame": 371,
+        "compute_shader": "global/3385 FTSRUpdateHistoryCS",
+        "profiler_pipeline_id": "8131C3C3",
+        "compute_pass_end_ms": 116079.152,
+        "next_graphics_pass_begin_ms": 116163.808,
+        "interval_ms": 84.656,
+        "note": "Pipeline-level timestamps leave this interval unattributed. The following timestamped graphics pass uses pixel shader 14AD63F8. A separate 4K GPU timestamp control times only the temporal upscaling dispatch.",
+        "dispatch_control": "tsr-history-performance.json"
+      }
+    },
+    "launch_utc": "2026-11-23T10:56:26.610651Z",
+    "first_menu_visually_confirmed_utc": "2026-11-23T10:58:04.590063Z",
+    "closed_utc": "2026-11-23T10:58:40.799438Z",
+    "process_loaded": {
+      "d3d12_xs.dll": {
+        "pid": "2181831",
+        "process_inode": 963999,
+        "private_inode": 963999,
+        "matched": true,
+        "sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc"
+      },
+      "frosty_hevc.dll": {
+        "pid": "2181831",
+        "process_inode": 964001,
+        "private_inode": 964001,
+        "matched": true,
+        "sha256": "41c973bd62b4cab7b05f07a27acdbc7ff7450dc5580257377309f8be8de40f66"
+      },
+      "frosty_h264.dll": {
+        "pid": "2181831",
+        "process_inode": 964000,
+        "private_inode": 964000,
+        "matched": true,
+        "sha256": "780ac791c3322a73637d8b1d4b0bad4f4a41495ce1b6f0116daf833d34378506"
+      }
+    },
+    "private_source_overrides": 24,
+    "exact_runtime_dxil_matches": 24,
+    "original_stage_inventories_unchanged": true,
+    "extra_instrumentation": "Pixel sampling in the tonemapping and LUT pipelines, vkd3d info messages and allocation-size logging. Same private shader DXILs, provider and frozen shader worker as the preceding active-shader run. Scoped NV12 surface heap changes for H.264 and HEVC."
+  },
+  "lds_reductions_and_menu_color": {
+    "launcher_log_sha256": "e12bc187b23ee8baf7dba4444890ff398bcfa7b85a16fde0fe86f49fe327967d",
+    "gpu_trace_sha256": "179d5f0310e8e48f68b03ad1360a139356ddc54c37fd8e68df7612eee946e02b",
+    "menu_capture_sha256": "1bcbfc432d7bce98c17d0e6f358dc00a962e93cdcbada01b9f547268b0c16b39",
+    "startup_logo": {
+      "frame_interval_inclusive": [
+        90,
+        95
+      ],
+      "frame_count": 6,
+      "command_buffer_active_ms_p50": 139.428,
+      "first_to_last_gpu_timestamp_ms_p50": 259.068,
+      "reversed_ranges_skipped": 4,
+      "top_pipelines": [
+        {
+          "name": "VS=38F54696 (main), PS=68349965 (main)",
+          "mean_ms_per_frame": 5.368,
+          "max_ms_per_frame": 7.328
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 3.236,
+          "max_ms_per_frame": 3.816
+        },
+        {
+          "name": "CS=C21B87E4 (main)",
+          "mean_ms_per_frame": 3.189,
+          "max_ms_per_frame": 3.392
+        },
+        {
+          "name": "VS=38F54696 (main), PS=0F512A2D (main)",
+          "mean_ms_per_frame": 1.648,
+          "max_ms_per_frame": 1.68
+        },
+        {
+          "name": "VS=38F54696 (main), PS=DF32CCD8 (main)",
+          "mean_ms_per_frame": 1.465,
+          "max_ms_per_frame": 1.48
+        },
+        {
+          "name": "CS=988E9A07 (main)",
+          "mean_ms_per_frame": 1.304,
+          "max_ms_per_frame": 1.76
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 15.473,
+          "max_ms_per_frame": 17.04
+        },
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 14.099,
+          "max_ms_per_frame": 77.0
+        },
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 12.581,
+          "max_ms_per_frame": 33.272
+        },
+        {
+          "name": "VkRenderPass 0x00007f06202f31a0",
+          "mean_ms_per_frame": 0.067,
+          "max_ms_per_frame": 0.08
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.035,
+          "max_ms_per_frame": 0.048
+        }
+      ],
+      "example_frame": {
+        "frame": 93,
+        "first_to_last_gpu_timestamp_ms": 260.056,
+        "command_buffer_active_ms": 139.576,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "VS=38F54696 (main), PS=68349965 (main)": 4.976,
+          "CS=B73784A7 (main)": 2.912,
+          "CS=C21B87E4 (main)": 2.88
+        }
+      }
+    },
+    "menu": {
+      "frame_interval_inclusive": [
+        249,
+        418
+      ],
+      "frame_count": 170,
+      "command_buffer_active_ms_p50": 115.136,
+      "first_to_last_gpu_timestamp_ms_p50": 297.36,
+      "reversed_ranges_skipped": 50,
+      "top_pipelines": [
+        {
+          "name": "CS=38F6C87A (main)",
+          "mean_ms_per_frame": 3.631,
+          "max_ms_per_frame": 4.528
+        },
+        {
+          "name": "CS=AF1BAD6C (main)",
+          "mean_ms_per_frame": 2.134,
+          "max_ms_per_frame": 3.04
+        },
+        {
+          "name": "CS=FCCBAE50 (main)",
+          "mean_ms_per_frame": 2.126,
+          "max_ms_per_frame": 3.056
+        },
+        {
+          "name": "CS=C61B8BF5 (main)",
+          "mean_ms_per_frame": 1.697,
+          "max_ms_per_frame": 2.576
+        },
+        {
+          "name": "VS=81161121 (main), PS=73CC97A6 (main)",
+          "mean_ms_per_frame": 0.861,
+          "max_ms_per_frame": 0.912
+        },
+        {
+          "name": "CS=B73784A7 (main)",
+          "mean_ms_per_frame": 0.74,
+          "max_ms_per_frame": 1.328
+        }
+      ],
+      "render_pass_timings": [
+        {
+          "name": "Copy Pass",
+          "mean_ms_per_frame": 37.213,
+          "max_ms_per_frame": 105.2
+        },
+        {
+          "name": "Compute Pass",
+          "mean_ms_per_frame": 11.918,
+          "max_ms_per_frame": 17.344
+        },
+        {
+          "name": "Dynamic Graphics Pass",
+          "mean_ms_per_frame": 3.042,
+          "max_ms_per_frame": 11.504
+        },
+        {
+          "name": "VkRenderPass 0x00007f06202f31a0",
+          "mean_ms_per_frame": 0.069,
+          "max_ms_per_frame": 0.096
+        },
+        {
+          "name": "Ray Tracing Pass",
+          "mean_ms_per_frame": 0.039,
+          "max_ms_per_frame": 0.464
+        }
+      ],
+      "example_frame": {
+        "frame": 334,
+        "first_to_last_gpu_timestamp_ms": 212.656,
+        "command_buffer_active_ms": 205.936,
+        "reversed_ranges_skipped": 0,
+        "top_pipelines_ms": {
+          "CS=38F6C87A (main)": 3.568,
+          "CS=AF1BAD6C (main)": 2.192,
+          "CS=FCCBAE50 (main)": 1.872
+        }
+      },
+      "sample_utc": [
+        "2026-11-23T11:12:13.254604+00:00",
+        "2026-11-23T11:12:32.460963+00:00"
+      ],
+      "mangohud": {
+        "complete_presents": 165,
+        "mean_fps": 8.653,
+        "frametime_ms": {
+          "p50": 112.53,
+          "p95": 171.071,
+          "p99": 329.032,
+          "worst": 369.616
+        },
+        "system_cpu_percent_p50": 21.5333,
+        "gpu_percent_p50": 100.0,
+        "csv_sha256": "d49d17591a68caf34627eab17812ed213215bb671fa8794c01bea0c455d4f6fe"
+      },
+      "vkd3d_allocation_clears": {
+        "monotonic_start": 88723.168,
+        "monotonic_end": 88742.374,
+        "count_by_hex_windows_tid_and_size_bytes": {
+          "0294": {
+            "196608": 158
+          },
+          "0644": {
+            "196608": 8
+          }
+        },
+        "h264_decoder_tid": "0644"
+      },
+      "desktop_visibility": {
+        "focused_visible_observations": 5,
+        "total_observations_during_sample": 5,
+        "method": "Window assigned to the desktop gaming workspace. XComposite recorded the native window pixmap as the user changed workspaces. The steady interval used only the foreground return. Startup time includes background periods."
+      },
+      "image": {
+        "path": "menu-green-code.jpg",
+        "sha256": "145372ff72111847b84af93ed8dbe109303a6656e2a6325e75bb7ba2d9f6d279",
+        "bright_boxes": 0,
+        "sampled_pixels": 220590,
+        "chromatic_pixels": 22039,
+        "green_dominant_pixels": 20554,
+        "blue_dominant_pixels": 1303
+      }
+    },
+    "launch_utc": "2026-11-23T11:09:56.668003Z",
+    "first_menu_visually_confirmed_utc": "2026-11-23T11:11:51.409849Z",
+    "closed_utc": "2026-11-23T11:12:37.759350Z",
+    "process_loaded": {
+      "d3d12_xs.dll": {
+        "pid": "2201348",
+        "process_inode": 965844,
+        "private_inode": 965844,
+        "matched": true,
+        "sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc"
+      },
+      "frosty_hevc.dll": {
+        "pid": "2201348",
+        "process_inode": 965846,
+        "private_inode": 965846,
+        "matched": true,
+        "sha256": "41c973bd62b4cab7b05f07a27acdbc7ff7450dc5580257377309f8be8de40f66"
+      },
+      "frosty_h264.dll": {
+        "pid": "2201348",
+        "process_inode": 965845,
+        "private_inode": 965845,
+        "matched": true,
+        "sha256": "780ac791c3322a73637d8b1d4b0bad4f4a41495ce1b6f0116daf833d34378506"
+      }
+    },
+    "private_source_overrides": 28,
+    "exact_runtime_dxil_matches": 28,
+    "original_stage_provider_files_unchanged": true,
+    "concurrent_by_source_changes_outside_private_mount": [
+      "76fb3b539aeeab93ca3bc9a935df2d0497047164c6b7902dc51c309f79e3c086.cso"
+    ],
+    "extra_instrumentation": "Pixel sampling of upstream bloom and tonemap data, vkd3d allocation logging, four new LDS reduction shaders plus prior 24 wave corrections. Same validated media, provider and frozen worker.",
+    "new_global_shader_entries": [
+      1300,
+      1301,
+      2427,
+      2633
+    ],
+    "elapsed_to_menu_match_seconds": 114.742
+  }
+}

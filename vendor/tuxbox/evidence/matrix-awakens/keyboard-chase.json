@@ -1,0 +1,18 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "a2120243e4f11a5a1df1d35e4caa6fbb6dcb94ac336ba1cc1ea3c03c8ded1af9",
+  "guest_sha256": "208801edd59e4493abedc14113a52c69140051eb5eae30e473f87d1eeeb2db88",
+  "patch_sha256": "bf25ef55bc284aae3bf12abfb0f3fd68dbb3a2f918fcc45b225966d73367567d",
+  "runs": {
+    "on": {
+      "keyboard_port": "5",
+      "buttons": "12",
+      "bipolar_axes": "4",
+      "triggers": "2",
+      "ordered_edges": "44"
+    },
+    "off": {
+      "keyboard_pad_absent": "1"
+    }
+  }
+}

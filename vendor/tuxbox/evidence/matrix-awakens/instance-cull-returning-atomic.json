@@ -1,0 +1,251 @@
+{
+  "scope": "Global 3396 InstanceCull: depth texture and visibility output with returning unsigned atomic max. Real packaged shader and root signature, scene fixtures, CPU expected outputs, including single-lane deterministic winners, multiple equal-depth contenders and protected depth. Texture row padding is excluded from comparison; equal-depth winners may be any participating lane.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 3396,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "3396": {
+          "source_sha256": "3f7cd4ed52ed0c65cb1c2786098c57e70d1b9fcc35295df5f2d5a9da862bbe5d",
+          "dxil_sha256": "f395833801ea433ae843307bf01d211508b93b7ecb85077cf4840d0a9a8710dc"
+        }
+      },
+      "cases": {
+        "visibility_empty": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane1": {
+          "visible": [
+            1
+          ],
+          "occluders": [
+            1
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane31": {
+          "visible": [
+            31
+          ],
+          "occluders": [
+            31
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane32": {
+          "visible": [
+            32
+          ],
+          "occluders": [
+            32
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane63": {
+          "visible": [
+            63
+          ],
+          "occluders": [
+            63
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_pair": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_full": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_protected": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": 1.0,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "3396": {
+          "source_sha256": "3f7cd4ed52ed0c65cb1c2786098c57e70d1b9fcc35295df5f2d5a9da862bbe5d",
+          "dxil_sha256": "f395833801ea433ae843307bf01d211508b93b7ecb85077cf4840d0a9a8710dc"
+        }
+      },
+      "cases": {
+        "visibility_empty": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane1": {
+          "visible": [
+            1
+          ],
+          "occluders": [
+            1
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane31": {
+          "visible": [
+            31
+          ],
+          "occluders": [
+            31
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane32": {
+          "visible": [
+            32
+          ],
+          "occluders": [
+            32
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_lane63": {
+          "visible": [
+            63
+          ],
+          "occluders": [
+            63
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_pair": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_full": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "protected": null,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_protected": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": 1.0,
+          "checked_words": 2262,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

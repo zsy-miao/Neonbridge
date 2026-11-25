@@ -1,0 +1,21 @@
+{
+  "scope": "Original and TuxBox XG replay of successful descriptors captured by the research proxy; compares complete layouts and first/last mip-slice origin addresses for each supported case. Numeric descriptor values and file hashes only; the game and its binaries are not included.",
+  "trace_sha256": "ced1efe7d13d08eb1e01e34e367a0350d94e542b42c188ffba88ce204e45e59b",
+  "original_xg_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "provider_sha256": "d6eb5334a939e18245bf3d5f1e7335fe82837bb0805d6347d22cd280b127231a",
+  "xmem_sha256": "504f7ec8e974e2effe8a7f5ca767acac6a644b62227f50dcf5e706b85214f324",
+  "guest_source_sha256": "1f3200b4b159b33c1f2b6cde35028964d228f7518b68663f56dee2371d92bb72",
+  "guest_sha256": "6f88e4d2ad4ffc1b1b837052592626da308597854de5e179b6dc607a97e0fd91",
+  "captured_calls": 2039,
+  "successful_unique_descriptors": 2039,
+  "original_replay_failures": 0,
+  "matched_layouts_and_samples": 2039,
+  "unsupported_unique_descriptors": 0,
+  "unsupported_descriptors": [],
+  "unsupported_families": [],
+  "mismatched_supported": [],
+  "trace_mode": "First occurrence of each distinct descriptor and HRESULT; capture ended after room activation.",
+  "last_logged_call_number": 10143,
+  "stock_settings": "Packaged Xbox graphics profile with hardware ray tracing and Lumen enabled.",
+  "reference_run_stop": "CreatePlacedResource returned E_INVALIDARG for a 2976 \u00d7 1676 texture at Unreal frame 234."
+}

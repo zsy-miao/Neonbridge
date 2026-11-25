@@ -1,0 +1,43 @@
+{
+  "archive": "Frosty global shader archive",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "compiler": {
+    "baseline_commit": "260e104cce6a9429277bb2a996520b0653cc0ad9",
+    "baseline_xshader_sha256": "907a3dd60c71b8a5766f0419a78839a905368ba2193487132da4eb589d61963a",
+    "tested_xshader_sha256": "7c72847f0fc8cb3f0d9ecf6ebea3bb42b4e8f40e1e4ce47bb3af2a1153dc1ac2",
+    "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+  },
+  "retail_sources": {
+    "method": "Translate previously unsupported cooked shaders individually. Compile each new HLSL entry point main as cs_6_0 with DXC and validate the resulting DXIL with DXV.",
+    "paired_lds_read_entries": "2762, 2775, 2788, 2791, 2794, 2796, 2805, 2808, 2817-2818, 2824, 2827, 2830, 2833, 2843, 2848, 2852, 2865, 2868, 2874, 2877, 2882, 2891-2892, 2909, 2917, 2934, 2950, 2958-2959, 2966-2968, 2970, 2974, 2979, 3005, 3010, 3013, 3015, 3021, 3023, 3028, 3041, 3044-3045, 3054, 3062, 3071, 3083, 3086, 3106, 3119, 3127, 3131, 3142, 3144, 3155, 3175, 3177, 3188, 3214, 3250, 3254",
+    "integer_alu_entries": "1302, 1305-1306, 1308, 1319, 1619-1620, 1622-1626, 1628-1631, 1633, 2484-2488, 2570, 2697, 2701, 2746, 3325-3328",
+    "paired_lds_read_sources": 64,
+    "integer_alu_sources": 30,
+    "distinct_sources_passing_dxc_and_dxv": 94,
+    "present_in_recorded_startup_or_menu_requests": 0,
+    "remaining_paired_read_sources_blocked_by_two_word_image_atomics": 32,
+    "source_set_sha256": "6a7acd52d152894113d9f2799f37f142d21e3e0d4f749022eb6b63fbbfeeec00",
+    "source_set_encoding": "Sort the 94 lowercase hexadecimal cooked DXBC SHA-256 strings, append LF to each, concatenate and hash the ASCII bytes."
+  },
+  "gpu_checks": {
+    "device": "NVIDIA GeForce RTX 4070 Ti SUPER (620.70.6)",
+    "path": "Compile synthetic native instruction sequences through the Rust HLSL emitter. Compile and validate DXIL, then dispatch the same HLSL as DXC SPIR-V on Vulkan 1.1 and read the storage buffer back.",
+    "paired_reads": {
+      "native_words_hex": ["d9dc0103", "00000000", "d9e00201", "04000004", "bf810000"],
+      "control": "Initialize shared dword i to 0x5a000000 + i and give lane t the byte address 8 + 16*t. Both instructions overwrite their own address register with the first result. Compare against byte offsets [24, 28, 8, 12] and [512, 516, 1024, 1028]. Odd lanes retain their input registers.",
+      "active_lanes": 2,
+      "masked_lanes": 2,
+      "matching_register_words": 32
+    },
+    "integer_alu": {
+      "vop3_opcodes_hex": ["303", "307", "308", "30a", "30c", "314"],
+      "vop3p_opcodes_hex": ["01", "03", "04", "05", "06", "0a", "0b"],
+      "control": "For each operation, try all source and destination half selections. Compare each register with a CPU calculation that masks shift counts to four bits, sign extends signed operands, truncates results to 16 bits and preserves the unwritten halves. Inputs mix pseudorandom register words and 0, 1, 15, 16, 31, 32, 0x7fff, 0x8000 and 0xffff. Every third lane retains its inputs.",
+      "selector_cases": 160,
+      "active_lanes": 42,
+      "masked_lanes": 22,
+      "matching_register_words": 10240
+    }
+  }
+}

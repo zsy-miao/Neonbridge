@@ -1,0 +1,60 @@
+{
+  "pipeline": "Standalone DXC translations of two complete Frosty pixel shaders, drawn into a 16 x 8 R32G32B32A32_FLOAT render target through D3D12 and Proton Experimental. Each draw used a controlled vertex shader and constant buffers.",
+  "compiler_sha256": "eecd3706084e5712286c6d2620c87a6c259a65a6a8616f9f33c2177e2f568c3a",
+  "adapters": [
+    "AMD Radeon 610M (1002:13c0)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (10de:2705)"
+  ],
+  "normal_chase_and_city_trace": {
+    "unique_pixel_programs_requested": 1163,
+    "unique_programs_reading_front_face": 195,
+    "unique_programs_reading_position_w": 665,
+    "unique_programs_with_sparse_w": 209,
+    "unique_programs_with_either_input": 667,
+    "dxil_validated_for_affected_programs": 667
+  },
+  "archive_layout_survey": {
+    "packaged_unique_programs_with_either_input": 5967,
+    "measure": "Matched the original input signature and FSSM 1.1 SPI_PS_INPUT_ENA in each program. Counted unique DXBC SHA-256 digests."
+  },
+  "front_face": {
+    "shader": "material/2976",
+    "source_sha256": "7e6ab136e57b69a611fdee6f10cee2f2f5ea14c6af4994c41d7aa0106a7313cb",
+    "input_enable": "0x1702",
+    "facing_register": "v5",
+    "retail_isa": "v_cmp_ne_u32 at 0x24 and v_cndmask_b32 at 0x68 choose +1 for front and -1 for back.",
+    "control": "Identical material inputs on two quads of opposite winding. RGB changed from 0.15/0.15 to 1.0/0.15, with alpha zero throughout.",
+    "pixels_per_input": 64,
+    "before_rgba32f_sha256": "521c0ac23e9d3357d919d1b3f038515e6b8f1f7c47fb57145937ebac51fb8ace",
+    "after_rgba32f_sha256": "9ca896e005390734092eca9e01b1a0ae3a5e8f7ababe4b6ebed005d2d431e7d4",
+    "all_pixels_match_expected_on_both_adapters": true,
+    "after_dxil_sha256": "8a03469ab2bdbcfe3f29002f1a3ea9490f8d4e12dbc3ee3a9812dd763443ff5b",
+    "before_dxil_sha256": "9b5750e5b78d8e54097d915d1a14099318a3968815475d84ecaabd61432f54f5",
+    "shader_profile": "ps_6_1"
+  },
+  "position_w": {
+    "shader": "material/16016",
+    "source_sha256": "63edc44259edb703d40c491fb22b9e85c93cbf226b4d2721a349521502cf0965",
+    "input_enable": "0xb02",
+    "w_register": "v4",
+    "control": "Clip W is 2 or 4 across columns, device Z is 0.25 or 0.75 across rows. Fixed distortion constants reduce the original shader output to red = 0.00092 * saturate(4.5 - W). Each pair covers 32 pixels. Before the fix every pixel had red 0.00092. The fix produces 0.00092 at W=2 and 0.00046 at W=4, independently of Z.",
+    "pixels_per_input": 64,
+    "before_rgba32f_sha256": "418d3a49b6e3ba7411683ebcc59d805da63f46da6f69ca6b4cf91462d424c59b",
+    "after_rgba32f_sha256": "bce056d9bdf86cf36ed989c3dfdcd4a6f7f1699174678262d2cce81b3ca473c2",
+    "all_pixels_match_expected_on_both_adapters": true,
+    "after_dxil_sha256": "382d1309f3e198152988b3371d46c0a215d223def342e7d153f69d26c2958e7b",
+    "before_dxil_sha256": "5256629d70b5232df212298296e2b88040b003cb2fb93c6638d10c7a4eca7b9a",
+    "shader_profile": "ps_6_1"
+  },
+  "hardware_position_control": {
+    "adapter": "AMD Radeon 610M (RDNA2)",
+    "pixel_shader": "float4(SV_Position.w, SV_Position.z, SV_Position.x, 1.0)",
+    "radv_isa": [
+      "v_mov_b32_e32 v0, 1.0",
+      "exp mrt0, v4, v3, v2, v0 done vm",
+      "s_endpgm"
+    ],
+    "readback": "W = 2 and 4 crossed with device Z = 0.25 and 0.75. All 32 pixels in each quadrant had the expected W and Z.",
+    "rgba32f_sha256": "8c7fc3d54f3c693f9497fa1a758caefdf04acb86480a6aea20797b37f47f211b"
+  }
+}

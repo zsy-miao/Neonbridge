@@ -1,0 +1,251 @@
+{
+  "scope": "Global 3397 InstanceCull post pass: scene fixtures test returning unsigned atomic max on depth and visibility textures, plus 3-word node queue appends. The packaged shader and original root signature are used. Texture padding is excluded from comparison; equal-depth winners may be any participating lane.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 3397,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "3397": {
+          "source_sha256": "fdade741fdeb0aa07dde5d7de4cbdf241ee731baa4b09043bb83c89f26e9696d",
+          "dxil_sha256": "9f08e88f564125e17234369d0cac5ccb690d4c5458cc508d9b33aff9530e5732"
+        }
+      },
+      "cases": {
+        "visibility_post_empty": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane1": {
+          "visible": [
+            1
+          ],
+          "occluders": [
+            1
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane31": {
+          "visible": [
+            31
+          ],
+          "occluders": [
+            31
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane32": {
+          "visible": [
+            32
+          ],
+          "occluders": [
+            32
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane63": {
+          "visible": [
+            63
+          ],
+          "occluders": [
+            63
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_pair": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_full": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_protected": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": 1.0,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "3397": {
+          "source_sha256": "fdade741fdeb0aa07dde5d7de4cbdf241ee731baa4b09043bb83c89f26e9696d",
+          "dxil_sha256": "9f08e88f564125e17234369d0cac5ccb690d4c5458cc508d9b33aff9530e5732"
+        }
+      },
+      "cases": {
+        "visibility_post_empty": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane1": {
+          "visible": [
+            1
+          ],
+          "occluders": [
+            1
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane31": {
+          "visible": [
+            31
+          ],
+          "occluders": [
+            31
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane32": {
+          "visible": [
+            32
+          ],
+          "occluders": [
+            32
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_lane63": {
+          "visible": [
+            63
+          ],
+          "occluders": [
+            63
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_pair": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_full": {
+          "visible": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "occluders": [
+            1,
+            31,
+            32,
+            63
+          ],
+          "protected": null,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "visibility_post_protected": {
+          "visible": [
+            1,
+            32
+          ],
+          "occluders": [
+            1,
+            32
+          ],
+          "protected": 1.0,
+          "checked_words": 1675,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

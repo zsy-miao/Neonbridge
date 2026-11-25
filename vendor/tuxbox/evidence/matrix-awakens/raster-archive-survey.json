@@ -1,0 +1,49 @@
+{
+  "scope": "Packaged raster entries translated to HLSL. Each archive was surveyed against the compiler hash recorded with it. These counts do not measure DXIL validation or rendered output.",
+  "archives": {
+    "global": {
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "compiler_sha256": "be66324a0de67077bdaf3b997e2b13e88f8669084444eefe370f4bc195ae2f6e",
+      "stages": {
+        "vertex": {
+          "entries": 199,
+          "translated": 199,
+          "failed": 0
+        },
+        "pixel": {
+          "entries": 1369,
+          "translated": 1364,
+          "failed": 5
+        },
+        "geometry": {
+          "entries": 3,
+          "translated": 3,
+          "failed": 0
+        }
+      },
+      "full_survey_sha256": "1da8f8715f93bc94031ac19488c47420aac4b422d22c67a1dd478ff1c3a2be0b"
+    },
+    "material": {
+      "archive_sha256": "9de0439f815138c89fd414e69f4f5f3497fd523ac4dd2321c5207f7fd67eb2e1",
+      "compiler_sha256": "be66324a0de67077bdaf3b997e2b13e88f8669084444eefe370f4bc195ae2f6e",
+      "stages": {
+        "vertex": {
+          "entries": 21031,
+          "translated": 21031,
+          "failed": 0
+        },
+        "pixel": {
+          "entries": 10982,
+          "translated": 10982,
+          "failed": 0
+        },
+        "geometry": {
+          "entries": 109,
+          "translated": 109,
+          "failed": 0
+        }
+      },
+      "full_survey_sha256": "8c0fefca4996032c77b41a304f26aece00533abc63a9f5c53e5798988849e0c1"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The `fivestar` command: every asset and shader tool behind one entry point. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>fivestar</AssemblyName>
+    <!-- The DXIL backend's IR survives until a program is written, so collections mark a large live graph: server GC
+         marks it on every core and halves shader compile times (docs/dxil-backend.md). -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FiveStar.Cli.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reads the loader's managed profiles (fivestar profile summary). -->
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FiveStar.Formats\FiveStar.Formats.csproj" />
+    <ProjectReference Include="..\FiveStar.Graphics\FiveStar.Graphics.csproj" />
+    <ProjectReference Include="..\FiveStar.Shaders\FiveStar.Shaders.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,336 @@
+# ScarlettPort's victory runtime (runtime/victory). Its second runtime, runtime/xcl, is a distinct
+# playable path (scripts/setup.ps1:15 `cargo build --release` in runtime\xcl -> runtime\xcl\target\release\xcl.exe,
+# scripts/play.ps1:34 `xcl run <game>` with XCL_DXC_THREADS=4, XCL_NO_WATCHDOG=1, XCL_PRESS_FILE); not modelled here.
+name = "scarlettport"
+about = "ScarlettPort d8eee74 (victory runtime), GPL-3.0"
+upstream = "https://github.com/ZigZagBoi1/ScarlettPort"
+# scripts/setup-victory.ps1:18,21 (run in runtime\victory; --manifest-path keeps that workspace's own target dir)
+build = ["cargo", "rustc", "--manifest-path", "runtime/victory/Cargo.toml", "--release", "-p", "victory", "--bin", "victory", "--features", "diagnostics", "--locked", "--", "-C", "link-arg=/EXPORT:D3D12SDKVersion,DATA", "-C", "link-arg=/EXPORT:D3D12SDKPath,DATA"]
+watch = ["runtime/victory/apps", "runtime/victory/crates", "runtime/victory/Cargo.toml", "runtime/victory/Cargo.lock"]
+exe = "runtime/victory/target/release/victory.exe"   # scripts/play-victory.ps1:42
+cwd = "runtime/victory/target/release"
+run = ["run", "{game_exe}", "--execute", "--console", "series-s"]   # play-victory.ps1:24,45,88
+prewarm = ["warm", "{game}", "--jobs", "{jobs}"]   # docs/RUNTIMES.md:81 (victory warm: translates every shader and makes the compute pipelines)
+# Second prewarm phase, as ScarlettPort launcher 0.3 runs it after warm (shaderbuild.rs:272, engine.rs:63-75):
+# repeat with {skip} = 0, 1000, 2000, ... until a run's summary line "precompile-graphics  <N> records: ..."
+# (engine.rs:145 parse_graphics_end) gives N < 1000. Each run saves the pipeline library when it ends.
+# NEONBRIDGE_PRECOMPILE_GRAPHICS=0 skips it. Needed because play runs set VICTORY_PRECOMPILED_GRAPHICS=1 (engine.rs:22).
+prewarm_graphics = ["precompile-graphics", "{game}/shaders.rpf", "--jobs", "{jobs}", "--skip", "{skip}", "--limit", "1000"]
+game_env = "VICTORY_GAME_DIR"       # play-victory.ps1:50
+cache_env = "VICTORY_CACHE_DIR"   # Neonbridge: this runtime's own %LOCALAPPDATA%\6ixpack\scarlettport\cache (translators differ)
+agility = true                      # setup-victory.ps1:27-38 (Agility 1.614.1 into <exe dir>\D3D12)
+
+# options: KEY=values (default X): text. Env names grepped from the Rust source (first read site); defaults "unset" unless noted
+options = [
+  "--console=series-s|series-x (default series-x; play script sets series-s): console profile the title sees, play-victory.ps1:24",
+  "--unimplemented=trap (default trap): what unimplemented imports do, apps/victory/src/main.rs",
+  "--strict=true|false (default false): disable host pass-through",
+  "-AutoInput=true|false (default false): play-victory.ps1:26 sets VICTORY_AUTO_INPUT=1",
+  "-NoOwnUpscaler=true|false (default false): play-victory.ps1:28 skips VICTORY_OWN_UPSCALER=1",
+  "-KeepWatchdog=true|false (default false): play-victory.ps1:30 skips VICTORY_NO_WATCHDOG=1",
+  "-FastBoot=true|false (default false): play-victory.ps1:32 sets VICTORY_FAST_BOOT=1 (testing only)",
+  "-SaveSlot=<name> (default unset): play-victory.ps1:34 sets VICTORY_SAVE_SLOT",
+  "-Precompile=true|false (default false): play-victory.ps1:36 reruns precompile-graphics",
+  "-SkipPrecompile=true|false (default false): play-victory.ps1:38 skips precompile-graphics",
+  "game_dir=<path> (default unset): runtime/victory/victory.example.toml [paths]",
+  "runtime=victory|xcl (default victory): ScarlettPort also ships runtime/xcl (scripts/setup.ps1, scripts/play.ps1)",
+  "VICTORY_ACTIVATE_RAYS=<value> (default off [=0 on]): read at runtime/victory/crates/victory-gpu/src/pipeline/make.rs:69",
+  "VICTORY_ALIAS_COPY=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/resource.rs:1227",
+  "VICTORY_AMBIENT_FILL=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/draw.rs:3049",
+  "VICTORY_AMBIENT_FILL_MIN_WIDTH=<value> (default 1024): read at runtime/victory/crates/victory-gpu/src/draw.rs:3070",
+  "VICTORY_AMBIENT_STUB=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:193",
+  "VICTORY_ASK_ONCE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/watch.rs:165",
+  "VICTORY_AUDIO_CAPTURE=<value> (default off [any value on]): read at runtime/victory/crates/victory-hle/src/modules/audio/capture.rs:69",
+  "VICTORY_AUDIO_CAPTURE_OF=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/audio/capture.rs:49",
+  "VICTORY_AUTO_INPUT=<value> (default off [any value on]; play script sets 1 with -AutoInput, play-victory.ps1:65): read at runtime/victory/crates/victory-hle/src/modules/gameinput.rs:728",
+  "VICTORY_BARRIER_HAZARD=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1960",
+  "VICTORY_BARRIER_LITERAL=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1977",
+  "VICTORY_BARRIER_MERGE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1921",
+  "VICTORY_BARRIER_TEST=<value> (default off [groups|indirect|both]): read at runtime/victory/crates/victory-gpu/src/copystat.rs:237",
+  "VICTORY_BCPACK_CASES=<value> (default unset): read at runtime/victory/crates/victory-formats/src/bcpack.rs:1577",
+  "VICTORY_BCPACK_TABLES=<value> (default unset): read at runtime/victory/crates/victory-formats/src/bcpack.rs:1576",
+  "VICTORY_BVH_BUILDER=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/pipeline.rs:405",
+  "VICTORY_BVH_QUARANTINE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/pipeline.rs:381",
+  "VICTORY_CACHE_DIR=<value> (default <default dir>/cache): read at runtime/victory/crates/victory-core/src/config.rs:93",
+  "VICTORY_CAPTURE=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/capture.rs:15",
+  "VICTORY_CAPTURE_EVERY=<value> (default 0): read at runtime/victory/crates/victory-gpu/src/capture.rs:26",
+  "VICTORY_CAPTURE_FRAMES=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/capture.rs:33",
+  "VICTORY_CAPTURE_MENUS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/capture.rs:163",
+  "VICTORY_CAPTURE_WORLD=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/capture.rs:129",
+  "VICTORY_CAPTURE_WORLD_ALSO=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/capture.rs:51",
+  "VICTORY_CARD_BUFFERS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/shadow.rs:235",
+  "VICTORY_CARD_BUFFERS_MB=<value> (default adapter-sized): read at runtime/victory/crates/victory-gpu/src/shadow.rs:294",
+  "VICTORY_CARD_BUFFERS_MIN_MB=<value> (default adapter-sized): read at runtime/victory/crates/victory-gpu/src/shadow.rs:293",
+  "VICTORY_CARD_REHASH_RUNS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1700",
+  "VICTORY_CARD_WINDOWS_MB=<value> (default 0): read at runtime/victory/crates/victory-gpu/src/shadow.rs:396",
+  "VICTORY_CLAMP_LIGHT_RESTORE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/draw.rs:207",
+  "VICTORY_CLAMP_SCOPED=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/indirect.rs:326",
+  "VICTORY_CLZERO_ASK=<value> (default on [=1 off]): read at runtime/victory/crates/victory-loader/src/console_insn.rs:28",
+  "VICTORY_COMMITTED_QUERY=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/texture.rs:1260",
+  "VICTORY_CONFIG=<value> (default victory.toml): read at runtime/victory/crates/victory-core/src/config.rs:52",
+  "VICTORY_CONSOLE_DXC=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/diff_tests.rs:655",
+  "VICTORY_COPY_ASK=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:6768",
+  "VICTORY_COPY_BACK_ASYNC=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/readback.rs:37",
+  "VICTORY_COPY_BACK_ASYNC_LAG=<value> (default 1): read at runtime/victory/crates/victory-gpu/src/host.rs:2982",
+  "VICTORY_COPY_BACK_ONLY_READBACK=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/readback.rs:68",
+  "VICTORY_COPY_FAST=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/regions.rs:32",
+  "VICTORY_COPY_MODE=<value> (default normal [plain|none]): read at runtime/victory/crates/victory-gpu/src/copystat.rs:141",
+  "VICTORY_COPY_PREFETCH=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/regions.rs:388",
+  "VICTORY_CRASH_SAVE=<value> (default unset): read at runtime/victory/apps/victory/src/run.rs:190",
+  "VICTORY_CUT_WAITS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/queue.rs:110",
+  "VICTORY_CUT_WRITES=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/list.rs:2364",
+  "VICTORY_D3D12_BACKGROUND=<value> (default driver default [=0 sets background mode]): read at runtime/victory/crates/victory-gpu/src/host.rs:642",
+  "VICTORY_D3D12_DEBUG=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/host.rs:578",
+  "VICTORY_D3D12_DRED=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1393",
+  "VICTORY_D3D12_GBV=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/host.rs:589",
+  "VICTORY_D3D12_WARP=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/host.rs:618",
+  "VICTORY_DATA_DIR=<value> (default <default dir>/data): read at runtime/victory/crates/victory-core/src/config.rs:96",
+  "VICTORY_DEPTH_BOUNDS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/pipeline/host.rs:1024",
+  "VICTORY_DEPTH_TWINS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/resource.rs:447",
+  "VICTORY_DIFF_ONLY=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/diff_tests.rs:775",
+  "VICTORY_DIRECT_WRITES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/host.rs:6918",
+  "VICTORY_DISPLAY_MODE=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/dxgi.rs:230",
+  "VICTORY_DS_BUFFER_MB=<value> (default 192): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:94",
+  "VICTORY_DS_CACHE_MB=<value> (default 0): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:91",
+  "VICTORY_DS_COALESCE_KB=<value> (default 2048): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:86",
+  "VICTORY_DS_DECODE_THREADS=<value> (default cpus-4 [min 2]): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:88",
+  "VICTORY_DS_GAP_KB=<value> (default 256): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:87",
+  "VICTORY_DS_MAX_JOBS=<value> (default 4096): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:92",
+  "VICTORY_DS_PIPELINE=<value> (default 1): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:83",
+  "VICTORY_DS_QD=<value> (default 64): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:84",
+  "VICTORY_DS_QD_FILE=<value> (default 16): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:85",
+  "VICTORY_DS_STAGING_MB=<value> (default 128): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:95",
+  "VICTORY_DS_UNBUFFERED=<value> (default 1): read at runtime/victory/crates/victory-hle/src/modules/dstorage/pipeline.rs:90",
+  "VICTORY_DUMP_FRAMES=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/capture.rs:362",
+  "VICTORY_DUMP_MATCH=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:634",
+  "VICTORY_DUMP_TARGETS=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/capture.rs:373",
+  "VICTORY_DXIL=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/validator.rs:122",
+  "VICTORY_EARLY_WORKERS=<value> (default workers/4 [min 1; 0 no limit]): read at runtime/victory/crates/victory-gpu/src/pipeline/make.rs:512",
+  "VICTORY_EMIT_DUMP=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:825",
+  "VICTORY_EXIT_CHILD=<value> (default off [any value on]): read at runtime/victory/crates/victory-loader/src/threads.rs:407",
+  "VICTORY_EXPOSURE_STUB=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:244",
+  "VICTORY_EXPOSURE_STUB_HASHES=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:248",
+  "VICTORY_EXPOSURE_STUB_VALUE=<value> (default exposure::VALUE): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:257",
+  "VICTORY_F16_NEAREST=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:118",
+  "VICTORY_F3_VIEW_FIX=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:2646",
+  "VICTORY_FAIL_DUMP=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:663",
+  "VICTORY_FAST_BOOT=<value> (default off [truthy on]; play script sets 1 with -FastBoot, play-victory.ps1:60): read at runtime/victory/crates/victory-core/src/fastboot.rs:46",
+  "VICTORY_FAST_BOOT_MAX_FRAMES=<value> (default unlimited): read at runtime/victory/crates/victory-core/src/fastboot.rs:97",
+  "VICTORY_FAST_BOOT_MAX_S=<value> (default 420): read at runtime/victory/crates/victory-core/src/fastboot.rs:102",
+  "VICTORY_FAST_HASH=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/memcopy.rs:47",
+  "VICTORY_FENCE_PRECISE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:2811",
+  "VICTORY_GAME_DIR=<value> (default unset; play script sets -Game, play-victory.ps1:50): read at runtime/victory/crates/victory-core/src/config.rs:100",
+  "VICTORY_GPU_TIMING=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1408",
+  "VICTORY_GROUP_SYNC=<value> (default 2): read at runtime/victory/crates/victory-shader/src/emit/mod.rs:178",
+  "VICTORY_GUARD_ASK=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/watch.rs:433",
+  "VICTORY_GUARD_HOLES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/watch.rs:513",
+  "VICTORY_HEAP_MAP=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:234",
+  "VICTORY_HEAP_PAD_NULL=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:1100",
+  "VICTORY_HEAP_RECHECK=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/draw.rs:520",
+  "VICTORY_HEAP_TEXTURES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/draw.rs:1694",
+  "VICTORY_HEAP_WINDOW=<value> (default 131072): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:223",
+  "VICTORY_HOST_MAX_WAVE=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:165",
+  "VICTORY_HOST_WAVE=<value> (default unset): read at runtime/victory/apps/victory/src/main.rs:219",
+  "VICTORY_INDIRECT_MERGE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/draw.rs:189",
+  "VICTORY_INDIRECT_WINDOW=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/draw.rs:290",
+  "VICTORY_INDIRECT_WINDOW_MOST=<value> (default 4096): read at runtime/victory/crates/victory-gpu/src/draw.rs:171",
+  "VICTORY_INPLACE=<value> (default 0): read at runtime/victory/crates/victory-gpu/src/inplace.rs:90",
+  "VICTORY_INPLACE_MB=<value> (default 4096): read at runtime/victory/crates/victory-gpu/src/inplace.rs:98",
+  "VICTORY_INPLACE_PROBE=<value> (default 0): read at runtime/victory/crates/victory-gpu/src/inplace.rs:63",
+  "VICTORY_INPLACE_PROBE_MB=<value> (default 64): read at runtime/victory/crates/victory-gpu/src/inplace.rs:987",
+  "VICTORY_JOIN_COPIES=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:3664",
+  "VICTORY_KBM=<value> (default 1): read at runtime/victory/crates/victory-core/src/kbm.rs:532",
+  "VICTORY_KBM_SCRIPT=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/gameinput.rs:1953",
+  "VICTORY_KEEP_SNAPSHOTS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/mem2.rs:43",
+  "VICTORY_KEEP_SNAPSHOTS_MB=<value> (default 256): read at runtime/victory/crates/victory-gpu/src/shadow.rs:1647",
+  "VICTORY_KEEP_VIEWS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:3173",
+  "VICTORY_KEYMAP=<value> (default unset): read at runtime/victory/crates/victory-core/src/kbm.rs:550",
+  "VICTORY_KEYS=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/gameinput.rs:1893",
+  "VICTORY_KNOWN_WRITES=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/memcopy.rs:35",
+  "VICTORY_LATE_WAIT=<value> (default 0 [3 when VICTORY_RELAY is on]): read at runtime/victory/crates/victory-gpu/src/host.rs:2073",
+  "VICTORY_LATE_WAITS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/frame.rs:166",
+  "VICTORY_LATE_WAIT_LISTS=<value> (default 128): read at runtime/victory/crates/victory-gpu/src/host.rs:2301",
+  "VICTORY_LATE_WAIT_WRITES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/host.rs:2311",
+  "VICTORY_LAZY_PRELUDE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/host.rs:949",
+  "VICTORY_LAZY_TEXTURES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/resource.rs:1269",
+  "VICTORY_LIBRARY_HANDLE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/pipeline/library.rs:90",
+  "VICTORY_LIBRARY_LOCK=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/pipeline/library.rs:427",
+  "VICTORY_LIBRARY_MAP=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/pipeline/library.rs:81",
+  "VICTORY_LIBRARY_TRIM=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/pipeline/library.rs:370",
+  "VICTORY_LINK_PAIRS=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:391",
+  "VICTORY_LIST_POOL=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/list.rs:336",
+  "VICTORY_LOG=<value> (default RUST_LOG, else built-in level): read at runtime/victory/crates/victory-core/src/logging.rs:29",
+  "VICTORY_MAPPED_BY_PAGE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/texture.rs:1352",
+  "VICTORY_MAPPING_RANGES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/watch.rs:751",
+  "VICTORY_MEM2_GPU_ONLY_NOSNAP=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/mem2.rs:35",
+  "VICTORY_MEM2_GPU_ONLY_NOVIEW=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/translate.rs:58",
+  "VICTORY_MEM2_PAGE_REHASH=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/mem2.rs:21",
+  "VICTORY_MEMORY_MAP=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/copystat.rs:487",
+  "VICTORY_MEMWAIT_SAMEQUEUE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:2867",
+  "VICTORY_MESH_OUTPUT_STRICT=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:117",
+  "VICTORY_MESH_TEST=<value> (default off [skip|scissor]): read at runtime/victory/crates/victory-gpu/src/draw.rs:410",
+  "VICTORY_MOUSE_INVERT_Y=<value> (default 0): read at runtime/victory/crates/victory-core/src/kbm.rs:544",
+  "VICTORY_MOUSE_SENS=<value> (default 1.0): read at runtime/victory/crates/victory-core/src/kbm.rs:538",
+  "VICTORY_NO_WATCHDOG=<value> (default off [any value on]; play script sets 1, play-victory.ps1:52): read at runtime/victory/crates/victory-loader/src/hooks.rs:15",
+  "VICTORY_NULL_MAGENTA=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:3260",
+  "VICTORY_OWN_UPSCALER=<value> (default on [=0 off]; play script sets 1, play-victory.ps1:51): read at runtime/victory/crates/victory-loader/src/hooks.rs:70",
+  "VICTORY_PACE=<value> (default 0): read at runtime/victory/crates/victory-core/src/pace.rs:42",
+  "VICTORY_PACE_FEEDBACK=<value> (default VICTORY_PACE [or on with latency]): read at runtime/victory/crates/victory-core/src/pace.rs:51",
+  "VICTORY_PACE_FPS=<value> (default unset): read at runtime/victory/crates/victory-core/src/pace.rs:43",
+  "VICTORY_PACE_INPUT=<value> (default VICTORY_PACE): read at runtime/victory/crates/victory-core/src/pace.rs:50",
+  "VICTORY_PACE_LATENCY=<value> (default 0): read at runtime/victory/crates/victory-core/src/pace.rs:46",
+  "VICTORY_PACE_STATS=<value> (default 0 [on with any pace option]): read at runtime/victory/crates/victory-core/src/pace.rs:52",
+  "VICTORY_PACE_TEARING=<value> (default 0): read at runtime/victory/crates/victory-core/src/pace.rs:49",
+  "VICTORY_PAGEMAP_RUNS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-hle/src/modules/xmem.rs:841",
+  "VICTORY_PAIRS=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:180",
+  "VICTORY_PC_DXC=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/pipeline/host.rs:1289",
+  "VICTORY_PHYS_COMMIT=<value> (default off [=1 on]): read at runtime/victory/crates/victory-hle/src/modules/xmem.rs:856",
+  "VICTORY_PIPELINE_GATE_S=<value> (default 120): read at runtime/victory/crates/victory-gpu/src/pipeline/make.rs:194",
+  "VICTORY_PIPELINE_WAIT_MS=<value> (default 500; play script sets 0, play-victory.ps1:59): read at runtime/victory/crates/victory-gpu/src/pipeline/make.rs:161",
+  "VICTORY_PIPELINE_WAIT_SHARED=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/pipeline/make.rs:280",
+  "VICTORY_PLACED_FILLER=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/resource.rs:2111",
+  "VICTORY_PRECOMPILED_DUMP=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/pipeline/precompiled.rs:277",
+  "VICTORY_PRECOMPILED_GRAPHICS=<value> (default off [=1 on]; play script sets unset [left off, play-victory.ps1:58]): read at runtime/victory/crates/victory-gpu/src/pipeline/precompiled.rs:138",
+  "VICTORY_PRECOMPILED_PSO=<value> (default real [off|stub]): read at runtime/victory/crates/victory-gpu/src/pipeline/precompiled.rs:120",
+  "VICTORY_PRESS_FILE=<value> (default unset; play script sets <repo>/press.txt, play-victory.ps1:63): read at runtime/victory/crates/victory-hle/src/modules/gameinput.rs:638",
+  "VICTORY_PROFILE=<value> (default off [set: every 4]): read at runtime/victory/crates/victory-gpu/src/profile.rs:53",
+  "VICTORY_PSO_CACHE=<value> (default unset): read at runtime/victory/crates/victory-game/src/pso_state.rs:603",
+  "VICTORY_PSO_SHARE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/pipeline/library.rs:860",
+  "VICTORY_QUEUE_WAIT=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/queue.rs:72",
+  "VICTORY_RAYTRACING=<value> (default on [off|0|false|no]): read at runtime/victory/crates/victory-gpu/src/device.rs:342",
+  "VICTORY_READ_BACK=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/list.rs:1305",
+  "VICTORY_READ_SETTLE_PRECISE=<value> (default off [=1 on]; play script sets 1, play-victory.ps1:57): read at runtime/victory/crates/victory-gpu/src/host.rs:2933",
+  "VICTORY_REBAR=<value> (default 0): read at runtime/victory/crates/victory-gpu/src/rebar.rs:127",
+  "VICTORY_REBAR_MB=<value> (default card budget/4 [max 4096; 256 unknown]): read at runtime/victory/crates/victory-gpu/src/rebar.rs:141",
+  "VICTORY_REF_PS=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/mod.rs:1391",
+  "VICTORY_REF_VS=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/mod.rs:1392",
+  "VICTORY_RELAUNCHED_FROM=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/lifecycle.rs:325",
+  "VICTORY_RELAY=<value> (default 0; play script sets 2, play-victory.ps1:55): read at runtime/victory/crates/victory-gpu/src/mem2.rs:39",
+  "VICTORY_RENDER_SCALE=<value> (default unset): read at runtime/victory/crates/victory-loader/src/hooks.rs:67",
+  "VICTORY_ROOT_SRV_DIRECT=<value> (default on [any value off]): read at runtime/victory/crates/victory-gpu/src/pipeline/host.rs:393",
+  "VICTORY_ROOT_UAV_MB=<value> (default unlimited): read at runtime/victory/crates/victory-gpu/src/draw.rs:1311",
+  "VICTORY_ROOT_VIEW_MB=<value> (default unlimited): read at runtime/victory/crates/victory-gpu/src/draw.rs:567",
+  "VICTORY_RT_MISS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-shader/src/resource.rs:71",
+  "VICTORY_RT_RESOLVE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/pipeline/make.rs:82",
+  "VICTORY_SAVE_CHILD=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/xgamesave.rs:1153",
+  "VICTORY_SAVE_OP=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/xgamesave.rs:1153",
+  "VICTORY_SAVE_SLOT=<value> (default default; play script sets -SaveSlot, play-victory.ps1:61): read at runtime/victory/crates/victory-core/src/saves.rs:27",
+  "VICTORY_SAVE_STOP=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/xgamesave.rs:1101",
+  "VICTORY_SCISSOR_TEST=<value> (default off [full on]): read at runtime/victory/crates/victory-gpu/src/draw.rs:401",
+  "VICTORY_SCRATCH_POOL=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/host.rs:1511",
+  "VICTORY_SHADER_CACHE_KEY=<value> (default source hash [exe]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:60",
+  "VICTORY_SHADER_CENSUS=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:777",
+  "VICTORY_SHADER_LOOP_LIMIT=<value> (default 1048576): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:120",
+  "VICTORY_SHADER_OPT=<value> (default 0): read at runtime/victory/crates/victory-shader/src/emit/mod.rs:207",
+  "VICTORY_SHADER_SAVE=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/pipeline.rs:171",
+  "VICTORY_SHADER_SOURCE_HASH=<value> (default unset): read at runtime/victory/crates/victory-shader/src/lib.rs:31",
+  "VICTORY_SHADOWMASK_STUB=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:194",
+  "VICTORY_SKIP_CUTSCENES=<value> (default off [truthy on]): read at runtime/victory/crates/victory-core/src/fastboot.rs:64",
+  "VICTORY_SKIP_FILE=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/pipeline.rs:588",
+  "VICTORY_SKIP_PIPELINES=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/pipeline.rs:584",
+  "VICTORY_SPLASH=<value> (default on [0|off|false|no]): read at runtime/victory/crates/victory-core/src/splash.rs:50",
+  "VICTORY_SPLASH_MAX_S=<value> (default 180): read at runtime/victory/crates/victory-core/src/splash.rs:55",
+  "VICTORY_SPLIT_WAITS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/queue.rs:91",
+  "VICTORY_STACKS=<value> (default unset): read at runtime/victory/crates/victory-loader/src/stacks.rs:27",
+  "VICTORY_STAGING_IDLE_FRAMES=<value> (default 4): read at runtime/victory/crates/victory-gpu/src/texture.rs:516",
+  "VICTORY_STALE_TEXTURES=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:445",
+  "VICTORY_STRICT_JOINS=<value> (default off [any value on]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:116",
+  "VICTORY_SWEEP=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/host.rs:194",
+  "VICTORY_SYNC_PRECISE=<value> (default off [=1 on]; play script sets 1, play-victory.ps1:56): read at runtime/victory/crates/victory-gpu/src/host.rs:1888",
+  "VICTORY_TABLED_TEXTURES=<value> (default on [=1 off]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:507",
+  "VICTORY_TEST_NO_GPU=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:560",
+  "VICTORY_TEST_TITLES=<value> (default unset): read at runtime/victory/crates/victory-core/src/config.rs:87",
+  "VICTORY_TEXTURE_BUDGET_MB=<value> (default unset): read at runtime/victory/crates/victory-gpu/src/resource.rs:1397",
+  "VICTORY_TEXTURE_COPY=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/texture.rs:460",
+  "VICTORY_TEXTURE_GATE_S=<value> (default 60): read at runtime/victory/crates/victory-gpu/src/draw.rs:477",
+  "VICTORY_TEXTURE_GUARD=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/texture.rs:803",
+  "VICTORY_TEXTURE_HASH_EVERY=<value> (default 8): read at runtime/victory/crates/victory-gpu/src/memcopy.rs:53",
+  "VICTORY_TEXTURE_NO_WAIT=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/texture.rs:398",
+  "VICTORY_TEXTURE_OVERLAP=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/memcopy.rs:41",
+  "VICTORY_TEXTURE_SWEEP=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/resource.rs:1442",
+  "VICTORY_TITLE_MEM_STATS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-hle/src/modules/xmem.rs:1494",
+  "VICTORY_TRAIL=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/host.rs:272",
+  "VICTORY_TRANSLATE_ONLY=<value> (default unset): read at runtime/victory/apps/victory/src/translate.rs:563",
+  "VICTORY_TRANSLATE_STUB=<value> (default off [any value on]): read at runtime/victory/apps/victory/src/translate.rs:578",
+  "VICTORY_TRAP_LOG=<value> (default unset): read at runtime/victory/crates/victory-loader/src/thunks.rs:160",
+  "VICTORY_UNWATCHED_FRAMES=<value> (default 1): read at runtime/victory/crates/victory-gpu/src/draw.rs:1638",
+  "VICTORY_VIEW_EXTENT=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:2475",
+  "VICTORY_VIEW_INLINE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/descriptor.rs:400",
+  "VICTORY_VIEW_LIMIT=<value> (default unset): read at runtime/victory/apps/victory/src/main.rs:215",
+  "VICTORY_WAIT_ASK=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/list.rs:2047",
+  "VICTORY_WAIT_FORCE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/queue.rs:120",
+  "VICTORY_WARP=<value> (default off [=1 on]): read at runtime/victory/crates/victory-shader/src/emit/diff_tests.rs:1177",
+  "VICTORY_WATCH=<value> (default unset): read at runtime/victory/apps/victory/src/run.rs:210",
+  "VICTORY_WAVE_DEEP_SKIPS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:112",
+  "VICTORY_WAVE_DEEP_SKIPS_NOT=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/per_program.rs:67",
+  "VICTORY_WAVE_DEEP_SKIPS_ONLY=<value> (default unset): read at runtime/victory/crates/victory-shader/src/emit/per_program.rs:68",
+  "VICTORY_WAVE_LOCAL=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:115",
+  "VICTORY_WAVE_OWN_BITS=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:113",
+  "VICTORY_WAVE_WHY=<value> (default off [any value on]): read at runtime/victory/crates/victory-shader/src/emit/lower.rs:1506",
+  "VICTORY_WAVE_WIDE=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/shader_cache.rs:111",
+  "VICTORY_WIDE_BACK=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/mem2.rs:45",
+  "VICTORY_WIDE_MERGE=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:1718",
+  "VICTORY_WIDE_REFRESH=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/host.rs:6505",
+  "VICTORY_WINDOW_KB=<value> (default 4096): read at runtime/victory/crates/victory-gpu/src/shadow.rs:3307",
+  "VICTORY_WINDOW_TAILS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/shadow.rs:3346",
+  "VICTORY_WRITE_SKIP=<value> (default on [=0 off]): read at runtime/victory/crates/victory-gpu/src/draw.rs:143",
+  "VICTORY_WRITE_VIEWS=<value> (default off [=1 on]): read at runtime/victory/crates/victory-gpu/src/descriptor/host.rs:3201",
+  "VICTORY_XMA_DUMP=<value> (default unset): read at runtime/victory/crates/victory-hle/src/modules/audio.rs:636",
+  "VICTORY_XMA_REFERENCE=<value> (default unset): read at runtime/victory/crates/victory-formats/src/xma.rs:1208",
+  "VICTORY_XMA_STREAMS=<value> (default unset): read at runtime/victory/crates/victory-formats/src/xma.rs:1163",
+]
+setup = [
+  "agility: powershell -NoProfile -Command \"New-Item -ItemType Directory -Force runtime\\victory\\target\\release\\D3D12 | Out-Null; Copy-Item $env:LOCALAPPDATA\\6ixpack\\agility-1.614.1\\*.dll runtime\\victory\\target\\release\\D3D12\"",
+  # agility is pre-staged by the step above (local copy); setup-victory.ps1:27-38 then finds it in place
+  "build: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\setup-victory.ps1 -SkipPrecompile [asks first: download]",
+  "precompile: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\setup-victory.ps1 -Game \"{game}\" [asks first: user-owned file]",
+  "xcl-runtime: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\setup.ps1 [asks first: download]",
+]
+# play-victory.ps1's settings, as its author runs it, when a run names no --preset or --set.
+default_preset = "play"
+preset_play = ["VICTORY_OWN_UPSCALER=1", "VICTORY_NO_WATCHDOG=1", "VICTORY_RELAY=2", "VICTORY_SYNC_PRECISE=1", "VICTORY_READ_SETTLE_PRECISE=1", "VICTORY_PIPELINE_WAIT_MS=0", "VICTORY_RAYTRACING=0", "VICTORY_PRECOMPILED_GRAPHICS=1", "VICTORY_READFIX=1", "VICTORY_COPY_BACK_ONLY_READBACK=1", "VICTORY_NARROW_ROOT=1", "VICTORY_NARROW_VIEWS=1", "VICTORY_NARROW_BVH=1", "VICTORY_PREP_BARRIERS=1", "VICTORY_PREP_TABLES=1", "VICTORY_PREP_REUSE=1", "--console=series-s"]
+# vitoriabr README.md:108-115 fastest measured preset, plus ScarlettPort's own opt-in copy switches
+# (readback.rs:37 COPY_BACK_ASYNC, readback.rs:68 COPY_BACK_ONLY_READBACK, regions.rs:388 COPY_PREFETCH)
+preset_fast = ["VICTORY_OWN_UPSCALER=1", "VICTORY_NO_WATCHDOG=1", "VICTORY_RELAY=2", "VICTORY_SYNC_PRECISE=1", "VICTORY_READ_SETTLE_PRECISE=1", "VICTORY_PIPELINE_WAIT_MS=0", "VICTORY_RAYTRACING=0", "VICTORY_TEXTURE_NO_WAIT=1", "VICTORY_CARD_BUFFERS_MB=6144", "VICTORY_WIDE_REFRESH=1", "VICTORY_WIDE_MERGE=1", "VICTORY_JOIN_COPIES=1", "VICTORY_DISPLAY_MODE=1920x1080", "VICTORY_COPY_BACK_ASYNC=1", "VICTORY_COPY_PREFETCH=1", "VICTORY_PRECOMPILED_GRAPHICS=1", "VICTORY_READFIX=1", "VICTORY_COPY_BACK_ONLY_READBACK=1", "VICTORY_NARROW_ROOT=1", "VICTORY_NARROW_VIEWS=1", "VICTORY_NARROW_BVH=1", "VICTORY_PREP_BARRIERS=1", "VICTORY_PREP_TABLES=1", "VICTORY_PREP_REUSE=1", "--console=series-s"]
+preset_autoinput = ["VICTORY_AUTO_INPUT=1"]
+preset_fastboot = ["VICTORY_FAST_BOOT=1"]
+preset_series_x = ["--console=series-x"]
+[env]
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family (storage/settings identical across trees)
+VICTORY_OWN_UPSCALER = "1"          # play-victory.ps1:51
+VICTORY_NO_WATCHDOG = "1"           # play-victory.ps1:52
+VICTORY_RELAY = "2"                 # play-victory.ps1:55
+VICTORY_SYNC_PRECISE = "1"          # play-victory.ps1:56
+VICTORY_READ_SETTLE_PRECISE = "1"   # play-victory.ps1:57
+VICTORY_PIPELINE_WAIT_MS = "0"      # play-victory.ps1:59
+VICTORY_PRECOMPILED_GRAPHICS = "1" # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_READFIX = "1"             # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_COPY_BACK_ONLY_READBACK = "1" # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_NARROW_ROOT = "1"         # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_NARROW_VIEWS = "1"        # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_NARROW_BVH = "1"          # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_PREP_BARRIERS = "1"       # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_PREP_TABLES = "1"         # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_PREP_REUSE = "1"          # launcher/src/engine.rs:98-100 (0.3: PRECOMPILED_GRAPHICS and SPEED_SETTINGS, its verified defaults)
+VICTORY_RAYTRACING = "0"            # launcher/src/engine.rs:80 world_env (Config.raytracing default false, main.rs:138): OPTIONS5 answers tier 0, the title takes its non-RT path
+VICTORY_PRESS_FILE = "{press}"      # play-victory.ps1:63
+
+# Keyboard as the gamepad, shown by the controls overlay (F1). From
+# runtime/victory/crates/victory-hle/src/modules/gameinput.rs FALLBACK_BUTTONS and fallback();
+# a real controller plays as well.
+[controls]
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter"
+b = "Backspace"
+x = "X"
+y = "Y"
+lb = "Q"
+rb = "E"
+lt = "Z"
+rt = "C"
+ls = "F"
+rs = "H"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

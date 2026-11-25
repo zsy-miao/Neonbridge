@@ -1,0 +1,89 @@
+{
+  "provider_sha256": "ac43961eb297f9ba326709bd57a15a62b1fcee3eda7805ea47c390523c3b4d2b",
+  "guest_sha256": "82e1eeec65b59a6aafd878d4a963a131095f7c6da0d05e647f1a5035dda52a3d",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "backend": "proton",
+  "host_provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "slot": 62,
+  "shaders": [
+    {
+      "index": 402,
+      "fnv1a64": "967bc3a70a86c7f4",
+      "cooked_sha256": "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e",
+      "hlsl_sha256": "bce00f006e43479526eacbb97d31026a325030a32a2e87a51ae14ce31b6026e7"
+    },
+    {
+      "index": 379,
+      "fnv1a64": "97a201d874e27271",
+      "cooked_sha256": "6f11d6dca919fc549840903f908a47520a58be5aa681082055c1681a9d660d1f",
+      "hlsl_sha256": "bce00f006e43479526eacbb97d31026a325030a32a2e87a51ae14ce31b6026e7"
+    },
+    {
+      "index": 414,
+      "fnv1a64": "526075503f59f4c3",
+      "cooked_sha256": "893b2d64e780e051b9a4d681cb0ee8cb27e68d96d766ffcdbcc564ce20df69fd",
+      "hlsl_sha256": "bce00f006e43479526eacbb97d31026a325030a32a2e87a51ae14ce31b6026e7"
+    }
+  ],
+  "dxil_sha256": "7f911c22446f15c4dba38e6e6912dd1946f18403ea645b6b27e52c782b41c518",
+  "start": 5,
+  "end_exclusive": 102,
+  "elements_per_buffer": 140,
+  "dispatch_groups": 2,
+  "cases": {
+    "portable_uncached": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x00000000",
+      "float_view_4_matched_words": "560",
+      "float_view_1_matched_words": "140",
+      "uint_view_4_matched_words": "560",
+      "uint_view_1_matched_words": "140"
+    },
+    "402_missing": {
+      "exit": 1,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x80004005",
+      "error": "create cooked compute pipeline failed: 0x80004005"
+    },
+    "402_only_379_cached": {
+      "exit": 1,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x80004005",
+      "error": "create cooked compute pipeline failed: 0x80004005"
+    },
+    "402_corrupt": {
+      "exit": 1,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x80004005",
+      "error": "create cooked compute pipeline failed: 0x80004005"
+    },
+    "402_warm": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x00000000",
+      "float_view_4_matched_words": "560",
+      "float_view_1_matched_words": "140",
+      "uint_view_4_matched_words": "560",
+      "uint_view_1_matched_words": "140"
+    },
+    "379_warm": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x00000000",
+      "float_view_4_matched_words": "560",
+      "float_view_1_matched_words": "140",
+      "uint_view_4_matched_words": "560",
+      "uint_view_1_matched_words": "140"
+    },
+    "414_warm": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "pipeline_hr": "0x00000000",
+      "float_view_4_matched_words": "560",
+      "float_view_1_matched_words": "140",
+      "uint_view_4_matched_words": "560",
+      "uint_view_1_matched_words": "140"
+    }
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "stage": "Vertex",
+  "export": "Uncompressed POS1 with enable mask 0xf and DONE set. The only D3D system outputs are SV_Position and float4 SV_ClipDistance0. All four clip components are written.",
+  "reference": "Mesa 25.0.7 src/amd/common/nir/ac_nir_prerast_utils.c, ac_nir_export_position. Clip-distance vectors follow position and any enabled miscellaneous position vector.",
+  "validated_profiles": "All listed retail sources were translated, compiled as vs_6_0 by DXC and passed DXV.",
+  "shaders": [
+    {
+      "archive": "material",
+      "entry": 504,
+      "xbox_sha256": "f82e7b115382ec86ce1945f8ef2a8d3d4d2974b01921fec8a6192b157a1384c2",
+      "d3d_output_register": 6,
+      "dxil_sha256": "a956e4be44a4fb6f58ad3838ce5f20556019d7d1aa4b63f4f7dca10a6662524f",
+      "pos1_offset": "0x6b0",
+      "export_words": [
+        "0xf80008df",
+        "0x0f101112"
+      ]
+    },
+    {
+      "archive": "material",
+      "entry": 4484,
+      "xbox_sha256": "bf4e306e604844e7a5fa3337a93066fb424c0786319f1850060f96ebcd685565",
+      "d3d_output_register": 8,
+      "dxil_sha256": "4b5b5384a17c77c2395acf5d364b79cf4c980735e0e765b888e31cd3cd01e518",
+      "pos1_offset": "0x6b0",
+      "export_words": [
+        "0xf80008df",
+        "0x0f101112"
+      ]
+    },
+    {
+      "archive": "material",
+      "entry": 4527,
+      "xbox_sha256": "b82f8dd7649a2251202aa15ca8ea12202de235fcd64e9c119eac32925c07e93e",
+      "d3d_output_register": 7,
+      "dxil_sha256": "be40d83a3510a0b22c5e2823fa1d88eee3c59dbc158c2b61771623cd001085f1",
+      "pos1_offset": "0x6b0",
+      "export_words": [
+        "0xf80008df",
+        "0x0f101112"
+      ]
+    },
+    {
+      "archive": "material",
+      "entry": 1139,
+      "xbox_sha256": "1d4a7014240189574a409b15beda9a4cf5e2c504993c47226bccd4db575062a9",
+      "d3d_output_register": 3,
+      "dxil_sha256": "b96cc3ca378f2c40baed01c875958d0c0f4ee3cc0d5eaecc476ecc75b3c87f79",
+      "pos1_offset": "0x5d8",
+      "export_words": [
+        "0xf80008df",
+        "0x03040506"
+      ]
+    },
+    {
+      "archive": "material",
+      "entry": 850,
+      "xbox_sha256": "6bdef957439af91dd827ee4e0ea7740b27736263bf2f1dc9d15273c710109e94",
+      "d3d_output_register": 3,
+      "dxil_sha256": "fc8aa78f7b4a98531765c057d6deeace4cd26279f964f604d00b0915801b4213",
+      "pos1_offset": "0xac0",
+      "export_words": [
+        "0xf80008df",
+        "0x00090607"
+      ]
+    },
+    {
+      "archive": "material",
+      "entry": 6142,
+      "xbox_sha256": "58cb8386d04193b40c348e2f14cd0533028eab0fb379011820324efaa72bad41",
+      "d3d_output_register": 5,
+      "dxil_sha256": "62bd34cd18ca1de1f24d88f9c0e1fc27b0b959d0e7d03e6b0d7f440ff28d9300",
+      "pos1_offset": "0xf00",
+      "export_words": [
+        "0xf80008df",
+        "0x0b0c0d0e"
+      ]
+    },
+    {
+      "archive": "material",
+      "entry": 1185,
+      "xbox_sha256": "97c299c64f7a277f6218be2f12afe5f18cd1c97e94cdd351fdaa9e11855b54df",
+      "d3d_output_register": 3,
+      "dxil_sha256": "ebf228accebf55d80c5005bdffb248255a67f72e713f3eda609bf94847034cb2",
+      "pos1_offset": "0x440",
+      "export_words": [
+        "0xf80008df",
+        "0x04050607"
+      ]
+    }
+  ],
+  "gpu_control": {
+    "xbox_sha256": "f82e7b115382ec86ce1945f8ef2a8d3d4d2974b01921fec8a6192b157a1384c2",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER, 10de:2705",
+    "host": "GE-Proton11-11 with vkd3d-proton 3.1.0",
+    "consumer": "A pass-through point geometry shader reads the vertex shader’s SV_Position and SV_ClipDistance0. It copies the latter into TEXCOORD0 for stream output before clipping. Each draw writes exactly six 32-byte records and preserves the trailing zero guard.",
+    "binding": "Zero-initialized b0–b3 and t0–t7. t0–t2 are structured buffers with 16-byte records, t3–t4 are uint4 buffers and t5–t7 are float4 buffers. Place the row [0.25, -0.125, 0.5, 1] at t1 byte offset 240. Set b3[65].x to the enabled integer and t2[0] to the four tile indices.",
+    "draws": "DrawInstanced(3, 2, 0, firstInstance) for firstInstance 0 and 13 in each control.",
+    "cases": [
+      {
+        "enabled": false,
+        "tile_indices": [
+          79,
+          74,
+          82,
+          68
+        ],
+        "observed_position": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "observed_clip_distances": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "matching_vertices": 12
+      },
+      {
+        "enabled": true,
+        "tile_indices": [
+          79,
+          74,
+          82,
+          68
+        ],
+        "observed_position": [
+          0.25,
+          -0.125,
+          0.5,
+          1.0
+        ],
+        "observed_clip_distances": [
+          128.0,
+          -256.0,
+          384.0,
+          -384.0
+        ],
+        "matching_vertices": 12
+      },
+      {
+        "enabled": true,
+        "tile_indices": [
+          83,
+          74,
+          82,
+          68
+        ],
+        "observed_position": [
+          0.25,
+          -0.125,
+          0.5,
+          1.0
+        ],
+        "observed_clip_distances": [
+          -384.0,
+          -256.0,
+          384.0,
+          -384.0
+        ],
+        "matching_vertices": 12
+      }
+    ],
+    "guest_sha256": "ec3ccfd74f399621b163335dda3c2a2a2a5aa241756db85491aa731eb4e59ab8"
+  }
+}

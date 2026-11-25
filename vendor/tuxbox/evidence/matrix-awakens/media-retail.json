@@ -1,0 +1,38 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "arguments": [
+    "-nosound",
+    "-DisablePlugins=XboxCommonGDKMoviePlayer"
+  ],
+  "loose_config": [
+    "[/Script/Engine.RendererSettings]",
+    "r.RayTracing=0"
+  ],
+  "mfplat_sha256": {
+    "mfplat.dll": "137df288c0a34eebfc183fee80aacde16be320d1e143fbb2d92468c3b62c3c5b",
+    "mfplat_sys.dll": "3df8aff6ca29903c6a9109b8154d36d9133d2fa371aaab2fa4be564dbba8bb1b",
+    "mfplat_tombox.dll": "04a56adec588bce9536aff7603790794edbbcfaadd0c472aa35686b193e9a978"
+  },
+  "caller": {
+    "function": "Electra::CreateDirectXResources",
+    "call_rva": "0x1983dc8",
+    "abi": [
+      "IMFDXGIDeviceManager*",
+      "IUnknown*",
+      "UINT resetToken"
+    ]
+  },
+  "d3d11on12_feature_level": "12_1",
+  "reset_hresult": "0x00000000",
+  "title_following_reset": [
+    "Game Engine Initialized.",
+    "LoadMap: /Game/Map/P_Construct_WP"
+  ],
+  "later_error": {
+    "source": "D3D12Resources.cpp:584",
+    "hresult": "E_INVALIDARG"
+  },
+  "trace_sha256": "d690c573c75c0cc30a63a55c227d5c862c57f8b18be5e9428c40c276bd432f05",
+  "retail_video_frame_verified": false
+}

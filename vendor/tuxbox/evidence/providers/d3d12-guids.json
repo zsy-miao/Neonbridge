@@ -1,0 +1,36 @@
+{
+  "reference": "EmbeddedXvd/Windows/System32/d3d12_xs.dll",
+  "reference_sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+  "provider_sha256": "300af24ae01e907accfe7ea48e8cac215a0e193146b915bc9fca409a62bb4f82",
+  "sdk_guest_sha256": "8f948e30d1e19291c226570b1deda222e9f225978c6d8f05201f6bce5269168e",
+  "reference_data_exports": 32,
+  "compared_data_exports": 32,
+  "method": "Compared every exported GUID byte and ordinal with each supplied console DLL. The guest checks its imported address by name and by ordinal against the Windows SDK GUID or, for the two Xbox-only interfaces, the value independently read from both packaged DLLs.",
+  "guids_sha256_in_ascending_ordinal_order": "ffceb5ff322ab9744a07521ce3b84c50ce4eb59712397d68b19950c0f998a357",
+  "remaining_data_exports": [],
+  "runs": [
+    {
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "checks": [
+        {
+          "gate": "d3d12-guids",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-guids PASS identifiers=32 bytes=512"
+        }
+      ]
+    },
+    {
+      "provider": "1792432585 GE-Proton11-11",
+      "checks": [
+        {
+          "gate": "d3d12-guids",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "d3d12-guids PASS identifiers=32 bytes=512"
+        }
+      ]
+    }
+  ],
+  "original_dll_receipt": "d3d12-guids PASS identifiers=32 bytes=512"
+}

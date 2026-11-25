@@ -1,0 +1,217 @@
+{
+  "scope": "Global 257 FLumenVisualizeCreateTilesCS: compact viewport-intersecting 8x8 groups into a tile queue. Real root signature, CPU-modeled viewport checks, output counter and guards are verified on Radeon and GeForce. Cases include fractional and negative offsets, NaN, and positive and negative infinity; output order is normalized across independent groups.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 257,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "257": {
+          "source_sha256": "a3f579218fe1f3d001cb0ae65225bab6481aa9372b5a3c63843dd311a70ec757",
+          "dxil_sha256": "eaa9a80e8d4c2b5f9b3d177a11aa864e96a5c02c0db0e8943775f724189d1c39"
+        }
+      },
+      "cases": {
+        "tiles_empty": {
+          "selected": [],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_one": {
+          "selected": [
+            0
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_edge": {
+          "selected": [
+            0,
+            1,
+            65536,
+            65537
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_full": {
+          "selected": [
+            0,
+            1,
+            2,
+            65536,
+            65537,
+            65538
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_offset": {
+          "selected": [
+            0,
+            1
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_negative": {
+          "selected": [
+            0,
+            1,
+            65536,
+            65537
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_nan_offset": {
+          "selected": [
+            0,
+            1,
+            2
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_nan_extent": {
+          "selected": [],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_positive_infinity": {
+          "selected": [],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_negative_infinity": {
+          "selected": [
+            0,
+            1,
+            2
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "257": {
+          "source_sha256": "a3f579218fe1f3d001cb0ae65225bab6481aa9372b5a3c63843dd311a70ec757",
+          "dxil_sha256": "eaa9a80e8d4c2b5f9b3d177a11aa864e96a5c02c0db0e8943775f724189d1c39"
+        }
+      },
+      "cases": {
+        "tiles_empty": {
+          "selected": [],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_one": {
+          "selected": [
+            0
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_edge": {
+          "selected": [
+            0,
+            1,
+            65536,
+            65537
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_full": {
+          "selected": [
+            0,
+            1,
+            2,
+            65536,
+            65537,
+            65538
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_offset": {
+          "selected": [
+            0,
+            1
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_negative": {
+          "selected": [
+            0,
+            1,
+            65536,
+            65537
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_nan_offset": {
+          "selected": [
+            0,
+            1,
+            2
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_nan_extent": {
+          "selected": [],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_positive_infinity": {
+          "selected": [],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "tiles_negative_infinity": {
+          "selected": [
+            0,
+            1,
+            2
+          ],
+          "checked_words": 176,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "scope": "Frosty global compute 306 produces deferred rays in u2. Packaged compute 313 consumes the same DEFAULT-heap u2 allocation on the same TuxBox device. Both Xbox pipeline creations use slot 62. Each far-field case checks the 64 regenerated radiance/distance records, a boundary guard, all 130 feedback dwords, and that all 65 five-word input ray records remain untouched.",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "9a637783484d8e993a52b0cd2099e5002934ef3592085be3a2119940b015f25a",
+  "shaders": {
+    "306": {
+      "source_sha256": "c96870c66198cee9fc7b8407b62425e86f8fab5d48238d0d767561ab362f7511",
+      "dxil_sha256": "30e4e741004fde281a2a8b33e56ec658c6fa3a799add23ff49f4d100b528d01f"
+    },
+    "313": {
+      "source_sha256": "65c8d69bf17229f83648b917806e4b5b4795c61ad5b149326f8de0c4e57a7c68",
+      "dxil_sha256": "02e33f46cbbfd606af903c59beac7105b8efab88615aec44d79d5492054bc3f2"
+    },
+    "299": {
+      "source_sha256": "bdd2b57829d4e4d8d13b9057f6b225251845c209196e0643d66636f4df2bee29",
+      "dxil_sha256": "71a2a613f049652704d8adf6df559d1e2819550ff95c9371df8b7ea0944482a6"
+    },
+    "311": {
+      "source_sha256": "b847d35c8c97dff4034f79659046a95f9457aa78a7e7de844fc0825fd054f490",
+      "dxil_sha256": "a75854724b791bedd211db49587b6f43d5df540f428026f1bd970b163c066d6d"
+    }
+  },
+  "dispatch": "Two 32-lane groups per active tile. 306 and 313 use different instance masks. The input queue contains all 64 rays in producer order. The GPU passes the resource directly between stages, without a CPU write or compaction.",
+  "reference": "299 and 311 trace a separate native TLAS and count geometric callbacks. The 0x01-only triangle at x=-1 produces 18 hits in 299/306 and zero in 311/313. Moving the probe to the 0x20-only triangle at x=3 produces zero hits in 299/306 and 18 in 311/313. Six constant cube face colors identify missed ray directions.",
+  "cases_313": {
+    "empty_queue": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] deadbeef,deadbeef; feedback guards 1",
+    "sky_cube": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] 46004500,4c404700; feedback guards 1",
+    "triangle_hits": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] 46004500,4c404700; feedback guards 1",
+    "far_geometry": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1"
+  },
+  "input_retrace_preservation": {
+    "empty_queue": "tile[27] deadbeef,deadbeef,deadbeef,deadbeef,deadbeef; 65 records matched 1; adjacent winding distance bins 0",
+    "sky_cube": "tile[27] 0000001b,ffffffff,41880000,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+    "triangle_hits": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+    "far_geometry": "tile[27] 0000001b,ffffffff,41880000,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0"
+  },
+  "limits": "A one-tile control distinguishes fresh near-field and far-field tracing. Live retail output, order/compaction of a larger queue, and native Xbox BVH iteration exhaustion require separate evidence."
+}

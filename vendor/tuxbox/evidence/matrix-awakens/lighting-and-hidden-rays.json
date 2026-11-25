@@ -1,0 +1,100 @@
+{
+  "command": "python tools/check_frosty_blas.py --lighting-hits --xshader \"$XSHADER\" --ray-states \"$STATES\" --proton \"$PROTON\" --prefix \"$PREFIX\" --output \"$OUTPUT\"",
+  "states": "Extracted global entries 1280, 1282, 1284, 1286, 2670, 2752. --ray-archive \"$MOUNT\" extracts them from the mounted package.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "library_hashes": {
+    "2670": {
+      "state_sha256": "eed4768c5970b5a19b0ac8681ae9bb05871b2195d601655d7e92c28c527d6c88",
+      "dxil_sha256": "d709e640e3915fed58c451ee83182856a81569e997c5559aadf31581078e71f6"
+    },
+    "2752": {
+      "state_sha256": "0393f3527057e3c53a337e9a6c87666c8d9fb49968fdd2fd431eca19595c3514",
+      "dxil_sha256": "baf4f8e29373aabd1b411af841c5f400a211a2b4f8b7d5d5dd8f530276905c94"
+    }
+  },
+  "lighting": {
+    "rays": 24,
+    "miss_records": 2,
+    "normals": [
+      "+X",
+      "+Y",
+      "+Z",
+      "-X",
+      "-Y",
+      "-Z"
+    ],
+    "initial_rgb": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0.125,
+        0.25,
+        0.5
+      ]
+    ],
+    "directional_light_rgb": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0.5,
+        0.25
+      ]
+    ],
+    "front_facing_expected_rgb_delta": [
+      "1 / pi",
+      "0.5 / pi",
+      "0.25 / pi"
+    ],
+    "back_facing_expected_rgb_delta": [
+      0,
+      0,
+      0
+    ],
+    "max_absolute_error_allowed": 0.0006,
+    "payload": "Sixteen dwords. The test checks all 14 preserved dwords, the upper half of word 4, both initial radiance levels and the colored contribution in words 3 and 4."
+  },
+  "hidden": {
+    "rays": 2,
+    "force_non_opaque": "Any-hit IgnoreHit triggers the independent miss export, which writes 0xfeed.",
+    "force_opaque": "Closest-hit preserves the original 16 dwords."
+  },
+  "runs": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "exit": 0,
+      "contributing_rays": 10,
+      "front_rgb_half_words": [
+        "31183518",
+        "00002d18"
+      ],
+      "back_rgb_half_words": [
+        "00000000",
+        "00000000"
+      ],
+      "hidden_any_hit_result": "0000feed",
+      "hidden_closest_hit_result": "00000000"
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "exit": 0,
+      "contributing_rays": 10,
+      "front_rgb_half_words": [
+        "31183518",
+        "00002d18"
+      ],
+      "back_rgb_half_words": [
+        "00000000",
+        "00000000"
+      ],
+      "hidden_any_hit_result": "0000feed",
+      "hidden_closest_hit_result": "00000000"
+    }
+  }
+}

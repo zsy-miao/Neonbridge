@@ -1,0 +1,76 @@
+{
+  "scope": "D3D12 compute dispatches under Proton on physical Radeon and GeForce adapters. Shader bytecode was produced by the Linux TuxBox translator and DXC. The readbacks cover these dispatches only.",
+  "singleton_variants_compiled_to_dxil": [
+    1654,
+    1869,
+    1870,
+    2151,
+    2164,
+    2254,
+    2622,
+    2627,
+    2630,
+    2632,
+    2745
+  ],
+  "controls": {
+    "tiles": {
+      "shader": 1337,
+      "guest_sha256": "33716abcc1e4b859b98f6e431ca728e240cc1bfd884c20427c062fba7f2c9280",
+      "dxil_sha256": "82abdc5a9ff2c63089312df8fe12b595f8947f9d353e0cda570866c51bcf75fc",
+      "input_and_check": "Initial counter 7, 49 tile counts cycling through 1 to 5 and 15 masked lanes. Each output range is disjoint and contiguous. The total ends at 152 and sentinel words survive.",
+      "readbacks": {
+        "1002:13c0": {
+          "total": 152,
+          "expected": 152,
+          "aligned_tiles": 1,
+          "first": 7
+        },
+        "10de:2705": {
+          "total": 152,
+          "expected": 152,
+          "aligned_tiles": 1,
+          "first": 7
+        }
+      }
+    },
+    "singleton": {
+      "shader": 2745,
+      "guest_sha256": "3156c99c53d39b2c326d3c65c1ba0debc0eff7567b203d6d5df1ac4623fa7910",
+      "dxil_sha256": "464bdf1814ea5b21e7b8d668b0b59e375492be0a0e850aa5ae125b49f95b2ea8",
+      "input_and_check": "Twelve single-thread workgroups append three known dwords per group from a structured buffer. The initial counter of 2 becomes 14. All 64 output words are checked, including guards.",
+      "readbacks": {
+        "1002:13c0": {
+          "groups": 12,
+          "counter": 14,
+          "copied_words": 36,
+          "mismatches": 0
+        },
+        "10de:2705": {
+          "groups": 12,
+          "counter": 14,
+          "copied_words": 36,
+          "mismatches": 0
+        }
+      }
+    },
+    "reduce": {
+      "shader": 3269,
+      "guest_sha256": "02a9669ef7c59c615f8482567f6f3dd73c3e16b58ba1d14caa220a5b49681b62",
+      "dxil_sha256": "e6bd660c197a1372eb69ddad7a9ed9c36070a6bc6583a0a6d3475a2360ad0bad",
+      "input_and_check": "A color ramp and constant circle of confusion feed the 8x8 reduction. The check covers all color, circle-of-confusion and untouched sentinel channels in eight UAVs, with scatter disabled by the constants. At the final mip the encoded vertical swizzles have AND=31, OR=0, XOR=0. The gradient differs in two channels from an idealized full-tile box average. There is no console comparison.",
+      "readbacks": {
+        "1002:13c0": {
+          "channels": 2048,
+          "guest_mode_mismatches": 0,
+          "ideal_box_mismatches": 2
+        },
+        "10de:2705": {
+          "channels": 2048,
+          "guest_mode_mismatches": 0,
+          "ideal_box_mismatches": 2
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- D3D12 runtime core: adapters, devices, the root-signature layout of translated programs, the DXIL form each
+       adapter runs and pipeline states. -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Part of fivestar-loader: trim and AOT analysis on every build (docs/aot.md). -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MeshWaveProbe's source; its callers compile it with the DXIL backend. -->
+    <EmbeddedResource Include="Probes/mesh_wave_probe.hlsl" LogicalName="FiveStar.Graphics.Probes.mesh_wave_probe.hlsl" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D12" />
+    <PackageReference Include="Vortice.DXGI" />
+  </ItemGroup>
+</Project>

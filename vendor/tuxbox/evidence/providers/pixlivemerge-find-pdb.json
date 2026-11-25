@@ -1,0 +1,37 @@
+{
+  "scope": "FindPdbInfo ordinal 2 only; x64 MSVC vector and wstring ABI, valid terminated UTF-16 strings. No PDB parsing or capture backend.",
+  "reference_sha256": "fa97410d99c482d45e9ae5686ccef43cd0c921fd13bba0d50eb042d50482b034",
+  "provider_sha256": "9813826c636a4c53a5119ccfde2f28160805bcdd2dd5289033163e84f3768c3c",
+  "guest_sha256": "a5bf90d8247545a34a15ae7dda75c6f96680fb688bd8be71ed4802e08f1e73b1",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "reference": {
+      "short": "0",
+      "long": "1",
+      "case": "0",
+      "first": "0",
+      "miss": "-1",
+      "null": "-1",
+      "nonascii_equal": "3",
+      "nonascii_case": "-1",
+      "empty": "-1",
+      "blank": "0",
+      "blank_path": "0",
+      "records_intact": "1"
+    },
+    "provider": {
+      "short": "0",
+      "long": "1",
+      "case": "0",
+      "first": "0",
+      "miss": "-1",
+      "null": "-1",
+      "nonascii_equal": "3",
+      "nonascii_case": "-1",
+      "empty": "-1",
+      "blank": "0",
+      "blank_path": "0",
+      "records_intact": "1"
+    }
+  }
+}

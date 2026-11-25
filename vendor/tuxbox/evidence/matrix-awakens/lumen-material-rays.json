@@ -1,0 +1,126 @@
+{
+  "archive": "global",
+  "shaders": {
+    "1237": {
+      "export": "LumenHardwareRayTracingMaterialMS_3b1ba881",
+      "state_sha256": "495236d5fd622b9643edd9b10089fa01dd408b5b8808e53678a97fe293c6b1b1",
+      "dxil_sha256": "8ab05a2bfca90ba9a5509b4103feb6fd01002afb7a480a560c03a4da75d35d44"
+    },
+    "1238": {
+      "export": "LumenHardwareRayTracingMaterialCHS_d29f9c3b",
+      "state_sha256": "624bacf33f660f0b17592a738af27713f1b567cff0163c6482a0573a8d5a0121",
+      "dxil_sha256": "01e8b12cce5f80a9bdef387abb34761880bcbd48a255b0514fe5e9d2389ed303"
+    }
+  },
+  "control": "Four triangle hits and one miss. Rays approach both sides of each instance. Each shader record binds a 32-bit index buffer, float3 vertices and a geometry user word.",
+  "payload": [
+    "RayTCurrent",
+    "shader record geometry user word",
+    "octahedral world-space geometric normal, X in high halfword",
+    "InstanceID",
+    "InstanceIndex minus first instance in shader record"
+  ],
+  "instances": [
+    {
+      "id": 7,
+      "object_normal": [
+        0,
+        0,
+        -1
+      ],
+      "world_linear_transform": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "packed_normal": "ffffffff"
+    },
+    {
+      "id": 8,
+      "object_normal": [
+        0,
+        0,
+        -1
+      ],
+      "world_linear_transform": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          2,
+          0
+        ],
+        [
+          0.5,
+          0.5,
+          1
+        ]
+      ],
+      "world_normal_before_normalization": [
+        0.5,
+        0.25,
+        -1
+      ],
+      "packed_normal": "edb6db6d"
+    }
+  ],
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "adapters": [
+    {
+      "adapter": "1002:13c0",
+      "payload_words_compared": 80,
+      "sha256_by_api": {
+        "desktop": "e976d34d81ec644b735b395171fe2a7e9ada7284aae6211d38230715e0bf5159",
+        "xbox": "e976d34d81ec644b735b395171fe2a7e9ada7284aae6211d38230715e0bf5159"
+      }
+    },
+    {
+      "adapter": "10de:2705",
+      "payload_words_compared": 80,
+      "sha256_by_api": {
+        "desktop": "e976d34d81ec644b735b395171fe2a7e9ada7284aae6211d38230715e0bf5159",
+        "xbox": "e976d34d81ec644b735b395171fe2a7e9ada7284aae6211d38230715e0bf5159"
+      }
+    }
+  ],
+  "guest_sha256": "11549f2ed2442f98b7938fceac323a7e2088ff5cbe499a4cc10809198570cf96",
+  "provider_sha256": "d1a5f56edd0bde38b8f381712914d165ab27155378fd4c385a22d0f4b93a1283",
+  "sample_words": {
+    "identity_hit": [
+      "3f800000",
+      "12345678",
+      "ffffffff",
+      "00000007",
+      "00000000"
+    ],
+    "sheared_hit": [
+      "3f800000",
+      "12345678",
+      "edb6db6d",
+      "00000008",
+      "00000001"
+    ],
+    "miss": [
+      "bf800000",
+      "00001001",
+      "00001002",
+      "00001003",
+      "00001004"
+    ]
+  }
+}

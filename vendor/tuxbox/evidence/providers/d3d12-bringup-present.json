@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/xbox-frame.exe": "b9ec9057483c9fd0e0c5dfed6f310eafdc3f6eb5d382633fbc1142ddd320e624",
+    "d3d12-smoke/d3d12_xs.dll": "fb93c8fbc4c55b74a1ca228ac651ae7c1d1fb4884feeabd0b45099311cf82b29",
+    "d3d12-smoke/xbox-frame-rgb10.exe": "5c8c374cac0087d51252ced2512ed6bfbbb6b1be83c1c07fccb455786c74ac0c"
+  },
+  "checks": [
+    {
+      "gate": "guest-present",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
+    },
+    {
+      "gate": "guest-present-rgb10",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2"
+    }
+  ]
+}

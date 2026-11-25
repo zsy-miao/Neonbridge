@@ -1,0 +1,25 @@
+{
+  "scope": "Experimental GPU instance encoding compared with the independent Rust CPU reference; not runtime TLAS construction",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": 10,
+      "guard_words_per_batch": 219
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": 10,
+      "guard_words_per_batch": 219
+    }
+  },
+  "shaders": [
+    {
+      "hlsl_sha256": "b33169b43cc1f9632bdeab74e6af4b284fb5c284b1b6a4c426d0bea8e529d59d",
+      "dxil_sha256": "820a451d90041717740ddcc483a3b6d6b2bbd4f6cf1ddd26b5cad720f94720dd"
+    },
+    {
+      "hlsl_sha256": "1b834638d1481b93be241e35eb1b80609e9d09db9214086cbc66bff36aa9b89d",
+      "dxil_sha256": "f91a409222b5b685f7618c9c35f4ad70b1d548b23e0669fae57004372c05a2e2"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "scope": "Original DLL only; repeated existing-vector growth, long strings, caller-side modification and destruction with /MT and /MD. Success on this host does not prove compatibility with custom allocators or arbitrary CRTs.",
+  "reference_sha256": "fa97410d99c482d45e9ae5686ccef43cd0c921fd13bba0d50eb042d50482b034",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "MT": {
+      "guest_sha256": "3b4fadea7197235024eada98cc70cfc49c952dd835257ec190f125e62f8dd67e",
+      "results": {
+        "bad_guid": "80004005,0,3:0040>0000;12:007d>0000;",
+        "missing_close": "80004005,0,",
+        "no_path": "80004005,0,",
+        "parse": "00000000,1",
+        "mutation": "3:0040>0000,41:007d>0000,",
+        "path_length": "780",
+        "spare": "00000000,2,existing,one",
+        "growth": "parsed,existing",
+        "ownership_stress": "1"
+      }
+    },
+    "MD": {
+      "guest_sha256": "50f9c05b8ee11a9b4bd99dfa245535a16b7def8468de2909fdaa1b85b3730c28",
+      "results": {
+        "bad_guid": "80004005,0,3:0040>0000;12:007d>0000;",
+        "missing_close": "80004005,0,",
+        "no_path": "80004005,0,",
+        "parse": "00000000,1",
+        "mutation": "3:0040>0000,41:007d>0000,",
+        "path_length": "780",
+        "spare": "00000000,2,existing,one",
+        "growth": "parsed,existing",
+        "ownership_stress": "1"
+      }
+    }
+  }
+}

@@ -1,0 +1,120 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -69,6 +69,7 @@
+ #[cfg(windows)]
+ impl Translated {
+     pub fn dxc_profile(&self) -> String {
++        if self.typed_int64_atomics && self.profile.starts_with("ps_") { return "ps_6_6".into(); }
+         if self.required_wave_size.is_some() || self.typed_int64_atomics { return "cs_6_6".into(); }
+         if self.needs_barycentrics { "ps_6_1".into() } else { crate::dxc::profile_for(self.profile) }
+     }
+@@ -342,6 +343,8 @@
+     /// Image ops whose texture and/or sampler is one of several descriptors.
+     /// UAV texture slots used with image atomics (declared `<uint>`).
+     uav_uint: BTreeSet<u32>,
++    /// The two verified HWRasterizePS permutations bind PF_R32G32_UINT at u0.
++    wide_visibility_uav: bool,
+     /// The shader uses wave intrinsics (needs shader model 6: DXC only).
+     required_wave_size: Option<u32>,
+     msel: HashMap<usize, MSel>,
+@@ -750,7 +753,7 @@
+         entry: "main",
+         profile,
+         needs_barycentrics: !em.pulled_attrs.is_empty(),
+-        typed_int64_atomics: em.packed.as_ref().is_some_and(|p| !p.wide_images.is_empty()),
++        typed_int64_atomics: em.wide_visibility_uav || em.packed.as_ref().is_some_and(|p| !p.wide_images.is_empty()),
+         required_wave_size,
+         portable_compute_group,
+         ps_input_interp: std::mem::take(&mut em.ps_in_interp),
+@@ -998,6 +1001,7 @@
+             vreg_array: false,
+             multi_sets: Vec::new(),
+             uav_uint: BTreeSet::new(),
++            wide_visibility_uav: false,
+             required_wave_size: None,
+             msel: HashMap::new(),
+             bsel: HashMap::new(),
+@@ -2004,7 +2008,8 @@
+                     }
+                 }
+             }
+-            if ins.mnemonic.starts_with("image_store") {
++            let atomic = ins.mnemonic.starts_with("image_atomic_");
++            if ins.mnemonic.starts_with("image_store") || atomic {
+                 if let Some(Opnd::Vgpr(base)) = ins.dst.first() {
+                     for reg in u32::from(*base)..u32::from(*base) + u32::from(image_data_registers(ins)) {
+                         if !written.contains(&format!("v{reg}")) {
+@@ -2012,7 +2017,9 @@
+                         }
+                     }
+                 }
+-                continue;
++                if !atomic || ins.raw[0] & (1 << 13) == 0 {
++                    continue;
++                }
+             }
+             // Multi-register destinations: SMEM loads, MIMG results, 64-bit scalar ops.
+             let extra = match ins.enc {
+@@ -4760,7 +4767,7 @@
+ 
+     fn emit_mimg(&mut self, idx: usize, ins: &Insn) -> Result<(), String> {
+         if self.packed.as_ref().is_some_and(|p| p.wide_images.contains(&idx)) {
+-            return packed_root::ps09_raster::emit_wide_image(self, ins);
++            return packed_root::ps09_raster::emit_wide_image(self, ins, "wide_u10");
+         }
+         let rs = self.res.get(&idx).cloned().ok_or("unresolved image")?;
+         // Instruction bits that change operand or result layout (RDNA2 ISA Table 41; bit
+@@ -4838,6 +4845,17 @@
+             if ins.mnemonic.starts_with("image_atomic_") {
+                 // Image atomics → Interlocked* on a RWTexture<uint> texel; vdata carries the
+                 // operand in and the previous value out.
++                if ins.aux.mask == 3 && as_uint && dim == 1 && slot == 0
++                    && ins.raw.as_slice() == [0xf05c1308, 0x00000301]
++                    && self.ex.stage == Stage::Pixel && self.ex.entry.as_deref() == Some("HWRasterizePS")
++                    && matches!(self.ex.resources.as_slice(), [resource] if
++                        (resource.res_type, resource.space, resource.lower, resource.upper) == (6, 0, 0, 0))
++                    && (packed_root::matches_program(&self.ex.isa, 104, 0x62a4894f274d7459)
++                        || packed_root::matches_program(&self.ex.isa, 120, 0xc974f220d28f72d8))
++                {
++                    self.wide_visibility_uav = true;
++                    return packed_root::ps09_raster::emit_wide_image(self, ins, "uav0");
++                }
+                 if ins.aux.mask != 1 {
+                     return Err("image atomic requires a verified two-word binding for DMASK=3 or DMASK=1 for one word".into());
+                 }
+@@ -5524,6 +5542,7 @@
+                 (1, false) => format!("RWTexture2D<{e}>"),
+                 (2, false) => format!("RWTexture3D<{e}>"),
+                 (5, false) => format!("RWTexture2DArray<{e}>"),
++                (1, true) if *slot == 0 && self.wide_visibility_uav => "RWTexture2D<uint64_t>".to_string(),
+                 (1, true) => "RWTexture2D<uint>".to_string(),
+                 (2, true) => "RWTexture3D<uint>".to_string(),
+                 (5, true) => "RWTexture2DArray<uint>".to_string(),
+--- a/crates/tuxbox-xshader/src/hlsl/packed_root/ps09_raster.rs
++++ b/crates/tuxbox-xshader/src/hlsl/packed_root/ps09_raster.rs
+@@ -172,7 +172,7 @@
+     Ok(Some(plan))
+ }
+ 
+-pub(in crate::hlsl) fn emit_wide_image(em: &mut Emitter<'_>, ins: &Insn) -> Result<(), String> {
++pub(in crate::hlsl) fn emit_wide_image(em: &mut Emitter<'_>, ins: &Insn, image: &str) -> Result<(), String> {
+     // With DMASK=3, IMAGE_ATOMIC_UMAX consumes two VGPRs as one unsigned
+     // 64-bit operand. The paired IMAGE_LOAD reads the same RG32_UINT texel.
+     let [Opnd::Vgpr(d)] = ins.dst[..] else {
+@@ -192,14 +192,14 @@
+     em.tmp += 1;
+     em.line("if (exec_lo & 1u) {");
+     if ins.mnemonic == "image_load" {
+-        em.line(&format!("uint64_t val{temp} = wide_u10[{uv}];"));
++        em.line(&format!("uint64_t val{temp} = {image}[{uv}];"));
+         em.line(&format!(
+             "v{d} = (uint)val{temp}; v{} = (uint)(val{temp} >> 32);",
+             d + 1
+         ));
+     } else {
+         em.line(&format!(
+-            "InterlockedMax(wide_u10[{uv}], (uint64_t(v{}) << 32) | v{d});",
++            "InterlockedMax({image}[{uv}], (uint64_t(v{}) << 32) | v{d});",
+             d + 1
+         ));
+     }

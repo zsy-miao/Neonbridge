@@ -1,0 +1,96 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -577,6 +577,75 @@
+     unsafe { create_committed_resource(this, heap, heap_flags, desc, state, clear, iid, out) }
+ }
+ 
++#[repr(C)]
++struct IndirectArgumentDesc {
++    kind: u32,
++    parameters: [u32; 3],
++}
++
++#[repr(C)]
++struct CommandSignatureDesc {
++    byte_stride: u32,
++    argument_count: u32,
++    arguments: *const IndirectArgumentDesc,
++    node_mask: u32,
++}
++
++unsafe extern "system" fn create_command_signature(
++    this: *mut DeviceWrapper,
++    desc: *const CommandSignatureDesc,
++    root: *mut c_void,
++    iid: *const Guid,
++    out: *mut *mut c_void,
++) -> i32 {
++    // SAFETY: this device wrapper holds a live ID3D12Device. Slot 41 is
++    // ID3D12Device::CreateCommandSignature with the signature below.
++    let real = unsafe { (*this).real };
++    let create: unsafe extern "system" fn(
++        *mut c_void, *const CommandSignatureDesc, *mut c_void, *const Guid, *mut *mut c_void,
++    ) -> i32 = unsafe { core::mem::transmute(*real_vtbl(real).add(41)) };
++
++    // Frosty submits three single-argument dispatch signatures to this slot.
++    let guest = unsafe { desc.as_ref() }.filter(|d| {
++        d.argument_count == 1 && !d.arguments.is_null()
++    });
++    if let Some(guest) = guest {
++        // SAFETY: the caller supplies one D3D12_INDIRECT_ARGUMENT_DESC. Only
++        // its type is defined for dispatch operations; leave its union unread.
++        let guest_kind = unsafe { (*guest.arguments).kind };
++        // Frosty associates its global root signature with this dispatch. The
++        // desktop API requires a null root when no argument changes root state.
++        if guest_kind == 9 && guest.byte_stride == 104 && !root.is_null() {
++            let hr = unsafe { create(real, desc, core::ptr::null_mut(), iid, out) };
++            record("d3d12_xs", "CreateCommandSignature", &format!(
++                "argument=9 stride=104 root=omitted -> hr={hr:#010x}"
++            ));
++            return hr;
++        }
++        let host_kind = match (guest_kind, guest.byte_stride, root.is_null()) {
++            (105, 12, true) => Some(2),  // D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH
++            (107, 16, true) => Some(10), // D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH
++            _ => None,
++        };
++        if let Some(kind) = host_kind {
++            let argument = IndirectArgumentDesc { kind, parameters: [0; 3] };
++            let translated = CommandSignatureDesc {
++                byte_stride: guest.byte_stride,
++                argument_count: 1,
++                arguments: &argument,
++                node_mask: guest.node_mask,
++            };
++            // SAFETY: both temporary descriptors live through the COM call.
++            let hr = unsafe { create(real, &translated, root, iid, out) };
++            record("d3d12_xs", "CreateCommandSignature", &format!(
++                "argument={guest_kind}->{kind} stride={} -> hr={hr:#010x}", guest.byte_stride
++            ));
++            return hr;
++        }
++    }
++    unsafe { create(real, desc, root, iid, out) }
++}
++
+ // Forwarding thunk: this(rcx) -> this->real; jmp real->vtbl[slot].
+ macro_rules! fwd {
+     ($name:ident, $slot:expr) => {
+@@ -620,7 +689,7 @@
+ fwd_sret!(f25, 25); fwd_sret!(f26, 26); // return structs by value: `this` is in rdx
+ fwd!(f27, 27); fwd!(f28, 28); fwd!(f29, 29); fwd!(f30, 30); fwd!(f31, 31); fwd!(f32, 32);
+ fwd!(f33, 33); fwd!(f34, 34); fwd!(f35, 35); fwd!(f36, 36); fwd!(f37, 37); fwd!(f38, 38);
+-fwd!(f39, 39); fwd!(f40, 40); fwd!(f41, 41); fwd!(f42, 42); fwd!(f43, 43);
++fwd!(f39, 39); fwd!(f40, 40); fwd!(f42, 42); fwd!(f43, 43);
+ // Slots 44+ are Xbox-specific device extensions (NOT PC ID3D12Device1-8), so they
+ // are NOT forwarded by slot number. Unrecognized ones get this fail-loud stub
+ // (returns E_NOTIMPL) so the game fails that call cleanly and names it in its log,
+@@ -1292,7 +1361,7 @@
+             f21 as usize, f22 as usize, f23 as usize, f24 as usize, f25 as usize, f26 as usize,
+             f27 as usize, f28 as usize, f29 as usize, f30 as usize, f31 as usize, f32 as usize,
+             f33 as usize, f34 as usize, f35 as usize, f36 as usize, f37 as usize, f38 as usize,
+-            f39 as usize, f40 as usize, f41 as usize, f42 as usize, f43 as usize,
++            f39 as usize, f40 as usize, create_command_signature as usize, f42 as usize, f43 as usize,
+         ];
+         // 44..160: Xbox-extension slots — fail-loud stub unless intercepted below.
+         while v.len() < 160 {

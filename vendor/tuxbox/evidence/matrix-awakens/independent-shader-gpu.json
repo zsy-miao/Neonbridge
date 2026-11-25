@@ -1,0 +1,128 @@
+{
+  "runner": "tools/check_independent_shaders.py",
+  "scope": "Translated desktop DXIL executed by the full Linux fork through D3D12CreateDevice. The prefix contains TuxBox Xbox providers. These shader probes create desktop D3D12 pipelines.",
+  "compilers": {
+    "previous": "898564347975930cd1a4b40085ff6837c192f3542e445e371cf7a966b887099f",
+    "strict": "1112512021c2c8eb77679e554003e8d879fc01211b09799b62e81caab38e010f"
+  },
+  "tools": {
+    "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+  },
+  "graphics_stack": {
+    "proton": "1795317580 experimental-11.0-20261027b-2-g9b0a6ae",
+    "d3d12_dlls": {
+      "d3d12.dll": "bced4b8e7ec5d80d4b3d21f2f97f0bbc36f236fc1979f85c626544e94b4863ec",
+      "d3d12core.dll": "d52f0780e69ead1e929e89471a671585eb5213d27f6bc10a0c29d16322c9e851"
+    },
+    "config": "cbv_16_byte_alignment",
+    "disabled_extensions": "VK_EXT_descriptor_buffer"
+  },
+  "adapters": {
+    "AMD": {
+      "pci_id": "1002:13c0",
+      "reported_device": "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+    },
+    "NVIDIA": {
+      "pci_id": "10de:2705",
+      "reported_device": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+    }
+  },
+  "pixel": {
+    "fixtures": "tools/reference/independent-shaders/pixel.json",
+    "unique": 99,
+    "coverage": {
+      "constant_render_targets": 56,
+      "depth_only": 23,
+      "unconditional_discard": 20
+    },
+    "fixture_check": "All constant outputs, depth-only returns and unconditional discard operations agreed with the previous compiler\u2019s independently disassembled DXIL.",
+    "draw": "16 \u00d7 16 triangle, D32_FLOAT cleared to 0.875, triangle depth 0.375, less comparison, 9 \u00d7 9 scissor. Color targets initialized to RGBA (0.25, -0.5, 0.75, 1.5) trimmed to R32, RG32 or RGBA32.",
+    "depth_pixels_per_draw": 256,
+    "scissored_pixels": 81,
+    "guard_pixels": 175,
+    "color_planes_per_run": 70,
+    "guest_sha256": "4936373ef1ef132f3c426f2873bbb3d972dba7c1fcbdf77383e1fbb0d83f7a1c",
+    "fixtures_sha256": "fd8f1bf53feeb58e0d446e6c2ef2ba6c7bdb8ce38b5a370f53277d48fe7d424e"
+  },
+  "compute": {
+    "fixtures": "tools/reference/independent-shaders/compute.json",
+    "unique": 7,
+    "structured_writers": 3,
+    "empty_dispatches": 4,
+    "dispatch": "One thread group with a structured view beginning at byte 384. The 384-word allocation starts with a distinct guard value at each word. All writes and all untouched words are compared.",
+    "buffer_words_per_dispatch": 384,
+    "expected_modified_words_per_run": 4,
+    "guest_sha256": "b4b5e7499cf6bb8da3b1a49129686b0a0817e8d64851611d13ddc39aed928fba",
+    "fixtures_sha256": "f9adb48740d6f0e18ec9263610db30f646ae47f0f38ff8c781397ae1e2998e96"
+  },
+  "runs": [
+    {
+      "stage": "pixel",
+      "compiler": "previous",
+      "adapter": "AMD",
+      "matched": 99,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "8bdaee51f729134112f4be5d83f56579ac1bbfe7ecc518d1eb336dc682c84cf3"
+    },
+    {
+      "stage": "pixel",
+      "compiler": "previous",
+      "adapter": "NVIDIA",
+      "matched": 99,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "8bdaee51f729134112f4be5d83f56579ac1bbfe7ecc518d1eb336dc682c84cf3"
+    },
+    {
+      "stage": "pixel",
+      "compiler": "strict",
+      "adapter": "AMD",
+      "matched": 99,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "8bdaee51f729134112f4be5d83f56579ac1bbfe7ecc518d1eb336dc682c84cf3"
+    },
+    {
+      "stage": "pixel",
+      "compiler": "strict",
+      "adapter": "NVIDIA",
+      "matched": 99,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "8bdaee51f729134112f4be5d83f56579ac1bbfe7ecc518d1eb336dc682c84cf3"
+    },
+    {
+      "stage": "compute",
+      "compiler": "previous",
+      "adapter": "AMD",
+      "matched": 7,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "fe8d892c9de72576fa1dc14fb60cc31243982db6182b2fa1c8514c717ffbde01"
+    },
+    {
+      "stage": "compute",
+      "compiler": "previous",
+      "adapter": "NVIDIA",
+      "matched": 7,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "fe8d892c9de72576fa1dc14fb60cc31243982db6182b2fa1c8514c717ffbde01"
+    },
+    {
+      "stage": "compute",
+      "compiler": "strict",
+      "adapter": "AMD",
+      "matched": 7,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "fe8d892c9de72576fa1dc14fb60cc31243982db6182b2fa1c8514c717ffbde01"
+    },
+    {
+      "stage": "compute",
+      "compiler": "strict",
+      "adapter": "NVIDIA",
+      "matched": 7,
+      "guest_exit": 0,
+      "all_readbacks_sha256": "fe8d892c9de72576fa1dc14fb60cc31243982db6182b2fa1c8514c717ffbde01"
+    }
+  ],
+  "aggregate_hash_format": "SHA-256 of UTF-8 lines sorted by native shader SHA-256. Each line contains the native shader SHA-256, a space, the complete readback SHA-256 and LF.",
+  "total_draws": 396,
+  "total_dispatches": 28
+}

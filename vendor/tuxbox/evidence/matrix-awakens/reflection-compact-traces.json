@@ -1,0 +1,123 @@
+{
+  "scope": "Global 576 ReflectionCompactTracesCS, dispatched with the packaged root signature and real depth, material and ray textures. CPU-modeled output coordinates, packed values, atomic count and guards cover empty, full, mixed, individual pixels crossing wave32 boundaries, and one or zero active source tiles. The shader reserves an extra queue entry when its last lane is inactive.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 576,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "source_sha256": "e5f9402ea4a5abe3a000a639d1308c40589c4a7e41f8edb4cf676dc04d794ec4",
+      "dxil_sha256": "179df2a505e301635a7ba678a45ee466df7bb48c5951a44085efc7c748fa7746",
+      "cases": {
+        "none": {
+          "selected": 0,
+          "counter": 6,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "full": {
+          "selected": 128,
+          "counter": 133,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "mixed": {
+          "selected": 84,
+          "counter": 90,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "lane31": {
+          "selected": 2,
+          "counter": 8,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "lane32": {
+          "selected": 2,
+          "counter": 8,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "lane63": {
+          "selected": 2,
+          "counter": 7,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "one_tile": {
+          "selected": 64,
+          "counter": 70,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "no_tiles": {
+          "selected": 0,
+          "counter": 6,
+          "checked_words": 528,
+          "mismatches": 0
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "source_sha256": "e5f9402ea4a5abe3a000a639d1308c40589c4a7e41f8edb4cf676dc04d794ec4",
+      "dxil_sha256": "179df2a505e301635a7ba678a45ee466df7bb48c5951a44085efc7c748fa7746",
+      "cases": {
+        "none": {
+          "selected": 0,
+          "counter": 6,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "full": {
+          "selected": 128,
+          "counter": 133,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "mixed": {
+          "selected": 84,
+          "counter": 90,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "lane31": {
+          "selected": 2,
+          "counter": 8,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "lane32": {
+          "selected": 2,
+          "counter": 8,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "lane63": {
+          "selected": 2,
+          "counter": 7,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "one_tile": {
+          "selected": 64,
+          "counter": 70,
+          "checked_words": 528,
+          "mismatches": 0
+        },
+        "no_tiles": {
+          "selected": 0,
+          "counter": 6,
+          "checked_words": 528,
+          "mismatches": 0
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "scope": "Global 1016 CompactFeedbackHashTableCS translated from the supplied package and dispatched through its original root signature. One 64-lane workgroup per case checks the allocator, packed output, and guard words.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 1016,
+  "results": {
+    "amd": {
+      "gpu": {
+        "adapter": "1002:13c0"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1016": {
+          "source_sha256": "c637d4b72b354ef2f744feda6d55cfbc93973a2b283f04c28a3b8df0672f91f4",
+          "dxil_sha256": "2f37ff4d28c483e62cec82a4903c5cc9a7c56c9fe0a31005049b09367d2a4451"
+        }
+      },
+      "cases": {
+        "feedback_empty": {
+          "selected": 0,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_sparse": {
+          "selected": 6,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_partial": {
+          "selected": 4,
+          "count": 33,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_capacity": {
+          "selected": 6,
+          "count": 64,
+          "capacity": 6,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_indices": {
+          "selected": 6,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 33,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_full": {
+          "selected": 64,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    },
+    "nvidia": {
+      "gpu": {
+        "adapter": "10de:2705"
+      },
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "exit": 0,
+      "libraries": {
+        "1016": {
+          "source_sha256": "c637d4b72b354ef2f744feda6d55cfbc93973a2b283f04c28a3b8df0672f91f4",
+          "dxil_sha256": "2f37ff4d28c483e62cec82a4903c5cc9a7c56c9fe0a31005049b09367d2a4451"
+        }
+      },
+      "cases": {
+        "feedback_empty": {
+          "selected": 0,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_sparse": {
+          "selected": 6,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_partial": {
+          "selected": 4,
+          "count": 33,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_capacity": {
+          "selected": 6,
+          "count": 64,
+          "capacity": 6,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_indices": {
+          "selected": 6,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 33,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        },
+        "feedback_full": {
+          "selected": 64,
+          "count": 64,
+          "capacity": 80,
+          "valid_limit": 64,
+          "checked_words": 160,
+          "mismatches": 0,
+          "first_mismatches": []
+        }
+      }
+    }
+  }
+}

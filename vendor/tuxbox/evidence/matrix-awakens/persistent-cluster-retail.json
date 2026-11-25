@@ -1,0 +1,142 @@
+{
+  "title": "The Matrix Awakens, Xbox Series X|S, build 1.20.1831.3754",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": "Linux, Valve Proton Experimental 1793301796",
+  "profile": "Existing reduced-effects configuration with Nanite and mesh shader rasterization enabled. Ray tracing and audio disabled.",
+  "user_engine_ini_sha256": "7107f7963b04c29ae3173591423b21736d240830b113f1ccc1aa1ed9e0b75f49",
+  "d3d12_xs_sha256": "847b82925c9311b93b4beaa8cf141959b2435f0f87c35de7bd818aa6e6357a6a",
+  "adapter": "1002:13c0",
+  "driver": "Mesa RADV 26.2.6",
+  "display": "Headless gamescope with Xwayland and DRI3",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "date_utc": "2026-11-21",
+  "compiler_sha256": "32d16ac56a82035fe4edb895299f0a0c59f9e649e729c4410f4024cc7c1aeb2f",
+  "previous_compiler_sha256": "073d268afd5157265f6fb3bce5c60081c04c8ed4be3a11a2011b9ce65b98b52b",
+  "entry": 1825,
+  "entry_point": "PersistentClusterCull",
+  "source_sha256": "5feb276685031ace58dc8e00634bb712f13caf79dd7cb25ed314177f36fb6e6a",
+  "dxil_sha256": "65cbd2ba33008312dbb82f8db5c139f65733dcaa7a7e6383797ad87fdeb40a2f",
+  "previous": {
+    "trace_sha256": "0c2e68624766d2f527eae7e4fe6ec8c37c681531073220760817de27d6fcb32c",
+    "launcher_log_sha256": "099766f3b3cfee5dd80e372955d81d7a92104354c98843a131a8b889d334d97a",
+    "render_thread": "0258",
+    "exit_code": 1,
+    "seconds": 4.0,
+    "compiled_target_on_demand": false,
+    "compute_requests_from_target": [
+      "5feb276685031ace58dc8e00634bb712f13caf79dd7cb25ed314177f36fb6e6a"
+    ],
+    "failed_source_sha256": "5feb276685031ace58dc8e00634bb712f13caf79dd7cb25ed314177f36fb6e6a",
+    "compiler_diagnostic": "unverified EXEC election at 0xf68"
+  },
+  "on_demand": {
+    "trace_sha256": "59c13205e66b0f69e97aee606b934fb04951856c73b2b7c10870f80f7db2018d",
+    "launcher_log_sha256": "b82a02cdf202054968ad718c8a85c179117a2d5d592581288a151ef34ff0bf18",
+    "render_thread": "0258",
+    "exit_code": 1,
+    "seconds": 7.6,
+    "compiled_target_on_demand": true,
+    "compute_requests_from_target": [
+      "5feb276685031ace58dc8e00634bb712f13caf79dd7cb25ed314177f36fb6e6a",
+      "887020f74e1ba4955bbd38b2665fb7c0a25c87edd88b11cd455ea82bd84fa1a9",
+      "1e7aa6eec3deeeb634429870c7d8bfce63591c0e8c0bd28b08e3af0e76b865e1"
+    ],
+    "failed_source_sha256": "1e7aa6eec3deeeb634429870c7d8bfce63591c0e8c0bd28b08e3af0e76b865e1",
+    "compiler_diagnostic": "unknown two-word visibility atomic [image_atomic_umax @ 0xbe0]"
+  },
+  "prepared": {
+    "trace_sha256": "c18b0e409d5bfa750fa14821a65f46d2d4a1430cc533a4d6da3f55f9afbbfe1d",
+    "launcher_log_sha256": "3c5ab20e5ef1c0d5e21ca8128af2953d29f33a993afcf1f1dfd006aaa5f11086",
+    "render_thread": "0258",
+    "exit_code": 1,
+    "seconds": 4.6,
+    "compiled_target_on_demand": false,
+    "compute_requests_from_target": [
+      "5feb276685031ace58dc8e00634bb712f13caf79dd7cb25ed314177f36fb6e6a",
+      "887020f74e1ba4955bbd38b2665fb7c0a25c87edd88b11cd455ea82bd84fa1a9",
+      "1e7aa6eec3deeeb634429870c7d8bfce63591c0e8c0bd28b08e3af0e76b865e1"
+    ],
+    "failed_source_sha256": "1e7aa6eec3deeeb634429870c7d8bfce63591c0e8c0bd28b08e3af0e76b865e1",
+    "compiler_diagnostic": "unknown two-word visibility atomic [image_atomic_umax @ 0xbe0]"
+  },
+  "subsequent_shaders": [
+    {
+      "entry": 1818,
+      "entry_point": "CalculateSafeRasterizerArgs",
+      "source_sha256": "887020f74e1ba4955bbd38b2665fb7c0a25c87edd88b11cd455ea82bd84fa1a9"
+    },
+    {
+      "entry": 3246,
+      "entry_point": "MicropolyRasterize",
+      "source_sha256": "1e7aa6eec3deeeb634429870c7d8bfce63591c0e8c0bd28b08e3af0e76b865e1"
+    }
+  ],
+  "family": {
+    "entry_point": "PersistentClusterCull",
+    "archive_entries": [
+      1790,
+      1793,
+      1795,
+      1796,
+      1797,
+      1798,
+      1800,
+      1801,
+      1802,
+      1803,
+      1804,
+      1806,
+      1807,
+      1808,
+      1809,
+      1812,
+      1814,
+      1815,
+      1816,
+      1817,
+      1819,
+      1820,
+      1821,
+      1822,
+      1823,
+      1824,
+      1825,
+      1826,
+      1827,
+      1828,
+      1829,
+      1831
+    ],
+    "previous_dxil_validated": 0,
+    "dxil_validated": [
+      1790,
+      1807,
+      1814,
+      1825
+    ],
+    "gpu_verified_on_both": [
+      1790,
+      1807,
+      1814,
+      1825
+    ],
+    "remaining_frontend_diagnostics": {
+      "unsupported PersistentClusterCull resource bindings": 28
+    }
+  },
+  "scope": "Global compute entries whose FSSM entry point is PersistentClusterCull. GPU readbacks use controlled scene data. The Radeon retail traces verify pipeline creation order before the Nanite menu.",
+  "first_boot_preparation": {
+    "first_with_cluster_culler": {
+      "compiled": 1,
+      "cached": 216,
+      "launcher_log_sha256": "6130c5b158e6d7b01495c7fe5bfa357aa2d881f66b2c80adc4dfcad92497a700"
+    },
+    "warm": {
+      "compiled": 0,
+      "cached": 217,
+      "launcher_log_sha256": "d2619ca2f4f84691c0ce1ad840b826bf2d69219984ebbbd788e82f1a88451f81"
+    },
+    "profiled_programs": 210,
+    "linked_variants": 7
+  }
+}

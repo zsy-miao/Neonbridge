@@ -1,0 +1,234 @@
+name = "vitoriabr"
+about = "VItoriaBr 009856f, GPL-3.0"
+upstream = "https://github.com/uiliannn/VItoriaBr"
+build = ["cargo", "build", "--release", "-p", "victory", "--locked"]   # README.md:95 (+--locked; Cargo.lock vendored)
+watch = ["apps", "crates", "Cargo.toml", "Cargo.lock"]
+exe = "target/release/victory.exe"   # README.md:98
+cwd = "target/release"
+run = ["run", "{game_exe}", "--execute"]   # README.md:98,117 (no --console given)
+game_env = "VICTORY_GAME_DIR"   # Neonbridge: the game folder for victory's config
+cache_env = "VICTORY_CACHE_DIR"   # Neonbridge: this runtime's own %LOCALAPPDATA%\6ixpack\vitoriabr\cache (translators differ)
+prewarm = ["translate", "{game}", "--warm", "all", "--jobs", "{jobs}"]   # Neonbridge: apps/victory/src/translate.rs:159 (`--warm all`: every container), as vendor/victory
+agility = false   # no D3D12SDKVersion/D3D12SDKPath export anywhere in the tree
+
+# options: KEY=values (default X): text. Env names grepped from the Rust source (first read site); defaults "unset" unless noted
+options = [
+  "VICTORY_FAST_CORES=0|1 (default 1): the submit and copy-back threads ask for the fast cores of a hybrid CPU (fxceless 0b0074e), read at crates/victory-gpu/src/framelog.rs:219",
+  "VICTORY_DISK_CORES=slow (default off): the DirectStorage workers ask for the slow cores (fxceless 0b0074e), read at crates/victory-hle/src/modules/dstorage.rs:499",
+  "--console=series-x|series-s (default series-x): console profile, apps/victory/src/main.rs:123",
+  "--unimplemented=trap (default trap): what unimplemented imports do",
+  "--strict=true|false (default false): disable host pass-through",
+  "game_dir=<path> (default unset): victory.example.toml [paths]",
+  "VICTORY_ALIAS_COPY=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/resource.rs:1218",
+  "VICTORY_ASK_ONCE=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/watch.rs:189",
+  "VICTORY_AUDIO_CAPTURE=<value> (default off (any value on)): read at crates/victory-hle/src/modules/audio/capture.rs:69",
+  "VICTORY_AUDIO_CAPTURE_OF=<value> (default unset): read at crates/victory-hle/src/modules/audio/capture.rs:49",
+  "VICTORY_BAKE_TEXTURES_MS=<value> (default 1500): read at crates/victory-gpu/src/draw.rs:94",
+  "VICTORY_BARRIER_TEST=<value> (default off): read at crates/victory-gpu/src/copystat.rs:243",
+  "VICTORY_BCPACK_CASES=<value> (default unset): read at crates/victory-formats/src/bcpack.rs:1577",
+  "VICTORY_BCPACK_TABLES=<value> (default unset): read at crates/victory-formats/src/bcpack.rs:1576",
+  "VICTORY_BVH_BUILDER=<value> (default off (=1 on)): read at crates/victory-gpu/src/pipeline.rs:287",
+  "VICTORY_BVH_QUARANTINE=<value> (default off (=1 on)): read at crates/victory-gpu/src/pipeline.rs:263",
+  "VICTORY_CACHE_DIR=<value> (default default cache dir): read at crates/victory-core/src/config.rs:88",
+  "VICTORY_CAPTURE=<value> (default unset): read at crates/victory-gpu/src/capture.rs:15",
+  "VICTORY_CAPTURE_FRAMES=<value> (default unset): read at crates/victory-gpu/src/capture.rs:25",
+  "VICTORY_CAPTURE_WORLD=<value> (default off (any value on)): read at crates/victory-gpu/src/capture.rs:120",
+  "VICTORY_CAPTURE_WORLD_ALSO=<value> (default unset): read at crates/victory-gpu/src/capture.rs:43",
+  "VICTORY_CARD_ACCOUNTING=<value> (default off (=1 on)): read at crates/victory-gpu/src/draw.rs:1641",
+  "VICTORY_CARD_BUFFERS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/shadow.rs:139",
+  "VICTORY_CARD_BUFFERS_MB=<value> (default 1024; play script sets 6144 (README.md:111)): read at crates/victory-gpu/src/shadow.rs:158",
+  "VICTORY_CARD_BUFFERS_MIN_MB=<value> (default 1): read at crates/victory-gpu/src/shadow.rs:158",
+  "VICTORY_CARD_FETCH_INFLIGHT=<value> (default off (=1 on)): README says keep off (off by default, and only with the relay); read at crates/victory-gpu/src/host.rs:1601",
+  "VICTORY_CARD_FETCH_INFLIGHT_MB=<value> (default 64): read at crates/victory-gpu/src/host.rs:1611",
+  "VICTORY_CARD_REHASH_RUNS=<value> (default off (=1 on)): read at crates/victory-gpu/src/host.rs:1734",
+  "VICTORY_CARD_ROOM_FOR_BUFFERS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/shadow.rs:196",
+  "VICTORY_CARD_ROOM_FOR_TARGETS_MB=<value> (default 3072): read at crates/victory-gpu/src/resource.rs:1468",
+  "VICTORY_CARD_WINDOWS_MB=<value> (default 0): read at crates/victory-gpu/src/shadow.rs:325",
+  "VICTORY_CLZERO_ASK=<value> (default on (=1 off)): read at crates/victory-loader/src/console_insn.rs:28",
+  "VICTORY_COMMITTED_QUERY=<value> (default off (=1 on)): read at crates/victory-gpu/src/texture.rs:1223",
+  "VICTORY_CONFIG=<value> (default victory.toml): read at crates/victory-core/src/config.rs:49",
+  "VICTORY_CONSOLE_DXC=<value> (default unset): read at crates/victory-shader/src/emit/diff_tests.rs:655",
+  "VICTORY_COPY_ASK=<value> (default off (=1 on)): read at crates/victory-gpu/src/host.rs:6025",
+  "VICTORY_COPY_MODE=<value> (default off (plain|none)): read at crates/victory-gpu/src/copystat.rs:147",
+  "VICTORY_CRASH_SAVE=<value> (default unset): read at apps/victory/src/run.rs:144",
+  "VICTORY_CUT_WAITS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/queue.rs:110",
+  "VICTORY_CUT_WRITES=<value> (default off (=1 on)): read at crates/victory-gpu/src/list.rs:2013",
+  "VICTORY_D3D12_BACKGROUND=<value> (default driver default (=0 sets background processing off)): read at crates/victory-gpu/src/host.rs:613",
+  "VICTORY_D3D12_DEBUG=<value> (default off (any value on)): read at crates/victory-gpu/src/host.rs:557",
+  "VICTORY_D3D12_DRED=<value> (default off (any value on)): read at crates/victory-gpu/src/host.rs:1264",
+  "VICTORY_D3D12_GBV=<value> (default off (any value on)): read at crates/victory-gpu/src/host.rs:568",
+  "VICTORY_D3D12_WARP=<value> (default off (any value on)): read at crates/victory-gpu/src/host.rs:597",
+  "VICTORY_DATA_DIR=<value> (default default data dir): read at crates/victory-core/src/config.rs:91",
+  "VICTORY_DEPTH_TWINS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/resource.rs:449",
+  "VICTORY_DESC_WHY=<value> (default off (any value on)): read at crates/victory-shader/src/emit/lower.rs:5902",
+  "VICTORY_DIFF_ONLY=<value> (default unset): read at crates/victory-shader/src/emit/diff_tests.rs:775",
+  "VICTORY_DIRECT_WRITES=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/host.rs:6151",
+  "VICTORY_DISPLAY_MODE=<value> (default 3840x2160; play script sets 1920x1080 (README.md:115)): read at crates/victory-gpu/src/dxgi.rs:230",
+  "VICTORY_DSTORAGE_RETRIES=<value> (default 12): read at crates/victory-hle/src/modules/dstorage.rs:1103",
+  "VICTORY_DUMP_MATCH=<value> (default unset): read at apps/victory/src/translate.rs:433",
+  "VICTORY_DUMP_TARGETS=<value> (default off (any value on)): read at crates/victory-gpu/src/capture.rs:344",
+  "VICTORY_DXIL=<value> (default Windows Kits 10 bin dxil.dll): read at crates/victory-shader/src/emit/validator.rs:122",
+  "VICTORY_EARLY_TEXTURES_MS=<value> (default 12): read at crates/victory-gpu/src/draw.rs:94",
+  "VICTORY_EMIT_DUMP=<value> (default unset): read at apps/victory/src/translate.rs:623",
+  "VICTORY_EXIT_CHILD=<value> (default off (any value on)): read at crates/victory-loader/src/threads.rs:407",
+  "VICTORY_F16_NEAREST=<value> (default off (=1 on)): read at crates/victory-shader/src/emit/lower.rs:1011",
+  "VICTORY_FAIL_DUMP=<value> (default unset): read at apps/victory/src/translate.rs:462",
+  "VICTORY_FIRSTLANE_OWN=<value> (default off (=1 on)): read at crates/victory-shader/src/emit/lower.rs:7788",
+  "VICTORY_FIRST_HALF=<value> (default on (unset = 1; =0 off)): read at crates/victory-shader/src/emit/lower.rs:1536",
+  "VICTORY_FULL_CARD_PASS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/draw.rs:403",
+  "VICTORY_GAME_DIR=<value> (default unset): read at crates/victory-core/src/config.rs:95",
+  "VICTORY_GPU_TIMING=<value> (default off (any value on)): read at crates/victory-gpu/src/host.rs:1284",
+  "VICTORY_GROUP_SYNC=<value> (default 2): read at crates/victory-shader/src/emit/mod.rs:159",
+  "VICTORY_GUARD_ASK=<value> (default off (=1 on)): read at crates/victory-gpu/src/watch.rs:461",
+  "VICTORY_GUARD_HOLES=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/watch.rs:586",
+  "VICTORY_HEAP_RECHECK=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/draw.rs:418",
+  "VICTORY_HEAP_SYNC=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/descriptor.rs:174",
+  "VICTORY_HEAP_SYNC_TABLES=<value> (default off (=1 on)): read at crates/victory-gpu/src/descriptor/host.rs:2215",
+  "VICTORY_HEAP_TEXTURES=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/draw.rs:1722",
+  "VICTORY_HOST_LOCK_CHILD=<value> (default unset): read at crates/victory-hle/src/host.rs:158",
+  "VICTORY_HOST_MAX_WAVE=<value> (default unset): read at apps/victory/src/translate.rs:246",
+  "VICTORY_HOST_WAVE=<value> (default unset): read at apps/victory/src/main.rs:184",
+  "VICTORY_INDIRECT_WINDOW=<value> (default off (=1 on)): read at crates/victory-gpu/src/draw.rs:184",
+  "VICTORY_INPLACE=<value> (default 0): read at crates/victory-gpu/src/inplace.rs:90",
+  "VICTORY_INPLACE_MB=<value> (default 4096): read at crates/victory-gpu/src/inplace.rs:98",
+  "VICTORY_INPLACE_PROBE=<value> (default 0): read at crates/victory-gpu/src/inplace.rs:63",
+  "VICTORY_INPLACE_PROBE_MB=<value> (default 64): read at crates/victory-gpu/src/inplace.rs:1080",
+  "VICTORY_JOIN_COPIES=<value> (default off (=1 on); play script sets 1 (README.md:114)): read at crates/victory-gpu/src/host.rs:2927",
+  "VICTORY_KEEP_SNAPSHOTS=<value> (default off (=1 on)): read at crates/victory-gpu/src/shadow.rs:1945",
+  "VICTORY_KEEP_SNAPSHOTS_MB=<value> (default 256): read at crates/victory-gpu/src/shadow.rs:1956",
+  "VICTORY_KEEP_VIEWS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/descriptor/host.rs:2895",
+  "VICTORY_KEYS=<value> (default unset): read at crates/victory-hle/src/modules/gameinput.rs:1208",
+  "VICTORY_LATE_WAIT=<value> (default 3 with the relay on, else 0): read at crates/victory-gpu/src/host.rs:1918",
+  "VICTORY_LATE_WAITS=<value> (default off (=1 on)): read at crates/victory-gpu/src/frame.rs:138",
+  "VICTORY_LATE_WAIT_LISTS=<value> (default 256): read at crates/victory-gpu/src/host.rs:2200",
+  "VICTORY_LATE_WAIT_WRITES=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/host.rs:2210",
+  "VICTORY_LAZY_PRELUDE=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/host.rs:820",
+  "VICTORY_LAZY_TEXTURES=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/resource.rs:1260",
+  "VICTORY_LEVELS_MIN_KB=<value> (default 1024): read at crates/victory-gpu/src/tiles.rs:120",
+  "VICTORY_LEVELS_ON_DEMAND=<value> (default off (=1 on)): read at crates/victory-gpu/src/tiles.rs:81",
+  "VICTORY_LIBRARY_HANDLE=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/pipeline/library.rs:90",
+  "VICTORY_LIBRARY_LOCK=<value> (default off (=1 on)): read at crates/victory-gpu/src/pipeline/library.rs:427",
+  "VICTORY_LIBRARY_MAP=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/pipeline/library.rs:81",
+  "VICTORY_LIBRARY_TRIM=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/pipeline/library.rs:370",
+  "VICTORY_LIST_POOL=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/list.rs:232",
+  "VICTORY_LIST_SLOTS=<value> (default unset): read at crates/victory-gpu/src/draw.rs:3293",
+  "VICTORY_LOG=<value> (default RUST_LOG, else the built-in level): read at crates/victory-core/src/logging.rs:21",
+  "VICTORY_MAPPED_BY_PAGE=<value> (default off (=1 on)): read at crates/victory-gpu/src/texture.rs:1308",
+  "VICTORY_MEMORY_MAP=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/copystat.rs:493",
+  "VICTORY_MERGE_RACE=<value> (default off (=1 on)): read at crates/victory-gpu/src/shadow.rs:812",
+  "VICTORY_MESH_OUTPUT_STRICT=<value> (default off (any value on)): read at crates/victory-shader/src/emit/lower.rs:4238",
+  "VICTORY_MESH_TEST=<value> (default off (skip|scissor)): read at crates/victory-gpu/src/draw.rs:295",
+  "VICTORY_PAGE_WRITES=<value> (default 1 (0|1|slots|all)): read at crates/victory-gpu/src/watch.rs:801",
+  "VICTORY_PAIRS=<value> (default unset): read at apps/victory/src/translate.rs:261",
+  "VICTORY_PC_DXC=<value> (default dxc.exe beside dxil.dll): read at crates/victory-gpu/src/pipeline/host.rs:999",
+  "VICTORY_PIPELINE_WAIT_MS=<value> (default 500): read at crates/victory-gpu/src/pipeline/make.rs:101",
+  "VICTORY_PIPELINE_WAIT_SHARED=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/pipeline/make.rs:159",
+  "VICTORY_PLACED_FILLER=<value> (default off (=1 on)): read at crates/victory-gpu/src/resource.rs:2596",
+  "VICTORY_QUEUE_WAIT=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/queue.rs:72",
+  "VICTORY_READ_BACK=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/list.rs:1068",
+  "VICTORY_REFRESH_CHECK=<value> (default off (=1 on)): read at crates/victory-gpu/src/shadow.rs:2963",
+  "VICTORY_REF_PS=<value> (default unset): read at crates/victory-shader/src/emit/mod.rs:1097",
+  "VICTORY_REF_VS=<value> (default unset): read at crates/victory-shader/src/emit/mod.rs:1098",
+  "VICTORY_RELAUNCHED_FROM=<value> (default unset): read at crates/victory-hle/src/modules/lifecycle.rs:234",
+  "VICTORY_RELAY=<value> (default 2 (=0 off, =1 stage 1); play script sets 2 (README.md:109)): read at crates/victory-gpu/src/host.rs:2018",
+  "VICTORY_REUPLOAD_WHEN_FULL=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/draw.rs:411",
+  "VICTORY_ROOT_SRV_DIRECT=<value> (default on (any value off)): read at crates/victory-gpu/src/pipeline/host.rs:279",
+  "VICTORY_ROOT_UAV_MB=<value> (default no limit): read at crates/victory-gpu/src/draw.rs:1196",
+  "VICTORY_ROOT_VIEW_MB=<value> (default no limit): read at crates/victory-gpu/src/draw.rs:465",
+  "VICTORY_SAVE_CHILD=<value> (default unset): read at crates/victory-hle/src/modules/xgamesave.rs:1012",
+  "VICTORY_SAVE_OP=<value> (default unset): read at crates/victory-hle/src/modules/xgamesave.rs:1012",
+  "VICTORY_SAVE_STOP=<value> (default unset): read at crates/victory-hle/src/modules/xgamesave.rs:960",
+  "VICTORY_SCISSOR_TEST=<value> (default off (=full on)): read at crates/victory-gpu/src/draw.rs:286",
+  "VICTORY_SCRATCH_POOL=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/host.rs:1377",
+  "VICTORY_SHADER_CACHE_KEY=<value> (default source hash (=exe hashes the exe)): read at crates/victory-gpu/src/shader_cache.rs:58",
+  "VICTORY_SHADER_CENSUS=<value> (default unset): read at apps/victory/src/translate.rs:575",
+  "VICTORY_SHADER_LOOP_LIMIT=<value> (default 4096 (lower::LOOP_LIMIT)): read at crates/victory-shader/src/emit/mod.rs:135",
+  "VICTORY_SHADER_OPT=<value> (default all passes (bitcode::opt::ALL)): read at crates/victory-shader/src/emit/mod.rs:183",
+  "VICTORY_SHADER_SAVE=<value> (default unset): read at crates/victory-gpu/src/pipeline.rs:141",
+  "VICTORY_SHADER_SOURCE_HASH=<value> (default build-time env! (not a run var)): read at crates/victory-shader/src/emit/mod.rs:194",
+  "VICTORY_SHADER_SWITCHES=<value> (default build-time env! (not a run var)): read at crates/victory-shader/src/emit/mod.rs:197",
+  "VICTORY_SKIP_PIPELINES=<value> (default unset): read at crates/victory-gpu/src/pipeline.rs:448",
+  "VICTORY_SPLIT_WAITS=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/queue.rs:91",
+  "VICTORY_STACKS=<value> (default unset): read at crates/victory-loader/src/stacks.rs:27",
+  "VICTORY_STALE_TEXTURES=<value> (default start (0|overlap)): read at crates/victory-gpu/src/descriptor/host.rs:441",
+  "VICTORY_STRICT_JOINS=<value> (default off (any value on)): read at crates/victory-shader/src/emit/lower.rs:11370",
+  "VICTORY_SWEEP=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/host.rs:188",
+  "VICTORY_TABLED_TEXTURES=<value> (default on (=1 off)): read at crates/victory-gpu/src/descriptor/host.rs:505",
+  "VICTORY_TEST_TITLES=<value> (default unset): read at crates/victory-core/src/config.rs:82",
+  "VICTORY_TEXTURE_BUDGET_MB=<value> (default unset): read at crates/victory-gpu/src/resource.rs:1422",
+  "VICTORY_TEXTURE_CATCHUP=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/draw.rs:1814",
+  "VICTORY_TEXTURE_COPY=<value> (default off (=1 on)): read at crates/victory-gpu/src/texture.rs:382",
+  "VICTORY_TEXTURE_GUARD=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/texture.rs:948",
+  "VICTORY_TEXTURE_NO_WAIT=<value> (default off (=1 on); play script sets 1 (README.md:110)): read at crates/victory-gpu/src/texture.rs:320",
+  "VICTORY_TEXTURE_ROOM_PERCENT=<value> (default 90): read at crates/victory-gpu/src/resource.rs:1507",
+  "VICTORY_TEXTURE_STAGE_MB=<value> (default 192): read at crates/victory-gpu/src/draw.rs:1730",
+  "VICTORY_TEXTURE_STAGE_MS=<value> (default 250): read at crates/victory-gpu/src/draw.rs:1808",
+  "VICTORY_TEXTURE_SWEEP=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/resource.rs:1759",
+  "VICTORY_TILES_TEST_CARD=<value> (default off (=1 on)): read at crates/victory-gpu/src/tiles.rs:800",
+  "VICTORY_TRAIL=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/host.rs:258",
+  "VICTORY_TRANSLATE_ONLY=<value> (default unset): read at apps/victory/src/translate.rs:408",
+  "VICTORY_TRAP_LOG=<value> (default unset): read at crates/victory-loader/src/thunks.rs:160",
+  "VICTORY_UNWATCHED_FRAMES=<value> (default 1): read at crates/victory-gpu/src/draw.rs:1504",
+  "VICTORY_VIEW_ASK=<value> (default off (=1 on)): read at crates/victory-gpu/src/watch.rs:461",
+  "VICTORY_VIEW_EXTENT=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/descriptor/host.rs:2146",
+  "VICTORY_VIEW_GUARD=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/watch.rs:655",
+  "VICTORY_VIEW_INLINE=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/descriptor.rs:515",
+  "VICTORY_VIEW_LIMIT=<value> (default unset): read at apps/victory/src/main.rs:180",
+  "VICTORY_VIEW_OWN_COPY=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/descriptor/host.rs:2246",
+  "VICTORY_WAIT_ASK=<value> (default off (=1 on)): read at crates/victory-gpu/src/list.rs:1811",
+  "VICTORY_WAIT_FORCE=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/queue.rs:120",
+  "VICTORY_WALLS_TRACE=<value> (default off (=1|2 on)): read at crates/victory-gpu/src/host.rs:2981",
+  "VICTORY_WARM_SECONDS=<value> (default unset): read at apps/victory/src/translate.rs:176",
+  "VICTORY_WARP=<value> (default off (=1 on)): read at crates/victory-shader/src/emit/diff_tests.rs:1177",
+  "VICTORY_WATCH=<value> (default unset): read at apps/victory/src/run.rs:164",
+  "VICTORY_WAVE_DEEP_SKIPS=<value> (default on (unset = 1; =0 off)): read at crates/victory-shader/src/emit/mod.rs:430",
+  "VICTORY_WAVE_LOCAL=<value> (default on (unset = 1; =0 off)): read at crates/victory-shader/src/emit/mod.rs:376",
+  "VICTORY_WAVE_OWN_BITS=<value> (default on (unset = 1; =0 off)): read at crates/victory-shader/src/emit/lower.rs:1024",
+  "VICTORY_WAVE_WHY=<value> (default off (any value on)): read at crates/victory-shader/src/emit/lower.rs:1372",
+  "VICTORY_WAVE_WIDE=<value> (default off (=1 on)): read at crates/victory-shader/src/emit/mod.rs:420",
+  "VICTORY_WIDE_BACK=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/shadow.rs:1310",
+  "VICTORY_WIDE_MERGE=<value> (default off (=1 on); play script sets 1 (README.md:113)): read at crates/victory-gpu/src/host.rs:1752",
+  "VICTORY_WIDE_REFRESH=<value> (default off (=1 on); play script sets 1 (README.md:112)): read at crates/victory-gpu/src/host.rs:5875",
+  "VICTORY_WINDOW_KB=<value> (default 4096): read at crates/victory-gpu/src/shadow.rs:3504",
+  "VICTORY_WINDOW_TAILS=<value> (default off (=1 on)): read at crates/victory-gpu/src/shadow.rs:3543",
+  "VICTORY_WRITE_SKIP=<value> (default on (unset = 1; =0 off)): read at crates/victory-gpu/src/draw.rs:119",
+  "VICTORY_XMA_DUMP=<value> (default unset): read at crates/victory-hle/src/modules/audio.rs:640",
+  "VICTORY_XMA_REFERENCE=<value> (default unset): read at crates/victory-formats/src/xma.rs:1247",
+  "VICTORY_XMA_STREAMS=<value> (default unset): read at crates/victory-formats/src/xma.rs:1202",
+]
+setup = [
+  "build-diag: cargo build --profile diag -p victory --features diagnostics",
+]
+preset_play = ["VICTORY_RELAY=2", "VICTORY_TEXTURE_NO_WAIT=1", "VICTORY_CARD_BUFFERS_MB=6144", "VICTORY_WIDE_REFRESH=1", "VICTORY_WIDE_MERGE=1", "VICTORY_JOIN_COPIES=1", "VICTORY_DISPLAY_MODE=1920x1080"]
+preset_warp = ["VICTORY_D3D12_WARP=1"]
+preset_dred = ["VICTORY_D3D12_DRED=1"]
+[env]   # README.md:109-115
+VICTORY_RAYTRACING = "0"   # Neonbridge rt patch: the leader has no 0x3a8 build (method not implemented), so the build hook stays off as in the leader; vb2 removed the device on our RT build path
+VICTORY_DATA_DIR = "%LOCALAPPDATA%\\6ixpack\\save"   # Neonbridge: one save/settings folder for the victory family (storage/settings identical across trees)
+VICTORY_RELAY = "2"
+VICTORY_TEXTURE_NO_WAIT = "1"
+VICTORY_CARD_BUFFERS_MB = "6144"
+VICTORY_WIDE_REFRESH = "1"
+VICTORY_WIDE_MERGE = "1"
+VICTORY_JOIN_COPIES = "1"
+VICTORY_DISPLAY_MODE = "1920x1080"
+
+# Keyboard as the gamepad, shown by the controls overlay (F1). From
+# crates/victory-hle/src/modules/gameinput.rs FALLBACK_BUTTONS and fallback();
+# a real controller plays as well.
+[controls]
+left_stick = "W A S D"
+right_stick = "I J K L"
+a = "Enter"
+b = "Backspace"
+x = "X"
+y = "Y"
+lb = "Q"
+rb = "E"
+lt = "Z"
+rt = "C"
+ls = "F"
+rs = "H"
+dpad = "Arrows"
+view = "Tab"
+menu = "Esc"

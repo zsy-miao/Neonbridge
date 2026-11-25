@@ -1,0 +1,23 @@
+{
+  "guest_sha256": "ffaa91a3f8918cb03683a428041b2819f0a50f07e608d0ce65fbe7549b29bbd8",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "desktop": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "raytracing_tier": "12",
+      "blas_result_bytes": "2560",
+      "blas_scratch_bytes": "1280",
+      "ray_query_results": "70010,70120,80010,80120,dead"
+    },
+    "xbox-prebuild": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "raytracing_tier": "12",
+      "blas_result_bytes": "2560",
+      "blas_scratch_bytes": "1280",
+      "ray_query_results": "70010,70120,80010,80120,dead"
+    }
+  },
+  "d3d12_xs_sha256": "6b9a567fe35422e58fcf746167501326a53a0d3de247611b45f2a154cef24b22"
+}

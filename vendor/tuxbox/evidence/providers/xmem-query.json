@@ -1,0 +1,57 @@
+{
+  "scope": "XMemMakeTag encoding and fail-closed XMemVirtualQuery placeholder. Query success, Xbox page flags, allocation tags, partition identities and GPU access are unsupported.",
+  "source_dll_sha256": "adc182acae5340b0618a3d57a239ed2e8deb305dbefc49439cb8a2d06c7ce812",
+  "abi_evidence": "Supplied xmem.dll XMemVirtualQuery export ordinal 32 RVA 0x25d0 accepts process handle, address, and output in RCX/RDX/R8. Static inspection shows 64-byte output with a 48-byte desktop memory-information prefix and console metadata at offsets 48 and 56. XMemMakeTag ordinal 20 RVA 0x7ab0 takes a 32-bit tag and returns a 64-bit value. Additional inspected branches add partition/access flags at offset 48 and allocation tags at offset 56, and can alter State and RegionSize; the packaged DLL could not be initialized for success-path comparison.",
+  "guest": "runtime/xmem/guest.c --query / --tags",
+  "query_checks": [
+    "Reserved, committed and released CPU addresses return ERROR_NOT_SUPPORTED with the entire output and guards untouched. A null output returns ERROR_INVALID_PARAMETER. Name and ordinal 32 resolve to the same function."
+  ],
+  "tag_control": {
+    "native": "tools/check_xmem_tag_native.py runs the isolated, hash-checked, call-free reference routine from the user-supplied DLL on x86-64; console bytes are not stored.",
+    "inputs": "All 256 byte values independently in each of four positions plus 4,096 seeded inputs, and zero.",
+    "count": 5120,
+    "fnv64": "d4bf30c57509b176",
+    "match": "The Proton guest uses the identical ordered cases and matches the native reference fingerprint. Name/ordinal identity is checked."
+  },
+  "run": {
+    "schema": 1,
+    "type": "homebrew",
+    "date_utc": "2026-11-22",
+    "host": "Linux",
+    "os_release": "7.3.5-2-cachyos-bore",
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "machine": "x86_64",
+    "backend": "proton",
+    "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+    "binaries_sha256": {
+      "xmem-smoke/xmem-smoke.exe": "0f9b812b4e4ad9fc639cd5fca42eb1aa151572a8b9fa3babaea3cb8d4d5cc720",
+      "xmem-smoke/xmem.dll": "4b1a61e9a72749502da312283c389d71940c85c7ac6b9342295e0c1c2549d083"
+    },
+    "checks": [
+      {
+        "gate": "xmem-tags",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-tags PASS count=5120 hash=d4bf30c57509b176"
+      },
+      {
+        "gate": "xmem-query",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-query PASS unsupported=3 guards=2 null=1"
+      },
+      {
+        "gate": "xmem-default",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-default: PASS (allocator pairs 1/6 and 2/7, ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+      },
+      {
+        "gate": "xmem-pages",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-pages PASS cpu-pages=2 remapped-bytes=131072 stale-and-foreign-rejected=1"
+      }
+    ]
+  }
+}

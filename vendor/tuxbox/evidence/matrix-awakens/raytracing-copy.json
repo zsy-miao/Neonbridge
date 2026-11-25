@@ -1,0 +1,47 @@
+{
+  "guest_sha256": "40e81e8d76107d40d319f780f40ed745cc46436223f19e91f5523369d18e5b8b",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "desktop": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "raytracing_tier": "12",
+      "blas_result_bytes": "2560",
+      "blas_scratch_bytes": "1280",
+      "ray_query_results": "70010,70120,80010,80120,dead"
+    },
+    "xbox-copy": {
+      "exit": 0,
+      "adapter": "10de:2705",
+      "raytracing_tier": "12",
+      "blas_result_bytes": "2816",
+      "blas_scratch_bytes": "2048",
+      "copy_modes": "clone,compact",
+      "invalid_copies": "2",
+      "ray_query_results": "70010,70120,80010,80120,dead"
+    }
+  },
+  "d3d12_xs_sha256": "c5c3dc18f832ecc7737c68efe8900d659b7df7c2fe3a74bcac5991e6448b4b05",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "title_call_sites": {
+    "list4_iid": "8754318e-d3a9-4541-98cf-645b50dc4874",
+    "qi_rva": "0x57868a9",
+    "clone_slot_pointer_rva": "0x57a5bd6",
+    "compact_slot_pointer_rva": "0x57a90c8",
+    "deserialize_slot_call_rva": "0x57b1115",
+    "prior_query_failure_log_sha256": "0b85659017bea3914245de036cdf2600dcaa449d547b0c2a0b495aaa281aae6a"
+  },
+  "test": "tools/check_frosty_blas.py --copy-only --provider /path/to/d3d12_xs.dll --output /path/to/report.json",
+  "scope": "Two BLASes were built on the same desktop adapter with compaction allowed. Xbox slot 119 cloned the first and compacted the second. A subsequent desktop TLAS and inline ray query checked both instances. Misaligned clone and visualization decode reported E_INVALIDARG and E_NOTIMPL respectively at list Close. Xbox serialized payloads require separate decoding.",
+  "retail": {
+    "proton_log_sha256": "a0ad7f13706d95f43dc41d5c0fbd048d270266bab70a0daafd5e36d5011056f5",
+    "first_mode4_copy": {
+      "source_gpu_va": "0x18e49c00",
+      "destination_gpu_va": "0x19200000",
+      "result": "E_NOTIMPL recorded for command-list Close"
+    },
+    "subsequent_rip_rva": "0x57aa013",
+    "subsequent_fault": "FD3D12RayTracingPipelineCache::GetOrCompileShader dereferenced the null Xbox Device8 interface before calling slot 115. The unmodified-settings run exited before the first presentation.",
+    "state_object_identity": "The earlier reference trace in retail-shaders.json matched its first slot 115 input to global/1280. The new run stopped before passing its input to that method."
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 3260,
+  "shader": "LightGridInjectionCS",
+  "native_sha256": "6ec18a57d2b2a826882ddf5719b540498d7a9815d7b41807d69649b020a111c0",
+  "hlsl_sha256": "387f7157be73e23ee4aa0431b5c5bdec215b609bc315297a6b805dd1d6e3d597",
+  "dxil_sha256": "edf0de90777f716a4f1e43784247083527ddd51c346b41c0c14f6c2e292a42f0",
+  "dxil_bytes": 17800,
+  "guest_sha256": "1e309e932c7c63fb1bea25782206ce9de4611ab3234544546c8ed9ca6d0880cb",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "groups": [
+    2,
+    2,
+    2
+  ],
+  "scope": "Eight 4x4x4 groups. One or two groups cover 24 or 48 active cells. Broad and lane-34 lights, repeated reflection captures, linked chains, capacity overflow, each empty list and both empty.",
+  "readback": {
+    "adapter": "1002:13c0",
+    "wave_min": "32",
+    "wave_max": "64",
+    "two_productive_groups_counter": "101",
+    "two_productive_groups_matched_words": "1024",
+    "broad_counter": "53",
+    "broad_matched_words": "1024",
+    "small_counter": "30",
+    "small_matched_words": "1024",
+    "chained_counter": "78",
+    "chained_matched_words": "1024",
+    "limited_counter": "78",
+    "limited_matched_words": "1024",
+    "captures_counter": "53",
+    "captures_matched_words": "1024",
+    "lights_counter": "30",
+    "lights_matched_words": "1024",
+    "empty_counter": "5",
+    "empty_matched_words": "1024"
+  },
+  "exit": 0
+}

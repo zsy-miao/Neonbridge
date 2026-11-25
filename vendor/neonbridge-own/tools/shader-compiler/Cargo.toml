@@ -1,0 +1,29 @@
+[package]
+name = "tuxbox-xshader"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Translate Xbox Series shader programs for the TuxBox host shader cache"
+
+[features]
+default = ["legacy-hlsl"]
+legacy-hlsl = []
+
+# cdylib: Neonbridge's launcher loads it to translate in-process
+# (lib.rs tuxbox_xshader_translate), not one xshader process per program.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "xshader"
+path = "src/main.rs"
+
+# Pre-push churn check (src/bin/churn_check.rs): run before every xshader push.
+[[bin]]
+name = "churn-check"
+path = "src/bin/churn_check.rs"
+
+[dependencies]
+tuxbox-dxbc = { path = "../../runtime/dxbc", features = ["native-bindings"] }
+
+[workspace]

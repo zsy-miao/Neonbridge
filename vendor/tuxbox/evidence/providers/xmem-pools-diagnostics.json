@@ -1,0 +1,59 @@
+{
+  "scope": "CPU allocation pool controls, Win32 heap notifications and statistics, title memory diagnostics, and the exported history pointer on stock Proton.",
+  "exports": [
+    "XMemGetAllocationHysteresis",
+    "XMemSetAllocationHysteresis",
+    "XMemPreallocateFreeSpace",
+    "XMemGetAllocationStatistics",
+    "XMemGetWin32HeapStatistics",
+    "XMemSetWin32HeapTrackingHooks",
+    "XMemIsToolsMemAvailable",
+    "XMemGetFreePageStatistics",
+    "XMemDumpMemoryStats",
+    "XMemHistoryData"
+  ],
+  "reference": {
+    "xmem_sha256": "adc182acae5340b0618a3d57a239ed2e8deb305dbefc49439cb8a2d06c7ce812",
+    "controls": [
+      "The normal PE loader ran the supplied xmem.dll and xcrdapi.dll with a test-only xbthunk.dll. The stand-in supplied the process heap, rejected partition handle requests and left notifications disconnected.",
+      "All 32 kind/size pairs matched the original default hysteresis. Setting one byte rounded to 4 MiB on every pair. The original returned 32 empty 32-byte statistics records with the caller DWORD at byte four preserved.",
+      "Original preallocation at zero hysteresis succeeded. A two-block request on the original DLL failed on Proton with error 87. The positive CPU commit lifecycle was exercised on TuxBox.",
+      "Original allocator tracking callbacks observed an allocation and its release. A five-byte dump buffer contained four X bytes and a NUL. The original reported tools memory unavailable. Its history pointer was null with the test-only partition provider."
+    ]
+  },
+  "implementation_controls": [
+    "The guest requested two 4 MiB blocks, suballocated and wrote 256-byte and 512-byte aligned buffers, then reduced the hysteresis to zero. Statistics tracked both commits and decommits and preserved the high-water extent.",
+    "An 8 MiB Win32 allocation increased the queried heap commit. The allocation and free tracking callbacks received the process heap, flags, requested size and pointer. Clearing both hooks suppressed subsequent notifications.",
+    "The 4 KiB history mapping is read-only to its guest. Two successive 120-byte rows held host process counters without any intervening XMem call. A separate control unloaded the DLL near its half-second tick eight times and observed the history views released.",
+    "The free-page query wrote exactly seven words. A 512 MiB claim in the 64 KiB token pool reduced available ordinary backing, while the second set of node counters mirrored the first. Bounds and guards passed."
+  ],
+  "free_page_format": {
+    "xmem_rva": "0x6bb0",
+    "consumer": "The packaged pixrt10.dll consumes all seven words.",
+    "kernel_control": "Microsoft Windows 10.0.19041.329 x64 ntoskrnl.exe, SHA-256 9923b54ed79b57e1fd609b8226bac634d5167a1afcd0eb06bc79d1f1c274d496, MmManagePartitionNodeInformation. Its node accounting weights the four pair totals by 1, 16, 512 and 262144 ordinary 4 KiB pages. The Xbox DLL adds the 1 GiB class to the 2 MiB class in units of 512 and repeats the first node on a single-node configuration."
+  },
+  "limits": [
+    "Non-CPU preallocation, GPU-backed aliases and physical Xbox partitions are outside this checked profile.",
+    "The dump includes supported host counters. History covers the eight working-set rows, while Xbox allocator internals, error events and WER registration in later page fields remain unverified.",
+    "Tracking covers allocations and frees made through the XMem host heap path. Host Win32 realloc interception and cross-module notification remain open."
+  ],
+  "rerun": "python build.py xmem && python tuxbox.py verify --only xmem --proton PROTON --prefix PREFIX --output build/xmem-check.json",
+  "run": {
+    "date_utc": "2026-11-23",
+    "backend": "proton",
+    "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+    "binaries_sha256": {
+      "xmem-smoke/xmem-smoke.exe": "34a80b13b1326b931af69c2b2077f899703ac6f61c181a4ac364db2663e40ec4",
+      "xmem-smoke/xmem.dll": "7eee4e07455778640c0e9d7433851ae1deb57088ec2ce5542686ea134254c483",
+      "xmem-smoke/xmem-http.exe": "fac2140e5165cb3d8f802b2e3e2563461e6e5e4bc5a86c62a435efec64e80d03",
+      "xmem-smoke/tuxbox_xhttp.dll": "70b6673f8aaf7395229e5f3bfaa3bf37476ec2179777e53206de11bc66c5b70e",
+      "xmem-smoke/xmem-partitions.exe": "4b88ec4a988a5eecea99c2bccefb9f7f818bb7620588fdf532f6cd71af43c23d"
+    }
+  },
+  "checked_receipt": {
+    "gate": "xmem-heaps",
+    "passed": true,
+    "exit_code": 0,
+    "receipt": "xmem-heaps PASS title=1 private=4 invalid=2 pool-commits=2 pool-decommits=2 heap-callbacks=2 stats=1 dump=1 history=2 page-classes=3"
+  }
+}

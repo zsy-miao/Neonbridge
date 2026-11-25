@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Shader containers (SGD5, DXBC, XDAT, FSSM), the RDNA disassembly driver and the RDNA to HLSL translator. -->
+  <PropertyGroup>
+    <!-- Part of fivestar-loader: trim and AOT analysis on every build (docs/aot.md). -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- DxcLibraryCompiler and the DXIL validator wrapper call DXC and dxil.dll through COM vtables. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      The loader's program cache is keyed by a hash of this assembly's bytes (docs/d3d12x-pipelines.md). With the
+      commit id in the informational version and in the source link (whose hash the PDB id carries) every commit
+      started an empty cache, so the build asks source control nothing and programs stay keyed by code only.
+    -->
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FiveStar.Shaders.Tests" />
+  </ItemGroup>
+
+  <!--
+    The hash of every source of this assembly but the translator's (Translation/), as assembly metadata
+    "CompilerSources": the program content store (Cache/ProgramContentStore) keys DXIL by the HLSL it was compiled from
+    and this, so a translator change recompiles only the programs whose HLSL it changed.
+  -->
+  <Target Name="HashCompilerSources" BeforeTargets="GetAssemblyAttributes">
+    <ItemGroup>
+      <_CompilerSource Include="@(Compile)" Exclude="Translation\**" />
+    </ItemGroup>
+    <GetFileHash Files="@(_CompilerSource)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_CompilerSourceHash" />
+    </GetFileHash>
+    <Hash ItemsToHash="@(_CompilerSourceHash->'%(RecursiveDir)%(Filename)%(Extension)=%(FileHash)')">
+      <Output TaskParameter="HashResult" PropertyName="_CompilerSources" />
+    </Hash>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>CompilerSources</_Parameter1>
+        <_Parameter2>$(_CompilerSources)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+  <!-- HLSL runtime helpers included by every translated program; written next to the generated HLSL. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Translation\Runtime\*.hlsli" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

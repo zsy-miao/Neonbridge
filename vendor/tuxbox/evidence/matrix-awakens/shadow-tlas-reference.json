@@ -1,0 +1,170 @@
+{
+  "description": "Synthetic CPU Xbox BOX32 TLAS traversal of an unmodified serialized Frosty sphere BLAS compared with D3D12 RayQuery and the TuxBox Xbox provider.",
+  "reference": {
+    "instances": 3,
+    "disabled_instances": 1,
+    "source_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+    "readback_sha256": "74a39eb0b86b066217390bb3f33e9439bc4030972b72d00f58d1990bca777dce",
+    "scope": "Synthetic Xbox BOX32 TLAS and unmodified serialized sphere BLAS"
+  },
+  "geometry": {
+    "asset": "EngineMeshes/Sphere",
+    "triangles": 528,
+    "instances": 3,
+    "xyz_sha256": "5381a79d200954ba9c317f325cdb10fa476e420c6915971dfc11458a1602f9a1",
+    "rays_sha256": "e47ffabeaedfd0f890c82e5bfd2c431bea2365756a852bd9c9755723d6812254",
+    "distance_tolerance": 0.0002,
+    "guest_blas_bytes": 31232,
+    "geometry_flags": "NONE",
+    "query_flags": [
+      "NONE",
+      "CULL_OPAQUE",
+      "CULL_NON_OPAQUE"
+    ],
+    "build_flags": "PREFER_FAST_TRACE | ALLOW_COMPACTION"
+  },
+  "scene": {
+    "instance_7": {
+      "transform": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1,
+          0
+        ]
+      ],
+      "mask": 255
+    },
+    "instance_8": {
+      "transform": [
+        [
+          0,
+          -2,
+          0.5,
+          512
+        ],
+        [
+          0.5,
+          0,
+          0.25,
+          0
+        ],
+        [
+          0,
+          0,
+          1.5,
+          0
+        ]
+      ],
+      "mask": 255
+    },
+    "instance_9": {
+      "transform": [
+        [
+          1,
+          0,
+          0,
+          1024
+        ],
+        [
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1,
+          0
+        ]
+      ],
+      "mask": 0
+    }
+  },
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "c00d84a6c56a5e07a8eddacaeea6b14ee1671dcce9bf3fbad00af2f21873ab97",
+  "d3d12_xs_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+  "adapters": {
+    "radeon": {
+      "desktop": {
+        "adapter": "1002:13c0",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 5.078315734863281e-05,
+          "readback_sha256": "9962c5b674f09bd73d4c941fa846f5da75437cee87f853c2333379ec91a1dea1"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 5.435943603515625e-05
+        }
+      },
+      "xbox": {
+        "adapter": "1002:13c0",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 5.078315734863281e-05,
+          "readback_sha256": "9962c5b674f09bd73d4c941fa846f5da75437cee87f853c2333379ec91a1dea1"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 5.435943603515625e-05
+        }
+      }
+    },
+    "geforce": {
+      "desktop": {
+        "adapter": "10de:2705",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 2.8014183044433594e-05,
+          "readback_sha256": "df8813aca832b4f8cd4283e63c33e6218a17c6a571d7378d1d9102d5bd01f468"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 2.765655517578125e-05
+        }
+      },
+      "xbox": {
+        "adapter": "10de:2705",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 2.8014183044433594e-05,
+          "readback_sha256": "df8813aca832b4f8cd4283e63c33e6218a17c6a571d7378d1d9102d5bd01f468"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 2.765655517578125e-05
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Synthetic CPU-built TLAS; not runtime construction or an in-game result.",
+    "Does not establish bit-exact hardware BVH node instruction semantics or GPU software traversal."
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "scope": "Packaged Frosty global compute 318 through Xbox device slot 62 using the original four descriptor tables. Each case checks 64 packed half4 radiance/distance records, a guard record and all 130 feedback words.",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "819eaab2a0ac25fc83c7edef464804f36d3e4a3fd050d87378887046920776ea",
+  "shaders": {
+    "318": {
+      "source_sha256": "29285864ab5a502a45dfe24cb3d1a775f849831c9f0587465ad206d6734a4944",
+      "dxil_sha256": "98015e5e73b88a207f4ff153e1c9e09ec78f70ac32f69e28e147f30e48146c16"
+    },
+    "323": {
+      "source_sha256": "320fd9aac520d4fd2e1b0492588c1fdf05a7383daaaad84bf5fc2dabd1162ddb",
+      "dxil_sha256": "c95e33fddfaa99a8b1079182969a19f3164bea3ecf9e657ecb42577d8d8ca11b"
+    }
+  },
+  "scene": "Guest slot 117 builds two upload-backed, R16-indexed triangle geometries with a 3x4 Y/Z exchange transform. Two instances reference this BLAS, both with mask 0xff. Guest t13 is a raw SRV of the TLAS resource.",
+  "dispatch": "Two groups of 32 lanes produce an 8x8 octahedral probe tile. Queue lengths are 0 and 64 rays.",
+  "reference": "Packaged ray-generation entry 323 runs a separate native TLAS. Its closest-hit and miss callbacks identify the 18 triangle hits, measure true ray distances and classify all six colored sky faces. Expected lit hits use the known card RGB (2,3,4). Reversing only triangle index winding must darken the same hits and suppress page feedback.",
+  "cases": {
+    "empty_queue": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] deadbeef,deadbeef; feedback guards 1",
+    "sky_cube": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] 46004500,4c404700; feedback guards 1",
+    "triangle_hits": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1",
+    "lit_card": "65/65 records matched; 18 reference hits; feedback[4] 0000007b; pixel[27] 42004000,301c4400; feedback guards 1",
+    "reversed_winding": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1"
+  },
+  "limits": "Controlled triangle scenes, one resident surface-cache page and one ray tile. Full retail scene composition, GPU-only native geometry and native Xbox traversal order remain unverified by this control.",
+  "upload_replay": {
+    "provider_sha256": "e3c93c6269a82912eadfeea6f2d10ef335716348a51bc601f0180e62fb5bb834",
+    "adapters": [
+      "1002:13c0",
+      "10de:2705"
+    ],
+    "result": "Both adapters matched all five cases after the guest rewrote upload-backed R16 indices after Close and between two submissions of the same closed BLAS list. The lit and reversed cases produced the expected opposing feedback and RGB values."
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "lanes/lanes.exe": "43388204db8bb56a35ab0ffccf6e85fc5577f5dca415235812abb78433d639d2",
+    "lanes/xmem.dll": "c7b7364c455d21c639fe6550cb7f90ff77f288161197c1d3833cce9a2dc1640b",
+    "lanes/GameInput.dll": "54ed6429d071c9893ca712852e4c6aa757a6985813a8c1aecf6b7ff8e6c86903",
+    "lanes/d3d12_xs.dll": "49437bcc6c1c394064455e5a2b814d63f9a9a0e5b5848af114720ec66eeaa497",
+    "lanes/MicrosoftGame.config": "09e0b87d4f4fd90b6cb04f339c16eaa76d8668ab2f6ad5fa1b10290647790a04"
+  },
+  "checks": [
+    {
+      "gate": "lanes-xbox-replay",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-replay PASS pci=1002:13c0 course=16/16 win=16/16 safe-miss=1 collision=1 frames=2 input=gameinput"
+    }
+  ]
+}

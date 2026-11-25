@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1789159601 experimental-11.0-20260910b-x86_64",
+  "binaries_sha256": {
+    "route-game.exe": "314eba407f9f42e62b61c024cc527a581cb3258bf0a1ea173717f15282e3cd00",
+    "dxc-utils/dxc-utils.exe": "e8eabc91cfc281d2efef83d62c0ecdc421cb5d61b3c5632c8268b722dff158a5",
+    "dxc-utils/dxcompiler_xs.dll": "a085156b0eb127644d9107a0d807b3b94693f769e623f30fd5c5cb7d62951b3e",
+    "dxc-utils/dxcompiler.dll": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9",
+    "xg/xg-texture.exe": "141cefad2e6ac91508a935dd5e7c1a59a64632178b0d744a11fa3f5fd1003d0c",
+    "xg/xg_xs.dll": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+    "xmem-smoke/xmem.dll": "b8dd12c7fb279d582a3839ee19517c5f6356908267fbbcab4bb6ea17131e71f1",
+    "xmem-smoke/xmem-smoke.exe": "4a97482ee9ac102e989d4dc7a99adacfcf31de18299e6592513b80700348644a",
+    "graphics/desktop-clear.exe": "c4e20ddfda21fb99fac28f30a59bee11ceab10ab6773604dfc45c7010b5ed969",
+    "d3d12-smoke/d3d12-root-smoke.exe": "a65da9e46fb86eb84caaf2d60c9febe623199807b335e10c7a9c4655eda6a261",
+    "d3d12-smoke/d3d12_xs.dll": "d5b82f7376e6282170624bfd630175cea23f465665299caa1b9a16b3d45a7c24",
+    "d3d12-smoke/xbox-frame.exe": "9ad23181a99fc1bbc7e2b1fe54502374936d08e878c33a5a7d3175cdebb8b772",
+    "d3d12-smoke/xbox-frame-negative.exe": "b3f5199f98508a1a2e844a3f9db2e377ea430e7698d34ec6cd4a0e59f51694e6",
+    "lanes/lanes.exe": "a68c8b49a77b5b63c4bf6982ce0df56d96a6881679890a64d42d78b41cece530",
+    "lanes/xmem.dll": "b8dd12c7fb279d582a3839ee19517c5f6356908267fbbcab4bb6ea17131e71f1",
+    "lanes/d3d12_xs.dll": "d5b82f7376e6282170624bfd630175cea23f465665299caa1b9a16b3d45a7c24",
+    "lanes/MicrosoftGame.config": "09e0b87d4f4fd90b6cb04f339c16eaa76d8668ab2f6ad5fa1b10290647790a04"
+  },
+  "checks": [
+    {
+      "gate": "route-RRRRDD",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "route-game x=5 y=3 coin_mask=1 ticks=6 bumps=0 exit=1"
+    },
+    {
+      "gate": "route-LDDRRRR",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "route-game x=5 y=3 coin_mask=2 ticks=7 bumps=1 exit=1"
+    },
+    {
+      "gate": "invalid-route",
+      "passed": true,
+      "exit_code": 2,
+      "receipt": null
+    },
+    {
+      "gate": "dxc-create-blob",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "dxc-utils PASS bytes=257 source-freed=1 writable=257 retained=1"
+    },
+    {
+      "gate": "xg-native-layout",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS descriptors=4 layout-queries=8 plane-records=4 releases=4"
+    },
+    {
+      "gate": "xmem-default",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-default: PASS (ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+    },
+    {
+      "gate": "desktop-clear",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "desktop-clear PASS adapter=NVIDIA GeForce RTX 4070 Ti SUPER pci=10de:2705 pixels=481/481 row_bytes=148 row_pitch=256"
+    },
+    {
+      "gate": "root-signature",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=10de:2705 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+    },
+    {
+      "gate": "guest-command-list",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+    },
+    {
+      "gate": "guest-command-errors",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame-negative PASS pci=10de:2705 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+    },
+    {
+      "gate": "guest-present",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
+    },
+    {
+      "gate": "lanes-package-replay",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "lanes-replay PASS pci=10de:2705 course=16/16 win=16/16 safe-miss=1 collision=1"
+    },
+    {
+      "gate": "cpu-replay",
+      "passed": true,
+      "samples": [
+        {
+          "gate": "cpu-replay",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=543940 frequency=10000000"
+        },
+        {
+          "gate": "cpu-replay",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=552954 frequency=10000000"
+        },
+        {
+          "gate": "cpu-replay",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=538829 frequency=10000000"
+        },
+        {
+          "gate": "cpu-replay",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=544569 frequency=10000000"
+        },
+        {
+          "gate": "cpu-replay",
+          "passed": true,
+          "exit_code": 0,
+          "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=541723 frequency=10000000"
+        }
+      ],
+      "median_ms": 54.394
+    }
+  ]
+}

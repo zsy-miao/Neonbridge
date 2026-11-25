@@ -1,0 +1,119 @@
+{
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "runtime_source": "ScarlettX 3eb694821b51c862c52b1a98ac382ba40eb07f74",
+  "storage_source": "local TomBox xcrdapi release artifact and Microsoft.Direct3D.DirectStorage 1.3.0 x64",
+  "package_drive": "G:",
+  "provider_sha256": {
+    "xgameruntime.dll": "3bfba2bd47483e056e43655f3b5d085aa8075bfe51cf4ffaea6a71be73ac8069",
+    "xcrdapi.dll": "b11be239a1eb653483bb25c65a4a209d67446189e4801b90307383ef2e835440",
+    "dstorage.dll": "cae65787f61514bec6f012f44546e68b19e39d8854a9ab52af813370d44b272a",
+    "dstoragecore.dll": "cf85b19a92a8276f8baca0db9bbcd60735bad50768deb303d310e84d5f4fdd11"
+  },
+  "observed_title_log": [
+    "Initialized I/O dispatcher",
+    "Mounted IoStore container",
+    "Mounting plugin MassCrowd",
+    "Could not initialize GameInput: 0x80004001",
+    "XUserGetMaxUsers - Error: (0x80004002)"
+  ],
+  "runtime_init_args": {
+    "build": 10003,
+    "revision": 7032,
+    "flags": 2
+  },
+  "runtime_queries_missing": [
+    {
+      "class": "01ACD177-91F9-4763-A38E-CCBB55CE32E0",
+      "iid": "EB9BF948-18DC-4D82-BBCC-40E0A809C4C0"
+    },
+    {
+      "class": "8836FE87-EDB9-4FE3-8DAD-05F0D2CD5B40",
+      "iid": "8836FE87-EDB9-4FE3-8DAD-05F0D2CD5B40"
+    },
+    {
+      "class": "973A344E-24BF-4D0F-8457-56C534892B29",
+      "iid": "50849859-0AD8-4F81-80E4-5BC78626F852"
+    },
+    {
+      "class": "AF406016-E850-4AA8-A88D-2F3DCB9DAC7E",
+      "iid": "3720DE07-E8E4-44A3-AD32-B359E8ADBE55"
+    },
+    {
+      "class": "B884675D-B738-4A9C-815D-9A9A1E0C6C9B",
+      "iid": "B884675D-B738-4A9C-815D-9A9A1E0C6C9B"
+    },
+    {
+      "class": "E349BD1A-FC20-4E40-B99C-4178CC6B409F",
+      "iid": "6FD71F09-7513-49F0-89BC-BFAF5DF6F852"
+    },
+    {
+      "class": "F4FAF4D4-2D04-4FCE-B3E0-474A713A3E84",
+      "iid": "D29411DF-0794-4553-8B27-95FC02D0F75D"
+    }
+  ],
+  "trace_sha256": "c2216fd496c6efdfca94e80e384ab63b68311ecb0def006c8fe2e8fe43dbfc3d",
+  "timeout_seconds": 40,
+  "exit": 124,
+  "frame_verified": false,
+  "main_thread_wait": {
+    "samples": 2,
+    "title_frames": [
+      {
+        "rva": "0x5dae073",
+        "function": "XTaskQueueDispatch"
+      },
+      {
+        "rva": "0x2bce3ca",
+        "function": "LocalGDKTask"
+      },
+      {
+        "rva": "0x2bcea74",
+        "function": "FGDKUserManager::AddUserInternal"
+      },
+      {
+        "rva": "0x2bce862",
+        "function": "FGDKUserManager::Init"
+      },
+      {
+        "rva": "0x2bc9f6a",
+        "function": "FGDKPlatformMisc::PlatformInit"
+      },
+      {
+        "rva": "0x538e79",
+        "function": "FEngineLoop::PreInitPreStartupScreen"
+      },
+      {
+        "rva": "0x532e6d",
+        "function": "GuardedMain"
+      },
+      {
+        "rva": "0x5326e8",
+        "function": "WinMain"
+      },
+      {
+        "rva": "0x5e70f3a",
+        "function": "__scrt_common_main_seh"
+      }
+    ],
+    "preceding_method": "XTaskQueueTerminate",
+    "threading_slot": 22,
+    "dispatch_timeout_ms": 4294967295
+  },
+  "queue_control": {
+    "work_port": "thread pool",
+    "completion_port": "manual",
+    "dispatch_timeout_ms": 500,
+    "exe_sha256": "06457ab07bf2edec7565927d351ee2e80043658776b8c87303993ad0f95739e1",
+    "baseline": {
+      "terminate": "0x80004001",
+      "dispatched": false,
+      "elapsed_ms": 500
+    },
+    "patched": {
+      "terminate": "0x00000000",
+      "dispatched": false,
+      "elapsed_ms": 0
+    }
+  }
+}

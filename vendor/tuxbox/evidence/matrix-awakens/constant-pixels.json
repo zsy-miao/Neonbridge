@@ -1,0 +1,64 @@
+{
+  "pixel_shaders_surveyed": 12271,
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+  "old_translator_sha256": "178401c576ca8f2f86826a97927c1e0e4270e75514406993e429ed68a347504c",
+  "programs": [
+    {
+      "entry": "material/1837",
+      "source_sha256": "0e1f419c2186054538be94770f8821abc236ab3079d6d5cbbfce809fc434a279",
+      "color": "black",
+      "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+    },
+    {
+      "entry": "global/2537",
+      "source_sha256": "6b3e66c0ef1ccca51ebc81cbba889dc65c77749eba944baddf35af200904b4ec",
+      "color": "white",
+      "dxil_sha256": "e0afb4abb3c14b200814a66e3b095d42a30bc9ef191f00e5f83700e1015ac3c8"
+    },
+    {
+      "entry": "global/4568",
+      "source_sha256": "77d134cffcd68cb35228b5ae4af3feed19ba2065563ea2158ed4265a07c0cee8",
+      "color": "black",
+      "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+    },
+    {
+      "entry": "global/3512",
+      "source_sha256": "9a3a9e0015df2362d5056a7e88d3597eec14bcec52c7a32bbb3e4064e82fd598",
+      "color": "red",
+      "dxil_sha256": "d974ce17e1a869629c2313e1bad4113d84482efb1d9460fec024aa68f584b255"
+    },
+    {
+      "entry": "global/2541",
+      "source_sha256": "a80726ef261628b7378af95c0a024c8d41c2303cb978bceb38c38da661a9564f",
+      "color": "black",
+      "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+    },
+    {
+      "entry": "global/1261",
+      "source_sha256": "c1b3e5ca48ef59dfcd462acac74fbe874f613e52692449920f89b383d61b45f3",
+      "color": "black",
+      "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+    },
+    {
+      "entry": "global/392",
+      "source_sha256": "e0ed33c7ead2a071304c3b8cc1cb1c12c0d0a399c43aef228c0cd75d1c618656",
+      "color": "black",
+      "dxil_sha256": "1b591be3e1df2bd312846ed10727a923f67c7986f84d95c45c5aabf68fc23bc4"
+    }
+  ],
+  "gpu_results": [
+    {
+      "pci_id": "1002:13c0",
+      "draws": 14,
+      "matched_pixels_per_draw": 81,
+      "matched_guard_pixels_per_draw": 175
+    },
+    {
+      "pci_id": "10de:2705",
+      "draws": 14,
+      "matched_pixels_per_draw": 81,
+      "matched_guard_pixels_per_draw": 175
+    }
+  ]
+}

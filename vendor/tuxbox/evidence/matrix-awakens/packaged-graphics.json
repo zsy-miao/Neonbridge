@@ -1,0 +1,75 @@
+{
+  "title": "The Matrix Awakens (Frosty)",
+  "package_version": "1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "package_check": {
+    "method": "SHA-256 of every original regular file in Mount against the same relative path in the selected working copy. The extra TuxBox providers and caches are staged separately.",
+    "files_matched": 59,
+    "bytes_matched": 30739160658,
+    "cooked_pak_sha256": "84b39b580b7dac8ce88263fe21238ea6abdce11e9bd8e76afc1c759aa38fc2e4",
+    "loose_ini_in_original": [],
+    "loose_ini_in_working_copy": [],
+    "packaged_renderer_settings": {
+      "r.RayTracing": true,
+      "r.Shadow.Virtual.Enable": 1,
+      "r.AntiAliasingMethod": 4
+    }
+  },
+  "retail_boot": {
+    "date_utc": "2026-11-22T11:05:20Z",
+    "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "620.73.04",
+    "command": "TUXBOX_TRACE_RAYTRACING=1 TUXBOX_MANGOHUD=1 tools/run_frosty.sh --desktop",
+    "game_arguments": [],
+    "device_profile": "XSX",
+    "ray_tracing_enabled": true,
+    "first_guest_command_batch": true,
+    "first_present": false,
+    "mangohud_frames": 0,
+    "exit_code": 5,
+    "elapsed_game_seconds": 2.6,
+    "d3d12_xs_sha256": "1f9f25b8798f54f16f63251cd772440e806c554fa4f8d3bbf585d8691fb113ab",
+    "game_log_sha256": "e5a335a77bf7642c339fc28e75e50dcf76b9be68ca04ce9f380e4b87bc8763da",
+    "proton_log_sha256": "cbc54283f0db7535f51a04bec616ef9d091efb7216bdfe1e7fd989b4548a94c5",
+    "observed": [
+      {
+        "operation": "ID3D12GraphicsCommandList4 slot 119, DESERIALIZE",
+        "source_gpu_va": "0x18e49c00",
+        "destination_gpu_va": "0x19200000",
+        "serialized_bytes": 31296,
+        "serialized_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+        "asset_identified_by_digest": "Engine/Content/EngineMeshes/Sphere.uasset",
+        "triangles": 528,
+        "geometries": 1,
+        "result": "Decoded the upload for diagnostics. Native GPU rebuild and address translation are incomplete. The command list recorded E_NOTIMPL."
+      },
+      {
+        "operation": "FD3D12RayTracingPipelineCache::GetOrCompileShader",
+        "fault_rva": "0x57aa013",
+        "expected_method": "Device8 slot 115, DeserializeStateObjectX",
+        "result": "Null interface receiver before the method call at RVA 0x57aa048."
+      }
+    ],
+    "shader_preparation_cached": 2509
+  },
+  "earlier_attempts": [
+    {
+      "d3d12_xs_sha256": "69a64840b95534400cf96e4a0acb494c2496fc8628a4fbba2c13030fd341259b",
+      "stop": "FD3D12PoolAllocator::AllocateResource+0x519, null Device5 receiver for SetResidencyPriority.",
+      "tuxbox_log_sha256": "f5812ed1cacaccc0f3f1109e9ed20aa7ccf976fbf3ea94d521ebe76c1e49d505"
+    },
+    {
+      "d3d12_xs_sha256": "40e20218ae4e3b538e8dfc6da67583e61779e3190b2105a877189ee0521c5385",
+      "stop": "Graphics command-list QueryInterface for List4 returned E_NOINTERFACE.",
+      "tuxbox_log_sha256": "5660aa77c7dc49bc6642004dffad95be81cf17c0fa4788579b1ce3fcff8e0822"
+    }
+  ],
+  "related_evidence": [
+    "residency-priority.json",
+    "raytracing-copy.json",
+    "retail-sphere-blas.json",
+    "ray-state-census.json",
+    "hair-visibility-raster.json"
+  ]
+}

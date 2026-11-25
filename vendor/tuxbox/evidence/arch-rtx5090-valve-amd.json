@@ -1,0 +1,383 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-24",
+  "host": "Linux",
+  "os_release": "7.3.5-arch1-1",
+  "cpu": "AMD Ryzen 9 9900X3D 12-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1794497090 experimental-11.0-20261112-x86_64",
+  "binaries_sha256": {
+    "route-game.exe": "3ede717cbdeac2507c529955aa1e164e6e76d7d1f5abca6d7461e8a375e74f5e",
+    "d3d12-smoke/d3d12-signatures.exe": "7c63d88281bf41f54e9fc09ff36dea727fd98f53e8ae3e182825a0925cca4da9",
+    "d3d12-smoke/d3d12_xs.dll": "b10016e40fd4aaad212a2bf245d2af73d3678cfa98dec98429cf013830e9be7c",
+    "d3d12-smoke/d3d12-guids.exe": "275c57d38f1fdcf0859551dcbbd32b6ec43acfc71ddd615bb985e0fe4136df41",
+    "xg-provider/xg-dcc.exe": "92666119d22972027ddb3a7561108c5163e6faa902ab10d246e29b29d29e075e",
+    "xg-provider/xg_xs.dll": "134420ebd675acc51eb349e75b8b06196ebbef855b8f2441e8989c4feed9fd11",
+    "xg-provider/xg-library.exe": "1b849ec6d94af2700a43d3471f947e1caa3969afce27baf32a9b5839ad0bd417",
+    "xg-provider/xg-texture.exe": "3f3621589e0a6490d5f2017bd8941e977373596f31db5294c636614cf88741b0",
+    "xgameruntime/runtime-control.exe": "c3f08bf0a0226c179f6531fda95978cbd8da06bbe4e36b9041f6d1e4c3149489",
+    "xgameruntime/xgameruntime.dll": "fd9b25f92e0d942982d0bb7aaf543a112c1517ee3626e5f0313fa20a61e2c2f9",
+    "xapu/xapu-control.exe": "2115774995605ad435dfb05830e8e74530ffaceb15e52e4439bc911342d23e95",
+    "xapu/xapu.dll": "77d232ce825b20ee6bf389306afb30413f03cd3b4ac475403e08a87dbaeae178",
+    "xcrdapi/xcrdapi-read.exe": "1579a45730e10d589be40e1b118be040289b229e090e63036b9f57f8f7b2b60e",
+    "xcrdapi/xcrdapi.dll": "287149ca4bd4c3ee9334839ac8ed3f9a2052640b0ad02bb82841fbe7f051ad7d",
+    "xmem-smoke/xmem-smoke.exe": "5c14c41b9b591211b3daf03773be9da88aca080679addda6fb165a1f4d4f9d0c",
+    "xmem-smoke/xmem.dll": "19310aaf3419c5e74f8b80f33d8126cc50f04726b43b087f74e9bc220431679a",
+    "xmem-smoke/xmem-http.exe": "e813f5160f5e7254f5765cd510e92e4235ed36167b16aa315e5cde226cf818d3",
+    "xmem-smoke/tuxbox_xhttp.dll": "e4cde1599338c305ff25979212603e91365fb780896db78b9e2aa090e70ed51d",
+    "xmem-smoke/xmem-partitions.exe": "40080e78f3092f504c95d88c26f570a00b205106272177b9222d09b95b6921f8",
+    "graphics/desktop-clear.exe": "1fcb6e9a39bbcdc182fc879fb7861b6c04c2b2badbc523ae2a69793e50bd0541",
+    "d3d12-smoke/d3d12-root-smoke.exe": "eded731dfd41b7ba7988db81e4c331fe91fba4d4d75e15122d3a552e0bc11b49",
+    "d3d12-smoke/d3d12-exports.exe": "c450a7ef9e2b4824ce2396cc3961bc7a8ef2390783bb8a8675836bb308a3183c",
+    "d3d12-smoke/d3d12-features.exe": "df45bbb9542a6586cf7ac34203197e9e8b36fd2eb2e0294ba200317a4a41bd41",
+    "d3d12-smoke/d3d12-heaps.exe": "0f40cf9e36775df6a8605c9ec5d268d965829fcedba0852e1688132f9426e596",
+    "d3d12-smoke/d3d12-placement.exe": "2841d8c2e9ed1d863edccdf291cc39db43c768874eaee7da0503a52184d5ca28",
+    "d3d12-smoke/d3d12-copy-resource.exe": "6bd76b4b7ca2bc928ddc17e047fa51210fb3e0ab271fe8a0517e63433353851a",
+    "d3d12-smoke/d3d12-draw.exe": "cbcee1dbc081b5a73150bfa62ae33a962c37410b87e8976a51b2ef8ddd551a45",
+    "d3d12-smoke/d3d12-mesh.exe": "0ef754d8259a71fe6dc93b66b888cc22a6092f5a7ff1e244a9e28ba0e327d895",
+    "d3d12-smoke/d3d12-frame-events.exe": "07dee6f859b7e35190953e82ec911b0cdc45c0487d4334a9ce5bef1dad9cd3f8",
+    "d3d12-smoke/d3d12-tables.exe": "3eca7b39d11f3d4a03cb2255348341ca55510fc9a5ecfe67b0135cadcbfa2866",
+    "d3d12-smoke/d3d12-queues.exe": "f978e6b047cdd0614adbb14f392f6c3d1ebc64a3c14659e02ed111912e417ff9",
+    "d3d12-smoke/d3d12-queries.exe": "70a706a8731e95c94a7ea510ca9c80d4d1763b72f22b4c3280d44037a56ede25",
+    "d3d12-smoke/d3d12-indirect.exe": "9824674c7a74e34647a8492aa0843581d5d99936aad052d1dfa0dd3fbeef8d4e",
+    "d3d12-smoke/d3d12-factory.exe": "5bd14de1b8f4ca4baf3dd37e98341b4b28e2f192d75204f882d1432fb4b24e91",
+    "d3d12-smoke/xbox-frame.exe": "7905aee642b2a00eb419d44397072a6569d5e9b3c0bb55e63f9e2a11410e6086",
+    "d3d12-smoke/xbox-frame-rgb10.exe": "8fcf8d90fbad1cc7332f04fdfed8d6263367cac101a378c49308e68174087c80",
+    "d3d12-smoke/xbox-frame-negative.exe": "aded9d27d826a379e94fcdcd6afab5d2532ea093a38df7684cf42a4d3ea0effc",
+    "d3d12-smoke/xbox-frame-4k.exe": "35ea39b51cccaeecce306aecd06faad7856e426b320ad1235b4b58d357720f3e",
+    "lanes/lanes.exe": "43388204db8bb56a35ab0ffccf6e85fc5577f5dca415235812abb78433d639d2",
+    "lanes/xmem.dll": "19310aaf3419c5e74f8b80f33d8126cc50f04726b43b087f74e9bc220431679a",
+    "lanes/GameInput.dll": "e4681140131961653f4a6db66f90827607f6ced0e6cc421448ee0f2a8321fadc",
+    "lanes/d3d12_xs.dll": "b10016e40fd4aaad212a2bf245d2af73d3678cfa98dec98429cf013830e9be7c",
+    "lanes/MicrosoftGame.config": "09e0b87d4f4fd90b6cb04f339c16eaa76d8668ab2f6ad5fa1b10290647790a04"
+  },
+  "checks": [
+    {
+      "gate": "route-RRRRDD",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "route-game x=5 y=3 coin_mask=1 ticks=6 bumps=0 exit=1"
+    },
+    {
+      "gate": "route-LDDRRRR",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "route-game x=5 y=3 coin_mask=2 ticks=7 bumps=1 exit=1"
+    },
+    {
+      "gate": "invalid-route",
+      "passed": true,
+      "exit_code": 2,
+      "receipt": null
+    },
+    {
+      "gate": "d3d12-signatures",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-signatures PASS versions=1.0,1.1 ranges=1 invalid=2"
+    },
+    {
+      "gate": "d3d12-guids",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-guids PASS identifiers=32 bytes=512"
+    },
+    {
+      "gate": "xg-dcc",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-dcc PASS xbox-blocks=2 encode-bytes=32 atomic-batch=1"
+    },
+    {
+      "gate": "xg-library",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-library PASS depth=516 descriptors=375 lock=recursive+factory copies=bidirectional depth_surfaces=16 typed_images=880 map_targets=1474 msaa_depth=384"
+    },
+    {
+      "gate": "xg-addresses",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-texture PASS layouts=18 traced-descriptors=8 element-addresses=872759"
+    },
+    {
+      "gate": "xg-formats",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xg-formats PASS formats=78 layouts=156 element-addresses=9231018"
+    },
+    {
+      "gate": "xgameruntime",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xgameruntime PASS init=balanced interfaces=checked manual=ordered termination=canceled automatic=3 stale=rejected"
+    },
+    {
+      "gate": "xapu",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xapu PASS Opus=960 pre-skip=312 output=648 queue=ordered"
+    },
+    {
+      "gate": "xcrdapi",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "raw=16 zlib=16 guards=2 errors=2 cancellation=1 autosubmit=64 PASS"
+    },
+    {
+      "gate": "xmem-heaps",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-heaps PASS title=1 private=4 invalid=2 pool-commits=2 pool-decommits=2 heap-callbacks=2 stats=1 dump=1 history=2 page-classes=3"
+    },
+    {
+      "gate": "xmem-heap-profiles",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-heap-profiles PASS attributes=40 alloc=80 free=80 null-free=2"
+    },
+    {
+      "gate": "xmem-virtual-cpu",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-virtual-cpu PASS protections=6 allocations=12 guards=5 invalid=1"
+    },
+    {
+      "gate": "xmem-scatter",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-scatter PASS pages=3 remapped-bytes=196608 duplicates=2 guards=2 rollback=1"
+    },
+    {
+      "gate": "xmem-watch",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-watch PASS initial=2 reset=2 next=1 guards=2 invalid=1 pause=2 resume=3 allocations=2 direct-tags=2 retail-apertures=2"
+    },
+    {
+      "gate": "xmem-hooks",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-hooks PASS calls=2/2 zero-size=1 null-free=1 restore=1 reentrant=1"
+    },
+    {
+      "gate": "xmem-tags",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-tags PASS count=5120 hash=d4bf30c57509b176"
+    },
+    {
+      "gate": "xmem-http",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-http PASS callbacks=7 host-session=1"
+    },
+    {
+      "gate": "xmem-query",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-query PASS cpu=5 released=1 unsupported=3 guards=2 null=1"
+    },
+    {
+      "gate": "xmem-default",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-default: PASS (allocator pairs 1/6 and 2/7, ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+    },
+    {
+      "gate": "xmem-partitions",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-partitions PASS stable_cpu_pfns=2 budget_reduced=1 ids=2 native_handles=0"
+    },
+    {
+      "gate": "xmem-pages",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-pages PASS cpu-pages=2 remapped-bytes=131072 stale-and-foreign-rejected=1 shared-aliases=3 scatter-aliases=2 rollback=1 free-unmaps=2"
+    },
+    {
+      "gate": "desktop-clear",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "desktop-clear PASS adapter=NVIDIA GeForce RTX 5090 pci=10de:2b85 pixels=481/481 row_bytes=148 row_pitch=256"
+    },
+    {
+      "gate": "root-signature",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=10de:2b85 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+    },
+    {
+      "gate": "d3d12-exports",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-exports PASS debug=1 blob=1 dxgix=4 cpu_clear=1"
+    },
+    {
+      "gate": "d3d12-features",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-features PASS pci=10de:2b85 queries=7 binding=3 heap=2 root=1 dxr=0 allocations=4 footprints=4"
+    },
+    {
+      "gate": "d3d12-heaps",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-heaps PASS pci=10de:2b85 heap=32MiB offsets=0,65536 words=256/256 invalid=4 display=3840x2160/RGB10A2 pixel=c00ffc00 volume=45/45 priorities=4/4 invalid_priority_calls=4"
+    },
+    {
+      "gate": "d3d12-placement",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-placement PASS pci=10de:2b85 slot=44 VA-offsets=0,4096,0 passes=2 BC1-blocks=522 cube-blocks=16404 R8-texels=262144 rejected=3 configured_vm=0"
+    },
+    {
+      "gate": "d3d12-copy-resource",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-copy-resource PASS pci=10de:2b85 slot=84 buffer_bytes=1028 texture_subresources=8 nonzero_option=E_NOTIMPL self_copy=E_INVALIDARG source_and_destination=verified placed_uploads=2 placed_dst=verified same_va_alias=verified cpu_writeback=verified partial_copy_texels=2 overlap_mips=4 pending_reader=verified"
+    },
+    {
+      "gate": "d3d12-draw",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-draw PASS pci=10de:2b85 red=36 blue=220"
+    },
+    {
+      "gate": "d3d12-mesh",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-mesh PASS pci=10de:2b85 tier=1 stream=680 direct=6 amplified=12 indirect=2 zero=0 pixels=256/256 guards=32 rejected=5"
+    },
+    {
+      "gate": "d3d12-frame-events",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-frame-events PASS pci=10de:2b85 slots=78,79,80,81 tokens=2 timeout=S_FALSE flip=1 detached=1 stats=2"
+    },
+    {
+      "gate": "d3d12-tables",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-tables PASS pci=10de:2b85 words=16/16 guards=4 heaps=2 rejected=3 placed-srv=16/16 range-copies=4 descriptor-mode=1"
+    },
+    {
+      "gate": "d3d12-queues",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-queues PASS pci=10de:2b85 queues=3 bytes=64 wait=1 signal-x=2"
+    },
+    {
+      "gate": "d3d12-queries",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-queries PASS pci=10de:2b85 timestamps=2 occlusion=0 guards=2 heaps=6 rejected=3"
+    },
+    {
+      "gate": "d3d12-indirect",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-indirect PASS pci=10de:2b85 sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero flush=global,range,wake-up(0x3000:0+0xa30000),zero-length,global-range budget=default,rejected2 mesh=0x00000000 rays=0x00000000"
+    },
+    {
+      "gate": "d3d12-stream",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-stream PASS pci=10de:2b85 slot=86 bytes=712 indices=16,32 half-red-blue=18 magenta=18 blue=220 rejected=4"
+    },
+    {
+      "gate": "guest-factories",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-factory PASS pci=10de:2b85 adapter=default profile=0x20004 queues=2 fences=2 flag-masks=4 dxgi=2"
+    },
+    {
+      "gate": "guest-command-list",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+    },
+    {
+      "gate": "guest-frame-rgb10",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 format=rgb10a2"
+    },
+    {
+      "gate": "guest-command-errors",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame-negative PASS pci=10de:2b85 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+    },
+    {
+      "gate": "guest-present",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
+    },
+    {
+      "gate": "guest-present-rgb10",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2"
+    },
+    {
+      "gate": "guest-present-4k-owned",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=918x516 origin=4,249 monitor=926x988"
+    },
+    {
+      "gate": "guest-present-4k-oversized",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=926x520 origin=0,234 monitor=926x988"
+    },
+    {
+      "gate": "guest-present-4k-fit",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2b85 submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=926x520 origin=0,234 monitor=926x988"
+    },
+    {
+      "gate": "lanes-xbox-replay",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-replay PASS pci=10de:2b85 course=16/16 win=16/16 safe-miss=1 collision=1 frames=2 input=gameinput"
+    },
+    {
+      "gate": "cpu-replay",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=528631 frequency=10000000"
+    }
+  ],
+  "present_display": "private rootful Xwayland"
+}

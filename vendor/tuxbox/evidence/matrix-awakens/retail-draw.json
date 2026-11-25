@@ -1,0 +1,56 @@
+{
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "shaders": [
+    {
+      "entry": 3643,
+      "profile": "vs_6_0",
+      "cooked_fnv1a64": "8e9e3b832c7dd2ae",
+      "cooked_sha256": "a6a07f696416504069eb3a7a4e77026b6e851f0ab0bf143f3bec14a9f8b6ae30",
+      "hlsl_sha256": "1c0e7009428d07791e458ff94ce8ec0b60877f36b987fad51ff550e266b247ba",
+      "cache_file": "1da7a0560d50e4d6.cso",
+      "desktop_sha256": "064ad521526626aea060f754830fa8a02c812da953abab8904ca001bcf3ce433"
+    },
+    {
+      "entry": 785,
+      "profile": "ps_6_1",
+      "cooked_fnv1a64": "01dadaebf074d085",
+      "cooked_sha256": "ee88f1048770d72114cc7600f7b48ec42df225493b1745c2c62d7a48e86b62d0",
+      "hlsl_sha256": "b55661a6a254bc591899e7c0ba2404178841fbe835c82c182547d62719ede828",
+      "cache_file": "f11c7f0b46cdc289.cso",
+      "desktop_sha256": "c035c643ee2718afb967ba7fadfc883db50246d18c0db0469bd8cc208119a9a4"
+    },
+    {
+      "entry": 792,
+      "profile": "ps_6_1",
+      "cooked_fnv1a64": "f6d1b9eafc4e1bd3",
+      "cooked_sha256": "0e96489778ac82f57f691ddafb4c901606812031555de7f4d4b082c249a4459e",
+      "hlsl_sha256": "3ab5cf918d5cab6e4814b04adcc036dec71a716d494443ec367eeddd786fd507",
+      "cache_file": "c28ea1319190ae6e.cso",
+      "desktop_sha256": "1d4e1128b8d53c51caf4c9be342e1b3055b4f9873695d7cf68c3ea49abd09361"
+    }
+  ],
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "ff695b2864e725f30cdf0ba0597d65163ea8701577d753550c322750329ee7bc",
+  "extent": [
+    16,
+    16
+  ],
+  "scissor": [
+    3,
+    2,
+    12,
+    11
+  ],
+  "vertex_count": 3,
+  "scope": "Title-cached DXIL, original cooked root signature, controlled vertex, texture and raster state",
+  "readback": {
+    "adapter": "10de:2705",
+    "entry_785_drawn_red": "81",
+    "entry_785_guard_blue": "175",
+    "entry_785_center": "ff0000ff",
+    "entry_792_drawn_red": "81",
+    "entry_792_guard_blue": "175",
+    "entry_792_center": "ff0000ff"
+  },
+  "exit": 0
+}

@@ -1,0 +1,152 @@
+{
+  "title": "The Matrix Awakens (Frosty)",
+  "build": "1.20.1831.3754",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "system": "x86-64 Linux, NVIDIA GeForce RTX 4070 Ti SUPER",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "setup": "Original Mount and EmbeddedXvd, Microsoft Windows x64 DXC v1.8.2505.1, checkout builds and a new Proton prefix.",
+  "command": "tools/run_frosty.sh",
+  "game_arguments": [
+    "-DisablePlugins=XboxCommonGDKMoviePlayer"
+  ],
+  "shaders": {
+    "cold_compiled": 202,
+    "duplicates_reused_within_preparation": 10,
+    "second_preparation_compiled": 0,
+    "entries": {
+      "by_gs_ps": 3,
+      "by_source": 206,
+      "by_vs_ps": 3
+    },
+    "compiler": "checkout-local Rust shader compiler and Linux DXC",
+    "external_shader_cache_present": false
+  },
+  "loader": {
+    "method": "Wine +loaddll paths matched to staged file SHA-256. The table is from the clean-prefix menu and Settings replay. The final Chase replay additionally masked the separate runtime repositories and the older reference game layout.",
+    "tombox_or_scarlettx_modules_loaded": [],
+    "modules": {
+      "G:\\Frosty\\Binaries\\XSX\\GameChat2.dll": {
+        "origin": "Original retail package",
+        "sha256": "35ecdfbea3a9f4d004b638d8b1070dcded9cb05f76514a4184b5a5832f4afb87"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\MSVCP140.dll": {
+        "origin": "Original retail package",
+        "sha256": "a8436d067fbceb7a8e970eea1bfb08b38a41b6d83f27822d2c0db5210c4bc641"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\VCRUNTIME140.dll": {
+        "origin": "Original retail package",
+        "sha256": "b0bd6a99bf2fee4c2eee67723d3cba6dbff084c0ae48217c2e98433799a89fa8"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\VCRUNTIME140_1.dll": {
+        "origin": "Original retail package",
+        "sha256": "426f631ac0d237168d83f1aa95998e9e6251ceb714a6bab5f830b6b5c3ac2811"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\d3d12_xs.dll": {
+        "origin": "TuxBox d3d12",
+        "sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\dxcompiler_xs.dll": {
+        "origin": "TuxBox dxc-utils",
+        "sha256": "920938f673eb7640951b21bf4cf3989f3254dc82912139717dfbe8ccef4ac525"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\GameInput.dll": {
+        "origin": "TuxBox gameinput",
+        "sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\xmem.dll": {
+        "origin": "TuxBox xmem",
+        "sha256": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\acphal.dll": {
+        "origin": "TuxBox acphal",
+        "sha256": "5679643b085e008a0f1102179144de3ecdbf6ce594c30f64cbaff3d1df5f5229"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\xcrdapi.dll": {
+        "origin": "TuxBox xcrdapi",
+        "sha256": "c02cd03e78906f48f1d0cf939303537a29631d1a83cc35a2284380202f69b532"
+      },
+      "C:\\windows\\system32\\xgameruntime.dll": {
+        "origin": "TuxBox xgameruntime",
+        "sha256": "5a83cb0998cf99be48a4f2cfbfd39aa55deb7725b3b3245f599b42f8aca7f61b"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\xg_xs.dll": {
+        "origin": "Packaged Xbox XG",
+        "sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\dxcompiler.dll": {
+        "origin": "Microsoft DirectX Shader Compiler for Windows",
+        "sha256": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\dxil.dll": {
+        "origin": "Microsoft DirectX Shader Compiler for Windows",
+        "sha256": "0cf5fa4b90f74550166108b3870c883f4a85243976b246b1da3ea90ad5b92015"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\mfplat.dll": {
+        "origin": "TuxBox media",
+        "sha256": "ba2b8d3123865b8ce25a9e44bc1b9cc9335f28d3a012d600ee202994d39e9c0f"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\mfplat_sys.dll": {
+        "origin": "Proton",
+        "sha256": "3df8aff6ca29903c6a9109b8154d36d9133d2fa371aaab2fa4be564dbba8bb1b"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\frosty_hevc.dll": {
+        "origin": "TuxBox media",
+        "sha256": "70b8c53c59b2d29dec98af616f2acb5cdeb5942a178bb6753787435b5e8aff54"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\mfhevcdec.dll": {
+        "origin": "Packaged Xbox HEVC",
+        "sha256": "fecc135bf0387f68c304542af3cb2c4aaed1267a06027f5198223f585678cd0d"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\frosty_h264.dll": {
+        "origin": "TuxBox media",
+        "sha256": "5c3158463dc13826f3ca3e6f033f46e5e02c03ba0402b715d4cd34daff6138d9"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\frosty_packaged_h264.dll": {
+        "origin": "Packaged Xbox H.264",
+        "sha256": "9db2936779eec00c69c9a549e7ec4ab2af717b64b95454065e80dfa5c5a439ac"
+      },
+      "G:\\Frosty\\Binaries\\XSX\\frosty_packaged_aac.dll": {
+        "origin": "Packaged Xbox AAC",
+        "sha256": "810c007551ec389a2c7dd0f0066747e453b5c3d1efb3cdc62cc1f22a76c5b454"
+      }
+    },
+    "historical_dependencies_hidden_during_final_replay": [
+      "TomBox worktrees",
+      "ScarlettX research checkout and staged comparison build",
+      "old patched shader tool and shader-preparation build",
+      "reference game layouts"
+    ]
+  },
+  "observed": [
+    "Both global and Frosty-XSX containers mounted",
+    "TuxBox presented its first frame from a 3840x2160 surface",
+    "XAudio2 started a stream and submitted a buffer",
+    "Studio intro and moving preview rendered",
+    "K selected Settings, Enter opened the settings panel",
+    "I selected Start Chase and Enter triggered ChaseSection-WakeUp"
+  ],
+  "captures": {
+    "independent-menu.webp": "c5d1aaec842b20196deb58270131bf1a8c33cb86e053032d3fe011a868afc867",
+    "independent-settings.webp": "0ab3276027b46e749254106337bc782e1371be3f06c97acf9be088fd4d713596",
+    "independent-wakeup.webp": "6c76bc7e10fa1294216afe8f74adeec1fec6b3a901284f0298c9e43c37f7c471"
+  },
+  "chase": {
+    "state": "Start Chase plays the opening Wake Up cinematic. The tested profile stops during the subsequent compute pipeline creation.",
+    "profile_outputs": 212,
+    "missing_shader_stage": "compute",
+    "missing_dxbc_sha256": "5ee232804ac9d010bf948657122f63097901943c9542d1c05fab9ceb1e20387b",
+    "elapsed_seconds_from_chase_event_to_fatal": 16.23
+  },
+  "remaining": [
+    "Green Matrix code behind menu is missing",
+    "Playable chase, driving and shooting are unverified"
+  ],
+  "source_only_build_control": {
+    "inputs": "Source copy with empty build directory, locally installed toolchains, original retail package and matching system image, Microsoft Windows DXC release, fresh Proton prefix.",
+    "environment": "Separate TomBox worktrees, ScarlettX comparison directories, historical game layouts and the prototype shader compiler were hidden in the Linux mount namespace. Cargo used its offline crate registry.",
+    "staged_pe_records_checked": 26,
+    "shader_outputs_matching_tested_run": 212,
+    "cold_compilations": 202,
+    "reused_translations_within_first_run": 10
+  }
+}

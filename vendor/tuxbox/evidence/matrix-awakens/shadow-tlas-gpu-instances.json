@@ -1,0 +1,108 @@
+{
+  "description": "Retail sphere deserialization plus default-heap GPU instance copy compared with the synthetic CPU Xbox-format TLAS reference. Instance source data is updated after list close and the closed list is executed twice, waiting for each execution to finish.",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "guest_sha256": "ac580354f25bb900fed10739d1e92001afa59dec1f2b566f53d1d5b2de5192c4",
+  "d3d12_xs_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+  "serialized_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+  "geometry": {
+    "asset": "EngineMeshes/Sphere",
+    "triangles": 528,
+    "instances": 3,
+    "xyz_sha256": "5381a79d200954ba9c317f325cdb10fa476e420c6915971dfc11458a1602f9a1",
+    "rays_sha256": "e47ffabeaedfd0f890c82e5bfd2c431bea2365756a852bd9c9755723d6812254",
+    "distance_tolerance": 0.0002,
+    "guest_blas_bytes": 31232,
+    "geometry_flags": "NONE",
+    "query_flags": [
+      "NONE",
+      "CULL_OPAQUE",
+      "CULL_NON_OPAQUE"
+    ],
+    "build_flags": "PREFER_FAST_TRACE | ALLOW_COMPACTION"
+  },
+  "reference": {
+    "instances": 3,
+    "disabled_instances": 1,
+    "source_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+    "readback_sha256": "74a39eb0b86b066217390bb3f33e9439bc4030972b72d00f58d1990bca777dce",
+    "scope": "Synthetic Xbox BOX32 TLAS and unmodified serialized sphere BLAS"
+  },
+  "adapters": {
+    "radeon": {
+      "desktop": {
+        "adapter": "1002:13c0",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 5.078315734863281e-05,
+          "readback_sha256": "9962c5b674f09bd73d4c941fa846f5da75437cee87f853c2333379ec91a1dea1"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 5.435943603515625e-05
+        }
+      },
+      "xbox-deserialize": {
+        "adapter": "1002:13c0",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 5.078315734863281e-05,
+          "readback_sha256": "9962c5b674f09bd73d4c941fa846f5da75437cee87f853c2333379ec91a1dea1"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 5.435943603515625e-05
+        },
+        "serialized_upload": "updated_after_close",
+        "instance_memory": "default_heap_gpu_copy_after_close",
+        "closed_list_executions": "2",
+        "restored_compute_bindings": "17,23,37,53"
+      }
+    },
+    "geforce": {
+      "desktop": {
+        "adapter": "10de:2705",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 2.8014183044433594e-05,
+          "readback_sha256": "df8813aca832b4f8cd4283e63c33e6218a17c6a571d7378d1d9102d5bd01f468"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 2.765655517578125e-05
+        }
+      },
+      "xbox-deserialize": {
+        "adapter": "10de:2705",
+        "exit": 0,
+        "ray_queries": {
+          "hits": 2112,
+          "misses": 1587,
+          "max_distance_error": 2.8014183044433594e-05,
+          "readback_sha256": "df8813aca832b4f8cd4283e63c33e6218a17c6a571d7378d1d9102d5bd01f468"
+        },
+        "comparison": {
+          "rays": 3699,
+          "mismatches": 0,
+          "max_distance_error": 2.765655517578125e-05
+        },
+        "serialized_upload": "updated_after_close",
+        "instance_memory": "default_heap_gpu_copy_after_close",
+        "closed_list_executions": "2",
+        "restored_compute_bindings": "17,23,37,53"
+      }
+    }
+  },
+  "limitations": [
+    "CPU reference uses a synthetic TLAS; runtime Xbox-format TLAS construction is not implemented.",
+    "This test does not establish bit-exact hardware BVH node instruction semantics."
+  ]
+}

@@ -1,0 +1,278 @@
+{
+  "scope": "Focused Frosty retail menu on stock Proton with packaged graphics settings, MangoHud, per-command Vulkan timing and shader dumps. CPU usage includes the Vulkan profiling layer. One fully busy logical CPU is 100% for threads and the game process; host busy percentage is normalized across all 16 logical CPUs.",
+  "method": "One-second Linux procfs samples across the entire interval, independent of frame presentation. perf sampled userspace CPU-clock instruction pointers at 49 Hz. PE address ranges came from the live process. Provider instruction pointers were matched to a byte-identical PE relink with a linker map. For the memcmp leaf, the raw sampled stack return address and call instruction identify the caller. Sampled byte lengths are from the Windows x64 third argument register.",
+  "logical_cpus": 16,
+  "baseline": {
+    "start_utc": "2026-11-23T10:29:30+00:00",
+    "end_utc": "2026-11-23T10:30:00+00:00",
+    "sample_count": 29,
+    "sampled_seconds": 29.04,
+    "process_one_core_percent": {
+      "p50": 206.72,
+      "max": 229.71,
+      "average": 209.2
+    },
+    "host_busy_percent": {
+      "p50": 15.24,
+      "max": 18.86
+    },
+    "busiest_single_thread_percent": {
+      "p50": 81.89,
+      "max": 85.89
+    },
+    "thread_samples_sha256": "141e1ca0da2ea6c467193360023864c04fe536ae463802fc38f962dfd5ee226f",
+    "provider_sha256": "25b45d2421190e2573912d91b7aaf67121824a94597324c404da71acf12a5f34",
+    "busiest_threads": [
+      {
+        "tid": 2135525,
+        "name": "Frosty-XSX-Ship",
+        "cpu_seconds": 23.23,
+        "one_core_percent": 79.99
+      },
+      {
+        "tid": 2135415,
+        "name": "Frosty-XSX-Ship",
+        "cpu_seconds": 9.46,
+        "one_core_percent": 32.58
+      },
+      {
+        "tid": 2135393,
+        "name": "[vkrt] Analysis",
+        "cpu_seconds": 9.33,
+        "one_core_percent": 32.13
+      }
+    ],
+    "userspace_perf": {
+      "samples": 2207,
+      "capture_sha256": "3176078ded775d6c9f394d76528e9bb6c3c805632334894dd8fb5aeed2eab3fc",
+      "modules": [
+        {
+          "name": "libVkLayer_profiler_layer.so",
+          "samples": 500,
+          "percent": 22.66
+        },
+        {
+          "name": "libc.so.6",
+          "samples": 477,
+          "percent": 21.61
+        },
+        {
+          "name": "d3d12_xs.dll",
+          "samples": 283,
+          "percent": 12.82
+        },
+        {
+          "name": "[vdso]",
+          "samples": 247,
+          "percent": 11.19
+        },
+        {
+          "name": "frosty-xsx-shipping.exe",
+          "samples": 204,
+          "percent": 9.24
+        },
+        {
+          "name": "ntdll.so",
+          "samples": 111,
+          "percent": 5.03
+        }
+      ],
+      "provider_memcmp": {
+        "name": "memcmp",
+        "samples": 198,
+        "percent": 8.97,
+        "confirmed_caller": "Texture::changed in runtime/d3d12/src/device/placement.rs",
+        "return_address_rva": "0x2f1ae",
+        "caller_samples": 198,
+        "sampled_lengths_bytes": {
+          "16777216": 82,
+          "8388608": 36,
+          "3670016": 16,
+          "524288": 12,
+          "1146880": 11,
+          "131072": 11,
+          "2097152": 10,
+          "1048576": 7
+        }
+      }
+    }
+  },
+  "two_shader_corrections": {
+    "start_utc": "2026-11-23T10:36:16+00:00",
+    "end_utc": "2026-11-23T10:36:46+00:00",
+    "sample_count": 29,
+    "sampled_seconds": 29.039,
+    "process_one_core_percent": {
+      "p50": 205.72,
+      "max": 227.7,
+      "average": 206.76
+    },
+    "host_busy_percent": {
+      "p50": 14.03,
+      "max": 16.03
+    },
+    "busiest_single_thread_percent": {
+      "p50": 78.9,
+      "max": 87.89
+    },
+    "thread_samples_sha256": "ec72e49a903567c47f0f35987ed105add97add8ed03b9a659d8ff35263d9ef1d",
+    "provider_sha256": "25b45d2421190e2573912d91b7aaf67121824a94597324c404da71acf12a5f34",
+    "busiest_threads": [
+      {
+        "tid": 2142586,
+        "name": "Frosty-XSX-Ship",
+        "cpu_seconds": 22.74,
+        "one_core_percent": 78.31
+      },
+      {
+        "tid": 2142486,
+        "name": "Frosty-XSX-Ship",
+        "cpu_seconds": 9.7,
+        "one_core_percent": 33.4
+      },
+      {
+        "tid": 2142462,
+        "name": "[vkrt] Analysis",
+        "cpu_seconds": 8.75,
+        "one_core_percent": 30.13
+      }
+    ],
+    "userspace_perf": {
+      "samples": 2200,
+      "capture_sha256": "5c73d197468401f3d3628809b21f8ab1f12009b2e3d2bb3ea00c247fc619fc8b",
+      "modules": [
+        {
+          "name": "libVkLayer_profiler_layer.so",
+          "samples": 492,
+          "percent": 22.36
+        },
+        {
+          "name": "libc.so.6",
+          "samples": 453,
+          "percent": 20.59
+        },
+        {
+          "name": "d3d12_xs.dll",
+          "samples": 307,
+          "percent": 13.95
+        },
+        {
+          "name": "[vdso]",
+          "samples": 266,
+          "percent": 12.09
+        },
+        {
+          "name": "frosty-xsx-shipping.exe",
+          "samples": 185,
+          "percent": 8.41
+        },
+        {
+          "name": "ntdll.so",
+          "samples": 114,
+          "percent": 5.18
+        }
+      ],
+      "provider_memcmp": {
+        "name": "memcmp",
+        "samples": 210,
+        "percent": 9.55
+      }
+    }
+  },
+  "descriptor_ranges_and_shader_corrections": {
+    "start_utc": "2026-11-23T10:50:16+00:00",
+    "end_utc": "2026-11-23T10:50:46+00:00",
+    "sample_count": 29,
+    "sampled_seconds": 29.039,
+    "process_one_core_percent": {
+      "p50": 215.73,
+      "max": 232.71,
+      "average": 213.82
+    },
+    "host_busy_percent": {
+      "p50": 14.59,
+      "max": 19.49
+    },
+    "busiest_single_thread_percent": {
+      "p50": 80.9,
+      "max": 87.88
+    },
+    "thread_samples_sha256": "9d3599c570c297fd95577a5727024a1bcff90a786ab8462a206be2276a40df08",
+    "provider_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc",
+    "busiest_threads": [
+      {
+        "tid": 2161649,
+        "name": "Frosty-XSX-Ship",
+        "cpu_seconds": 23.46,
+        "one_core_percent": 80.79
+      },
+      {
+        "tid": 2161513,
+        "name": "Frosty-XSX-Ship",
+        "cpu_seconds": 9.82,
+        "one_core_percent": 33.82
+      },
+      {
+        "tid": 2161491,
+        "name": "[vkrt] Analysis",
+        "cpu_seconds": 8.95,
+        "one_core_percent": 30.82
+      }
+    ],
+    "userspace_perf": {
+      "samples": 2191,
+      "capture_sha256": "9c032eeef23aefc0ebc176618611990d170426b2ce6f124567f398c0a35993c7",
+      "modules": [
+        {
+          "name": "libVkLayer_profiler_layer.so",
+          "samples": 526,
+          "percent": 24.01
+        },
+        {
+          "name": "libc.so.6",
+          "samples": 412,
+          "percent": 18.8
+        },
+        {
+          "name": "[vdso]",
+          "samples": 251,
+          "percent": 11.46
+        },
+        {
+          "name": "d3d12_xs.dll",
+          "samples": 223,
+          "percent": 10.18
+        },
+        {
+          "name": "frosty-xsx-shipping.exe",
+          "samples": 196,
+          "percent": 8.95
+        },
+        {
+          "name": "perf-2161367.map",
+          "samples": 137,
+          "percent": 6.25
+        }
+      ],
+      "provider_memcmp": {
+        "name": "memcmp",
+        "samples": 126,
+        "percent": 5.75,
+        "confirmed_caller": "Texture::changed in runtime/d3d12/src/device/placement.rs",
+        "return_address_rva": "0x5bee",
+        "caller_samples": 126,
+        "sampled_lengths_bytes": {
+          "16777216": 47,
+          "8388608": 29,
+          "3670016": 17,
+          "1146880": 9,
+          "2097152": 6,
+          "131072": 5,
+          "524288": 5,
+          "8192": 3
+        }
+      }
+    }
+  },
+  "comparison": "Each recording used 30 seconds of visible menu. The combined run also included 24 shader changes and a one-frame color probe; differences in total process time and frame rates cannot be assigned to the descriptor change alone."
+}

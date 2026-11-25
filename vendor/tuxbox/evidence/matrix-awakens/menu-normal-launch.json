@@ -1,0 +1,163 @@
+{
+  "scope": "Normal desktop launcher, -nosound, original packaged graphics settings, stock Proton Experimental. MangoHud records through presentation. The window was visible and focused. The clean menu interval ends at the title\u2019s first RequestStateChangeToChase message. The separate 20-second interval includes the transition. The observation script sent no game input.",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": {
+    "os": "Linux 7.3.5-2-cachyos-bore x86_64",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "620.73.4"
+  },
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "launcher": "tools/run_frosty.sh --desktop --work STAGE -nosound",
+  "shader_prep": "Frosty shaders ready: 0 compiled, 3791 cached. Preparation took 2.1s.",
+  "compute_prep": "Frosty compute pipelines ready: 6 cached.",
+  "observed_process": {
+    "pid": "2222966",
+    "diagnostic_env": {
+      "VK_INSTANCE_LAYERS": "VK_LAYER_TUXBOX_console_cbv"
+    },
+    "profile_layer_mapped": false,
+    "mangohud": true,
+    "provider_sha256": "416b52319d3c51346252a7b67c55358abf5bbb65531a3d9b80e46a3ca368c8bc"
+  },
+  "service_bind_mounts": [],
+  "launch_utc": "2026-11-23T11:15:03.468850+00:00",
+  "first_menu_match_utc": "2026-11-23T11:16:10.258932+00:00",
+  "elapsed_to_menu_seconds": 66.79,
+  "closed_utc": "2026-11-23T11:16:35.493516+00:00",
+  "sample_utc": [
+    "2026-11-23T11:16:10.258932+00:00",
+    "2026-11-23T11:16:23.219000+00:00"
+  ],
+  "mangohud": {
+    "complete_presents": 111,
+    "mean_fps": 8.674,
+    "frametime_ms": {
+      "p50": 114.569,
+      "p95": 122.329,
+      "p99": 198.423,
+      "worst": 209.132
+    },
+    "system_cpu_percent_p50": 21.4366,
+    "gpu_percent_p50": 100.0,
+    "csv_sha256": "0dd326005ffa16db5b1806f7958c7bfe4b1b3ce1b41bc9a89492add7498d1f95"
+  },
+  "device_wide_nvidia_smi": {
+    "command": "nvidia-smi dmon -i 0 -s puct -o DT",
+    "samples": 12,
+    "metrics": {
+      "board_power_w": {
+        "median": 118.0,
+        "min": 117,
+        "max": 119
+      },
+      "graphics_engine_percent": {
+        "median": 100.0,
+        "min": 100,
+        "max": 100
+      },
+      "memory_engine_percent": {
+        "median": 3.0,
+        "min": 3,
+        "max": 4
+      },
+      "mem_clock_mhz": {
+        "median": 10501.0,
+        "min": 10501,
+        "max": 10501
+      },
+      "sm_clock_mhz": {
+        "median": 2850.0,
+        "min": 2850,
+        "max": 2850
+      },
+      "pcie_rx_MBps": {
+        "median": 391.0,
+        "min": 115,
+        "max": 645
+      },
+      "pcie_tx_MBps": {
+        "median": 68.5,
+        "min": 52,
+        "max": 397
+      }
+    }
+  },
+  "procfs": {
+    "samples": 8,
+    "logical_cpus": 16,
+    "process_one_core_percent": {
+      "median": 215.685,
+      "min": 175.71,
+      "max": 235.71
+    },
+    "host_busy_percent": {
+      "median": 20.785,
+      "min": 18.54,
+      "max": 22.98
+    }
+  },
+  "native_capture": {
+    "sha256": "5be1e8a19fa7846e7c42777702b3fcd13d644adb0cc9de3842c7bcd3b8f619d8",
+    "image": "menu-native.png",
+    "background_rgb_sha256": "efcfab81e9022690e169b2615ee65171fa08b1f39a1089363f7e7db12220efd0",
+    "largest_solid_square_side_px": 6,
+    "bright_boxes": 0,
+    "green_pixels": 24846,
+    "sampled_pixels": 220590,
+    "chromatic_pixels": 21443,
+    "green_dominant_pixels": 19948,
+    "blue_dominant_pixels": 1352,
+    "chromatic_mean_rgb": [
+      12.95,
+      99.94,
+      55.48
+    ]
+  },
+  "launcher_log_sha256": "336a1c0722af8ff7611a9552c2a8dc71a2f484a9aa3f22d28e87a121b2a6430c",
+  "comparison": {
+    "baseline": "See menu-gpu-passes.json baseline and lds_reductions_and_menu_color. Both used per-pipeline Vulkan timestamps and shader dumps. The normal launcher run measured here used only MangoHud for presentation timing."
+  },
+  "sample_seconds": 12.96,
+  "chase_request_utc": "2026-11-23T11:16:23.219000+00:00",
+  "wake_up_event_utc": "2026-11-23T11:16:28.229Z",
+  "foreground_including_transition": {
+    "sample_utc": [
+      "2026-11-23T11:16:10.759012+00:00",
+      "2026-11-23T11:16:30.759012+00:00"
+    ],
+    "sample_seconds": 20,
+    "mangohud": {
+      "complete_presents": 169,
+      "mean_fps": 8.467,
+      "frametime_ms": {
+        "p50": 114.201,
+        "p95": 209.132,
+        "p99": 284.935,
+        "worst": 390.239
+      },
+      "system_cpu_percent_p50": 21.5973,
+      "gpu_percent_p50": 100.0,
+      "csv_sha256": "0dd326005ffa16db5b1806f7958c7bfe4b1b3ce1b41bc9a89492add7498d1f95"
+    }
+  },
+  "desktop_capture": {
+    "path": "menu-normal-launch.jpg",
+    "sha256": "b8105b33c389dec6a4c8d84eb80f3865c4655a5b0bc7b361eba8234a7d5da182",
+    "color_measurement": {
+      "image": "menu-normal-launch.jpg",
+      "background_rgb_sha256": "03deaea7e21ecafa148036231473a103ca1c5bc6bd1f1e5a3b7fbae7d54ff3af",
+      "largest_solid_square_side_px": 9,
+      "bright_boxes": 1,
+      "green_pixels": 39831,
+      "sampled_pixels": 220590,
+      "chromatic_pixels": 30316,
+      "green_dominant_pixels": 29766,
+      "blue_dominant_pixels": 432,
+      "chromatic_mean_rgb": [
+        22.77,
+        96.69,
+        61.83
+      ]
+    }
+  }
+}

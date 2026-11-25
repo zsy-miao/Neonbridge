@@ -1,0 +1,46 @@
+{
+  "export": "D3D12ZeroMemoryX",
+  "implementation": "The Series CPU path validates every range and the optional workspace before clearing caller-owned memory. A call with zero ranges succeeds. Nonempty requests for GPU-assisted clearing are unsupported.",
+  "control": {
+    "loader": "The original packaged Series DLL and the TuxBox provider ran the same exports guest under Proton Experimental.",
+    "probe_source": "runtime/d3d12/exports_guest.cpp",
+    "checked_memory_bytes": 128,
+    "range_alignment_bytes": 16,
+    "disjoint_and_overlapping_ranges": [
+      [
+        16,
+        32
+      ],
+      [
+        96,
+        16
+      ],
+      [
+        32,
+        32
+      ],
+      [
+        0,
+        0
+      ]
+    ],
+    "expected_cleared_byte_intervals": "[16, 64) and [96, 112); all other bytes retain the 0xa5 sentinel.",
+    "validation": "A null array for a nonempty list, unaligned start or size in the second range, and each invalid workspace field produced E_INVALIDARG. Validation failures left all 128 bytes intact.",
+    "optional_workspace": "The same buffer was refilled with 0x4d; flags 0x81 and a null workspace cleared only bytes [16, 48).",
+    "translated_gpu_mode": "A nonempty, otherwise valid request with flags 0 returned E_NOTIMPL and preserved all 128 sentinel bytes."
+  },
+  "variants": {
+    "xs": {
+      "reference_sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+      "provider_sha256": "6101c51799128a1042397876efd4bab3583f8592f828afdee2fd935fc262f42e",
+      "guest_sha256": "8dfe315078208a56c95f64e4da3b9363d223c86ab7b4ed5b15d08eb9bb230ce0",
+      "matched_exports": 47,
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "export_ordinal": 1,
+      "checks": {
+        "original": "d3d12-exports PASS debug=1 blob=1 dxgix=4 cpu_clear=1",
+        "translated": "d3d12-exports PASS debug=1 blob=1 dxgix=4 cpu_clear=1"
+      }
+    }
+  }
+}

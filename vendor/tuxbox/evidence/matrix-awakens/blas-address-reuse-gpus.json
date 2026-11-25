@@ -1,0 +1,47 @@
+{
+  "scope": "Synthetic cooked BLAS replacement at one already relocated guest address. The larger stream has the same serialized size as the 768-byte stream submitted by Frosty during Wake Up.",
+  "runner": "tools/check_frosty_blas.py --single-build --reuse-blas",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "680ebe65dddc0a517cb4f7b4b57d05f23435a656d8a40e9f31e4a327e4d0aa49",
+  "guest_sha256": "f43db90396cd744fed820bdec9b16070f6c786f32ad80880261122f7890f0dd6",
+  "guest_serialized_bytes": [
+    256,
+    768
+  ],
+  "guest_destination_bytes_in_order": [
+    192,
+    704,
+    192,
+    704
+  ],
+  "native_address_check": "A slot 118 size query records the resolved native address before replacement and executes afterward. Its result must equal a fresh query of the larger BLAS.",
+  "copy_checks": [
+    "CLONE of the larger BLAS into 192 bytes returns E_INVALIDARG on Close.",
+    "CLONE of the larger BLAS into 704 bytes succeeds.",
+    "After a smaller deserialize at the same address, COMPACT into 192 bytes succeeds.",
+    "COMPACT of the saved larger BLAS back to the original address succeeds."
+  ],
+  "rays": "After rebuilding the TLAS, instance 11 returns the two replacement primitive IDs at distance 1, followed by a miss. Four independent triangle hits and a miss match desktop D3D12.",
+  "adapters": {
+    "AMD": {
+      "pci": "1002:13c0",
+      "native_compacted_bytes": [
+        448,
+        1600
+      ],
+      "prior_address_compacted_bytes": 1600,
+      "replacement_rays": "11/0/0/1,11/0/1/1,miss",
+      "control_rays": "70010,70120,80010,80120,dead"
+    },
+    "NVIDIA": {
+      "pci": "10de:2705",
+      "native_compacted_bytes": [
+        1152,
+        1280
+      ],
+      "prior_address_compacted_bytes": 1280,
+      "replacement_rays": "11/0/0/1,11/0/1/1,miss",
+      "control_rays": "70010,70120,80010,80120,dead"
+    }
+  }
+}

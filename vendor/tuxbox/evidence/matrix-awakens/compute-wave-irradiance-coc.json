@@ -1,0 +1,59 @@
+{
+  "scope": "Packaged compute shader wave exchange compared with shader model 6.6 WaveSize(64), WaveReadLaneAt and WaveActiveBallot on Radeon. Both versions use the same translated arithmetic and binding layout.",
+  "fixture": "tools/reference/irradiance/guest.cpp",
+  "cases": [
+    "active",
+    "width1",
+    "width2",
+    "width3",
+    "partial",
+    "quarter",
+    "empty",
+    "rejected"
+  ],
+  "readback": "Two 8 by 8 RGBA32F textures per dispatch. Compared the full 512-float buffers including pitch padding.",
+  "absolute_and_relative_tolerance": 1e-06,
+  "reference_device": "1002:13c0",
+  "portable_devices": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "entries": {
+    "482": {
+      "guest_sha256": "879f412627ee04aae73179af837504a2176f579c74a8878bc67205c85a5a69c2",
+      "portable_dxil_sha256": "612db153f6098810704ce9735814f3d15dceb600b092c98142207d7d70a3dd7b",
+      "wave64_reference_dxil_sha256": "05e398b3ef85e49d198237af7453a81138c83220afe25dbf23663f6d33d12b6d",
+      "mismatched_values": 0
+    },
+    "484": {
+      "guest_sha256": "e09cdb6df329494337af2c63ef27ac70eebbdce1fab9578c52835b159f88f15e",
+      "portable_dxil_sha256": "a49431aa9185b3e6d151ec32b6b8a5f4acf46a5ab49d621f1ccbd6e1db62903c",
+      "wave64_reference_dxil_sha256": "c75520ffa6dc82b145b9241b393802cb8cb6aed6628d122d9ce4ed1e810ab659",
+      "mismatched_values": 0
+    },
+    "491": {
+      "guest_sha256": "7eb57b292e92fd1f9dc8c73db659209f7622b540ab28484e0dc6c4f43b06ea20",
+      "portable_dxil_sha256": "6d458b533dfb886cedd899f2768366b21c95d83787add44072b352c4a4c0e1d2",
+      "wave64_reference_dxil_sha256": "2a72b69edea942a21bffc0bfac8077d3027c94f32b9cce13192f18585431e79c",
+      "mismatched_values": 0
+    },
+    "493": {
+      "guest_sha256": "173d114d93d0f9942c11ffe29fdc38750163e5091ca2d12d630f89bd9cf927fd",
+      "portable_dxil_sha256": "d0962cb0b3e0cdefdd070aec8abd443eaef1f51c2ed364d761b9bf6c2b1020e7",
+      "wave64_reference_dxil_sha256": "215707ae3df20dba7014f7091fba69750fc8b92f6c47854c1ff9e9730a5372a7",
+      "mismatched_values": 0
+    },
+    "2558": {
+      "guest_sha256": "c785e0f62b9fd677116a60d9e91b806012f8c5a5f98c2fadaa61d913fe75a5a7",
+      "portable_dxil_sha256": "a105fd6954d7fecb99e93abe51cd50a1bbe7779eab9292860af3e45fce09ebe4",
+      "wave64_reference_dxil_sha256": "30d8e9aad29621780717b77a4d71cc8163f4551a217e23256033f69e0483821a",
+      "mismatched_values": 0
+    },
+    "2559": {
+      "guest_sha256": "bee8303d6bebad57b76b0514523f1d6454ad692dde5581e27d572e7cac45a568",
+      "portable_dxil_sha256": "1afe29ee573b0597bfe549b5da8b8809298e5ef78671bd848a21891baa987629",
+      "wave64_reference_dxil_sha256": "399f9479187a658d7c6c48d16cbbe5408501f639824f6856a95e6a30d04a3a63",
+      "mismatched_values": 0
+    }
+  }
+}

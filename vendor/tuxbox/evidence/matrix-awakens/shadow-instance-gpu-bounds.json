@@ -1,0 +1,111 @@
+{
+  "scope": "GPU-buffer instance encoding and conservative bounds compared with the independent Rust CPU reference; not runtime TLAS construction",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": 46,
+      "bounds_negative_cases_per_batch": 4,
+      "guard_words_per_batch": 302
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": 46,
+      "bounds_negative_cases_per_batch": 4,
+      "guard_words_per_batch": 302
+    }
+  },
+  "shaders": [
+    {
+      "hlsl_sha256": "f4aabf6044d6cb0309fc481e9e2cd8cd06d3b35c557a352cf24fd99d91c3f188",
+      "dxil_sha256": "bcc636353ab998e1132d73fce8069875962ab15c7f635500967a8f279c52b3a8"
+    },
+    {
+      "hlsl_sha256": "846b6859d2866973d7f2001b1ae1bb53d5b2732167b9452830081d09b38ee79d",
+      "dxil_sha256": "e38342060ebd1c37ca1cd1e177846183d6ff6b04b6fd531ca35b6121186d12ed"
+    },
+    {
+      "hlsl_sha256": "23e709fa8e89a449fbec172eb6d1db42d4448500c3c8c46ce8695ac7222733f7",
+      "dxil_sha256": "039fc6c329a9062b5161bdccf512c3ab5ddd3302580fd34409edd762ac8fd901"
+    },
+    {
+      "hlsl_sha256": "797c88de9aab5ba13d9d5bb5ce64fda73b37a9aba43a57d407790450a46f3298",
+      "dxil_sha256": "b76f99459af09138204265849011b1ef1d814b21926bc17f2122956b2487ddd7"
+    },
+    {
+      "hlsl_sha256": "1364bbb6ba0464b1266594df9c8c561b5ce559ed980ca18296dc01274e48bc4e",
+      "dxil_sha256": "cd1ed33df9dab58abf91ccc423d9b19b8b184dea91305d77bef608919cd8fc23"
+    },
+    {
+      "hlsl_sha256": "7a3d1de7f0caa5f43cc4ede920fbd9d65478c8a2549bcaca926ccad1603edaf5",
+      "dxil_sha256": "4dcefecfa6319f6fb31e4c47f0f424aaa0bf93b1e2d5a5c7f913a0dfc02a2601"
+    },
+    {
+      "hlsl_sha256": "edf724076320c6833ec990810b13d5dd3e3865b1f77b2bbf2f6f7c5753aaeae1",
+      "dxil_sha256": "e69e35a00c2809babe6812946872f3e3c833e6c01ec5e41913cf0ea09cdcaf82"
+    },
+    {
+      "hlsl_sha256": "f228fa82994e353a81512e512d7561c01c3d993e8374ccd6320db6e5277c24ba",
+      "dxil_sha256": "9caf979b11831b0cf27276085f4cb6c43eaf31bbcf2ad717b20b263c562e07ee"
+    },
+    {
+      "hlsl_sha256": "a3a3464b0072b48fe9386e0b9aa54667fe50b63ede8d0d2896f86f6740d47cd1",
+      "dxil_sha256": "aa82da932fd042a208d24c2c95f8ccf370f2333da1c1d486677a86d2ceb9a756"
+    },
+    {
+      "hlsl_sha256": "6f8e6ea39e0db40af426333485f0530b76d714cb9af5dc287dbeb295551b8e3c",
+      "dxil_sha256": "79adcd347eda936666a2225c5d88d9f91d50009c3f398127fc12c360e056a401"
+    },
+    {
+      "hlsl_sha256": "822caf877d73d2177de543837da6824a0ff1e72ce20c58a7aed61f7216612a9f",
+      "dxil_sha256": "33038fc256323212e84f87a8f776bf3224c844ed142b70130f01140eb2263197"
+    },
+    {
+      "hlsl_sha256": "435aceaa4f943df05cbd18bba1e016583ac8575078bc5ae555e5c6c186544611",
+      "dxil_sha256": "728694c3904b63d7dfce1f3ad258c2547e3a29418b45f80b8bf9d33fc368eaf7"
+    },
+    {
+      "hlsl_sha256": "6c428c34f8482ee7d7c6a8d4ce1605c60466e9d58f06d03f8831ce18a48a60e5",
+      "dxil_sha256": "5cb9d29f0bc1d72cacc6822d9f91e3669a967cd0c25ab1e709144190469d720c"
+    },
+    {
+      "hlsl_sha256": "5e740109f6dacdc9d6f5d1f2d283276b6ef32e8d7f01e1ae4ad77cab377804e6",
+      "dxil_sha256": "bf237ac07d76c198a17fb88e913dbf803f6313c13a0e4ca7cd3ecdeaabc9b588"
+    },
+    {
+      "hlsl_sha256": "5ced211d6104a4ad54f66a7b91b8150b7545e102382b3bf9eefa131a1f8973c7",
+      "dxil_sha256": "e45262d59cc856be29fd14d7a081cb716b2ebfa81e8c8184223622c654ec7c8f"
+    },
+    {
+      "hlsl_sha256": "60e352b875544407466e2a4989eb6cf4f91e8ee24046f0ca0f99d0c830f5af39",
+      "dxil_sha256": "ecbcad5937a616a4e622c033465322b4ee2bf89bd15448e4b25a472348994a85"
+    },
+    {
+      "hlsl_sha256": "5613f1b0618c454eaa53d42fd6a95f4c9b0fcc3e88045e578b80563c9bb6af07",
+      "dxil_sha256": "2b3e5fcaabe5d6a60a10a04fc81fc158618e5534f2c9bb7f48ef49ec21344d91"
+    },
+    {
+      "hlsl_sha256": "eafce09e3ce157456649a087f9392ad0af28211fc102575ce7449e0e820de390",
+      "dxil_sha256": "6d44d1513915ef6b3e5719d79614677a6fe76a98f5e49cff5456677c983fe1fc"
+    },
+    {
+      "hlsl_sha256": "d3288ec2a86af0c8312a0e12649acbd827cbf174bedb4c64bdcbd241e4ed65b3",
+      "dxil_sha256": "0dfd652ffa1c1475f94748040be498d073a6025daba5c4733986c98a53648206"
+    },
+    {
+      "hlsl_sha256": "3e8ebdab01f48e7c3473304b0f34293e109bb2486d81154b7f273f7a3601145d",
+      "dxil_sha256": "590270784568b7f35b0e14b969a76ee82f71278ff9fcb00645ec7f2df2c34616"
+    },
+    {
+      "hlsl_sha256": "608f53ad0cccbb44ad4769a1793dfba769d0f8ebccd8e7a6b7394cf234ec1169",
+      "dxil_sha256": "c938a7ef9c111ecc33e97cf400dda701082d58adc283bc4c2b90e082cd44aab9"
+    },
+    {
+      "hlsl_sha256": "d3fbffedb73242bacdff5e42db2a81797a014ea94830015cd154ce9826f7f652",
+      "dxil_sha256": "36e80b7a80d0d7123576ac52030889b2a991ecbce0c15af3b7a0d0fa355ff1b5"
+    },
+    {
+      "hlsl_sha256": "c1513fb3e806cd0e539a5eb3dc48215ae58584fa32e397529d3a3167656a6fcb",
+      "dxil_sha256": "fb867324422aa7710ba31aa7c15877aed40ef7595aa943119fd11c5382e2ef7d"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "archive": "global",
+  "dispatch": [
+    4,
+    1,
+    1
+  ],
+  "probe": "tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "direct_light": {
+    "entry": 218,
+    "export": "LumenSceneDirectLightingHardwareRayTracingRGS_516b84a8",
+    "input": "One light tile, four pixels, pixel zero already resolved in the shadow mask. Miss and closest-hit records count independently for each pixel.",
+    "state_sha256": "7d8bbcef8d2b310caf71240bff586b48eca6e7dad8b59548c55f94348098ce11"
+  },
+  "radiosity": {
+    "entry": 1064,
+    "export": "LumenRadiosityHardwareRayTracingRGS_aafff1ba",
+    "input": "One 8 by 8 card page, sixteen work items, four GPU invocations. The active case has empty surface coverage. The lit case supplies opacity one, encoded normal (0.5,0.5), depth one and sky RGB (1,2,3). The pass reads back the entire atlas and checks all pixels outside its first two rows.",
+    "state_sha256": "15e04bf95e8b836cd81108abae8f199342d05acb66ada07fae618d790aa4882b"
+  },
+  "adapters": [
+    {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "results": {
+        "218_empty": "mask 00000002; atlas 0; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+        "218_active": "mask 000000aa; atlas 0; hits 0; misses 6; guard 1; color 00000000,00000000,00000000,00000000",
+        "1064_empty": "mask 00000002; atlas 0; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+        "1064_active": "mask 00000002; atlas 16; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+        "1064_lit": "mask 00000002; atlas 16; hits 0; misses 16; guard 1; color 3f800000,40000000,40400000,3f800000"
+      }
+    },
+    {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "results": {
+        "218_empty": "mask 00000002; atlas 0; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+        "218_active": "mask 000000aa; atlas 0; hits 0; misses 6; guard 1; color 00000000,00000000,00000000,00000000",
+        "1064_empty": "mask 00000002; atlas 0; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+        "1064_active": "mask 00000002; atlas 16; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+        "1064_lit": "mask 00000002; atlas 16; hits 0; misses 16; guard 1; color 3f800000,40000000,40400000,3f800000"
+      }
+    }
+  ]
+}

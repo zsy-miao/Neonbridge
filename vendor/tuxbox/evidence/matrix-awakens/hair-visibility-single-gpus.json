@@ -1,0 +1,193 @@
+{
+  "scope": "Globals 979 and 982 single-sample hair visibility compaction through TuxBox\u2019s D3D12 provider and runtime shader worker. Five full-output CPU-modeled cases on each GPU cover empty, full, sparse, last-lane and depth rejection. This is not an end-to-end hair rendering check.",
+  "results": {
+    "amd": {
+      "scope": "Two packaged single-sample hair visibility compaction shaders through TuxBox\u2019s guest provider and runtime shader worker, with CPU-modeled GPU readback. Does not validate rendered hair.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "11a6d834b70434d063158e3748e63c31d8de4274458f81eb5bfb42b6fb5e8ecd",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "guest_sha256": "d665f627d8556bcb018b576f2d24b07def976a9449bc165f63739601acfbf578",
+      "shaders": {
+        "979": {
+          "cooked_sha256": "695a0af2716be84c7101edcb8970f48f40f2115a6f1e89b74c1f1d74f5dfafbb",
+          "workgroup": [
+            8,
+            4,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 32,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 5,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        },
+        "982": {
+          "cooked_sha256": "f5c3578c399acdb88eb90fd1fd852157a627056799680cb2cc325a84114db424",
+          "workgroup": [
+            8,
+            8,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 64,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 8,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        }
+      }
+    },
+    "nvidia": {
+      "scope": "Two packaged single-sample hair visibility compaction shaders through TuxBox\u2019s guest provider and runtime shader worker, with CPU-modeled GPU readback. Does not validate rendered hair.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "11a6d834b70434d063158e3748e63c31d8de4274458f81eb5bfb42b6fb5e8ecd",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "guest_sha256": "d665f627d8556bcb018b576f2d24b07def976a9449bc165f63739601acfbf578",
+      "shaders": {
+        "979": {
+          "cooked_sha256": "695a0af2716be84c7101edcb8970f48f40f2115a6f1e89b74c1f1d74f5dfafbb",
+          "workgroup": [
+            8,
+            4,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 32,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 5,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        },
+        "982": {
+          "cooked_sha256": "f5c3578c399acdb88eb90fd1fd852157a627056799680cb2cc325a84114db424",
+          "workgroup": [
+            8,
+            8,
+            1
+          ],
+          "cases": {
+            "none": {
+              "active_pixels": 0,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "all": {
+              "active_pixels": 64,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "sparse": {
+              "active_pixels": 8,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "last": {
+              "active_pixels": 1,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            },
+            "depth": {
+              "active_pixels": 2,
+              "image_pixels_checked": 64,
+              "buffer_slots_checked": 512,
+              "outputs_checked": 5
+            }
+          }
+        }
+      }
+    }
+  },
+  "negative_control": "Changing one native ISA bit disables the exact handler and the compiler rejects the unverified election at 0x174.",
+  "regression": "Globals 744 and 745 pass all five existing compaction cases on AMD with the updated translator."
+}

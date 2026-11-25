@@ -1,0 +1,11 @@
+[package]
+name = "tuxbox-dxc"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D12", "Win32_Graphics_Direct3D_Dxc", "Win32_System_Com"] }

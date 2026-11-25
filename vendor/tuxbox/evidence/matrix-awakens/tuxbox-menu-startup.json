@@ -1,0 +1,556 @@
+{
+  "title": "The Matrix Awakens",
+  "title_version": "1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": "Linux, Proton Experimental, NVIDIA RTX 4070 Ti SUPER",
+  "setup": "Private copies of the reference game layout and prefix, with the TuxBox D3D12 DLL swapped into each native-provider trial. The launcher selected Frosty from its compiled game configuration and ran normal shader preparation.",
+  "research_cache": "For fullcache and later diagnostic trials, exact cooked source hashes from the working reference were preloaded in each private prefix; linked shaders were selected by producer and consumer hash. The verified desktop configuration is recorded separately.",
+  "trial_arguments": [
+    "-DisablePlugins=XboxCommonGDKMoviePlayer",
+    "-nosound"
+  ],
+  "trials": [
+    {
+      "step": "prepared-reference",
+      "d3d12_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+      "proton_log_sha256": "7c3b7082265c3ee2094dea6cd62fdc2a90fd4616134d9ec3798f058a0c17fdbd",
+      "tuxbox_log_sha256": "d6ef79e656f66357960054851f06e66cf48daddbdb3dc99965196906432c863a",
+      "match_in_progress": true,
+      "graphics_provider": "reference",
+      "graphics_events": [],
+      "screen": {
+        "time_seconds": 50,
+        "sha256": "fa2485fbc2993619b3715e9dc23461bdd19d84fd32d5b7d8807f0c8785dfd63d",
+        "observed": "Start Chase selected, Settings visible, movie preview present"
+      },
+      "observation": "Reference provider, observed Start Chase and Settings at 50 seconds.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 11 cached"
+    },
+    {
+      "step": "prepared-stream",
+      "d3d12_sha256": "5afcf231cd474a8bcf1a83dd9351000eb251c7c4aca112d568c5124c1d9f8ac6",
+      "proton_log_sha256": "46c3305a1e88040e594b79c93e838f218b1a2183976f37ee437324e51301e67e",
+      "tuxbox_log_sha256": "80a40cc0fa9f451a01bb45c5747327d21addb47328332187a0a1dcc136f6cf87",
+      "match_in_progress": true,
+      "first_present": false,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "Project TuxBox: unsupported D3D12.x vtable slot 47, title return RVA 0x57db1db"
+      ],
+      "observation": "Created the 712-byte slot 86 PSO. Index buffer binding (slot 47) was unavailable.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 13 cached"
+    },
+    {
+      "step": "prepared-index",
+      "d3d12_sha256": "17e6aa960fb355cb9ea2969557d68959df8de459a1fbf496d37ff48e95a70f48",
+      "proton_log_sha256": "3d18d9d6fc99995e3f115e158d891465c906b1a0d08c32e0c7fa7321b01c22aa",
+      "tuxbox_log_sha256": "9ad46695a6e25d8e1ba0e3956cd1f5ca9bd306b0030f0982685c19cd2637787a",
+      "match_in_progress": true,
+      "first_present": false,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [],
+      "observation": "Passed index binding and reached command-list Close, which returned E_NOTIMPL.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 14 cached"
+    },
+    {
+      "step": "prepared-record",
+      "d3d12_sha256": "6a65145c6afd62db5b9ae40cc3c855a5776ddb2b2332bd494bc289d9116c0261",
+      "proton_log_sha256": "9327d1b544abd4c91838a0885aaba694fc71f7f7fd86712c32676af5aa37e566",
+      "tuxbox_log_sha256": "a45b093034f89dcee740d7ca00695ab55c5c4866b0f2721e1fff95ced092a70f",
+      "match_in_progress": true,
+      "first_present": false,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: command list cannot record resource barrier type 2 flags 0x0"
+      ],
+      "observation": "First unsupported recording command identified as a UAV barrier, type 2, flags 0.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 14 cached"
+    },
+    {
+      "step": "prepared-uav",
+      "d3d12_sha256": "223569b370d77609ac5d589f903ed4d877fbf887727a8a5b9a3a4badc9250332",
+      "proton_log_sha256": "3d5798537e0078ffb6ac09650b65016fb6eecf6bc1c0a3f82b1fcc58adb8ccf3",
+      "tuxbox_log_sha256": "f6c37e9debcb0f3eb0260b0fc1c6b5c7554a806b89c150c917114926a7182901",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "Project TuxBox: unsupported D3D12.x vtable slot 81, title return RVA 0x57652bc"
+      ],
+      "observation": "Passed UAV ordering and presented the first 3840x2160 display buffer. The title queried frame statistics at device slot 81.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 14 cached"
+    },
+    {
+      "step": "prepared-stats",
+      "d3d12_sha256": "31091a9708f326815d6747ddaaf85505a3592c8fb810904c3fd10746ddf397e2",
+      "proton_log_sha256": "1f714a46011a73a810bc52a79b9a095ab437309efc45a334984afdf5087e911d",
+      "tuxbox_log_sha256": "893d6e80b6509f3263d696469f8ec45742b245d860898a8e8a3752ca72915a17",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [],
+      "observation": "Passed the frame-statistics call. Creation of the 1024x1024 depth and UAV texture failed.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 14 cached"
+    },
+    {
+      "step": "prepared-bridge",
+      "d3d12_sha256": "63df92c734705f484a20168ba51fe2071bf65da4671e79e85a2b8977dc5466a7",
+      "proton_log_sha256": "97c15d1c3af40ffe31027c14e1312c65d76b6c1c20726970e2a3537e287c1cfc",
+      "tuxbox_log_sha256": "ffd452feeadbbc033d95ccd746cbbdb28930b8a449c15f0c1690be481e6eb5e5",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "The movie decoder obtained its D3D11On12 device. The depth and UAV texture creation still failed.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 14 cached"
+    },
+    {
+      "step": "prepared-depth",
+      "d3d12_sha256": "9be0c223156bf5685738b05419db9ace86b77e75ec618e1969978ef2cd9820ba",
+      "proton_log_sha256": "43c6a01e7a268cb54772ae07670f620e6b597b6ce7fe67d9c54cb1219ca7e8b1",
+      "tuxbox_log_sha256": "3b9400e7ac1b518b7abef761fcbebb10bab650ab0fb901190330e4393344e455",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: prepared vertex shader missing or invalid, source SHA-256 83bfd12ac34c11ff4ea3db9b892e12b2781a3e3e1e8c44bb1f61b5dcb7c9bed4",
+        "TuxBox d3d12_xs: prepared pixel shader missing or invalid, source SHA-256 5c89c4a1821fd930725c023754808b78879f186a651747e6492fdfe217f127f4",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80004005"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Passed the depth and UAV texture allocation. Frosty requested another graphics shader pair.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 14 cached"
+    },
+    {
+      "step": "prepared-postdepth",
+      "d3d12_sha256": "9be0c223156bf5685738b05419db9ace86b77e75ec618e1969978ef2cd9820ba",
+      "proton_log_sha256": "eab246e980549e74335e2a2c496a85a340d083834a8c244a33170e68bbabbb4f",
+      "tuxbox_log_sha256": "b3fb6ea149c8dfe60d8f356be4f868d513a29498406453338bf7293929d32ecd",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: prepared vertex shader missing or invalid, source SHA-256 7d09c3f5f7b068ef4edd02ea464e5a6bcad9f792b34d4bc1cce740aa9c5aa95e",
+        "TuxBox d3d12_xs: prepared pixel shader missing or invalid, source SHA-256 61860fa935b89bd5057821a52722a237aa77f07717630bde161dd50fc505267e",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80004005"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 16 cached"
+    },
+    {
+      "step": "prepared-fullcache",
+      "d3d12_sha256": "9be0c223156bf5685738b05419db9ace86b77e75ec618e1969978ef2cd9820ba",
+      "proton_log_sha256": "1c513169e0b587c48b62256c8bd20cfe2244c6b2843275c89f1ffa24eb379f1e",
+      "tuxbox_log_sha256": "152e83f5c62052593866aa5da3c26cbac72abba57b010fcc0e36756cedcf7432",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80070057"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "The driver rejected a geometry to pixel shader linkage for SV_RenderTargetArrayIndex.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 16 cached"
+    },
+    {
+      "step": "prepared-link",
+      "d3d12_sha256": "b5b0c1509149d77f7ed8c398c1b4c26365d2f817a810ba6989f8be61969c2fc9",
+      "proton_log_sha256": "25248db169a656eabf83da5d14c88c414ad6bfe80317127133924a655f53b77a",
+      "tuxbox_log_sha256": "d9ab6e7950e8450b42198cc61fcc6630f8bf61f53d32927c3983b1710aa152c8",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure 0x80070057, linked VS=false, VS=a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e(prepared) PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830(prepared) GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438\"...",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80070057",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure 0x80070057, linked VS=false, VS=a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e(prepared) PS=dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc(prepared) GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438\"..."
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 18 cached"
+    },
+    {
+      "step": "prepared-geometry",
+      "d3d12_sha256": "f465374340cb96f9fe19cd9db76d79b9799261bd6cda4acb6cf292d4e1bb4480",
+      "proton_log_sha256": "257bf1e20ebffc9ec0749ef9a0ed02391c157310c8ffd7186a21e6c326e4a56a",
+      "tuxbox_log_sha256": "d84bc304b8726c85fc694ce58c446d028c13e3936ff6e5f8e4ceae2737443d54",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: prepared geometry shader missing or invalid, source SHA-256 4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+        "Project TuxBox: unsupported D3D12.x vtable slot 55, title return RVA 0x5787b84"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 18 cached"
+    },
+    {
+      "step": "prepared-discard",
+      "d3d12_sha256": "31de0adc0dfed092e42b589fb678141c0f634326db466ead21ec975cc716163a",
+      "proton_log_sha256": "d192f2f7eaea442fe9766e576d6278e4c5d80b6bb007a3665965db84c7eb734a",
+      "tuxbox_log_sha256": "57f2dc2fce20cb3e9186bd23832891c1b9ecb8b0e1e3a261c9eb947e81bccdc5",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: prepared compute shader missing or invalid, source SHA-256 8e11c3a2bc8cba1092cfcc3f2ee5918c015f83d1c70c66f1885811b3b2908303",
+        "TuxBox d3d12_xs: compute pipeline creation failed (0x80004005, 2296 bytes, DXBC caf333f4d609df3f5a4b384d64917edd, chunks SFI0/ISG1/OSG1/PSV0/RTS0/ILDN/HASH/DXIL)"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Passed geometry pipeline linkage in an isolated GPU control and the resource discard in the title. Frosty requested another compute shader.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 18 cached"
+    },
+    {
+      "step": "prepared-compute8e11",
+      "d3d12_sha256": "31de0adc0dfed092e42b589fb678141c0f634326db466ead21ec975cc716163a",
+      "proton_log_sha256": "32dff542030fed9da25933f1eeed895a47299f93126f86ef6bce73828dad54b7",
+      "tuxbox_log_sha256": "889cd5246769f781ba8211f7b5d15f4d4f39f896dfbce4fed62c2c5cc3b936bc",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: prepared compute shader missing or invalid, source SHA-256 9f1bdd2dfd0960e5e4b7f0b6899ffa69e3125e77a5029daad04d11ac60029173",
+        "TuxBox d3d12_xs: compute pipeline creation failed (0x80004005, 1708 bytes, DXBC 8c5884035d3741eae52ee40fcafd0a7a, chunks SFI0/ISG1/OSG1/PSV0/RTS0/ILDN/HASH/DXIL)"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 18 cached"
+    },
+    {
+      "step": "prepared-cache3",
+      "d3d12_sha256": "31de0adc0dfed092e42b589fb678141c0f634326db466ead21ec975cc716163a",
+      "proton_log_sha256": "45d05ee29e1c070c0f36994b3bc24651f3bacc3f1177cd0166aed57d73a46659",
+      "tuxbox_log_sha256": "44d8362545092e828280322ff6fdaf88fae46f4eb49e3b801ac661a076e2a276",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: command list cannot record resource barrier type 1 flags 0x0"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "The native driver accepted the paired geometry pipeline in the title. An aliasing barrier stopped command-list recording.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 24 cached"
+    },
+    {
+      "step": "prepared-alias",
+      "d3d12_sha256": "56f6c7153e2164fee9ebe92eb47a6015aab1a8bb18c3e68c8142b2687297763d",
+      "proton_log_sha256": "12f4a5e2f0039ebdc1e86b49804d73e4dbdc640b8f62f8fec6100e6726f69089",
+      "tuxbox_log_sha256": "bb99c9074d527f72329cf4d021cdd6cba6db35f33db44c0d0038f694fe0f44f6",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: prepared compute shader missing or invalid, source SHA-256 708a27ac71ba47031771da69dc79bbef3acf80f656e4cd657960153874d08057",
+        "TuxBox d3d12_xs: compute pipeline creation failed (0x80004005, 2600 bytes, DXBC 1e83670a66c3a4c437c787fdae631294, chunks SFI0/ISG1/OSG1/PSV0/RTS0/ILDN/HASH/DXIL)"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 29 cached"
+    },
+    {
+      "step": "prepared-aliascache3",
+      "d3d12_sha256": "56f6c7153e2164fee9ebe92eb47a6015aab1a8bb18c3e68c8142b2687297763d",
+      "proton_log_sha256": "e24ccfd7503e45eb0ce58d8adcf94109aeb2f1386dfa47389b2ae8c5ef22f18a",
+      "tuxbox_log_sha256": "40476387b209c65084064008db52a1eacb072db7729f99411838d4a87e11575f",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "Project TuxBox: unsupported D3D12.x vtable slot 68, title return RVA 0x57f03ed"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Frosty passed the aliasing barrier and stopped at command list slot 68.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 30 cached"
+    },
+    {
+      "step": "prepared-depthbounds",
+      "d3d12_sha256": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+      "proton_log_sha256": "0402dcb7b7e3d4c346e03c36e2ceb0b48f019828c485752e14c8774fe0b55f7b",
+      "tuxbox_log_sha256": "693281c9d505fb52c297899a646b5a11271ea69ecc3552e381fd851e66286eea",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: prepared vertex shader missing or invalid, source SHA-256 54dac3a1f96f8b2aafe9e906f59936dca7ae0d45529262db80859c62f6b2dd1b",
+        "TuxBox d3d12_xs: prepared pixel shader missing or invalid, source SHA-256 e62b37833f215f7d9680cb442df5d3843c8b5c4fe970ea56d51bdab55dddf183",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #1 0x80004005 linked=false VS=54dac3a1f96f8b2aafe9e906f59936dca7ae0d45529262db80859c62f6b2dd1b(original) PS=e62b37833f215f7d9680cb442df5d3843c8b5c4fe970ea56d51bdab55dddf183(original)",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80004005",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #2 0x80004005 linked=false VS=54dac3a1f96f8b2aafe9e906f59936dca7ae0d45529262db80859c62f6b2dd1b(original) PS=5c89c4a1821fd930725c023754808b78879f186a651747e6492fdfe217f127f4(prepared)"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Isolated check using normal initial shader profile before the full menu set was installed; an additional vertex/pixel pair was requested.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 33 cached"
+    },
+    {
+      "step": "prepared-menu-profile",
+      "d3d12_sha256": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+      "proton_log_sha256": "5119c674fd94aa04ab6c0ddbe1e50a81e71cd844ffc08531c77ffe9e0a34aca2",
+      "tuxbox_log_sha256": "398ba79b0b281573d02873ffc1fd95ccdecb535183e4129a0aef59c73c3ac780",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc",
+        "TuxBox d3d12_xs: prepared compute shader missing or invalid, source SHA-256 942c771aed713166e2c8c7b4551f0ece55d47a272517e6425233e029dc9604cd",
+        "TuxBox d3d12_xs: compute pipeline creation failed (0x80004005, 1124 bytes, DXBC 8bf76674e25bf9e80552caae3818dfa4, chunks SFI0/ISG1/OSG1/PSV0/RTS0/ILDN/HASH/DXIL)",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #1 0x80070057 linked=false VS=a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e(prepared) PS=bf851dbaac9b5fdefdbf6fe01ed5b58e3a6e78a6fb1d3177249d9425f691ba9f(prepared)",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #1 0x80070057 linked=false GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33(prepared)",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80070057"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Full menu profile loaded 117 entries. Engine frame 1 requested another compute shader and linked geometry variation.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 117 cached"
+    },
+    {
+      "step": "prepared-frameone0",
+      "d3d12_sha256": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+      "proton_log_sha256": "65de6f087823610e1d459361c767983b0a84ccaeb8829f85d560a9afa0ec77c0",
+      "tuxbox_log_sha256": "164f2315e95badf3fca018159b2f916404b33317a80b9a2c52471d8b4c465a60",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #1 0x80070057 linked=false VS=a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e(prepared) PS=bf851dbaac9b5fdefdbf6fe01ed5b58e3a6e78a6fb1d3177249d9425f691ba9f(prepared)",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #1 0x80070057 linked=false GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33(prepared)",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80070057"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 117 cached"
+    },
+    {
+      "step": "prepared-menulink",
+      "d3d12_sha256": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+      "proton_log_sha256": "c0c44a0542fee6ee80dab1b67df05a5a1a2d7e9772faea0ddcc823d77ef7b8a5",
+      "tuxbox_log_sha256": "b545c83ad694ef57accc79a6830a0dc6a7a5ca28e6e09de2ecaf6d4dc86a819e",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: prepared compute shader missing or invalid, source SHA-256 fe7adadd002e364935ab1cbb7155a49f595cff93eb9a36303a880dccc50fb927",
+        "TuxBox d3d12_xs: compute pipeline creation failed (0x80004005, 1624 bytes, DXBC 30fc6c9d9ed3fe0dc6e2cfc9d78b2614, chunks SFI0/ISG1/OSG1/PSV0/RTS0/ILDN/HASH/DXIL)"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 118 cached"
+    },
+    {
+      "step": "prepared-late8",
+      "d3d12_sha256": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+      "proton_log_sha256": "2bea822526332a7a8f54cf2ccbf7485691f6f1720ca97471cfa2b16017d102a3",
+      "tuxbox_log_sha256": "3a041017f1360afe76ad67a734e094b9027abfca2cf31be3192d5746b6ce5425",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: slot 86 pipeline stage failure #1 0x80070057 linked=false VS=90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98(prepared) PS=c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95(prepared)",
+        "TuxBox d3d12_xs: slot 86 pipeline stream (712 bytes) failed: 0x80070057"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Reached engine frame 7. A material vertex/pixel pipeline required a linked translation.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 125 cached"
+    },
+    {
+      "step": "prepared-vslink",
+      "d3d12_sha256": "11a8f4c22edd1a4212299653823f1cd420eb626e53574ed554c2f9b893f70ad1",
+      "proton_log_sha256": "6a224c197ed3cf267770cddb1303971dbf10455cb5756031fb9ba31d8f25ba1c",
+      "tuxbox_log_sha256": "fbcfd39c5dda4835bfeb8d43ebd5b766defc61dcdc5ee6edbc0264c3275a4277",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: linked slot 86 VS=90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98 PS=c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "observation": "Frosty accepted the material pipeline and opened the 3840x2160 HEVC stream at frame 9. Its compact copy list, created with a zero node mask, was unavailable at frame 10.",
+      "first_boot": "Frosty shaders ready: 0 compiled, 128 cached"
+    },
+    {
+      "step": "prepared-movie",
+      "d3d12_sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+      "proton_log_sha256": "8294bde09abaad124549b397e7a0dae48c4132a3bbc129b5a9c39902e596f2df",
+      "tuxbox_log_sha256": "3b8b950d041a739bbf9d9645af49df3dcf4f5a6654029045686a57f51e555d3b",
+      "match_in_progress": true,
+      "first_present": true,
+      "graphics_provider": "TuxBox",
+      "graphics_events": [
+        "TuxBox d3d12_xs: linked slot 86 GS=4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33 PS=bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "TuxBox d3d12_xs: linked slot 86 VS=90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98 PS=c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95"
+      ],
+      "mfplat_sha256": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "movie_device_reset_succeeded": true,
+      "first_boot": "Frosty shaders ready: 0 compiled, 169 cached",
+      "observation": "Reached the 4K studio intro, then Start Chase and Settings with a moving preview. The private trial was stopped at the menu for the physical desktop launch.",
+      "display_captures": [
+        {
+          "seconds": 50,
+          "png_sha256": "17fdddade11d5a821a1679f925bbe289fe5093ca9eae1b13deaa9e8a69231576"
+        },
+        {
+          "seconds": 65,
+          "png_sha256": "a546049128416e3c4405010dbec22049698a189890b7521160c34095aae0573f"
+        },
+        {
+          "seconds": 90,
+          "png_sha256": "af69e8e5d30824c97f0f2fc11be2866798af42caec71adb46d493504878d2400"
+        }
+      ]
+    }
+  ],
+  "additional_shader_trials": [
+    {
+      "proton_log_sha256": "490a6111cc8566ceccab9bbb400e45053d990a0108708ad17666353bf373b64d",
+      "requested": [
+        "37399ddb0859075eca883b249982ba57a67054045c09aba6eb9b89f9df7b0602"
+      ]
+    },
+    {
+      "proton_log_sha256": "b2b9cbf48bfd44e84d15ec039d79ffb0720ffc1e3eb0eb023dcaf2eff1f7349c",
+      "requested": [
+        "19a409921782bec0dd6e2342f3591d6852fa0fa5e347807bfeb86b02cd39ee6c"
+      ]
+    },
+    {
+      "proton_log_sha256": "61decf5cd7093be0b2c8ff6c6d0cc0ecd4bf44678db8b1d1886bbe4a80ad78d9",
+      "requested": [
+        "98e02d75a4daec17354269988eaaa5e2718a7bc915de2cd24c9a2954b0db13d9"
+      ]
+    },
+    {
+      "proton_log_sha256": "eda8c0dc936326137596db7b51908ba6095a40706546d69c5f56bf6260ab7a82",
+      "requested": [
+        "0c9ee329b71780a29dbdd8f608f43bc303a9da0b478bde3c70bfb6c176574c25"
+      ]
+    },
+    {
+      "proton_log_sha256": "48be95e2f7ddb043b5bf979deaa176da2230f6bbe74d04085932b54b08487751",
+      "requested": [
+        "5ab8c9d977989bd8092b36e2e3127aab5ecbb463d7d33e483fe37bf2fcdd10e4"
+      ]
+    },
+    {
+      "proton_log_sha256": "a3d990ad3c959ca35f11fde9e87497b1372248914fb98bf47395c2b6cef4dc7b",
+      "requested": [
+        "e1665d19d2ff94d1295b7a78490bfc93a48039eb2aa87fe2e73e75fee8a86c75"
+      ]
+    },
+    {
+      "proton_log_sha256": "d44bfe08e6f0e0550a2b99ace77884f42297ec47c9100e8fea20a9ad6fc0eb8d",
+      "requested": [
+        "98c99ffbb5cb0cdb066bcbf333331e9c04edbda29c80d0881e73eb54bc136815"
+      ]
+    },
+    {
+      "proton_log_sha256": "f0937063a90332c7e3406c9b088db919eb4e53d5d26b59a087da82eddfe7d2ea",
+      "requested": [
+        "362a1d76620147f7beab785c70b134a68a6ec5c995c611e22bfbf19748c6d39d"
+      ]
+    },
+    {
+      "proton_log_sha256": "bedc8443769631987fca093d907e9d9380cef6491b9dd628ae3b74d7faf21a39",
+      "requested": [
+        "47fed5ea7e15d16c1e0dbeadbaa64e7efd922ac381479232deca02f7115df6a6"
+      ]
+    },
+    {
+      "proton_log_sha256": "852b19fb9a2662d17284d8b53834a207e646ef57a4d04f26d60b2846b6560671",
+      "requested": [
+        "5e6891b6d41f48e8912be7df9de033dede36425e3db534b5ad6b32d62c1f0ab5"
+      ]
+    },
+    {
+      "proton_log_sha256": "916387f9400203fc6d201cdabad6997c71c8edbcfbacdced5d7eeebb62981404",
+      "requested": [
+        "d7f20d1948c7417d74f298a17eea6d78b64b05280cf9a8234b65faa19ecbe640"
+      ]
+    },
+    {
+      "proton_log_sha256": "c4902c60e03d9154b1ed19da261e8c6a8d6ca61700858f2e7dab815f1a0ca755",
+      "requested": [
+        "9b1bd08dd30b0fe7f8a4d2b9e3d3e1b5caca450f8fc72348b0e5c432d391fde9"
+      ]
+    },
+    {
+      "proton_log_sha256": "f257fccf0768755e4cf0b9fddf93a2ac3e93dd723d499d639cabd6fe66de117b",
+      "requested": [
+        "4409088a7bc3ee6830856436f5f67bccc631b4045f7a35749989cda8dc76d727"
+      ]
+    },
+    {
+      "proton_log_sha256": "ad07344ee2565cd93857eddd9d371eb5e8752ed20b79f4997f77c61b0eb5f226",
+      "requested": [
+        "46dc8c6c941cee2e290a5cc9953083bb1d89be893a21b4206ecdfd22259fe490"
+      ]
+    }
+  ],
+  "isolated_controls": [
+    "evidence/matrix-awakens/tuxbox-media-copy.json",
+    "evidence/matrix-awakens/tuxbox-depth-stencil.json",
+    "evidence/matrix-awakens/tuxbox-linked-materials.json",
+    "evidence/matrix-awakens/tuxbox-slate-draw.json",
+    "evidence/matrix-awakens/tuxbox-present-sizing.json"
+  ],
+  "schema": 1,
+  "date_utc": "2026-11-21",
+  "result": "TuxBox rendered the retail main menu on the Linux desktop. The logo, both rows, the settings panel and changing video preview were visible.",
+  "desktop": {
+    "configuration": "Separate Linux working copy and prefix. Normal launcher, extended menu profile, desktop audio enabled, Xbox startup-movie plugin disabled. The existing Game Runtime, storage, input and media bridges were retained.",
+    "launch": "./tools/run_frosty_reference.sh --tuxbox-d3d12 --desktop",
+    "cache_outputs_reused": 169,
+    "research_shader_cache_preloaded": false,
+    "driver_cache": "Copied the completed private run’s vkd3d output cache into this installation before launch.",
+    "log_capture": "Snapshots taken while the retail game was still running at its menu.",
+    "tuxbox_log_snapshot_sha256": "95b937794a51b47a54ecc3221c5be70544e9573f8751e5ed9b0dae3267b81b85",
+    "proton_log_snapshot_sha256": "9c2664d16fa21b4cffa61aca1e1250d9ce1bfb80455d760d578744046a992d56",
+    "bin_sha256": {
+      "Frosty-XSX-Shipping.exe": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+      "d3d12_xs.dll": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+      "mfplat.dll": "5f4614eac00768c301e090112215f5fb86a24b98bee580363594f72472c1adcb",
+      "GameInput.dll": "50af3c2268e06f2cc7d92ce47b55945bb225eadfa5c7d677dae6aaedd2a5fc50"
+    },
+    "captures": {
+      "desktop-menu": {
+        "file": "evidence/matrix-awakens/tuxbox-desktop-menu.webp",
+        "sha256": "76f829afc8844fae96d66dccb271f322a7b9b10475cb8c7aea2abbeac458af35",
+        "original_png_sha256": "44c37cf41727e2ea7fef8c97cedbc20d3e64d7d989e6c209b69ca45c26310453"
+      },
+      "desktop-settings": {
+        "file": "evidence/matrix-awakens/tuxbox-desktop-settings.webp",
+        "sha256": "5341f2beb6464dbbeb432aac3ed00aa843c90b01314b5fba800e5ec262e0d59f",
+        "original_png_sha256": "2a42b142a9d11d6ae9d4295225c74decc5e27c6f44f853eff7940693fd6a4a9b"
+      }
+    },
+    "inputs": {
+      "keyboard": "With Frosty focused, K opened the Settings panel and I returned to Start Chase.",
+      "xinput": "A Linux virtual Xbox 360 controller exposed through Proton XInput selected Settings with D-pad down and returned to Start Chase with D-pad up.",
+      "capture_png_sha256": {
+        "desktop-settings": "2a42b142a9d11d6ae9d4295225c74decc5e27c6f44f853eff7940693fd6a4a9b",
+        "desktop-start": "c6358ca1695b1670f4a87c53ae5ec4e37354bbe1a0fc0ffff982101af106fc59",
+        "pad-settings": "d80c454424815324ce757a4643130d2d2cb67ead40c3291cf70aef86684b5250",
+        "pad-start": "5d8b9d387900af6d36826c4e7df5200115e6470e1c7384cca03a0fc1a14474e4"
+      }
+    },
+    "remaining": "The green digital rain behind the menu is missing. This TuxBox-renderer run stopped testing at the menu; interactive chase gameplay remains unverified."
+  }
+}

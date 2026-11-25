@@ -1,0 +1,220 @@
+{
+  "scope": "Optional exceptional-range round-toward-zero prototype vs native gfx1036, dynamic seeded-UAV samples; not runtime integration or general correctness proof.",
+  "serialized_source_sha256": "38bd71be9dd00e74952a9612f87f7df37a1617ca9f9847bb531b40bc5a4ad6af",
+  "controls": {
+    "edges": {
+      "scope": "Dynamic seeded-UAV synthetic triangle edges: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "22fc15b5195188fdf8471ae9c73c7d58e9eba05a6918331c42027dac7c6912f5",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 432,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 432,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 432,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    },
+    "scales": {
+      "scope": "Dynamic seeded-UAV extreme triangle scales: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "80ddd062e54fd19449413fd1c8f0da4a9835e9819f52bf9805f078b83be71d19",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 8,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 8,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 8,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    },
+    "mixed-final": {
+      "scope": "Dynamic seeded-UAV mixed-exponent triangle scales: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "55c0453214bca492b6745fc374db574016e689ef1b1104fdb02db403222b1811",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 10,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 10,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 10,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    },
+    "underflow-final": {
+      "scope": "Dynamic seeded-UAV underflow-boundary triangle scales: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "22aa400a06a42eff67d7b16f06c648837dcaa8ab396ac551a488fc4104fbdeec",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 10,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 10,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 10,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    },
+    "retail-edge": {
+      "scope": "Dynamic seeded-UAV serialized-leaf edges: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "906cea60c5c62b96f83ff5bfe37c7958b1eddf8cafa218d07c0a7f2b72296917",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 6,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    },
+    "retail-nearedge": {
+      "scope": "Dynamic seeded-UAV serialized-leaf edges: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "c2bc4010082d9c99d69cfd17f2c3f5798e74e4bd565d89027a8d6ccf263fc675",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 6,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    },
+    "degenerate": {
+      "scope": "Dynamic seeded-UAV parallel and degenerate triangles: native gfx1036 versus float32 RTZ candidate; no general equivalence claim",
+      "native_dump_sha256": "5b830e34ed30d8b186ca2f972e38166e7e94058c5cd558fbde9f9a65ed2828f8",
+      "offset": 0,
+      "wide_fallback": true,
+      "cases": 9,
+      "hlsl_sha256": "05b83bab0b1f1012f59df755c2b679e5b4f4c881a3dea5fcb77ca05c8d535147",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 9,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 9,
+          "mismatches": []
+        }
+      },
+      "dxil_sha256": "2a94dad7cc66eacb1187e7107ea06818369c1fce28245b6f490248c3ba958664"
+    }
+  },
+  "cases_per_adapter": 481,
+  "mismatches_per_adapter": {
+    "AMD": 0,
+    "NVIDIA": 0
+  },
+  "fallback_perf": {
+    "scope": "Synthetic single triangle, 65536 dynamic rays with 1024 distinct origins; strict float32 candidate, GPU timestamps include UAV barriers. Not a game benchmark or a general accuracy proof.",
+    "wide_fallback": true,
+    "native_agent": "agent=gfx1036 signal=0 records=65536",
+    "native_sha256": "256f7b9fa6ed5d97a5f45bad6541e9e640cbf03afce80c72fd538963172e1620",
+    "dxil_sha256": "d16448ad556ec61744fd553ecb2a7df13893217e338642cc80afc214ff3e60fb",
+    "adapters": {
+      "AMD": {
+        "adapter": "1002:13c0",
+        "runs_ms_per_dispatch": [
+          0.24165,
+          0.24165,
+          0.24173
+        ],
+        "median_ms_per_dispatch": 0.24165,
+        "threads_per_dispatch": 65536,
+        "native_mismatched_words": 0
+      },
+      "NVIDIA": {
+        "adapter": "10de:2705",
+        "runs_ms_per_dispatch": [
+          0.007168,
+          0.007168,
+          0.006656
+        ],
+        "median_ms_per_dispatch": 0.007168,
+        "threads_per_dispatch": 65536,
+        "native_mismatched_words": 0
+      }
+    }
+  },
+  "float_only_baseline_perf": {
+    "scope": "Synthetic single triangle, 65536 dynamic rays with 1024 distinct origins; strict float32 candidate, GPU timestamps include UAV barriers. Not a game benchmark or a general accuracy proof.",
+    "native_agent": "agent=gfx1036 signal=0 records=65536",
+    "native_sha256": "256f7b9fa6ed5d97a5f45bad6541e9e640cbf03afce80c72fd538963172e1620",
+    "dxil_sha256": "dabb12d7a37ea1462e60d83cf430e775c36d5915e540828d5299318db51f572c",
+    "adapters": {
+      "AMD": {
+        "adapter": "1002:13c0",
+        "runs_ms_per_dispatch": [
+          0.17084,
+          0.17072,
+          0.17076
+        ],
+        "median_ms_per_dispatch": 0.17076,
+        "threads_per_dispatch": 65536,
+        "native_mismatched_words": 0
+      },
+      "NVIDIA": {
+        "adapter": "10de:2705",
+        "runs_ms_per_dispatch": [
+          0.004352,
+          0.004352,
+          0.004352
+        ],
+        "median_ms_per_dispatch": 0.004352,
+        "threads_per_dispatch": 65536,
+        "native_mismatched_words": 0
+      }
+    }
+  },
+  "limitations": "Finite sampled inputs only. General subnormal, NaN, infinity, arbitrary graph, address provenance, device FP64 capabilities, exact edge behavior for arbitrary geometry, and full shader 219 traversal remain unverified. Synthetic timing is not game performance."
+}

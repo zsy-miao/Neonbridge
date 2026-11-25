@@ -1,0 +1,86 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -22,6 +22,7 @@
+ mod compare;
+ mod lds_tile;
+ mod ps09_classify;
++mod subsurface_setup;
+ mod packed_root;
+ mod wave_sum;
+ mod wave_scan;
+@@ -738,6 +739,7 @@
+                 | Opnd::ConstInt(_) | Opnd::ConstF32(_) | Opnd::Literal(_)))
+     })).then(|| compute_group(ex));
+     lower_local_pc_transfers(&mut insns)?;
++    let subsurface_setup = subsurface_setup::prepare(ex, &mut insns);
+     let material_classify = ps09_classify::prepare(ex, &mut insns);
+     let allocation_wave64 = mark_wave_allocations(&mut insns)?;
+     let required_wave_size = lower_wave_reductions(&mut insns)?;
+@@ -814,6 +816,10 @@
+         em.classify_interpolation();
+     }
+     em.infer_tbuf_types();
++    if subsurface_setup {
++        // These two R32_UINT UAVs hold both the atomic head and the XY rows.
++        em.tbuf_uint.extend([0, 1]);
++    }
+     if material_classify { ps09_classify::resources(&mut em)?; }
+     let live_in = em.live_in();
+     em.live = live_in.clone();
+@@ -2585,6 +2591,10 @@
+                 let dst = d.ok_or("missing elected lane register")?;
+                 return self.ws(&dst, "WaveActiveMin((exec_lo & 1u) ? WaveGetLaneIndex() : 0xffffffffu)");
+             }
++            "tb_subsurface_group_sync" => {
++                self.line("GroupMemoryBarrierWithGroupSync();");
++                return Ok(());
++            }
+             "tb_capture_allocation_mask" => {
+                 let dst = d.ok_or("missing mask register")?;
+                 let upper = hi(&dst);
+--- /dev/null
++++ b/crates/tuxbox-xshader/src/hlsl/subsurface_setup.rs
+@@ -0,0 +1,43 @@
++//! Subsurface indirect setup, Frosty global entry 856. One 8x8 group produces
++//! one flag word. Both append elections are explicitly intersected with VCC,
++//! which this kernel sets once to (local_y * 8 + local_x == 0).
++use super::{compute_group, packed_root::matches_program, Enc, Insn, Opnd, ShaderExtract, Stage};
++
++pub(super) fn prepare(ex: &ShaderExtract, insns: &mut [Insn]) -> bool {
++    if ex.stage != Stage::Compute || compute_group(ex) != [8, 8, 1]
++        || ex.entry.as_deref() != Some("SetupIndirectCS")
++        || !matches_program(&ex.isa, 1104, 0x3bc35cb76f547697)
++    {
++        return false;
++    }
++    for ins in insns {
++        match ins.offset {
++            // The native workgroup occupies one wave64. A wave32 host needs
++            // workgroup-wide ordering between clear, atomic OR and load.
++            0x080 | 0x2b8 => ins.mnemonic = "tb_subsurface_group_sync".into(),
++            // The only participant is local lane 0. Its physical lane index
++            // and its prefix among the active lanes are both zero. The frame
++            // of code that reads/increments the UAV counter remains intact.
++            0x2e8 | 0x2f8 | 0x334 | 0x344 | 0x3b0 | 0x3c0 | 0x3fc | 0x40c => {
++                ins.enc = Enc::Vop1;
++                ins.op = 1;
++                ins.mnemonic = "v_mov_b32".into();
++                ins.src = vec![Opnd::ConstInt(0)];
++            }
++            0x2f0 | 0x3b8 => {
++                ins.enc = Enc::Sop1;
++                ins.op = 3;
++                ins.mnemonic = "s_mov_b32".into();
++                ins.src = vec![Opnd::ConstInt(0)];
++            }
++            // Only the issuing lane consumes its own pre-increment value.
++            0x340 | 0x408 => {
++                ins.enc = Enc::Sop1;
++                ins.op = 3;
++                ins.mnemonic = "s_mov_b32".into();
++            }
++            _ => {}
++        }
++    }
++    true
++}

@@ -1,0 +1,99 @@
+{
+  "scope": "XMemGetTitleHeap ordinal 14 and ordinary XMemCreateWin32Heap ordinal 4 modes on CPU host heaps. Xbox partition ownership and caller-supplied-memory heaps are not implemented.",
+  "reference_dll_sha256": "adc182acae5340b0618a3d57a239ed2e8deb305dbefc49439cb8a2d06c7ce812",
+  "native_control": "python tools/check_xmem_heaps_native.py /path/to/xmem.dll",
+  "native_method": "Runs the hash-pinned console routines in a temporary mapped PE, replacing XbGetPartitionHeap and XbCreatePartitionHeap with argument-checking native callbacks; console diagnostic logging and SetLastError are stubbed for invalid cases. The title getter forwards partition=1 and the creator with modes 0/4 forwards (1,3/2,NULL,1). The original strips bit 0x8000 and ignores the second argument for those modes. Null/unaligned mode-2 base, combined mode 6 and invalid mode 8 return error 87.",
+  "native_result": "xmem-native-heaps PASS title=1 create=5 flags=3/2 invalid=4",
+  "guest_checks": [
+    "Get title heap and verify that HeapAlloc allocations can be freed with XMemFreeDefault and XMemAllocDefault allocations can be freed with HeapFree.",
+    "Create four independent heaps with modes 0/4 and optional bit 0x8000, allocate/write/free and destroy each; reject unsupported mode2 and invalid arguments."
+  ],
+  "limits": [
+    "The Xbox title partition heap is replaced by the process heap. Xbox physical partition ownership, memory budgets and GPU visibility are not emulated.",
+    "Only ordinary modes 0 and 4 are implemented. Supported modes ignore base as observed; custom-base mode 2 and console-partition modes are rejected.",
+    "The real console partition allocator is stubbed in the native reference control; hardware memory backing and allocation failures are not compared."
+  ],
+  "source_sha256": {
+    "tools/check_xmem_heaps_native.py": "9d80c827feb0839f20dcbc6a175081c61024e855ae205ed464aa141b8450e742",
+    "tools/reference/xmem-tag/heaps_native.c": "cfb1f19ea4706e82d9aaf2d1be6ad034761c1bba2a3f5cd15416aa4039cdb6c0",
+    "runtime/xmem/guest.c": "141fd2d8a374fb7ff4a01279b1e72f46c03ff469b9bf3dbc96d865bc87977612",
+    "runtime/xmem/src/lib.rs": "9f268ee4f55172fcafbca34f11c3118fecce99240fef38ebd3a5b3439e02c030"
+  },
+  "run": {
+    "schema": 1,
+    "type": "homebrew",
+    "date_utc": "2026-11-22",
+    "host": "Linux",
+    "os_release": "7.3.5-2-cachyos-bore",
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "machine": "x86_64",
+    "backend": "proton",
+    "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+    "binaries_sha256": {
+      "xmem-smoke/xmem-smoke.exe": "e858f3de37dfbf8bf77c233874be18c506c07fb6016deeb1041c9e2b8cc672df",
+      "xmem-smoke/xmem.dll": "505e3cc32326c19dfbeb374d1fb74bf081cbbb09992e5081144c817e66fa9275"
+    },
+    "checks": [
+      {
+        "gate": "xmem-heaps",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-heaps PASS title=1 private=4 invalid=2"
+      },
+      {
+        "gate": "xmem-heap-profiles",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-heap-profiles PASS attributes=40 alloc=80 free=80"
+      },
+      {
+        "gate": "xmem-virtual-cpu",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-virtual-cpu PASS protections=6 allocations=12 guards=5 invalid=1"
+      },
+      {
+        "gate": "xmem-scatter",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-scatter PASS pages=3 remapped-bytes=196608 duplicates=2 guards=2 rollback=1"
+      },
+      {
+        "gate": "xmem-watch",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-watch PASS initial=2 reset=2 next=1 guards=2 invalid=1 pause=2 resume=3 allocations=2"
+      },
+      {
+        "gate": "xmem-hooks",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-hooks PASS calls=2/2 zero-size=1 null-free=1 restore=1 reentrant=1"
+      },
+      {
+        "gate": "xmem-tags",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-tags PASS count=5120 hash=d4bf30c57509b176"
+      },
+      {
+        "gate": "xmem-query",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-query PASS unsupported=3 guards=2 null=1"
+      },
+      {
+        "gate": "xmem-default",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-default: PASS (allocator pairs 1/6 and 2/7, ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+      },
+      {
+        "gate": "xmem-pages",
+        "passed": true,
+        "exit_code": 0,
+        "receipt": "xmem-pages PASS cpu-pages=2 remapped-bytes=131072 stale-and-foreign-rejected=1"
+      }
+    ]
+  }
+}

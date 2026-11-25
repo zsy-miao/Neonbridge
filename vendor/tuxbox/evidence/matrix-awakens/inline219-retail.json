@@ -1,0 +1,42 @@
+{
+  "scope": "Desktop run with the packaged graphics settings and MangoHud. Records a retail dispatch on the command list. The separate two-GPU replay checks completed GPU writes.",
+  "adapter": "10de:2705",
+  "proton": "Proton - Experimental",
+  "proton_version": "1793301796 experimental-11.0-20261027b-x86_64",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider_sha256": "eda3ba0ad68eae02aff95f1119c5f2a4eefc1ab4f50aae56ef2edfb979d04ebd",
+  "compiler_sha256": "6758d4dca1238a327c7484c6de1f197b8fe90458fc05289f2f348340e9b757ee",
+  "log_sha256": "36b4cb3030cfe7f1a4a02635a17c2bb68dbc94638235d745842aebd95e7b8a2f",
+  "graphics": {
+    "stock_settings": true,
+    "lumen_hardware_ray_tracing": 1,
+    "shader_cache": "warm",
+    "mangohud_frame_samples": 1
+  },
+  "shader_219": {
+    "source_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+    "dxil_sha256": "3c460f9202764f2d52429175cde720aa2ef995d2c7ea7ab75ddc1fc11be8516f",
+    "guest_root_payload_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+    "guest_root_version": "1.0",
+    "guest_srv_table_parameter": 0,
+    "scene_offset_in_table": 5,
+    "recorded_scene_gpu_va": "0xe8600000"
+  },
+  "next_failure": {
+    "entry": 318,
+    "source_sha256": "29285864ab5a502a45dfe24cb3d1a775f849831c9f0587465ad206d6734a4944",
+    "container_bytes": 7172,
+    "dxbc_checksum": "6219535d170d68759c050e0e30e95f17",
+    "diagnostic": "raw BVH node intersection requires traversal translation at 0x7c8",
+    "pipeline_hresult": "0x80004005"
+  },
+  "outcome": "Construct loaded. Shader 219 dispatch recorded. The subsequent shader 318 compute pipeline failed, and the game exited with code 1 before the menu.",
+  "repeat_with_submission_validation": {
+    "provider_sha256": "582f5e913d37c062aad64d9f095f0f887d16fd1269a878c8a883213146944a28",
+    "log_sha256": "4b084535a417828031742a30be17e9699f00c8eb93c29c64f2a71db45db7cc18",
+    "recorded_scene_gpu_va": "0xff600000",
+    "next_failure_entry": 318,
+    "exit_code": 1,
+    "mangohud_frame_samples": 0
+  }
+}

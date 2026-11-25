@@ -1,0 +1,36 @@
+# Neonbridge launcher spec for vendor/fivestar: ThatRecompDev's Five Star Recomp,
+# vendored clean. A .NET 10 port: the `fivestar` CLI prepares the dump and starts
+# fivestar-loader on the game (README.md "Running the game", docs/running.md).
+# Upstream status (README.md:20-24): logo, intro, first-run screens, story load and
+# the opening cutscene's UI, dialogue and sound at 30 fps; the 3D world draws into
+# the G-buffer but lighting and composition do not reach the screen yet.
+name = "fivestar"
+about = "Five Star Recomp 7d0393d (GPL-3.0+); first setup takes 1 to several hours and needs over 100 GB free (run --setup knowingly)"
+upstream = "https://github.com/ThatRecompDev/five-star-recomp"
+# docs/running.md:7-10: needs the .NET 10 SDK (global.json 10.0.203), the Windows
+# SDK (dxc) and the PC GDK (xgameruntime.lib). Release instead of the docs' debug.
+build = ["dotnet", "build", "FiveStar.slnx", "-c", "Release"]
+watch = ["src", "Directory.Build.props", "Directory.Packages.props", "FiveStar.slnx", "global.json"]
+exe = "artifacts/bin/FiveStar.Cli/release/fivestar.exe"   # Directory.Build.props UseArtifactsOutput; docs/running.md:20
+# docs/running.md:12,26: run finishes any setup step still to do, then starts the
+# loader; the work folder defaults to %LOCALAPPDATA%\FiveStar\<titleid>-<version>.
+run = ["run", "{game}"]
+agility = false
+
+options = [
+  "--work <dir> (default %LOCALAPPDATA%\\FiveStar\\<titleid>-<version>): work folder, docs/running.md:32",
+  "--debug: D3D12 debug layer and DRED (needs the Graphics Tools optional feature), docs/running.md:33",
+  "--timeout <s>: end the game after s seconds, docs/running.md:34",
+  "--bcpack-tables <file>: BCPack tables you supply, for exact BC7/BC6H/BC3 textures, README.md Textures",
+]
+# README.md "Preparing your dump": checks the dump, extracts and translates the
+# shaders, reads the pipeline cache and exports the textures. ONE TO SEVERAL HOURS
+# and OVER 100 GB the first time; resumable; `doctor` first checks the PC.
+# {exe} and {game} in setup steps need the launcher's substitution (Coder1).
+setup = [
+  "build: dotnet build FiveStar.slnx -c Release [asks first: needs the .NET 10 SDK, Windows SDK and PC GDK installed]",
+  "doctor: artifacts\\bin\\FiveStar.Cli\\release\\fivestar.exe doctor \"{game}\"",
+  "prepare: artifacts\\bin\\FiveStar.Cli\\release\\fivestar.exe setup \"{game}\" [asks first: takes 1 to several hours and over 100 GB free; resumable]",
+]
+
+[env]

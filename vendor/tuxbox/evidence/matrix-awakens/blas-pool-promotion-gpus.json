@@ -1,0 +1,42 @@
+{
+  "scope": "Synthetic direct-to-relocated BLAS overwrite of the same guest address. The initial two triangles occupy 2048 guest bytes. Fourteen replacement triangles occupy 704 guest bytes, the destination size seen at the Wake Up failure.",
+  "runner": "tools/check_frosty_blas.py --single-build --promote-blas",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "ca123ec040ea68ef752008bb23c5af037c5333df1829e9ac9a780b640233d1bd",
+  "guest_sha256": "d800d43f5a6eb7d21929d8d2884bb3193d863184d90e2b9f30569cbbf9b63e53",
+  "previous_provider_sha256": "680ebe65dddc0a517cb4f7b4b57d05f23435a656d8a40e9f31e4a327e4d0aa49",
+  "previous_provider_result": "AMD rejected the replacement at Close with E_NOTIMPL.",
+  "queue": "Record both cooked writes and two TLAS build-and-trace lists. Hold a direct queue behind a fence. Submit original write plus first TLAS list, then replacement write plus second TLAS list. Release the gate and verify both readbacks. After completion, swap the two TLAS lists and repeat. Each build reads identical GPU-produced instance descriptors. Each trace checks two triangle IDs, distances, instance ID, geometry ID and a miss.",
+  "adapters": {
+    "AMD": {
+      "pci": "1002:13c0",
+      "initial_native_compacted_bytes": 448,
+      "replacement_native_compacted_bytes": 1600,
+      "first_primitive_each_tlas_build": [
+        1,
+        0,
+        1,
+        0
+      ],
+      "final_instance_geometry_primitive_distance": "11/0/0/1,11/0/1/1,miss",
+      "desktop_reference_rays": "70010,70120,80010,80120,dead",
+      "existing_private_address_reuse": "pass",
+      "ordinary_gpu_instances": "pass"
+    },
+    "NVIDIA": {
+      "pci": "10de:2705",
+      "initial_native_compacted_bytes": 1152,
+      "replacement_native_compacted_bytes": 1280,
+      "first_primitive_each_tlas_build": [
+        1,
+        0,
+        1,
+        0
+      ],
+      "final_instance_geometry_primitive_distance": "11/0/0/1,11/0/1/1,miss",
+      "desktop_reference_rays": "70010,70120,80010,80120,dead",
+      "existing_private_address_reuse": "pass",
+      "ordinary_gpu_instances": "pass"
+    }
+  }
+}

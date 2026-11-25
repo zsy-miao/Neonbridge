@@ -1,0 +1,38 @@
+# Neonbridge launcher spec for vendor/tuxbox: brcly's TuxBox, vendored clean
+# (Neonbridge's own modified TuxBox is vendor/neonbridge-own). TuxBox runs a
+# title through its Python CLI (tuxbox.py run), which loads the providers
+# build.py makes; on x64 Windows it executes natively with its D3D12 backend
+# (examples/lanes/README.md "Build and play"). Upstream says Windows game
+# compatibility is still in development; ProjectScarlett is verified on Linux
+# under Proton only (README.md:5-6, 19).
+name = "tuxbox"
+about = "TuxBox 1d821cb (Apache-2.0), brcly's upstream build"
+upstream = "https://github.com/brcly/TuxBox"
+# README.md:16 / docs/PROJECTSCARLETT.md:20-24: build every provider (needs
+# Python 3.10+, Rust 1.95 with x86_64-pc-windows-msvc, VS Build Tools C++ and
+# Windows SDK in an x64 Native Tools environment, dxc on PATH).
+build = ["python", "build.py"]
+watch = ["runtime", "tools", "graphics", "build.py", "Cargo.toml", "Cargo.lock"]
+# The D3D12 provider build.py links last among ProjectScarlett's providers
+# (build.py:250-253); its age marks the build stale. The title is launched by
+# `launcher` below, not by this file.
+exe = "build/d3d12-smoke/d3d12_xs.dll"
+# NEW KEY for the launcher (Coder1): the command that starts a run, in the
+# tree's folder; run/prewarm arguments follow it.
+launcher = ["python", "tuxbox.py"]
+# README.md "Game logs": --log-file before the game path; the game path is the
+# package folder or its game_scarlett_master.exe (docs/PROJECTSCARLETT.md:15).
+run = ["run", "{game}"]
+# README.md "Shader preparation": --prepare-only fills the shader cache without
+# opening the game.
+prewarm = ["run", "--prepare-only", "{game}"]
+agility = false   # its D3D12 provider uses the system d3d12.dll (build.py:250 links d3d12.lib)
+
+options = [
+]
+# docs/PROJECTSCARLETT.md:20, README.md "Try Lanes": Python dependencies (pefile, ...).
+setup = [
+  "python -m pip install -r requirements.txt",
+]
+
+[env]

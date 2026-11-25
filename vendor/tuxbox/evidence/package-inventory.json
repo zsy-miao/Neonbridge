@@ -1,0 +1,142 @@
+{
+  "package_version": "1.0.2.1",
+  "manifest_sha256": "d0d5e4777460045916046619cd0fd433aa251d4a74f4d91e83987588f907f80c",
+  "declared_executables": [
+    {
+      "path": "game_scarlett_master.exe",
+      "id": "GTAO",
+      "target": "Scarlett",
+      "present": false
+    }
+  ],
+  "appx_applications": [
+    {
+      "id": "GTAO",
+      "path": "game_scarlett_master.exe"
+    }
+  ],
+  "inventory": {
+    "dlls": 16,
+    "rpf_files": 22,
+    "ttpf_files": 57
+  },
+  "cross_check": {
+    "llvm_version": "23.1.5",
+    "pefile_version": "2024.8.26",
+    "ordinary_and_delay_match_llvm": true,
+    "ordinary_match_fork_tsv": true,
+    "fork_tsv_sha256": "d3ffe484b977e8cbeb36a270ed9444987ff3330e52f84cb4d0e862544db5a316"
+  },
+  "symbol_totals": {
+    "imports": {
+      "named": 1334,
+      "ordinal": 3,
+      "descriptors": 325,
+      "distinct_module_symbol_pairs": 611
+    },
+    "delay_imports": {
+      "named": 0,
+      "ordinal": 0,
+      "descriptors": 0,
+      "distinct_module_symbol_pairs": 0
+    }
+  },
+  "libraries": [
+    {
+      "path": "Bink2Scarlett.dll",
+      "sha256": "9eaf045d004cd7d6a8382aaff0c6ea23a29fec4ef8bfacd726b54f5bc26fafd0",
+      "imports": 60,
+      "delay_imports": 0
+    },
+    {
+      "path": "XCurl.dll",
+      "sha256": "d11ba4e4a07f42f8d80c48553c5c2588ab4114ecdbe023305f5f8fa8262131f8",
+      "imports": 140,
+      "delay_imports": 0
+    },
+    {
+      "path": "XboxBvhBuilder.dll",
+      "sha256": "99f803ac22c01ef329dddb1d40be67238d2a812d01e8d040b3cb5135bc23707e",
+      "imports": 57,
+      "delay_imports": 0
+    },
+    {
+      "path": "amd_fidelityfx_loader_xbox.dll",
+      "sha256": "431bdd2e26c0c8214fd7601140eb9fe6d8a249f5000539453a9a9b6a0b7c0ee8",
+      "imports": 22,
+      "delay_imports": 0
+    },
+    {
+      "path": "amd_fidelityfx_upscaler_xbox.dll",
+      "sha256": "faff02f294a7e9149ce079dffe3dedbcabe99b1f180ab14222aa8689e00a75fa",
+      "imports": 86,
+      "delay_imports": 0
+    },
+    {
+      "path": "concrt140.dll",
+      "sha256": "554168b99726cbe982b542ec97c493f48483b20a4ea4e54e102ba3a0d098e75f",
+      "imports": 103,
+      "delay_imports": 0
+    },
+    {
+      "path": "libHttpClient.GDK.dll",
+      "sha256": "14d97b3d071e0ce461e758dbcf1511941ae5c0bdd6e32ed33cb87aaae0414d3a",
+      "imports": 198,
+      "delay_imports": 0
+    },
+    {
+      "path": "msvcp140.dll",
+      "sha256": "6036fdb3ee3a5813ef0b17462219ebcee5f06b46ef738bacde07aa797e6d2b75",
+      "imports": 187,
+      "delay_imports": 0
+    },
+    {
+      "path": "msvcp140_1.dll",
+      "sha256": "c56b530e0894d9c4d11b12d389786fef40463dbd81d4438b8414f909d6226211",
+      "imports": 33,
+      "delay_imports": 0
+    },
+    {
+      "path": "msvcp140_2.dll",
+      "sha256": "276813083c55c079120e0db49898088bb0c8d1c912ed59ec0d00fedf56a694a8",
+      "imports": 96,
+      "delay_imports": 0
+    },
+    {
+      "path": "msvcp140_atomic_wait.dll",
+      "sha256": "b7f879662095f71dc08efcbc0d24ac3c0ff2dde8d475f92f5c5646a39bf8f2c3",
+      "imports": 64,
+      "delay_imports": 0
+    },
+    {
+      "path": "msvcp140_codecvt_ids.dll",
+      "sha256": "89cf5b07b98709277e8511d9a402ce72279e8df3ae24a8dd641ab0265c799a0c",
+      "imports": 24,
+      "delay_imports": 0
+    },
+    {
+      "path": "vccorlib140.dll",
+      "sha256": "79ee6fa49aa2c6f0dfbc1279273fd619e1a9285995ff53a8bc183000c8895b91",
+      "imports": 114,
+      "delay_imports": 0
+    },
+    {
+      "path": "vcomp140.dll",
+      "sha256": "91e249c0f66f827bcacd0be4931b1cec3e4907cc05ea0a5bcd83696c70908963",
+      "imports": 78,
+      "delay_imports": 0
+    },
+    {
+      "path": "vcruntime140.dll",
+      "sha256": "9385104cc3e031dbbcb63f156134a0f6afff455e0ff6887f5a9e1c5f7e2706b0",
+      "imports": 41,
+      "delay_imports": 0
+    },
+    {
+      "path": "vcruntime140_1.dll",
+      "sha256": "0dbd6859f825ab8acab1fa25b6bd1a091d35ca2dbe3185c1187192f2d2ac8154",
+      "imports": 34,
+      "delay_imports": 0
+    }
+  ]
+}

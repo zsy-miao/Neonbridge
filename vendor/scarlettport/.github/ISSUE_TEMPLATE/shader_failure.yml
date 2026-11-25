@@ -1,0 +1,43 @@
+name: Shader failure report
+description: A shader that fails to translate or compile
+labels: [shaders]
+body:
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: [XCL, VIctory-based runtime]
+    validations:
+      required: true
+  - type: input
+    id: hash
+    attributes:
+      label: Shader hash
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      options: [VS, PS, CS, MS, AS, GS, HS, DS, unknown]
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error line
+      description: The exact log line, including the opcode or HLSL/DXC message and line number.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Do not paste dumped game shader code; the hash and error line are enough.

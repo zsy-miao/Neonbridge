@@ -1,0 +1,28 @@
+{
+  "scope": "Global compute 114 through original Xbox slot 62 and packaged root signature, compared against separate native TLAS and packaged ray generation 71. Readbacks cover two depth words, two float4 radiance texels and four five-word records.",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "7e01b49515fe44d8083e498b14823bd0ebc02e2c464bb1e85b0ba58c74b652c7",
+  "shaders": {
+    "114": {
+      "source_sha256": "c1d37ea3f753a8426aa8831dbe5546aa31496f30152b0fb76e87eeef9ab73b6b",
+      "dxil_sha256": "25659ec055581b1a394f64c1a4be29251de790866a9bcc6953db1147ac22900c"
+    },
+    "71": {
+      "source_sha256": "248aad22fe2ba86d0078187ed382be9d5d010bfef34738425b6b355ba3e8768c",
+      "dxil_sha256": "fac83939f008d1e0bf2ab27480f1b32b61ce66f6a069121879de9e888d3f1c43"
+    }
+  },
+  "cases": {
+    "empty_queue": "depth deadbeef,deadbeef; rgb deadbeef,deadbeef,deadbeef; record 00000000,00000000,00000000,00000000,00000000; match 1",
+    "miss": "depth 00000002,deadbeef; rgb 00000000,00000000,00000000; record 00000000,ffffffff,41880000,ffffffff,ffffffff; match 1",
+    "triangle": "depth 40000000,deadbeef; rgb 00000000,00000000,00000000; record 00000000,00000000,00000000,00000000,00000000; match 1",
+    "reversed_triangle": "depth 00000002,deadbeef; rgb 00000000,00000000,00000000; record 00000000,ffffffff,418baf38,ffffffff,ffffffff; match 1",
+    "reversed_second_interval": "depth 40000000,deadbeef; rgb 00000000,00000000,00000000; record 00000000,00000000,3efae14b,ffffffff,ffffffff; match 1"
+  },
+  "observations": "Reversing both scenes’ triangle winding prevents the first hit; the reference reports two misses. Shortening only the first interval to 0.1 then puts the reversed triangle inside the second ray interval. The native reference reports one miss and one hit at 0.49, and both compute outputs match.",
+  "limits": "One active pixel with null lighting textures. Full retail colors, queue compaction and runtime presentation require separate measurements."
+}

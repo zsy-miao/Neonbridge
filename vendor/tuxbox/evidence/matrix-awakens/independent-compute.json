@@ -1,0 +1,164 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "distinct_compute_programs": 3233,
+  "shader_compiler_sha256": {
+    "baseline": "898564347975930cd1a4b40085ff6837c192f3542e445e371cf7a966b887099f",
+    "default": "1c03be7dfc16717941b819c52e05e2ff64a24a8a8743f9577021a3ad4971e991",
+    "independent": "1112512021c2c8eb77679e554003e8d879fc01211b09799b62e81caab38e010f"
+  },
+  "host_tools_sha256": {
+    "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+  },
+  "profile": "cs_6_0",
+  "programs": [
+    {
+      "archive_entry": "global/833",
+      "dxbc_sha256": "63403469f6a15e9e9a4689ff04fff98c80441351a39fc3723ceed016c8634773",
+      "entry": "MainIndirectDispatchCS",
+      "trace_count": 0,
+      "group_size": [
+        64,
+        1,
+        1
+      ],
+      "baseline_dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c",
+      "dxil_sha256": "3f898fe1f9d53250606bbe41129482d5b213482f58a28ff320c492b9746debf6",
+      "hlsl_sha256": "ab90e226c8ad9857f140b90f4dbe3d2c508b0e7065d4c104bd7e9263402a5d7d",
+      "dxil_main_sha256": "e8f35b1908d3ee6454e6fc2ec06460fa0380c19e5dc671b15a19212f2bbc624e",
+      "expected_u0_writes": []
+    },
+    {
+      "archive_entry": "global/1275",
+      "dxbc_sha256": "661460a72911aa6e30fe7309a11829ec2fc9829de04a8c89d92d04014cd2858a",
+      "entry": "InitValueBufferCS",
+      "trace_count": 0,
+      "group_size": [
+        1,
+        1,
+        1
+      ],
+      "baseline_dxil_sha256": "a7abf3e77ee4ce6c3641cdd369030ccadf3c361675456210be74928a1366fbda",
+      "dxil_sha256": "8a9bf4e6823f5445a2ab06ae518bd03924759f8352d173028c7ef173ca402997",
+      "hlsl_sha256": "d3f6fe3377e2ca0f7c15d1226cd33b4f617912a4d73356bbb395c49cd3ab578b",
+      "dxil_main_sha256": "91f78d2fa82852d9cd2da8040a92d66f839f64d158bc5c0f2a1c95b6b10dbb42",
+      "expected_u0_writes": [
+        {
+          "element": 0,
+          "byte_offset": 8,
+          "u32": 0
+        },
+        {
+          "element": 0,
+          "byte_offset": 12,
+          "u32": 0
+        }
+      ],
+      "structured_stride_bytes": 16
+    },
+    {
+      "archive_entry": "global/1810",
+      "dxbc_sha256": "3ef7747e089ca8ba65f447bd75e4cebd1ebadc55e85de589a2addefd2a56f218",
+      "entry": "ClearStreamingRequestCount",
+      "trace_count": 8,
+      "group_size": [
+        1,
+        1,
+        1
+      ],
+      "baseline_dxil_sha256": "458474a137cc0a98391ea08531c750b66db99f6d4ea16342a970f4242214b4ea",
+      "dxil_sha256": "a737d6436949327e892bc8821123bade0787679374f3b3c77260beaa5ba9b08d",
+      "hlsl_sha256": "d9d57ab868d2d1de1355254041b2dd8651cb9fb53c408bf588d8212487dec974",
+      "dxil_main_sha256": "0b37e065423b9fc989af0b82093b59cfd218f5978f82eb76662242df2efd690f",
+      "expected_u0_writes": [
+        {
+          "element": 0,
+          "byte_offset": 0,
+          "u32": 0
+        }
+      ],
+      "structured_stride_bytes": 12
+    },
+    {
+      "archive_entry": "global/2623",
+      "dxbc_sha256": "f5869f31b6628bbd87ff70f8c0a677ddfd7fed641a01b47ff61cd111aaaa770b",
+      "entry": "PrintStats",
+      "trace_count": 0,
+      "group_size": [
+        1,
+        1,
+        1
+      ],
+      "baseline_dxil_sha256": "95d39d78bb977ae1eee98a66ba5360e8a62542b86c19b77c5ffe7c54eec64c65",
+      "dxil_sha256": "240bb897802c8e739ca05ed23211fab75884c383fd1b734b47cb2a86e13bae56",
+      "hlsl_sha256": "8bd5d5643520e0151e9c87447eca908fd8eb253d540f0389d2d36dbe875fadcd",
+      "dxil_main_sha256": "e8f35b1908d3ee6454e6fc2ec06460fa0380c19e5dc671b15a19212f2bbc624e",
+      "expected_u0_writes": []
+    },
+    {
+      "archive_entry": "global/3320",
+      "dxbc_sha256": "6a80b346d8d3e301369448f79ea19eb143a36a7c887103f5239c8f1b145083c5",
+      "entry": "ClearMessageBuffer",
+      "trace_count": 0,
+      "group_size": [
+        1,
+        1,
+        1
+      ],
+      "baseline_dxil_sha256": "576283bfb38b0d2f323edefa8375683726fa8b6cb93d53e4affd6c1403af3d13",
+      "dxil_sha256": "6c41d2bd9f4dd688b605d005c85fa26f25099ce7a2ff8ce4822a11149856af4f",
+      "hlsl_sha256": "d2c5413a0c5c3253172d00b91181c41e87a68143e1df9934f9b4bf02e91da2c2",
+      "dxil_main_sha256": "0b37e065423b9fc989af0b82093b59cfd218f5978f82eb76662242df2efd690f",
+      "expected_u0_writes": [
+        {
+          "element": 0,
+          "byte_offset": 0,
+          "u32": 0
+        }
+      ],
+      "structured_stride_bytes": 4
+    },
+    {
+      "archive_entry": "global/3491",
+      "dxbc_sha256": "a626d09022a5d3e17e93a48ecb45c66d085e032488977133cbc12fcc1012c3a2",
+      "entry": "MainCS",
+      "trace_count": 0,
+      "group_size": [
+        8,
+        8,
+        1
+      ],
+      "baseline_dxil_sha256": "f6d75b0a3507c084bbd8163d9b0aa73926744efe2d3dee826b6f7a517dfe9b09",
+      "dxil_sha256": "e9ca1b44cd01a6448e21b82037aad3830c6e4b1f97c6563ae6faf00e0725393f",
+      "hlsl_sha256": "b02838f7b7a00445053d9792bf0d2bb5fde6c39b12f18bcc4314d7f7dbf03958",
+      "dxil_main_sha256": "e8f35b1908d3ee6454e6fc2ec06460fa0380c19e5dc671b15a19212f2bbc624e",
+      "expected_u0_writes": []
+    },
+    {
+      "archive_entry": "material/38557",
+      "dxbc_sha256": "3ad8d46cbc2e4dce4a439e81432fda3ed7c1901ebff140ae02c14e361a5100ab",
+      "entry": "SimulateMainComputeCS",
+      "trace_count": 0,
+      "group_size": [
+        64,
+        1,
+        1
+      ],
+      "baseline_dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c",
+      "dxil_sha256": "3f898fe1f9d53250606bbe41129482d5b213482f58a28ff320c492b9746debf6",
+      "hlsl_sha256": "ab90e226c8ad9857f140b90f4dbe3d2c508b0e7065d4c104bd7e9263402a5d7d",
+      "dxil_main_sha256": "e8f35b1908d3ee6454e6fc2ec06460fa0380c19e5dc671b15a19212f2bbc624e",
+      "expected_u0_writes": []
+    }
+  ],
+  "validation": {
+    "all_compiles_dxv_validated": 21,
+    "identical_default_and_independent_dxil": 7,
+    "byte_identical_previous_dxil": 0,
+    "identical_dxil_main_disassembly": 7,
+    "distinct_empty_dispatches": 4,
+    "distinct_structured_buffer_initializers": 3,
+    "observed_programs": 1,
+    "trace_count": 22
+  }
+}

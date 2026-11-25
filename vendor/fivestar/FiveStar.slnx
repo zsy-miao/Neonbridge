@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/FiveStar.Benchmarks/FiveStar.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/FiveStar.Cli/FiveStar.Cli.csproj" />
+    <Project Path="src/FiveStar.Debugger/FiveStar.Debugger.csproj" />
+    <Project Path="src/FiveStar.Formats/FiveStar.Formats.csproj" />
+    <Project Path="src/FiveStar.Graphics/FiveStar.Graphics.csproj" />
+    <Project Path="src/FiveStar.Loader/FiveStar.Loader.csproj" />
+    <Project Path="src/FiveStar.Loader.Generators/FiveStar.Loader.Generators.csproj" />
+    <Project Path="src/FiveStar.Shaders/FiveStar.Shaders.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FiveStar.Architecture.Tests/FiveStar.Architecture.Tests.csproj" />
+    <Project Path="tests/FiveStar.Cli.Tests/FiveStar.Cli.Tests.csproj" />
+    <Project Path="tests/FiveStar.Debugger.Tests/FiveStar.Debugger.Tests.csproj" />
+    <Project Path="tests/FiveStar.Formats.Tests/FiveStar.Formats.Tests.csproj" />
+    <Project Path="tests/FiveStar.Loader.Tests/FiveStar.Loader.Tests.csproj" />
+    <Project Path="tests/FiveStar.Shaders.Tests/FiveStar.Shaders.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,178 @@
+{
+  "scope": "Packaged globals 744 and 745 visibility compaction, full CPU-modeled translated-shader GPU readbacks. This checks the compaction stage, not rendered hair.",
+  "results": {
+    "amd": {
+      "scope": "Two packaged hair visibility compaction shaders, translated DXIL and CPU-modeled GPU readback. Does not validate rendered hair.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapter": "1002:13c0",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "f3246a7fbaecd10dac223821f19dabc27cca8b869758a00cf812e30c90a0e74c",
+      "guest_sha256": "ab425bf69f50191755bdea1a1a2c08c559d097fbf65ca774bfbc0284b15617cb",
+      "shaders": {
+        "744": {
+          "cooked_sha256": "7b50efe4e1af24ee493d1fdcf898f4f63a2bc648896e49be42365d54982e1272",
+          "hlsl_sha256": "45529c7c9616068dfe161c82bbf06e3891f8e73e0487e7d8ec61cda5e71c06f9",
+          "dxil_sha256": "cbd94b450812d46aad280b85ce5ae266e29815e6be109496b4ddca9dee317ae7",
+          "profile": "cs_6_0",
+          "cases": {
+            "none": {
+              "pixels": 0,
+              "samples": 0,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "all": {
+              "pixels": 64,
+              "samples": 64,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "sparse": {
+              "pixels": 6,
+              "samples": 6,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "last": {
+              "pixels": 1,
+              "samples": 1,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "multi": {
+              "pixels": 6,
+              "samples": 16,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            }
+          }
+        },
+        "745": {
+          "cooked_sha256": "6279fec42a171d61f708225a65d3f023eed1ec79031cbe0e8c97ef5b4a7e7cde",
+          "hlsl_sha256": "374de48595314f6ce7375b30991bc2f9b18faad60a857e3b9cbec6fc35ac92cc",
+          "dxil_sha256": "07f8500bcb2917eb538408544d1c68a4ce523017b3916f0cd617fa9ef9542958",
+          "profile": "cs_6_0",
+          "cases": {
+            "none": {
+              "pixels": 0,
+              "samples": 0,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "all": {
+              "pixels": 64,
+              "samples": 64,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "sparse": {
+              "pixels": 6,
+              "samples": 6,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "last": {
+              "pixels": 1,
+              "samples": 1,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "multi": {
+              "pixels": 6,
+              "samples": 16,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            }
+          }
+        }
+      }
+    },
+    "nvidia": {
+      "scope": "Two packaged hair visibility compaction shaders, translated DXIL and CPU-modeled GPU readback. Does not validate rendered hair.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "adapter": "10de:2705",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "xshader_sha256": "f3246a7fbaecd10dac223821f19dabc27cca8b869758a00cf812e30c90a0e74c",
+      "guest_sha256": "ab425bf69f50191755bdea1a1a2c08c559d097fbf65ca774bfbc0284b15617cb",
+      "shaders": {
+        "744": {
+          "cooked_sha256": "7b50efe4e1af24ee493d1fdcf898f4f63a2bc648896e49be42365d54982e1272",
+          "hlsl_sha256": "45529c7c9616068dfe161c82bbf06e3891f8e73e0487e7d8ec61cda5e71c06f9",
+          "dxil_sha256": "cbd94b450812d46aad280b85ce5ae266e29815e6be109496b4ddca9dee317ae7",
+          "profile": "cs_6_0",
+          "cases": {
+            "none": {
+              "pixels": 0,
+              "samples": 0,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "all": {
+              "pixels": 64,
+              "samples": 64,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "sparse": {
+              "pixels": 6,
+              "samples": 6,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "last": {
+              "pixels": 1,
+              "samples": 1,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "multi": {
+              "pixels": 6,
+              "samples": 16,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            }
+          }
+        },
+        "745": {
+          "cooked_sha256": "6279fec42a171d61f708225a65d3f023eed1ec79031cbe0e8c97ef5b4a7e7cde",
+          "hlsl_sha256": "374de48595314f6ce7375b30991bc2f9b18faad60a857e3b9cbec6fc35ac92cc",
+          "dxil_sha256": "07f8500bcb2917eb538408544d1c68a4ce523017b3916f0cd617fa9ef9542958",
+          "profile": "cs_6_0",
+          "cases": {
+            "none": {
+              "pixels": 0,
+              "samples": 0,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "all": {
+              "pixels": 64,
+              "samples": 64,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "sparse": {
+              "pixels": 6,
+              "samples": 6,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "last": {
+              "pixels": 1,
+              "samples": 1,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            },
+            "multi": {
+              "pixels": 6,
+              "samples": 16,
+              "outputs_checked": 5,
+              "buffer_slots_checked": 512
+            }
+          }
+        }
+      }
+    }
+  },
+  "negative_control": "Flipping one ISA bit in each extracted program makes the exact-match optimization decline it; the normal compiler rejects the unverified EXEC election (0x4ec or 0x490)."
+}

@@ -1,0 +1,84 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "paths": [
+    {
+      "name": "Submit and present frames",
+      "libraries": ["d3d12_xs.dll"],
+      "provider": "TuxBox D3D12",
+      "status": "verified",
+      "scope": "The reduced-settings Wake Up run presented the cinematic and activated the room, furniture and bullet-time scenes.",
+      "evidence": ["evidence/matrix-awakens/wake-up-xg.json"]
+    },
+    {
+      "name": "Address game textures",
+      "libraries": ["xg_xs.dll"],
+      "provider": "TuxBox or packaged XG",
+      "status": "verified",
+      "scope": "TuxBox matched the packaged XG layouts and sampled addresses for all 1,918 distinct descriptors in the Wake Up replay.",
+      "evidence": ["evidence/providers/xg-wake-up.json", "evidence/matrix-awakens/wake-up-xg.json"]
+    },
+    {
+      "name": "Create DXC utilities",
+      "libraries": ["dxcompiler_xs.dll"],
+      "provider": "TuxBox to desktop DXC",
+      "status": "verified",
+      "scope": "Frosty imports DxcCreateInstance. A guest called that factory and verified a retained 257-byte shader blob.",
+      "evidence": ["evidence/frosty-xbox-library-inventory.json", "evidence/matrix-awakens/valve-dxc-utils.json"]
+    },
+    {
+      "name": "Map CPU memory",
+      "libraries": ["xmem.dll"],
+      "provider": "TuxBox XMem",
+      "status": "verified",
+      "scope": "With Frosty's allocation flags, a guest mapped 512 CPU views and read back writes through each paired view.",
+      "evidence": ["evidence/matrix-awakens/xmem-physical-pages.json", "evidence/providers/xmem-pages.json"]
+    },
+    {
+      "name": "Start runtime task queues",
+      "libraries": ["xgameruntime.dll"],
+      "provider": "TuxBox Game Runtime",
+      "status": "verified",
+      "scope": "Frosty loaded the runtime. A startup control initialized its threading interface, dispatched work and completed queue termination.",
+      "evidence": ["evidence/matrix-awakens/independent-menu.json", "evidence/providers/xgameruntime-queues.json"]
+    },
+    {
+      "name": "Read packaged assets",
+      "libraries": ["xcrdapi.dll"],
+      "provider": "TuxBox storage",
+      "status": "verified",
+      "scope": "Frosty mounted both containers. A storage-queue replay decompressed two retail blocks and matched every byte against zlib.",
+      "evidence": ["evidence/matrix-awakens/independent-menu.json", "evidence/providers/xcrdapi-storage.json"]
+    },
+    {
+      "name": "Handle player input",
+      "libraries": ["GameInput.dll"],
+      "provider": "TuxBox GameInput",
+      "status": "verified",
+      "scope": "Keyboard and controller navigated Frosty's retail menu and settings. A mouse click activated Start Chase.",
+      "evidence": ["evidence/matrix-awakens/retail-mixed-input.json"]
+    },
+    {
+      "name": "Play previews and movies",
+      "libraries": ["mfplat.dll", "mfreadwrite.dll", "mfh264dec.dll", "mfhevcdec.dll"],
+      "provider": "TuxBox, Proton and packaged codecs",
+      "status": "verified",
+      "scope": "The moving preview and Wake Up movie rendered. TuxBox bridges Xbox video surfaces, Proton supplies the source reader and the packaged H.264 and HEVC decoders produce the frames.",
+      "evidence": ["evidence/matrix-awakens/provider-audit.json", "evidence/matrix-awakens/independent-media.json", "evidence/matrix-awakens/independent-menu.json", "evidence/matrix-awakens/wake-up-xg.json"]
+    },
+    {
+      "name": "Play game audio",
+      "libraries": ["AcpHal.dll", "XAudio2_9.dll", "MSAudDecMFT.dll"],
+      "provider": "TuxBox ACP, Proton and packaged AAC",
+      "status": "partial",
+      "scope": "The retail menu submitted an XAudio2 buffer and the AAC control decoded soundtrack samples. Audible, synchronized chase playback remains unverified.",
+      "evidence": ["evidence/matrix-awakens/independent-menu.json", "evidence/matrix-awakens/aac-valve.json", "evidence/matrix-awakens/acphal-call-sites.json", "evidence/matrix-awakens/wake-up-xg.json"]
+    }
+  ],
+  "optional": [
+    {
+      "name": "GameChat2.dll",
+      "reason": "Frosty delay-imports and loads the game's copy. No observed single-player action requires a TuxBox chat implementation.",
+      "evidence": ["evidence/frosty-xbox-library-inventory.json", "evidence/matrix-awakens/provider-audit.json"]
+    }
+  ]
+}

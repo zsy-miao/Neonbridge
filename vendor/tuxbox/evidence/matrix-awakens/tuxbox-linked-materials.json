@@ -1,0 +1,146 @@
+{
+  "provider_sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+  "pipeline_stream_bytes": 712,
+  "device_slot": 86,
+  "frame_seven": {
+    "global_geometry": 2420,
+    "geometry_consumers": [
+      "global shader 2421",
+      "material shader 687"
+    ],
+    "material_vertex": 2517,
+    "material_pixel": 2522,
+    "render_target_formats": [
+      10,
+      24,
+      87,
+      91,
+      87
+    ],
+    "sources": {
+      "vertex": "a3b9680ebb893cd7b8cc230f74b2caaa769670e8407e658678d325e3a3de7b8e",
+      "geometry": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33",
+      "pixel0": "bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+      "pixel1": "dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc",
+      "vertex7": "90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98",
+      "pixel7": "c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95"
+    },
+    "links": [
+      {
+        "pair": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33_bfc8310727d73a1e98ac4d4d406173b8ccfcdfda2e355b21fb4fe8e96cbed830",
+        "compiled_sha256": "6fd5ba164d9a53476a9360b2ecfbaf14d89807261f2f5d21d645d2acb760a82d"
+      },
+      {
+        "pair": "4566ef26d1185681caa1cf06ae1a4df41db01a5eb9c3f161a109438879555f33_dbb0ca9c58d6b9baa842fce81b1d81a8f02d74c316124ccb7efff5baeaefaccc",
+        "compiled_sha256": "6fd5ba164d9a53476a9360b2ecfbaf14d89807261f2f5d21d645d2acb760a82d"
+      },
+      {
+        "pair": "90440178d04cc59388fc4ccfbb1e531654c95e342f6805a90fcb624af496fb98_c3d04b309ccbe65b5c657122e5bfe5c92d3a693fdb2200266ca3afc8dc50eb95",
+        "compiled_sha256": "ded3930032cf20cfd34a0913bf96f2557a170221f4dda134c66c455fb10e4c5a"
+      }
+    ],
+    "guest_sha256": "0c27ab0a223cf7d8b75f05abc45a7e377fae798016bcd133466fbfcd790baabf"
+  },
+  "chase": {
+    "material_indices": [
+      [
+        6113,
+        523
+      ],
+      [
+        31788,
+        31750
+      ]
+    ],
+    "links": [
+      {
+        "pair": "4952ebb81b8868e66c39f8f1323501d9c9affec2f54fb6fcec21472933b46035_ff94f1d5a7f37f24346ef9bfa15cad12e2504b43b3176b535e4b56937204e614",
+        "ordinary_sha256": "b818553e3a7a2d3926fd0987ce931af09c42f5f0acc8da68221886c3f3ec4ed5",
+        "linked_sha256": "d0f4aa3dc1071db433c0b457f8d04965cb8577ea3431a28e26f8bcf8c5ac44b2"
+      },
+      {
+        "pair": "bfee6e102ab504ca659652189db6ad1d4e0790971745c3919dc2111076ef35cd_3ca45139817062553ab3bb8cb6f429211dc7c944458312cce8b64c872959f33d",
+        "ordinary_sha256": "9374d6493aaab69008ce7097f123ff7e2c24271f748647b0f71c6964c651d59b",
+        "linked_sha256": "0ef90f5a9fc0913414c663819b79f308f79b8daca8f8d5b87ca6b5329ab73f03"
+      }
+    ],
+    "guest_sha256": "78a379d72a3cec9bbc98670baea6e98d82b95ddce8b3ba342f71c6fd7ebbaa9c",
+    "depth_oracle": "Independent desktop pipeline draws an 8 x 8 triangle at depth 0.25 with controlled positions and the two retail pixel programs."
+  },
+  "negative_controls": [
+    "Missing producer/consumer pair",
+    "Correct producer filed under a different consumer",
+    "Incorrect shader stage filed under the correct pair"
+  ],
+  "runs": [
+    {
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "adapter": "10de:2705",
+      "stage_link_results": {
+        "pci": "10de:2705",
+        "linked": "2",
+        "absent": "1",
+        "wrong_consumer": "1",
+        "wrong_stage": "1",
+        "vertex_linked": "1",
+        "vertex_absent": "1",
+        "vertex_wrong_consumer": "1",
+        "vertex_wrong_stage": "1"
+      },
+      "chase_results": {
+        "pair_0_rejections": "3",
+        "pair_0_slot_86": "passed",
+        "pair_0_depth_written": "0",
+        "pair_1_rejections": "3",
+        "pair_1_slot_86": "passed",
+        "pair_1_depth_written": "64"
+      }
+    },
+    {
+      "proton": "1792432585 GE-Proton11-11",
+      "adapter": "10de:2705",
+      "stage_link_results": {
+        "pci": "10de:2705",
+        "linked": "2",
+        "absent": "1",
+        "wrong_consumer": "1",
+        "wrong_stage": "1",
+        "vertex_linked": "1",
+        "vertex_absent": "1",
+        "vertex_wrong_consumer": "1",
+        "vertex_wrong_stage": "1"
+      },
+      "chase_results": {
+        "pair_0_rejections": "3",
+        "pair_0_slot_86": "passed",
+        "pair_0_depth_written": "0",
+        "pair_1_rejections": "3",
+        "pair_1_slot_86": "passed",
+        "pair_1_depth_written": "64"
+      }
+    },
+    {
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "adapter": "1002:13c0",
+      "stage_link_results": {
+        "pci": "1002:13c0",
+        "linked": "2",
+        "absent": "1",
+        "wrong_consumer": "1",
+        "wrong_stage": "1",
+        "vertex_linked": "1",
+        "vertex_absent": "1",
+        "vertex_wrong_consumer": "1",
+        "vertex_wrong_stage": "1"
+      },
+      "chase_results": {
+        "pair_0_rejections": "3",
+        "pair_0_slot_86": "passed",
+        "pair_0_depth_written": "0",
+        "pair_1_rejections": "3",
+        "pair_1_slot_86": "passed",
+        "pair_1_depth_written": "64"
+      }
+    }
+  ]
+}

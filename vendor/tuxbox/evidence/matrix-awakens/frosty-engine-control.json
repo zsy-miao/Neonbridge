@@ -1,0 +1,134 @@
+{
+  "title": "Frosty-XSX-Shipping.exe",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "shipping_symbols_sha256": "b886b339a77da68874a44d107e366aeb4b7c16695dd67e8bbd44d6fcbab13c2c",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runtime_setup": "G: staged package, queue-patched ScarlettX xgameruntime, TomBox XCRDAPI and DirectStorage 1.3.0 as in reference-runtime.json",
+  "embedded_acphal_sha256": "a8fe520eafe38784249d6fca38b0a185006bcc18cd3962405b8b92be1f758123",
+  "tombox_acphal_sha256": "29512a2414558b08934d6d37ffa14923f8ae1f99d89e5f2b6f9a44063a65bd4d",
+  "movie_startup_control": {
+    "arguments": [
+      "-nullrhi",
+      "-nosound"
+    ],
+    "acphal": "embedded",
+    "audio_endpoint": "default",
+    "game_thread_id": "0x170",
+    "winedbg_samples": 2,
+    "sample_interval_seconds": 8.78,
+    "both_full_stack_logs_sha256": "bbf1c92493448219f613401403886b56892f27cc0ca0ab1d8caa1213dcde1b4d",
+    "game_thread_stack": [
+      {
+        "module": "mmdevapi",
+        "rva": "0x1278f",
+        "symbol": "load_driver"
+      },
+      {
+        "module": "xaudio2_9",
+        "rva": "0x1f4a5",
+        "symbol": "XAudio2Create"
+      },
+      {
+        "module": "Frosty",
+        "rva": "0x23fc659",
+        "symbol": "FMediaFoundationMovieStreamer::FMediaFoundationMovieStreamer"
+      },
+      {
+        "module": "Frosty",
+        "rva": "0x23fbe37",
+        "symbol": "FXboxCommonGDKMoviePlayerModule::StartupModule"
+      },
+      {
+        "module": "Frosty",
+        "rva": "0x53b416",
+        "symbol": "FEngineLoop::PreInitPostStartupScreen"
+      }
+    ]
+  },
+  "movie_plugin_disabled_control": {
+    "arguments": [
+      "-nullrhi",
+      "-nosound",
+      "-DisablePlugins=XboxCommonGDKMoviePlayer"
+    ],
+    "acphal": "embedded",
+    "audio_endpoint": "default",
+    "map_load_seconds": 2.649121,
+    "match_state": "InProgress",
+    "terminal_rva": "0x4b9afa9",
+    "trace_sha256": "62e3fa30300adb3c11c407758b303af6dfce902e401c9aee203d33275aa4b710"
+  },
+  "private_audio_control": {
+    "arguments": [
+      "-nullrhi"
+    ],
+    "audio_endpoint": "private PipeWire with policy-only WirePlumber and Pulse null sink, as in TomBox tools/homebrew/audio_fixture.py",
+    "movie_plugin_enabled": true,
+    "acphal": "embedded",
+    "first_fatal": "Failed to create APU heap: 80070002",
+    "apu_heap_mib": 64,
+    "trace_sha256": "2fe1827eb219eb84bb36b1ecb7a441d4999767aa898594184c377014c37fcd03"
+  },
+  "tombox_audio_control": {
+    "arguments": [
+      "-nullrhi"
+    ],
+    "audio_endpoint": "same private Pulse setup",
+    "acphal_source": "TomBox target/x86_64-pc-windows-msvc/release/acphal.dll",
+    "movie_plugin_enabled": true,
+    "engine_sound_enabled": true,
+    "mixer_started": true,
+    "xaudio2_first_buffer_submitted": true,
+    "mixer_buffer": {
+      "frames": 256,
+      "channels": 8,
+      "samples": 2048
+    },
+    "pulse_playback_streams": [
+      "2 channels, 48000 Hz",
+      "8 channels, 44100 Hz"
+    ],
+    "stereo_monitor": {
+      "format": "signed 16-bit little endian, 48000 Hz",
+      "frames": 384480,
+      "nonzero_samples": 0,
+      "sha256": "d71e174bcd568db77ac05c997d86c1cbe34bfb348d56774f6fd609017d352763"
+    },
+    "map": "/Game/Map/P_Construct_WP",
+    "map_load_seconds": 2.585431,
+    "game_class": "BP_FrostyGameMode_SandboxIntro_C",
+    "match_state": "InProgress",
+    "unreal_log_frame_at_fault": 2,
+    "first_exception": "0xc0000005",
+    "read_address": "0x0",
+    "game_thread_stack": [
+      {
+        "rva": "0x4b9afa9",
+        "symbol": "UInstancedStaticMeshComponent::BuildRenderData"
+      },
+      {
+        "rva": "0x4ba2792",
+        "symbol": "UInstancedStaticMeshComponent::UpdateInstances"
+      },
+      {
+        "rva": "0x13afaaa",
+        "symbol": "UMassVisualizationComponent::EndVisualChanges"
+      },
+      {
+        "rva": "0x4c213ba",
+        "symbol": "UWorld::Tick"
+      },
+      {
+        "rva": "0x4ad18be",
+        "symbol": "UGameEngine::Tick"
+      },
+      {
+        "rva": "0x541864",
+        "symbol": "FEngineLoop::Tick"
+      }
+    ],
+    "trace_sha256": "945a95f0e9d0436472e1c95f75b2b4152a93d336c8faa4d876ef3934f93ec8f6",
+    "rendered_frame_verified": false,
+    "movie_playback_verified": false
+  }
+}

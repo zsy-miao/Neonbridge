@@ -1,0 +1,67 @@
+{
+  "scope": "Frosty global compute 306 through Xbox device slot 62, using the original four descriptor tables and t13. The five cases check page feedback (130 dwords), radiance and distance (65 half4 records), and deferred ray data (65 five-word records).",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "0f2e43a9d3d96c87812c1a6d79e776c06b38d074394ac77dc568db70a1f2750e",
+  "shaders": {
+    "306": {
+      "source_sha256": "c96870c66198cee9fc7b8407b62425e86f8fab5d48238d0d767561ab362f7511",
+      "dxil_sha256": "30e4e741004fde281a2a8b33e56ec658c6fa3a799add23ff49f4d100b528d01f"
+    },
+    "299": {
+      "source_sha256": "bdd2b57829d4e4d8d13b9057f6b225251845c209196e0643d66636f4df2bee29",
+      "dxil_sha256": "71a2a613f049652704d8adf6df559d1e2819550ff95c9371df8b7ea0944482a6"
+    },
+    "311": {
+      "source_sha256": "b847d35c8c97dff4034f79659046a95f9457aa78a7e7de844fc0825fd054f490",
+      "dxil_sha256": "a75854724b791bedd211db49587b6f43d5df540f428026f1bd970b163c066d6d"
+    }
+  },
+  "no_bookmark": "Packaged ray generator 299 sets V41 to -1 at offset 0xe74 of SPTR program 3 and stores it at offsets +12/+16 at 0xec4 and 0xecc. This is its no-bookmark representation on hits and misses. The host translation of 306 uses that representation. Its 32-bit distance/flag word can move by one quantization bin when ray-triangle winding differs between scenes.",
+  "retrace_control": "The real u2 readback produced by 306 is supplied to packaged ray generator 311. Its callbacks independently establish the six miss face colors and the 18 geometric hit distances. The test also compares every input retrace record after 311.",
+  "runs": [
+    {
+      "adapter": "1002:13c0",
+      "cases": {
+        "empty_queue": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] deadbeef,deadbeef; feedback guards 1",
+        "sky_cube": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] 46004500,4c404700; feedback guards 1",
+        "triangle_hits": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1",
+        "lit_card": "65/65 records matched; 18 reference hits; feedback[4] 0000007b; pixel[27] 42004000,301c4400; feedback guards 1",
+        "reversed_winding": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1"
+      },
+      "retrace": {
+        "empty_queue": "tile[27] deadbeef,deadbeef,deadbeef,deadbeef,deadbeef; 65 records matched 1; adjacent winding distance bins 0",
+        "sky_cube": "tile[27] 0000001b,ffffffff,41880000,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+        "triangle_hits": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+        "lit_card": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+        "reversed_winding": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 2"
+      },
+      "chained_311_hits": {
+        "empty": 0,
+        "tile": 0,
+        "geometry": 18
+      }
+    },
+    {
+      "adapter": "10de:2705",
+      "cases": {
+        "empty_queue": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] deadbeef,deadbeef; feedback guards 1",
+        "sky_cube": "65/65 records matched; 0 reference hits; feedback[4] deadbeef; pixel[27] 46004500,4c404700; feedback guards 1",
+        "triangle_hits": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1",
+        "lit_card": "65/65 records matched; 18 reference hits; feedback[4] 0000007b; pixel[27] 42004000,301c4400; feedback guards 1",
+        "reversed_winding": "65/65 records matched; 18 reference hits; feedback[4] deadbeef; pixel[27] 00000000,301c0000; feedback guards 1"
+      },
+      "retrace": {
+        "empty_queue": "tile[27] deadbeef,deadbeef,deadbeef,deadbeef,deadbeef; 65 records matched 1; adjacent winding distance bins 0",
+        "sky_cube": "tile[27] 0000001b,ffffffff,41880000,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+        "triangle_hits": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+        "lit_card": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0",
+        "reversed_winding": "tile[27] 0000001b,00000000,3e0381eb,ffffffff,ffffffff; 65 records matched 1; adjacent winding distance bins 0"
+      },
+      "chained_311_hits": {
+        "empty": 0,
+        "tile": 0,
+        "geometry": 18
+      }
+    }
+  ]
+}

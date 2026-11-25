@@ -1,0 +1,522 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "620.70.6",
+  "graphics_sha256": "7e50ad3af8c1b8efbdc142c97d72d7ec997c80b62b1c91e7cd458e053a11d2c2",
+  "layer_sha256": "ebd67272d55eecc9f313f238b9c98b9c5caad2798a8db774ee3320805a4059db",
+  "userengine_sha256": "a159f8a0435a0d2cfe0798b473a693aa31f0ce668e50c9651d995756fbabab42",
+  "first_trial": {
+    "force_raw_va_cbv": true,
+    "trace_sha256": "77d4acbb6bd02ff03ffbdaa52f9071464e071389d6df8b5fea06471e1446cb4f",
+    "harness_exit": 124,
+    "fatal": {
+      "last_reported_decoded_frame": 3,
+      "status": "EXCEPTION_ACCESS_VIOLATION",
+      "read_address": "0xf3845530",
+      "provider_rvas": [
+        "0x1a5da6",
+        "0x23500",
+        "0x1fdfa",
+        "0x3bad3"
+      ],
+      "symbolized": [
+        "memmove",
+        "upload::check (upload.rs:548)",
+        "upload::pump (upload.rs:661)",
+        "present_x (present.rs:390)"
+      ]
+    }
+  },
+  "verified_trial": {
+    "vk_instance_layers": "VK_LAYER_TUXBOX_console_cbv",
+    "vkd3d_disable_extensions": "VK_EXT_descriptor_buffer",
+    "vkd3d_config": null,
+    "package_arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer",
+      "-nosound"
+    ],
+    "trace_sha256": "7e6369a963aef825a650f9054f3c3f8b7b1ede1933f0dab3635a1a228e5101da",
+    "provider_log_sha256": "99c27f14b0f9e7e9165f5e575333ce96f4c3d964cef3b3b967af0532b0aa946c",
+    "harness_exit": 124,
+    "harness_timeout_seconds": 150,
+    "observation": "Confirmed Start Chase with Z. The opening full-width film displayed the falling Matrix glyphs and computer Searching screen. The title subsequently opened another 3840x2160 stream.",
+    "movie": "Frosty/Content/Movies/WakeUp/HEVC/WU_VID_0010_HEVC.mp4",
+    "movie_sha256": "c511dd82465e2875193b38d4d4d3c5dc4bcbae6fd680cc33230bde4a67bb2ebd",
+    "method": "The X11 game window began at (44,63) on the 1280x720 private display and measured 1280x705. Its movie region began at (44,154). For each screenshot the left 1220x523 visible pixels were reduced to 122x54 RGB by averaging. FFmpeg independently decoded the 445 source frames at 128x54. The left 122 columns of each source frame were compared to the display using the per-channel Pearson correlation. The highest mean channel correlation identifies the reported source frame. Frame IDs in the log indicate decoder milestones, ahead of presentation.",
+    "screenshots_at_decoder_milestones": {
+      "60": {
+        "crop_xyxy": [
+          44,
+          154,
+          1264,
+          677
+        ],
+        "source_frame_zero_based": 54,
+        "rgb_spatial_correlations": [
+          0.9823,
+          0.99645,
+          0.99301
+        ],
+        "crop_rgb_stddev": [
+          6.85,
+          12.33,
+          11.26
+        ],
+        "sha256": "fcfbc637c00d815c46c3e304078801862bacae2f6b784b3a4bb97de7bf64017b"
+      },
+      "120": {
+        "crop_xyxy": [
+          44,
+          154,
+          1264,
+          677
+        ],
+        "source_frame_zero_based": 114,
+        "rgb_spatial_correlations": [
+          0.97205,
+          0.99291,
+          0.99304
+        ],
+        "crop_rgb_stddev": [
+          33.17,
+          45.33,
+          45.17
+        ],
+        "sha256": "a24d0aadb1af6b0510479936ca87267242eabf2b5e2908f3b82b1aa98274d45e"
+      },
+      "180": {
+        "crop_xyxy": [
+          44,
+          154,
+          1264,
+          677
+        ],
+        "source_frame_zero_based": 176,
+        "rgb_spatial_correlations": [
+          0.97046,
+          0.9959,
+          0.98135
+        ],
+        "crop_rgb_stddev": [
+          40.31,
+          52.56,
+          50.04
+        ],
+        "sha256": "25a1664dba30340f7e6837b2967fd29de802bb9ed30f2f6081cc792ff265e242"
+      },
+      "240": {
+        "crop_xyxy": [
+          44,
+          154,
+          1264,
+          677
+        ],
+        "source_frame_zero_based": 238,
+        "rgb_spatial_correlations": [
+          0.99309,
+          0.99868,
+          0.9939
+        ],
+        "crop_rgb_stddev": [
+          86.71,
+          82.99,
+          85.34
+        ],
+        "sha256": "264be11c34a341cdaf636d571051e43964e9f2a2b2f385a8704fdc5a4a393c3e"
+      },
+      "300": {
+        "crop_xyxy": [
+          44,
+          154,
+          1264,
+          677
+        ],
+        "source_frame_zero_based": 295,
+        "rgb_spatial_correlations": [
+          0.99793,
+          0.99953,
+          0.99929
+        ],
+        "crop_rgb_stddev": [
+          103.16,
+          82.18,
+          80.26
+        ],
+        "sha256": "81f942b7c7432b05e58c960f00bc4bc5e6ef9b38ce0691791984c6a287c0744f"
+      },
+      "360": {
+        "crop_xyxy": [
+          44,
+          154,
+          1264,
+          677
+        ],
+        "source_frame_zero_based": 356,
+        "rgb_spatial_correlations": [
+          0.98004,
+          0.98377,
+          0.98807
+        ],
+        "crop_rgb_stddev": [
+          55.73,
+          63.9,
+          65.55
+        ],
+        "sha256": "03cd90d2573bdb7ef399a51335a4cbaef3aab51262c9cfd6dd2f2a91bc6e7446"
+      }
+    },
+    "published_screenshot": "retail-chase-searching.png"
+  },
+  "production_trial": {
+    "graphics_sha256": "44268c6e8bb86d1deed6e4ec1c29dd31e7fff71879a02617a22436aba8fdb12a",
+    "layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "unix_exit": 1,
+    "trace_sha256": "08c2bc27d5d730fe7a4547aedef321546c3dfd4e1a9439cfaf983cc73b7feb38",
+    "provider_log_sha256": "4b7b31e39bc44bab00c355132df8cb2dff9b5e2d31d9b27eff09dd459629d70f",
+    "systemd_memory_peak": "6.9G",
+    "systemd_swap_peak": "970.2M",
+    "observation": "Original first movie title card and Searching screen visible again. Chase_Global activated. Electra opened the next 30,123,437-bps 3840x2160 movie, matching WU_VID_0030_HEVC.mp4 metadata. The presentation sampled thereafter was nearly black. The title reported fatal compute pipeline creation failure before an interactive scene could be verified.",
+    "first_movie_screenshot": {
+      "file": "retail-chase-title.png",
+      "sha256": "b0b6c3a4eeaef6beb0cd194e3f96e77051d8873ae339174860cc81ff04caa6f0"
+    },
+    "second_segment_screenshot": {
+      "file": "retail-world-before-compute-fatal.png",
+      "seconds_after_confirmation": 49,
+      "sha256": "b9a8116e66eca0e300f6ef5c80696c656c2d2e089d1816b9f596e03c5723b5d7",
+      "rgb_min": [
+        0,
+        0,
+        0
+      ],
+      "rgb_max": [
+        1,
+        1,
+        1
+      ],
+      "rgb_mean": [
+        0.5403,
+        0.5403,
+        0.5403
+      ]
+    },
+    "failing_compute": {
+      "global_archive_entry": 2227,
+      "entry_point": "MainCS",
+      "hash": "43dc259a6856543c",
+      "dxbc_sha256": "d6ce4f1984b92b4106c31b052c92e1e5dccd60943a06da7a250fcb132c28d12b",
+      "input_bytes": 4604,
+      "instruction": "ds_swizzle_b32",
+      "offset": "0x65c",
+      "provider_message": "ds_swizzle outside a pixel shader",
+      "unreal": "FD3D12DynamicRHI::RHICreateComputePipelineState",
+      "graphics_worker": "FD3D12CommandContext::RHISetComputeShader"
+    }
+  },
+  "compute_swizzle_trial": {
+    "graphics_sha256": "58b6b681be3f37a92e93261692de83b7d119806878c1b106a5dc098459dbb5ed",
+    "unix_exit": 1,
+    "trace_sha256": "0ed93b9726cfa1bfa192dd4b26331f066f38c5cc07fc1c36c4882ef9e5868552",
+    "provider_log_sha256": "dc112de2e6211d7d265804e4f743e5ce8eb44fc1b6703a0d63cb01843acc3719",
+    "last_video_verified": "WU_VID_0070_HEVC.mp4",
+    "screenshot": "retail-chase-armchair.png",
+    "screenshot_sha256": "4a62982a86063766b76eec0b329170a77260431ffa4b6eee01be9177bcf885b1",
+    "source_sha256": "8fc2653840c12b8460dae50fc418a623ebd8978baa4185da9f53639c31702c9c",
+    "matches": {
+      "present-56.png": {
+        "source_frame_zero_based": 431,
+        "rgb_correlation": [
+          0.99326,
+          0.9965,
+          0.99624
+        ]
+      },
+      "present-62.png": {
+        "source_frame_zero_based": 580,
+        "rgb_correlation": [
+          0.99405,
+          0.99654,
+          0.997
+        ]
+      },
+      "present-68.png": {
+        "source_frame_zero_based": 730,
+        "rgb_correlation": [
+          0.99785,
+          0.99736,
+          0.99631
+        ]
+      },
+      "present-74.png": {
+        "source_frame_zero_based": 877,
+        "rgb_correlation": [
+          0.99187,
+          0.99197,
+          0.99193
+        ]
+      }
+    },
+    "matching_method": "Original 24 fps source decoded with FFmpeg, scaled to 128x72 with letterboxing. Visible area of each private game window cropped to (80,118)-(1180,607) and averaged to 110x50 RGB, compared to source rows 12..61 and columns 8..117. Best mean channel correlation across all source frames.",
+    "observation": "Viewed Keanu Reeves, the armchair and movie transitions beyond the previous compute PSO fatal. The game thread later timed out waiting for its render thread after 120.00 seconds following activation of Cine_00_Wakeup_1_ConstructFurniture.",
+    "thread_samples": {
+      "host_threads_sampled": 114,
+      "interval_seconds": 6,
+      "total_cpu_jiffies": 614,
+      "wait_channel_counts": {
+        "ntsync_schedule": 76,
+        "futex_wait": 27,
+        "0": 1,
+        "do_select": 7,
+        "__x64_sys_poll.cold": 3
+      }
+    },
+    "slow_shader": {
+      "raw_fnv64": "120b5a4b5fbaaf8f",
+      "archive": "Frosty",
+      "archive_index": 37635,
+      "entry_point": "SimulateMainComputeCS",
+      "native_sha256": "fd74a543c491e2e51740079ffb047e6159a76debc7eb097bf64208770e3f94b9",
+      "source_bytes": 40288,
+      "hlsl_lines": 31692,
+      "hlsl_sha256": "cbffb435837c49b20be3d34620fcff6522152ea6a61b96230ce9d896496f65a0",
+      "host_dxc_ms": 103346,
+      "dxc_profile": "cs_6_0",
+      "hlsl_profile_cache_key": "988fe343db918144",
+      "dxil_sha256": "715f41328e0173906a2ebfa5426d4de6b3874196196f89a53dcec0362484d63d",
+      "dxil_bytes": 711768,
+      "dxv": "Validation succeeded",
+      "numthreads": [
+        64,
+        1,
+        1
+      ]
+    }
+  },
+  "construct_furniture_warm_trial": {
+    "graphics_sha256": "b34b1c59280ba7b1b8b74c39bb1902215a259e1ec6da91819c1fa834071a82d5",
+    "exit": 1,
+    "trace_sha256": "49118a055986858aaadcba72eb74412e02822f29077245e4f4aef9f60f5b295a",
+    "provider_trace_sha256": "4c142e7dd9dcc5f59666b207e6f72a58c2f8cec7c412bb42fb2f1c07c84767e1",
+    "cvar_logged": {
+      "g.TimeoutForBlockOnRenderFence": 300000
+    },
+    "profile": "reduced effects, GPU particles enabled",
+    "observation": "Title activated Cine_00_Wakeup_1_ConstructFurniture. The game thread reported a 300.00-second timeout on its rendering thread. The last displayed frame from WU_VID_0070 stayed unchanged across the screen samples below.",
+    "same_frame_seconds_after_menu_confirm": {
+      "first": 74,
+      "last": 379,
+      "samples": 50,
+      "png_sha256": "50ebfb1ef5d994eec397f1ad8a831a2fcfa429fa4eea999a6bdd8524198a889a"
+    },
+    "already_warm_at_launch": [
+      "988fe343db918144"
+    ],
+    "dxc_compile_ms_during_trial": {
+      "fd24ed956df9cbb1": 87044
+    },
+    "dxil_cache_entries": {
+      "120b5a4b5fbaaf8f": {
+        "entry": "SimulateMainComputeCS",
+        "archive": "Frosty",
+        "input_sha256": "fd74a543c491e2e51740079ffb047e6159a76debc7eb097bf64208770e3f94b9",
+        "hlsl_sha256": "cbffb435837c49b20be3d34620fcff6522152ea6a61b96230ce9d896496f65a0",
+        "hlsl_lines": 31692,
+        "profile": "cs_6_0",
+        "key": "988fe343db918144",
+        "cso_sha256": "715f41328e0173906a2ebfa5426d4de6b3874196196f89a53dcec0362484d63d",
+        "dxil_bytes": 711768,
+        "dxv": "Validation succeeded",
+        "archive_index": 37635
+      },
+      "fd24ed956df9cbb1": {
+        "entry": "SimulateMainComputeCS",
+        "archive": "Frosty",
+        "input_sha256": "a63bf983647eb18e8ae245bd960da623dd8e0a44da760bd51504d5667f2cfa36",
+        "hlsl_sha256": "beae967385754c52bdc3aa0a891dec0db4fdb4a59137e24c5811da9fc7a3e94a",
+        "hlsl_lines": 30416,
+        "profile": "cs_6_0",
+        "key": "3efcdc501389cc3b",
+        "cso_sha256": "06cc58bd3680a6953b893f5b6cdfbcb62e7814cdb952af3c5a3a3b9effb10ffc",
+        "dxil_bytes": 683540,
+        "dxv": "Validation succeeded",
+        "archive_index": 15458
+      }
+    },
+    "perf_observation": {
+      "retail_duration_seconds": 3,
+      "counter": "cycles:u",
+      "vkd3d_d3d12core_percent": 99.78,
+      "top_rva": "0x2e91cf",
+      "top_rva_percent": 97.63
+    },
+    "independent_warm_pso": {
+      "guest_sha256": "157f8ffeefb2bacbcfbd973f4b1ac020f3ec6742b2b849bf40c50b57370e9864",
+      "source": "SimulateMainComputeCS, material entry 37635",
+      "xbox_device_slot": 62,
+      "dxil_cache_key": "988fe343db918144",
+      "cso_size": 711768,
+      "sampled_adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "timeout_seconds": 230,
+      "exit": 124,
+      "perf_observation": {
+        "duration_seconds": 2,
+        "counter": "cycles:u",
+        "vkd3d_d3d12core_percent": 100,
+        "top_rva": "0x2e91cf",
+        "top_rva_percent": 94.58
+      },
+      "trace_sha256": "066542c9c3216b9687265c173eac820ad6e8dd519f5550fcf3a2be3b6664c43a",
+      "scope": "TomBox returned the precompiled DXIL. The downstream D3D12 PSO creation call was still active at the 230-second harness deadline. The host report supplies a lower bound on complete guest runtime. The interval from the provider announcing that it returned the DXIL to termination was approximately 226 seconds."
+    }
+  },
+  "reduced_gpu_particles": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "graphics_sha256": "b34b1c59280ba7b1b8b74c39bb1902215a259e1ec6da91819c1fa834071a82d5",
+    "config_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+    "trace_sha256": "9f0fd48bedfc99a970319f1ea3e99e7a0315d54cbea59eaf3d2143828e557e91",
+    "provider_log_sha256": "adffef2540b8ebec56932c40b741f1d7117a16ce1c0301272462c19fe30ec1ae",
+    "unix_exit": 1,
+    "config_applied": [
+      "g.TimeoutForBlockOnRenderFence=300000",
+      "fx.NiagaraAllowGPUParticles=0",
+      "fx.NiagaraAllowComputeShaders=0"
+    ],
+    "observed": "With both compiled particle shaders cached, this profile activated ConstructFurniture at 12:34:04 UTC, opened two later 3840x1600 streams and activated ConstructBulletTime at 12:35:13. Interactive input and 3D city gameplay are unverified.",
+    "next_failure": {
+      "command": "ResourceBarrier",
+      "guest_state": "0x120000c0",
+      "host_unrecognized_bits": "0x12000000",
+      "observed": "vkd3d-proton rejected StateAfter and StateBefore. The title reported CommandList->Close() E_INVALIDARG."
+    },
+    "subsequent_movie_capture": {
+      "file": "retail-chase-furniture.png",
+      "sha256": "5d1759d5302bd6da5db46a0babd16cf190c1ef9da9c927b52a9ee28a5b202ef9",
+      "seconds_after_activation": 141,
+      "observed": "Keanu Reeves between picture frames during the later Wake Up footage."
+    }
+  },
+  "srv_read_state_trial": {
+    "provider_sha256": "8b4e898c7f55c7e2a737227efb2dd6aa6013ebcc7f22a3d49a258ec7021a2fd7",
+    "config_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+    "provider_trace_sha256": "d2db9e82589b0ee02323709fb3d24dfa69f05165354968a41ae008c727397668",
+    "trace_sha256": "99de84890f09a665419626ba3216e6246bdf16b4097ca83e2f04c591933204a6",
+    "terminal_shell_status": null,
+    "cvar_settings": {
+      "fx.NiagaraAllowGPUParticles": 0,
+      "fx.NiagaraAllowComputeShaders": 0,
+      "g.TimeoutForBlockOnRenderFence": 300000
+    },
+    "resource_barrier_mappings_logged": {
+      "0x40->0x120000c0 becomes 0x40->0xc0": 3,
+      "0x120000c0->0x4 becomes 0xc0->0x4": 1
+    },
+    "barrier_diagnostics_in_title_proton_log": 0,
+    "title_result": "Frosty reported a fatal CreateComputePipelineState error. TomBox rejected the particle sort-key shader while translating its final wave operation.",
+    "next_shader": {
+      "resource": "Frosty global shader archive",
+      "archive_index": 3333,
+      "entry": "GenerateParticleSortKeys",
+      "fnv64": "b21f674801940e35",
+      "source_sha256": "1bb75d7eee96ddae9c7a19fa5dd91c551a894120999daa71218c254705850a33",
+      "source_bytes": 2464,
+      "stripped_shader_model": "cs_6_5",
+      "workgroup": [
+        64,
+        1,
+        1
+      ],
+      "decoded_isa_bytes": 2320,
+      "decoded_instructions": 478,
+      "observation": "At 0x08bc the terminal region computes logical lane index, elects the lowest active lane (first set bit of EXEC), compares v2==0 into VCC before narrowing EXEC, counts the VCC bits and performs a non-returning atomic add at 0x0904. s_endpgm follows at 0x090c. The existing allocator matcher expects the remaining restore, broadcast and per-lane prefix instructions from the light-grid program, so its fixed-length pattern fails with incomplete wave allocation sequence.",
+      "independent_limit": "Exact cross-lane semantics of this shader are unverified on either GPU. Existing wave64 allocator control is isolated. This terminal-only counter has no returned per-lane allocation address."
+    }
+  },
+  "city_vista_trial": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "graphics_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+    "config_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+    "layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "trace_sha256": "fdbdfade06c0040caf9931e8ca4ed82d323c70c4494ddc21f7d7dc64187d7227",
+    "provider_log_sha256": "14cc9513b0f08d9bce3ee59af810e5d12943afa885d27fd1f66a6dd39605689e",
+    "input": "Z confirmed Start Chase.",
+    "active_layers": [
+      "Chase_Global",
+      "Cine_00_Wakeup_0_Room",
+      "Cine_00_Wakeup_1_ConstructFurniture",
+      "Cine_00_Wakeup_2_ConstructBulletTime",
+      "Cine_00_Wakeup_3_ConstructMorph",
+      "Cine_00_Wakeup_3_ConstructMorphAnnie",
+      "CITY_VISTA",
+      "CITY_Lighting",
+      "Cine_10_ChaseIntro_0_Corner",
+      "Chase_Gameplay_hero"
+    ],
+    "harness_limit_seconds_after_input": 420,
+    "last_sample_seconds_after_input": 423,
+    "unix_exit": 143,
+    "exit_reason": "Stopped by the bounded replay harness at the first sampling interval reaching 420 seconds after Z.",
+    "fatal_in_unreal_log": false,
+    "translation_failure_in_provider_log": false,
+    "last_logged_present": 9900,
+    "later_clip_match": {
+      "retail_frame": "present-257.png",
+      "clip": "WU_VID_0260_HEVC.mp4",
+      "source_frame_zero_based": 141,
+      "screen_crop": [
+        0,
+        91,
+        1220,
+        614
+      ],
+      "comparison": "Captured visible left 1220 columns at 122x54 RGB against the first 122 columns of the 128x54 FFmpeg source at 24 fps.",
+      "correlation_rgb": [
+        0.9969473481178284,
+        0.9985908269882202,
+        0.9971039891242981
+      ]
+    },
+    "screenshot": "retail-chase-crowd.png",
+    "screenshot_sha256": "8ce939d203f3b0a3072213d839d4cbc2a0583fe32e1db6fb0d365659e9fe9baa",
+    "additional_validated_shader_cache_entries_staged": 608,
+    "scope": "Correct moving movie images, including the crowd in the last Wake Up movie. Some intervening samples were black. City vista and lighting layer activation is logged; no interactive driving, shooting or city exploration verified."
+  },
+  "desktop_extended_trial": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "graphics_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+    "layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "config_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+    "proton_log_sha256": "4762a3dd0fe859786da3470670746b349e5d2ede4c40ff455f4fc8021338e5c7",
+    "unit": "tuxbox-frosty.service",
+    "date_utc": "2026-11-21",
+    "start_chase_input": "Z on the Start Chase menu item",
+    "activated_layers_utc": {
+      "Chase_Global": "13:02:00.143",
+      "Cine_00_Wakeup_0_Room": "13:02:17.655",
+      "Cine_00_Wakeup_1_ConstructFurniture": "13:04:19.793",
+      "Cine_00_Wakeup_2_ConstructBulletTime": "13:05:31.611",
+      "Cine_00_Wakeup_3_ConstructMorph": "13:06:44.350",
+      "Cine_00_Wakeup_3_ConstructMorphAnnie": "13:07:30.383",
+      "CITY_VISTA": "13:07:49.312",
+      "CITY_Lighting": "13:07:49.312",
+      "Cine_10_ChaseIntro_0_Corner": "13:09:52.583",
+      "Chase_Gameplay_hero": "13:09:56.588",
+      "Cine_10_ChaseIntro_1_Dialogue": "13:11:03.520"
+    },
+    "last_render_warning_utc": "13:14:55.307",
+    "seconds_from_chase_global_to_last_render_warning": 775.164,
+    "fatal_in_unreal_log": false,
+    "end_reason": "Stopped the test service to reopen Frosty at the main menu.",
+    "dialogue_screenshot": "retail-chase-dialogue.png",
+    "dialogue_screenshot_sha256": "9c2a21d1b163bb34227f37047bd92405a79556575df0f9864c65f49aa219880e",
+    "dialogue_capture_utc": "13:12:25",
+    "capture_dimensions": [
+      1904,
+      1029
+    ],
+    "fraction_pixels_with_all_rgb_channels_at_most_12": 0.999315542543548,
+    "menu_button_test": "The two window captures bracketing an M press during dialogue were pixel-identical. No visible overlay appeared in this sample.",
+    "driving_and_shooting_verified": false,
+    "outcome": "The cinematic movies were visible. In the later real-time dialogue, the frame showed a faint curved highlight and surrounding darkness. Unreal kept submitting graphics work. No verified driving, shooting, or visible city geometry."
+  }
+}

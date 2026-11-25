@@ -1,0 +1,119 @@
+{
+  "title_version": "1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "trials": {
+    "menu-controller": {
+      "graphics_sha256": "dbad134999f615f4f18708037249457f838bf1b5ec55b6f71dd4610fb542b380",
+      "gameinput_sha256": "0876314c19a7e2630ac32c80cee5fe45310ab27b2af943727bb3c624a2ed9cee",
+      "actions": [
+        "K selected Settings",
+        "I selected Start Chase",
+        "Z activated Start Chase"
+      ],
+      "new_video_dimensions": [
+        3840,
+        1600
+      ],
+      "observed": "Decoded through frame 360. Only flat fields were visible in the chase sequence.",
+      "fatal": "CreatePipelineState E_INVALIDARG following two vertex/pixel signature mismatches",
+      "unix_exit": 1,
+      "video_sha256": "bec33c270540dd74fba6b6ae1e3437586614303cccfcef332e56e7ccae1418fd",
+      "trace_sha256": "8ed7f8144198c6cef7ec96e6b2f8b5dd116cc6cd3feff56f754c575e935f6174"
+    },
+    "chase-link": {
+      "graphics_sha256": "bd1e829f3fc54b87ef2eca874860567e496c8b3afe565e66d76e5eb7f29528c5",
+      "gameinput_sha256": "a2120243e4f11a5a1df1d35e4caa6fbb6dcb94ac336ba1cc1ea3c03c8ded1af9",
+      "observed": "The depth PSOs now compiled. Creation of FSubsurfaceIndirectDispatchSetupCS failed in the provider. Unreal subsequently reported a fatal graphics error.",
+      "compute_fingerprint": "f86e702d691e9da6",
+      "terminal_shell_exit": null,
+      "exit_note": "Launcher script changed during this run. The terminal shell status is unsuitable for classifying the title outcome.",
+      "trace_sha256": "f42c2d82d82f1914409797241bfff7d7f74fce4a24a3bbf3ecfa82b131f26c58",
+      "video_sha256": "ed3ef35835f9ae4d266addac1e2cb0f4ee2a769bbbc76fdbcd6928817f374e33"
+    },
+    "chase-reduced-sss": {
+      "graphics_sha256": "bd1e829f3fc54b87ef2eca874860567e496c8b3afe565e66d76e5eb7f29528c5",
+      "gameinput_sha256": "a2120243e4f11a5a1df1d35e4caa6fbb6dcb94ac336ba1cc1ea3c03c8ded1af9",
+      "config_sha256": "49ac466dc8f295452fa1c69c29403838654ad8025c11004d8b7476e2fdd621cb",
+      "unix_exit": 1,
+      "trace_sha256": "aa694f6dbb5882851177e21d7a690c7c5d85b7c27981da26e6c687186cf23c65",
+      "provider_log_sha256": "766918bb754a274abcc3fa57c844d7534567a04950f80e703a247e4bf99ac7bc",
+      "observed": "The subsurface switch eliminated the failing compute request. CreatePlacedResource rejected the 2976x1676 D32/S8 writable depth texture at offset 0x52c0000."
+    },
+    "chase-placed": {
+      "graphics_sha256": "ea16818058d834ef2234d53f859a14c93effe783ff80368373e53e5dd227f76f",
+      "gameinput_sha256": "a2120243e4f11a5a1df1d35e4caa6fbb6dcb94ac336ba1cc1ea3c03c8ded1af9",
+      "config_sha256": "3487955fcbdb92d9ffb1610e02d0231b6fbb1b59340575e291112868df91bb85",
+      "unix_exit": 1,
+      "trace_sha256": "3581a772b2c9ca795fe9d05114a51dc67263ac713de840b76a116333a6997238",
+      "provider_log_sha256": "835521ed3d68934e92646ba507020670f78d87ef36c66fe7e65ebd7a292dae4d",
+      "observed": "Frosty opened the 3840x1600 video, then failed to translate the hair cluster culling shader 1be6d7f0a5efda73. The title reported CreateComputePipelineState failure."
+    },
+    "chase-placed-reduced": {
+      "graphics_sha256": "ea16818058d834ef2234d53f859a14c93effe783ff80368373e53e5dd227f76f",
+      "config_sha256": "49ac466dc8f295452fa1c69c29403838654ad8025c11004d8b7476e2fdd621cb",
+      "unix_exit": 1,
+      "trace_sha256": "6cef4b6585b7474c3583783c2fe743bc5c337b239d0c3aca5b462d6ead923551",
+      "provider_log_sha256": "3fee09eede54bc7ac31873ff57a9173f9c93b045a1e3e92d77303cd2279ce1b2",
+      "video_sha256": "912c8e4e883f33ea2acc47cba92c0fa7f4bcd8b2267bfa47c231b7ad4a2f8ea3",
+      "observed": "Disabling subsurface scattering alone still reached the unsupported hair cluster shader."
+    },
+    "chase-hair-cards": {
+      "graphics_sha256": "ea16818058d834ef2234d53f859a14c93effe783ff80368373e53e5dd227f76f",
+      "config_sha256": "a159f8a0435a0d2cfe0798b473a693aa31f0ce668e50c9651d995756fbabab42",
+      "unix_exit": 124,
+      "trace_sha256": "c8b908719ca3f2dc8d2bfcd68bcf582c56a8ffc12a2b375ebe4a15ce001ef2e6",
+      "provider_log_sha256": "4d085373bea0acf04503018e712b84369280f0159f46ab582f20168fa7036519",
+      "video_sha256": "e18aefdf4a06905eca308dd35d0e85f800f9e808bfb787061e8f70b78fa9bbee",
+      "observed": "Disabling the strand representation reached the next 3840x2160 movie stream. The recorded scene still consisted of flat color fields. The harness reached the 145-second deadline."
+    },
+    "chase-strands": {
+      "graphics_sha256": "6e6bcbdbcc323c6e7d508a3d3e3eff820ca727d2e6c017af4104091691fe7fee",
+      "config_sha256": "3487955fcbdb92d9ffb1610e02d0231b6fbb1b59340575e291112868df91bb85",
+      "trace_sha256": "925ddc943157fdb3363e4bb9a9120e5046b7e2962695b0f7d7a0e5c4e2176247",
+      "provider_log_sha256": "f629ab084a24a638cdc36d3053cb5a3199e1454c3cdd4ee63e7b108aad1dc484",
+      "unix_exit": 1,
+      "observed": "With strand rendering enabled, the culling shader compiled. The next rejected shader was the per-block prefix sum, fingerprint 5520f1a5a8969275."
+    }
+  },
+  "desktop_menu": {
+    "window": [
+      1920,
+      1080
+    ],
+    "capture_sha256": "16338dfae268819488dad7135ce19675dc420481d77f478e098b588de2afa235",
+    "audio": "No desktop PulseAudio reply within three seconds. Launcher used -nosound.",
+    "graphics_sha256": "6e6bcbdbcc323c6e7d508a3d3e3eff820ca727d2e6c017af4104091691fe7fee",
+    "config_sha256": "a159f8a0435a0d2cfe0798b473a693aa31f0ce668e50c9651d995756fbabab42",
+    "observed": "Menu title, highlighted Start Chase, Settings and a frame from the moving H.264 preview."
+  },
+  "desktop_service_menu": {
+    "window": [
+      1920,
+      1080
+    ],
+    "launcher": "./tools/run_frosty_reference.sh --desktop",
+    "unit": "tuxbox-frosty.service",
+    "capture_sha256": "b559dd1f036f4aedd3d79ada87f855f07ae6d05d9a93f6b7e89872b6a65d14c2",
+    "graphics_sha256": "44268c6e8bb86d1deed6e4ec1c29dd31e7fff71879a02617a22436aba8fdb12a",
+    "layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "settings_sha256": "a159f8a0435a0d2cfe0798b473a693aa31f0ce668e50c9651d995756fbabab42",
+    "audio": "-nosound after desktop audio query timeout",
+    "observed": "Start Chase highlighted, Settings and the preview of the police car visible. H.264 preview passed output frame 360."
+  },
+  "corrected_cinematic_receipt": "retail-chase-cinematic.json",
+  "desktop_service_menu_latest": {
+    "window": [
+      1920,
+      1080
+    ],
+    "launcher": "./tools/run_frosty_reference.sh --desktop",
+    "unit": "tuxbox-frosty.service",
+    "capture_sha256": "17d5ddec3b77d764c0f4e35a61ec1c51df4ffaaf68f895ed9b3fa3aa8ba392e8",
+    "graphics_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+    "layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "config_sha256": "d2cf0b898ab42e7d349e388a505c2efe004cdab803ba097ba894343c029210ed",
+    "audio": "-nosound after the desktop playback probe timed out",
+    "observed": "Restored the 1920x1080 desktop menu after the extended chase trial. Start Chase was highlighted above Settings, with the police-car action preview visible."
+  }
+}

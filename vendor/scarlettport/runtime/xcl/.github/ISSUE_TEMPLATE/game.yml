@@ -1,0 +1,60 @@
+name: A game does not run right
+description: A crash, a black or wrong picture, no sound, a hang – with the run's report attached.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every run writes a report and a log to `%LOCALAPPDATA%\XCL\<title>\logs\` (`report.json`, `xcl.log`; the previous run's are `report.prev.json`, `xcl.prev.log`). They say most of what is needed – please attach both.
+
+        Do not attach or link game files, dumps or anything from a game package. XCL works only on unpacked games you own and does not help with DRM.
+  - type: input
+    id: game
+    attributes:
+      label: Game and package version
+      description: The name, and `Identity Name` / `Version` from the game's `MicrosoftGame.config` if you can.
+      placeholder: "Minecraft Preview – Microsoft.MinecraftBeta 1.18.3064.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you see or hear, and when (at start, a menu, in game). What you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: xcl
+    attributes:
+      label: XCL version
+      description: The release, or the commit you built (`git rev-parse --short HEAD`).
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver version
+      placeholder: "NVIDIA GeForce RTX 4060, 32.0.16.2124"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: "`winver` – and whether the D3D12 Agility SDK is next to xcl.exe (Windows 10)."
+      placeholder: "Windows 11 24H2 (26100.4061)"
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: report.json and xcl.log
+      description: Drag the two files here. They hold file paths of your PC (your user name), edit them out if you want.
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: What `xcl run` printed at the start and after the game exited.
+      render: text

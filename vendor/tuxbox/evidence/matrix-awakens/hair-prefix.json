@@ -1,0 +1,50 @@
+{
+  "shader_entries": {
+    "500": "MainClusterCullingPreFixSumCS",
+    "502": "MainPerBlockPreFixSumCS"
+  },
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "cooked_sha256": {
+    "500": "784beb40fe291b076dcab2930238a71b2e2c684813d82705bd6ec8966027a76e",
+    "502": "3262d7c9f78d41cb2b552bf0605e0f66963aea7d8630d3c3e8ff5d80656ae5a0"
+  },
+  "guest_slot": 62,
+  "mop": "BUFFER_STORE_FORMAT_XY",
+  "mop_code": "0x5",
+  "retail_entry": 502,
+  "workgroup": [
+    512,
+    1,
+    1
+  ],
+  "shader_views": [
+    "R32_UINT",
+    "R32G32_UINT"
+  ],
+  "test_inputs": "769 elements crossing two blocks, 512, one and zero. Nonzero offsets, wrapped unsigned values, exclusive/inclusive prefix, per-block totals and guard words.",
+  "checked_words_per_case": 2060,
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+  ],
+  "readback": {
+    "entry_502_count_769": "2060",
+    "entry_502_count_512": "2060",
+    "entry_502_count_1": "2060",
+    "entry_502_count_0": "2060",
+    "entry_500_count_769": "2060",
+    "entry_500_count_512": "2060",
+    "entry_500_count_1": "2060",
+    "entry_500_count_0": "2060"
+  },
+  "guest_sha256": "0407c7d0ea79762fd9f0cfa86601bcf21cad952583d2201c764c11e9e45fc601",
+  "provider_sha256": "7e50ad3af8c1b8efbdc142c97d72d7ec997c80b62b1c91e7cd458e053a11d2c2",
+  "patch_sha256": "d4aee78fdac119b4dd40dc6adabafbdd3ef3b918037751538c1693500b68fce2",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+}

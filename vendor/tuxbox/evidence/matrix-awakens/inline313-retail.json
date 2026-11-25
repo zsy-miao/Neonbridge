@@ -1,0 +1,61 @@
+{
+  "scope": "Frosty desktop run on Proton Experimental with the packaged graphics settings. Dispatch records report commands recorded by the title. GPU output comparisons are recorded separately.",
+  "adapter": "10de:2705",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "compiler_sha256": "390adde851bd22265780d5a26693b9f3e6f16922672d8d34b92735a42c36ed97",
+  "provider_sha256": "9a637783484d8e993a52b0cd2099e5002934ef3592085be3a2119940b015f25a",
+  "log_sha256": "c44ec262c9a07588c6479e279d3888d24d25be4f2f7051f52a3c3f4d3e17958d",
+  "lumen_hardware_ray_tracing": 1,
+  "construct_loaded": true,
+  "recorded_dispatches": {
+    "219": {
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "version": 1,
+      "table_slot": 0,
+      "descriptor_offset": 5,
+      "source_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+      "scene_gpu_va": "0xff800000"
+    },
+    "318": {
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "version": 1,
+      "table_slot": 0,
+      "descriptor_offset": 13,
+      "source_sha256": "29285864ab5a502a45dfe24cb3d1a775f849831c9f0587465ad206d6734a4944",
+      "scene_gpu_va": "0xff800000"
+    },
+    "306": {
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "version": 1,
+      "table_slot": 0,
+      "descriptor_offset": 13,
+      "source_sha256": "c96870c66198cee9fc7b8407b62425e86f8fab5d48238d0d767561ab362f7511",
+      "scene_gpu_va": "0xff800000"
+    },
+    "313": {
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "version": 1,
+      "table_slot": 0,
+      "descriptor_offset": 13,
+      "source_sha256": "65c8d69bf17229f83648b917806e4b5b4795c61ad5b149326f8de0c4e57a7c68",
+      "scene_gpu_va": "0xff800000"
+    }
+  },
+  "mangohud_frames": 1,
+  "next_shader_failure": {
+    "entry": 114,
+    "source_sha256": "c1d37ea3f753a8426aa8831dbe5546aa31496f30152b0fb76e87eeef9ab73b6b",
+    "diagnostic": "raw BVH node intersection requires traversal translation at 0xce0",
+    "packaged_entry": "LumenScreenProbeGatherHardwareRayTracingCS",
+    "static_analysis": {
+      "scene_register": "t18",
+      "bvh_intersection_instructions": [
+        "0xce0",
+        "0x2e88"
+      ],
+      "writes": "Two textures and a five-word queue record."
+    }
+  },
+  "exit_code": 1,
+  "elapsed_seconds": 31.6
+}

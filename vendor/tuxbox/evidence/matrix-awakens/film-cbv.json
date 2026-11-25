@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "provider_sha256": "8903dddb8cecf2f1578bbe5dc7bc3a5c248ada77dc7ae6df7006a57f5b2f2a72",
+  "guest_sha256": "44c9d4c6ec50bbdbc817544e1691db7acd18d99edb911c5b90baee32d1b6661c",
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "retail_gpuva": "0x1d5235c0",
+  "size_bytes": 768,
+  "retail_b0_fields": [
+    "cb0[37].x",
+    "cb0[37].y",
+    "cb0[38].z",
+    "cb0[38].w"
+  ],
+  "expected_ieee754": "00000000,00000000,39b02c0b,3a53680d",
+  "scope": "Guest CBV creation, guest descriptor range copy, shader-visible heap fetch, post-recording upload update, all 48 registers read by a compute control.",
+  "readback": {
+    "offset_0_words": "192",
+    "offset_0_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_64_words": "192",
+    "offset_64_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_128_words": "192",
+    "offset_128_fields": "00000000,00000000,39b02c0b,3a53680d",
+    "offset_192_words": "192",
+    "offset_192_fields": "00000000,00000000,39b02c0b,3a53680d"
+  }
+}

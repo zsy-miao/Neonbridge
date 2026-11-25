@@ -1,0 +1,58 @@
+{
+  "title": "The Matrix Awakens 1.20.1831.3754",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "graphics_provider_sha256": "8e3e1579b353a7108c1e3ade48b01c29c4c0f82a56f9fa3f9575e483df259c96",
+  "arguments": [
+    "-DisablePlugins=XboxCommonGDKMoviePlayer",
+    "-nosound"
+  ],
+  "config_sha256": "3487955fcbdb92d9ffb1610e02d0231b6fbb1b59340575e291112868df91bb85",
+  "runs": {
+    "heap-api-hevc": {
+      "trace_sha256": "e279945928dc3664b583e1be67259f287ce479129134a1e8ba7591593ccf0da6",
+      "video_sha256": "f7eb6b6a242390533a5aec9020d2832170bd65d67418b4f4c60d696e1d2ebffb",
+      "decoded_display_samples": 2040,
+      "distinct_screens": 5,
+      "capture_hz": 24,
+      "display_size": [
+        1280,
+        720
+      ],
+      "launcher_exit": 124,
+      "highest_logged_present": 5100,
+      "display_observation": "Only flat fields and window transitions across 85 seconds. No recognizable movie or scene.",
+      "termination": "85-second harness timeout",
+      "device_loss_in_trace": false
+    },
+    "intro-decoders": {
+      "trace_sha256": "5601b591d80c72824206e79b66483d9e20e82e0872345f100dbe481d1b08e03b",
+      "video_sha256": "f64713940370f16de247147e623dea2a6b08abb2b7894c611e76a0415208f523",
+      "decoded_display_samples": 204,
+      "distinct_screens": 3,
+      "capture_hz": 24,
+      "display_size": [
+        1280,
+        720
+      ],
+      "launcher_exit": null,
+      "media_provider_sha256": {
+        "frosty_hevc.dll": "a69f212ab6e08ae7cb880b907f065e6a80120bee847eef9e73d14073eda51d7e",
+        "mfhevcdec.dll": "fecc135bf0387f68c304542af3cb2c4aaed1267a06027f5198223f585678cd0d",
+        "frosty_packaged_aac.dll": "810c007551ec389a2c7dd0f0066747e453b5c3d1efb3cdc62cc1f22a76c5b454",
+        "mfplat.dll": "60f27ba98edb4218234399f94c3a44c643bb28dbbfd752a3064944bc6e44030a",
+        "mfplat_tombox.dll": "04a56adec588bce9536aff7603790794edbbcfaadd0c472aa35686b193e9a978",
+        "mfplat_sys.dll": "3df8aff6ca29903c6a9109b8154d36d9133d2fa371aaab2fa4be564dbba8bb1b"
+      },
+      "decoder_message": "FrostyMF HEVC delivered D3D12 NV12 frame 1 (3840x2160)",
+      "copy_list_iid": "30bc77b9-8379-4b25-95de-b8588c42275d",
+      "copy_list_result": "0x80004002",
+      "faulting_title_rva": "0x19849c9",
+      "symbol": "Electra::FElectraPlayerVideoDecoderOutputXSX::Initialize",
+      "recording_complete": false,
+      "display_observation": "Only flat black and white fields across the surviving 204 samples. Recorder ended before the title trace.",
+      "frame_verified": false
+    }
+  }
+}

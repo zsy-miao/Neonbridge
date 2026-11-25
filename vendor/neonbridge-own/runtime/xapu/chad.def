@@ -1,0 +1,9 @@
+LIBRARY chad
+EXPORTS
+    XDspActivate @1
+    XDspConnect @2
+    XDspConnectWithMaximumStreamLimit @3
+    XDspDeactivate @4
+    XDspDisconnect @5
+    XDspSubmitCommand @6
+    XDspSubmitCommandWithEnvelope @7

@@ -1,0 +1,53 @@
+{
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "allocation": {
+    "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "texture": "Nanite.VisBuffer64",
+    "parameter": "OutVisBuffer64",
+    "parameter_type": "RWTexture2D<UlongType>",
+    "engine_format": "PF_R32G32_UINT",
+    "engine_index": 68,
+    "allocation_format_rva": "0x3a8f3f7",
+    "format_table_entry_rva": "0x79bd910",
+    "d3d12_format_store_rva": "0x57d1c00",
+    "dxgi_format": 17
+  },
+  "shaders": [
+    {
+      "entry": 2989,
+      "input_sha256": "6a68ec901fb2697f60bf3cfbda888e7c3653d28ef94b6961e552b05e6231fb7e",
+      "hlsl_sha256": "7a27c996afd571b4390dedf3309e7bc4b128ae5eb95236659489a92137004b08",
+      "dxil_sha256": "5935e048f0cefb0e64b03a1527db1cc1f44ed5b1d607f05934232c6c939808bb"
+    },
+    {
+      "entry": 2853,
+      "input_sha256": "33c3a3b5c3045ac280b15ccaf78e951227c87833ec919c0fbb787c6316d970a6",
+      "hlsl_sha256": "fbcc8bf70ff5c335654515e261ee79bddc8271ce1f65bc13de7dd939e3436aa9",
+      "dxil_sha256": "a574ee7bd51516820df9a3ee49539c6ae7fca3c50f330e77334505370dcf44d8"
+    }
+  ],
+  "guest_sha256": "ce9f0b96600888143474eac2c66ba3fd608d0be55c770bcf0ec71a09b4abd7bf",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "format": "R32G32_UINT",
+  "extent": [
+    19,
+    13
+  ],
+  "scissor": [
+    3,
+    2,
+    16,
+    10
+  ],
+  "instances": 3,
+  "exit": 0,
+  "scope": "Translated retail pixel shaders, controlled vertex input and depth, competing full-width UAV values",
+  "readback": {
+    "adapter": "10de:2705",
+    "typed_int64_atomics": "1",
+    "entry_2989_matched": "247",
+    "entry_2989_changed": "69",
+    "entry_2853_matched": "247",
+    "entry_2853_changed": "69"
+  }
+}

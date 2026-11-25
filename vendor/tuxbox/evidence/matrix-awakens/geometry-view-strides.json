@@ -1,0 +1,131 @@
+{
+  "shader": "global/2927 HWRasterizeVS",
+  "source_sha256": "e97681a916368067bb6a90022ef3d192b79cd20cf285f23b4b039eb6eea5f5a8",
+  "scope": "The Sandbox requested the affected shaders. A controlled draw measures their indexing independently of city lighting.",
+  "survey": {
+    "retail_log_sha256": "ca7cff9dd1146b8d6f79b9e2159c79fc34931aa0d3341853a417a9af119727de",
+    "observed_pixel_archive_entries": 216,
+    "observed_vertex_geometry_mesh_archive_entries": 76,
+    "changed_archive_entries": 54,
+    "changed_distinct_native_programs": 48,
+    "changed_programs": "46 distinct material vertex shaders across 52 archive entries, global/2927 vertex shader and global/3194 mesh shader",
+    "validated_changed_dxil_entries": 54,
+    "stride_bytes": {
+      "material vertex view": [
+        784,
+        800
+      ],
+      "global/2927 views": [
+        704,
+        800
+      ],
+      "global/2927 scene records": [
+        4,
+        16
+      ],
+      "global/3194 packed views": [
+        16,
+        800
+      ]
+    },
+    "pixel_audit": "The target order, reflected structured SRV strides and enabled position register masks matched in the 216 examined material pixel entries."
+  },
+  "draw": {
+    "probe": "tools/check_frosty_geometry_views.py",
+    "method": "A D3D12 point draw selects three 800-byte view records using three cluster IDs. Stream output captures TEXCOORD2.zw from the packaged vertex shader before rasterization. The six dimension words differ. Remaining view words contain 0xBAD.",
+    "expected_dimensions": [
+      [
+        257,
+        513
+      ],
+      [
+        258,
+        514
+      ],
+      [
+        259,
+        515
+      ]
+    ],
+    "before_dxil_sha256": "df1363d24605344e5fee65a27fccd20e0bdcefda62a2dba5175fd50eaa046634",
+    "after_dxil_sha256": "3d1940f55834ba896ffca32f4513a5f0ec6dc31b0a8dac4473541b01a9d0bbe8",
+    "readbacks": {
+      "1002:13c0": {
+        "before": [
+          [
+            257,
+            513
+          ],
+          [
+            2989,
+            2989
+          ],
+          [
+            2989,
+            2989
+          ]
+        ],
+        "after": [
+          [
+            257,
+            513
+          ],
+          [
+            258,
+            514
+          ],
+          [
+            259,
+            515
+          ]
+        ]
+      },
+      "10de:2705": {
+        "before": [
+          [
+            257,
+            513
+          ],
+          [
+            2989,
+            2989
+          ],
+          [
+            2989,
+            2989
+          ]
+        ],
+        "after": [
+          [
+            257,
+            513
+          ],
+          [
+            258,
+            514
+          ],
+          [
+            259,
+            515
+          ]
+        ]
+      }
+    },
+    "readback_bytes_per_version_per_gpu": 48
+  },
+  "mesh_control": {
+    "adapter": "1002:13c0",
+    "host": "1793301796 experimental-11.0-20261027b-x86_64",
+    "cases": {
+      "global/3194": "nanite-mesh PASS pci=1002:13c0 ms=3194 ps=2853 format=R32G32_UINT texels=1729/1729 primitive0=69 primitive96=69 empty=0 invalid=0 clipped=23 group0=0 groups01=69",
+      "global/2886": "nanite-mesh PASS pci=1002:13c0 ms=2886 ps=3130 format=R32_UINT texels=1729/1729 primitive0=69 primitive96=69 empty=0 invalid=0 clipped=23 group0=0 groups01=69"
+    },
+    "warm_repeats_matched": true
+  },
+  "stock_sandbox": {
+    "old_linked_2927_dxil_sha256": "c4ab44d0e9beaa32f8c8fb849474d14aac4af5545c183586048c814fb948f6b2",
+    "updated_linked_2927_dxil_sha256": "e0941ed16f7fdf519dd2381b48dc00e32c02faa146caf3a54407902c08186091",
+    "updated_3194_dxil_sha256": "291c5bde238baba7cbdf8d6880c2f127ae0b62574107386963ec59357f86564b",
+    "verification": "VKD3D dumped the corrected linked vertex and mesh binaries during the stock Sandbox launch. The three-record control covers a known indexing error. The active city view indices and coverage of visible building gaps remain unverified."
+  }
+}

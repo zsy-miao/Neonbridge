@@ -1,0 +1,9 @@
+[
+  {"source_sha256": "63403469f6a15e9e9a4689ff04fff98c80441351a39fc3723ceed016c8634773", "entry": "global/833", "mode": "compute", "stride": 4, "first_word": 0, "words": []},
+  {"source_sha256": "661460a72911aa6e30fe7309a11829ec2fc9829de04a8c89d92d04014cd2858a", "entry": "global/1275", "mode": "compute", "stride": 16, "first_word": 2, "words": [0, 0]},
+  {"source_sha256": "3ef7747e089ca8ba65f447bd75e4cebd1ebadc55e85de589a2addefd2a56f218", "entry": "global/1810", "mode": "compute", "stride": 12, "first_word": 0, "words": [0]},
+  {"source_sha256": "f5869f31b6628bbd87ff70f8c0a677ddfd7fed641a01b47ff61cd111aaaa770b", "entry": "global/2623", "mode": "compute", "stride": 4, "first_word": 0, "words": []},
+  {"source_sha256": "6a80b346d8d3e301369448f79ea19eb143a36a7c887103f5239c8f1b145083c5", "entry": "global/3320", "mode": "compute", "stride": 4, "first_word": 0, "words": [0]},
+  {"source_sha256": "a626d09022a5d3e17e93a48ecb45c66d085e032488977133cbc12fcc1012c3a2", "entry": "global/3491", "mode": "compute", "stride": 4, "first_word": 0, "words": []},
+  {"source_sha256": "3ad8d46cbc2e4dce4a439e81432fda3ed7c1901ebff140ae02c14e361a5100ab", "entry": "material/38557", "mode": "compute", "stride": 4, "first_word": 0, "words": []}
+]

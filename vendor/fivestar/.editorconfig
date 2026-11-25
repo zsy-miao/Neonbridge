@@ -1,0 +1,22 @@
+root = true
+
+# Layout of every file. The code rules live in build/FiveStar.globalconfig.
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,xml,csproj,props,targets,slnx,runsettings}]
+indent_size = 2
+
+# The header every C# file starts with (IDE0073); the architecture tests check the other code files.
+[*.cs]
+file_header_template = Copyright (c) 2026 Five Star Recomp contributors.\nSPDX-License-Identifier: GPL-3.0-or-later
+
+
+# The DXIL backend names LLVM and HLSL types (Int32, Float, Pointer, Integer): CA1720 would rename the subject matter.
+[src/FiveStar.Shaders/Dxil/**.cs]
+dotnet_diagnostic.CA1720.severity = none

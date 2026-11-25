@@ -1,0 +1,8 @@
+{
+  "scope": "Packaged shader 219 immediate descriptor setup at its two image_bvh64_intersect_ray instructions; this does not cover other shaders or runtime-generated descriptors.",
+  "shader_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+  "instruction_offsets_in_extracted_isa": ["0x6fc", "0xe94"],
+  "descriptor_words": ["0x00000000", "0x80000000", "0xffffffff", "0x890003ff"],
+  "box_growth": 0,
+  "box_sorting_enabled": true
+}

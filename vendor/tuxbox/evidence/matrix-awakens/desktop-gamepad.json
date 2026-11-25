@@ -1,0 +1,24 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "50af3c2268e06f2cc7d92ce47b55945bb225eadfa5c7d677dae6aaedd2a5fc50",
+  "guest_sha256": "5e2e9c9ee9e851e6dff9c582fb7090f7333a396559575affe66f1ed97bdd526a",
+  "patch_sha256": "1d141a99f70d61c895018e55d96a574e1e5a2895ed11d1e8c6e7789158366d4a",
+  "runs": {
+    "on": {
+      "keyboard_port": "5",
+      "buttons": "12",
+      "keyboard_aliases": "2",
+      "bipolar_axes": "4",
+      "triggers": "2",
+      "ordered_edges": "48",
+      "mouse_confirm": "1",
+      "mouse_aim_fire": "1",
+      "mouse_look_signed_axes": "2",
+      "mouse_idle_neutral": "1",
+      "cursor_restored": "1"
+    },
+    "off": {
+      "keyboard_pad_absent": "1"
+    }
+  }
+}

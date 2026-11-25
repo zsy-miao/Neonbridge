@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+# Binary content keeps its exact bytes.
+*.png binary
+*.jpg binary
+*.dds binary
+*.ico binary
+*.ttf binary
+*.woff2 binary
+*.nupkg binary
+*.opus binary
+*.ogg binary
+*.zst binary
+*.bin binary
+*.webm binary
+*.yuv binary

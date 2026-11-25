@@ -1,0 +1,100 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -361,6 +361,7 @@
+     live: Vec<String>,
+     /// Pixel shader needs its position within the 2x2 quad (ds_swizzle).
+     uses_quad: bool,
++    compute_swizzle: bool,
+     regs: BTreeSet<String>,
+     body: String,
+     tmp: usize,
+@@ -806,6 +807,28 @@
+     }
+     let required_wave_size = required_wave_size.or(scan_width).or(requires_ballot.then_some(64)).or((uses_quad_add || uses_bpermute).then_some(32));
+     em.required_wave_size = required_wave_size;
++    // DS bit-mask mode operates on the low five lane bits in wave32 and wave64.
++    // Map guest lanes by workgroup index, independently of the Vulkan subgroup layout.
++    em.compute_swizzle = ex.stage == Stage::Compute && scan_width.is_none()
++        && em.insns.iter().any(|i| i.mnemonic == "ds_swizzle_b32");
++    if em.compute_swizzle {
++        let [x, y, z] = compute_group(ex);
++        let count = x.checked_mul(y).and_then(|n| n.checked_mul(z)).unwrap_or(0);
++        if count == 0 || count > 1024 || count % 32 != 0 {
++            return Err("compute swizzle requires complete blocks of 32 lanes".into());
++        }
++        let last = em.insns.iter().rposition(|i| i.mnemonic == "ds_swizzle_b32").unwrap_or(0);
++        if em.insns[..last].iter().any(|i| i.mnemonic == "s_endpgm") {
++            return Err("compute swizzle following an early exit".into());
++        }
++        // The generic LDS declaration already reserves the full SM5 shared budget.
++        if em.insns.iter().any(|i| i.enc == Enc::Ds && i.mnemonic != "ds_swizzle_b32") {
++            return Err("compute swizzle with additional LDS operations".into());
++        }
++        if em.insns.iter().any(|i| i.enc == Enc::Sopp && Emitter::branch_cond(i.op).is_some() && i.aux.imm < 0) {
++            return Err("compute swizzle inside a program with backward branches".into());
++        }
++    }
+     if let Some(width) = required_wave_size {
+         wave_sum::check_control_flow(&em.insns, width)?;
+         let [x, y, z] = compute_group(ex);
+@@ -1111,6 +1134,7 @@
+             dsel_moves: HashMap::new(),
+             live: Vec::new(),
+             uses_quad: false,
++            compute_swizzle: false,
+             regs: if has_mode { BTreeSet::from(["tb_fp_mode".into()]) } else { BTreeSet::new() },
+             body: String::new(),
+             tmp: 0,
+@@ -2364,6 +2388,9 @@
+             {
+                 active.clear();
+             }
++            if self.compute_swizzle && ins.mnemonic == "ds_swizzle_b32" && !active.is_empty() {
++                return Err(format!("compute swizzle in divergent control flow at {:#x}", ins.offset));
++            }
+             if is_quad_add(ins) {
+                 // FI=1 fetches the saved VGPR even from an EXEC-disabled lane. All
+                 // host lanes must reach the exchange, including those skipping this
+@@ -3461,6 +3488,22 @@
+                     self.line(&format!("uint t{t}value = WaveReadLaneAt({}, t{t}src);", r(&s[0])?));
+                     return self.wv(&d.ok_or("no swizzle destination")?, &format!("t{t}value"));
+                 }
++                if self.compute_swizzle {
++                    let mode = ins.aux.imm as u32;
++                    if ins.raw[0] & 0x3_8000 != 0 {
++                        return Err("unsupported compute DS swizzle encoding".into());
++                    }
++                    let t = self.tmp;
++                    self.tmp += 1;
++                    let value = r(&s[0])?;
++                    self.line(&format!("tb_swizzle[tb_lane] = (exec_lo & 1u) ? {value} : 0u;"));
++                    self.line("GroupMemoryBarrierWithGroupSync();");
++                    self.line(&format!("uint t{t} = tb_swizzle[(tb_lane & ~31u) | (((tb_lane & {}u) | {}u) ^ {}u)];",
++                        mode & 31, (mode >> 5) & 31, (mode >> 10) & 31));
++                    // Every thread must finish reading before the next exchange publishes.
++                    self.line("GroupMemoryBarrierWithGroupSync();");
++                    return self.wv(&d.ok_or("no swizzle destination")?, &format!("t{t}"));
++                }
+                 if !is_ps { return Err("ds_swizzle outside a pixel shader".into()); }
+                 let off = ins.aux.imm as u32;
+                 if off & 0x8000 == 0 { return Err("ds_swizzle without QDMode unsupported".into()); }
+@@ -5717,6 +5760,9 @@
+                 Some(RootAbi::Ps09Raster) => 11,
+                 None => 4 + nparams,
+             };
++            if self.compute_swizzle {
++                writeln!(h, "groupshared uint tb_swizzle[{}];", tx * ty_ * tz).unwrap();
++            }
+             if let Some(width) = self.required_wave_size { writeln!(h, "[WaveSize({width})]").unwrap(); }
+             let _ = writeln!(h, "[numthreads({tx}, {ty_}, {tz})]
+ void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID) {{");
+@@ -5728,6 +5774,9 @@
+                 self.regs.insert(format!("s{}", g + k));
+             }
+             let _ = writeln!(h, "{}", self.reg_decls());
++            if self.compute_swizzle {
++                writeln!(h, "    uint tb_lane = gtid.x + {tx}u * (gtid.y + {ty_}u * gtid.z);").unwrap();
++            }
+             let _ = writeln!(h, "    v0 = gtid.x; v1 = gtid.y; v2 = gtid.z;");
+             let _ = writeln!(h, "    s{} = gid.x; s{} = gid.y; s{} = gid.z;", g, g + 1, g + 2);
+             if let Some(plan) = &self.packed { plan.init_args(&mut h); }

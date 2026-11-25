@@ -1,0 +1,59 @@
+{
+  "scope": "Global compute entries 2134 and 2154 compiled from their complete packaged programs. GPU readbacks exercise only the emitted single-word texture atomics with synthetic inputs.",
+  "compiler_sha256": "0d1cd099c5b0674badbd98f946e469e8469c0dbd5d07c3aa136d8668dc17e31d",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "entries": [
+    {
+      "index": 2134,
+      "entry": "VoxelTraceCS",
+      "opcode": "image_atomic_umin",
+      "offset": "0x7f0",
+      "source_sha256": "87a924e4eb081dfe7d11049781e6af01ccb5d9cbec8bcb9d3dc936e31f37bfa6",
+      "profile": "cs_6_0",
+      "dxil_sha256": "5c3ae0e1ef7d90255266b2adbe5a9ec95e34a233a8fd551cfc428adf7fde5cbf",
+      "dxv": "passed",
+      "atomic_probe_hlsl_sha256": "ad38ab39bc2ebfbc5c313b72c5892ade4649ee83b59f632d191dc0b1a99a5673",
+      "packaged_shader_map": {
+        "index": 133,
+        "sha1": "5f7dcd3bb7e050404444791532c00353d3ef2c0d",
+        "source": "/Engine/Private/Lumen/LumenVoxelLighting.usf"
+      }
+    },
+    {
+      "index": 2154,
+      "entry": "MainCS",
+      "opcode": "image_atomic_or",
+      "offset": "0x780",
+      "source_sha256": "d70b38f8ff50ba9f20fd1ecf8c0bcc313ca0c5293e5d9d9a65eb703933c92acf",
+      "profile": "cs_6_0",
+      "dxil_sha256": "6ae2f06c4a46f3d2d16b97c8e435787e31206039e54e59929b8e56984367f166",
+      "dxv": "passed",
+      "atomic_probe_hlsl_sha256": "e1339853da25645ec3a6cd90b8232d4118672da78da812a58b8fa10186cd06fb",
+      "packaged_shader_map": {
+        "index": 138,
+        "sha1": "7143b3e6af9af1c5a0758bea44c3d8d627923272",
+        "source": "/Engine/Private/HairStrands/HairStrandsVoxelOpaque.usf"
+      }
+    }
+  ],
+  "readback": {
+    "texture": "4 × 4 × 3 R32_UINT, u0, one group of 32 lanes",
+    "center": "(2, 1, 1), initially 0x81000000",
+    "mask": "Odd lanes active. All 16 active lanes contend for the same texel.",
+    "minimum_input": "Lane 0 would write zero if active. Lane 3 supplies 0x80000001. Other lanes supply 0x11111100 + lane.",
+    "or_input": "Each lane supplies 1 << (lane % 16).",
+    "adapters": {
+      "1002:13c0": {
+        "minimum": "0x11111101",
+        "or": "0x8100aaaa",
+        "unchanged_neighbors_per_dispatch": 47
+      },
+      "10de:2705": {
+        "minimum": "0x11111101",
+        "or": "0x8100aaaa",
+        "unchanged_neighbors_per_dispatch": 47
+      }
+    }
+  },
+  "global_shader_map_cache_sha256": "d6640174767d44dfa1049fd147b495bab214bd3c5a27d931d628b3e2e95cf37c"
+}

@@ -1,0 +1,123 @@
+{
+  "name": "ClassifyMaterials",
+  "entry": 2725,
+  "adapter": "1002:13c0",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "source_sha256": "624cea6b8644e17fe48084b21d7586e4860805b090d349db172a068ae5e0e495",
+  "dxil_sha256": "79ae0e0879ec850e743374bbd3a2c72b78f58a212ada875b715c542db8fee96b",
+  "guest_sha256": "1b7b0f743520ea33a8c4d90e433b96db17a1eb7c89739922bd2dfd9c79f6c775",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "cases": {
+    "empty": {
+      "materials_by_tile": {
+        "0": []
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "6fc121307b1da7292b36a4b0cf379903d0bacddcd1ba6668ded8fed55af7a808",
+      "tile_masks_sha256": "269376d6ac95e21fa6bb0974c57ac9559245ba224a4b82ce5d22a3d170eddc7e"
+    },
+    "uniform": {
+      "materials_by_tile": {
+        "0": [
+          1
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "7b365ed0b844df5ead51c6a4de055eefe712290cffe74524e2f7d9088295e2b0",
+      "tile_masks_sha256": "a5885394dc750d25e5aa53f0d67583d65795067539ed6b483817a184b1fbc57d"
+    },
+    "upper-lane": {
+      "materials_by_tile": {
+        "0": [
+          8195
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "aa42c6b4894d19abe5f54e896845fc0cc03c394aadc31f0a8b1d1ed8b44edc9a",
+      "tile_masks_sha256": "ae8bb00bb13aa010e5e798273df28e0a6c24fcf2f5d06afe9a85fd839c63652d"
+    },
+    "mixed": {
+      "materials_by_tile": {
+        "0": [
+          1,
+          12,
+          33,
+          35,
+          8189,
+          8195
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "02599125552b81e86e09bdbfff9d569f93c5b1a47c9a066d3f8616cc2399ddd4",
+      "tile_masks_sha256": "c8d899e3d7ee2832980958f527f2aa3714ea50288102a668383ee6ff46c0db7f"
+    },
+    "range-table": {
+      "materials_by_tile": {
+        "0": [
+          1,
+          12,
+          33,
+          35,
+          8189,
+          8195
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "02599125552b81e86e09bdbfff9d569f93c5b1a47c9a066d3f8616cc2399ddd4",
+      "tile_masks_sha256": "c8d899e3d7ee2832980958f527f2aa3714ea50288102a668383ee6ff46c0db7f"
+    },
+    "resident-pages": {
+      "materials_by_tile": {
+        "0": [
+          1,
+          12,
+          33,
+          35,
+          8189,
+          8195
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "02599125552b81e86e09bdbfff9d569f93c5b1a47c9a066d3f8616cc2399ddd4",
+      "tile_masks_sha256": "c8d899e3d7ee2832980958f527f2aa3714ea50288102a668383ee6ff46c0db7f"
+    },
+    "four-tiles": {
+      "materials_by_tile": {
+        "0": [
+          1,
+          12,
+          33,
+          35,
+          8189,
+          8195
+        ],
+        "1": [
+          8195
+        ],
+        "37": [
+          12
+        ],
+        "38": [
+          1,
+          35
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "dadfa8ecf9c5ba6b2065db14f321ffa923e647c4e4c5ea1213c046e084c3e1f9",
+      "tile_masks_sha256": "a35756097b01c9a0cf64e7be872a2707ce0a0d2d18fdaab3c5d36e72e416ed5d"
+    },
+    "offset": {
+      "materials_by_tile": {
+        "0": [
+          35,
+          8195
+        ]
+      },
+      "verified_words": 57416,
+      "draw_arguments_sha256": "c788aaa07b7d502f14a75885080e5919feefd5359f1a2ace634fa408e2c7ec0d",
+      "tile_masks_sha256": "987b8c8c92c270d9e2d98fe87c17c3af6eb4bb33a7920fb0fbc0ff3f233ee084"
+    }
+  }
+}

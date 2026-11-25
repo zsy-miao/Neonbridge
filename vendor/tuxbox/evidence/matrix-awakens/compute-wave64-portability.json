@@ -1,0 +1,78 @@
+{
+  "scope": "Six packaged compute shaders dispatched with their original root signatures. The Radeon reference uses native 64-lane exchanges in the same translation. The portable path uses workgroup memory for each logical wave.",
+  "reference_device": "1002:13c0",
+  "portable_devices": {
+    "AMD": "1002:13c0",
+    "NVIDIA": "10de:2705"
+  },
+  "cases": [
+    "zero",
+    "gradient",
+    "scaled"
+  ],
+  "inputs": "8 by 8 RGBA32F point-sampled textures with zero, a per-channel spatial gradient, and the gradient scaled by 1.75. Ray generation uses identity camera matrices and a 32 by 32 dispatch tile.",
+  "entries": {
+    "2550": {
+      "guest_sha256": "3ffe04f939d82d650d7230134ba5d5f3c1c135ce6e7fc1be9187dde536c457f9",
+      "portable_dxil_sha256": "b2162554cccb095ec2b4a79e512421f128c6b8b247b6a3eb48ff5f56e3b9fd84",
+      "reference_dxil_sha256": "1ccb494392b8d4e63be7bb2c4839876f095bead0f8bc8b2bb2f2a8d87755ed9d",
+      "outputs": "1024 32-byte records. Matched by the packed source pixel coordinate (word 3) because the order of records in an atomic bin can vary. Checked a guard record before and after the UAV view.",
+      "comparisons": {
+        "AMD": {
+          "matching_pixel_ids": 3072,
+          "guard_failures": 0,
+          "max_f32_absolute_error": 1.9073486328125e-05,
+          "max_f16_absolute_error": 3.0517578125e-05,
+          "max_f16_ulp": 1
+        },
+        "NVIDIA": {
+          "matching_pixel_ids": 3072,
+          "guard_failures": 0,
+          "max_f32_absolute_error": 3.719329833984375e-05,
+          "max_f16_absolute_error": 0.000244140625,
+          "max_f16_ulp": 1
+        }
+      }
+    },
+    "3391": {
+      "guest_sha256": "062aae603ca8088564e6cc02f632c6ab51c73d899304c384854600eb91f0196e",
+      "portable_dxil_sha256": "3a6741790031e7e726b9c35f271a5ca6e58e75817322e758dae60c2e7f3ce535",
+      "reference_dxil_sha256": "3c5c4cbc671c2b2977327183df166e111f4fc46fd36f51da7328736f1d0864b6",
+      "outputs": "Three RGBA32F textures; 8 by 8, 4 by 4 and 2 by 2 active regions in 8 by 8 views. All three readback buffers compared including untouched guards and padding.",
+      "mismatched_components": 0,
+      "absolute_and_relative_tolerance": 1e-05
+    },
+    "3392": {
+      "guest_sha256": "851d727e96da25dbd834ef067d620d39fae6b15e53e38ab2d066561b1c4eaa66",
+      "portable_dxil_sha256": "70a0560b2a223df59991b0cd3f02ebea3830de5f6ab6409750fcb63bb80fc5e5",
+      "reference_dxil_sha256": "2734983f894f6a6a58334c0e6a69b09b4d5f89d7a4ef26c0e0d29dc1099e464b",
+      "outputs": "Three RGBA32F textures; 8 by 8, 4 by 4 and 2 by 2 active regions in 8 by 8 views. All three readback buffers compared including untouched guards and padding.",
+      "mismatched_components": 0,
+      "absolute_and_relative_tolerance": 1e-05
+    },
+    "3393": {
+      "guest_sha256": "98f36ed240b15d7a53ac018b5d0ee2c5fd5745a3fdb97c840220aeba17228b49",
+      "portable_dxil_sha256": "4502b48f302780c852a1a69e091cbb40505374dccee408ca17192acfe041999e",
+      "reference_dxil_sha256": "1138dc312c52c78de0664769487d85b93d9174bf7baf9d3347b7d9c7a94d5501",
+      "outputs": "Three RGBA32F textures; 8 by 8, 4 by 4 and 2 by 2 active regions in 8 by 8 views. All three readback buffers compared including untouched guards and padding.",
+      "mismatched_components": 0,
+      "absolute_and_relative_tolerance": 1e-05
+    },
+    "3394": {
+      "guest_sha256": "857f67949b2af66e43f689dd02fbb23cf86272176f61df6805a9e59a3b1bb72d",
+      "portable_dxil_sha256": "ecaeaef8cc5578702967ce6e58d343030e9e9edb6f2e2b5e21341c6f7f73fe21",
+      "reference_dxil_sha256": "82070d3f4758c1244de17f89fe1f7d04b4941a023f1e80a6e5f62f704633e391",
+      "outputs": "Three RGBA32F textures; 8 by 8, 4 by 4 and 2 by 2 active regions in 8 by 8 views. All three readback buffers compared including untouched guards and padding.",
+      "mismatched_components": 0,
+      "absolute_and_relative_tolerance": 1e-05
+    },
+    "3395": {
+      "guest_sha256": "703fdd9c262e772702639a3052ea815a4a7f950346d17e2d1160dab312f9ef99",
+      "portable_dxil_sha256": "a9d2c02f82d6734e7e69caee716df7cebd54e187c657cf261ade85afaf06ea12",
+      "reference_dxil_sha256": "276ce48c3cfa6013781b333f765ed436e9934b5cf1ee098805acbfd1c2464e3d",
+      "outputs": "Three RGBA32F textures; 8 by 8, 4 by 4 and 2 by 2 active regions in 8 by 8 views. All three readback buffers compared including untouched guards and padding.",
+      "mismatched_components": 0,
+      "absolute_and_relative_tolerance": 1e-05
+    }
+  }
+}

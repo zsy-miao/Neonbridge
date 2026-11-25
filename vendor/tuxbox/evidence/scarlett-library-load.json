@@ -1,0 +1,60 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "providers": {
+    "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f",
+    "d3d12_xs.dll": "0ead823295d240a0d652f673380623be2e1bf4667d9bfec4984ef22e8f6b2e0a"
+  },
+  "libraries": {
+    "Bink2Scarlett.dll": {
+      "sha256": "9eaf045d004cd7d6a8382aaff0c6ea23a29fec4ef8bfacd726b54f5bc26fafd0",
+      "provider_imports": {
+        "xmem.dll": [
+          "XMemFree",
+          "XMemAlloc"
+        ]
+      },
+      "missing_named_exports": {
+        "xmem.dll": []
+      },
+      "process_exit": 0,
+      "LoadLibraryW_error": 0
+    },
+    "XboxBvhBuilder.dll": {
+      "sha256": "99f803ac22c01ef329dddb1d40be67238d2a812d01e8d040b3cb5135bc23707e",
+      "provider_imports": {
+        "d3d12_xs.dll": [
+          "D3D12SerializeVersionedRootSignature"
+        ],
+        "xmem.dll": [
+          "XMemVirtualQuery"
+        ]
+      },
+      "missing_named_exports": {
+        "d3d12_xs.dll": [],
+        "xmem.dll": []
+      },
+      "process_exit": 0,
+      "LoadLibraryW_error": 0
+    },
+    "amd_fidelityfx_upscaler_xbox.dll": {
+      "sha256": "faff02f294a7e9149ce079dffe3dedbcabe99b1f180ab14222aa8689e00a75fa",
+      "provider_imports": {
+        "d3d12_xs.dll": [
+          "D3D12CreateRootSignatureDeserializer"
+        ],
+        "xmem.dll": [
+          "XMemFree",
+          "XMemGetWorkingSetStatistics",
+          "XMemAlloc"
+        ]
+      },
+      "missing_named_exports": {
+        "d3d12_xs.dll": [],
+        "xmem.dll": []
+      },
+      "process_exit": 0,
+      "LoadLibraryW_error": 0
+    }
+  },
+  "guest_sha256": "2d12fc16149d4bd70799f3eefde44fce65dc0083de5231b81e02f60a88b6591c"
+}

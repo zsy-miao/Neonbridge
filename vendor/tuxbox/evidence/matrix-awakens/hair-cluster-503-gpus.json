@@ -1,0 +1,110 @@
+{
+  "scope": "Packaged global 503 hair cluster culling and per-cluster LOD metadata through TuxBox\u2019s provider and runtime shader compiler. Six CPU-modeled cases check all 676 words on each GPU. Does not validate rendered hair.",
+  "archive_entry": 503,
+  "results": {
+    "amd": {
+      "shader": "FHairClusterCullingCS / MainClusterCullingCS",
+      "archive_entry": 503,
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_sha256": "4ac42cca742e6601aa4977e84ee3bd037d573af909cfac2a2b8c74f87844eef0",
+      "guest_slot": 62,
+      "workgroup": [
+        64,
+        1,
+        1
+      ],
+      "source_isa_instructions": 367,
+      "source_isa_bytes": 1948,
+      "first_election": "0x620",
+      "second_election": "0x6dc",
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "test_inputs": "Sparse clusters across both wave halves, forced and automatic LOD, blended vertex counts and FP16 radius values, per-cluster metadata with both LOD flag values, view plane excluding cluster 60, partial range, hidden group.",
+      "initial_cluster_count": 2,
+      "initial_draw_vertices": 17,
+      "checked_words_per_case": 676,
+      "readback": {
+        "marked_matched": "676",
+        "marked_cluster_count": "8",
+        "marked_draw_vertices": "777",
+        "lod0_matched": "676",
+        "lod0_cluster_count": "8",
+        "lod0_draw_vertices": "753",
+        "blended_matched": "676",
+        "blended_cluster_count": "7",
+        "blended_draw_vertices": "529",
+        "automatic_matched": "676",
+        "automatic_cluster_count": "8",
+        "automatic_draw_vertices": "753",
+        "hidden_matched": "676",
+        "hidden_cluster_count": "2",
+        "hidden_draw_vertices": "17",
+        "frustum_matched": "676",
+        "frustum_cluster_count": "7",
+        "frustum_draw_vertices": "509"
+      },
+      "guest_sha256": "6791161a5e403b057963b62781746f7725b7a9f7f374e6fb5bb0d65ae5d61c08",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    },
+    "nvidia": {
+      "shader": "FHairClusterCullingCS / MainClusterCullingCS",
+      "archive_entry": 503,
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_sha256": "4ac42cca742e6601aa4977e84ee3bd037d573af909cfac2a2b8c74f87844eef0",
+      "guest_slot": 62,
+      "workgroup": [
+        64,
+        1,
+        1
+      ],
+      "source_isa_instructions": 367,
+      "source_isa_bytes": 1948,
+      "first_election": "0x620",
+      "second_election": "0x6dc",
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "test_inputs": "Sparse clusters across both wave halves, forced and automatic LOD, blended vertex counts and FP16 radius values, per-cluster metadata with both LOD flag values, view plane excluding cluster 60, partial range, hidden group.",
+      "initial_cluster_count": 2,
+      "initial_draw_vertices": 17,
+      "checked_words_per_case": 676,
+      "readback": {
+        "marked_matched": "676",
+        "marked_cluster_count": "8",
+        "marked_draw_vertices": "777",
+        "lod0_matched": "676",
+        "lod0_cluster_count": "8",
+        "lod0_draw_vertices": "753",
+        "blended_matched": "676",
+        "blended_cluster_count": "7",
+        "blended_draw_vertices": "529",
+        "automatic_matched": "676",
+        "automatic_cluster_count": "8",
+        "automatic_draw_vertices": "753",
+        "hidden_matched": "676",
+        "hidden_cluster_count": "2",
+        "hidden_draw_vertices": "17",
+        "frustum_matched": "676",
+        "frustum_cluster_count": "7",
+        "frustum_draw_vertices": "509"
+      },
+      "guest_sha256": "6791161a5e403b057963b62781746f7725b7a9f7f374e6fb5bb0d65ae5d61c08",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    }
+  },
+  "negative_control": "Changing one native ISA bit disables the exact-program handler and the compiler rejects the unverified election at 0x620.",
+  "related_regression": "Global 506 cluster-culling fixture passed all five cases on AMD with the same compiler build."
+}

@@ -1,0 +1,28 @@
+{
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 2696,
+  "shader": "TranscodePageToGPU",
+  "native_sha256": "4aa3e6cce7f1bcaccbec2a4ee445fb49519e575fb47d9203b7a7eb5c54c92560",
+  "hlsl_sha256": "000530c881a9fedfe153d5d0d8dee1d80caf764856914dff17745929cabe9577",
+  "dxil_sha256": "fa5f96dbf08c42a6ca7c9d5f75f79faebe087c69488ea2a44e06609fcbcbc487",
+  "dxil_bytes": 63644,
+  "guest_sha256": "e0c6ada852947841502c29dfa0f71da9623553169725001c36574f38ecafbec0",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "groups": [
+    2,
+    4,
+    1
+  ],
+  "scope": "Two page copies plus one-cluster pages with one and four strip-start triangles. Concurrent AND/OR updates share and straddle 32-bit words.",
+  "readback": {
+    "adapter": "10de:2705",
+    "atomic_word_expected": "deadbc41",
+    "atomic_word_actual": "deadbc41",
+    "packed_low": "6104c410",
+    "packed_high": "de106441",
+    "copied_words": "712",
+    "guard_words": "1333",
+    "matched_words": "2048"
+  },
+  "exit": 0
+}

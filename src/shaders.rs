@@ -1,0 +1,2284 @@
+//! Runtime shader worker: compiles the Xbox shader programs the running title
+//! asks for, the Windows counterpart of TuxBox's `project_tuxbox/runtime_shaders.py`.
+//!
+//! d3d12_xs (env `TUXBOX_SHADER_SESSION=run-…`) publishes requests by renaming
+//! them into `%TEMP%\tuxbox_shader_cache\<session>\requests`:
+//!   `<sha256>.dxbc`, `<sha256>_rtN.stencil` (files) and
+//!   `<producer>_<pixel>_<order>.link` (dir: producer.dxbc, pixel.dxbc, pixel.cso).
+//! The worker answers with `<key>.cso` (DXIL) or `<key>.failed` in the session dir.
+//! Translations: vendored `tools/shader-compiler` (xshader: Xbox ISA -> HLSL),
+//! then the Windows SDK `dxc` (signed by its `dxil.dll`). Results persist in
+//! `tuxbox_shader_cache\runtime\<toolchain fingerprint>`, which d3d12_xs also
+//! reads directly via the session's `compiler-id`.
+//! Under Sandboxie the session lives in the box's copy of %TEMP% (where the
+//! boxed title writes); the persistent cache stays in the real %TEMP%, which
+//! the box reads through.
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::time::Duration;
+use std::{fs, thread};
+
+const MAX_SHADER_BYTES: u64 = 64 << 20;
+
+/// The running title's process id (main.rs sets it at each start): a child
+/// of this process that the worker's own size below leaves out.
+pub static GAME_PID: AtomicU32 = AtomicU32::new(0);
+
+/// An explicit `neonbridge --prewarm` (main.rs prewarm_only): nothing waits on
+/// its compiles, so -O1 gets 120 s (NEONBRIDGE_DXC_O1_SECS still sets it).
+pub static PREWARM_ONLY: AtomicBool = AtomicBool::new(false);
+
+/// Whether the explicit prewarm compiles cached -O0 DXIL (`.o0`) again at -O1
+/// instead of reusing it: opt-in, NEONBRIDGE_PREWARM_UPGRADE_O0=1. On by
+/// default it made the 6f69363 prewarm recompile ~2000 `.o0` entries of
+/// unchanged HLSL (1.5/s), and the -O1 passes that ran past 120 s stored -O0
+/// again, so every prewarm repeated them. The -O0 DXIL is reused and the
+/// background upgrade queue (dxil_upgrade.rs, 900 s at idle priority) makes it -O1.
+/// xshader TB_DENORM_FTZ marker: the program wants `-denorm ftz`.
+/// `-denorm` needs shader model 6.2 or later; an older profile keeps the software flushes'
+/// absence unflushed, so xshader only marks programs it compiles at 6.2+ (and this checks).
+pub(crate) fn denorm_ftz_marked(hlsl: &Path, target: &str) -> bool {
+    target.rsplit('_').next().and_then(|m| m.parse::<u32>().ok()).is_some_and(|m| m >= 2)
+        && fs::read(hlsl).is_ok_and(|b| b.windows(16).any(|w| w == b"// tb:denorm-ftz"))
+}
+
+fn upgrading() -> bool {
+    PREWARM_ONLY.load(Ordering::Relaxed) && std::env::var("NEONBRIDGE_PREWARM_UPGRADE_O0").as_deref() == Ok("1")
+}
+
+/// Whether the prewarm compiles the cached -O0 DXIL at `path` again at -O1:
+/// every `.o0` entry with NEONBRIDGE_PREWARM_UPGRADE_O0=1, and by default
+/// (NEONBRIDGE_PREWARM_BIG_O1_CACHED, =0 off) a big one (over
+/// NEONBRIDGE_PREWARM_BIG_DXIL_KB, 2048). test185 drew the six heavy programs
+/// from prewarm182's 4.0-4.5 MiB `.o0` entries (the key was unchanged, so
+/// NEONBRIDGE_PREWARM_BIG_O1 never ran): one 4559 KiB pipeline took 220 s and
+/// +12.5 GiB in a pso child. Only a handful are this big, so the ~2000-entry
+/// repeat that made UPGRADE_O0 opt-in does not come back.
+fn upgrading_o0(path: &Path) -> bool {
+    if !crate::dxil_upgrade::marker(path).exists() {
+        return false;
+    }
+    // An -O1 upgrade that already timed out on this entry (`<key>.o1slow`) is not tried again.
+    if keep_slow_o0() && path.with_extension("o1slow").exists() {
+        return false;
+    }
+    upgrading() || (PREWARM_ONLY.load(Ordering::Relaxed)
+        && std::env::var("NEONBRIDGE_PREWARM_BIG_O1").map_or(true, |v| v.trim() != "0")
+        && std::env::var("NEONBRIDGE_PREWARM_BIG_O1_CACHED").map_or(true, |v| v.trim() != "0")
+        && fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+            > std::env::var("NEONBRIDGE_PREWARM_BIG_DXIL_KB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(2048) << 10)
+}
+
+/// NEONBRIDGE_PREWARM_KEEP_SLOW_O0 (default on, =0 off): a prewarm -O1
+/// upgrade of a cached -O0 entry that times out keeps that entry and marks it
+/// `<key>.o1slow`, instead of compiling -O0 again, and later prewarms leave it.
+/// prewarm186 and prewarm191 sat at 3737/3740 for minutes on 93247fa6,
+/// fe9c9850 and b413657f (3.8 MB of HLSL, 4.6 MB -O0 DXIL already cached):
+/// each was taken up for the big -O1 upgrade, ran out its 600 s, then spent
+/// up to 600 s more on -O0 again (in-process dxc, ~1 GB each), and every prewarm repeated it.
+fn keep_slow_o0() -> bool {
+    std::env::var("NEONBRIDGE_PREWARM_KEEP_SLOW_O0").map_or(true, |v| v.trim() != "0")
+}
+
+/// The private commit of `pid` and, with `children`, of the processes it
+/// started but the title (this worker's xshader and dxc).
+fn private_bytes(pid: u32, children: bool) -> u64 {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let mut pids = vec![pid];
+    if children {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snapshot != INVALID_HANDLE_VALUE {
+                let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+                entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+                let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+                while more {
+                    // The title is a child too; the caller counts it once.
+                    if entry.th32ParentProcessID == pid && entry.th32ProcessID != GAME_PID.load(Ordering::Relaxed) {
+                        pids.push(entry.th32ProcessID);
+                    }
+                    more = Process32NextW(snapshot, &mut entry) != 0;
+                }
+                CloseHandle(snapshot);
+            }
+        }
+    }
+    pids.into_iter().map(|p| unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, p);
+        if process.is_null() {
+            return 0;
+        }
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        let ok = GetProcessMemoryInfo(process, (&raw mut counters).cast::<PROCESS_MEMORY_COUNTERS>(), counters.cb) != 0;
+        CloseHandle(process);
+        if ok { counters.PrivateUsage as u64 } else { 0 }
+    }).sum()
+}
+
+/// Whether a translation job may start beside `running` others: this
+/// worker's private bytes, with its xshader and dxc, where the translations'
+/// memory goes, are under NEONBRIDGE_WORKER_CEILING_GB (8; 0 off), or none
+/// runs. Ported from five-star-recomp fec516c and 36c506c (GPL-3.0,
+/// CompileBudget.RoomForPrograms), with credit. The title's private bytes are
+/// left out: they are its own and the driver's (test140 had 19.8 GB), and
+/// past the 28 GB compile ceiling counting them ran translations one at a
+/// time while the title still waited on them.
+fn room_for_programs(running: usize) -> bool {
+    static CEILING: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let ceiling = *CEILING.get_or_init(|| {
+        std::env::var("NEONBRIDGE_WORKER_CEILING_GB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(8) << 30
+    });
+    if running == 0 || ceiling == 0 {
+        return true;
+    }
+    // Sampled at most every 250 ms: the dispatch loop asks every 5 ms.
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, u64)>> = std::sync::Mutex::new(None);
+    let total = {
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        match *last {
+            Some((at, total)) if at.elapsed() < Duration::from_millis(250) => total,
+            _ => {
+                let total = private_bytes(std::process::id(), true);
+                *last = Some((std::time::Instant::now(), total));
+                total
+            }
+        }
+    };
+    if total <= ceiling {
+        return true;
+    }
+    static HELD: AtomicUsize = AtomicUsize::new(0);
+    let n = HELD.fetch_add(1, Ordering::Relaxed) + 1;
+    if n == 1 || n.is_power_of_two() {
+        println!("[launch] shaders: a translation waits: the shader worker with its xshader and dxc holds {} MiB private, over NEONBRIDGE_WORKER_CEILING_GB={} ({running} running, {n} waits so far)",
+            total >> 20, ceiling >> 30);
+    }
+    false
+}
+const XSHADER_UNSUPPORTED_HLSL: i32 = 65;
+
+pub struct Tools {
+    pub xshader: PathBuf,
+    /// Hash of the shader-compiler sources xshader was built from; keys the
+    /// translation cache in place of the exe's bytes (None: the exe's bytes).
+    pub source_key: Option<String>,
+    pub dxc: PathBuf,
+    /// dxc `-D` defines; bind_cache fills them from the host wave range.
+    pub defines: Vec<String>,
+    /// Where dxc's output is kept by what it was given (`<cache_root>/dxil/<dxc
+    /// toolchain fingerprint>`); bind_cache fills it.
+    pub dxil: Option<PathBuf>,
+}
+
+/// `TB_NO_WAVESIZE_<n>` for each wave width outside the host's lane range, which
+/// d3d12_xs leaves as "min max" in `<cache_root>/wave_lanes.txt` at device
+/// creation. xshader's HLSL wraps `[WaveSize(n)]` in `#ifndef` on them, so a
+/// wave32-only GPU doesn't reject the pipeline. No file yet (first run on this
+/// machine) means no defines.
+fn wave_size_defines(cache_root: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(cache_root.join("wave_lanes.txt")) else { return Vec::new() };
+    let mut it = text.split_whitespace().map(str::parse::<u32>);
+    let (Some(Ok(min)), Some(Ok(max))) = (it.next(), it.next()) else { return Vec::new() };
+    [32, 64].into_iter().filter(|&n| n < min || n > max).map(|n| format!("TB_NO_WAVESIZE_{n}")).collect()
+}
+
+/// The host's widest wave from `<cache_root>/wave_lanes.txt` ("min max"),
+/// for the ztrx translator (TUXBOX_ZTRX_HOST_WAVE=0: none).
+fn host_wave_max(cache_root: &Path) -> Option<u32> {
+    if std::env::var("TUXBOX_ZTRX_HOST_WAVE").is_ok_and(|v| v.trim() == "0") {
+        return None;
+    }
+    let text = fs::read_to_string(cache_root.join("wave_lanes.txt")).ok()?;
+    text.split_whitespace().nth(1)?.parse::<u32>().ok().filter(|&n| n != 0)
+}
+
+pub struct Worker {
+    stop: Arc<AtomicBool>,
+    /// The full prewarm while the game runs; not joined at stop, it stops
+    /// taking programs.
+    background: Option<thread::JoinHandle<()>>,
+    handle: Option<thread::JoinHandle<()>>,
+    pub stats: Arc<Stats>,
+    private: PathBuf,
+}
+
+/// dxc outputs reused by the normalised HLSL key alone (not the exact text).
+pub static NORMALISED_REUSES: AtomicUsize = AtomicUsize::new(0);
+/// Reuses of -O0 DXIL (a `.o0` marker beside it); the rest of the reuses are -O1.
+pub static O0_REUSES: AtomicUsize = AtomicUsize::new(0);
+
+/// HLSL with `//` and `/* */` comments removed, each line trimmed with its
+/// runs of spaces and tabs made one space, and blank lines dropped. Line
+/// breaks stay (preprocessor directives end at them), string literals are
+/// kept as written. dxc's DXIL does not depend on any of it without debug
+/// info, which the worker never asks for.
+fn normalised_hlsl(source: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(source.len());
+    let mut line: Vec<u8> = Vec::new();
+    let (mut i, mut block, mut string) = (0, false, false);
+    let flush = |line: &mut Vec<u8>, out: &mut Vec<u8>| {
+        let mut prev_space = true;
+        let mut compact: Vec<u8> = Vec::with_capacity(line.len());
+        for &c in line.iter() {
+            let space = matches!(c, b' ' | b'\t' | b'\r');
+            if !space {
+                compact.push(c);
+            } else if !prev_space {
+                compact.push(b' ');
+            }
+            prev_space = space;
+        }
+        while compact.last() == Some(&b' ') {
+            compact.pop();
+        }
+        if !compact.is_empty() {
+            out.extend_from_slice(&compact);
+            out.push(b'\n');
+        }
+        line.clear();
+    };
+    while i < source.len() {
+        let c = source[i];
+        let next = source.get(i + 1).copied();
+        if block {
+            if c == b'*' && next == Some(b'/') {
+                block = false;
+                line.push(b' ');
+                i += 2;
+                continue;
+            }
+            if c == b'\n' {
+                flush(&mut line, &mut out);
+            }
+            i += 1;
+            continue;
+        }
+        if string {
+            line.push(c);
+            if c == b'\\' && let Some(n) = next {
+                line.push(n);
+                i += 2;
+                continue;
+            }
+            if c == b'"' || c == b'\n' {
+                string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match (c, next) {
+            (b'/', Some(b'/')) => {
+                while i < source.len() && source[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            (b'/', Some(b'*')) => {
+                block = true;
+                i += 2;
+                continue;
+            }
+            (b'"', _) => {
+                string = true;
+                line.push(c);
+            }
+            (b'\n', _) => flush(&mut line, &mut out),
+            _ => line.push(c),
+        }
+        i += 1;
+    }
+    flush(&mut line, &mut out);
+    out
+}
+
+#[derive(Default)]
+pub struct Stats {
+    pub compiled: AtomicUsize,
+    pub cached: AtomicUsize,
+    pub unsupported: AtomicUsize,
+    pub failed: AtomicUsize,
+    /// Archived requests translated before the title started.
+    pub prewarmed: AtomicUsize,
+    /// Translations whose HLSL dxc had compiled before (another xshader build).
+    pub reused: AtomicUsize,
+    /// Prewarm refusals and failures by reason (registers, program counters
+    /// and numbers masked, as TuxBox's triage_scarlett_shaders.py does).
+    pub reasons: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+    /// The same, grouped by the construct named before " at N" (or the first ':').
+    pub constructs: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+}
+
+/// One line per refusal: "[op @ 0x1a0]" variant tags dropped, registers to
+/// `sN`/`vN`/`tN`, other numbers to `N`, so the same gap in different shaders
+/// shares one row.
+fn mask_reason(msg: &str) -> String {
+    let line = msg.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(no message)");
+    // Drop " [mnemonic @ 0xADDR]".
+    let mut untagged = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find('[') {
+        let tail = &rest[at + 1..];
+        let tag = tail.find(']').map(|end| &tail[..end]).filter(|t| {
+            t.split_once(" @ 0x").is_some_and(|(op, addr)| !op.is_empty()
+                && op.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+                && !addr.is_empty() && addr.bytes().all(|b| b.is_ascii_hexdigit()))
+        });
+        match tag {
+            Some(t) => { untagged.push_str(rest[..at].trim_end()); rest = &tail[t.len() + 1..]; }
+            None => { untagged.push_str(&rest[..=at]); rest = tail; }
+        }
+    }
+    untagged.push_str(rest);
+    let b = untagged.as_bytes();
+    let mut out = String::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        let boundary = i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+        let next = b.get(i + 1).copied();
+        if boundary && matches!(c, b's' | b'v' | b't')
+            && (next.is_some_and(|n| n.is_ascii_digit())
+                || (next == Some(b'[') && b.get(i + 2).is_some_and(u8::is_ascii_digit)))
+        {
+            let mut j = i + 1;
+            if b[j] == b'[' {
+                while j < b.len() && b[j] != b']' { j += 1; }
+                j = (j + 1).min(b.len());
+            } else {
+                while j < b.len() && (b[j].is_ascii_digit() || b[j] == b':') { j += 1; }
+            }
+            if !b.get(j).is_some_and(|n| n.is_ascii_alphanumeric() || *n == b'_') {
+                out.push(c as char);
+                out.push('N');
+                i = j;
+                continue;
+            }
+        }
+        if c.is_ascii_digit() {
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_hexdigit() || b[i] == b'x') { i += 1; }
+            out.push('N');
+            continue;
+        }
+        let ch = untagged[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    if out.is_empty() { "(no message)".to_owned() } else { out }
+}
+
+/// Coarse group: the construct named before " at N", else before the first ':'.
+fn construct(reason: &str) -> &str {
+    reason.split_once(" at N").map_or_else(|| reason.split(':').next().unwrap_or(reason), |(head, _)| head)
+}
+
+fn ranked(map: &std::sync::Mutex<std::collections::BTreeMap<String, usize>>, n: usize) -> Vec<(String, usize)> {
+    let mut v: Vec<_> = map.lock().unwrap().iter().map(|(r, c)| (r.clone(), *c)).collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.truncate(n);
+    v
+}
+
+impl Stats {
+    fn note(&self, kind: &str, msg: &str) {
+        let masked = mask_reason(msg);
+        let group: String = format!("{kind}: {}", construct(&masked)).chars().take(120).collect();
+        let reason: String = format!("{kind}: {masked}").chars().take(160).collect();
+        *self.reasons.lock().unwrap().entry(reason).or_default() += 1;
+        *self.constructs.lock().unwrap().entry(group).or_default() += 1;
+    }
+
+    /// The most common reasons, most frequent first.
+    pub fn top_reasons(&self, n: usize) -> Vec<(String, usize)> {
+        ranked(&self.reasons, n)
+    }
+
+    /// The most common constructs, most frequent first.
+    pub fn top_constructs(&self, n: usize) -> Vec<(String, usize)> {
+        ranked(&self.constructs, n)
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    sha256(data)
+}
+
+fn sha256(data: &[u8]) -> String {
+    hex(&Sha256::digest(data))
+}
+
+/// Windows SDK dxc.exe beside its dxil.dll (needed to sign DXIL for native D3D12).
+pub fn find_dxc() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("DXC").map(PathBuf::from).filter(|p| p.is_file()) {
+        return Some(p);
+    }
+    let kits = Path::new(&std::env::var("ProgramFiles(x86)").ok()?).join(r"Windows Kits\10\bin");
+    let mut versions: Vec<PathBuf> = fs::read_dir(kits).ok()?.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    versions.sort();
+    versions.into_iter().rev().map(|v| v.join(r"x64\dxc.exe"))
+        .find(|p| p.is_file() && p.with_file_name("dxil.dll").is_file())
+}
+
+pub fn has_dxil_container(data: &[u8]) -> bool {
+    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    if data.len() < 32 || &data[..4] != b"DXBC" {
+        return false;
+    }
+    let (Some(size), Some(count)) = (u32_at(24), u32_at(28)) else { return false };
+    let toc_end = 32 + count * 4;
+    if count == 0 || !(toc_end <= size && size <= data.len()) {
+        return false;
+    }
+    let mut found = false;
+    for i in 0..count {
+        let Some(offset) = u32_at(32 + i * 4) else { return false };
+        if offset < toc_end || offset + 8 > size {
+            return false;
+        }
+        let Some(length) = u32_at(offset + 4) else { return false };
+        if offset + 8 + length > size {
+            return false;
+        }
+        found |= &data[offset..offset + 4] == b"DXIL";
+    }
+    found
+}
+
+fn portable_pixel(data: &[u8]) -> bool {
+    if !has_dxil_container(data) {
+        return false;
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(data[o..o + 4].try_into().unwrap()) as usize;
+    let stages: Vec<u16> = (0..u32_at(28)).map(|i| u32_at(32 + i * 4))
+        .filter(|&o| &data[o..o + 4] == b"DXIL")
+        .map(|o| u16::from_le_bytes(data[o + 10..o + 12].try_into().unwrap())).collect();
+    stages == [0] // D3D12_SHVER_PIXEL_SHADER
+}
+
+fn is_key(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+
+fn valid_request(name: &str) -> Option<(&str, &str)> {
+    let (key, ext) = name.rsplit_once('.')?;
+    let ok = match ext {
+        "dxbc" => is_key(key),
+        "stencil" => key.split_once("_rt").is_some_and(|(k, n)| is_key(k) && n.len() == 1 && (b'0'..=b'7').contains(&n.as_bytes()[0])),
+        "link" => { let p: Vec<_> = key.split('_').collect(); p.len() == 3 && p.iter().all(|k| is_key(k)) }
+        // The runtime's quad-mask pixel variant (xshader --quad-mask, 84fbaed).
+        "quadmask" => key.strip_suffix("_qm").is_some_and(is_key),
+        // d3d12 TUXBOX_ZTRX_MIXED: a plain request answered by our translator
+        // only (a ztrx stage beside our stages in one pipeline).
+        "ours" => key.strip_suffix("_o").is_some_and(is_key),
+        _ => false,
+    };
+    ok.then_some((key, ext))
+}
+
+fn verified(path: &Path, expected: &str) -> Result<Vec<u8>, String> {
+    let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.is_file() || meta.len() > MAX_SHADER_BYTES {
+        return Err(format!("{} is not a shader file within 64 MiB", path.display()));
+    }
+    let data = fs::read(path).map_err(|e| e.to_string())?;
+    if sha256(&data) != expected {
+        return Err(format!("{} contents differ from the requested digest", path.display()));
+    }
+    Ok(data)
+}
+
+enum ToolError { Exit(i32, String), Other(String) }
+
+/// Peak private bytes of the xshader and dxc processes this launcher ran: the
+/// per-job memory the worker ceiling has to fit (reported after each prewarm).
+static JOB_PEAK_MAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static JOB_PEAK_SUM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static JOB_PEAK_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn note_peak(child: &std::process::Child) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    let mut c: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    c.cb = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    if unsafe { GetProcessMemoryInfo(child.as_raw_handle() as _, &mut c, c.cb) } != 0 {
+        let peak = c.PeakPagefileUsage as u64;
+        JOB_PEAK_MAX.fetch_max(peak, Ordering::Relaxed);
+        JOB_PEAK_SUM.fetch_add(peak, Ordering::Relaxed);
+        JOB_PEAK_N.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Where the prewarm's time goes: xshader (translation) and dxc milliseconds, summed over jobs.
+static TRANSLATE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TRANSLATE_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DXC_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DXC_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The ten slowest dxc compiles (ms, key, HLSL bytes) of this launcher:
+/// where a prewarm's seconds go, by program.
+static SLOWEST_DXC: std::sync::Mutex<Vec<(u64, String, u64)>> = std::sync::Mutex::new(Vec::new());
+static HLSL_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+thread_local! {
+    /// The HLSL size of the program this thread's compile sent to dxc.
+    static LAST_HLSL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// shader-worker.log: one line per dxc compile (key, ms, HLSL bytes) and
+/// the slowest ten at the end, so a prewarm's dxc time can be measured per
+/// program (the xshader TB_* switch comparisons). NEONBRIDGE_DXC_TIMES_LOG=0
+/// leaves the per-compile lines out.
+static COMPILE_LOG: std::sync::Mutex<Option<fs::File>> = std::sync::Mutex::new(None);
+
+pub fn set_compile_log(path: &Path, truncate: bool) {
+    let file = if truncate { fs::File::create(path) } else { fs::OpenOptions::new().create(true).append(true).open(path) };
+    *COMPILE_LOG.lock().unwrap_or_else(|e| e.into_inner()) = file.ok();
+}
+
+fn compile_log(line: &str) {
+    if let Some(f) = COMPILE_LOG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let _ = std::io::Write::write_all(f, format!("{line}\n").as_bytes());
+    }
+}
+
+fn note_times(outcome: &Outcome, key: &str) {
+    let (xs, dxc) = match outcome {
+        Outcome::Compiled(xs, dxc) => (Some(*xs), Some(*dxc)),
+        Outcome::Reused(xs) => (Some(*xs), None),
+        _ => (None, None),
+    };
+    if let Some(ms) = xs {
+        TRANSLATE_MS.fetch_add(ms, Ordering::Relaxed);
+        TRANSLATE_N.fetch_add(1, Ordering::Relaxed);
+    }
+    if let Some(ms) = dxc {
+        let bytes = LAST_HLSL.with(|b| b.get());
+        DXC_MS.fetch_add(ms, Ordering::Relaxed);
+        DXC_N.fetch_add(1, Ordering::Relaxed);
+        HLSL_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        if std::env::var("NEONBRIDGE_DXC_TIMES_LOG").as_deref() != Ok("0") {
+            compile_log(&format!("dxc {key}: {ms} ms, HLSL {bytes} bytes"));
+        }
+        let mut slow = SLOWEST_DXC.lock().unwrap_or_else(|e| e.into_inner());
+        if slow.len() < 10 || slow.last().is_some_and(|l| ms > l.0) {
+            slow.push((ms, key.to_owned(), bytes));
+            slow.sort_by(|a, b| b.0.cmp(&a.0));
+            slow.truncate(10);
+        }
+    }
+}
+
+fn job_times(workers: usize) -> String {
+    let (xs, xn, dx, dn) = (TRANSLATE_MS.load(Ordering::Relaxed), TRANSLATE_N.load(Ordering::Relaxed), DXC_MS.load(Ordering::Relaxed), DXC_N.load(Ordering::Relaxed));
+    format!("time: xshader {:.1} s over {xn} translations ({} ms each), dxc {:.1} s over {dn} compiles ({} ms each); over {workers} workers that is about {:.0} s of xshader and {:.0} s of dxc",
+        xs as f64 / 1000.0, xs / xn.max(1), dx as f64 / 1000.0, dx / dn.max(1), xs as f64 / 1000.0 / workers as f64, dx as f64 / 1000.0 / workers as f64)
+        + &{
+            let slow = SLOWEST_DXC.lock().unwrap_or_else(|e| e.into_inner());
+            let top: u64 = slow.iter().map(|s| s.0).sum();
+            let hb = HLSL_BYTES.load(Ordering::Relaxed);
+            compile_log(&format!("dxc totals: {dn} compiles, {:.1} s ({} ms each), HLSL {} KiB ({} KiB each); slowest {}:", dx as f64 / 1000.0, dx / dn.max(1), hb >> 10, (hb / dn.max(1)) >> 10, slow.len()));
+            for (ms, k, b) in slow.iter() {
+                compile_log(&format!("  {k}: {ms} ms, HLSL {b} bytes"));
+            }
+            format!("; dxc is {:.0}% of the work; HLSL {} KiB sent ({} KiB each); slowest dxc compiles ({:.0}% of dxc time; keys in shader-worker.log): {}", 100.0 * dx as f64 / (dx + xs).max(1) as f64,
+                hb >> 10, (hb / dn.max(1)) >> 10,
+                100.0 * top as f64 / dx.max(1) as f64,
+                slow.iter().map(|(ms, k, b)| format!("{} {:.1} s {} KiB", &k[..k.len().min(16)], *ms as f64 / 1000.0, b >> 10)).collect::<Vec<_>>().join(", "))
+        }
+}
+
+/// Prewarm jobs under way: key -> (started, the dxc/xshader child's pid).
+/// The prewarm's watchdog ends a job past NEONBRIDGE_PREWARM_JOB_S (660, past the big programs' 600 s dxc; 0
+/// off): the last --prewarm sat at 1704/1705 for over 10 minutes on one
+/// program (fe9c9850..., 3.4 MB of HLSL in dxc) until it was killed by hand.
+static PREWARM_JOBS: std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, Option<u32>)>>> = std::sync::Mutex::new(None);
+/// Keys the watchdog ended, with the seconds they ran.
+static PREWARM_STUCK: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+thread_local! {
+    static PREWARM_KEY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+fn prewarm_job_secs() -> u64 {
+    std::env::var("NEONBRIDGE_PREWARM_JOB_S").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(660)
+}
+
+fn prewarm_job(key: Option<&str>) {
+    let mut jobs = PREWARM_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+    let jobs = jobs.get_or_insert_with(Default::default);
+    PREWARM_KEY.with(|k| {
+        if let Some(old) = k.borrow_mut().take() {
+            jobs.remove(&old);
+        }
+        if let Some(key) = key {
+            jobs.insert(key.to_owned(), (std::time::Instant::now(), None));
+            *k.borrow_mut() = Some(key.to_owned());
+        }
+    });
+}
+
+fn prewarm_child(pid: Option<u32>) {
+    PREWARM_KEY.with(|k| {
+        if let Some(key) = k.borrow().as_ref()
+            && let Some(job) = PREWARM_JOBS.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|j| j.get_mut(key))
+        {
+            job.1 = pid;
+        }
+    });
+}
+
+fn prewarm_stuck(key: &str) -> Option<u64> {
+    PREWARM_STUCK.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| k == key).map(|s| s.1)
+}
+
+/// Ends every prewarm job past its time (its child killed, its key kept as
+/// a dxc failure so later prewarms skip it); the lines to say.
+fn prewarm_watchdog() -> Vec<String> {
+    let limit = prewarm_job_secs();
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut jobs = PREWARM_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+    for (key, (since, pid)) in jobs.iter_mut().flat_map(|j| j.iter_mut()) {
+        let secs = since.elapsed().as_secs();
+        if secs < limit || prewarm_stuck(key).is_some() {
+            continue;
+        }
+        let Some(id) = pid.take() else { continue };
+        let _ = crate::runtimes::command("taskkill").args(["/F", "/T", "/PID", &id.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        PREWARM_STUCK.lock().unwrap_or_else(|e| e.into_inner()).push((key.clone(), secs));
+        out.push(format!("prewarm: {key} ran {secs} s, ended (pid {id}); later prewarms skip it (NEONBRIDGE_PREWARM_JOB_S={limit}; NEONBRIDGE_DXC_RETRY_FAILED=1 retries)"));
+    }
+    out
+}
+
+fn job_peaks() -> String {
+    let n = JOB_PEAK_N.load(Ordering::Relaxed).max(1);
+    format!("xshader/dxc process peaks: mean {} MiB, max {} MiB over {} processes; in-process compiles still running past their time: {}",
+        JOB_PEAK_SUM.load(Ordering::Relaxed) / n >> 20, JOB_PEAK_MAX.load(Ordering::Relaxed) >> 20, JOB_PEAK_N.load(Ordering::Relaxed), crate::dxc::abandoned())
+}
+
+/// `run`, also ending the tool early (as a timeout) once `give_up` says so.
+fn run_until(cmd: &mut Command, timeout: Duration, give_up: impl Fn() -> bool) -> Result<(), ToolError> {
+    let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
+        .map_err(|e| ToolError::Other(format!("{e}")))?;
+    prewarm_child(Some(child.id()));
+    struct Clear;
+    impl Drop for Clear { fn drop(&mut self) { prewarm_child(None); } }
+    let _clear = Clear;
+    let start = std::time::Instant::now();
+    let mut polls = 0u32;
+    loop {
+        polls += 1;
+        // Every 100 ms: the predicate reads the file system.
+        if polls % 10 == 0 && give_up() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ToolError::Other("timed out".into()));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                note_peak(&child);
+                if status.success() {
+                    return Ok(());
+                }
+                let mut err = String::new();
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = std::io::Read::read_to_string(&mut s, &mut err);
+                }
+                let tail: String = err.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+                return Err(ToolError::Exit(status.code().unwrap_or(-1), tail.trim().to_owned()));
+            }
+            Ok(None) if start.elapsed() > timeout => {
+                // Said, so a tool left running past its time shows whether the
+                // kill was tried and what it returned (the master saw six dxc.exe
+                // well past 120 s in prewarm174b). NEONBRIDGE_TOOL_KILL_LOG=0 off.
+                let killed = child.kill();
+                if std::env::var("NEONBRIDGE_TOOL_KILL_LOG").as_deref() != Ok("0") {
+                    println!("[launch] tool pid {} past {} s: kill {}", child.id(), timeout.as_secs(),
+                        killed.as_ref().map_or_else(|e| format!("failed: {e}"), |_| "sent".into()));
+                }
+                return Err(ToolError::Other("timed out".into()));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(e) => return Err(ToolError::Other(e.to_string())),
+        }
+    }
+}
+
+/// Pin the compiler (a private copy of xshader) and return the persistent cache dir.
+/// The TB_* switches xshader inherits, as sorted NAME=value.
+fn xshader_switches() -> Vec<String> {
+    let mut switches: Vec<String> = std::env::vars().filter(|(k, _)| k.starts_with("TB_")).map(|(k, v)| format!("{k}={v}")).collect();
+    switches.sort();
+    switches
+}
+
+fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools, PathBuf), String> {
+    fs::create_dir_all(private).map_err(|e| e.to_string())?;
+    let xshader = private.join("xshader.exe");
+    fs::copy(&tools.xshader, &xshader).map_err(|e| format!("copy xshader: {e}"))?;
+    // Its cdylib from the same build goes beside the copy (xshader_lib.rs); a
+    // rebuild then replaces the original, not a DLL this process holds.
+    let _ = fs::remove_file(xshader.with_file_name(crate::xshader_lib::DLL));
+    if let Some(dll) = crate::xshader_lib::beside(&tools.xshader) {
+        let _ = fs::copy(&dll, xshader.with_file_name(crate::xshader_lib::DLL));
+    }
+    let version = crate::runtimes::command(&tools.dxc).arg("--version").output().map_err(|e| format!("dxc: {e}"))?.stdout;
+    let defines = wave_size_defines(cache_root);
+    let mut fp = Sha256::new();
+    fp.update(&version);
+    // The defines change the DXIL, so they're part of the cache key.
+    for d in &defines {
+        fp.update(b"-D");
+        fp.update(d.as_bytes());
+    }
+    // The translator is keyed by its source, not its bytes: a no-op rebuild
+    // relinked xshader.exe and invalidated every cached shader (1,308).
+    // VIctory c47b529 keys its cache by the translator.
+    match &tools.source_key {
+        Some(k) => { fp.update(b"-S"); fp.update(k.as_bytes()); }
+        None => fp.update(sha256(&fs::read(&xshader).map_err(|e| e.to_string())?).as_bytes()),
+    }
+    fp.update(sha256(&fs::read(&tools.dxc).map_err(|e| e.to_string())?).as_bytes());
+    // xshader inherits this process's environment, and its TB_* switches change
+    // the code it emits: a cache made under other switches answered for them
+    // (a TB_ switch reached only shaders not yet cached). With none set the key
+    // is unchanged, so the existing cache stays valid.
+    // ztrx's translator makes the DXIL of what it translates (TB_ZTRX_SHADER).
+    if crate::ztrx::on() {
+        fp.update(b"-Zvitoriabr-2b3c339");
+        // TB_ZTRX_FOLD_CONST (victory-shader resource.rs, default on, =0 off):
+        // constant SALU descriptors translate now, so entries ours made for
+        // them are not answered from an older cache.
+        if std::env::var("TB_ZTRX_FOLD_CONST").map_or(true, |v| v.trim() != "0") {
+            fp.update(b"-Ffold1");
+        }
+        // TB_ZTRX_RAW_REBUILD (resource.rs, default on, =0 off): likewise for
+        // loaded buffer descriptors rebuilt as raw ones.
+        if std::env::var("TB_ZTRX_RAW_REBUILD").map_or(true, |v| v.trim() != "0") {
+            fp.update(b"-Fraw1");
+        }
+        // TUXBOX_ZTRX_HOST_WAVE (default on, =0 leaves it unknown): the
+        // translator learns the host's widest wave, as VIctory-fxceless
+        // victory-gpu host.rs:632 calls set_host_max_wave(WaveLaneCountMax)
+        // (GPL-3.0, credit to its authors). Unset, it kept console wave64
+        // compute as [WaveSize(64)], which the RTX 4060 (32..32) refused:
+        // prewarm190's 64 refused CS, 57 of the 58 cached ones WaveSize=64.
+        // A known width changes the DXIL, so it is part of the key.
+        if let Some(max) = host_wave_max(cache_root) {
+            victory_shader::emit::set_host_max_wave(max);
+            fp.update(format!("-W{max}").as_bytes());
+            // NEONBRIDGE_ZTRX_WAVE64_REFUSE (ztrx.rs) sends WaveSize(64) entries to ours.
+            if max == 32 && std::env::var("NEONBRIDGE_ZTRX_WAVE64_REFUSE").as_deref() != Ok("0") {
+                fp.update(b"-R64");
+            }
+        }
+    }
+    for s in xshader_switches() {
+        fp.update(b"-E");
+        fp.update(s.as_bytes());
+    }
+    let cache = cache_root.join("runtime").join(hex(&fp.finalize()));
+    fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+    prune_runtime(cache_root, &cache);
+    // dxc's output depends only on its input, its own binaries and the
+    // defines, not on xshader: keyed apart from the cache above, DXIL for HLSL
+    // a new xshader still emits unchanged is reused (VIctory c47b529 keys its
+    // cache by the translator, five-star 2d73fe7 keeps it across rebuilds).
+    let mut dxc_fp = Sha256::new();
+    dxc_fp.update(&version);
+    for d in &defines {
+        dxc_fp.update(b"-D");
+        dxc_fp.update(d.as_bytes());
+    }
+    dxc_fp.update(sha256(&fs::read(&tools.dxc).map_err(|e| e.to_string())?).as_bytes());
+    if let Some(dll) = tools.dxc.parent().map(|d| d.join("dxil.dll")) && let Ok(bytes) = fs::read(dll) {
+        dxc_fp.update(sha256(&bytes).as_bytes());
+    }
+    let dxil = (std::env::var("NEONBRIDGE_DXIL_REUSE").as_deref() != Ok("0"))
+        .then(|| cache_root.join("dxil").join(hex(&dxc_fp.finalize())))
+        .filter(|d| fs::create_dir_all(d).is_ok());
+    Ok((Tools { xshader, source_key: tools.source_key.clone(), dxc: tools.dxc.clone(), defines, dxil }, cache))
+}
+
+/// The shader cache root, one folder with every runtime's cache:
+/// %LOCALAPPDATA%\6ixpack\cache\neonbridge-own. The old
+/// %TEMP%\tuxbox_shader_cache is moved there once by rename (same drive, no
+/// copy); a failed rename keeps using it where it is. The first call sets
+/// NEONBRIDGE_SHADER_ROOT, which d3d12_xs (shader_cache::root) and the
+/// launcher's children read. A set NEONBRIDGE_SHADER_ROOT wins;
+/// NEONBRIDGE_SHADER_ROOT_MOVE=0 keeps the old %TEMP% root.
+pub fn cache_root() -> PathBuf {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let old = std::env::temp_dir().join("tuxbox_shader_cache");
+        let root = match std::env::var_os("NEONBRIDGE_SHADER_ROOT").filter(|v| !v.is_empty()) {
+            Some(r) => PathBuf::from(r),
+            None if std::env::var("NEONBRIDGE_SHADER_ROOT_MOVE").as_deref() == Ok("0") => old,
+            None => {
+                let new = crate::data_dir().join("cache").join("neonbridge-own");
+                if old.is_dir() && !new.exists() {
+                    let _ = fs::create_dir_all(new.parent().unwrap_or(&new));
+                    match fs::rename(&old, &new) {
+                        Ok(()) => println!("[shaders] moved the shader cache {} -> {}", old.display(), new.display()),
+                        Err(e) => println!("[shaders] shader cache not moved ({e}); using {}", old.display()),
+                    }
+                }
+                if new.is_dir() || !old.is_dir() { new } else { old }
+            }
+        };
+        // SAFETY: set once, early, before the launcher starts its threads' children.
+        unsafe { std::env::set_var("NEONBRIDGE_SHADER_ROOT", &root) };
+        root
+    }).clone()
+}
+
+/// Fingerprint folders kept under `runtime\`: each translator change
+/// starts a new one and the old ones stayed forever (106 folders, 31 GB).
+const KEEP_RUNTIME: usize = 4;
+
+/// Marks `current` as the newest toolchain folder (a file made and removed
+/// in it bumps its modified time), then deletes all but the KEEP_RUNTIME
+/// newest, on a thread of its own. The dxil\ cache is untouched, so a
+/// pruned toolchain coming back re-translates but reuses dxc's output.
+/// NEONBRIDGE_SHADER_PRUNE=0 keeps them all.
+fn prune_runtime(cache_root: &Path, current: &Path) {
+    if std::env::var("NEONBRIDGE_SHADER_PRUNE").as_deref() == Ok("0") {
+        return;
+    }
+    let mark = current.join(".in-use");
+    if fs::write(&mark, b"").is_ok() {
+        let _ = fs::remove_file(&mark);
+    }
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(cache_root.join("runtime")).into_iter().flatten().flatten()
+        .filter(|e| is_key(&e.file_name().to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+    if dirs.len() <= KEEP_RUNTIME {
+        return;
+    }
+    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    let old: Vec<PathBuf> = dirs.into_iter().skip(KEEP_RUNTIME).map(|d| d.1).filter(|d| d != current).collect();
+    println!("[shaders] pruning {} old toolchain cache folders (keeping the {KEEP_RUNTIME} newest; NEONBRIDGE_SHADER_PRUNE=0 keeps all)", old.len());
+    std::thread::spawn(move || {
+        for d in old {
+            let _ = fs::remove_dir_all(&d);
+        }
+    });
+}
+
+/// Compiled carries the milliseconds spent in xshader and in dxc.
+/// Reused carries the xshader milliseconds of a translation whose HLSL dxc had compiled before.
+enum Outcome { Compiled(u64, u64), Reused(u64), Cached, Unsupported(String), Failed(String) }
+
+/// NEONBRIDGE_RETRY_LADDER (default on, =0 one try): a program xshader
+/// refuses or dxc rejects with a compile error is tried again down a ladder
+/// of safer forms, each in an xshader process of its own with the knobs of
+/// that step (the in-process translator shares one environment), and the
+/// first form that compiles is kept in the cache as the program's DXIL.
+/// Programs that already compile never reach it, so their DXIL is unchanged.
+/// A program every step fails gets `<key>.ladder` and is not laddered again.
+/// Refs: xcl recomp/lower.rs:1616 (direct DXIL refused -> HLSL+dxc) and
+/// hle/d3d12x/real.rs:6440 retry_without_rect_gs (GPL-2.0); five-star-recomp
+/// DxcOptions.cs:8-27 (-Od retry, GPL-3.0). No ref has the ladder as a whole.
+const LADDER: &[(&str, bool, &[(&str, &str)])] = &[
+    // The form steps keep dxc's normal optimisation and -O0 comes last:
+    // -O0 DXIL runs 4-5x the size (Coder4: 4-5 MiB heavy cso vs 0.9 MB at -O1),
+    // so it is only for a program no other form compiles.
+    ("no split wave64", false, &[("TB_SPLIT_WAVE64", "0")]),
+    ("no structured bound", false, &[("TB_STRUCTURED_BOUND", "0")]),
+    ("plain wave votes", false, &[("TB_SCC_VOTE", "0"), ("TB_PARTIAL_WAVE", "0"), ("TB_READLANE_VECTOR", "0")]),
+    ("dxc -O0", true, &[]),
+];
+
+thread_local! {
+    /// The knobs of the ladder step under way (none: the normal path).
+    static LADDER_STEP: std::cell::Cell<Option<&'static [(&'static str, &'static str)]>> = const { std::cell::Cell::new(None) };
+}
+
+fn retry_ladder() -> bool {
+    std::env::var("NEONBRIDGE_RETRY_LADDER").as_deref() != Ok("0")
+}
+
+fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path, o0_first: bool, cancel: Option<&AtomicBool>) -> Outcome {
+    let first = compile_once(source, key, ext, tools, cache, session, o0_first, cancel);
+    let why = match &first {
+        Outcome::Unsupported(m) => m.clone(),
+        Outcome::Failed(m) if m.contains("dxc failed") && (m.contains("error:") || m.contains("error X")) => m.clone(),
+        _ => return first,
+    };
+    let tried = cache.join(format!("{key}.ladder"));
+    if !retry_ladder() || ext == "quadmask" || tried.exists() || cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
+        return first;
+    }
+    for &(name, o0, knobs) in LADDER {
+        LADDER_STEP.with(|s| s.set(Some(knobs)));
+        let next = compile_once(source, key, ext, tools, cache, session, o0 || o0_first, cancel);
+        LADDER_STEP.with(|s| s.set(None));
+        if matches!(next, Outcome::Compiled(..) | Outcome::Reused(..)) {
+            let _ = fs::remove_file(cache.join(format!("{key}.unsupported")));
+            println!("[launch] shaders: {key} compiled on retry ladder step '{name}' after: {} (NEONBRIDGE_RETRY_LADDER=0 off)", why.lines().next().unwrap_or(""));
+            return next;
+        }
+    }
+    let _ = fs::write(&tried, &why);
+    println!("[launch] shaders: {key} failed every retry ladder step; kept as {} (first: {})", tried.display(), why.lines().next().unwrap_or(""));
+    first
+}
+
+/// `cancel`: the prewarm's tail ran out (prewarm_tail): a dxc still running
+/// is ended and the program left to the title's request, with no failure kept.
+fn compile_once(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, session: &Path, o0_first: bool, cancel: Option<&AtomicBool>) -> Outcome {
+    let work = cache.join(format!("tmp-{}-{}", std::process::id(), sha256(key.as_bytes()).get(..12).unwrap_or("x")));
+    let _ = fs::remove_dir_all(&work);
+    if let Err(e) = fs::create_dir_all(&work) {
+        return Outcome::Failed(e.to_string());
+    }
+    let result = (|| -> Result<Outcome, String> {
+        let mut flags: Vec<std::ffi::OsString> = Vec::new();
+        let cooked;
+        if ext == "link" {
+            if !fs::symlink_metadata(source).map(|m| m.is_dir()).unwrap_or(false) {
+                return Err("linked shader request must be a directory".into());
+            }
+            let mut k = key.split('_');
+            let (ph, xh, dh) = (k.next().unwrap(), k.next().unwrap(), k.next().unwrap());
+            cooked = work.join("producer.dxbc");
+            fs::write(&cooked, verified(&source.join("producer.dxbc"), ph)?).map_err(|e| format!("write {}: {e}", cooked.display()))?;
+            let pixel = work.join("pixel.dxbc");
+            fs::write(&pixel, verified(&source.join("pixel.dxbc"), xh)?).map_err(|e| e.to_string())?;
+            let code = verified(&source.join("pixel.cso"), dh)?;
+            if !portable_pixel(&code) {
+                return Err("pixel order requires a portable pixel DXIL container".into());
+            }
+            let order = work.join("pixel.cso");
+            fs::write(&order, code).map_err(|e| e.to_string())?;
+            flags.extend(["--link-pixel".into(), pixel.into_os_string(), "--pixel-order".into(), order.into_os_string()]);
+        } else {
+            cooked = work.join("input.dxbc");
+            let source_hash = if ext == "stencil" {
+                let (h, slot) = key.split_once("_rt").unwrap();
+                flags.extend(["--stencil-target".into(), slot.into()]);
+                h
+            } else if ext == "quadmask" {
+                flags.push("--quad-mask".into());
+                key.strip_suffix("_qm").unwrap()
+            } else if ext == "ours" {
+                key.strip_suffix("_o").unwrap()
+            } else { key };
+            fs::write(&cooked, verified(source, source_hash)?).map_err(|e| format!("write {}: {e}", cooked.display()))?;
+        }
+        let dest = cache.join(format!("{key}.cso"));
+        let checksum = cache.join(format!("{key}.sha256"));
+        let refusal = cache.join(format!("{key}.unsupported"));
+        // xshader's sidecars ride beside the DXIL: the heap access reflection
+        // (<hlsl>.heap, TB_HEAP_REFLECT) and the UAV-from-SRV slots
+        // (<hlsl>.slots). Each is kept in the cache as <key>.<ext> and
+        // published to the session before the .cso, so d3d12 finds it when
+        // the .cso shows.
+        const SIDECARS: [&str; 3] = ["heap", "slots", "ztrx"];
+        let link_producer: Option<&str> = (ext == "link").then(|| key.split('_').next()).flatten();
+        let publish = |bytes: &[u8]| -> Result<(), String> {
+            for ext in SIDECARS {
+                if let Ok(text) = fs::read(cache.join(format!("{key}.{ext}"))) {
+                    let tmp = session.join(format!("{key}.{}.{ext}reply", std::process::id()));
+                    let _ = fs::write(&tmp, &text).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.{ext}"))));
+                    // A linked producer's heap access is its own (the pixel
+                    // stage has its own key): d3d12 looks a pipeline's stages
+                    // up by their source digests, so the link's .heap is
+                    // published under the producer's digest too.
+                    if ext == "heap" && link_producer.is_some_and(|p| !session.join(format!("{p}.heap")).is_file()) {
+                        let producer = link_producer.unwrap_or_default();
+                        let tmp = session.join(format!("{producer}.{}.heapreply", std::process::id()));
+                        let _ = fs::write(&tmp, &text).and_then(|_| publish_file(&tmp, &session.join(format!("{producer}.heap"))));
+                    }
+                }
+            }
+            let tmp = session.join(format!("{key}.{}.reply", std::process::id()));
+            fs::write(&tmp, bytes).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.cso")))).map_err(|e| format!("publish to {}: {e}", session.display()))
+        };
+        if let (Ok(bytes), Ok(sum)) = (fs::read(&dest), fs::read(&checksum))
+            && !upgrading_o0(&dest)
+            && bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() {
+            // An earlier ztrx entry made without its heap reflection gets it now.
+            if ext == "dxbc" && cache.join(format!("{key}.ztrx")).is_file() && !cache.join(format!("{key}.heap")).is_file() {
+                ztrx_heap(tools, &cooked, cache, key);
+            }
+            publish(&bytes)?;
+            return Ok(Outcome::Cached);
+        }
+        // TB_ZTRX_SHADER (ztrx.rs): ztrx's translator first for a plain request;
+        // its DXIL needs no dxc. A refusal goes on to ours below.
+        if ext == "dxbc" && LADDER_STEP.with(|s| s.get()).is_none() && crate::ztrx::on() {
+            let started = std::time::Instant::now();
+            let container = fs::read(&cooked).map_err(|e| e.to_string())?;
+            let made = crate::ztrx::translate(&container);
+            // TUXBOX_ZTRX_WHY (default on, =0 off): ztrx's refusal goes to
+            // `<key>.ztrxwhy` (its error, or why its DXIL was not taken), so a
+            // shader both translators refuse names both reasons; its .ladder
+            // held only ours.
+            if std::env::var("TUXBOX_ZTRX_WHY").map_or(true, |v| v.trim() != "0") {
+                let why = match &made {
+                    Err(e) => Some(e.clone()),
+                    Ok((dxil, _)) if dxil.len() as u64 > MAX_SHADER_BYTES => Some(format!("DXIL of {} bytes over the cache limit", dxil.len())),
+                    Ok((dxil, _)) if !has_dxil_container(dxil) => Some("output is not a DXIL container".into()),
+                    Ok(_) => None,
+                };
+                let path = cache.join(format!("{key}.ztrxwhy"));
+                match why {
+                    Some(why) => { let _ = fs::write(&path, format!("{key}
+{why}
+")); }
+                    None => { let _ = fs::remove_file(&path); }
+                }
+            }
+            if let Ok((dxil, sidecar)) = made
+                && dxil.len() as u64 <= MAX_SHADER_BYTES && has_dxil_container(&dxil) {
+                fs::write(cache.join(format!("{key}.ztrx")), sidecar).map_err(|e| e.to_string())?;
+                let _ = fs::remove_file(crate::dxil_upgrade::marker(&dest));
+                let tmp = work.join("ztrx.cso");
+                fs::write(&tmp, &dxil).and_then(|_| fs::write(&checksum, sha256(&dxil))).and_then(|_| publish_file(&tmp, &dest)).map_err(|e| e.to_string())?;
+                ztrx_heap(tools, &cooked, cache, key);
+                publish(&dxil)?;
+                return Ok(Outcome::Compiled(started.elapsed().as_millis() as u64, 0));
+            }
+            // Ours made it: no ztrx sidecar may outlive an earlier ztrx entry.
+            let _ = fs::remove_file(cache.join(format!("{key}.ztrx")));
+        }
+        // `<key>` on the first line, then xshader's reason (older entries hold the key alone).
+        let step = LADDER_STEP.with(|s| s.get());
+        if let Some(text) = step.is_none().then(|| fs::read_to_string(&refusal).ok()).flatten() {
+            let (first, reason) = text.split_once('\n').unwrap_or((&text, ""));
+            if first == key {
+                let reason = if reason.trim().is_empty() { "cached unsupported HLSL translation" } else { reason.trim() };
+                return Ok(Outcome::Unsupported(reason.to_owned()));
+            }
+        }
+        let (hlsl, output, profile) = (work.join("shader.hlsl"), work.join("out.cso"), work.join("profile"));
+        let translate_started = std::time::Instant::now();
+        for ext in SIDECARS {
+            let _ = fs::remove_file(work.join(format!("shader.hlsl.{ext}")));
+        }
+        // In-process first (xshader_lib.rs): the same inputs as the command line below.
+        let dll = tools.xshader.with_file_name(crate::xshader_lib::DLL);
+        let inproc = if step.is_none() && crate::xshader_lib::enabled() && dll.is_file() && ext != "quadmask" {
+            let read = |p: &Path| fs::read(p).map_err(|e| format!("read {}: {e}", p.display()));
+            let (consumer, order) = if ext == "link" {
+                (Some(read(&work.join("pixel.dxbc"))?), Some(read(&work.join("pixel.cso"))?))
+            } else { (None, None) };
+            let stencil = (ext == "stencil").then(|| key.split_once("_rt").and_then(|(_, n)| n.parse().ok())).flatten();
+            match crate::xshader_lib::translate(&dll, read(&cooked)?, consumer, order, stencil, Duration::from_secs(120), cancel) {
+                crate::xshader_lib::Outcome::Done(text, prof, heap) => {
+                    fs::write(&hlsl, text).and_then(|_| fs::write(&profile, prof)).map_err(|e| format!("write {}: {e}", hlsl.display()))?;
+                    // The process path's xshader writes this itself (hlsl/heap_reflect.rs).
+                    if let Some(heap) = heap {
+                        let _ = fs::write(work.join("shader.hlsl.heap"), heap);
+                    }
+                    true
+                }
+                crate::xshader_lib::Outcome::Unsupported(msg) => {
+                    let _ = fs::write(&refusal, format!("{key}
+{msg}"));
+                    return Ok(Outcome::Unsupported(msg));
+                }
+                crate::xshader_lib::Outcome::Failed(msg) => return Err(format!("xshader failed (1): {msg}")),
+                crate::xshader_lib::Outcome::Deferred =>
+                    return Err("xshader: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
+                crate::xshader_lib::Outcome::Fallback(why) => {
+                    static SAID: std::sync::Once = std::sync::Once::new();
+                    SAID.call_once(|| println!("[launch] shaders: in-process xshader fell back to the xshader process: {why} (more may follow unlogged)"));
+                    false
+                }
+            }
+        } else { false };
+        if !inproc { match run_until(crate::runtimes::command(&tools.xshader).envs(step.unwrap_or(&[]).iter().copied()).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
+            .arg("--profile-out").arg(&profile), Duration::from_secs(120), || cancel.is_some_and(|c| c.load(Ordering::Acquire))) {
+            Err(ToolError::Other(msg)) if msg == "timed out" && cancel.is_some_and(|c| c.load(Ordering::Acquire)) =>
+                return Err("xshader: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
+            Ok(()) => {}
+            Err(ToolError::Exit(XSHADER_UNSUPPORTED_HLSL, msg)) => {
+                if step.is_none() {
+                    let _ = fs::write(&refusal, format!("{key}\n{msg}"));
+                }
+                return Ok(Outcome::Unsupported(msg));
+            }
+            Err(ToolError::Exit(c, msg)) => return Err(format!("xshader failed ({c}): {msg}")),
+            Err(ToolError::Other(msg)) if msg == "timed out" => return Err("xshader: timed out after 120 s".into()),
+            Err(ToolError::Other(msg)) => return Err(format!("xshader: {msg}")),
+        } }
+        let translate_ms = translate_started.elapsed().as_millis() as u64;
+        for ext in SIDECARS {
+            let cached = cache.join(format!("{key}.{ext}"));
+            match fs::read(work.join(format!("shader.hlsl.{ext}"))) {
+                Ok(text) => { let _ = fs::write(&cached, text); }
+                Err(_) => { let _ = fs::remove_file(&cached); }
+            }
+        }
+        let target = fs::read_to_string(&profile).map_err(|e| format!("xshader wrote no profile: {e}"))?.trim().to_owned();
+        let allowed: &[&str] = if ext == "link" {
+            // A mesh producer links too (d3d12 stream.rs mesh_link, five-star-recomp
+            // ddcaa54): 94ba67a's prewarm failed c20f5160 on ms_6_6.
+            &["vs_6_0", "vs_6_1", "vs_6_6", "gs_6_0", "gs_6_1", "gs_6_6", "ms_6_5", "ms_6_6"]
+        } else {
+            &["cs_6_0", "cs_6_1", "cs_6_6", "ps_6_0", "ps_6_1", "ps_6_6", "vs_6_0", "vs_6_1", "vs_6_6",
+              "gs_6_0", "gs_6_1", "gs_6_6", "cs_6_4", "cs_6_5", "ms_6_5", "ms_6_6", "as_6_5", "as_6_6", "lib_6_3"]
+        };
+        if !allowed.contains(&target.as_str()) {
+            return Err(format!("unsupported compiler profile {target:?}"));
+        }
+        // The same HLSL for the same profile compiled before (under another
+        // xshader build: test-to-test, most programs' HLSL is unchanged; the
+        // helper's exit-stub commit changed 12 of 885) is not compiled again.
+        // A second key hashes the HLSL with comments and spacing removed
+        // (normalised_hlsl): an xshader change to its comments alone (each
+        // instruction is annotated with its address and disassembly) or to
+        // its layout no longer sends every program back through dxc.
+        // NEONBRIDGE_DXIL_REUSE_NORMALISED=0 keys by the exact text only.
+        let source = tools.dxil.as_ref().and_then(|_| fs::read(&hlsl).ok());
+        let key_path = |text: &[u8], prefix: &str| tools.dxil.as_ref().map(|dir| {
+            let mut key = Sha256::new();
+            key.update(target.as_bytes());
+            key.update(&[0]);
+            key.update(text);
+            dir.join(format!("{prefix}{}.cso", hex(&key.finalize())))
+        });
+        let reused = source.as_deref().and_then(|s| key_path(s, ""));
+        let normalised = source.as_deref()
+            .filter(|_| std::env::var("NEONBRIDGE_DXIL_REUSE_NORMALISED").as_deref() != Ok("0"))
+            .and_then(|s| key_path(&normalised_hlsl(s), "n-"));
+        let stored = |path: &PathBuf| -> Option<Vec<u8>> {
+            let (bytes, sum) = (fs::read(path).ok()?, fs::read(path.with_extension("sha256")).ok()?);
+            (bytes.len() as u64 <= MAX_SHADER_BYTES && sum == sha256(&bytes).as_bytes() && has_dxil_container(&bytes)).then_some(bytes)
+        };
+        let stored = |path: &PathBuf| (!upgrading_o0(path)).then(|| stored(path)).flatten();
+        let found = reused.as_ref().and_then(|p| Some((stored(p)?, p))).or_else(|| {
+            let found = normalised.as_ref().and_then(|p| Some((stored(p)?, p)))?;
+            NORMALISED_REUSES.fetch_add(1, Ordering::Relaxed);
+            Some(found)
+        });
+        // -O0 DXIL (dxil_upgrade.rs) goes on to this build's cache marked too, and is
+        // queued for its -O1 compile, if it is not queued already.
+        let upgrade = |dxil_o0: bool| {
+            let up = crate::dxil_upgrade::marker(&dest);
+            if !dxil_o0 {
+                let _ = fs::remove_file(&up);
+                return;
+            }
+            let _ = fs::write(&up, b"");
+            if let (Some(dir), Some(text), Some(id)) = (tools.dxil.as_ref(), source.as_deref(), reused.as_ref().and_then(|p| p.file_stem())) {
+                let paths: Vec<&Path> = reused.iter().chain(&normalised).map(|p| p.as_path()).chain([dest.as_path()]).collect();
+                crate::dxil_upgrade::enqueue(dir, &id.to_string_lossy(), &target, text, &paths);
+            }
+        };
+        if let Some((bytes, from)) = found {
+            let o0 = crate::dxil_upgrade::marker(from).exists();
+            if o0 {
+                O0_REUSES.fetch_add(1, Ordering::Relaxed);
+            }
+            upgrade(o0);
+            // Into this build's cache as a compile would store it (renamed in whole).
+            let (copy, stamp) = (work.join("reused.cso"), work.join("reused.sha256"));
+            fs::write(&copy, &bytes).and_then(|_| fs::write(&stamp, sha256(&bytes)))
+                .and_then(|_| publish_file(&copy, &dest)).and_then(|_| publish_file(&stamp, &checksum))
+                .map_err(|e| format!("store {}: {e}", dest.display()))?;
+            publish(&bytes)?;
+            return Ok(Outcome::Reused(translate_ms));
+        }
+        let dxc = |opt: &str, secs: u64, give_up: &dyn Fn() -> bool| {
+            let mut dxc = crate::runtimes::command(&tools.dxc);
+            dxc.arg("-T").arg(&target).arg(opt);
+            for d in &tools.defines {
+                dxc.arg("-D").arg(d);
+            }
+            if target != "lib_6_3" {
+                dxc.args(["-E", "main"]);
+            }
+            // xshader TB_DENORM_FTZ: a constant-flush-mode program asks for hardware
+            // f32 denormal flushing (its tb_ftz is the identity).
+            if denorm_ftz_marked(&hlsl, &target) {
+                dxc.args(["-denorm", "ftz"]);
+            }
+            // In-process (src/dxc.rs): the same arguments without the file
+            // names, no dxc.exe start and dxcompiler.dll load per program. Not
+            // for -O1: its 10 s cut-off cannot kill an in-process compile, and
+            // the 0577d56 prewarm (in-process from 570e0aa) held 9.4 GB private
+            // in the launcher itself, no dxc children, 53 threads for 10 jobs:
+            // every -O1 past its time kept compiling (up to ~0.7 GB each) beside
+            // its -O0 retry, uncounted, so the worker ceiling held the prewarm at
+            // 0.3 programs/s. dxc.exe takes -O1 and is killed at its time.
+            if crate::dxc::enabled() && opt != "-O1" {
+                let args = dxc.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+                let source = fs::read(&hlsl).map_err(|e| ToolError::Other(format!("read {}: {e}", hlsl.display())))?;
+                return match crate::dxc::compile(&tools.dxc, source, args, Duration::from_secs(secs), give_up, false) {
+                    Ok(bytes) => fs::write(&output, bytes).map_err(|e| ToolError::Other(format!("write {}: {e}", output.display()))),
+                    Err(crate::dxc::Error::Compiler(msg)) => Err(ToolError::Exit(1, msg.chars().take(600).collect::<String>().trim().to_owned())),
+                    Err(crate::dxc::Error::Other(msg)) => Err(ToolError::Other(msg)),
+                };
+            }
+            run_until(dxc.arg("-Fo").arg(&output).arg(&hlsl), Duration::from_secs(secs), give_up)
+        };
+        // Large skinning and edge-emit programs can spend minutes in DXC's optimiser;
+        // unoptimised DXIL compiles in seconds and the driver optimises it again.
+        let dxc_started = std::time::Instant::now();
+        LAST_HLSL.with(|b| b.set(fs::metadata(&hlsl).map(|m| m.len()).unwrap_or(0)));
+        // test112: dxc was 98% of shader time (401 s for 252 compiles, one took
+        // 92 s), starving pipelines the title waited on. -O1 now gets
+        // NEONBRIDGE_DXC_O1_SECS (10) before the -O0 retry, not 120.
+        let o1_secs = std::env::var("NEONBRIDGE_DXC_O1_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0)
+            .unwrap_or(if PREWARM_ONLY.load(Ordering::Relaxed) { 120 } else { 10 });
+        // test130/131 died at the scene load (the title's own watchdog, game
+        // +0x23cf620 "GPU Loc Sig") with its render jobs blocked in pipeline
+        // binds on these replies: 14 of 229 compiles spent their 10 s on an
+        // -O1 pass that timed out and was discarded (140 of 315 s of dxc).
+        // Idle-machine timings: 727f287e -O1 8.8 s vs -O0 0.5 s; a64767c5
+        // -O1 65 s vs -O0 8.3 s. A request a title thread waits on (its
+        // urgent/ marker, d3d12_xs writes it) goes straight to -O0, and an -O1
+        // pass under way ends when the marker appears.
+        // NEONBRIDGE_DXC_URGENT_O0=0 keeps -O1 first for every request.
+        let urgent_o0 = std::env::var("NEONBRIDGE_DXC_URGENT_O0").as_deref() != Ok("0");
+        let marker = session.join("urgent").join(key);
+        let urgent = || urgent_o0 && marker.exists();
+        // The prewarm compiles at -O0 straight away: the f95f59a cold prewarm
+        // ran 14 workers at 1.9 programs/s (7.4 s a program), 83% of them
+        // through dxc, most of that the -O1 pass (8.8 s vs 0.5 s at -O0 on
+        // 727f287e; up to its 10 s cut-off, then -O0 again). The driver
+        // optimises the DXIL again, as for the urgent path above.
+        // Default while the -O1 upgrade is on (prewarm_o0).
+        // A dxc failure or timeout is kept beside the HLSL's reuse path
+        // (`.dxcfail`), so the same HLSL is not sent to dxc again on every
+        // launch (test152 sat at 1336/1338 on two programs a full prewarm of
+        // the same rev had already timed out on); changed HLSL is a new path.
+        // NEONBRIDGE_DXC_RETRY_FAILED=1 retries them.
+        // Only a compile error is kept: dxc's own "error:" text on stderr. A
+        // kill (taskkill while a prewarm stops: exit 1, empty stderr), a
+        // timeout or a silent exit is not a verdict on the HLSL; marks written
+        // for those before (293a605) are dropped as they are found. The
+        // prewarm's tail cut-off, not this mark, keeps slow programs off the launch.
+        let compile_error = |m: &str| m.contains("error:") || m.contains("error X");
+        let failed_mark = reused.as_ref().map(|p| p.with_extension("dxcfail"));
+        if let Some(reason) = failed_mark.as_ref().and_then(|p| fs::read_to_string(p).ok()) {
+            if !compile_error(&reason) {
+                let _ = failed_mark.as_ref().map(fs::remove_file);
+            } else if std::env::var("NEONBRIDGE_DXC_RETRY_FAILED").as_deref() != Ok("1") {
+                return Err(format!("{} (kept from an earlier run for this HLSL; NEONBRIDGE_DXC_RETRY_FAILED=1 retries)", reason.trim()));
+            }
+        }
+        let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Acquire));
+        let keep_failure = |reason: &str| {
+            if let Some(p) = &failed_mark {
+                let _ = fs::write(p, reason);
+            }
+        };
+        // NEONBRIDGE_PREWARM_BIG_O1 (default on, =0 off): the prewarm compiles
+        // big HLSL (over NEONBRIDGE_PREWARM_BIG_HLSL_KB, 2048) at -O1 with
+        // NEONBRIDGE_PREWARM_BIG_DXC_S (600) even while prewarm_o0 is on; -O0
+        // only after an -O1 timeout or a dxc crash/out-of-memory. prewarm182:
+        // the six heavy programs (13755448, bda8b02e, 93247fa6, fe9c9850,
+        // a640d8aa, b413657f) went to -O0 at 4.0-4.5 MiB of DXIL and the
+        // driver took ~9 GiB of arena on one; -O1 gives 0.93 MB in 72 s
+        // (13755448), and the background upgrade never reached them.
+        let big_o1 = PREWARM_ONLY.load(Ordering::Relaxed)
+            && std::env::var("NEONBRIDGE_PREWARM_BIG_O1").map_or(true, |v| v.trim() != "0")
+            && fs::metadata(&hlsl).map(|m| m.len()).unwrap_or(0)
+                > std::env::var("NEONBRIDGE_PREWARM_BIG_HLSL_KB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(2048) << 10;
+        let (o0_first, o1_secs) = if big_o1 {
+            (false, std::env::var("NEONBRIDGE_PREWARM_BIG_DXC_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(600).max(o1_secs))
+        } else {
+            (o0_first, o1_secs)
+        };
+        let first = if o0_first || urgent() { Err(ToolError::Other("timed out".into())) } else { dxc("-O1", o1_secs, &|| urgent() || cancelled()) };
+        // A big -O1 that crashed or ran out of memory (not a compile error) retries at -O0.
+        let first = match first {
+            Err(ToolError::Exit(_, ref msg)) if big_o1 && !compile_error(msg) && prewarm_stuck(key).is_none() => Err(ToolError::Other("timed out".into())),
+            other => other,
+        };
+        let mut dxil_o0 = false;
+        let compiled = match first {
+            Err(ToolError::Other(msg)) if msg == "timed out" && !cancelled() => {
+                let _ = fs::remove_file(&output);
+                // NEONBRIDGE_PREWARM_KEEP_SLOW_O0: the -O0 DXIL this upgrade
+                // started from is still the cache entry; keep it, mark it, skip dxc.
+                if PREWARM_ONLY.load(Ordering::Relaxed) && keep_slow_o0() && crate::dxil_upgrade::marker(&dest).exists()
+                    && let (Ok(bytes), Ok(sum)) = (fs::read(&dest), fs::read(&checksum))
+                    && sum == sha256(&bytes).as_bytes() {
+                    let _ = fs::write(dest.with_extension("o1slow"), format!("-O1 timed out after {o1_secs} s; -O0 kept (NEONBRIDGE_PREWARM_KEEP_SLOW_O0=0 retries)
+"));
+                    publish(&bytes)?;
+                    return Ok(Outcome::Cached);
+                }
+                dxil_o0 = true;
+                // The prewarm gives big programs (over NEONBRIDGE_PREWARM_BIG_HLSL_KB
+                // of HLSL, 2048) NEONBRIDGE_PREWARM_BIG_DXC_S (600; 0 keeps 120) at
+                // -O0, so they land in the cache once: prewarm176's six over 2 MB
+                // were killed at 120 s and left to the run's binds.
+                let big_kb = std::env::var("NEONBRIDGE_PREWARM_BIG_HLSL_KB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(2048);
+                let big_s = std::env::var("NEONBRIDGE_PREWARM_BIG_DXC_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(600);
+                let o0_secs = if PREWARM_ONLY.load(Ordering::Relaxed) && big_s > 0
+                    && fs::metadata(&hlsl).map(|m| m.len()).unwrap_or(0) > big_kb << 10 { big_s.max(120) } else { 120 };
+                dxc("-O0", o0_secs, &cancelled)
+            }
+            other => other,
+        };
+        match compiled {
+            Ok(()) => {}
+            Err(ToolError::Other(msg)) if msg == "timed out" && cancelled() =>
+                return Err("dxc: left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)".into()),
+            Err(ToolError::Exit(_, _)) | Err(ToolError::Other(_)) if prewarm_stuck(key).is_some() => {
+                let reason = format!("error: dxc ended by the prewarm watchdog after {} s (NEONBRIDGE_PREWARM_JOB_S)", prewarm_stuck(key).unwrap_or(0));
+                keep_failure(&reason);
+                return Err(reason);
+            }
+            Err(ToolError::Exit(c, msg)) => {
+                let reason = format!("dxc failed ({c}): {msg}");
+                if compile_error(&msg) {
+                    keep_failure(&reason);
+                }
+                return Err(reason);
+            }
+            Err(ToolError::Other(msg)) => {
+                return Err(format!("dxc: {msg}"));
+            }
+        }
+        let dxc_ms = dxc_started.elapsed().as_millis() as u64;
+        let bytes = fs::read(&output).map_err(|e| format!("dxc wrote no output: {e}"))?;
+        if !has_dxil_container(&bytes) {
+            return Err("compiler returned an invalid DXIL container".into());
+        }
+        let stamp = work.join("sha256");
+        fs::write(&stamp, sha256(&bytes)).map_err(|e| e.to_string())?;
+        for path in reused.iter().chain(&normalised) {
+            // -O0 never over an -O1 result (another worker's, since the lookup missed).
+            let up = crate::dxil_upgrade::marker(path);
+            if dxil_o0 {
+                if path.exists() && !up.exists() {
+                    continue;
+                }
+                let _ = fs::write(&up, b"");
+            }
+            // Written stamp-first under a temporary name: a reader sees both or neither.
+            let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+            if fs::write(&tmp, &bytes).and_then(|_| fs::write(path.with_extension("sha256"), sha256(&bytes)))
+                .and_then(|_| fs::rename(&tmp, path)).is_err() {
+                let _ = fs::remove_file(&tmp);
+            } else if !dxil_o0 {
+                // -O1 over an -O0 entry: no longer one.
+                let _ = fs::remove_file(&up);
+            }
+        }
+        publish_file(&output, &dest).map_err(|e| format!("store {}: {e}", dest.display()))?;
+        publish_file(&stamp, &checksum).map_err(|e| e.to_string())?;
+        upgrade(dxil_o0);
+        publish(&bytes)?;
+        Ok(Outcome::Compiled(translate_ms, dxc_ms))
+    })();
+    let _ = fs::remove_dir_all(&work);
+    result.unwrap_or_else(Outcome::Failed)
+}
+
+fn remove_request(path: &Path) {
+    if fs::symlink_metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+        let _ = fs::remove_dir_all(path);
+    } else {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// Keep a copy of a request the title made, so the next launch can translate it
+/// before the title asks (TuxBox's ProjectScarlett prewarm).
+fn archive_request(path: &Path, name: &str, archive: &Path) {
+    // The title asked for it: mark it for the next launch's seen prewarm.
+    if let Some(seen) = archive.parent().map(|r| r.join("seen")) {
+        let _ = fs::create_dir_all(&seen);
+    }
+    let dest = archive.join(name);
+    if fs::symlink_metadata(&dest).is_ok() {
+        mark_seen(archive, name);
+        return;
+    }
+    let tmp = archive.join(format!("{name}.{}.tmp", std::process::id()));
+    let copied = if fs::symlink_metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+        fs::create_dir_all(&tmp).and_then(|_| {
+            for f in ["producer.dxbc", "pixel.dxbc", "pixel.cso"] {
+                fs::copy(path.join(f), tmp.join(f))?;
+            }
+            Ok(())
+        })
+    } else {
+        fs::copy(path, &tmp).map(|_| ())
+    };
+    if copied.and_then(|_| fs::rename(&tmp, &dest)).is_err() {
+        remove_request(&tmp);
+    }
+    mark_seen(archive, name);
+}
+
+/// `seen/<name>` for an archived request: a hard link to its archive copy, so
+/// census and offline traces reading seen/ get the request's bytes (they were
+/// 0-byte name markers; only the name was ever read here). A directory
+/// request (a link pair) or a failed link keeps the empty marker.
+/// NEONBRIDGE_SEEN_LINKS=0 writes empty markers only.
+fn mark_seen(archive: &Path, name: &str) {
+    let Some(seen) = archive.parent().map(|r| r.join("seen")) else { return };
+    let (src, dst) = (archive.join(name), seen.join(name));
+    if fs::metadata(&dst).is_ok_and(|m| m.len() > 0) {
+        return;
+    }
+    let linked = std::env::var("NEONBRIDGE_SEEN_LINKS").as_deref() != Ok("0")
+        && fs::metadata(&src).is_ok_and(|m| m.is_file())
+        && { let _ = fs::remove_file(&dst); fs::hard_link(&src, &dst).is_ok() };
+    if !linked && fs::symlink_metadata(&dst).is_err() {
+        let _ = fs::write(&dst, b"");
+    }
+}
+
+/// DXBC parts as (fourcc, payload offset, payload length), or None if the
+/// container is malformed.
+fn dxbc_parts(data: &[u8]) -> Option<Vec<([u8; 4], usize, usize)>> {
+    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    if data.len() < 32 || &data[..4] != b"DXBC" || u32_at(24)? != data.len() {
+        return None;
+    }
+    let count = u32_at(28)?;
+    (0..count).map(|i| {
+        let o = u32_at(32 + i * 4)?;
+        let len = u32_at(o + 4)?;
+        (o + 8 + len <= data.len()).then(|| (data[o..o + 4].try_into().unwrap(), o + 8, len))
+    }).collect()
+}
+
+/// D3D12 program stage: high 16 bits of the DXIL part's program version.
+fn dxil_stage(data: &[u8], parts: &[([u8; 4], usize, usize)]) -> Option<u16> {
+    let &(_, o, len) = parts.iter().find(|p| &p.0 == b"DXIL")?;
+    (len >= 4).then(|| u16::from_le_bytes(data[o + 2..o + 4].try_into().unwrap()))
+}
+
+/// The program as d3d12_xs sends it when the pipeline supplies its root
+/// signature (`with_root` in runtime/d3d12/src/device/shader_cache.rs):
+/// hash cleared, one more part offset, RTS0 appended at a 4-byte boundary.
+fn with_root(shader: &[u8], count: usize, root: &[u8]) -> Vec<u8> {
+    let end = 32 + count * 4;
+    let root_offset = (shader.len() + 4).next_multiple_of(4);
+    let size = root_offset + 8 + root.len();
+    let mut out = Vec::with_capacity(size);
+    out.extend_from_slice(&shader[..24]);
+    out[4..20].fill(0);
+    out.extend_from_slice(&(size as u32).to_le_bytes());
+    out.extend_from_slice(&((count + 1) as u32).to_le_bytes());
+    for i in 0..count {
+        let o = u32::from_le_bytes(shader[32 + i * 4..36 + i * 4].try_into().unwrap());
+        out.extend_from_slice(&(o + 4).to_le_bytes());
+    }
+    out.extend_from_slice(&(root_offset as u32).to_le_bytes());
+    out.extend_from_slice(&shader[end..]);
+    out.resize(root_offset, 0);
+    out.extend_from_slice(b"RTS0");
+    out.extend_from_slice(&(root.len() as u32).to_le_bytes());
+    out.extend_from_slice(root);
+    out
+}
+
+/// NEONBRIDGE_SKIP_BARE_MESH (default on, =0 off): a mesh or amplification
+/// program with no RTS0 is not prewarmed bare. xshader needs the pipeline's
+/// root for those stages (hlsl/mesh.rs "mesh root signature missing"), and
+/// d3d12_xs always sends a mesh stage with its pipeline root appended
+/// (shader_cache.rs mesh_stage / with_root), so the bare form is a request no
+/// title makes: the archive held 8765 bare mesh programs, each refused and
+/// then sent down the retry ladder, and 341 kept `.unsupported`. A bare one
+/// the title did ask for (in `seen`) still runs. Refs translate mesh against
+/// the pipeline's root or their own fixed bindless root, never bare
+/// (leonida d3d12_vulkan_device.cpp:11866, five-star-recomp
+/// BindlessRootSignature.cs:14, xcl pso.rs:927).
+fn skip_bare_mesh() -> bool {
+    std::env::var("NEONBRIDGE_SKIP_BARE_MESH").as_deref() != Ok("0")
+}
+
+fn bare_mesh(data: &[u8]) -> bool {
+    let Some(parts) = dxbc_parts(data) else { return false };
+    matches!(dxil_stage(data, &parts), Some(13 | 14)) && !parts.iter().any(|p| &p.0 == b"RTS0")
+}
+
+/// Graphics stages whose pipelines share a few root signatures (pixel, vertex,
+/// geometry, hull, domain, mesh, amplification). Compute roots are per program.
+const SHARED_ROOT_STAGES: [u16; 7] = [0, 1, 2, 3, 4, 13, 14];
+const MAX_SHARED_ROOTS: usize = 4;
+
+/// NEONBRIDGE_ZTRX_HEAP (default on, =0 off): a ztrx translation gets the
+/// `<key>.heap` reflection our xshader makes of the same program (the
+/// in-process translation only, no dxc), so the runtime's shadow UAV re-mark
+/// sees its heap writes. The reflection names title sources (root constant
+/// dwords, table entries, literal indices), which ztrx's DXIL reads at the
+/// same title heap index. ztrx has no reflection of its own to copy.
+/// prewarm189: 3469 .ztrx and no .heap for any of them in the cache.
+fn ztrx_heap(tools: &Tools, cooked: &Path, cache: &Path, key: &str) {
+    if std::env::var("NEONBRIDGE_ZTRX_HEAP").as_deref() == Ok("0") {
+        return;
+    }
+    let dll = tools.xshader.with_file_name(crate::xshader_lib::DLL);
+    let Ok(code) = fs::read(cooked) else { return };
+    if !dll.is_file() {
+        return;
+    }
+    if let crate::xshader_lib::Outcome::Done(_, _, Some(heap)) =
+        crate::xshader_lib::translate(&dll, code, None, None, None, Duration::from_secs(120), None)
+    {
+        let _ = fs::write(cache.join(format!("{key}.heap")), heap);
+    }
+}
+
+/// Moves a staged cache file to its content-addressed name. When the rename
+/// fails because another worker published the same key meanwhile (on
+/// Windows, renaming over a file a reader holds open is a sharing
+/// violation), that file is the same bytes: the staging copy is dropped and
+/// the published one used (VIctory-zhai 37e90b3, after fxceless 43f465b,
+/// credit). NEONBRIDGE_CACHE_REUSE_PUBLISHED=0 fails as before.
+fn publish_file(tmp: &Path, dest: &Path) -> std::io::Result<()> {
+    match fs::rename(tmp, dest) {
+        Err(e) if dest.is_file() && std::env::var("NEONBRIDGE_CACHE_REUSE_PUBLISHED").as_deref() != Ok("0") => {
+            let _ = fs::remove_file(tmp);
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+            if n <= 4 || n.is_power_of_two() {
+                println!("[launch] shader cache: {} was published by another worker while this one wrote it ({e}); using that copy ({n} so far)", dest.display());
+            }
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+fn write_request(archive: &Path, data: &[u8]) -> bool {
+    let name = format!("{}.dxbc", sha256(data));
+    let dest = archive.join(&name);
+    if fs::symlink_metadata(&dest).is_ok() {
+        return false;
+    }
+    let tmp = archive.join(format!("{name}.{}.tmp", std::process::id()));
+    if fs::write(&tmp, data).and_then(|_| publish_file(&tmp, &dest)).is_err() {
+        let _ = fs::remove_file(&tmp);
+        return false;
+    }
+    true
+}
+
+pub struct Built { pub programs: usize, pub written: usize }
+
+/// Build every shader program in the title's `shaders.rpf` into the prewarm
+/// archive, as PC games do before the first frame.
+///
+/// The data area of shaders.rpf is not encrypted: after the `SGD5` index each
+/// program is a record `<name>_Wrapped\0`, a tag byte, u32 stored size, u32,
+/// u32 stored size again, u32 expanded size, then a raw deflate stream that
+/// inflates to the exact DXBC container the title hands d3d12_xs (its SHA-256
+/// is the request key). Records are found by scanning, so the encrypted TOC is
+/// not needed. Programs whose pipelines bring a root signature are requested
+/// with it appended; for graphics stages that use few roots, each program is
+/// also written with every root of its stage seen in archived requests.
+/// Skipped when the archive already holds this build of this shaders.rpf.
+pub fn build_requests(rpf: &Path, archive: &Path) -> Result<Option<Built>, String> {
+    let meta = fs::metadata(rpf).map_err(|e| format!("{}: {e}", rpf.display()))?;
+    fs::create_dir_all(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    let mut roots: std::collections::BTreeMap<u16, std::collections::BTreeMap<String, Vec<u8>>> = Default::default();
+    for entry in fs::read_dir(archive).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !matches!(valid_request(&name), Some((_, "dxbc"))) {
+            continue;
+        }
+        let Ok(data) = fs::read(entry.path()) else { continue };
+        let Some(parts) = dxbc_parts(&data) else { continue };
+        let (Some(stage), Some(&(_, o, len))) = (dxil_stage(&data, &parts), parts.iter().find(|p| &p.0 == b"RTS0")) else { continue };
+        if SHARED_ROOT_STAGES.contains(&stage) {
+            let root = data[o..o + len].to_vec();
+            roots.entry(stage).or_default().insert(sha256(&root), root);
+        }
+    }
+    roots.retain(|_, r| r.len() <= MAX_SHARED_ROOTS);
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let mut stamp = format!("shaders.rpf build v1\n{} {} {mtime}\n", rpf.display(), meta.len());
+    for (stage, r) in &roots {
+        for key in r.keys() {
+            stamp.push_str(&format!("root {stage} {key}\n"));
+        }
+    }
+    let marker = archive.join(".built");
+    if fs::read_to_string(&marker).is_ok_and(|s| s == stamp) {
+        return Ok(None);
+    }
+
+    let data = fs::read(rpf).map_err(|e| format!("{}: {e}", rpf.display()))?;
+    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    const TAG: &[u8] = b"_Wrapped\0";
+    let mut seen = std::collections::HashSet::new();
+    let mut built = Built { programs: 0, written: 0 };
+    let mut at = 0;
+    while let Some(i) = data[at..].windows(TAG.len()).position(|w| w == TAG) {
+        let p = at + i + TAG.len();
+        at = p;
+        let (Some(stored), Some(again), Some(size)) = (u32_at(p + 1), u32_at(p + 9), u32_at(p + 13)) else { break };
+        let start = p + 17;
+        if stored != again || size as u64 > MAX_SHADER_BYTES || start + stored > data.len() {
+            continue;
+        }
+        let mut program = Vec::with_capacity(size);
+        let mut inflate = flate2::Decompress::new(false);
+        if inflate.decompress_vec(&data[start..start + stored], &mut program, flate2::FlushDecompress::Finish).is_err()
+            || program.len() != size {
+            continue;
+        }
+        at = start + stored;
+        let Some(parts) = dxbc_parts(&program) else { continue };
+        if !seen.insert(sha256(&program)) {
+            continue;
+        }
+        built.programs += 1;
+        if !(skip_bare_mesh() && bare_mesh(&program)) {
+            built.written += write_request(archive, &program) as usize;
+        }
+        if let Some(stage_roots) = dxil_stage(&program, &parts).and_then(|s| roots.get(&s)) {
+            for root in stage_roots.values() {
+                built.written += write_request(archive, &with_root(&program, parts.len(), root)) as usize;
+            }
+        }
+    }
+    if built.programs == 0 {
+        return Err(format!("no shader programs found in {}", rpf.display()));
+    }
+    fs::write(&marker, stamp).map_err(|e| e.to_string())?;
+    Ok(Some(built))
+}
+
+/// Request names the title asked for in earlier launches (`<cache_root>/seen`).
+/// The first launch with this marker list seeds it from the keys every
+/// recent toolchain's cache dir holds a translation for, matched against
+/// the archive (all of those came from title requests while
+/// TUXBOX_PREWARM=0).
+fn seen_requests(cache_root: &Path, archive: &Path) -> std::collections::HashSet<String> {
+    let seen = cache_root.join("seen");
+    let names = |dir: &Path| fs::read_dir(dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
+    let marked: std::collections::HashSet<String> = names(&seen).into_iter().filter(|n| valid_request(n).is_some()).collect();
+    if !marked.is_empty() {
+        for n in &marked {
+            mark_seen(archive, n);
+        }
+        return marked;
+    }
+    // The four newest toolchain dirs: older ones include whole-archive
+    // builds (--build-shaders), ~3000 programs the title never asked for.
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(cache_root.join("runtime")).into_iter().flatten().flatten()
+        .filter(|e| is_key(&e.file_name().to_string_lossy()))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut keys = std::collections::HashSet::new();
+    for (_, dir) in dirs.iter().take(4) {
+        for name in names(dir) {
+            if let Some(key) = name.strip_suffix(".cso") {
+                keys.insert(key.to_owned());
+            }
+        }
+    }
+    let found: std::collections::HashSet<String> = names(archive).into_iter()
+        .filter(|n| valid_request(n).is_some_and(|(k, _)| keys.contains(k))).collect();
+    if fs::create_dir_all(&seen).is_ok() {
+        for n in &found {
+            mark_seen(archive, n);
+        }
+    }
+    found
+}
+
+/// Translate archived requests into the cache before the title starts, so its
+/// pipelines load translations instead of waiting on the worker. `only`
+/// limits it to those request names.
+///
+/// Every 10 s it reports done/total, the rate and the time left to stdout and
+/// `log`; no job starts after `deadline` (the rest are translated when the
+/// title asks for them).
+#[allow(clippy::too_many_arguments)]
+/// The session's urgent/ markers (d3d12_xs writes one for each shader a title
+/// thread waits on): the background prewarm stands aside while any exist.
+static URGENT_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn title_waiting() -> bool {
+    URGENT_DIR.get().is_some_and(|d| fs::read_dir(d).is_ok_and(|mut e| e.next().is_some()))
+}
+
+fn idle_priority() {
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_IDLE};
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE) };
+}
+
+/// The seen programs' prewarm and its summary lines.
+#[allow(clippy::too_many_arguments)]
+fn seen_prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
+    seen: &std::collections::HashSet<String>, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync), stop: Option<&AtomicBool>) {
+            let started = std::time::Instant::now();
+            prewarm(tools, cache, archive, scratch, workers, stats, Some(seen), if stop.is_some() { "seen prewarm in the background (NEONBRIDGE_BLOCKING_PREWARM=1 waits for it)" } else { "seen prewarm" }, deadline, log, stop);
+            log(format!("seen prewarm: {} programs the title asked for before, {} translated, {} with dxc output reused ({} matched only without comments and spacing), {} already cached, in {:.1} s (NEONBRIDGE_PREWARM_SEEN=0 off)",
+                seen.len(), stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed), NORMALISED_REUSES.load(Ordering::Relaxed),
+                stats.cached.load(Ordering::Relaxed), started.elapsed().as_secs_f64()));
+            let o0 = O0_REUSES.load(Ordering::Relaxed);
+            log(format!("seen prewarm: DXIL: {} reused at -O1, {o0} reused at -O0 (queued for the -O1 upgrade), {} fresh dxc compiles; {} programs left at -O0 in the upgrade queue (drained between runs)",
+                stats.reused.load(Ordering::Relaxed).saturating_sub(o0), stats.prewarmed.load(Ordering::Relaxed),
+                tools.dxil.as_deref().map_or(0, crate::dxil_upgrade::left)));
+            // The churn line: how much of this xshader's output was new HLSL.
+            // 1273355's 515 s prewarm compiled 1141 and reused 25, from an
+            // xshader change three revs back (59ad7f5's helper pruning).
+            let (new, same) = (stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed));
+            log(format!("seen prewarm: HLSL churn: {new} of {} translations emitted HLSL the DXIL cache had not seen (dxc compiled them), {same} unchanged (DXIL reused), {:.0}% changed",
+                new + same, if new + same == 0 { 0.0 } else { 100.0 * new as f64 / (new + same) as f64 }));
+}
+
+static EXIT_DONE: AtomicUsize = AtomicUsize::new(0);
+static EXIT_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// NEONBRIDGE_PREWARM_HARD_EXIT (default on, =0 off): an explicit --prewarm
+/// gets a timer thread of its own that ends the process (TerminateProcess)
+/// once every program is taken and none has finished for
+/// NEONBRIDGE_PREWARM_TAIL_EXIT_S (60) of wall clock. prewarm194 and
+/// prewarm195 (b4994d1, with 900d443's in-loop exit) sat at 4002/4005,
+/// 0.0/s, for over 10 minutes; neither logged a tail line or a single
+/// 10 s summary, so the progress loop that held those checks was not
+/// reaching them. This thread shares no lock with it: atomics only, its
+/// line goes to stderr, and the exit does not wait on stdout or other threads.
+/// Cache entries are published by rename, so nothing is left half written.
+fn prewarm_exit_watch(total: usize) -> bool {
+    if !PREWARM_ONLY.load(Ordering::Relaxed) || std::env::var("NEONBRIDGE_PREWARM_HARD_EXIT").is_ok_and(|v| v.trim() == "0") {
+        return false;
+    }
+    let secs = std::env::var("NEONBRIDGE_PREWARM_TAIL_EXIT_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|&s| s > 0).unwrap_or(60);
+    EXIT_DONE.store(0, Ordering::Relaxed);
+    EXIT_TAKEN.store(false, Ordering::Relaxed);
+    thread::Builder::new().name("neonbridge-prewarm-exit".into()).spawn(move || {
+        let mut last = (usize::MAX, std::time::Instant::now());
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            let n = EXIT_DONE.load(Ordering::Relaxed);
+            if n >= total {
+                return;
+            }
+            if n != last.0 || !EXIT_TAKEN.load(Ordering::Relaxed) {
+                last = (n, std::time::Instant::now());
+                continue;
+            }
+            if last.1.elapsed() >= Duration::from_secs(secs) {
+                use std::io::Write;
+                let mut e = std::io::stderr();
+                let _ = writeln!(e, "
+[launch] prewarm: {n}/{total} done, none finished for {secs} s with every program taken; the other {} are left to the title's requests; ending the process (NEONBRIDGE_PREWARM_HARD_EXIT=0 waits)", total - n);
+                let _ = e.flush();
+                unsafe {
+                    use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+                    TerminateProcess(GetCurrentProcess(), 0);
+                }
+                std::process::exit(0);
+            }
+        }
+    }).is_ok()
+}
+
+fn prewarm(tools: &Tools, cache: &Path, archive: &Path, scratch: &Path, workers: usize, stats: &Stats,
+    only: Option<&std::collections::HashSet<String>>, label: &str, deadline: std::time::Instant, log: &(dyn Fn(String) + Sync),
+    stop: Option<&AtomicBool>) {
+    let Ok(entries) = fs::read_dir(archive) else { return };
+    let skipped_bare = AtomicUsize::new(0);
+    let jobs: Vec<(PathBuf, String, String)> = entries.flatten().filter_map(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if only.is_some_and(|o| !o.contains(&name)) {
+            return None;
+        }
+        let (key, ext) = valid_request(&name)?;
+        if only.is_none() && ext == "dxbc" && skip_bare_mesh() && fs::read(e.path()).is_ok_and(|d| bare_mesh(&d)) {
+            skipped_bare.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        Some((e.path(), key.to_owned(), ext.to_owned()))
+    }).collect();
+    let skipped_bare = skipped_bare.into_inner();
+    if skipped_bare > 0 {
+        println!("[launch] {label}: {skipped_bare} bare mesh/amplification programs skipped: d3d12_xs sends those with the pipeline root (NEONBRIDGE_SKIP_BARE_MESH=0 prewarms them)");
+    }
+    if jobs.is_empty() || fs::create_dir_all(scratch).is_err() {
+        println!("[launch] {label}: nothing to do ({} programs matched in {}, scratch {})", jobs.len(), archive.display(), scratch.display());
+        return;
+    }
+    let next = AtomicUsize::new(0);
+    let running = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let finished = AtomicBool::new(false);
+    let workers_done = AtomicUsize::new(0);
+    // Set once every program is taken and the last ones have run
+    // NEONBRIDGE_PREWARM_TAIL_S (20; 0 waits for all) more: their dxc is ended and
+    // the title asks for them while it runs, so a few stragglers never hold the launch.
+    let tail = AtomicBool::new(false);
+    let tail_secs = std::env::var("NEONBRIDGE_PREWARM_TAIL_S").ok().and_then(|v| v.trim().parse::<u64>().ok())
+        // NEONBRIDGE_PREWARM_ONLY_TAIL (default on, =0 waits for all as
+        // before): an explicit --prewarm stops after 60 s of tail too; the
+        // stragglers compile on the title's request. prewarm186/191 sat at
+        // 3737/3740 for many minutes on three heavy -O0 compiles.
+        .unwrap_or(if !PREWARM_ONLY.load(Ordering::Relaxed) { 20 }
+            else if std::env::var("NEONBRIDGE_PREWARM_ONLY_TAIL").map_or(true, |v| v.trim() != "0") { 60 } else { 0 });
+    let tail_exit = PREWARM_ONLY.load(Ordering::Relaxed)
+        && std::env::var("NEONBRIDGE_PREWARM_TAIL_EXIT").map_or(true, |v| v.trim() != "0");
+    let tail_exit_secs = std::env::var("NEONBRIDGE_PREWARM_TAIL_EXIT_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(60);
+    let total = jobs.len();
+    let say = |line: String| {
+        println!("[launch] {line}");
+        log(line);
+    };
+    say(format!("{label}: {total} programs to translate {} (stops taking new ones {} s from now; NEONBRIDGE_PREWARM_MAX_S)",
+        if stop.is_some() { "while the game runs" } else { "before the game starts" }, deadline.saturating_duration_since(std::time::Instant::now()).as_secs()));
+    let started = std::time::Instant::now();
+    let _hard_exit = prewarm_exit_watch(total);
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            // The bar (loading screen, or one in-place console line under
+            // --prewarm) follows real counts every 200 ms, its time left from
+            // a moving average of the rate (crate::progress); the log keeps
+            // one plain line every 10 s, which triage parses.
+            let mut meter = crate::progress::Meter::new(total);
+            let mut last = std::time::Instant::now();
+            let mut taken_at: Option<std::time::Instant> = None;
+            let mut last_done = (usize::MAX, std::time::Instant::now());
+            while !finished.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(200));
+                for line in prewarm_watchdog() {
+                    say(format!("{label}: {line}"));
+                }
+                // NEONBRIDGE_PREWARM_TAIL_EXIT (default on, =0 off): an explicit
+                // --prewarm ends the process once no program has finished for
+                // NEONBRIDGE_PREWARM_TAIL_EXIT_S (60) past its tail. prewarm194
+                // (d0942ea) sat at 4002/4005, 0.0/s, for over 10 minutes with
+                // dxc running: in-process dxc compiles past their time are
+                // abandoned, not ended, and count against the worker room, so
+                // the last jobs waited for room the tail never freed.
+                // Every cache entry is published by rename, so nothing is left half written.
+                // It does not wait for the tail flag: prewarm194 logged no tail line either.
+                if tail_exit && next.load(Ordering::Relaxed) >= total {
+                    let n = done.load(Ordering::Relaxed);
+                    if n != last_done.0 {
+                        last_done = (n, std::time::Instant::now());
+                    } else if n < total && last_done.1.elapsed() >= Duration::from_secs(tail_exit_secs) {
+                        crate::progress::finish();
+                        say(format!("{label}: {n}/{total} done; {} still compiling, none finished for {tail_exit_secs} s; exiting, the title compiles them when it asks (NEONBRIDGE_PREWARM_TAIL_EXIT=0 waits)",
+                            total - n));
+                        say(format!("{label}: {}", job_peaks()));
+                        std::process::exit(0);
+                    }
+                }
+                if tail_secs > 0 && next.load(Ordering::Relaxed) >= total && !tail.load(Ordering::Relaxed) {
+                    let at = *taken_at.get_or_insert_with(std::time::Instant::now);
+                    if at.elapsed() >= Duration::from_secs(tail_secs) {
+                        say(format!("{label}: the last {} programs left to the title's requests after {tail_secs} s (NEONBRIDGE_PREWARM_TAIL_S)", running.load(Ordering::Relaxed)));
+                        tail.store(true, Ordering::Release);
+                    }
+                }
+                meter.sample(done.load(Ordering::Relaxed));
+                if stop.is_none() {
+                    crate::progress::report(label, &meter, 0.4, 0.6);
+                }
+                if last.elapsed() < Duration::from_secs(10) || crate::progress::inline() {
+                    continue;
+                }
+                last = std::time::Instant::now();
+                let n = meter.done();
+                let rate = meter.rate().unwrap_or(0.0);
+                let eta = meter.eta().map_or_else(|| "unknown".into(), |e| format!("{:.0} s", e.as_secs_f64()));
+                say(format!("{label}: {n}/{total} done ({:.1}%), {rate:.1}/s, {eta} left at this rate; {} translated, {} dxc reused, {} cached, {} unsupported, {} failed; {} running",
+                    100.0 * n as f64 / total as f64, stats.prewarmed.load(Ordering::Relaxed), stats.reused.load(Ordering::Relaxed),
+                    stats.cached.load(Ordering::Relaxed), stats.unsupported.load(Ordering::Relaxed), stats.failed.load(Ordering::Relaxed),
+                    running.load(Ordering::Relaxed)));
+            }
+        });
+        for _ in 0..workers {
+            scope.spawn(|| {
+                if stop.is_some() {
+                    idle_priority();
+                }
+                while std::time::Instant::now() < deadline
+                    && !stop.is_some_and(|s| s.load(Ordering::Acquire))
+                    && let Some((path, key, ext)) = jobs.get(next.fetch_add(1, Ordering::Relaxed))
+                {
+                    if next.load(Ordering::Relaxed) >= total {
+                        EXIT_TAKEN.store(true, Ordering::Relaxed);
+                    }
+                    // In-process compiles abandoned past their time still run and hold
+                    // memory (a4ba782): each one counts as a job until it ends.
+                    while (!room_for_programs(running.load(Ordering::Acquire) + crate::dxc::abandoned())
+                        || running.load(Ordering::Acquire) + crate::dxc::abandoned() >= workers
+                        || (stop.is_some() && title_waiting()))
+                        && !stop.is_some_and(|s| s.load(Ordering::Acquire))
+                        && !(tail_exit && tail.load(Ordering::Acquire)) {
+                        thread::sleep(Duration::from_millis(250));
+                    }
+                    // NEONBRIDGE_PREWARM_TAIL_EXIT: a job still waiting for room at the tail is left to the title.
+                    if tail_exit && tail.load(Ordering::Acquire) {
+                        stats.note("failed", "left to the title's request at the prewarm's end (NEONBRIDGE_PREWARM_TAIL_S)");
+                        stats.failed.fetch_add(1, Ordering::Relaxed);
+                        done.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    running.fetch_add(1, Ordering::AcqRel);
+                    prewarm_job(Some(key));
+                    // A panic inside one compile used to end its worker thread
+                    // without counting the job or the worker: the progress loop
+                    // then waited for `finished` forever (the last --prewarm sat
+                    // at 1704/1705 with fe9c9850's work dir left behind). It is a
+                    // failure of that program now. NEONBRIDGE_PREWARM_CATCH_PANIC=0
+                    // lets it unwind as before.
+                    let outcome = if std::env::var("NEONBRIDGE_PREWARM_CATCH_PANIC").as_deref() == Ok("0") {
+                        compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail))
+                    } else {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile(path, key, ext, tools, cache, scratch, prewarm_o0(), Some(&tail))))
+                            .unwrap_or_else(|panic| {
+                                let msg = panic.downcast_ref::<String>().cloned()
+                                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                                    .unwrap_or_else(|| "unknown panic".into());
+                                Outcome::Failed(format!("the launcher panicked compiling it: {msg}"))
+                            })
+                    };
+                    prewarm_job(None);
+                    note_times(&outcome, &key);
+                    running.fetch_sub(1, Ordering::AcqRel);
+                    let counter = match outcome {
+                        Outcome::Compiled(..) => &stats.prewarmed,
+                        Outcome::Reused(_) => &stats.reused,
+                        Outcome::Cached => &stats.cached,
+                        Outcome::Unsupported(m) => { stats.note("unsupported", &m); &stats.unsupported }
+                        Outcome::Failed(m) => {
+                            // Every failure named by key, so any one can be replayed
+                            // (the summary groups by reason only).
+                            println!("[launch] Xbox shader {key}: {m}");
+                            stats.note("failed", &m);
+                            &stats.failed
+                        }
+                    };
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    done.fetch_add(1, Ordering::Relaxed);
+                    EXIT_DONE.fetch_add(1, Ordering::Relaxed);
+                    let _ = fs::remove_file(scratch.join(format!("{key}.cso")));
+                }
+                if workers_done.fetch_add(1, Ordering::AcqRel) + 1 == workers {
+                    finished.store(true, Ordering::Release);
+                }
+            });
+        }
+    });
+    if stop.is_none() {
+        let mut meter = crate::progress::Meter::new(total);
+        meter.sample(done.load(Ordering::Relaxed));
+        crate::progress::report(label, &meter, 0.4, 0.6);
+    }
+    crate::progress::finish();
+    let n = done.load(Ordering::Relaxed);
+    if n < total {
+        say(format!("{label}: stopped at NEONBRIDGE_PREWARM_MAX_S with {n}/{total} done in {:.0} s; the other {} are translated when the title asks for them",
+            started.elapsed().as_secs_f64(), total - n));
+    } else {
+        say(format!("{label}: all {total} done in {:.0} s", started.elapsed().as_secs_f64()));
+    }
+    say(format!("{label}: {}", job_peaks()));
+    say(format!("{label}: {}", job_times(workers)));
+    {
+        let stuck = PREWARM_STUCK.lock().unwrap_or_else(|e| e.into_inner());
+        if !stuck.is_empty() {
+            say(format!("{label}: {} program(s) ended by the watchdog (NEONBRIDGE_PREWARM_JOB_S): {}", stuck.len(),
+                stuck.iter().map(|(k, s)| format!("{k} ({s} s)")).collect::<Vec<_>>().join(", ")));
+        }
+    }
+    let _ = fs::remove_dir_all(scratch);
+}
+
+/// Whether the prewarm skips dxc's -O1 pass (see compile). It was opt-in
+/// (0bc73ad) until an -O1 upgrade path existed: -O0 DXIL runs slower on the
+/// GPU. The upgrade drainer (dxil_upgrade, `--drain-upgrades`) now recompiles
+/// every -O0 program at -O1 in the background and swaps it in, so the
+/// prewarm compiles -O0 by default: the test169 prewarm spent 99% of its
+/// time in -O1 passes of up to 120 s (41 s a compile, one timed out) for
+/// DXIL the driver optimises again. With the upgrade off
+/// (NEONBRIDGE_DXC_UPGRADE=0) it keeps -O1. NEONBRIDGE_PREWARM_DXC_O0=0
+/// keeps -O1 first.
+fn prewarm_o0() -> bool {
+    match std::env::var("NEONBRIDGE_PREWARM_DXC_O0").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => crate::dxil_upgrade::enabled(),
+    }
+}
+
+/// Parallel translations (xshader, then dxc) for the prewarm and for the
+/// title's requests. The prewarm runs before the game starts, so it takes
+/// every core but two (test143: 8 of 16 threads gave about 1.8 programs a
+/// second, ten minutes for a changed translator). While the game runs the
+/// title needs the cores, so its requests keep at most 8 as before.
+/// NEONBRIDGE_SHADER_THREADS sets both.
+fn worker_counts() -> (usize, usize) {
+    if let Some(n) = std::env::var("NEONBRIDGE_SHADER_THREADS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n > 0) {
+        return (n, n);
+    }
+    let cores = thread::available_parallelism().map_or(4, |n| n.get());
+    (cores.saturating_sub(2).max(2), cores.clamp(2, 8))
+}
+
+/// How long the prewarm may hold the launch, both passes together
+/// (NEONBRIDGE_PREWARM_MAX_S, 600; 0 no limit). After an xshader change every
+/// cached translation is stale and the full archive is ~80k programs: test142
+/// sat 15 minutes in the prewarm with no output and the game not started.
+fn prewarm_deadline() -> std::time::Instant {
+    let secs = std::env::var("NEONBRIDGE_PREWARM_MAX_S").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(600);
+    let secs = if secs == 0 { 10 * 365 * 24 * 3600 } else { secs };
+    std::time::Instant::now() + Duration::from_secs(secs)
+}
+
+impl Worker {
+    /// Create the session (`session_dir`, where the title publishes requests) and serve it.
+    pub fn start(tools: Tools, cache_root: PathBuf, session_dir: PathBuf, log: impl Fn(String) + Send + Sync + 'static)
+        -> Result<Self, String> {
+        let requests = session_dir.join("requests");
+        fs::create_dir_all(&requests).map_err(|e| format!("{}: {e}", requests.display()))?;
+        // Outside the session: Sandboxie forces programs started from a box folder into the box.
+        let private = cache_root.join(format!("xshader-{}", std::process::id()));
+        let (tools, cache) = bind_cache(&tools, &cache_root, &private)?;
+        let switches = xshader_switches();
+        if !switches.is_empty() {
+            log(format!("shader cache keyed by the xshader switches {}", switches.join(" ")));
+        }
+        let id = cache.file_name().unwrap().to_string_lossy().into_owned();
+        fs::write(session_dir.join("compiler-id.tmp"), &id)
+            .and_then(|_| fs::rename(session_dir.join("compiler-id.tmp"), session_dir.join("compiler-id")))
+            .map_err(|e| e.to_string())?;
+        // d3d12_xs counts this process (and its xshader and dxc) toward its compile ceiling.
+        let _ = fs::write(session_dir.join("worker-pid"), std::process::id().to_string());
+        let stop = Arc::new(AtomicBool::new(false));
+        let stats = Arc::new(Stats::default());
+        let (prewarm_workers, workers) = worker_counts();
+        log(format!("shader workers: {prewarm_workers} for the prewarm, {workers} while the game runs (NEONBRIDGE_SHADER_THREADS sets both)"));
+        let archive = cache_root.join("requests");
+        let _ = fs::create_dir_all(&archive);
+        // test113-116 all said "0 prewarmed, N compiled, 0 from cache": runs
+        // set TUXBOX_PREWARM=0 (the full archive is ~80k programs) and xshader
+        // changed between runs, so each run started on an empty cache dir and
+        // the world's pipelines waited on hundreds of compiles. The programs
+        // the title asked for before (a few hundred) are translated first,
+        // whatever TUXBOX_PREWARM says; with an unchanged toolchain they are
+        // cache hits. NEONBRIDGE_PREWARM_SEEN=0 turns it off.
+        let deadline = prewarm_deadline();
+        // Tests start at once (user order): outside --prewarm the seen prewarm
+        // no longer holds the launch. It runs in the background thread below,
+        // at idle priority and paused while the title waits on a shader, and
+        // the title's own requests compile at -O0 the moment it asks (the
+        // upgrade queue raises them to -O1 between runs).
+        // NEONBRIDGE_BLOCKING_PREWARM=1 prewarms before the game as before.
+        let blocking = PREWARM_ONLY.load(Ordering::Relaxed) || std::env::var("NEONBRIDGE_BLOCKING_PREWARM").as_deref() == Ok("1");
+        let _ = URGENT_DIR.set(session_dir.join("urgent"));
+        let seen_on = std::env::var("NEONBRIDGE_PREWARM_SEEN").as_deref() != Ok("0");
+        if seen_on && blocking {
+            let seen = seen_requests(&cache_root, &archive);
+            seen_prewarm(&tools, &cache, &archive, &private.join("prewarm-seen"), prewarm_workers, &stats, &seen, deadline, &log, None);
+        }
+        // TUXBOX_PREWARM=0 serves the title's requests at once, without
+        // building the archive (~80k programs) in the background.
+        let full = std::env::var("TUXBOX_PREWARM").as_deref() != Ok("0");
+        let log = Arc::new(log);
+        // -O0 DXIL from the prewarm (and from before) is recompiled at -O1 while the game runs.
+        if let Some(dxil) = tools.dxil.clone() {
+            let log = log.clone();
+            crate::dxil_upgrade::start(tools.dxc.clone(), tools.defines.clone(), dxil, move |line| log(line));
+        }
+        let tools = Arc::new(tools);
+        let seen_later = (seen_on && !blocking).then(|| seen_requests(&cache_root, &archive));
+        let background = (full || seen_later.is_some()).then(|| {
+            let (tools, cache, archive, scratch, stats, log, stop) =
+                (tools.clone(), cache.clone(), archive.clone(), private.join("prewarm"), stats.clone(), log.clone(), stop.clone());
+            let seen_scratch = private.join("prewarm-seen");
+            // Half the game-time workers: the title's own requests keep the rest.
+            let n = workers.div_ceil(2).max(1);
+            thread::Builder::new().name("shader-prewarm".into()).spawn(move || {
+                let forever = std::time::Instant::now() + Duration::from_secs(10 * 365 * 24 * 3600);
+                if let Some(seen) = &seen_later {
+                    // test159 printed no seen-prewarm line at all: say that it starts, and with how many.
+                    println!("[launch] seen prewarm in the background: {} programs the title asked for before (NEONBRIDGE_BLOCKING_PREWARM=1 waits for them)", seen.len());
+                    seen_prewarm(&tools, &cache, &archive, &seen_scratch, n, &stats, seen, forever, &*log, Some(&stop));
+                }
+                if !full || stop.load(Ordering::Acquire) {
+                    return;
+                }
+                prewarm(&tools, &cache, &archive, &scratch, n, &stats, None, "full prewarm in the background (TUXBOX_PREWARM=0 skips)", forever, &*log, Some(&stop));
+            }).ok()
+        }).flatten();
+        let (s, st) = (stop.clone(), stats.clone());
+        let handle = thread::Builder::new().name("shader-worker".into()).spawn(move || {
+            let busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>> = Default::default();
+            let active = Arc::new(AtomicUsize::new(0));
+            // test110: a title thread waiting on one translation sat behind
+            // hundreds of background requests in directory order. A key the
+            // title waits on has a marker in urgent/ (d3d12_xs writes it);
+            // those requests go first, and a scan stops to start over as soon
+            // as one appears. NEONBRIDGE_URGENT_SHADERS=0 keeps directory order.
+            let urgent_dir = session_dir.join("urgent");
+            let urgent_on = std::env::var("NEONBRIDGE_URGENT_SHADERS").as_deref() != Ok("0");
+            let urgent_keys = |busy: &std::collections::HashSet<String>| -> Vec<String> {
+                if !urgent_on { return Vec::new(); }
+                // A marker whose request is gone (served before the marker was
+                // written) is removed, or it would stop every scan for good.
+                fs::read_dir(&urgent_dir).map(|d| d.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|k| {
+                        let pending = ["dxbc", "stencil", "link", "quadmask", "ours"].iter().any(|x| requests.join(format!("{k}.{x}")).exists());
+                        if !pending { let _ = fs::remove_file(urgent_dir.join(k)); }
+                        pending
+                    })
+                    .filter(|k| !busy.iter().any(|n| n.rsplit_once('.').is_some_and(|(b, _)| b == k)))
+                    .collect()).unwrap_or_default()
+            };
+            while !s.load(Ordering::Acquire) {
+                let mut idle = true;
+                if let Ok(entries) = fs::read_dir(&requests) {
+                    let mut entries: Vec<_> = entries.flatten().collect();
+                    let first = urgent_keys(&busy.lock().unwrap());
+                    if !first.is_empty() {
+                        entries.sort_by_key(|e| {
+                            let name = e.file_name().to_string_lossy().into_owned();
+                            !first.iter().any(|k| name.rsplit_once('.').is_some_and(|(b, _)| b == k))
+                        });
+                    }
+                    for entry in entries {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        let path = entry.path();
+                        let Some((key, ext)) = valid_request(&name).map(|(k, e)| (k.to_owned(), e.to_owned())) else {
+                            if !name.ends_with(".tmp") { remove_request(&path); }
+                            continue;
+                        };
+                        if !busy.lock().unwrap().insert(name.clone()) {
+                            continue;
+                        }
+                        idle = false;
+                        let mine = name.rsplit_once('.').map_or("", |(k, _)| k).to_owned();
+                        let mut rescan = false;
+                        // A request a title thread waits on is never held by the ceiling.
+                        let urgent = first.contains(&key);
+                        while active.load(Ordering::Acquire) >= workers
+                            || (!urgent && !room_for_programs(active.load(Ordering::Acquire)))
+                        {
+                            thread::sleep(Duration::from_millis(5));
+                            if urgent_keys(&busy.lock().unwrap()).iter().any(|k| *k != mine) {
+                                rescan = true;
+                                break;
+                            }
+                        }
+                        if rescan {
+                            busy.lock().unwrap().remove(&name);
+                            break;
+                        }
+                        // The listing is a snapshot: a request another worker
+                        // finished meanwhile (its file removed, its name out of
+                        // `busy`) was taken again and failed reading a file that
+                        // was gone, and its `.failed` marker told the title to give
+                        // up on a shader that had compiled (test167: 13 "cannot find
+                        // the file" failures, 47 prepared pixel shaders missing).
+                        // NEONBRIDGE_REQUEST_RECHECK=0 takes it as before.
+                        if !path.exists() && std::env::var("NEONBRIDGE_REQUEST_RECHECK").as_deref() != Ok("0") {
+                            busy.lock().unwrap().remove(&name);
+                            continue;
+                        }
+                        if first.contains(&key) {
+                            // test111 had no line showing whether urgent requests were served.
+                            static SERVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                            let n = SERVED.fetch_add(1, Ordering::Relaxed) + 1;
+                            if n <= 8 || n.is_power_of_two() {
+                                log(format!("urgent Xbox shader {key}: a title thread waits on it, served ahead of the queue ({n} so far; NEONBRIDGE_URGENT_SHADERS=0 off)"));
+                            }
+                        }
+                        active.fetch_add(1, Ordering::AcqRel);
+                        archive_request(&path, &name, &archive);
+                        let (tools, cache, session, st, log, busy, active) =
+                            (tools.clone(), cache.clone(), session_dir.clone(), st.clone(), log.clone(), busy.clone(), active.clone());
+                        thread::spawn(move || {
+                            let outcome = compile(&path, &key, &ext, &tools, &cache, &session, !blocking, None);
+                            match &outcome {
+                                Outcome::Compiled(xs, dxc) => {
+                                    // Measures whether dxc dominates (a direct DXIL writer would only save the dxc part).
+                                    st.compiled.fetch_add(1, Ordering::Relaxed);
+                                    log(format!("compiled Xbox shader {key} (xshader {xs} ms, dxc {dxc} ms)"));
+                                }
+                                Outcome::Reused(xs) => {
+                                    let n = st.reused.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if n <= 8 || n.is_power_of_two() {
+                                        log(format!("Xbox shader {key}: xshader {xs} ms, its HLSL compiled before: dxc skipped ({n} so far, {} of them matched only without comments and spacing; NEONBRIDGE_DXIL_REUSE=0 off)",
+                                            NORMALISED_REUSES.load(Ordering::Relaxed)));
+                                    }
+                                }
+                                Outcome::Cached => { st.cached.fetch_add(1, Ordering::Relaxed); }
+                                Outcome::Unsupported(m) => { st.unsupported.fetch_add(1, Ordering::Relaxed); log(format!("Xbox shader {key}: unsupported: {m}")); }
+                                Outcome::Failed(m) => { st.failed.fetch_add(1, Ordering::Relaxed); log(format!("Xbox shader {key}: {m}")); }
+                            }
+                            if matches!(outcome, Outcome::Unsupported(_) | Outcome::Failed(_)) {
+                                // The reply carries the reason on one line (NEONBRIDGE_FAILED_REASON=0
+                                // writes it empty): test182's 12 title waits logged "no reason
+                                // recorded" while the reason (dxc: shared memory 32776 > 32768) sat
+                                // only in the launcher log.
+                                let why = match &outcome {
+                                    Outcome::Unsupported(m) => format!("unsupported: {m}"),
+                                    Outcome::Failed(m) => m.clone(),
+                                    _ => String::new(),
+                                };
+                                let why = if std::env::var("NEONBRIDGE_FAILED_REASON").as_deref() == Ok("0") { String::new() }
+                                    else { why.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("; ") };
+                                let _ = fs::write(session.join(format!("{key}.failed")), why.as_bytes());
+                                // Keep refused programs as a corpus for translator work offline.
+                                if ext == "dxbc" && let Some(root) = cache.parent() {
+                                    let refused = root.join("refused");
+                                    let _ = fs::create_dir_all(&refused);
+                                    let _ = fs::copy(&path, refused.join(format!("{key}.dxbc")));
+                                }
+                            }
+                            remove_request(&path);
+                            let _ = fs::remove_file(session.join("urgent").join(&key));
+                            busy.lock().unwrap().remove(&name);
+                            active.fetch_sub(1, Ordering::AcqRel);
+                        });
+                    }
+                }
+                if idle {
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+            while active.load(Ordering::Acquire) > 0 {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }).map_err(|e| e.to_string())?;
+        Ok(Self { stop, background, handle: Some(handle), stats, private })
+    }
+
+    pub fn stop(mut self) -> Arc<Stats> {
+        self.stop.store(true, Ordering::Release);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+        // The background prewarm publishes into its scratch under `private`:
+        // removing it under a running job failed that job's publish (test167,
+        // "publish to xshader-<pid>/prewarm-seen: cannot find the path"). Give
+        // it 10 s to stop taking work, and leave the folder if it is still busy.
+        let started = std::time::Instant::now();
+        let finished = loop {
+            match &self.background {
+                Some(b) if !b.is_finished() && started.elapsed() < Duration::from_secs(10) => thread::sleep(Duration::from_millis(50)),
+                Some(b) => break b.is_finished(),
+                None => break true,
+            }
+        };
+        if finished {
+            let _ = fs::remove_dir_all(&self.private);
+        }
+        self.stats.clone()
+    }
+}
+

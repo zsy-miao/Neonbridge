@@ -1,0 +1,51 @@
+{
+  "shader": "FSubsurfaceIndirectDispatchSetupCS / SetupIndirectCS",
+  "archive_entry": 856,
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "cooked_fnv1a64": "f86e702d691e9da6",
+  "cooked_sha256": "26e80fcef4b6cf6e28a7e6505af62e3ccfa2a09daf4ae16433eae0d61d3612df",
+  "guest_slot": 62,
+  "size": [
+    16,
+    16
+  ],
+  "workgroup": [
+    8,
+    8,
+    1
+  ],
+  "source_isa_instructions": 200,
+  "source_isa_bytes": 1104,
+  "first_election": "0x2f0",
+  "second_election": "0x3b8",
+  "test_inputs": "Four qualifying pixels with material IDs 5/9 in three groups. Checkerboard taps, independent depth dithering and viewport guards.",
+  "expected_allocations": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      1,
+      1
+    ]
+  ],
+  "initial_count": 1,
+  "pixel_tolerance": 1e-05,
+  "readback": {
+    "adapter": "10de:2705",
+    "capacity_5_channels": "1024",
+    "capacity_5_counter": "4",
+    "capacity_5_valid_records": "1",
+    "capacity_1_channels": "1024",
+    "capacity_1_counter": "4",
+    "capacity_1_valid_records": "1"
+  },
+  "guest_sha256": "eacf74b73a404063ec57f5688afd50e9fb41a59d5c7bc6bbbff6132e5691794d",
+  "provider_sha256": "8903dddb8cecf2f1578bbe5dc7bc3a5c248ada77dc7ae6df7006a57f5b2f2a72",
+  "patch_sha256": "4a585abc80e79fb938b631e8b6b4d1c09c229d709c054cf3f44af3aa6baa0f83",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+}

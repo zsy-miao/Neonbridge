@@ -1,0 +1,159 @@
+{
+  "scope": "Frosty linked-list hair visibility compaction via Xbox compute slot 62. On both GPUs every case matched the CPU model for counts, depth order, packed records, coordinates, coverage and guard words.",
+  "fixture": "tools/check_frosty_hair_visibility_single.py --linked-list",
+  "cases": [
+    "empty list",
+    "sparse one-node list",
+    "two-node list in reverse output order",
+    "35-node lists overflowing the 8-, 16- or 32-node capacity"
+  ],
+  "velocity_cases": "Six shaders write a sixth image in RG32F. We checked both signed velocity components after averaging, selecting the peak magnitude, and evaluating mode 2, which retains the initial zero vector for finite depths. Relative/absolute velocity comparison tolerance 1e-6.",
+  "per_dispatch": {
+    "pixels_checked": 64,
+    "record_and_coordinate_slots_checked": 512
+  },
+  "dispatches_per_adapter": 54,
+  "adapters": [
+    "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+    "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+  ],
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "xshader_sha256": "a14ec6fd32c847539587b153ff73c7e299a7428d429aea73ca57d9755c9f3a5b",
+  "provider_sha256": "08ffeb035220c40445858966448ea60c5746856de4a93c8de96d5f6fd6dc8ec9",
+  "guest_sha256": "017660e432d2299bb119b2011a359809c4ccfde02b6196758b960a38ab012317",
+  "entries": {
+    "977": {
+      "group": [
+        8,
+        4,
+        1
+      ],
+      "retained_nodes_per_pixel": 16,
+      "outputs_checked": 5,
+      "cooked_sha256": "606d6db2cb579a1890371e9b8db187975c72afb1f1383e928244bfe4003b0204",
+      "dxil_sha256": "e5c30e7033d87cc6154937ef378eb1be6384bb5e1df45af7221b363d95e09a40"
+    },
+    "978": {
+      "group": [
+        8,
+        4,
+        1
+      ],
+      "retained_nodes_per_pixel": 32,
+      "outputs_checked": 6,
+      "cooked_sha256": "5e9fc68a16ca959516c2a0b5bbce62c374cc307da14224b080155c2296aa9ab5",
+      "dxil_sha256": "c21f38c80f68a36bc7f83a46cca2304e2a51a0e05b1493bb83a1be2189980a13"
+    },
+    "981": {
+      "group": [
+        8,
+        4,
+        1
+      ],
+      "retained_nodes_per_pixel": 32,
+      "outputs_checked": 5,
+      "cooked_sha256": "30ffac7df80e9f748a01f5cdc7e8e822b8d73639413c7fb9a2ce214b2bad524f",
+      "dxil_sha256": "742a6ebab5454cd0737a997795a33887ab10b1e7ed41be2c209378291fb3662a"
+    },
+    "984": {
+      "group": [
+        8,
+        4,
+        1
+      ],
+      "retained_nodes_per_pixel": 8,
+      "outputs_checked": 6,
+      "cooked_sha256": "80b7fe132f20ec8df1358eac0b4580a3af41e1db07f79b06b6be527d53625571",
+      "dxil_sha256": "f1685dc051092dcd97ae18cda553e2b1e63ca78a262164040afab2933ee26494"
+    },
+    "986": {
+      "group": [
+        8,
+        8,
+        1
+      ],
+      "retained_nodes_per_pixel": 32,
+      "outputs_checked": 6,
+      "cooked_sha256": "561136aa72421ee6faa5ce54a02218dfac236e05ea74db5e5cd84842fd9a0858",
+      "dxil_sha256": "c42acde6a478e61fe9e089ea0b608ca23f5a3ae33a3ad1d5773258e296fa41cf"
+    },
+    "992": {
+      "group": [
+        8,
+        8,
+        1
+      ],
+      "retained_nodes_per_pixel": 8,
+      "outputs_checked": 6,
+      "cooked_sha256": "d9d70ff972d5c7aaacd70b8088be34659c0aa50d46e266fe028a33c6e93341a3",
+      "dxil_sha256": "75f2cb1854ddaabb04bcedfa50c83061298461e5eab626459bfca26c0de34eb6"
+    },
+    "993": {
+      "group": [
+        8,
+        4,
+        1
+      ],
+      "retained_nodes_per_pixel": 16,
+      "outputs_checked": 6,
+      "cooked_sha256": "c1e0da293b7aa55dae0652a41b1260785b5687dfcfe5d3c413c59e95ab9bf374",
+      "dxil_sha256": "21b50a58bf7ae3d76278c4f9897552f9e920ed04538fe1e36468d6a208da8c95"
+    },
+    "994": {
+      "group": [
+        8,
+        8,
+        1
+      ],
+      "retained_nodes_per_pixel": 8,
+      "outputs_checked": 5,
+      "cooked_sha256": "7c06c970580eeba7dbb2e6323b7cf4b0db061b682c221232120ff5bb2cba880c",
+      "dxil_sha256": "1b4c796bcd604207cb89b67211a5e7f52e3a6238fa9af7d98d921682bf043683"
+    },
+    "995": {
+      "group": [
+        8,
+        4,
+        1
+      ],
+      "retained_nodes_per_pixel": 8,
+      "outputs_checked": 5,
+      "cooked_sha256": "8033c0b7f1bbe12511a9ca06bfce3674d25c7730b485ae4b414f268144914dde",
+      "dxil_sha256": "d64c553cfe5cc0252f06901ff8946378dc2e2d2b36cd030a69ccc163d3ad330a"
+    },
+    "998": {
+      "group": [
+        8,
+        8,
+        1
+      ],
+      "retained_nodes_per_pixel": 16,
+      "outputs_checked": 5,
+      "cooked_sha256": "2b04d2a317ccc596409dd819e27112b979542db0dfe24f63ddeb493de623ddd7",
+      "dxil_sha256": "c78ab416c6fc82dec3bdbd9e44ec51c0149987e88d36c05ff0cbd07edb2ef938"
+    },
+    "1000": {
+      "group": [
+        8,
+        8,
+        1
+      ],
+      "retained_nodes_per_pixel": 32,
+      "outputs_checked": 5,
+      "cooked_sha256": "dd76d42d47d6347828e966ab5ce6e0b5f1bbc59dd6096808de0be57004d675bf",
+      "dxil_sha256": "ac9286d09899cf87ec2ecaa4ea86e341297d2c1fbb459d93d40cee8c74748ab1"
+    },
+    "1004": {
+      "group": [
+        8,
+        8,
+        1
+      ],
+      "retained_nodes_per_pixel": 16,
+      "outputs_checked": 6,
+      "cooked_sha256": "1546bfd751e7b13c2760bf1118c6dbf6a32504e9e57c9a85e6974e87026de183",
+      "dxil_sha256": "1c1501a150ce33f259ec5330ed5e540c2a7854d23de39d58448dbe6a1d7a834d"
+    }
+  }
+}

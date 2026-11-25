@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-draw.exe": "00fa0e12158a1ac5eff65599f1e1aea995bcac7efe3b64d06ec508feb90fdd5e",
+    "d3d12-smoke/d3d12_xs.dll": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-draw",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-draw PASS pci=10de:2705 red=36 blue=220"
+    },
+    {
+      "gate": "d3d12-stream",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-stream PASS pci=10de:2705 slot=86 bytes=712 indices=16,32 half-red-blue=18 magenta=18 blue=220 rejected=4"
+    }
+  ]
+}

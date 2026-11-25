@@ -1,0 +1,93 @@
+{
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "adapter": "1002:13c0",
+  "guest_sha256": "b3fa9981c5020f4b8dc8c9fc803fa7f1dcf0372a36234cf969b95bf3e57de28d",
+  "exit": 0,
+  "dispatch": [
+    3,
+    1,
+    1
+  ],
+  "input": "Two compacted jobs target pixels 1 and 0 respectively. Their direction texels contain opposite vectors. Six cube faces have distinct colors. The third output starts at -99.",
+  "results": "Each row contains output RGB, signed hit distance, dispatch-index hardware hit and miss counts and the cube face observed in the miss shader.",
+  "programs": {
+    "467": {
+      "state_sha256": "401e9773ec0e04edf5c890b8a48e2d600a44ef3e0a897235bb0a77d5033dd7d4",
+      "dxil_sha256": "39baf6d7eb9891607c46c1fb8a0d468ef1350cb71f95ce3ff8ccbe8831d93ecf",
+      "pixel_order": [
+        "6,7,8;-17;hits 0;misses 1;face 5",
+        "7,8,9;-17;hits 0;misses 1;face 4",
+        "-99,-99,-99;-99;hits 0;misses 0;face 0"
+      ]
+    },
+    "425": {
+      "state_sha256": "50f0cc278e1b8c49b3ada50345c3b9a0fd5d450c36a00f74743778e37d4ead35",
+      "dxil_sha256": "d9aa42524af3ff490c8b9bf9e7c32906d02fce12410843d04af7fabfcecf16b1",
+      "pixel_order": [
+        "6,7,8;-17;hits 0;misses 1;face 5",
+        "7,8,9;-17;hits 0;misses 1;face 4",
+        "-99,-99,-99;-99;hits 0;misses 0;face 0"
+      ]
+    },
+    "456": {
+      "state_sha256": "7368d6cccdae3101f9c642cfbbb7937f0d5dd94d35977a80c88e04a44e523342",
+      "dxil_sha256": "233ca658f4af6de2026692c7f06d868b05eafaef71f90e3f18775e8da12c979b",
+      "pixel_order": [
+        "6,7,8;-17;hits 0;misses 1;face 5",
+        "7,8,9;-17;hits 0;misses 1;face 4",
+        "-99,-99,-99;-99;hits 0;misses 0;face 0"
+      ],
+      "queue_records": [
+        "00000000,ffffffff,41880001,ffffffff,ffffffff",
+        "00000001,ffffffff,41880001,ffffffff,ffffffff",
+        "deadbeef,deadbeef,deadbeef,deadbeef,deadbeef"
+      ]
+    },
+    "421": {
+      "state_sha256": "cf54daf58bc2c4ad16ecb8bbfae3989efa28f5c84c69c995cece9b6472a72b9f",
+      "dxil_sha256": "2d05ad6f96dcc2b95d1c4363613bc6578ed0931fe3536af617f43a1917d57b18",
+      "pixel_order": [
+        "6,7,8;-17;hits 0;misses 1;face 5",
+        "7,8,9;-17;hits 0;misses 1;face 4",
+        "-99,-99,-99;-99;hits 0;misses 0;face 0"
+      ],
+      "queue_records": [
+        "00000000,ffffffff,41880001,ffffffff,ffffffff",
+        "00000001,ffffffff,41880001,ffffffff,ffffffff",
+        "deadbeef,deadbeef,deadbeef,deadbeef,deadbeef"
+      ]
+    },
+    "432": {
+      "state_sha256": "fd39efbb2590fe6d85f3ab34ac56573ae9589858a8716b5e2d60646b9b881e64",
+      "dxil_sha256": "471597199e8b282ac070da2bf52b611195fe8afd6d7a9875c91b7bfffeacdc38",
+      "pixel_order": [
+        "6,7,8;-17;hits 0;misses 1;face 5",
+        "7,8,9;-17;hits 0;misses 1;face 4",
+        "-99,-99,-99;-99;hits 0;misses 0;face 0"
+      ],
+      "queue_records": [
+        "00000000,abcd0001,abcd0002,abcd0003,abcd0004",
+        "00000001,abcd0006,abcd0007,abcd0008,abcd0009",
+        "deadbeef,deadbeef,deadbeef,deadbeef,deadbeef"
+      ]
+    }
+  },
+  "surface_case": {
+    "entry": 456,
+    "input": "Camera at (-1,0,0.125), packed minimum trace distance zero. The first queue entry aims at the triangle. Its destination is the second pixel. Empty surface-cache resources produce black on that hit.",
+    "ray_origin_tmin_direction_tcurrent": [
+      "-1,0,0.175,0.050000001;0,0,-1,0.175",
+      "-1,0,0.13500001,0.050000001;0,0,1,0.050000001"
+    ],
+    "pixel_order": [
+      "6,7,8;-17;hits 1;misses 0;face 0",
+      "0,0,0;-0.175;hits 0;misses 1;face 4",
+      "-99,-99,-99;-99;hits 0;misses 0;face 0"
+    ],
+    "queue_records": [
+      "00000000,00000000,3e333333,ffffffff,ffffffff",
+      "00000001,ffffffff,41880001,ffffffff,ffffffff",
+      "deadbeef,deadbeef,deadbeef,deadbeef,deadbeef"
+    ]
+  }
+}

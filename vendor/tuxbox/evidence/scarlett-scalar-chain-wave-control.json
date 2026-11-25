@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "scope": "Synthetic translated guarded scalar chains on RTX 4080 via existing provider and offline Proton; not retail shader coverage or gameplay",
+  "runs": [
+    {
+      "scope": "Synthetic native wave32 guarded reductions, instrumented inputs and outputs only",
+      "guest_wave_width": 32,
+      "variant": "chain",
+      "adapter": "10de:2704",
+      "proton": "1794497090 experimental-11.0-20261112-x86_64",
+      "guest_exit": 0,
+      "cases": 32,
+      "compared_words": 12288,
+      "result_words": 4096,
+      "input_and_guard_words": 8192,
+      "emitter_sha256": "af31aa93e2b79e99a148d0d007a664ee5a899411a4c833c9e7169afa384d44e3",
+      "shaders": {
+        "all": {
+          "hlsl_sha256": "752c42a0db883e31d8520f07ccd2fad18e673d695db843373ab4e0b4e5797532",
+          "dxil_sha256": "c5274faca3938b132961007ca8ee1659cae1a47c0e8de0c67aec9bfea451962c",
+          "profile": "cs_6_6"
+        }
+      },
+      "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+      "d3d12_dlls": {
+        "d3d12.dll": "fc2bbef02509fb11c334cc96dd211f64def94bb7b4eb82082a4808e6e0549543",
+        "d3d12core.dll": "9356501320114773be279506644aabd9a1717ff451d480ac802a4fd4e94b2576"
+      }
+    },
+    {
+      "scope": "Synthetic native wave32 guarded reductions, instrumented inputs and outputs only",
+      "guest_wave_width": 32,
+      "variant": "chain-zero",
+      "adapter": "10de:2704",
+      "proton": "1794497090 experimental-11.0-20261112-x86_64",
+      "guest_exit": 0,
+      "cases": 32,
+      "compared_words": 12288,
+      "result_words": 4096,
+      "input_and_guard_words": 8192,
+      "emitter_sha256": "af31aa93e2b79e99a148d0d007a664ee5a899411a4c833c9e7169afa384d44e3",
+      "shaders": {
+        "all": {
+          "hlsl_sha256": "cd533f130c94877af81cd3b6f9efe1f2dd8d1a51c9173cd07166ecd65efc7086",
+          "dxil_sha256": "be5d660327d5e9684a6dbd7eecb7d63b919e694ec82344253ec6cac8fb685ef7",
+          "profile": "cs_6_6"
+        }
+      },
+      "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+      "d3d12_dlls": {
+        "d3d12.dll": "fc2bbef02509fb11c334cc96dd211f64def94bb7b4eb82082a4808e6e0549543",
+        "d3d12core.dll": "9356501320114773be279506644aabd9a1717ff451d480ac802a4fd4e94b2576"
+      }
+    },
+    {
+      "scope": "Synthetic native wave64 guarded reductions, instrumented inputs and outputs only",
+      "guest_wave_width": 64,
+      "variant": "chain",
+      "adapter": "10de:2704",
+      "proton": "1794497090 experimental-11.0-20261112-x86_64",
+      "guest_exit": 0,
+      "cases": 70,
+      "compared_words": 26880,
+      "result_words": 8960,
+      "input_and_guard_words": 17920,
+      "emitter_sha256": "af31aa93e2b79e99a148d0d007a664ee5a899411a4c833c9e7169afa384d44e3",
+      "shaders": {
+        "values": {
+          "hlsl_sha256": "21b77de619495940d4f9253077c512c50b604c49a9257297bbbb8b138a89f3da",
+          "dxil_sha256": "d3516371e56c83f9a0c09359d2a9a1b5bed01d96bac5110ef84cb1a3056f53fe",
+          "profile": "cs_6_0"
+        },
+        "state": {
+          "hlsl_sha256": "673db316113ac2f081a9d17517d9800a0d13ada3480c7d586c14ca1fd341edb9",
+          "dxil_sha256": "259a7bb4dde9a837219a19e8bd4f2ab3c6b9e989cdaecef7c976213ea79badb0",
+          "profile": "cs_6_0"
+        }
+      },
+      "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+      "d3d12_dlls": {
+        "d3d12.dll": "fc2bbef02509fb11c334cc96dd211f64def94bb7b4eb82082a4808e6e0549543",
+        "d3d12core.dll": "9356501320114773be279506644aabd9a1717ff451d480ac802a4fd4e94b2576"
+      }
+    },
+    {
+      "scope": "Synthetic native wave64 guarded reductions, instrumented inputs and outputs only",
+      "guest_wave_width": 64,
+      "variant": "chain-zero",
+      "adapter": "10de:2704",
+      "proton": "1794497090 experimental-11.0-20261112-x86_64",
+      "guest_exit": 0,
+      "cases": 70,
+      "compared_words": 26880,
+      "result_words": 8960,
+      "input_and_guard_words": 17920,
+      "emitter_sha256": "af31aa93e2b79e99a148d0d007a664ee5a899411a4c833c9e7169afa384d44e3",
+      "shaders": {
+        "values": {
+          "hlsl_sha256": "5fb91c96e844e5af76ec96afd3f909697b85799c5db4b1f61f4e9d184108000f",
+          "dxil_sha256": "207523f66c0c211ee25e530b650329b1d7c3e7aa3496c51f72b120fedeb0def8",
+          "profile": "cs_6_0"
+        },
+        "state": {
+          "hlsl_sha256": "e6aa03a972b2c92942cc9c0850422acf0a84fc19aa11e63f18a17e9e25e0dd4f",
+          "dxil_sha256": "b42660bb4c217f5609c7ac12d5117ac67aebeec5bd34c7388c13709d681fb734",
+          "profile": "cs_6_0"
+        }
+      },
+      "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+      "d3d12_dlls": {
+        "d3d12.dll": "fc2bbef02509fb11c334cc96dd211f64def94bb7b4eb82082a4808e6e0549543",
+        "d3d12core.dll": "9356501320114773be279506644aabd9a1717ff451d480ac802a4fd4e94b2576"
+      }
+    }
+  ],
+  "total_cases": 204,
+  "total_compared_words": 78336,
+  "mismatches": 0,
+  "unit_tests": {
+    "shader_compiler": 90,
+    "dxbc": 18,
+    "python": 132
+  }
+}

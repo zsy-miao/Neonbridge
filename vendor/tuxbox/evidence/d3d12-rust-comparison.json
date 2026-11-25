@@ -1,0 +1,169 @@
+{
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "kernel": "7.3.4-1-cachyos",
+  "control_revision": "8214cd5",
+  "d3d12_sdk": "0x20002",
+  "control_dll_sha256": "d5b82f7376e6282170624bfd630175cea23f465665299caa1b9a16b3d45a7c24",
+  "rust_dll_sha256": "f4d5fe684f71ea0c8873e712df69d2c6b048a3449c05e78965480da19ee6eae4",
+  "exports": {
+    "D3D12SerializeRootSignature": {
+      "ordinal": 1,
+      "forwarder": "d3d12.D3D12SerializeRootSignature"
+    },
+    "D3D12XboxCreateDevice": {
+      "ordinal": 2
+    },
+    "IID_ID3D12Device": {
+      "ordinal": 3,
+      "guid": "189819f1-1db6-4b57-be54-1821339b85f7"
+    }
+  },
+  "guest_sha256": {
+    "d3d12-root-smoke.exe": "a65da9e46fb86eb84caaf2d60c9febe623199807b335e10c7a9c4655eda6a261",
+    "xbox-frame.exe": "9ad23181a99fc1bbc7e2b1fe54502374936d08e878c33a5a7d3175cdebb8b772",
+    "xbox-frame-negative.exe": "b3f5199f98508a1a2e844a3f9db2e377ea430e7698d34ec6cd4a0e59f51694e6",
+    "lanes.exe": "5ca022902cc584043ae48d74da53165dbafbdfe04fe503a995e591f5efb6e2b6"
+  },
+  "runs": [
+    {
+      "pci": "10de:2705",
+      "driver": "NVIDIA",
+      "provider": "1789159601 experimental-11.0-20260910b-x86_64",
+      "display": "Xvfb",
+      "matching_gates": [
+        {
+          "name": "root-signature",
+          "passed": true,
+          "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=10de:2705 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+        },
+        {
+          "name": "guest-command-list",
+          "passed": true,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+        },
+        {
+          "name": "guest-command-errors",
+          "passed": true,
+          "receipt": "xbox-frame-negative PASS pci=10de:2705 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+        },
+        {
+          "name": "guest-present",
+          "passed": true,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
+        },
+        {
+          "name": "lanes-package-replay",
+          "passed": true,
+          "receipt": "lanes-replay PASS pci=10de:2705 course=16/16 win=16/16 safe-miss=1 collision=1"
+        }
+      ]
+    },
+    {
+      "pci": "1002:13c0",
+      "driver": "Mesa RADV 26.2.6",
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "display": "Xvfb",
+      "matching_gates": [
+        {
+          "name": "root-signature",
+          "passed": true,
+          "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=1002:13c0 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+        },
+        {
+          "name": "guest-command-list",
+          "passed": true,
+          "receipt": "xbox-frame PASS pci=1002:13c0 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+        },
+        {
+          "name": "guest-command-errors",
+          "passed": true,
+          "receipt": "xbox-frame-negative PASS pci=1002:13c0 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+        },
+        {
+          "name": "guest-present",
+          "passed": false,
+          "receipt": "xbox-frame failed: queue slot 30 PresentX returned 0x80070057"
+        },
+        {
+          "name": "lanes-package-replay",
+          "passed": true,
+          "receipt": "lanes-replay PASS pci=1002:13c0 course=16/16 win=16/16 safe-miss=1 collision=1"
+        }
+      ]
+    },
+    {
+      "pci": "10de:2705",
+      "driver": "NVIDIA",
+      "provider": "1792432585 GE-Proton11-11",
+      "display": "Xvfb",
+      "matching_gates": [
+        {
+          "name": "root-signature",
+          "passed": true,
+          "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=10de:2705 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+        },
+        {
+          "name": "guest-command-list",
+          "passed": true,
+          "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+        },
+        {
+          "name": "guest-command-errors",
+          "passed": true,
+          "receipt": "xbox-frame-negative PASS pci=10de:2705 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+        },
+        {
+          "name": "lanes-package-replay",
+          "passed": true,
+          "receipt": "lanes-replay PASS pci=10de:2705 course=16/16 win=16/16 safe-miss=1 collision=1"
+        }
+      ],
+      "presentation": {
+        "first_pair": {
+          "rust": false,
+          "control": true
+        },
+        "same_display_repeats": [
+          {
+            "build": "rust",
+            "passed": false
+          },
+          {
+            "build": "control",
+            "passed": false
+          },
+          {
+            "build": "control",
+            "passed": true
+          },
+          {
+            "build": "rust",
+            "passed": true
+          }
+        ],
+        "observed_failure": "xbox-frame failed: screen colors on frame 1: 0/0xf5f5f5, expected 0xcb5b11/0xcb5b11"
+      }
+    }
+  ],
+  "frosty_pipeline_worker": {
+    "profile": "0x20004",
+    "proton": "1789159601 experimental-11.0-20260910b-x86_64",
+    "guest_provider_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "reference": "matrix-awakens/first-boot-pipelines.json",
+    "matched_pso_keys": [
+      "f35045efae4e54ca",
+      "fa22c60c026499ec",
+      "f11088fd594ce24b",
+      "24b602ef753766bf",
+      "03685e8d6eb0010c",
+      "d1c0de8406308908",
+      "952657336a99ad99"
+    ],
+    "archive_bytes": 1392,
+    "matching_archive_sha256": "33c9c2eabeac8e5cc9cf8ee1b107af92d2031d649c21a85b7ed12830396bf049",
+    "cold_and_forced_warm_pipeline_count": 7,
+    "receipt_reuse_helper_starts": 0
+  }
+}

@@ -1,0 +1,29 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -69,6 +69,10 @@
+     }
+     unsafe { *ppv = core::ptr::null_mut() };
+     let g = unsafe { &*riid };
++    if DEVICE_IIDS[5..].contains(g) {
++        record("d3d12_xs", "RasterDeviceProfile", &format!("declining device interface {}", guid_str(g)));
++        return E_NOINTERFACE;
++    }
+     if is_device_iid(g) || *g == IID_IUNKNOWN {
+         unsafe {
+             *ppv = this as *mut c_void;
+@@ -129,6 +133,15 @@
+     let rvt = unsafe { real_vtbl(real) };
+     let f: unsafe extern "system" fn(*mut c_void, u32, *mut c_void, u32) -> i32 =
+         unsafe { core::mem::transmute(*rvt.add(13)) };
++    if feature == 27 && size == 12 && !pdata.is_null() {
++        let hr = unsafe { f(real, feature, pdata, size) };
++        if hr == S_OK {
++            // OPTIONS5.RaytracingTier is the third 32-bit field.
++            unsafe { pdata.cast::<u32>().add(2).write(0); }
++            record("d3d12_xs", "RasterDeviceProfile", "OPTIONS5.RaytracingTier = NOT_SUPPORTED");
++        }
++        return hr;
++    }
+     let hr = unsafe { f(real, feature, pdata, size) };
+     if hr == S_OK {
+         return S_OK;

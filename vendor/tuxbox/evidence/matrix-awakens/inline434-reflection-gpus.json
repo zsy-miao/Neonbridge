@@ -1,0 +1,26 @@
+{
+  "scope": "Original global compute 434 through Xbox slot 62, the packaged root signature and t15 scene, compared against packaged ray generation 432 on a separate native TLAS. Both read an integer-packed far trace distance and independently initialized five-word job records.",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "7e01b49515fe44d8083e498b14823bd0ebc02e2c464bb1e85b0ba58c74b652c7",
+  "shaders": {
+    "434": {
+      "source_sha256": "22c246d69acb4d8f46f5b4397891d168feabf4210075e9b592d36ffcc5b0f2b7",
+      "dxil_sha256": "e3c5ccd7fe7fb71b00b2e35025fd91cfd099e85d233cf0ca274e746e60ebbf99"
+    },
+    "432": {
+      "source_sha256": "fd39efbb2590fe6d85f3ab34ac56573ae9589858a8716b5e2d60646b9b881e64",
+      "dxil_sha256": "471597199e8b282ac070da2bf52b611195fe8afd6d7a9875c91b7bfffeacdc38"
+    }
+  },
+  "cases": {
+    "reordered_sky": "colors 1, distances 1, records 1; rgb [6,7,8] [7,8,9]; distances -17,-17,-99; hit record 00000000,abcd0001,abcd0002,abcd0003,abcd0004",
+    "triangle_hit": "colors 1, distances 1, records 1; rgb [6,7,8] [0,0,0]; distances -17,-0.175,-99; hit record 00000000,abcd0001,abcd0002,abcd0003,abcd0004",
+    "excluded_near_mask": "colors 1, distances 1, records 1; rgb [6,7,8] [7,8,9]; distances -17,-17,-99; hit record 00000000,abcd0001,abcd0002,abcd0003,abcd0004"
+  },
+  "observations": "The signed distance was -0.175 for the opaque triangle in the 0x20 instance. The equivalent triangle in a 0x01 instance was excluded and returned -17 and sky RGB. The two active pixels were reversed in the queue. The adjacent pixel, all three distances and all 15 record words matched.",
+  "limits": "Opaque triangles, empty surface cache and test sky faces."
+}

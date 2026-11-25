@@ -1,0 +1,124 @@
+{
+  "runs": [
+    {
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "adapter_pci": "10de:2705",
+      "provider_sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+      "guest_sha256": "64d812b5e283ee24e7803b524f97067f42955a7635c671c33842559a0ed8200e",
+      "copy_iid": "30bc77b9-8379-4b25-95de-b8588c42275d",
+      "scope": "Standalone two-plane NV12 split using the retail method sequence, real GPU execution and readback",
+      "type": 3,
+      "device_create_slot": 73,
+      "device_placement_slot": 44,
+      "compact_slots": {
+        "close": 9,
+        "reset": 10,
+        "copy_texture_region": 12,
+        "resource_barrier": 15
+      },
+      "desktop_slots": {
+        "close": 9,
+        "reset": 10,
+        "copy_texture_region": 16,
+        "resource_barrier": 26
+      },
+      "extent": [
+        94,
+        38
+      ],
+      "guest_pitch": 256,
+      "guest_chroma_alias_width": 128,
+      "guest_chroma_alias_gpuva": "0x2600",
+      "luma_bytes_expected": 3572,
+      "luma_bytes_matched": 3572,
+      "chroma_bytes_expected": 1786,
+      "chroma_bytes_matched": 1786,
+      "caller_released_source_and_alias_before_submission": true,
+      "source": "Native ID3D12Resource created by the independent decoder-side device",
+      "destinations": "TuxBox guest resources",
+      "foreign_guest_rejected": true,
+      "stale_decoder_rejected": true,
+      "foreign_decoder_adapter_rejected": "1002:13c0"
+    },
+    {
+      "host": "1792432585 GE-Proton11-11",
+      "adapter_pci": "10de:2705",
+      "provider_sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+      "guest_sha256": "64d812b5e283ee24e7803b524f97067f42955a7635c671c33842559a0ed8200e",
+      "copy_iid": "30bc77b9-8379-4b25-95de-b8588c42275d",
+      "scope": "Standalone two-plane NV12 split using the retail method sequence, real GPU execution and readback",
+      "type": 3,
+      "device_create_slot": 73,
+      "device_placement_slot": 44,
+      "compact_slots": {
+        "close": 9,
+        "reset": 10,
+        "copy_texture_region": 12,
+        "resource_barrier": 15
+      },
+      "desktop_slots": {
+        "close": 9,
+        "reset": 10,
+        "copy_texture_region": 16,
+        "resource_barrier": 26
+      },
+      "extent": [
+        94,
+        38
+      ],
+      "guest_pitch": 256,
+      "guest_chroma_alias_width": 128,
+      "guest_chroma_alias_gpuva": "0x2600",
+      "luma_bytes_expected": 3572,
+      "luma_bytes_matched": 3572,
+      "chroma_bytes_expected": 1786,
+      "chroma_bytes_matched": 1786,
+      "caller_released_source_and_alias_before_submission": true,
+      "source": "Native ID3D12Resource created by the independent decoder-side device",
+      "destinations": "TuxBox guest resources",
+      "foreign_guest_rejected": true,
+      "stale_decoder_rejected": true,
+      "foreign_decoder_adapter_rejected": null
+    },
+    {
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "adapter_pci": "1002:13c0",
+      "provider_sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d",
+      "guest_sha256": "64d812b5e283ee24e7803b524f97067f42955a7635c671c33842559a0ed8200e",
+      "copy_iid": "30bc77b9-8379-4b25-95de-b8588c42275d",
+      "scope": "Standalone two-plane NV12 split using the retail method sequence, real GPU execution and readback",
+      "type": 3,
+      "device_create_slot": 73,
+      "device_placement_slot": 44,
+      "compact_slots": {
+        "close": 9,
+        "reset": 10,
+        "copy_texture_region": 12,
+        "resource_barrier": 15
+      },
+      "desktop_slots": {
+        "close": 9,
+        "reset": 10,
+        "copy_texture_region": 16,
+        "resource_barrier": 26
+      },
+      "extent": [
+        94,
+        38
+      ],
+      "guest_pitch": 256,
+      "guest_chroma_alias_width": 128,
+      "guest_chroma_alias_gpuva": "0x2600",
+      "luma_bytes_expected": 3572,
+      "luma_bytes_matched": 3572,
+      "chroma_bytes_expected": 1786,
+      "chroma_bytes_matched": 1786,
+      "caller_released_source_and_alias_before_submission": true,
+      "source": "Native ID3D12Resource created by the independent decoder-side device",
+      "destinations": "TuxBox guest resources",
+      "foreign_guest_rejected": true,
+      "stale_decoder_rejected": true,
+      "foreign_decoder_adapter_rejected": null
+    }
+  ]
+}

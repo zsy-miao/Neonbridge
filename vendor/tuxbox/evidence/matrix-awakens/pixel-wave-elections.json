@@ -1,0 +1,176 @@
+{
+  "scope": "Static pixel-shader EXEC election inventory; operation counts are a local 30-instruction window, not proof of data flow or rendering correctness.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "compiler_sha256": "cca5f0d8767d98482e805469ceabab4d15a55eca184138cf485602c6a6c94da6",
+  "programs_scanned": 1369,
+  "programs_with_elections": 5,
+  "programs": [
+    {
+      "index": 726,
+      "source_sha256": "b3e98668bc7c8209c8ac664964c14c3d241c185b9c527148870bb89347ba584f",
+      "elections": [
+        {
+          "offset": "0xabc",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 1,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        }
+      ],
+      "entry": "MeshSDFObjectCullPS"
+    },
+    {
+      "index": 727,
+      "source_sha256": "b9b030d1b9621f21fae6de0274f705b9d1f3a79a6419943ba27abd5c4ab35a2e",
+      "elections": [
+        {
+          "offset": "0x5c4",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 1,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        }
+      ],
+      "entry": "MeshSDFObjectCullForProbesPS"
+    },
+    {
+      "index": 730,
+      "source_sha256": "73ed0b82ec676be3ad54d7e67b3508647daaa5b8df1722f2735d10453a4a7cf1",
+      "elections": [
+        {
+          "offset": "0x954",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 1,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        }
+      ],
+      "entry": "MeshSDFObjectCullPS"
+    },
+    {
+      "index": 2409,
+      "source_sha256": "7792889499124ad29d7f0947bdecc4cedec8407cda4d493fdf26d7ecd435c78b",
+      "elections": [
+        {
+          "offset": "0x2f4",
+          "save_exec": 1,
+          "count_mask": 0,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 0,
+          "prefix_high": 1,
+          "read_lane": 1,
+          "permute_lane16": 1,
+          "conditional_branch": 1
+        },
+        {
+          "offset": "0x3b8",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 1,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        },
+        {
+          "offset": "0x1dc0",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 2,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        },
+        {
+          "offset": "0x1e40",
+          "save_exec": 1,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 0,
+          "prefix_low": 0,
+          "prefix_high": 1,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 3
+        }
+      ],
+      "entry": "MainPS"
+    },
+    {
+      "index": 2414,
+      "source_sha256": "4c2c8309ff59c858f71c1d567a04cc8b2b8adeb8f63fc0161cfd9be42c72098e",
+      "elections": [
+        {
+          "offset": "0x2f4",
+          "save_exec": 1,
+          "count_mask": 0,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 0,
+          "prefix_high": 1,
+          "read_lane": 1,
+          "permute_lane16": 1,
+          "conditional_branch": 1
+        },
+        {
+          "offset": "0x3b8",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 1,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        },
+        {
+          "offset": "0x29b0",
+          "save_exec": 2,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 1,
+          "prefix_low": 2,
+          "prefix_high": 2,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 2
+        },
+        {
+          "offset": "0x2a30",
+          "save_exec": 1,
+          "count_mask": 1,
+          "atomic_add": 1,
+          "read_first_lane": 0,
+          "prefix_low": 0,
+          "prefix_high": 1,
+          "read_lane": 0,
+          "permute_lane16": 0,
+          "conditional_branch": 3
+        }
+      ],
+      "entry": "MainPS"
+    }
+  ]
+}

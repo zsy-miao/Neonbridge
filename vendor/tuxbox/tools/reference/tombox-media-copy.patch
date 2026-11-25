@@ -1,0 +1,444 @@
+--- a/crates/compat/d3d12_xs/src/cmdlist_wrap.rs
++++ b/crates/compat/d3d12_xs/src/cmdlist_wrap.rs
+@@ -859,7 +859,7 @@
+         if *(p as *const usize) == SHIM_VT.as_ptr() as usize {
+             (*p.cast::<ListShim>()).real
+         } else {
+-            p
++            crate::media_copy::unwrap(p)
+         }
+     }
+ }
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -266,14 +266,20 @@
+     if node_mask == 0 {
+         node_mask = 1;
+     }
++    let compact = !riid.is_null() && unsafe { *riid == crate::media_copy::IID };
++    if compact && list_type != 3 {
++        if !ppv.is_null() { unsafe { ppv.write(core::ptr::null_mut()) }; }
++        return E_NOINTERFACE;
++    }
++    let host_iid = if compact { &crate::media_copy::HOST } else { riid };
+     let real = unsafe { (*this).real };
+     let f: unsafe extern "system" fn(*mut c_void, u32, u32, *mut c_void, *mut c_void, *const Guid, *mut *mut c_void) -> i32 =
+         unsafe { core::mem::transmute(*real_vtbl(real).add(12)) };
+-    let hr = unsafe { f(real, node_mask, list_type, alloc, init_state, riid, ppv) };
++    let hr = unsafe { f(real, node_mask, list_type, alloc, init_state, host_iid, ppv) };
+     if hr == S_OK && !ppv.is_null() {
+         // Hand the title a shim object (Xbox vtable layout + inert inline-buffer fields)
+         // instead of the real PC command list; see cmdlist_wrap.
+-        unsafe { *ppv = crate::cmdlist_wrap::wrap(*ppv, alloc, init_state) };
++        unsafe { *ppv = if compact { crate::media_copy::wrap(*ppv, alloc) } else { crate::cmdlist_wrap::wrap(*ppv, alloc, init_state) } };
+     }
+     record("d3d12_xs", "CreateCommandList", &format!("nodeMask={node_mask} type={list_type} -> hr={hr:#010x}"));
+     hr
+@@ -1621,6 +1627,7 @@
+         let res = unsafe { *ppv };
+         let addref: unsafe extern "system" fn(*mut c_void) -> u32 = unsafe { core::mem::transmute(*real_vtbl(res).add(1)) };
+         unsafe { addref(res) };
++        unsafe { crate::media_copy::tag_placement(res, &orig, va) };
+         crate::placed::register(res, crate::placed::Placed { va, desc: orig, init_state: pc_state });
+     }
+     hr
+--- a/crates/compat/d3d12_xs/src/lib.rs
++++ b/crates/compat/d3d12_xs/src/lib.rs
+@@ -17,6 +17,7 @@
+ mod barriers;
+ mod depth;
+ mod cmdlist_wrap;
++mod media_copy;
+ mod gxdk_edition;
+ mod shader_xlat;
+ mod present;
+--- /dev/null
++++ b/crates/compat/d3d12_xs/src/media_copy.rs
+@@ -0,0 +1,352 @@
++//! Frosty's compact Xbox COPY-list interface, used to split NV12 for Electra.
++use crate::device_wrap::Guid;
++use core::ffi::c_void;
++use core::sync::atomic::{AtomicU32, Ordering};
++use std::sync::OnceLock;
++
++pub(super) const IID: Guid = Guid {
++    d1: 0x30bc77b9,
++    d2: 0x8379,
++    d3: 0x4b25,
++    d4: [0x95, 0xde, 0xb8, 0x58, 0x8c, 0x42, 0x27, 0x5d],
++};
++pub(super) const HOST: Guid = Guid {
++    d1: 0x5b160d0f,
++    d2: 0xac1b,
++    d3: 0x4185,
++    d4: [0x8b, 0xa8, 0xb3, 0xae, 0x42, 0xa5, 0xa4, 0x55],
++};
++const UNKNOWN: Guid = Guid {
++    d1: 0,
++    d2: 0,
++    d3: 0,
++    d4: [0xc0, 0, 0, 0, 0, 0, 0, 0x46],
++};
++const OBJECT: Guid = Guid {
++    d1: 0xc4fec28f,
++    d2: 0x7966,
++    d3: 0x4e95,
++    d4: [0x9f, 0x94, 0xf4, 0x31, 0xcb, 0x56, 0xc3, 0xb8],
++};
++const CHILD: Guid = Guid {
++    d1: 0x905db94b,
++    d2: 0xa00c,
++    d3: 0x4140,
++    d4: [0x9d, 0xf5, 0x2b, 0x64, 0xca, 0x9e, 0xa3, 0x57],
++};
++const BASE: Guid = Guid {
++    d1: 0x7116d91c,
++    d2: 0xe7e4,
++    d3: 0x47ce,
++    d4: [0xb8, 0xc6, 0xec, 0x81, 0x68, 0xf4, 0x37, 0xe5],
++};
++const PLACEMENT: Guid = Guid {
++    d1: 0x2355f569,
++    d2: 0x610d,
++    d3: 0x48cc,
++    d4: [0xa4, 0x69, 0x43, 0x10, 0x52, 0xa7, 0xc3, 0x68],
++};
++const INVALID: i32 = 0x80070057u32 as i32;
++const POINTER: i32 = 0x80004003u32 as i32;
++const NO_INTERFACE: i32 = 0x80004002u32 as i32;
++
++#[repr(C)]
++struct CopyList {
++    vt: *const usize,
++    real: *mut c_void,
++    refs: AtomicU32,
++    error: i32,
++    nv12: *mut c_void,
++    chroma_va: u64,
++    uv_width: u64,
++    uv_height: u32,
++}
++type Object = *mut c_void;
++unsafe fn method<T: Copy>(obj: Object, index: usize) -> T {
++    let ptr = *(*obj.cast::<*const usize>()).add(index);
++    core::mem::transmute_copy(&ptr)
++}
++unsafe fn reference(obj: Object, slot: usize) {
++    let f: unsafe extern "system" fn(Object) -> u32 = method(obj, slot);
++    f(obj);
++}
++impl CopyList {
++    unsafe fn clear_plane(&mut self) {
++        if !self.nv12.is_null() {
++            reference(self.nv12, 2);
++            self.nv12 = core::ptr::null_mut();
++        }
++    }
++}
++unsafe extern "system" fn query(this: *mut CopyList, iid: *const Guid, out: *mut Object) -> i32 {
++    if out.is_null() {
++        return POINTER;
++    }
++    *out = core::ptr::null_mut();
++    if iid.is_null() {
++        return POINTER;
++    }
++    if [&IID, &UNKNOWN, &OBJECT, &CHILD, &BASE]
++        .into_iter()
++        .any(|id| *iid == *id)
++    {
++        add_ref(this);
++        *out = this.cast();
++        0
++    } else {
++        NO_INTERFACE
++    }
++}
++unsafe extern "system" fn add_ref(this: *mut CopyList) -> u32 {
++    (*this).refs.fetch_add(1, Ordering::Relaxed) + 1
++}
++unsafe extern "system" fn release(this: *mut CopyList) -> u32 {
++    let old = (*this).refs.fetch_sub(1, Ordering::Release);
++    if old == 1 {
++        core::sync::atomic::fence(Ordering::Acquire);
++        let mut list = Box::from_raw(this);
++        list.clear_plane();
++        reference(list.real, 2);
++    }
++    old - 1
++}
++macro_rules! forward {
++    ($name:ident,$index:expr) => {
++        #[unsafe(naked)]
++        unsafe extern "system" fn $name(){
++            core::arch::naked_asm!("mov rcx,[rcx+8]","mov rax,[rcx]","jmp qword ptr [rax+{offset}]",offset=const $index*8);
++        }
++    }
++}
++forward!(private_data, 3);
++forward!(set_data, 4);
++forward!(set_interface, 5);
++forward!(set_name, 6);
++forward!(get_device, 7);
++forward!(get_type, 8);
++unsafe extern "system" fn close(this: &mut CopyList) -> i32 {
++    if this.error != 0 {
++        return this.error;
++    }
++    let f: unsafe extern "system" fn(Object) -> i32 = method(this.real, 9);
++    f(this.real)
++}
++unsafe extern "system" fn reset(this: &mut CopyList, alloc: Object, pso: Object) -> i32 {
++    let f: unsafe extern "system" fn(Object, Object, Object) -> i32 = method(this.real, 10);
++    let hr = f(this.real, alloc, pso);
++    if hr >= 0 {
++        this.clear_plane();
++        this.error = if crate::transient::set_allocator(this.real, alloc) {
++            0
++        } else {
++            INVALID
++        };
++    }
++    hr
++}
++unsafe extern "system" fn unsupported(this: &mut CopyList) -> i32 {
++    this.error = compat_common::E_NOTIMPL;
++    this.error
++}
++#[repr(C, align(8))]
++struct Desc([u8; 56]);
++impl Desc {
++    unsafe fn read(resource: Object) -> Self {
++        let mut result = Self([0; 56]);
++        let f: unsafe extern "system" fn(Object, *mut Desc) -> *mut Desc = method(resource, 10);
++        f(resource, &mut result);
++        result
++    }
++    fn width(&self) -> u64 {
++        u64::from_le_bytes(self.0[16..24].try_into().unwrap())
++    }
++    fn height(&self) -> u32 {
++        u32::from_le_bytes(self.0[24..28].try_into().unwrap())
++    }
++    fn format(&self) -> u32 {
++        u32::from_le_bytes(self.0[32..36].try_into().unwrap())
++    }
++    fn array(&self) -> u16 {
++        u16::from_le_bytes(self.0[28..30].try_into().unwrap())
++    }
++    fn mips(&self) -> u16 {
++        u16::from_le_bytes(self.0[30..32].try_into().unwrap())
++    }
++}
++#[repr(C, align(8))]
++struct Location {
++    resource: Object,
++    kind: u32,
++    padding: u32,
++    payload: [u8; 32],
++}
++impl Location {
++    fn index(&self) -> u32 {
++        u32::from_le_bytes(self.payload[..4].try_into().unwrap())
++    }
++}
++const _: () = assert!(size_of::<Location>() == 48);
++unsafe extern "system" fn copy(
++    this: &mut CopyList,
++    dst: *const Location,
++    x: u32,
++    y: u32,
++    z: u32,
++    source: *const Location,
++    region: *const u32,
++) {
++    if dst.is_null()
++        || source.is_null()
++        || (*dst).resource.is_null()
++        || (*source).resource.is_null()
++    {
++        this.error = POINTER;
++        return;
++    }
++    let f: unsafe extern "system" fn(
++        Object,
++        *const Location,
++        u32,
++        u32,
++        u32,
++        *const Location,
++        *const u32,
++    ) = method(this.real, 16);
++    let src = &*source;
++    let dst = &*dst;
++    if src.kind != 0 || dst.kind != 0 {
++        this.clear_plane();
++        f(this.real, dst, x, y, z, src, region);
++        return;
++    }
++    let sd = Desc::read(src.resource);
++    let dd = Desc::read(dst.resource);
++    let mut va = 0u64;
++    let mut size = 8u32;
++    let get: unsafe extern "system" fn(Object, &Guid, &mut u32, &mut u64) -> i32 =
++        method(src.resource, 3);
++    let placed_uv =
++        sd.format() == 49 && get(src.resource, &PLACEMENT, &mut size, &mut va) == 0 && size == 8;
++    if placed_uv && !this.nv12.is_null() {
++        if va != this.chroma_va
++            || src.index() != 0
++            || dd.format() != 49
++            || sd.width() != this.uv_width
++            || sd.height() != this.uv_height
++        {
++            this.error = INVALID;
++            return;
++        }
++        let mut plane = Location {
++            resource: this.nv12,
++            kind: 0,
++            padding: 0,
++            payload: [0; 32],
++        };
++        plane.payload[..4].copy_from_slice(&1u32.to_le_bytes());
++        f(this.real, dst, x, y, z, &plane, region);
++        // The original source is retained by the recording allocator through GPU completion.
++        this.clear_plane();
++        return;
++    }
++    this.clear_plane();
++    if sd.format() == 103
++        && sd.array() == 1
++        && sd.mips() == 1
++        && src.index() == 0
++        && dd.format() == 61
++    {
++        let gpu_va: unsafe extern "system" fn(Object) -> u64 = method(src.resource, 11);
++        // Retail computes AlignUp(luma width,256)*height*(arrayIndex+1)+GPUVA.
++        // Only the observed single-image NV12 allocation is supported here.
++        let pitch = (sd.width() + 255) & !255;
++        if let Some(offset) = pitch
++            .checked_mul(u64::from(sd.height()))
++            .and_then(|n| n.checked_add(gpu_va(src.resource)))
++        {
++            if !crate::transient::retain_media_source(this.real, src.resource) {
++                this.error = INVALID;
++                return;
++            }
++            this.chroma_va = offset;
++            this.uv_width = pitch / 2;
++            this.uv_height = sd.height() / 2;
++            reference(src.resource, 1);
++            this.nv12 = src.resource;
++        }
++    }
++    f(this.real, dst, x, y, z, src, region);
++}
++pub(super) unsafe fn tag_placement(resource: Object, desc: &[u8; 56], va: u64) {
++    if u32::from_le_bytes(desc[32..36].try_into().unwrap()) != 49 {
++        return;
++    }
++    let set: unsafe extern "system" fn(Object, &Guid, u32, &u64) -> i32 = method(resource, 4);
++    set(resource, &PLACEMENT, 8, &va);
++}
++unsafe extern "system" fn barriers(
++    this: &mut CopyList,
++    count: u32,
++    input: *const crate::barriers::Barrier,
++) {
++    if count == 0 {
++        return;
++    }
++    if input.is_null() {
++        this.error = POINTER;
++        return;
++    }
++    let original = std::slice::from_raw_parts(input, count as usize);
++    let f: unsafe extern "system" fn(Object, u32, *const crate::barriers::Barrier) =
++        method(this.real, 26);
++    let translated = crate::barriers::translate(original);
++    f(this.real, translated.len() as u32, translated.as_ptr());
++}
++static TABLE: OnceLock<[usize; 16]> = OnceLock::new();
++pub(super) unsafe fn wrap(real: Object, allocator: Object) -> Object {
++    let vt = TABLE.get_or_init(|| {
++        [
++            query as usize,
++            add_ref as usize,
++            release as usize,
++            private_data as usize,
++            set_data as usize,
++            set_interface as usize,
++            set_name as usize,
++            get_device as usize,
++            get_type as usize,
++            close as usize,
++            reset as usize,
++            unsupported as usize,
++            copy as usize,
++            unsupported as usize,
++            unsupported as usize,
++            barriers as usize,
++        ]
++    });
++    Box::into_raw(Box::new(CopyList {
++        vt: vt.as_ptr(),
++        real,
++        refs: AtomicU32::new(1),
++        error: if crate::transient::set_allocator(real, allocator) {
++            0
++        } else {
++            INVALID
++        },
++        nv12: core::ptr::null_mut(),
++        chroma_va: 0,
++        uv_width: 0,
++        uv_height: 0,
++    }))
++    .cast()
++}
++pub(super) unsafe fn unwrap(p: Object) -> Object {
++    if TABLE
++        .get()
++        .is_some_and(|vt| !p.is_null() && *p.cast::<*const usize>() == vt.as_ptr())
++    {
++        (*p.cast::<CopyList>()).real
++    } else {
++        p
++    }
++}
+--- a/crates/compat/d3d12_xs/src/transient.rs
++++ b/crates/compat/d3d12_xs/src/transient.rs
+@@ -22,6 +22,8 @@
+ const OWNER: Guid = key(0xeb77, 0);
+ const CURSOR: Guid = key(0xeb77, 1);
+ const PAGE_INFO: Guid = key(0xeb77, 2);
++const MEDIA_COUNT: Guid = key(0x6a91, 0);
++const MEDIA_GROUP: u16 = 0x6a92;
+ const MIN_PAGE: u64 = 65536;
+ 
+ unsafe fn method(obj: Object, slot: usize) -> usize {
+@@ -102,7 +104,23 @@
+     if hr >= 0 && get_data::<Cursor>(allocator, &CURSOR).is_some() {
+         set_data(allocator, &CURSOR, &Cursor::default());
+     }
++    if hr >= 0 {
++        if let Some(n) = get_data::<u32>(allocator, &MEDIA_COUNT) {
++            for i in 0..n { set_interface(allocator, &key(MEDIA_GROUP,i), ptr::null_mut()); }
++            set_data(allocator, &MEDIA_COUNT, &0u32);
++        }
++    }
+     hr
++}
++
++// A COPY list can be reset for its next frame before the previous list finishes.
++// Keep all split NV12 sources with the allocator until its next successful Reset.
++pub(super) unsafe fn retain_media_source(list: Object, source: Object) -> bool {
++    let Some(owner) = get_interface(list, &OWNER) else { return false };
++    if !track_resets(owner.0) { return false; }
++    let n = get_data::<u32>(owner.0, &MEDIA_COUNT).unwrap_or_default();
++    let Some(next) = n.checked_add(1) else { return false };
++    set_interface(owner.0, &key(MEDIA_GROUP,n), source) && set_data(owner.0, &MEDIA_COUNT, &next)
+ }
+ 
+ unsafe fn track_resets(allocator: Object) -> bool {

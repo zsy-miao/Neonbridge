@@ -1,0 +1,125 @@
+{
+  "name": "FTSRFilterFrequenciesCS",
+  "shader_file": "/Engine/Private/TemporalSuperResolution/TSRFilterFrequencies.usf",
+  "entry": 2653,
+  "shader_map": 217,
+  "adapter": "1002:13c0",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "source_sha256": "d70b3993585759774396d39ec7471a3a598a80801d986a29265c6f5f47b73b6e",
+  "dxil_sha256": "461f97db7e0f4a76fd9ee56b43f6b8cdc51e6819bc7b425634eddc17fad3e85b",
+  "guest_sha256": "9f20ad568bd77c8d70ae81079e16af89203e78d8a83775513aca041ea956eb4a",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "dispatch_groups": [
+    2,
+    2,
+    1
+  ],
+  "threads_per_group": [
+    16,
+    16,
+    1
+  ],
+  "texture_dimensions": [
+    32,
+    32
+  ],
+  "cases": {
+    "zero": {
+      "outputs": [
+        {
+          "sha256": "4fe7b59af6de3b665b67788cc2f99892ab827efae3a467342b3bb4e3bc8e5bfe",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "4fe7b59af6de3b665b67788cc2f99892ab827efae3a467342b3bb4e3bc8e5bfe",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        }
+      ]
+    },
+    "flat": {
+      "outputs": [
+        {
+          "sha256": "e3d4a992cdfb45cd0989a8bdaad1f9794642ba2bcec68bb96ab0835be646681f",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "640a4a5507cfa80ac9dc3876b54d70f5bc96ca00dba018102d0406d95f2f2798",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "eb5b57942df32d0b60aa707cde2b10c6b44d31b112991bab9553abb0689477ef",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        }
+      ]
+    },
+    "reverse": {
+      "outputs": [
+        {
+          "sha256": "640a4a5507cfa80ac9dc3876b54d70f5bc96ca00dba018102d0406d95f2f2798",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "e3d4a992cdfb45cd0989a8bdaad1f9794642ba2bcec68bb96ab0835be646681f",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "5fca8e699cb7513eaa4b8c71775ecdfb2a75b5bb90e5118d589864c0d134576f",
+          "distinct_texels": 1,
+          "verified_texels": 1024
+        }
+      ]
+    },
+    "pattern": {
+      "outputs": [
+        {
+          "sha256": "e16fd388ec9c49e00b528504b7d662ad1a638f8672b8be61fc38e33ec8127f90",
+          "distinct_texels": 72,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "090ca7daee16c0294d58fd67def3fd95013f8b6eb2ef79af047dc36c7bb4b022",
+          "distinct_texels": 72,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "67092314d2a93de763144329dc52a6628b23e862f4fe7b08ddcf2763796113ea",
+          "distinct_texels": 10,
+          "verified_texels": 1024
+        }
+      ]
+    },
+    "clip": {
+      "outputs": [
+        {
+          "sha256": "e547560d12c8fcc68f4dda2005fcfa0de0d80d3b5ed8d85404e44c00896ad094",
+          "distinct_texels": 67,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "9733d72b2208f977000b5296cd619e4e97795259f4082a149ac5317fb13a3420",
+          "distinct_texels": 67,
+          "verified_texels": 1024
+        },
+        {
+          "sha256": "dd4236a852633701cce81d5da663e0a50cbf21f873c1d38f807c9068555ae814",
+          "distinct_texels": 11,
+          "verified_texels": 1024
+        }
+      ]
+    }
+  }
+}

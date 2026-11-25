@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "kind": "Isolated retail run and static call-site identification",
+  "date_utc": "2026-11-21T16:48:32Z",
+  "package_version": "1.20.1831.3754",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "host": {
+    "kernel": "7.3.4-1-cachyos",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "driver": "620.70.6",
+    "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+  },
+  "trial": {
+    "scope": "One Frosty startup in a separate staged layout and prefix with the TuxBox D3D12 provider. Other staged platform providers participate in initialization.",
+    "arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer",
+      "-nosound"
+    ],
+    "staged_sha256": {
+      "d3d12_xs.dll": "af8fd163697fb2963a130274f9510af95981df04744c36fd1c172c7a233d6d50",
+      "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f",
+      "acphal.dll": "29512a2414558b08934d6d37ffa14923f8ae1f99d89e5f2b6f9a44063a65bd4d"
+    },
+    "logs_sha256": {
+      "console.log": "cfe473fc722093aeb8e03681c872bc36a09c158f1b12482942a5b1e3afee3bfc",
+      "steam-default.log": "302aae527afdf735724c455b0f20a55ec18914d2512ed3edcaf8b2f024c6b9ab"
+    },
+    "exit_code": 5,
+    "service_runtime_seconds": 2.42
+  },
+  "observed": {
+    "provider_loaded": "G:\\Frosty\\Binaries\\XSX\\d3d12_xs.dll",
+    "factory": "The title proceeded through D3D12XboxCreateDevice to query its returned root device. The host trace includes vkd3d-proton device capability initialization.",
+    "failure": "Frosty reported RootDevice->QueryInterface failure (XboxCommonD3D12Device.cpp line 703). The debug string ends at E_NOI in the captured trace; the staged wrapper rejects unsupported IIDs with E_NOINTERFACE (0x80004002).",
+    "following_exception": {
+      "code": "0xc0000005",
+      "title_rva": "0x57eaf52"
+    },
+    "retail_frame_verified": false
+  },
+  "static_call_sites": {
+    "source": "Frosty-XSX-Shipping.exe; little-endian GUIDs and error expressions read at image RVAs. The installed Windows SDK dxgi.idl identifies the DXGI interface.",
+    "function": "FXboxCommonD3D12Adapter::CreateRootDevice",
+    "function_rva": "0x5752a70",
+    "factory": {
+      "api": "D3D12XboxCreateDevice",
+      "call_rva": "0x5752bc5",
+      "profile": "0x20004",
+      "iid": "189819f1-1db6-4b57-be54-1821339b85f7",
+      "interface": "ID3D12Device"
+    },
+    "next_query": {
+      "call_rva": "0x5752db3",
+      "iid_rva": "0x71b6818",
+      "iid": "77db970f-6276-48ba-ba28-070143b4392c",
+      "interface": "IDXGIDevice1",
+      "slot": 0,
+      "error_expression": "RootDevice->QueryInterface(__uuidof(DXGIDevice), (void**)DXGIDevice.GetInitReference())"
+    },
+    "on_success": {
+      "method": "IDXGIDevice::GetAdapter (inherited by IDXGIDevice1)",
+      "call_rva": "0x5752e24",
+      "slot": 7,
+      "vtable_offset": "0x38",
+      "error_expression": "DXGIDevice->GetAdapter(DxgiAdapter.GetInitReference())",
+      "execution_in_trial": "Unreached after the failed query."
+    }
+  },
+  "dxgi_trial": {
+    "date_utc": "2026-11-21T16:55:27Z",
+    "scope": "Second isolated Frosty startup on the same host and Proton build, with the DXGI-enabled TuxBox D3D12 provider and a fresh prefix.",
+    "arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer",
+      "-nosound"
+    ],
+    "staged_sha256": {
+      "Frosty-XSX-Shipping.exe": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+      "d3d12_xs.dll": "1880ac12ac0a35dd9dab86bbd2e96813c7171c34b0c7d38317f9997fb85d219e",
+      "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f",
+      "acphal.dll": "29512a2414558b08934d6d37ffa14923f8ae1f99d89e5f2b6f9a44063a65bd4d"
+    },
+    "logs_sha256": {
+      "console.log": "d80571103ebe172ebcaffd831e45f3693cefde6216f57df2f881226e2de96f0b",
+      "steam-default.log": "fcabb956d764eb6d772c2a0ffaaf03e7d0fd068f43b597b49455996d91e06b6c"
+    },
+    "exit_code": 2,
+    "service_runtime_seconds": 2.256,
+    "observed": {
+      "provider_loaded": "G:\\Frosty\\Binaries\\XSX\\d3d12_xs.dll",
+      "provider_load_address": "0x6ffffac80000",
+      "adapter_log": {
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 4070 Ti SUPER",
+        "feature_level": "11_0",
+        "dedicated_video_memory_mb": 16376,
+        "dedicated_system_memory_mb": 0,
+        "shared_system_memory_mb": 23383,
+        "reported_outputs": 1
+      },
+      "next_diagnostic": "Project TuxBox: unsupported D3D12.x vtable slot",
+      "following_exception": {
+        "code": "0xc0000602",
+        "address": "0x6ffffac81706",
+        "provider_rva": "0x1706"
+      },
+      "retail_frame_verified": false
+    },
+    "static_call_sites": {
+      "source": "RVAs in the staged executable and provider. The trace gives the shared trap address. The first missing slot and its arguments are inferred from the executable control flow.",
+      "adapter_discovery": {
+        "device_query_rva": "0x5752db3",
+        "get_adapter_rva": "0x5752e24",
+        "get_desc_rva": "0x5752e78",
+        "get_parent_factory2_rva": "0x5752ed1",
+        "factory_enum_adapters_rva": "0x5752f5f",
+        "enumerated_adapter_get_desc_rva": "0x5752f9a",
+        "adapter_log_call_rva": "0x57530a4",
+        "memory_log_call_rva": "0x575310a",
+        "reported_outputs_source": "The title supplies the constant 1 at RVA 0x57530b2 for this log field."
+      },
+      "first_missing_device_method": {
+        "method": "ID3D12Device::CheckFeatureSupport",
+        "slot": 13,
+        "vtable_offset": "0x68",
+        "call_rva": "0x57671c9",
+        "feature_id": 0,
+        "feature": "D3D12_FEATURE_D3D12_OPTIONS",
+        "data_bytes": 64,
+        "call_path": "The engine adapter calls CreateRootDevice at 0x5766f0f. After its two observed log messages and COM cleanup, the normal initialization path probes optional device interfaces through QueryInterface before loading slot 13 at 0x57671b6. The alternative compatibility branch logs a message absent from this run.",
+        "arguments": "The caller clears two 32-byte blocks, passes their address in R8, clears EDX for feature 0 and sets R9D to 0x40.",
+        "failure_expression_rva": "0x71b5200",
+        "failure_expression": "RootDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &D3D12Caps, sizeof(D3D12Caps))",
+        "failure_source": "D3D12Adapter.cpp line 908",
+        "provider_binding": "In the staged DLL the root-device table at RVA 0x266f8 has slot 13 bound to the shared diagnostic routine at RVA 0x16f0. The runtime exception address lies in that routine. The log contains no title return address or per-slot diagnostic."
+      }
+    },
+    "repeat": {
+      "scope": "Independent prefix, same layout and title arguments, with the final provider including GetAdapter null-output handling.",
+      "d3d12_xs_sha256": "cf3d580bfccf583af7ed48742d624ca3e227314b73dc31afe7554e7519ba618a",
+      "console_log_sha256": "922c9f3c4229e73b8282fa55c5cee41dfa59bec7e992ab839b60fcd74daca9c1",
+      "proton_log_sha256": "75510c123c885955d87d0b6b65ef593c3772d38a6f9105ae8d14a1d00690666b",
+      "exit_code": 2,
+      "result": "The same adapter, dedicated video memory and shared unsupported-method diagnostic appeared before the fail-fast exception."
+    }
+  }
+}

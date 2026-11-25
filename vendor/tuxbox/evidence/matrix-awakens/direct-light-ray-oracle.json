@@ -1,0 +1,25 @@
+{
+  "scope": "Original 218 direct-light ray-generation shader on a scene with one intersected triangle. Ray origin and direction, hit and miss callbacks, shadow mask and guard words are verified. This does not execute the different 219 compute traversal.",
+  "source_sha256": "7d8bbcef8d2b310caf71240bff586b48eca6e7dad8b59548c55f94348098ce11",
+  "probe": "tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "test_executable_sha256": "4e9b3d88f490e8910bf09299ad44ce84b73b82273fa790147f259dd4469ea534",
+      "provider_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+      "trace": "mask 0000fffe; atlas 0; hits 7; misses 7; guard 1; color 00000000,00000000,00000000,00000000",
+      "empty": "mask 00000002; atlas 0; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+      "active_miss": "mask 000000aa; atlas 0; hits 0; misses 6; guard 1; color 00000000,00000000,00000000,00000000"
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1793301796 experimental-11.0-20261027b-x86_64",
+      "test_executable_sha256": "4e9b3d88f490e8910bf09299ad44ce84b73b82273fa790147f259dd4469ea534",
+      "provider_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+      "trace": "mask 0000fffe; atlas 0; hits 7; misses 7; guard 1; color 00000000,00000000,00000000,00000000",
+      "empty": "mask 00000002; atlas 0; hits 0; misses 0; guard 1; color 00000000,00000000,00000000,00000000",
+      "active_miss": "mask 000000aa; atlas 0; hits 0; misses 6; guard 1; color 00000000,00000000,00000000,00000000"
+    }
+  }
+}

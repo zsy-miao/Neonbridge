@@ -1,0 +1,354 @@
+{
+  "scope": "Ordinary scalar bit operations, synthetic native inputs and CPU-only DXIL checks; no GPU execution or retail coverage",
+  "base_source": "11a278a993652c6d0b39399531282d10705daddc",
+  "host": "Bazzite / Ryzen 5 5600X",
+  "tests": {
+    "python": 125,
+    "dxbc": 45,
+    "compiler": 69
+  },
+  "numerical": {
+    "scope": "CPU-only native instruction emitter statements, DXC constant-folded observable stores, DXV; no GPU or retail game",
+    "tools_sha256": {
+      "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+    },
+    "fixture_sha256": "7da5d07b872e3e33ea8f81b1ee7114289c0a937b4c5bd9ac1472fb610d4f5442",
+    "instructions": 12,
+    "cases": 1944,
+    "compared_words": 7776,
+    "mismatches": 0,
+    "rows": [
+      {
+        "opcode": "s_brev_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "391413c6142da1c28cfeedcdebd380f0e26088899c60e5151f7c4cfb5f731369",
+        "dxil_sha256": "42840c28d135e5d1b903ca410153f39adbdec6133efc2014013101ddd443c175",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_bcnt0_i32_b32",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "424e2c4c461e8075ea8a54bf2a0c733cbfd9884a40f2fcb7b79e7c997e3b2d89",
+        "dxil_sha256": "9763e5f2ab940eadc9a3b31aabe2d67c121f1fdeb4ccb1d4b65cbe2164beb2c9",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_bcnt0_i32_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "b9a6adc1ec247780afbdfb0128ac74ac06339f0546fde9c1dae0b7c94ba84ddc",
+        "dxil_sha256": "f0e9036a9d033a85e407eba75e2686cd48dd62b9d226bbb6aef4ef917f0cb3c5",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_ff0_i32_b32",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "791ba366999c4d77093b5487c8214fefc341fa24a1604396d09ec42d8126b20e",
+        "dxil_sha256": "9fb5bdf988ca0c5668e1036eab0064384a7e4d32e388b1ef309eb542204a7980",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_ff0_i32_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "7e2d7e764d5e2f361161b85f964c5055721da0ec2f98cc94414eb11adccc0821",
+        "dxil_sha256": "ee30c33fd57fde1b0c2defee93daf684d7a84110bd66e3f45d142dcf9372673f",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_flbit_i32_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "f32f54ea80a417ed1c198acfe165f0d57256f4c072d561586da241ad608d59b4",
+        "dxil_sha256": "d5e1031ba4a2df424b231771470471a1c5e8c498fffc62b553ce3c0fb0d7a223",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_flbit_i32",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "d638eb2fef4a6c9c7ede340ace037faff9698156d9e144dfe477bfd378e75de6",
+        "dxil_sha256": "b8ec4e800192297dba757fac130949f5ee844ab6828b7e92df655dbff5628e07",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_flbit_i32_i64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "e747777a9c9740add6ab0903d606bc8bfeab3eaa122c8916ec6fa18a8eb9d0a5",
+        "dxil_sha256": "2d0d5a8e1be141c93a82665e2f6da7669d57c8c0cc1bd172b856477f7bce7782",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_bitset0_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "accbe9b6992845077409c9c3f74f619869cbaa8062a568223d37c978f5a9d599",
+        "dxil_sha256": "9490047d8910d92195440a8fee9afc1bb409aba160276d36fca6de4384a160c6",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_bitset1_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "acf29171027c526dbad618245ffc2d3588f95e052f2f72a16a30cf5b45887284",
+        "dxil_sha256": "225d79846d1461c080d73c4307adb613e6eb258c1efc95f14485c0fdb7cf6c8a",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_bitcmp0_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "3e7160e86e040f02b09cd95fb6a89020bea65de97b85d7d0dd7eea9ce2ad63e8",
+        "dxil_sha256": "e1adecdbc7dcd41ff35ebd470351b55e4972969804da811072e95ff7974430ec",
+        "mismatches": 0
+      },
+      {
+        "opcode": "s_bitcmp1_b64",
+        "cases": 162,
+        "words": 648,
+        "hlsl_sha256": "3d8e5a315e83cc09a43a995ca98d3ee54871932156863a12dba08257fe40569d",
+        "dxil_sha256": "d20fac7ed6fa478308b013fac369ecfa9b31ce4f6dbcee515bf33f4eb13bc2b6",
+        "mismatches": 0
+      }
+    ]
+  },
+  "native": {
+    "scope": "CPU production compiler pipeline, synthetic native DXBC; no GPU or retail coverage",
+    "tools_sha256": {
+      "baseline": "171c29d4e99703cec10759c3beedd9b90aeaed62350b18569cdb0b12d5977f6c",
+      "candidate": "b17174bd2c38402e6f3b3ed5178a886f9881ba097bba1ad5f472bc0f4c24c60c",
+      "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3"
+    },
+    "cases": 20,
+    "recovered": 13,
+    "regressions": 0,
+    "rows": [
+      {
+        "case": "s_brev_b64",
+        "request_sha256": "b49a0dbb0a984bcb927f1e0ed198c709091cc4e5e970c5a5e42c3e9fb9c9466c",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_bcnt0_i32_b32",
+        "request_sha256": "a6f60e5d1b17276e9104b6b2fe70224aa33f7bd8763189a00c120d531a05cdf7",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_bcnt0_i32_b64",
+        "request_sha256": "a30962b38ee458515856b04ac0bd2dd6be958aa70fa0bb6bc5106f658ffd2457",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_ff0_i32_b32",
+        "request_sha256": "03dd59026711c1dec2b746fb6eaa6b6c16ac57e6f330001bab386883836f48a1",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_ff0_i32_b64",
+        "request_sha256": "50a26c1178955d424f62c1fdf4dd65be3860d503cfeb66c312d18a1fa39b0722",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_flbit_i32_b64",
+        "request_sha256": "cd3c03c8003324cadcf7f8e730b6f34916c7b10fe3506349b948e28bd15a2a15",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_flbit_i32",
+        "request_sha256": "a724687094732917c82e7ddcc0b58b7543162fc75feb9786be4d0886a46d2f29",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_flbit_i32_i64",
+        "request_sha256": "ba52abb1512177bafb9505074c91849e4240e1422cdfb695e7ea611558c1983a",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_bitset0_b64",
+        "request_sha256": "d6c67a73538054cfeba048edfe79c98eb4c751e0e93e0d5741380bf6cc405496",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_bitset1_b64",
+        "request_sha256": "959279db41add239395abe4f90225e757aae811b4685a5654c65e3f4f3fafc65",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_bitcmp0_b64",
+        "request_sha256": "225a4ec85e5ecd3ba06e11ce9923edad6c852128d2a4ffc20d045a9bff316d9c",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "s_bitcmp1_b64",
+        "request_sha256": "fffc3062fb7d341e439695a26d99d7cb0da23807241300822ab51fa376f28bad",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "runtime_cbv",
+        "request_sha256": "56015424bc68e3ac464f4cbb3b4a6a10ccc75a5997db228bfb4ba660d13a0bc2",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "ordinary_control",
+        "request_sha256": "a71ea29974c7532b6b3f903661dea49eeb1d9085510ceeb2eadc9492addf5f09",
+        "baseline": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        },
+        "candidate": {
+          "status": "compiled",
+          "dxil_sha256": "9d101e7d0b98b308ff9b55e34d6dec00dae349530a0b22490156522e78c5905c"
+        }
+      },
+      {
+        "case": "unknown_half",
+        "request_sha256": "fb760e36e9f3503bdcbe785fd127c485f07ee4a9a35af0645bad34bc5d843ec1",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "refused"
+        }
+      },
+      {
+        "case": "exec",
+        "request_sha256": "d04b0891ef65baff64c6526549675c7f8f18023af799dc6af31dafc5aff73248",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "refused"
+        }
+      },
+      {
+        "case": "vcc",
+        "request_sha256": "0db9deb41de46e99c8b2677462f12eef865847a6e1a0ea2b278e0cbb609a990a",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "refused"
+        }
+      },
+      {
+        "case": "copied_exec",
+        "request_sha256": "f34153807a508e4bd62af20368bf8ab579f146c479bfbb8547f5c4549c613861",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "refused"
+        }
+      },
+      {
+        "case": "clobbered_half",
+        "request_sha256": "4c57336657b48963cb6fcd583c0e0eb041e67daa2daa5dabc613dfddb653f82c",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "refused"
+        }
+      },
+      {
+        "case": "branch_entry",
+        "request_sha256": "0e719d6c6b36dd112f30e3a2505b2b580fa8ffaabb5446ae9abf1bd21a19c664",
+        "baseline": {
+          "status": "refused"
+        },
+        "candidate": {
+          "status": "refused"
+        }
+      }
+    ]
+  },
+  "dynamic": {
+    "scope": "Full emitted HLSL with output instrumentation only; DXC/DXV validated runtime CBV load, two bit reversals and output stores, not numerical GPU execution",
+    "hlsl_sha256": "5cddc918993578bf60a02c1aa16ecc19ff477ffa6d16fb787541e237838ed8b7",
+    "dxil_sha256": "7d74ec15deab92e31f3eb15c6ed25303be88174af07f0995d669648ec044541b"
+  }
+}

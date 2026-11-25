@@ -1,0 +1,91 @@
+--- a/crates/compat/d3d12_xs/src/depth.rs
++++ b/crates/compat/d3d12_xs/src/depth.rs
+@@ -79,13 +79,17 @@
+ struct Description([u32; 14]);
+ 
+ pub(super) unsafe fn matches(heap: *const u32, flags: u32, desc: *const u32, state: u32) -> bool {
+-    if heap.is_null() || desc.is_null() || flags != 0 || state & UAV != 0 {
++    !heap.is_null() && unsafe { *heap == 1 } && flags == 0 && state & UAV == 0
++        && unsafe { is_writable_depth(desc) }
++}
++
++pub(super) unsafe fn is_writable_depth(desc: *const u32) -> bool {
++    if desc.is_null() {
+         return false;
+     }
+-    // A D3D12_RESOURCE_DESC contains 13 defined words including its flags.
++    // The last defined field in the base Xbox descriptor is Flags at byte 48.
+     let d = unsafe { core::slice::from_raw_parts(desc, 13) };
+-    (unsafe { *heap == 1 })
+-        && d[0] == 3
++    d[0] == 3
+         && d[7] == 0x0001_0001
+         && d[8] == 19
+         && d[9] == 1
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -325,13 +325,14 @@
+         let dim = unsafe { *pdescs };
+         let format = unsafe { *pdescs.add(8) };
+         let layout = unsafe { *pdescs.add(11) };
+-        if dim == 3 && matches!(format, 70..=84 | 94..=99) && layout == 0 {
++        let depth_uav = unsafe { crate::depth::is_writable_depth(pdescs) };
++        if depth_uav || (dim == 3 && matches!(format, 70..=84 | 94..=99) && layout == 0) {
+             #[repr(C, align(8))]
+             struct ResourceDesc([u32; 14]);
+             let mut desc = ResourceDesc([0; 14]);
+             // The PC descriptor ends at flags. Its final four bytes are padding.
+             unsafe { core::ptr::copy_nonoverlapping(pdescs, desc.0.as_mut_ptr(), 13) };
+-            desc.0[12] &= 0xff; // same flags as CreatePlacedResource
++            desc.0[12] = if depth_uav { 2 } else { desc.0[12] & 0xff };
+             let real = unsafe { (*this).real };
+             let query: unsafe extern "system" fn(
+                 *mut c_void, *mut AllocInfo, u32, u32, *const ResourceDesc,
+@@ -1575,11 +1576,44 @@
+     if pdesc.is_null() {
+         return unsafe { f(real, heap, offset, pdesc, init_state, pclear, riid, ppv) };
+     }
+-    let mut d = unsafe { core::slice::from_raw_parts(pdesc, 0x38).to_vec() };
+-    let flags = u32::from_le_bytes(d[0x30..0x34].try_into().unwrap());
+-    d[0x30..0x34].copy_from_slice(&(flags & 0xFF).to_le_bytes());
++    #[repr(C, align(8))]
++    struct ResourceDesc([u8; 56]);
++    let mut storage = ResourceDesc([0; 56]);
++    let d = &mut storage.0;
++    // The native description ends at the 32-bit Flags field.
++    unsafe { core::ptr::copy_nonoverlapping(pdesc, d.as_mut_ptr(), 52) };
++    let mut flags = u32::from_le_bytes(d[48..52].try_into().unwrap()) & 0xff;
++    let mut heap_properties = None;
++    if !heap.is_null() && init_state & 8 == 0 && unsafe { crate::depth::is_writable_depth(pdesc.cast()) } {
++        #[repr(C)]
++        #[derive(Default)]
++        struct HeapDesc {
++            size: u64,
++            properties: [u32; 5],
++            alignment: u64,
++            flags: u32,
++        }
++        // ID3D12Heap::GetDesc returns a structure through an explicit Win64 COM result pointer.
++        let get: unsafe extern "system" fn(*mut c_void, *mut HeapDesc) -> *mut HeapDesc =
++            unsafe { core::mem::transmute(*real_vtbl(heap).add(8)) };
++        let mut desc = HeapDesc::default();
++        unsafe { get(heap, &mut desc) };
++        if desc.properties[0] == 1 {
++            flags = 2;
++            heap_properties = Some(desc.properties);
++        }
++    }
++    d[48..52].copy_from_slice(&flags.to_le_bytes());
+     let pc_state = initial_state(u32::from_le_bytes(d[..4].try_into().unwrap()), init_state);
+     let hr = unsafe { f(real, heap, offset, d.as_ptr(), pc_state, pclear, &IID_ID3D12RESOURCE, ppv) };
++    if hr >= 0 && !ppv.is_null() && !unsafe { *ppv }.is_null() {
++        if let Some(properties) = heap_properties {
++            if let Err(error) = unsafe { crate::depth::attach(real, *ppv, properties.as_ptr(), d) } {
++                unsafe { drop(crate::depth::Owned(*ppv)); ppv.write(core::ptr::null_mut()) };
++                return error;
++            }
++        }
++    }
+     if hr >= 0 && crate::rtcap::enabled() && d[0] == 1 && !ppv.is_null() {
+         let width = u64::from_le_bytes(d[0x10..0x18].try_into().unwrap());
+         unsafe { crate::bindtrace::note_buffer(*ppv, width, crate::bindtrace::heap_type_of(heap as usize)) };

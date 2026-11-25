@@ -1,0 +1,143 @@
+{
+  "scope": "Procedural AABB RayQuery plus experimental float32 RTZ TRI0 helper for a small GPU-visible scene. This is not full shader 219 execution and is not runtime attached.",
+  "probe": "tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "tools/reference/blas/zero_aabb.hlsl": "d09ef2fafafcbcb8d3e75daa4144fab98364caa4b2da6dbcdaf2cbfc04ac22c1",
+    "tools/reference/blas/zero_aabb_probe.h": "64200be1c0b05876b14d58536ffca6c07a424c345a334bf9d9da31d07f0fba04",
+    "tools/reference/bvh-node/rtz_triangle.hlsl": "5802530c7cf61ae8f94372016fb8a1a5c603fc4172754033cfa2ab08f4eaa6d7",
+    "tools/reference/blas/guest.cpp": "8e7f4b1a1f5874102d35a856dd6e2509e4a10ce31a19a1f3a411af9e69ef40ce",
+    "tools/check_frosty_blas.py": "f6ec325edbda31319b1762042eac609d1bc8c5f9be44e6e696119b0f72b8ea42"
+  },
+  "prior_native_control": "bvh-native-endpoints.json",
+  "geometry": "Two synthetic TRI0 records and conservative synthetic AABBs. Node words copied from upload to GPU default memory on the recorded command list before dispatch; Query candidate primitive index selects the record.",
+  "instances": "ID7 identity; ID8 nonuniform X scale 2 and translation X=4; ID9 translation X=12 with mask zero.",
+  "cases": [
+    {
+      "index": 0,
+      "world_origin": [
+        0.25,
+        0.25,
+        0
+      ]
+    },
+    {
+      "index": 1,
+      "world_origin": [
+        2.25,
+        0.25,
+        0
+      ]
+    },
+    {
+      "index": 2,
+      "world_origin": [
+        4.5,
+        0.25,
+        0
+      ]
+    },
+    {
+      "index": 3,
+      "world_origin": [
+        0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "index": 4,
+      "world_origin": [
+        0.5,
+        0,
+        0
+      ]
+    },
+    {
+      "index": 5,
+      "world_origin": [
+        0.8,
+        0.8,
+        0
+      ]
+    },
+    {
+      "index": 6,
+      "world_origin": [
+        8.5,
+        0.25,
+        0
+      ]
+    },
+    {
+      "index": 7,
+      "world_origin": [
+        20,
+        0,
+        0
+      ]
+    },
+    {
+      "index": 8,
+      "world_origin": [
+        0.25,
+        0.25,
+        -1
+      ]
+    },
+    {
+      "index": 9,
+      "world_origin": [
+        12.25,
+        0.25,
+        0
+      ]
+    }
+  ],
+  "result_format": "candidate count, committed status, committed distance bits, instance ID << 16 | primitive index",
+  "observations": [
+    "Interior zero hits, both node IDs, transformed instances, an included edge, an excluded edge, off-triangle and off-AABB misses, t=1 hit, and masked instance are checked.",
+    "The included edge commits negative zero; the control accepts either sign and records actual bits.",
+    "The TRI0 float32 helper matches prior native controls for sampled inputs only; numerical fidelity for exceptional ranges, all geometry flags, paired triangle variants and all cases is not established."
+  ],
+  "limitations": [
+    "No queue-ordered guest geometry provenance, resource lifetime, device table publication, dynamic builds/copies/compaction or runtime consumer.",
+    "Only this fixed synthetic geometry and manually chosen conservative boxes. Bounds generation, arbitrary transforms and general zero-distance edge behavior are not proven.",
+    "RayQuery candidate ordering, exception/NaN behavior, nonopaque/opaque/culling semantics, node types 1-3, complex BLAS geometry and full 219 control flow remain unverified."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "4eb57b8b230babe22d828f22862e5abab284a9b1ad88cb7b248569b814627dab",
+      "cases": {
+        "0": "1,2,00000000,00070000",
+        "1": "1,2,00000000,00070001",
+        "2": "1,2,00000000,00080000",
+        "3": "1,2,80000000,00070000",
+        "4": "1,0,00000000,00000000",
+        "5": "1,0,00000000,00000000",
+        "6": "1,2,00000000,00080001",
+        "7": "0,0,00000000,00000000",
+        "8": "1,2,3f800000,00070000",
+        "9": "0,0,00000000,00000000"
+      }
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "4eb57b8b230babe22d828f22862e5abab284a9b1ad88cb7b248569b814627dab",
+      "cases": {
+        "0": "1,2,00000000,00070000",
+        "1": "1,2,00000000,00070001",
+        "2": "1,2,00000000,00080000",
+        "3": "1,2,80000000,00070000",
+        "4": "1,0,00000000,00000000",
+        "5": "1,0,00000000,00000000",
+        "6": "1,2,00000000,00080001",
+        "7": "0,0,00000000,00000000",
+        "8": "1,2,3f800000,00070000",
+        "9": "0,0,00000000,00000000"
+      }
+    }
+  }
+}

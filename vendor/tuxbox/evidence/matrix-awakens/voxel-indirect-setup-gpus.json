@@ -1,0 +1,75 @@
+{
+  "scope": "Packaged Lumen global 2140 visibility-shading indirect argument setup through TuxBox provider and runtime shader compiler. Five allocator inputs check 16 output and guard words on each GPU. This does not validate full Lumen lighting.",
+  "results": {
+    "amd": {
+      "scope": "Packaged Lumen global 2140 through the TuxBox provider and runtime shader compiler. Five counts check all 16 output and guard words; not an end-to-end lighting check.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "shader_sha256": "08a948c5de3dabde63a207e37f47b3ce1ec624289f74a16b1854b50fff837e62",
+      "view": {
+        "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+        "buffer_name": "Lumen.CompactedVisBufferIndirectArguments",
+        "allocation_element_bytes": 12,
+        "allocation_elements": 1,
+        "allocation_rva": "0x3a0fb84",
+        "view_buffer_pointer_rva": "0x3a104c2",
+        "view_format_rva": "0x3a104b5",
+        "engine_pixel_format": "PF_R32_UINT",
+        "engine_pixel_format_value": 28,
+        "input_buffer_name": "Lumen.CompactedVisBufferAllocator",
+        "input_bytes": 4,
+        "input_view_format_rva": "0x3a101a9",
+        "evidence": "The named 12-byte buffer allocation is retained in a stack slot; the view descriptor sets pixel format 28 and loads that same slot."
+      },
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "readback": {
+        "count_0": "16",
+        "count_1": "16",
+        "count_7": "16",
+        "count_65537": "16",
+        "count_4294967295": "16"
+      },
+      "guest_sha256": "c08811b24c1ddc8a4f299ef47e4f744b1e107259e3572057dc316d207a82a7b4",
+      "xshader_sha256": "3f4e955851a7f2d716e12955750b71227e20ec1be111df6007254262890fdd82",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    },
+    "nvidia": {
+      "scope": "Packaged Lumen global 2140 through the TuxBox provider and runtime shader compiler. Five counts check all 16 output and guard words; not an end-to-end lighting check.",
+      "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "shader_sha256": "08a948c5de3dabde63a207e37f47b3ce1ec624289f74a16b1854b50fff837e62",
+      "view": {
+        "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+        "buffer_name": "Lumen.CompactedVisBufferIndirectArguments",
+        "allocation_element_bytes": 12,
+        "allocation_elements": 1,
+        "allocation_rva": "0x3a0fb84",
+        "view_buffer_pointer_rva": "0x3a104c2",
+        "view_format_rva": "0x3a104b5",
+        "engine_pixel_format": "PF_R32_UINT",
+        "engine_pixel_format_value": 28,
+        "input_buffer_name": "Lumen.CompactedVisBufferAllocator",
+        "input_bytes": 4,
+        "input_view_format_rva": "0x3a101a9",
+        "evidence": "The named 12-byte buffer allocation is retained in a stack slot; the view descriptor sets pixel format 28 and loads that same slot."
+      },
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "readback": {
+        "count_0": "16",
+        "count_1": "16",
+        "count_7": "16",
+        "count_65537": "16",
+        "count_4294967295": "16"
+      },
+      "guest_sha256": "c08811b24c1ddc8a4f299ef47e4f744b1e107259e3572057dc316d207a82a7b4",
+      "xshader_sha256": "3f4e955851a7f2d716e12955750b71227e20ec1be111df6007254262890fdd82",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    }
+  },
+  "negative_control": "Changing one ISA bit bypasses the exact-program translation; the remaining typed-buffer offset instruction is rejected.",
+  "format_reference": "https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Core/EPixelFormat"
+}

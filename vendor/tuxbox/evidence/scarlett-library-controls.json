@@ -1,0 +1,72 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "files": {
+    "XboxBvhBuilder.dll": "99f803ac22c01ef329dddb1d40be67238d2a812d01e8d040b3cb5135bc23707e",
+    "amd_fidelityfx_loader_xbox.dll": "431bdd2e26c0c8214fd7601140eb9fe6d8a249f5000539453a9a9b6a0b7c0ee8",
+    "amd_fidelityfx_upscaler_xbox.dll": "faff02f294a7e9149ce079dffe3dedbcabe99b1f180ab14222aa8689e00a75fa",
+    "bvh_commands.dll": "8354fb25f7e824dce829142e1bd2826fd73e9cb0e9b14e7452646fb6e0d77677",
+    "bvh_sort_probe.exe": "68aa898810f4fc028b2f703fef6333137a06d88ca4cc315b00bcc61edc119231",
+    "d3d12_xs.dll": "8e3e1579b353a7108c1e3ade48b01c29c4c0f82a56f9fa3f9575e483df259c96",
+    "dxcompiler.dll": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9",
+    "dxil.dll": "0cf5fa4b90f74550166108b3870c883f4a85243976b246b1da3ea90ad5b92015",
+    "fidelityfx_probe.exe": "ae41546a45e210ed5a3a82745dec5c5283380917b3dcd0343eaa66610aae86cc",
+    "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f"
+  },
+  "runs": {
+    "ffx": {
+      "command": "fidelityfx_probe.exe --verify-provider",
+      "device_filter": null,
+      "devices": [],
+      "exit": 0,
+      "observations": [
+        "Quality 0: 1920x1080 -> 1920x1080",
+        "Quality 1: 1920x1080 -> 1280x720",
+        "Quality 3: 1920x1080 -> 960x540",
+        "Quality 4: 1920x1080 -> 640x360",
+        "Quality 0: 1920x1080 -> 1920x1080",
+        "Quality 1: 1920x1080 -> 1280x720",
+        "Quality 3: 1920x1080 -> 960x540",
+        "Quality 4: 1920x1080 -> 640x360",
+        "Local loader and upscaler passed all four resolution queries."
+      ]
+    },
+    "bvh32": {
+      "command": "bvh_sort_probe.exe XboxBvhBuilder.dll --records32",
+      "device_filter": "NVIDIA",
+      "devices": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+      ],
+      "exit": 0,
+      "observations": [
+        "BVH record and geometry kernels verified through 14 complete guarded dispatches.",
+        "BVH prefix scans verified exclusive sums, optional group totals and guards."
+      ]
+    },
+    "full_with_default_icd": {
+      "command": "bvh_sort_probe.exe XboxBvhBuilder.dll",
+      "device_filter": "AMD",
+      "devices": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)"
+      ],
+      "exit": 1,
+      "observations": [
+        "BVH record and geometry kernels verified through 14 complete guarded dispatches.",
+        "xbox_method<Create>(dev, 62)(dev, &pso, 0, nullptr, IID_PPV_ARGS(&pipeline)) failed (HRESULT 0x80070057)"
+      ]
+    },
+    "bvh_radv": {
+      "command": "bvh_sort_probe.exe XboxBvhBuilder.dll",
+      "devices": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "exit": 0,
+      "observations": [
+        "BVH record and geometry kernels verified through 14 complete guarded dispatches.",
+        "BVH prefix scans verified exclusive sums, optional group totals and guards.",
+        "BVH strided copies verified both source bindings, node-bounds reset and destination guards.",
+        "BVH radix sort verified 16384 key/index pairs and both output guards after each of four passes."
+      ]
+    }
+  },
+  "scope": "FidelityFX resolution queries and GPU dispatch/readback of selected embedded XboxBvhBuilder kernels using the local TomBox reference guests. The complete game executable is absent."
+}

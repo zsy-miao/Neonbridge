@@ -1,0 +1,111 @@
+{
+  "control": "Packaged Scarlett FidelityFX 4 upscaler with TuxBox D3D12 and XMem under Proton Experimental.",
+  "upscaler_sha256": "faff02f294a7e9149ce079dffe3dedbcabe99b1f180ab14222aa8689e00a75fa",
+  "d3d12_xs_sha256": "bdce301f7de76c5bb002bb32ae0a1dc9b5f26a5f389afc6c0e777a41816bca2d",
+  "xmem_sha256": "1151f3569939eada5e6a20b967495d4ae2d1706cf5ab1120a418af1dd67b1e8b",
+  "d3d12core_sha256": "5edbb1df81ce270e2263e4472e1dcddaeaccdd8624af561a00eea865926f3c40",
+  "first_compute_pipeline": {
+    "dxbc_file_offset": "0xb1700",
+    "dxbc_bytes": 5980,
+    "dxbc_sha256": "599034461240d93b21766c0aa0b23bae88a6e120e1b2413fe3ece06ac1ff9ef7",
+    "source": "ACCC/FSPX compute, original embedded root signature, guest device slot 62",
+    "devices": [
+      "1002:13c0",
+      "10de:2705"
+    ],
+    "result": "Both cold workers compiled the source and both drivers created a compute PSO. The same drivers accepted portable compute DXIL and rejected three damaged FSPX controls (version, section bounds, PSV stage). Only the valid Xbox input requested translation."
+  },
+  "abi_controls": {
+    "device_67": "Both adapters returned E_NOTIMPL and cleared the pipeline output for a serialized Xbox descriptor.",
+    "device_76": "Both adapters created a private 32x32 RGBA8 UAV with guest layout 0x101, resource flags 0x00c00004 and DCC setting 3. GetDesc preserved the guest layout, size, format and flags. Both rejected a nonzero descriptor extension with a cleared resource output.",
+    "pipeline_11": "The DLL calls the pipeline scratch-blob query at RVA 0x586d and skips the blob on a negative HRESULT. Both adapters returned E_NOTIMPL with a null blob. Both rejected a null output argument with E_POINTER. The standard indirect compute guest completed its 64-word check on both."
+  },
+  "public_api": {
+    "configuration": {
+      "ffx_create_type": "0x10000",
+      "upscaler_version": "0x01000000",
+      "flags": "0x29",
+      "render_size": [
+        1280,
+        720
+      ],
+      "output_size": [
+        1920,
+        1080
+      ]
+    },
+    "amd": {
+      "ffxCreateContext": 0,
+      "aco_active_after_create": 1,
+      "aco_active_at_first_compute_pso": 0,
+      "resources_named": 14,
+      "slot_76_allocations": 10,
+      "before_compiler_optimization": {
+        "successful_pipelines": 14,
+        "previously_runtime_compiled": 11,
+        "new_compilations": 3,
+        "next_file_offset": "0x95020",
+        "next_shader": "1d52e9cfa58dee5a71bb0e6a62294933d2df09e48394a41938d9097bbb0885d2",
+        "result": "DXC timed out at 50 seconds in the initial runtime-worker control."
+      },
+      "cold_runtime_worker": {
+        "preexisting_shader_cache_entries": 0,
+        "toolchain_fingerprint": "4fc209d4784df4d1818863d20f5ee10e8bec7c180946470c3bc0c45876ccbbde",
+        "dxc_timeout_seconds": 50,
+        "unique_requests": 27,
+        "compiled_and_validated": 26,
+        "created_pipeline_file_offsets": [
+          "0xb1700",
+          "0xadf60",
+          "0x9c930",
+          "0x9f040",
+          "0x72b30",
+          "0xad160",
+          "0xaed40",
+          "0x9bb10",
+          "0xa64a0",
+          "0xae650",
+          "0x88d00",
+          "0x72440",
+          "0xb2e80",
+          "0x9c200",
+          "0x95020",
+          "0x9f740",
+          "0x8e6e0",
+          "0xb0180",
+          "0x7e680",
+          "0xa5d60",
+          "0x75830",
+          "0xb0fa0",
+          "0x79eb0",
+          "0xb08b0",
+          "0xaaac0",
+          "0xad850"
+        ],
+        "next_program": {
+          "file_offset": "0x9fe90",
+          "size_bytes": 24108,
+          "sha256": "3727a000d3ee4cefab693d5f233e49887b97d40819d412a72f37c21869b1711d",
+          "error": "v_readlane at 0x2358: v1 lane 31 read before any v_writelane"
+        },
+        "result": "The original upscaler advanced through 26 native GPU pipeline creations. The next shader failed translation. An unhandled command-list slot 85 followed on the failure path.",
+        "remaining_package_programs_after_failure": [
+          "0x704f0",
+          "0x6f1b0"
+        ]
+      }
+    },
+    "nvidia": {
+      "successful_slot_76_allocations": 3,
+      "next_resource": {
+        "width": 1920,
+        "height": 1080,
+        "format": "R9G9B9E5_SHAREDEXP",
+        "usage": "unordered access",
+        "hr": "0x80070057"
+      },
+      "result": "vkd3d-proton reported that the requested format does not support the UAV flag during the fourth allocation."
+    }
+  },
+  "scope": "These controls cover provider calls and compute PSO creation. No upscaled image was verified."
+}

@@ -1,0 +1,63 @@
+{
+  "shader": {
+    "archive": "global",
+    "entry": 1320,
+    "name": "GPUSceneSetInstancePrimitiveIdCS",
+    "source_sha256": "9f1bdd2dfd0960e5e4b7f0b6899ffa69e3125e77a5029daad04d11ac60029173",
+    "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2"
+  },
+  "adapters": [
+    "NVIDIA GeForce RTX 4070 Ti SUPER (10de:2705)",
+    "AMD Radeon 610M (1002:13c0)"
+  ],
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "pipeline": "Xbox device slot 62, original Xbox shader container and embedded root signature, xshader output compiled as cs_6_0 with DXC and checked by dxv.",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "input": {
+    "dispatch_groups": [
+      2,
+      1,
+      1
+    ],
+    "threads_per_group": 64,
+    "cb0_word4": 2,
+    "t0": "Two 4-byte batch records containing 64 and (64 << 7) | 64.",
+    "t1": "256 eight-byte records of (i << 7, (0x4567 + 3*i) << 6).",
+    "u0": "256 sixteen-byte records. Word k in record i starts at 0xabcde000 + 4*i + k.",
+    "expected": "For i below 128, word 0 must become 0xabc00000 | (0x4567 + 3*i). Every other word must retain its seed."
+  },
+  "before": {
+    "dxil_sha256": "3ac02c68eb4414cb49ba2a669d1fc7484fc80c214461c60635285f1eabd40e27",
+    "hlsl_sha256": "61f00beb399fc089608291aaa6b6aac8635d0648922b3a51d15fb91daa4272c8",
+    "input_strides_bytes": [
+      16,
+      16
+    ],
+    "readbacks": {
+      "10de:2705": "IDs 64/128, guard IDs 64/128, neighbors 768/768",
+      "1002:13c0": "IDs 64/128, guard IDs 64/128, neighbors 768/768"
+    }
+  },
+  "after": {
+    "dxil_sha256": "6241e5f152288f2b01f8692e997c53aed0219d1ed616e6a47f59b8fcbc6e6dbe",
+    "hlsl_sha256": "daef1e138f4390693a65f9e2466824df50b57793d360ebf6c9c20d9d6e8d49a6",
+    "input_strides_bytes": [
+      4,
+      8
+    ],
+    "readbacks": {
+      "10de:2705": "IDs 128/128, guard IDs 128/128, neighbors 768/768",
+      "1002:13c0": "IDs 128/128, guard IDs 128/128, neighbors 768/768"
+    }
+  },
+  "retail_trace_survey": {
+    "trace": "Frosty normal_final highway chase and city run",
+    "requested_native_containers": 2099,
+    "containers_with_comparable_structured_bindings": 1781,
+    "pixel_shaders_with_incorrect_strides_before": 293,
+    "compute_shaders_with_incorrect_strides_before": 3,
+    "incorrect_bindings_before": 303,
+    "incorrect_bindings_after": 0,
+    "comparison": "Declared HLSL structured element width versus a matching PSV0 binding and FSSM 1.1 descriptor record in the original program. All 293 affected pixel shaders had one mismatched SRV. Global compute entries 332, 369 and 1320 had ten mismatched SRVs between them."
+  }
+}

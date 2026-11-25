@@ -1,0 +1,98 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "video_sha256": "c511dd82465e2875193b38d4d4d3c5dc4bcbae6fd680cc33230bde4a67bb2ebd",
+  "video": "WU_VID_0010_HEVC.mp4",
+  "gpu_sample": "IMFDXGIBuffer, ID3D12Resource NV12, IMFD3D12SynchronizationObjectCommands",
+  "decode": "Original packaged Microsoft HEVC decoder, software transform",
+  "size": [
+    3840,
+    1600
+  ],
+  "frames": {
+    "0": {
+      "ffmpeg_sha256": "5d97719d5ae00d0e18e28454913c392a68106ffd63c770b80dce5f73e276a809",
+      "ffmpeg_y_sha256": "772e1c3fa2409249ed5b0e5313ac75bc86a13938c5dd381ee6e6979d008df529",
+      "ffmpeg_uv_sha256": "f029e2bf72ed85aa28a654df43b70200e507fa012fe31f01894881a7f487ac21",
+      "ffmpeg_y_range": [
+        17,
+        19
+      ],
+      "ffmpeg_uv_range": [
+        127,
+        128
+      ],
+      "cpu_sha256": "5d97719d5ae00d0e18e28454913c392a68106ffd63c770b80dce5f73e276a809",
+      "cpu_y_sha256": "772e1c3fa2409249ed5b0e5313ac75bc86a13938c5dd381ee6e6979d008df529",
+      "cpu_uv_sha256": "f029e2bf72ed85aa28a654df43b70200e507fa012fe31f01894881a7f487ac21",
+      "gpu_sha256": "5d97719d5ae00d0e18e28454913c392a68106ffd63c770b80dce5f73e276a809",
+      "gpu_y_sha256": "772e1c3fa2409249ed5b0e5313ac75bc86a13938c5dd381ee6e6979d008df529",
+      "gpu_uv_sha256": "f029e2bf72ed85aa28a654df43b70200e507fa012fe31f01894881a7f487ac21"
+    },
+    "48": {
+      "ffmpeg_sha256": "a7cbcc96cf319b70407e8423fdc37aa47d96adce31be60f1ede842c71de8947d",
+      "ffmpeg_y_sha256": "5d4807ffdc894bc6ced49db6bcac31e109a28c2a1b8418ab166275a50b28fa3c",
+      "ffmpeg_uv_sha256": "eec82c0960f46fa25ba5f982a2119a440ab92e6e40d44dd65425baa9bc5c9157",
+      "ffmpeg_y_range": [
+        16,
+        231
+      ],
+      "ffmpeg_uv_range": [
+        56,
+        171
+      ],
+      "cpu_sha256": "a7cbcc96cf319b70407e8423fdc37aa47d96adce31be60f1ede842c71de8947d",
+      "cpu_y_sha256": "5d4807ffdc894bc6ced49db6bcac31e109a28c2a1b8418ab166275a50b28fa3c",
+      "cpu_uv_sha256": "eec82c0960f46fa25ba5f982a2119a440ab92e6e40d44dd65425baa9bc5c9157",
+      "gpu_sha256": "a7cbcc96cf319b70407e8423fdc37aa47d96adce31be60f1ede842c71de8947d",
+      "gpu_y_sha256": "5d4807ffdc894bc6ced49db6bcac31e109a28c2a1b8418ab166275a50b28fa3c",
+      "gpu_uv_sha256": "eec82c0960f46fa25ba5f982a2119a440ab92e6e40d44dd65425baa9bc5c9157"
+    },
+    "120": {
+      "ffmpeg_sha256": "4944a0cf534965618ceb61dd6e95153c9bbfbc305e883c381067ab7804dcb392",
+      "ffmpeg_y_sha256": "363800fdfc6e3a1bdcd9682bfec85394ae3cdb9fe5dffbb0200672e955827716",
+      "ffmpeg_uv_sha256": "a3ee98578478958a83107d68aff195db5bb09af23feec42aceeab9ddfe82ccdd",
+      "ffmpeg_y_range": [
+        18,
+        238
+      ],
+      "ffmpeg_uv_range": [
+        48,
+        170
+      ],
+      "cpu_sha256": "4944a0cf534965618ceb61dd6e95153c9bbfbc305e883c381067ab7804dcb392",
+      "cpu_y_sha256": "363800fdfc6e3a1bdcd9682bfec85394ae3cdb9fe5dffbb0200672e955827716",
+      "cpu_uv_sha256": "a3ee98578478958a83107d68aff195db5bb09af23feec42aceeab9ddfe82ccdd",
+      "gpu_sha256": "4944a0cf534965618ceb61dd6e95153c9bbfbc305e883c381067ab7804dcb392",
+      "gpu_y_sha256": "363800fdfc6e3a1bdcd9682bfec85394ae3cdb9fe5dffbb0200672e955827716",
+      "gpu_uv_sha256": "a3ee98578478958a83107d68aff195db5bb09af23feec42aceeab9ddfe82ccdd"
+    },
+    "240": {
+      "ffmpeg_sha256": "dc702e687bedf702425f3947562cc8f88b9815e0ce0bcc770105d5c430ccf5e6",
+      "ffmpeg_y_sha256": "a84d9fc22465ee4c777efcd1e204519d9205f9bb67c1d76df70ffff859a19604",
+      "ffmpeg_uv_sha256": "089ca171f3cb844b2a1108f934d89fafeed25215723e78bd20054769d8a6c09e",
+      "ffmpeg_y_range": [
+        17,
+        238
+      ],
+      "ffmpeg_uv_range": [
+        31,
+        212
+      ],
+      "cpu_sha256": "dc702e687bedf702425f3947562cc8f88b9815e0ce0bcc770105d5c430ccf5e6",
+      "cpu_y_sha256": "a84d9fc22465ee4c777efcd1e204519d9205f9bb67c1d76df70ffff859a19604",
+      "cpu_uv_sha256": "089ca171f3cb844b2a1108f934d89fafeed25215723e78bd20054769d8a6c09e",
+      "gpu_sha256": "dc702e687bedf702425f3947562cc8f88b9815e0ce0bcc770105d5c430ccf5e6",
+      "gpu_y_sha256": "a84d9fc22465ee4c777efcd1e204519d9205f9bb67c1d76df70ffff859a19604",
+      "gpu_uv_sha256": "089ca171f3cb844b2a1108f934d89fafeed25215723e78bd20054769d8a6c09e"
+    }
+  },
+  "dll_sha256": {
+    "frosty_hevc.dll": "4ae215c99b793542924cb3438d4a180e52e03780329b46bb271c7ddce6e613d0",
+    "mfhevcdec.dll": "fecc135bf0387f68c304542af3cb2c4aaed1267a06027f5198223f585678cd0d",
+    "mfplat.dll": "60f27ba98edb4218234399f94c3a44c643bb28dbbfd752a3064944bc6e44030a",
+    "mfplat_sys.dll": "3df8aff6ca29903c6a9109b8154d36d9133d2fa371aaab2fa4be564dbba8bb1b",
+    "mfplat_tombox.dll": "04a56adec588bce9536aff7603790794edbbcfaadd0c472aa35686b193e9a978",
+    "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f"
+  },
+  "register_flags": 1
+}

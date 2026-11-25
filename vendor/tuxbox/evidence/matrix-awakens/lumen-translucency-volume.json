@@ -1,0 +1,65 @@
+{
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "guest_sha256": "4f6cff7c5def281526ea7481bd89655b7f241cf4c71e6ab3b4eba7407eb224ca",
+  "adapter": "1002:13c0",
+  "exit": 0,
+  "dispatch": [
+    65,
+    1,
+    1
+  ],
+  "volume_extent": [
+    2,
+    1,
+    32
+  ],
+  "readback_extent": [
+    2,
+    1,
+    33
+  ],
+  "inputs": "Two HZB texels alternate between excluded and traced cells. A miss shader records the face selected by the hardware ray direction. The six cubemap faces contain distinct RGB values. The last volume slice starts cleared to -99.",
+  "control": "Every traced cell must sample its expected sky face; every excluded cell must be black. Each valid cell must record maximum distance 17. The out-of-range invocation must preserve both sentinel texels.",
+  "programs": {
+    "619": {
+      "state_sha256": "5348bfe86b4fb2b315c52b7d88587a9139da35a393097e936262e55d40e302f1",
+      "dxil_sha256": "776377c620810f855afb93c47cccba1eb8505b1b2f82b5a3f1489257e7134ca7",
+      "native_misses": 32,
+      "untraced_invocations": 33,
+      "native_hits": 0,
+      "sky_faces_checked": "0x3f",
+      "radiance_and_distance_texels_checked": 132,
+      "first_two_slices": [
+        "0,0,0;17",
+        "3,5,7;17",
+        "0,0,0;17",
+        "2,3,4;17"
+      ],
+      "outside_volume": [
+        "-99,-99,-99;-99",
+        "-99,-99,-99;-99"
+      ],
+      "ordered_readback_sha256": "e40a5bbd521b65184355fe43e4a385d784f73bd1b3ed27b2e0353e4a2d5e0e15"
+    },
+    "620": {
+      "state_sha256": "1addc77595d8fa777974134c826dd30a18822a89302002cf482492a0a10d51fe",
+      "dxil_sha256": "30a240f94f790789c9a34761c67a59d31e7c25e4d206c483fdbd9327d0586c98",
+      "native_misses": 32,
+      "untraced_invocations": 33,
+      "native_hits": 0,
+      "sky_faces_checked": "0x3f",
+      "radiance_and_distance_texels_checked": 132,
+      "first_two_slices": [
+        "0,0,0;17",
+        "3,5,7;17",
+        "0,0,0;17",
+        "2,3,4;17"
+      ],
+      "outside_volume": [
+        "-99,-99,-99;-99",
+        "-99,-99,-99;-99"
+      ],
+      "ordered_readback_sha256": "e40a5bbd521b65184355fe43e4a385d784f73bd1b3ed27b2e0353e4a2d5e0e15"
+    }
+  }
+}

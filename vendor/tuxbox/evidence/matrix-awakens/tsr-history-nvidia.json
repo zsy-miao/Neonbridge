@@ -1,0 +1,290 @@
+{
+  "name": "FTSRUpdateHistoryCS",
+  "shader_file": "/Engine/Private/TemporalSuperResolution/TSRUpdateHistory.usf",
+  "entry": 3385,
+  "shader_map": 281,
+  "adapter": "10de:2705",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "source_sha256": "76fb3b539aeeab93ca3bc9a935df2d0497047164c6b7902dc51c309f79e3c086",
+  "dxil_sha256": "9559f473c03f4aef2f647d3c3ebab007914f9c28194a700019d5903980635a11",
+  "guest_sha256": "c10e0b6d2d087193979585f0bd4f43e44a7629c10ace2d6037f1c2e0d33e97e0",
+  "provider_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+  "compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+  "dispatch_groups": [
+    2,
+    2,
+    1
+  ],
+  "threads_per_group": [
+    8,
+    4,
+    1
+  ],
+  "texture_dimensions": [
+    32,
+    32
+  ],
+  "cases": {
+    "black": {
+      "outputs": [
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "448a349667310f24ccc1a91819f2704739c8bfe27c583ffc583cf55730dc6b4e",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "0d153be63329a8dde979325ec2c9b117983debea43a084771318455df4affedc",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "8866fe8358adfb9295c3776d76c91c7cfac692c6c54bdb16ee6d3a46950cc6d6",
+          "distinct_texels": 1,
+          "verified_texels": 1024,
+          "guard_texels": 1024
+        }
+      ]
+    },
+    "current": {
+      "outputs": [
+        {
+          "sha256": "10fd334cedfca66c3ffec56b873ab06ae5f4eb1cc533be77978c05e3415ff67a",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "e68c5d7b554c7ea0af5a494ca80f64cb454f1c5488769153aa942e3b9116dc9d",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "448a349667310f24ccc1a91819f2704739c8bfe27c583ffc583cf55730dc6b4e",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "0d153be63329a8dde979325ec2c9b117983debea43a084771318455df4affedc",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "138bd6af141c589316af38c21bf1a1dd9577ee85c6b05c7bfa93a3ac01a63f13",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "8866fe8358adfb9295c3776d76c91c7cfac692c6c54bdb16ee6d3a46950cc6d6",
+          "distinct_texels": 1,
+          "verified_texels": 1024,
+          "guard_texels": 1024
+        }
+      ]
+    },
+    "transparent": {
+      "outputs": [
+        {
+          "sha256": "10fd334cedfca66c3ffec56b873ab06ae5f4eb1cc533be77978c05e3415ff67a",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "e68c5d7b554c7ea0af5a494ca80f64cb454f1c5488769153aa942e3b9116dc9d",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "448a349667310f24ccc1a91819f2704739c8bfe27c583ffc583cf55730dc6b4e",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "0d153be63329a8dde979325ec2c9b117983debea43a084771318455df4affedc",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "138bd6af141c589316af38c21bf1a1dd9577ee85c6b05c7bfa93a3ac01a63f13",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "71f977d384c035c0507c9cf9fe8413bde0f4b311e010a30251fd3512c2f133b5",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 960
+        }
+      ]
+    },
+    "overlay": {
+      "outputs": [
+        {
+          "sha256": "10fd334cedfca66c3ffec56b873ab06ae5f4eb1cc533be77978c05e3415ff67a",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "e68c5d7b554c7ea0af5a494ca80f64cb454f1c5488769153aa942e3b9116dc9d",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "448a349667310f24ccc1a91819f2704739c8bfe27c583ffc583cf55730dc6b4e",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "9fa7324d4894659ee344cf7c2bc8c6d9b3b0cc38afb7b7a44b95bc3841cd4a1a",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "b12546dff7244ded82b5352bf9306305def6dcddf6c86afb84d3fee64268ed2c",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "4c683c9a69ec0d74472df8923252ce9764bb1425c29b6bb1bc72e17e9800f74f",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1344568c9f6adfe113fa73a4e92d599ef88ff0c37b5293af1763f5f46c27f70",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 960
+        }
+      ]
+    },
+    "pattern": {
+      "outputs": [
+        {
+          "sha256": "55183842a8d2358563b363cb59d0d0277bbb6400d59d29bb83e870a082db3abb",
+          "distinct_texels": 65,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "aa6186f3f863b14f5a95716fff71ac2b6aedb81361170354eebee002cff7bad6",
+          "distinct_texels": 65,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "448a349667310f24ccc1a91819f2704739c8bfe27c583ffc583cf55730dc6b4e",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "0d153be63329a8dde979325ec2c9b117983debea43a084771318455df4affedc",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "d1966d8c847517de844f3d4955e91c9a59dea55445e8c381fb0176d2de6c6349",
+          "distinct_texels": 2,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "c36ec86af107ab1d51f6709e6204d3f982767e95b9f0880f185bf6e06514c7ad",
+          "distinct_texels": 62,
+          "verified_texels": 1024,
+          "guard_texels": 768
+        },
+        {
+          "sha256": "6063c461db00ac940bbaa44b97bf25e680e1c95f97fa19df7daf38844491efc6",
+          "distinct_texels": 35,
+          "verified_texels": 1024,
+          "guard_texels": 960
+        }
+      ]
+    }
+  }
+}

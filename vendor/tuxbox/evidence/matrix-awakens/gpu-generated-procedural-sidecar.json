@@ -1,0 +1,82 @@
+{
+  "scope": "Synthetic single-queue GPU-generated procedural sidecar with candidate-stage consumer and replay. This is not the runtime, general GPU provenance, or full shader 219.",
+  "probe": "python tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "tools/reference/blas/sidecar_bounds.hlsl": "1ec415c4cf6830cb2115f72da21149bfcc868edd90f6fe78c731431d53e4ca95",
+    "tools/reference/blas/zero_aabb_probe.h": "750683ddd5b01acdc1896b0246ca897603fa460f56571b6a3be1184c5b0c5d36",
+    "tools/reference/blas/zero_aabb.hlsl": "7f5524d7063f06d12102d1c1f77593d5644d7767b7eb9564dff76a180130553a",
+    "tools/reference/blas/inline219_candidate.hlsl": "57fe3f66a615d503b377815386c3df9f4a5bee8f12104cdd0bea803f6b4cd6cb",
+    "tools/reference/blas/inline219_probe.hlsl": "969e4a9d7e99f8554a743d007ca0e8715fb7b91a646c08d3fe4670bdb8372772",
+    "tools/reference/blas/sidecar_fixture.rs": "37550f05473c2d76d6a88ef1a60915a29550426d10fe79b54a91d95d0fc48c93",
+    "runtime/d3d12/src/device/blas/sidecar_directory.rs": "f0d5eb0c9dd0312416a95e1973ee0710fded8bc824bcdd7afe5e908b7df2343c",
+    "tools/check_frosty_blas.py": "bb3013fcd11fb5f31c53fa93e3e0614225a10f3473d287a9aeadf2118a783c56",
+    "tools/reference/blas/guest.cpp": "2027965053a10a1f0da8087ba455c1aa0db1ea460dbbffa63e872ee3255d0366"
+  },
+  "ordered_work": [
+    "Copy CPU-validated synthetic 64-byte leaf records and Rust-encoded directory to GPU default memory.",
+    "Generate two conservative AABBs from GPU leaf data, transition UAV output to AS build input, build one BLAS and a transformed/masked TLAS, then dispatch the guarded candidate helper.",
+    "Read back generated AABBs and confirm that all axes strictly enclose the source triangle bounds; run ten hit/miss/edge/mask candidate checks.",
+    "After GPU fence completion, change one recorded upload and replay the same closed command list. Readback confirms regenerated bounds, disappearance of old hits and continued hit on unchanged triangle."
+  ],
+  "negative_controls": [
+    "Malformed selector sets converter status 2 and leaves its sentinel output untouched; that output is not submitted to an AS build.",
+    "Short physical leaf extent sets converter status 1 and leaves the entire sentinel output untouched; that output is not submitted to an AS build.",
+    "Short private candidate-directory extent sets helper status 2 and commits no hits."
+  ],
+  "limitations": [
+    "Only two validated, unpaired TRI0 records; no general leaf layout, arbitrary graph, geometry flags, RTZ behavior, ray numerical range or transforms are proven.",
+    "No runtime provider integration or guest VA association. The directory is CPU-generated for fixed fixture instances; original GPU-written guest TLAS inputs are not captured.",
+    "Valid source is controlled by the fixture. Conversion status is observed after the list runs; an invalid result could already have reached AS build in that command sequence. A real implementation must validate before dependent GPU work or provide a proven GPU-side fail-closed path.",
+    "Replay is after completion on one queue. Concurrent in-flight submissions, allocator reset, clone/compact/update, aliases, cross-queue waits, immutable generation selection and fence retirement are not verified here."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "389c1e4094ab66189003e85635cb0fd51940c3514b067e706f96c6e3ffe19d41",
+      "sidecar_gpu_bounds_status": "0",
+      "sidecar_gpu_bounds_enclose": "2",
+      "sidecar_gpu_invalid": "status 2; untouched 1",
+      "sidecar_gpu_short": "status 1; untouched 1",
+      "sidecar_gpu_replay": "status 0; bounds 0; old 0; other 2,00070001; moved 0",
+      "inline219_candidate_status": "0",
+      "inline219_invalid_directory_status": "2",
+      "candidate_cases": {
+        "0": "1,2,80000000,00070000",
+        "1": "1,2,80000000,00070001",
+        "2": "1,2,80000000,00080000",
+        "3": "1,2,80000000,00070000",
+        "4": "1,0,00000000,00000000",
+        "5": "1,0,00000000,00000000",
+        "6": "1,2,80000000,00080001",
+        "7": "0,0,00000000,00000000",
+        "8": "1,2,3f800000,00070000",
+        "9": "0,0,00000000,00000000"
+      }
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "389c1e4094ab66189003e85635cb0fd51940c3514b067e706f96c6e3ffe19d41",
+      "sidecar_gpu_bounds_status": "0",
+      "sidecar_gpu_bounds_enclose": "2",
+      "sidecar_gpu_invalid": "status 2; untouched 1",
+      "sidecar_gpu_short": "status 1; untouched 1",
+      "sidecar_gpu_replay": "status 0; bounds 0; old 0; other 2,00070001; moved 0",
+      "inline219_candidate_status": "0",
+      "inline219_invalid_directory_status": "2",
+      "candidate_cases": {
+        "0": "1,2,80000000,00070000",
+        "1": "1,2,80000000,00070001",
+        "2": "1,2,80000000,00080000",
+        "3": "1,2,80000000,00070000",
+        "4": "1,0,00000000,00000000",
+        "5": "1,0,00000000,00000000",
+        "6": "1,2,80000000,00080001",
+        "7": "0,0,00000000,00000000",
+        "8": "1,2,3f800000,00070000",
+        "9": "0,0,00000000,00000000"
+      }
+    }
+  }
+}

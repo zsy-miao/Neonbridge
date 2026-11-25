@@ -1,0 +1,110 @@
+{
+  "scope": "Synthetic native procedural AABB RayQuery control only; no actual 219 execution, Xbox triangle instruction implementation, or runtime attachment.",
+  "probe": "tools/check_frosty_blas.py --ray-archive <mounted-title> --card-tiles",
+  "source_sha256": {
+    "tools/reference/blas/zero_aabb.hlsl": "b961062ab9cc7deca25d94aaa25824bc060e3eb85e3843ba227b5f06d4cdf8bc",
+    "tools/reference/blas/zero_aabb_probe.h": "566ca9927f45225212e526aac46685a00c23c97e483fdf300d6cb518a6236565",
+    "tools/reference/blas/guest.cpp": "8e7f4b1a1f5874102d35a856dd6e2509e4a10ce31a19a1f3a411af9e69ef40ce",
+    "tools/check_frosty_blas.py": "f6ec325edbda31319b1762042eac609d1bc8c5f9be44e6e696119b0f72b8ea42"
+  },
+  "spec": "https://microsoft.github.io/DirectX-Specs/d3d/Raytracing.html#ray-extents",
+  "scene": {
+    "aabb": [
+      -1,
+      -1,
+      -1,
+      1,
+      1,
+      1
+    ],
+    "test_triangle": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ]
+    ],
+    "direction": [
+      0,
+      0,
+      1
+    ],
+    "interval": [
+      0,
+      2
+    ]
+  },
+  "cases": [
+    {
+      "origin": [
+        0.25,
+        0.25,
+        0
+      ],
+      "meaning": "inside AABB and strict interior of test triangle; commit procedural t=0"
+    },
+    {
+      "origin": [
+        0.25,
+        0.25,
+        -1
+      ],
+      "meaning": "on AABB entrance face but not on test triangle; reject"
+    },
+    {
+      "origin": [
+        0.8,
+        0.8,
+        0
+      ],
+      "meaning": "inside AABB and triangle plane but outside test triangle; reject"
+    },
+    {
+      "origin": [
+        2,
+        0,
+        0
+      ],
+      "meaning": "outside AABB; no candidate"
+    }
+  ],
+  "limitations": [
+    "Only the strictly interior on-plane condition for the fixed synthetic triangle is evaluated; general Xbox triangle arithmetic, edge ownership, transforms, culling and flags are not implemented.",
+    "Production requires queue-ordered triangle and instance provenance, conservative AABB generation, updates/copies/aliasing, descriptor binding and fenced resource retirement.",
+    "Hardware AABB and software triangle behavior have not been proven conservative or equivalent for every IEEE special value or input geometry."
+  ],
+  "results": {
+    "amd": {
+      "adapter": "1002:13c0",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "607dfaab5c69b62a469f4205e051131bfc657956f4fb946f5bd46eb061882161",
+      "candidate_count_status_t": {
+        "0": "1,2,00000000",
+        "1": "1,0,00000000",
+        "2": "1,0,00000000",
+        "3": "0,0,00000000"
+      }
+    },
+    "nvidia": {
+      "adapter": "10de:2705",
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "guest_sha256": "607dfaab5c69b62a469f4205e051131bfc657956f4fb946f5bd46eb061882161",
+      "candidate_count_status_t": {
+        "0": "1,2,00000000",
+        "1": "1,0,00000000",
+        "2": "1,0,00000000",
+        "3": "0,0,00000000"
+      }
+    }
+  }
+}

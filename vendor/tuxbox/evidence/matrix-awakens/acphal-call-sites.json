@@ -1,0 +1,52 @@
+{
+  "analysis_type": "static PE and call-site review",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "reference_library": "EmbeddedXvd/Windows/System32/AcpHal.dll",
+  "reference_library_sha256": "a8fe520eafe38784249d6fca38b0a185006bcc18cd3962405b8b92be1f758123",
+  "title_imports": [
+    {
+      "name": "AcpHalReleaseShapeContexts",
+      "iat_rva": "0x60d6000",
+      "call_site_rvas": [
+        "0x44d4539",
+        "0x44d4eb1",
+        "0x44d509e"
+      ]
+    },
+    {
+      "name": "AcpHalAllocateShapeContexts",
+      "iat_rva": "0x60d6008",
+      "call_site_rvas": [
+        "0x44d479f"
+      ]
+    },
+    {
+      "name": "AcpHalCreate",
+      "iat_rva": "0x60d6010"
+    }
+  ],
+  "release_export": {
+    "ordinal": 3,
+    "rva": "0x2b80",
+    "observed_abi": "No input argument registers are consumed in the export body; returns a 32-bit HRESULT.",
+    "observed_behavior": "Reads and updates shared AcpHal device state under a lock, then returns state-dependent HRESULT values.",
+    "title_callers": "Check the HRESULT sign. Successful cleanup paths clear the title's allocation-hook state."
+  },
+  "shape_contexts": {
+    "allocation_export_ordinal": 1,
+    "allocation_export_rva": "0x2b70",
+    "title_count_field_va": "0x147ac98a0",
+    "requested_xma_contexts": 512,
+    "xma_array_pointer_record_offset": "0x38",
+    "bytes_cleared_after_allocation": "0x8000",
+    "inferred_xma_context_size": 64
+  },
+  "tuxbox_provider": {
+    "source": "runtime/acphal",
+    "build_command": "python build.py acphal",
+    "built_exports": 7,
+    "exports_behaviorally_verified": 0,
+    "release_implementation": "Returns S_OK for the inert host provider; not yet verified in a guest or retail launch."
+  },
+  "callsite_scan_note": "Call-site RVAs list only direct FF 15 IAT-indirect call instructions found by static byte scan; absence of a listed call site does not mean the import is unused."
+}

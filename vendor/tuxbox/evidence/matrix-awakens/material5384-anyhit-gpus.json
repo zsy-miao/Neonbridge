@@ -1,0 +1,51 @@
+{
+  "scope": "The original room material state (material archive entry 5384) runs its own procedural any-hit and closest-hit exports through a native DXR state object and the Xbox serialized collection path. Each dispatch uses two shader-table records referencing the same hit group, geometry, scene and samplers.",
+  "exports": [
+    "MaterialAHS_b602922d",
+    "MaterialCHS_b602922d"
+  ],
+  "shader": {
+    "state_sha256": "f7e669e6365e8b7dcc35c16cf9525cc129189a3d38ec849c56e3848618162581",
+    "dxil_sha256": "1050137ae78791693a043d13d6fbeb50580d00c70f47f013973d7e72e96a1863"
+  },
+  "worker_sha256": "bed9ce34869694445272024328662477a40ccf5392deb1070496f5652d3bc54f",
+  "provider_sha256": "ca123ec040ea68ef752008bb23c5af037c5333df1829e9ac9a780b640233d1bd",
+  "guest_sha256": "836224c9c0d76d7f9b24aee9ae9dfdad99c7672192f7c012ad70f94f6f44cc6e",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "command": "tools/check_frosty_blas.py --masked-materials",
+  "inputs": "Both ray directions intersect the same triangle with a zero payload flag. The two record-local CBV tables differ only in b3[94].w, which is -0.67 or -0.66. The shader applies its original 0.3333 opacity threshold. A geometric miss and force-opaque hits on two instances provide controls.",
+  "ray_order": [
+    "low opacity front",
+    "low opacity back",
+    "high opacity front",
+    "high opacity back",
+    "geometric miss",
+    "force opaque low",
+    "force opaque high"
+  ],
+  "expected": [
+    "miss",
+    "miss",
+    "hit",
+    "hit",
+    "miss",
+    "hit",
+    "hit"
+  ],
+  "adapters": {
+    "AMD": {
+      "pci": "1002:13c0",
+      "payload_sha256": "a794507cce51a13bba1e1c7928b6e5d8d7048eea8fb07122198d1886ec8add1d",
+      "material_words_compared": 112,
+      "all_four_material_words_compared": 448,
+      "mismatches": 0
+    },
+    "NVIDIA": {
+      "pci": "10de:2705",
+      "payload_sha256": "a794507cce51a13bba1e1c7928b6e5d8d7048eea8fb07122198d1886ec8add1d",
+      "material_words_compared": 112,
+      "all_four_material_words_compared": 448,
+      "mismatches": 0
+    }
+  }
+}

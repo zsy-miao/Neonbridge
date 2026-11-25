@@ -1,0 +1,42 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "fixture": "TomBox tools/homebrew/controller_fixture.py (check_route with adapter=False)",
+  "fixture_sha256": "5785075b62be665ab374225e549bb5bd1e0e2e7fd4e9033922600bae68380b8c",
+  "guest_sha256": "d5b722eaf598829391cf9a3c25f59d72c0801dda8a67773ddf7fbe412ac153ac",
+  "route": "Linux uinput \u2192 Proton XInput \u2192 TomBox Coin Run homebrew",
+  "host_device": "Two virtual Xbox 360-style USB controllers via /dev/uinput",
+  "real_controller_attached": false,
+  "tests": [
+    "directional hat and signed thumbsticks",
+    "disconnect primary and reassign secondary",
+    "two pickup rumble effects delivered to their respective virtual Linux devices, including stops",
+    "start button restarted the course"
+  ],
+  "guest_events": [
+    "Waiting for a controller (XInput)",
+    "pad ready XInput",
+    "pad d 1 2",
+    "pad neutral",
+    "pad d 2 2",
+    "pad neutral",
+    "pad s 2 2",
+    "pad neutral",
+    "pad d 3 1",
+    "pad neutral",
+    "pad inactive XInput",
+    "pad ready XInput",
+    "pad a 2 1",
+    "pad neutral",
+    "pad a 1 1",
+    "pad neutral",
+    "pad a 0 1",
+    "pad neutral",
+    "pad s 4 1",
+    "pad neutral",
+    "pad s 8 0",
+    "pad neutral",
+    "pad d 8 0",
+    "pad neutral",
+    "pad r 0 2"
+  ]
+}

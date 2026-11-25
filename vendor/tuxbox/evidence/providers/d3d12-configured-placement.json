@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-23",
+  "host": "Linux",
+  "os_release": "7.3.5-2-cachyos-bore",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-exports.exe": "bf07721e09d448531765318ee1981d70cefe8ab15e8d3ee1050f70a498e067cc",
+    "d3d12-smoke/d3d12_xs.dll": "18af35109925fdd71ede066eba74a526101bf116ca9615572dee1ab7167df27e",
+    "d3d12-smoke/d3d12-placement.exe": "15e105339dfd5367ce9d26f3022d545366835367bd4df9f77b89163d6f12b40b"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-exports",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-exports PASS debug=1 blob=1 dxgix=4 cpu_clear=1"
+    },
+    {
+      "gate": "d3d12-placement",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-placement PASS pci=10de:2705 slot=44 VA-offsets=0,4096,0 passes=2 BC1-blocks=522 cube-blocks=16404 R8-texels=262144 rejected=4 configured_vm=1"
+    }
+  ]
+}

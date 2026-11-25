@@ -1,0 +1,1191 @@
+{
+  "title": "The Matrix Awakens: An Unreal Engine 5 Experience (Frosty, retail Xbox Series)",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "providers_sha256": {
+    "d3d12_xs.dll": "847b82925c9311b93b4beaa8cf141959b2435f0f87c35de7bd818aa6e6357a6a",
+    "dxcompiler_xs.dll": "920938f673eb7640951b21bf4cf3989f3254dc82912139717dfbe8ccef4ac525",
+    "GameInput.dll": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+    "xmem.dll": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+    "acphal.dll": "5679643b085e008a0f1102179144de3ecdbf6ce594c30f64cbaff3d1df5f5229",
+    "xcrdapi.dll": "c02cd03e78906f48f1d0cf939303537a29631d1a83cc35a2284380202f69b532",
+    "xgameruntime.dll": "5a83cb0998cf99be48a4f2cfbfd39aa55deb7725b3b3245f599b42f8aca7f61b",
+    "gameconfighelper.dll": "20f03f2405f714cd5f1f014de1027df221e60abc2adfd3011c5106905ce74363",
+    "mfplat.dll": "ba2b8d3123865b8ce25a9e44bc1b9cc9335f28d3a012d600ee202994d39e9c0f",
+    "frosty_hevc.dll": "70b8c53c59b2d29dec98af616f2acb5cdeb5942a178bb6753787435b5e8aff54",
+    "frosty_h264.dll": "5c3158463dc13826f3ca3e6f033f46e5e02c03ba0402b715d4cd34daff6138d9"
+  },
+  "console_cbv_layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+  "shader_compiler": {
+    "initial_runtime_cache_fingerprint": "bf1ae098d16f4a2aebe7a2c1d74cd3c5573fbc72ff80fe838c55a3d4e874458c",
+    "initial_xshader_sha256": "2edce37da13eccf844cfe0484f6a6be6eff1566cacedb3390dcdec7a160e8625",
+    "observed_rebuilt_xshader_sha256": "d70b57c64cf7e528aaf49cc5693bbe8d62099fdd71eda53da1bcc3acc2de4db6",
+    "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "provenance": "The release translator was rebuilt during this run. The initial fingerprint identifies its starting binary. Individual translated outputs from the session have mixed provenance."
+  },
+  "run": {
+    "entry": "Retail main menu, Start Chase selected with keyboard",
+    "start_chase_utc": "2026-11-21T23:46:09+00:00",
+    "guest_arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer",
+      "-nosound"
+    ],
+    "vkd3d_disabled_extensions": [
+      "VK_EXT_descriptor_buffer"
+    ],
+    "engine_ini_sha256": "a0f4aad845fafedfdf1496557ce705e57020c69ea07b33ce17fdb48ece51f56b",
+    "engine_ini": [
+      "[/Script/Engine.RendererSettings]",
+      "r.RayTracing=0",
+      "[ConsoleVariables]",
+      "r.Nanite=0",
+      "r.Forward.LightLinkedListCulling=0",
+      "r.Shadow.Virtual.Enable=0",
+      "r.Lumen.DiffuseIndirect.Allow=0",
+      "r.Lumen.Reflections.Allow=0",
+      "r.AntiAliasingMethod=0",
+      "r.TemporalAA.Upsampling=0",
+      "r.ScreenPercentage=33.3333",
+      "Frosty.ChaseStartSection=2",
+      "r.MotionBlurQuality=0",
+      "r.DepthOfFieldQuality=0",
+      "r.BloomQuality=0",
+      "r.AmbientOcclusionLevels=0",
+      "r.InstanceCulling.OcclusionCull=0",
+      "r.SSS.Scale=0",
+      "r.HairStrands.Strands=0",
+      "g.TimeoutForBlockOnRenderFence=300000",
+      "fx.NiagaraAllowGPUParticles=0",
+      "fx.NiagaraAllowComputeShaders=0"
+    ],
+    "profile_note": "The private INI includes Frosty.ChaseStartSection=2. The game logged WakeUp, then CityIntro, on the regular menu route.",
+    "sections": [
+      {
+        "section": "WakeUp",
+        "frame": 821,
+        "seconds_from_start": 3.383
+      },
+      {
+        "section": "CityIntro",
+        "frame": 564,
+        "seconds_from_start": 477.319
+      },
+      {
+        "section": "Frogger",
+        "frame": 291,
+        "seconds_from_start": 1074.223
+      },
+      {
+        "section": "RoofRip",
+        "frame": 876,
+        "seconds_from_start": 1389.063
+      },
+      {
+        "section": "Underpass",
+        "frame": 124,
+        "seconds_from_start": 1494.344
+      },
+      {
+        "section": "CityStreets",
+        "frame": 321,
+        "seconds_from_start": 1586.44
+      },
+      {
+        "section": "HeliHighway",
+        "frame": 393,
+        "seconds_from_start": 1612.233
+      },
+      {
+        "section": "ChaseFinale",
+        "frame": 573,
+        "seconds_from_start": 1698.791
+      }
+    ],
+    "first_gameplay_layer": {
+      "name": "Chase_Gameplay_Frogger",
+      "transition": "Unloaded -> Activated",
+      "frame": 431,
+      "seconds_from_start": 1209.964
+    },
+    "first_gameplay_profile": {
+      "name": "XSX_ChaseGameplay",
+      "frame": 457,
+      "seconds_from_start": 1212.968
+    }
+  },
+  "hud": {
+    "image": "chase-gameplay-hud.jpg",
+    "sha256": "112605f54f44810db39fe20d4ac6e6d18227b36a4d09c2343172311e7a225cff",
+    "seconds_from_start": 1321.331,
+    "labels": [
+      "Switch Targets",
+      "Shoot"
+    ]
+  },
+  "controls": {
+    "path": "Linux uinput Xbox 360-style gamepad (045e:028e) -> Proton XInput -> TuxBox GameInput -> retail chase targeting component",
+    "target_lock_action": {
+      "verified": true,
+      "linux_button": "BTN_TL",
+      "button_down_utc": "2026-11-22T00:14:00.073856+00:00",
+      "button_up_utc": "2026-11-22T00:14:03.206348+00:00",
+      "guest_symbol": "UFrostyChaseTargetingComponent::LockTarget",
+      "guest_rva": "0x2495600",
+      "guest_entry_utc": "2026-11-22T00:14:00.262859+00:00",
+      "seconds_from_start": 1671.263,
+      "delay_ms": 189.003,
+      "observations": 1
+    },
+    "target_switch_visually_confirmed": false,
+    "hit_target_observed": true,
+    "manual_fire_verified": false,
+    "free_roam_movement_verified": false,
+    "attribution": "The HUD displayed the auto-fire program. The retail HitTarget routine returned non-null targets during neutral intervals. The left-shoulder press reached LockTarget during HeliHighway; the sampled frames do not identify a selected target."
+  },
+  "rendering": "The chase shows the highway, police vehicles, HUD and effects. Some building, character and vehicle geometry is missing or distorted. Cold pipeline creation caused visible stalls. Sound was disabled for this run.",
+  "termination": {
+    "section": "ChaseFinale",
+    "last_observed_layer": "Cine_90_Finale_3_BridgeDestruction",
+    "frame": 628,
+    "seconds_from_start": 1873.91,
+    "runtime_shader_request_sha256": "ccdd625c97ef08eb7adfa5e2c029827fe389a64c69f4095ef2e229f47c40ff34",
+    "archive": "material",
+    "entry": 31420,
+    "stage": "pixel",
+    "first_error": "xshader timed out after 30 seconds while translating the request. vkd3d reported invalid shader bytecode (result -4), and retail CreatePipelineState returned E_FAIL.",
+    "exit_code": 1,
+    "process_wall_seconds": 1911.8
+  },
+  "material_fallbacks": {
+    "warnings": 58,
+    "unique_materials": 28,
+    "usage_flags": {
+      "bUsedWithInstancedStaticMeshes": 57,
+      "bUsedWithNiagaraMeshParticles": 1
+    }
+  },
+  "current_build": {
+    "title": "The Matrix Awakens: An Unreal Engine 5 Experience (Frosty, retail Xbox Series)",
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+    "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+    "providers_sha256": {
+      "d3d12_xs.dll": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+      "dxcompiler_xs.dll": "920938f673eb7640951b21bf4cf3989f3254dc82912139717dfbe8ccef4ac525",
+      "GameInput.dll": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+      "xmem.dll": "9b3a3c2435f8f90e1dc30067cb72de6e7b2a516c38fc6fe42f13d7eeaef6babd",
+      "acphal.dll": "5679643b085e008a0f1102179144de3ecdbf6ce594c30f64cbaff3d1df5f5229",
+      "xcrdapi.dll": "c02cd03e78906f48f1d0cf939303537a29631d1a83cc35a2284380202f69b532",
+      "xgameruntime.dll": "5a83cb0998cf99be48a4f2cfbfd39aa55deb7725b3b3245f599b42f8aca7f61b",
+      "gameconfighelper.dll": "20f03f2405f714cd5f1f014de1027df221e60abc2adfd3011c5106905ce74363",
+      "mfplat.dll": "ba2b8d3123865b8ce25a9e44bc1b9cc9335f28d3a012d600ee202994d39e9c0f",
+      "frosty_hevc.dll": "70b8c53c59b2d29dec98af616f2acb5cdeb5942a178bb6753787435b5e8aff54",
+      "frosty_h264.dll": "5c3158463dc13826f3ca3e6f033f46e5e02c03ba0402b715d4cd34daff6138d9"
+    },
+    "console_cbv_layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+    "shader_compiler": {
+      "runtime_cache_fingerprint": "8687bf0693af6bf7d9ad906be8dc868b4e416ce86d1a17d4a483e9564e8b25e1",
+      "xshader_sha256": "851c3cbca4c651cc78d3b88b75ab2e9ea1c0f52d4a749462ca2066ac9b799dbe",
+      "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+      "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+      "finale_prewarm_sha256": {
+        "b331bc67f92ea2c1daaf26418e8ed09c55179a36b529340fe8bd60ec9d4fd75c": "fb4cf0d3637c3ac1e7b5fe6129c30ccee32554ca40ae93d15fbe07189ed536f4",
+        "ccdd625c97ef08eb7adfa5e2c029827fe389a64c69f4095ef2e229f47c40ff34": "e08272f47646a29d3bfd672e87843fb00c41745748445472939e132ce0e08b24",
+        "b331bc67f92ea2c1daaf26418e8ed09c55179a36b529340fe8bd60ec9d4fd75c_ccdd625c97ef08eb7adfa5e2c029827fe389a64c69f4095ef2e229f47c40ff34_e08272f47646a29d3bfd672e87843fb00c41745748445472939e132ce0e08b24": "05af648e4a8c6645ad9b833058626f68eb0ed6aa6ffdcc289b5b8881da0977f8"
+      }
+    },
+    "run": {
+      "entry": "tools/run_frosty.sh, standalone staged layout, retail menu Start Chase with keyboard",
+      "start_chase_utc": "2026-11-22T00:20:10+00:00",
+      "guest_arguments": [
+        "-DisablePlugins=XboxCommonGDKMoviePlayer"
+      ],
+      "vkd3d_disabled_extensions": [
+        "VK_EXT_descriptor_buffer"
+      ],
+      "engine_ini_sha256": "1f10954392a7401137094c59c91fe980e42b7426cc0e43918cf50b0443e359ca",
+      "engine_ini": [
+        "[/Script/Engine.RendererSettings]",
+        "r.RayTracing=0",
+        "[ConsoleVariables]",
+        "r.Nanite=0",
+        "r.Forward.LightLinkedListCulling=0",
+        "r.Shadow.Virtual.Enable=0",
+        "r.Lumen.DiffuseIndirect.Allow=0",
+        "r.Lumen.Reflections.Allow=0",
+        "r.AntiAliasingMethod=0",
+        "r.TemporalAA.Upsampling=0",
+        "r.ScreenPercentage=33.3333",
+        "r.MotionBlurQuality=0",
+        "r.DepthOfFieldQuality=0",
+        "r.BloomQuality=0",
+        "r.AmbientOcclusionLevels=0",
+        "r.InstanceCulling.OcclusionCull=0",
+        "r.SSS.Scale=0",
+        "r.HairStrands.Strands=0",
+        "g.TimeoutForBlockOnRenderFence=300000",
+        "fx.NiagaraAllowGPUParticles=0",
+        "fx.NiagaraAllowComputeShaders=0"
+      ],
+      "sections": [
+        {
+          "section": "WakeUp",
+          "frame": 735,
+          "seconds_from_start": 4.377
+        },
+        {
+          "section": "CityIntro",
+          "frame": 149,
+          "seconds_from_start": 481.451
+        },
+        {
+          "section": "Frogger",
+          "frame": 359,
+          "seconds_from_start": 999.19
+        },
+        {
+          "section": "RoofRip",
+          "frame": 534,
+          "seconds_from_start": 1308.125
+        },
+        {
+          "section": "Underpass",
+          "frame": 683,
+          "seconds_from_start": 1418.455
+        },
+        {
+          "section": "CityStreets",
+          "frame": 934,
+          "seconds_from_start": 1504.993
+        },
+        {
+          "section": "HeliHighway",
+          "frame": 73,
+          "seconds_from_start": 1523.445
+        },
+        {
+          "section": "ChaseFinale",
+          "frame": 359,
+          "seconds_from_start": 1613.511
+        }
+      ],
+      "first_gameplay_layer": {
+        "name": "Chase_Gameplay_Frogger",
+        "transition": "Unloaded -> Activated",
+        "seconds_from_start": 1143.91,
+        "frame": 408
+      },
+      "first_gameplay_profile": {
+        "name": "XSX_ChaseGameplay",
+        "seconds_from_start": 1147.445,
+        "frame": 417
+      }
+    },
+    "hud": {
+      "image": "chase-before-manual-shot.jpg",
+      "sha256": "8b68ff02f86f9dc884ecf6f18ccc9c2432b6d7b9b98f2c57cd6c486a077a4946",
+      "captured_utc": "2026-11-22T00:40:28.230076+00:00",
+      "seconds_from_start": 1218.23,
+      "labels": [
+        "Switch Targets",
+        "Shoot"
+      ]
+    },
+    "controls": {
+      "path": "Linux uinput Xbox 360-style gamepad (045e:028e), Proton XInput, TuxBox GameInput, retail Enhanced Input",
+      "target_lock_action": {
+        "verified": true,
+        "linux_button": "BTN_TL",
+        "guest_symbol": "UFrostyChaseTargetingComponent::LockTarget",
+        "guest_rva": "0x2495600",
+        "button_down_utc": "2026-11-22T00:39:59.701502+00:00",
+        "button_up_utc": "2026-11-22T00:40:01.342175+00:00",
+        "guest_entry_utc": "2026-11-22T00:40:00.000121+00:00",
+        "delay_ms": 298.619,
+        "seconds_from_start": 1190.0,
+        "script_action": "InpActEvt_IA_Chase_LockTarget_K2Node_EnhancedInputActionEvent_4"
+      },
+      "target_switch_visually_confirmed": false,
+      "hit_target_observed": true,
+      "manual_fire_verified": true,
+      "manual_fire": {
+        "linux_axis": "ABS_RZ",
+        "pressed_value": 255,
+        "released_value": 0,
+        "non_null_shots_on_manual_input": [
+          {
+            "button_down_utc": "2026-11-22T00:40:28.231900+00:00",
+            "button_up_utc": "2026-11-22T00:40:30.051845+00:00",
+            "guest_hit_utc": "2026-11-22T00:40:28.501485+00:00",
+            "delay_ms": 269.585,
+            "target_at_return": "0xcf726280",
+            "seconds_from_start": 1218.501,
+            "script_stack_innermost_first": [
+              "ExecuteUbergraph_BP_ProjectileWeapon",
+              "FireSIngleShotArtWithDelay",
+              "FireSingleShot",
+              "ExecuteUbergraph_BP_ProjectileWeapon",
+              "AutoFire",
+              "ExecuteUbergraph_BP_ProjectileWeapon",
+              "StartFiring",
+              "ExecuteUbergraph_BP_ChasePassenger",
+              "InpActEvt_IA_Chase_HitTarget_K2Node_EnhancedInputActionEvent_2"
+            ]
+          },
+          {
+            "button_down_utc": "2026-11-22T00:41:15.663776+00:00",
+            "button_up_utc": "2026-11-22T00:41:17.464329+00:00",
+            "guest_hit_utc": "2026-11-22T00:41:15.741946+00:00",
+            "delay_ms": 78.17,
+            "target_at_return": "0xcf726280",
+            "seconds_from_start": 1265.742,
+            "script_stack_innermost_first": [
+              "ExecuteUbergraph_BP_ProjectileWeapon",
+              "FireSIngleShotArtWithDelay",
+              "FireSingleShot",
+              "ExecuteUbergraph_BP_ProjectileWeapon",
+              "AutoFire",
+              "ExecuteUbergraph_BP_ProjectileWeapon",
+              "StartFiring",
+              "ExecuteUbergraph_BP_ChasePassenger",
+              "InpActEvt_IA_Chase_HitTarget_K2Node_EnhancedInputActionEvent_2"
+            ]
+          }
+        ],
+        "screen_captures": [
+          {
+            "image": "chase-before-manual-shot.jpg",
+            "sha256": "8b68ff02f86f9dc884ecf6f18ccc9c2432b6d7b9b98f2c57cd6c486a077a4946",
+            "captured_utc": "2026-11-22T00:40:28.230076+00:00",
+            "seconds_from_start": 1218.23
+          },
+          {
+            "image": "chase-after-manual-shot.jpg",
+            "sha256": "678c6afef2801ed9247cdc18dc176b1cf514873996ba59269b6d527eecc588ba",
+            "captured_utc": "2026-11-22T00:40:29.052077+00:00",
+            "seconds_from_start": 1219.052
+          },
+          {
+            "image": "chase-shot-impact.jpg",
+            "sha256": "ba0e0f9277b914b44ddd154160acd245e1f2781334fda4f2055540a7a0813bf6",
+            "captured_utc": "2026-11-22T00:40:30.689079+00:00",
+            "seconds_from_start": 1220.689
+          }
+        ],
+        "observation": "The first capture immediately precedes the press. The next shows the first changed display frame after the hit. Muzzle flash appears in the last capture. The BP_ProjectileWeapon AutoFire routine in the stack is called by the manual input event through StartFiring. Ambient hits outside manual calls are excluded."
+      },
+      "free_roam_movement_verified": false
+    },
+    "rendering": "The tutorial HUD, pursuit cars, weapon, gunfire and skyline render. Several road, building, character and vehicle surfaces are missing or distorted. Pipeline creation still stalls the title for seconds at a time.",
+    "bridge": {
+      "previous_shader_failure_passed": true,
+      "sequence_completed": false,
+      "layer": "Cine_90_Finale_3_BridgeDestruction",
+      "activation_frame": 435,
+      "activation_seconds_from_start": 1676.72,
+      "last_observed_set": "Cine_90_Finale_Set_0240",
+      "last_set_activation_frame": 612,
+      "last_set_activation_seconds_from_start": 1735.824,
+      "captured_utc": "2026-11-22T00:48:33.167459+00:00",
+      "capture_seconds_from_start": 1703.167,
+      "image": "chase-bridge.jpg",
+      "image_sha256": "97959588546d1d3476746281e11a8407056f4297cf3f79cec544aa4fd73acc37",
+      "visible": "Burning helicopter, targeting reticle, firearm and destroyed bridge geometry."
+    },
+    "termination": {
+      "kind": "memory_cgroup_oom",
+      "last_engine_frame": 635,
+      "last_engine_message_utc": "2026-11-22T00:49:16.427+00:00",
+      "seconds_from_start": 1746.427,
+      "last_engine_message": "Force flushing command list to GPU because too many commands have been enqueued already (10609 commands)",
+      "memory_peak_gib": 12,
+      "swap_peak_gib": 1,
+      "outcome": "The isolated systemd unit reached its hard limit with the chase finale still active. The earlier xshader timeout and invalid-bytecode error did not recur. The game had not entered free roam."
+    },
+    "material_fallbacks": {
+      "warnings": 59,
+      "unique_materials": 29,
+      "usage_flags": {
+        "bUsedWithInstancedStaticMeshes": 58,
+        "bUsedWithNiagaraMeshParticles": 1
+      }
+    }
+  },
+  "warm_replay": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "d3d12_xs_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+    "gameinput_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+    "shader_compiler_sha256": "851c3cbca4c651cc78d3b88b75ab2e9ea1c0f52d4a749462ca2066ac9b799dbe",
+    "runtime_cache_fingerprint": "8687bf0693af6bf7d9ad906be8dc868b4e416ce86d1a17d4a483e9564e8b25e1",
+    "engine_ini_sha256": "1f10954392a7401137094c59c91fe980e42b7426cc0e43918cf50b0443e359ca",
+    "launcher": "tools/run_frosty.sh",
+    "shader_prep": "chase",
+    "start_chase_utc": "2026-11-22T00:51:28+00:00",
+    "guest_arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer"
+    ],
+    "title_shader_prep": {
+      "profiled_chase_programs_ready": 1271,
+      "compiled": 3,
+      "cached": 1696
+    },
+    "vkd3d_disk_cache": {
+      "existing_entries": 177,
+      "merged_entries": 1505
+    },
+    "sections": [
+      {
+        "section": "WakeUp",
+        "frame": 810,
+        "seconds_from_start": 4.1
+      },
+      {
+        "section": "CityIntro",
+        "frame": 889,
+        "seconds_from_start": 149.063
+      },
+      {
+        "section": "Frogger",
+        "frame": 946,
+        "seconds_from_start": 244.65
+      },
+      {
+        "section": "RoofRip",
+        "frame": 592,
+        "seconds_from_start": 313.455
+      },
+      {
+        "section": "Underpass",
+        "frame": 896,
+        "seconds_from_start": 340.938
+      },
+      {
+        "section": "CityStreets",
+        "frame": 150,
+        "seconds_from_start": 371.737
+      },
+      {
+        "section": "HeliHighway",
+        "frame": 275,
+        "seconds_from_start": 386.653
+      },
+      {
+        "section": "ChaseFinale",
+        "frame": 595,
+        "seconds_from_start": 427.428
+      },
+      {
+        "section": "ChaseEnded",
+        "frame": 211,
+        "seconds_from_start": 485.073
+      }
+    ],
+    "first_gameplay_layer": {
+      "seconds_from_start": 262.152,
+      "frame": 139
+    },
+    "first_gameplay_profile": {
+      "seconds_from_start": 265.165,
+      "frame": 168
+    },
+    "bridge_activated": {
+      "seconds_from_start": 441.056,
+      "frame": 675
+    },
+    "bridge_unloaded": {
+      "seconds_from_start": 480.907,
+      "frame": 121
+    },
+    "material_fallbacks": {
+      "warnings": 63,
+      "unique_materials": 30,
+      "usage_flags": {
+        "bUsedWithInstancedStaticMeshes": 62,
+        "bUsedWithNiagaraMeshParticles": 1
+      }
+    },
+    "memory": {
+      "high_gib": 13,
+      "hard_limit_gib": 15,
+      "swap_limit_gib": 2,
+      "sample_period_seconds": 2,
+      "peak_sampled_bytes": 11981627392,
+      "peak_sampled_swap_bytes": 2147483648,
+      "minimum_sampled_host_available_bytes": 4478861312,
+      "high_events": 0,
+      "max_events": 0,
+      "oom_kills": 0
+    },
+    "sandbox": {
+      "state": "EFrostyGameStateType::Sandbox",
+      "seconds_from_start": 485.082,
+      "walking_pawn": "BP_FrostyPlayerCharacter_C",
+      "observed_walking_mode": true,
+      "free_roam_movement_verified": false,
+      "camera_input_verified": false,
+      "image": "sandbox-flyover.jpg",
+      "image_sha256": "5882d79367b025dc1ce787a1fc9b31b97c152e36e5b9faaaf995d12c2448986f",
+      "capture_utc": "2026-11-22T01:02:57.864641+00:00",
+      "observation": "The post-chase technology flyover renders. The captured flyover offers Toggle Nanite Visualization. Movement and camera sticks did not change the player during the tested intervals.",
+      "save": "The game reported that user 0 was invalid when entering Sandbox; persistent unlock was not verified."
+    },
+    "termination": {
+      "kind": "compute_shader_translation",
+      "first_error_utc": "2026-11-22T01:03:09+00:00",
+      "seconds_from_start": 701.093,
+      "last_engine_frame": 517,
+      "source_shader_sha256": "d70b3993585759774396d39ec7471a3a598a80801d986a29265c6f5f47b73b6e",
+      "compiler_diagnostic": "lane op at 0x194: non-constant lane operand Some(Sgpr(0))",
+      "guest_error": "CreateComputePipelineState failed after vkd3d rejected the shader bytecode (-4).",
+      "exit_code": 1,
+      "process_wall_seconds": 738.0,
+      "systemd_memory_peak_gib": 11.2,
+      "systemd_swap_peak_gib": 2.0
+    }
+  },
+  "sandbox_replay": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "d3d12_xs_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+    "gameinput_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+    "shader_compiler_sha256": "1506cbd4c5f0088c20150d65e3717f7c33411512e65171d5cae07cd4cebcd9a8",
+    "runtime_cache_fingerprint": "0d5cfa2a8b79738ec35efc54f585036edf53d33e0e75ebdf115cb0fbb2a16d70",
+    "engine_ini_sha256": "1f10954392a7401137094c59c91fe980e42b7426cc0e43918cf50b0443e359ca",
+    "launcher": "tools/run_frosty.sh",
+    "shader_prep": "chase",
+    "start_chase_utc": "2026-11-22T01:12:09+00:00",
+    "guest_arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer"
+    ],
+    "title_shader_prep": {
+      "profiled_chase_programs_ready": 1271,
+      "compiled": 1,
+      "cached": 1699
+    },
+    "vkd3d_disk_cache": {
+      "existing_entries": 1682,
+      "merged_entries": 135
+    },
+    "sections": [
+      {
+        "section": "WakeUp",
+        "frame": 570,
+        "seconds_from_start": 4.778
+      },
+      {
+        "section": "CityIntro",
+        "frame": 490,
+        "seconds_from_start": 478.674
+      },
+      {
+        "section": "Frogger",
+        "frame": 236,
+        "seconds_from_start": 835.582
+      },
+      {
+        "section": "RoofRip",
+        "frame": 680,
+        "seconds_from_start": 1115.924
+      },
+      {
+        "section": "Underpass",
+        "frame": 896,
+        "seconds_from_start": 1175.361
+      },
+      {
+        "section": "CityStreets",
+        "frame": 126,
+        "seconds_from_start": 1218.0
+      },
+      {
+        "section": "HeliHighway",
+        "frame": 211,
+        "seconds_from_start": 1235.721
+      },
+      {
+        "section": "ChaseFinale",
+        "frame": 463,
+        "seconds_from_start": 1285.324
+      },
+      {
+        "section": "ChaseEnded",
+        "frame": 984,
+        "seconds_from_start": 1372.064
+      }
+    ],
+    "first_gameplay_layer": {
+      "seconds_from_start": 930.322,
+      "frame": 386
+    },
+    "first_gameplay_profile": {
+      "seconds_from_start": 933.296,
+      "frame": 409
+    },
+    "bridge_activated": {
+      "seconds_from_start": 1302.346,
+      "frame": 518
+    },
+    "bridge_unloaded": {
+      "seconds_from_start": 1367.887,
+      "frame": 886
+    },
+    "material_fallbacks": {
+      "warnings": 64,
+      "unique_materials": 29,
+      "usage_flags": {
+        "bUsedWithInstancedStaticMeshes": 63,
+        "bUsedWithNiagaraMeshParticles": 1
+      }
+    },
+    "memory": {
+      "high_gib": 13,
+      "hard_limit_gib": 15,
+      "swap_limit_gib": 2,
+      "sample_period_seconds": 2,
+      "peak_sampled_bytes": 12596297728,
+      "peak_sampled_swap_bytes": 2147483648,
+      "minimum_sampled_host_available_bytes": 2007719936,
+      "high_events": 0,
+      "max_events": 0,
+      "oom_kills": 0
+    },
+    "sandbox": {
+      "state": "EFrostyGameStateType::Sandbox",
+      "seconds_from_start": 1372.075,
+      "walking_pawn": "BP_FrostyPlayerCharacter_C",
+      "free_roam_movement_verified": false,
+      "camera_input_verified": false,
+      "pose_samples": 761,
+      "distinct_xy": 1,
+      "image": "sandbox-temporal-resolution.jpg",
+      "image_sha256": "77b50fbd461a831d161120b62ad676fdc343b1c7986a0ba20768d67e3f970432",
+      "capture_utc": "2026-11-22T01:38:13.411433+00:00",
+      "observation": "The guided city flyover showed the Temporal Super Resolution demonstration. The sampled player pawn remained at one horizontal position during the repeated left-stick inputs."
+    },
+    "termination": {
+      "kind": "compute_shader_translation",
+      "seconds_from_start": 1615.004,
+      "archive": "global",
+      "entry": 3385,
+      "source_shader_sha256": "76fb3b539aeeab93ca3bc9a935df2d0497047164c6b7902dc51c309f79e3c086",
+      "compiler_diagnostic": "lane op at 0xd8: non-constant lane operand Some(Sgpr(6))",
+      "guest_error": "CreateComputePipelineState returned 0x80004005. vkd3d rejected the untranslated Xbox bytecode.",
+      "last_engine_frame": 220,
+      "exit_code": 1,
+      "process_wall_seconds": 1652.6,
+      "systemd_memory_peak_gib": 11.7,
+      "systemd_swap_peak_gib": 2.0
+    }
+  },
+  "normal_final": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "d3d12_xs_sha256": "85c107da7251484e0e6890ad5d2fb482901f4bb95b12abc97f73140e44c424da",
+    "gameinput_sha256": "4e26e880ab77aab0e1db35c9d573a3d546f804515df0b2b13ec978f0dfbf7d99",
+    "engine_ini_sha256": "1f10954392a7401137094c59c91fe980e42b7426cc0e43918cf50b0443e359ca",
+    "launcher": "tools/run_frosty.sh",
+    "shader_prep": "chase",
+    "guest_arguments": [
+      "-DisablePlugins=XboxCommonGDKMoviePlayer"
+    ],
+    "shader_compiler_sha256": "732513553bab1f580e7530f3d1640e6117420495e585e757177947975523f48f",
+    "start_chase_utc": "2026-11-22T01:46:01+00:00",
+    "title_shader_prep": {
+      "compiled": 0,
+      "cached": 1701
+    },
+    "vkd3d_disk_cache": {
+      "existing_entries": 1857,
+      "merged_entries": 92
+    },
+    "sections": [
+      {
+        "section": "WakeUp",
+        "frame": 606,
+        "seconds_from_start": 3.678
+      },
+      {
+        "section": "CityIntro",
+        "frame": 605,
+        "seconds_from_start": 146.923
+      },
+      {
+        "section": "Frogger",
+        "frame": 706,
+        "seconds_from_start": 226.667
+      },
+      {
+        "section": "RoofRip",
+        "frame": 287,
+        "seconds_from_start": 291.824
+      },
+      {
+        "section": "Underpass",
+        "frame": 593,
+        "seconds_from_start": 319.366
+      },
+      {
+        "section": "CityStreets",
+        "frame": 849,
+        "seconds_from_start": 350.181
+      },
+      {
+        "section": "HeliHighway",
+        "frame": 971,
+        "seconds_from_start": 364.897
+      },
+      {
+        "section": "ChaseFinale",
+        "frame": 294,
+        "seconds_from_start": 405.561
+      },
+      {
+        "section": "ChaseEnded",
+        "frame": 964,
+        "seconds_from_start": 462.897
+      }
+    ],
+    "first_gameplay_layer": {
+      "seconds_from_start": 244.23,
+      "frame": 906
+    },
+    "first_gameplay_profile": {
+      "seconds_from_start": 247.152,
+      "frame": 934
+    },
+    "memory": {
+      "high_gib": 13,
+      "hard_limit_gib": 15,
+      "swap_limit_gib": 2,
+      "peak_sampled_bytes": 11474341888,
+      "peak_sampled_swap_bytes": 2147483648,
+      "oom_kills": 0
+    },
+    "sandbox": {
+      "state": "EFrostyGameStateType::Sandbox",
+      "seconds_from_start": 462.907,
+      "frame": 964,
+      "walking_pawn": "BP_FrostyPlayerCharacter_C",
+      "free_roam_movement_verified": true,
+      "camera_input_verified": true,
+      "keyboard_movement_verified": true,
+      "mouse_look_verified": true,
+      "probe": {
+        "pad_forward": {
+          "before": {
+            "utc": "2026-11-22T01:56:50.266450+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72172.2656,
+              -38796.5781,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:57:02.906217+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72112.1797,
+              -38782.6055,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:57:04.329860+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72099.0,
+              -38779.5391,
+              203.5259
+            ]
+          },
+          "delta": [
+            60.0859,
+            13.9726
+          ]
+        },
+        "pad_backward": {
+          "before": {
+            "utc": "2026-11-22T01:57:05.742220+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72099.0,
+              -38779.5391,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:57:06.175953+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72146.0547,
+              -38790.4648,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:57:07.609743+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "delta": [
+            -47.0547,
+            -10.9257
+          ]
+        },
+        "pad_right": {
+          "before": {
+            "utc": "2026-11-22T01:57:09.011279+00:00",
+            "rotation": [
+              0.0,
+              13.0904,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:57:09.232692+00:00",
+            "rotation": [
+              359.9997,
+              22.6721,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:57:10.659300+00:00",
+            "rotation": [
+              359.9994,
+              32.6038,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "delta": 9.581700000000012
+        },
+        "pad_left": {
+          "before": {
+            "utc": "2026-11-22T01:57:12.060232+00:00",
+            "rotation": [
+              359.9994,
+              32.6038,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:57:16.883145+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:57:18.330826+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "delta": -30.834100000000007
+        },
+        "key_w": {
+          "before": {
+            "utc": "2026-11-22T01:57:19.732350+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72159.2344,
+              -38793.5234,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:57:20.190600+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72111.8438,
+              -38792.0586,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:57:21.626838+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72098.3281,
+              -38791.6445,
+              203.5259
+            ]
+          },
+          "delta": [
+            47.3906,
+            1.4648
+          ]
+        },
+        "key_s": {
+          "before": {
+            "utc": "2026-11-22T01:57:23.028555+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72098.3281,
+              -38791.6445,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:57:24.062355+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72142.8203,
+              -38793.0352,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:57:25.498324+00:00",
+            "rotation": [
+              359.9984,
+              1.7697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "delta": [
+            -44.4922,
+            -1.3907
+          ]
+        },
+        "mouse_right": {
+          "before": {
+            "utc": "2026-11-22T01:58:12.373994+00:00",
+            "rotation": [
+              359.9984,
+              75.2697,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:58:14.817348+00:00",
+            "rotation": [
+              359.9984,
+              113.5947,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:58:16.244141+00:00",
+            "rotation": [
+              359.9984,
+              113.5947,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "delta": 38.32499999999999
+        },
+        "mouse_left": {
+          "before": {
+            "utc": "2026-11-22T01:58:17.645652+00:00",
+            "rotation": [
+              359.9984,
+              113.5947,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "after": {
+            "utc": "2026-11-22T01:58:18.079651+00:00",
+            "rotation": [
+              359.9984,
+              106.5947,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "released": {
+            "utc": "2026-11-22T01:58:19.509217+00:00",
+            "rotation": [
+              359.9984,
+              106.5947,
+              0.0
+            ],
+            "pawn_name": "BP_FrostyPlayerCharacter_C",
+            "pawn": "0x1b9d109a0",
+            "location": [
+              -72156.9844,
+              -38793.4766,
+              203.5259
+            ]
+          },
+          "delta": -7.0
+        },
+        "verified": true
+      },
+      "image": "city-free-roam.jpg",
+      "image_sha256": "74a218dff539f23be4e36abec15d6dfe1b142c1b20f23c438f165092f68d0e6a",
+      "capture_utc": "2026-11-22T01:58:18.105832+00:00"
+    },
+    "shader_requests": {
+      "2653": true,
+      "3385": true
+    },
+    "termination": {
+      "kind": "viewport_access_lost_on_window_close",
+      "close_request_utc": "2026-11-22T01:58:26Z",
+      "first_error_utc": "2026-11-22T01:58:26.664+00:00",
+      "last_engine_frame": 838,
+      "exit_code": 1,
+      "process_wall_seconds": 784.1,
+      "detail": "After the input measurements, the test sent WM_DELETE_WINDOW to the game window. The next viewport operation at XboxCommonD3D12Viewport.cpp:831 returned DXGI_ERROR_ACCESS_LOST (0x887A0026). The title reported a fatal at shutdown."
+    },
+    "log_sha256": "5cfb45695e297e680ef0b9acdfbb3e46b4e48257a3787ca8e9e66bfcd4af6e03"
+  }
+}

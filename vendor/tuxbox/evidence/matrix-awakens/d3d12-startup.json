@@ -1,0 +1,660 @@
+{
+  "schema": 1,
+  "date_utc": "2026-11-21",
+  "package_version": "1.20.1831.3754",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "shipping_symbols_sha256": "b886b339a77da68874a44d107e366aeb4b7c16695dd67e8bbd44d6fcbab13c2c",
+  "host": "Linux, Proton Experimental, NVIDIA GeForce RTX 4070 Ti SUPER",
+  "scope": "One title launch per step. Each used a reflinked game layout, a fresh copy of the same working prefix and the tested TuxBox D3D12 provider. The remaining platform DLLs came from the established reference configuration.",
+  "staged_companions_sha256": {
+    "xmem.dll": "65f3762e0eaef572315423402a1e09f668ad8f911d80bf9cd6e5e5634cc0521f",
+    "acphal.dll": "29512a2414558b08934d6d37ffa14923f8ae1f99d89e5f2b6f9a44063a65bd4d"
+  },
+  "arguments": [
+    "-DisablePlugins=XboxCommonGDKMoviePlayer",
+    "-nosound"
+  ],
+  "retail_frame_verified": false,
+  "trials": [
+    {
+      "step": "baseline",
+      "provider_sha256": "90bac270c1d7b8fe8d3a25ca34f591bca802fd88b6c3b9045773c766eeedf1c2",
+      "log_sha256": "dcd502517b052c2afc0ac7698f5b5867bfb9aaa4939d409db083598f8ea9dc24",
+      "console_sha256": "c7ef3bf0f237485dba94fd01a789d7fe41a5dae4da60d86d0e6f04f25a79568f",
+      "slot": 13,
+      "title_return_rva": "0x57671cc",
+      "runtime": "3.376s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Device CheckFeatureSupport, 64-byte D3D12_OPTIONS record",
+      "caller": "FD3D12Adapter::InitializeDevices"
+    },
+    {
+      "step": "feature",
+      "provider_sha256": "4838ee76ae8788aeef26b5cc15d3c343f89fc96b281de8cc3bdce291ba6b6cc1",
+      "log_sha256": "ac9e55eef40e322bc348023b75c2aab02183d6e000de921b7172941d617059b0",
+      "console_sha256": "cdd928145635a15359e41b78eba05dab7bcdff9a203fbae55441ff27cdf87194",
+      "slot": 39,
+      "title_return_rva": "0x57e5c65",
+      "runtime": "2.318s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Device CreateQueryHeap, timestamp heap",
+      "caller": "FD3D12LinearBatchedQueryPool::FD3D12LinearBatchedQueryPool"
+    },
+    {
+      "step": "timestamps",
+      "provider_sha256": "8e634131bd021e15ccbd39d031e0f0a87ff8d8919453d04571c2ae854783f319",
+      "log_sha256": "9e666a12940a570981446f210c24320af8a8b87bb280a0aad2d280956dbdf129",
+      "console_sha256": "97f6e9d97b466ed374cd33d1fe653b867bb146adc47fa97ccfff5f91358d9c50",
+      "first_game_error": "HResultCreation failed \\n at D:\\build\\++UE5\\Sync\\Engine\\Platforms\\XboxCommon\\Source\\Runtime\\D3D12RHI\\Private\\XboxCommonD3D12Device.cpp:466 \\n with error 80004001\\n",
+      "title_stack_rvas": [
+        "0x25cd14f",
+        "0x25c555a",
+        "0x2732963",
+        "0x57eb63f",
+        "0x57eb9f3",
+        "0x57529be",
+        "0x579594a",
+        "0x5793e13",
+        "0x57678b1",
+        "0x5751db2",
+        "0x575255f",
+        "0x5765daf"
+      ],
+      "runtime": "2.571s",
+      "status": "1/FAILURE",
+      "operation": "Xbox queue creation, non-compute branch calls device slot 8"
+    },
+    {
+      "step": "queues",
+      "provider_sha256": "93532e7dec338e41cd401b648dab2952f43e3c1ff1908b6a818333c1c441f787",
+      "log_sha256": "d2ec327a0d21b658aaf9762a5ef1a387f76ba2cee6802d01da0d8b9213065464",
+      "console_sha256": "d090106f0e8395746324842d21515997015f38c6041496cf43066f00e2aa9e55",
+      "slot": 18,
+      "title_return_rva": "0x5790415",
+      "runtime": "2.186s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Device CreateShaderResourceView, typed null resource in descriptor-cache initialization",
+      "caller": "FD3D12DescriptorCache::Init"
+    },
+    {
+      "step": "views",
+      "provider_sha256": "64ea1b9c644b033b285b2bde9330ee18635509ab0651a9a59fe63a579cc0c6c2",
+      "log_sha256": "ffbbf42aedcfae577e4848f02daa2ba3e922e23b8ddd756289c4dd7620e5cb09",
+      "console_sha256": "4e2cf58c286e9a6483dbd71f4412e1eb89fc7b11f87fda15f0f0ac1dfc6b7fa0",
+      "first_game_error": "CommandList->Close() failed \\n at D:\\build\\++UE5\\Sync\\Engine\\Source\\Runtime\\D3D12RHI\\Private\\D3D12CommandList.cpp:185 \\n with error E_FAIL\\n",
+      "title_stack_rvas": [
+        "0x25cd14f",
+        "0x25c555a",
+        "0x2732963",
+        "0x57eb63f",
+        "0x57eb9f3",
+        "0x5786943",
+        "0x5795f52",
+        "0x5783204",
+        "0x5793953",
+        "0x5793e92",
+        "0x57678b1",
+        "0x5751db2"
+      ],
+      "runtime": "2.279s",
+      "status": "1/FAILURE",
+      "operation": "First Close on a newly created Xbox graphics command list"
+    },
+    {
+      "step": "list-state",
+      "provider_sha256": "cbbbabc03e6b70a82524d688b221da4cc4410eae1fc2154ac2ce03484621656e",
+      "log_sha256": "a23a263ce0b1dbc8ca6c1292e4ad33a765c9c48629e06aa2596c92bdb8609922",
+      "console_sha256": "1b07c3723faaf3fc7b9077e31c320ce4801f559e3a0a82f4323f7d3f524d1a1c",
+      "slot": 8,
+      "title_return_rva": "0x5791368",
+      "runtime": "3.015s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Descriptor heap GetDesc, caller-owned 16-byte result",
+      "caller": "FD3D12SubAllocatedOnlineHeap::AllocateBlock"
+    },
+    {
+      "step": "heap-desc",
+      "provider_sha256": "b2c62c2cbe761e5acbdc899e0c36fe3015021974f0993a4bcacf4a5155392457",
+      "log_sha256": "ef3271d95e22a6b674fccff96a27abea57affaa2917daaffb11e2bf9588499cb",
+      "console_sha256": "2507d15433605eb602120e06933348884203de76699dd691e31754b403f7e8da",
+      "slot": 28,
+      "title_return_rva": "0x57a41a1",
+      "runtime": "2.484s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Device CreateHeap for the D3D12 memory pool",
+      "caller": "FD3D12MemoryPool::Init"
+    },
+    {
+      "step": "memory-pool",
+      "provider_sha256": "b6b792820357073a30a4e62dcdc5ce00d3951606b25717070579842dc9ff070d",
+      "log_sha256": "d67997b1dc26d721ec09a4c5be42c3164dce9a1b1db9063d714a945ee37c8792",
+      "console_sha256": "2c086f8201a2d95394465ba5c1dd7d9827153eaaf65b4565e07b2e88de379a6b",
+      "slot": 38,
+      "title_return_rva": "0x57e12a4",
+      "runtime": "2.839s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Device GetCopyableFootprints for a texture upload",
+      "caller": "FD3D12TextureBase::InitializeTextureData"
+    },
+    {
+      "step": "texture-upload",
+      "provider_sha256": "e29e02368a24233e0effc9ed3da57883fa7a8ea0f757032f1cbdae5c1dfcf47c",
+      "log_sha256": "c79fc6ee8a247bc1ac00e8dbb0cd4a1a266bb6f2f91b5a4a3ff20ddb2a611280",
+      "console_sha256": "ac960b3ae786f4e91c8a9737fe32083a1f899b10b6aeaf00a964c4977c4b07da",
+      "first_game_error": "Adapter->GetDevice(0)->GetDevice()->CreateCommittedResource( &HeapProps, D3D12_HEAP_FLAG_ALLOW_DISPLAY, &BackBufferDesc, D3D12_RESOURCE_STATE_PRESENT, nullptr, IID_PPV_ARGS(BackBufferResource.GetInitReference())) failed \\n at D:\\build\\++\"...",
+      "title_stack_rvas": [
+        "0x25cd14f",
+        "0x25c555a",
+        "0x2732963",
+        "0x57eb63f",
+        "0x57eb9f3",
+        "0x57642fd",
+        "0x57fd088",
+        "0x42ea0b9",
+        "0x42eadb4",
+        "0x2b7ee3f",
+        "0x4ac9d4e",
+        "0x5721742"
+      ],
+      "runtime": "2.365s",
+      "status": "1/FAILURE",
+      "operation": "Device CreateCommittedResource with ALLOW_DISPLAY for a viewport back buffer"
+    },
+    {
+      "step": "back-buffer",
+      "provider_sha256": "54c200d00fb8723fc33256cfbc8486345912ecd4c9d17e8d96ae0fa1c1bbf2f5",
+      "log_sha256": "26e67ffccfb9a1dcb96cef82a98b4a8c44c7119d9aa712b7054bf6db0b1b4102",
+      "console_sha256": "1db0a2cb4d5b82c4065327c56c2fb48dbf28a742bdcbd213a153ca3b0c515401",
+      "slot": 78,
+      "title_return_rva": "0x5763970",
+      "runtime": "2.335s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Device SetFrameIntervalX for the selected display",
+      "caller": "XboxCommonUpdateFrameEvents"
+    },
+    {
+      "step": "pacing",
+      "provider_sha256": "860221165fdd6ee73ca9bff17720e4891beb21b774c9f495dce83456eb282600",
+      "log_sha256": "a244bd42fdc2cced1f9b7987d13650a9f86875a9f287faea9a2cc6f96cfd4d59",
+      "console_sha256": "513eb724098e071193034b1fd1415191ec25ee6d36320a28ae5cb9e3b9f99550",
+      "first_game_error": "GetRHIDevice(0)->GetTextureAllocator().AllocateTexture(TextureDesc, ClearValuePtr, Format, Texture3D->ResourceLocation, ActualState, CreateInfo.DebugName) failed \\n at D:\\build\\++UE5\\Sync\\Engine\\Platforms\\XboxCommon\\Source\\Runtime\\\"...",
+      "title_stack_rvas": [
+        "0x25cd14f",
+        "0x25c555a",
+        "0x2732963",
+        "0x57eb63f",
+        "0x57eb9f3",
+        "0x576130e",
+        "0x5760bba",
+        "0x2e9230a",
+        "0x2e92e54",
+        "0x3e19f7b",
+        "0x42ec1cb",
+        "0x42ef9fe"
+      ],
+      "runtime": "2.478s",
+      "status": "1/FAILURE",
+      "operation": "Allocation of a committed 3D texture during renderer initialization"
+    },
+    {
+      "step": "volume",
+      "provider_sha256": "76fd15fff4aa6d3fa82d0a9e98e98906cfbaac88bdfa6fc7fc3e62ac6409208d",
+      "log_sha256": "18b1dcb05f4de465ee2164bc4d2e0af434f93c7427f75ebe5e7f154664c62721",
+      "console_sha256": "96dc0dbe0349721a5fd3164da08593397e3b3cfc5403a1358a177b9c452b7916",
+      "slot": 23,
+      "title_return_rva": "0x5774d24",
+      "runtime": "2.535s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "Queue SignalX with the direct/compute flush mask or zero for copy",
+      "caller": "FD3D12CommandListFence::Signal"
+    },
+    {
+      "step": "signal-x",
+      "provider_sha256": "09972da51db38532608c4e1d2932529b22ae7b944c144599b4e3a38d4813dc53",
+      "log_sha256": "89f4deddaeabe6d378b81dbb61d4acb42662dd969830b9511f4dcfa88ff80ff3",
+      "console_sha256": "31ee7b625b5015771911fef8ba305083e53f294c75f7032a181dd19d20c65d3c",
+      "slot": 44,
+      "title_return_rva": "0x5759ce3",
+      "runtime": "2.436s",
+      "status": "2/INVALIDARGUMENT",
+      "operation": "First Xbox virtual-address placed texture, device slot 44",
+      "caller": "FXboxCommonD3D12Adapter::CreatePlacedResourceX"
+    },
+    {
+      "step": "virtual-placement",
+      "provider_sha256": "b14d98431dc5970a308910e501ec487ecfb3a9b9de18b1b2d55130dd2631789c",
+      "log_sha256": "51030010e491d4dbfbe4b4b73b0eea55a5abdf4a23231885f8254366dea3b853",
+      "console_sha256": "7677d26c8dc1045141a9fe8e2f0d4fd36857bfd2dafd99f27fe66897c04a6689",
+      "first_game_error": "Adapter->CreatePlacedResourceX(ResourceDesc, Device->GetGPUMask(), Device->GetGPUMask(), (D3D12_GPU_VIRTUAL_ADDRESS)RawTextureMemory, ppResource, InitialUsage) failed \\n at D:\\build\\++UE5\\Sync\\Engine\\Platforms\\XboxCommon\\Source\\Run\"...",
+      "title_stack_rvas": [
+        "0x25cd14f",
+        "0x25c555a",
+        "0x2732963",
+        "0x57eb63f",
+        "0x57eb9f3",
+        "0x575e522",
+        "0x576cfb6",
+        "0x575fb87",
+        "0x4ee3f4a",
+        "0x4edf088",
+        "0x2e8e6c8",
+        "0x508ec56"
+      ],
+      "runtime": "2.458s",
+      "status": "1/FAILURE",
+      "operation": "Same call with its 56-byte resource descriptor decoded; unsupported guest backing"
+    },
+    {
+      "step": "final",
+      "provider_sha256": "fb93c8fbc4c55b74a1ca228ac651ae7c1d1fb4884feeabd0b45099311cf82b29",
+      "log_sha256": "3b2ca0501012bfacdb0f52d92b4fd1752ef6f3ad36b89a055ce88b472b15f08b",
+      "console_sha256": "e62801688262381de3f951dc51838943dff7588744b6d65fa0205d3503077b6f",
+      "first_game_error": "Adapter->CreatePlacedResourceX(ResourceDesc, Device->GetGPUMask(), Device->GetGPUMask(), (D3D12_GPU_VIRTUAL_ADDRESS)RawTextureMemory, ppResource, InitialUsage) failed \\n at D:\\build\\++UE5\\Sync\\Engine\\Platforms\\XboxCommon\\Source\\Run\"...",
+      "title_stack_rvas": [
+        "0x25cd14f",
+        "0x25c555a",
+        "0x2732963",
+        "0x57eb63f",
+        "0x57eb9f3",
+        "0x575e522",
+        "0x576cfb6",
+        "0x575fb87",
+        "0x4ee3f4a",
+        "0x4edf088",
+        "0x2e8e6c8",
+        "0x508ec56"
+      ],
+      "runtime": "2.674s",
+      "status": "1/FAILURE",
+      "operation": "Final provider: same virtual-address placed texture"
+    },
+    {
+      "step": "slot-44-control",
+      "provider_sha256": "fb93c8fbc4c55b74a1ca228ac651ae7c1d1fb4884feeabd0b45099311cf82b29",
+      "log_sha256": "a782c084a1c277c1ccb0df6843e368eb252676a4bd8e0e86e4c02d35961417a8",
+      "console_sha256": "43a6d48d7209a5783e3cba9aa9abaa1d39c5943941bcdf54ea7671548d7cd6be",
+      "package_config": "MicrosoftGame.config",
+      "shader_preparation": false,
+      "exit_code": 1,
+      "runtime": "2.6s",
+      "operation": "Reproduced failure for the 32x32, six-mip, typeless BC1 4 KiB tiled texture at guest VA 0x350000000."
+    },
+    {
+      "step": "guest-backed-placement",
+      "provider_sha256": "b2787233b7810f0561da812646f4d735954cb2a6b3f10819f6cc6a8f75863422",
+      "log_sha256": "eb1b5ebeb8270841fcd1d64cd8b9af5fad779597bdb488ebfb80a4555b16a570",
+      "console_sha256": "73763dd5d82e20fba2a3aa8849c5e0fd71eecdba371e9c7cf66b442104da9fd3",
+      "package_config": "MicrosoftGame.config",
+      "shader_preparation": false,
+      "exit_code": 1,
+      "runtime": "2.5s",
+      "operation": "Passed the BC1 placement. Next failed on a 256x1792 R16G16B16A16_FLOAT 4 KiB tiled texture at VA 0x21c90000."
+    },
+    {
+      "step": "color-placement",
+      "provider_sha256": "74cb08bdfcdec965b62a0cc0ff8157cd393f80a633739b23a6a52529f77aa24f",
+      "log_sha256": "54c9b2c1bc925e5bababc7b6c128039ecbbe0a509043bf7138a28182485a5d03",
+      "console_sha256": "80e2df86c8c7fadc11bbed20b12ba8a06e1dd5eadf0ca94ddda007d74e63c9fc",
+      "package_config": "MicrosoftGame.config",
+      "shader_preparation": false,
+      "exit_code": 1,
+      "runtime": "2.5s",
+      "operation": "Passed the RGBA16F placement and reached creation of a console compute pipeline."
+    },
+    {
+      "step": "compiled-game-config",
+      "provider_sha256": "7c1ddefb217cfd814d398fc72584347e1753faa68bfdd736827eb51f80d9c509",
+      "log_sha256": "10e5bf0a824dcc3498fe882c294092f92ecbe91f4edfa641832b1839cb1ed799",
+      "console_sha256": "09da5838455b0c91d825cf1327f1972e3652b5c3af0908155624d41ba4182e2b",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": false,
+      "exit_code": 1,
+      "runtime": "2.7s",
+      "operation": "Selected the shipping executable from microsoft_gameconfig.bin without XML. Logged the rejected 1196-byte console ClearCS container, DXBC id 129dd264e1c4857c397f8590ed670451."
+    },
+    {
+      "step": "prepared-shader",
+      "provider_sha256": "88b7cb93bf692c561ec4de15b98f422e97185ea12c2755b1f2b8b9d9f98dd902",
+      "log_sha256": "df2f2cef0a2fcbd47117eee01395104ad4ca1bc9ebf77aead3f60d781515a383",
+      "console_sha256": "af045ed9d9bedb7529ad0f6ec7564568723388114a78de29af1e1dd103fcf7b1",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": true,
+      "exit_code": 2,
+      "runtime": "2.5s",
+      "operation": "Selected the shipping executable from the compiled game config. The launcher prepared nine compute entries, and slot 62 loaded the exact-source translation for shader 402. The title then called command-list slot 67 from FD3D12StateCacheBase::ApplyState<1>.",
+      "console_shader_sha256": "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e",
+      "slot": 67,
+      "return_rva": "0x57f0b72"
+    },
+    {
+      "step": "texture-cache-flush",
+      "provider_sha256": "7feb6180bc908faf5dee1f6f79dfd691a7b34b775ef9ef55aac4b7366edffc90",
+      "log_sha256": "c154d84285b13cb0ac079b3f15e69faf6dc6fb1cab2fe1598918bde55fc943c9",
+      "console_sha256": "39a346fc0f86c2e0e0f7ff7203ebb7d7f9e0afb303803df8b058bbe8d7407e2b",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": true,
+      "exit_code": 1,
+      "runtime": "2.5s",
+      "operation": "Frosty progressed past the global texture-cache flush and requested another stripped compute shader, global 414. The nine-entry preparation profile had no translation keyed to its source. Desktop D3D12 returned 0x80004005.",
+      "loaded_compute_sources": [
+        "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e"
+      ],
+      "missing_compute_sources": [
+        "893b2d64e780e051b9a4d681cb0ee8cb27e68d96d766ffcdbcc564ce20df69fd"
+      ]
+    },
+    {
+      "step": "prepared-clear-414",
+      "provider_sha256": "7feb6180bc908faf5dee1f6f79dfd691a7b34b775ef9ef55aac4b7366edffc90",
+      "log_sha256": "3bc2a5d3ff58124c420b4a721e50179163c64d1dc427d054db69951f2ce4b3b9",
+      "console_sha256": "e9b6bcfa720138edc286fa833a5697a02d4782270e150c52246aaccc64af4a99",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": true,
+      "exit_code": 5,
+      "runtime": "2.4s",
+      "operation": "With ten profiled sources and the global texture-cache flush, Frosty advanced to installing UAV descriptors for a compute clear. The host failed in the descriptor-copy path before a presentation.",
+      "loaded_compute_sources": [
+        "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e"
+      ],
+      "shader_sources_prepared": 10,
+      "stack": [
+        {
+          "rva": "0x579d045",
+          "status": "matched",
+          "function": "FD3D12DescriptorCache::SetUAVs<5>",
+          "function_rva": "0x579cec0",
+          "offset": "0x185"
+        },
+        {
+          "rva": "0x57f0e77",
+          "status": "matched",
+          "function": "FD3D12StateCacheBase::ApplyState<1>",
+          "function_rva": "0x57f0b20",
+          "offset": "0x357"
+        },
+        {
+          "rva": "0x5787281",
+          "status": "matched",
+          "function": "FD3D12CommandContext::RHIDispatchComputeShader",
+          "function_rva": "0x57871c0",
+          "offset": "0xc1"
+        },
+        {
+          "rva": "0x2dfa9f2",
+          "status": "matched",
+          "function": "FRHICommandListExecutor::ExecuteInner_DoExecute",
+          "function_rva": "0x2dfa960",
+          "offset": "0x92"
+        },
+        {
+          "rva": "0x2dfb8a4",
+          "status": "matched",
+          "function": "FRHICommandListExecutor::ExecuteInner",
+          "function_rva": "0x2dfad20",
+          "offset": "0xb84"
+        },
+        {
+          "rva": "0x57e8285",
+          "status": "matched",
+          "function": "FD3D12CommandContext::RHIClearUAVUint",
+          "function_rva": "0x57e8170",
+          "offset": "0x115"
+        }
+      ],
+      "tuxbox_provider_stack_rvas": [
+        "0x10f16",
+        "0x11c90"
+      ]
+    },
+    {
+      "step": "ranges-without-device-mode",
+      "provider_sha256": "8e05541a1072b44b177070ec5844111dc77a21625aee4f2bb7086d2842ac6350",
+      "log_sha256": "128e9f3794c4e0db55993be0c0f61f02735996846994f1441f1753e10eaaefc0",
+      "console_sha256": "db52eef46a931a328bfdb93e86a2363e181dbd363521e4bb10c07e5c44aba7c8",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": true,
+      "exit_code": 5,
+      "runtime": "2.4s",
+      "operation": "Normalizing the ranged descriptor copy to single-descriptor operations alone left the same fatal ClearUAV path.",
+      "loaded_compute_sources": [
+        "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e"
+      ]
+    },
+    {
+      "step": "descriptor-device-mode",
+      "provider_sha256": "ac43961eb297f9ba326709bd57a15a62b1fcee3eda7805ea47c390523c3b4d2b",
+      "log_sha256": "c67eb87dff73cc7692945be9a5906dd7f5604a0bfa4d714094eecb0d98af0bdf",
+      "console_sha256": "3a4d8224512061602be45c60765f40c7eb11b7e9a21b00cf7754c7d4ef8802d6",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": true,
+      "exit_code": 5,
+      "runtime": "3.2s",
+      "operation": "Setting the guest device descriptor API flag at byte 0x18 passed the UAV copy. Unreal brought /Game/Map/P_Construct_WP up for play and changed the match state from WaitingToStart to InProgress. Two graphics-pipeline workers then faulted at the same title RVA before a verified frame.",
+      "loaded_compute_sources": [
+        "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e"
+      ],
+      "map": "/Game/Map/P_Construct_WP",
+      "match_state": "InProgress",
+      "shader_sources_prepared": 10,
+      "stack": [
+        {
+          "rva": "0x575970a",
+          "status": "matched",
+          "function": "CreatePipelineState",
+          "function_rva": "0x5759600",
+          "offset": "0x10a"
+        },
+        {
+          "rva": "0x5758318",
+          "status": "matched",
+          "function": "FD3D12PipelineStateCache::OnPSOCreated",
+          "function_rva": "0x57582c0",
+          "offset": "0x58"
+        },
+        {
+          "rva": "0x57d9e7b",
+          "status": "matched",
+          "function": "FD3D12DynamicRHI::RHICreateGraphicsPipelineState",
+          "function_rva": "0x57d9c60",
+          "offset": "0x21b"
+        },
+        {
+          "rva": "0x2df040c",
+          "status": "matched",
+          "function": "FCompilePipelineStateTask::DoTask",
+          "function_rva": "0x2df0300",
+          "offset": "0x10c"
+        },
+        {
+          "rva": "0x2e053da",
+          "status": "matched",
+          "function": "TGraphTask<FCompilePipelineStateTask>::ExecuteTask",
+          "function_rva": "0x2e053b0",
+          "offset": "0x2a"
+        }
+      ]
+    },
+    {
+      "step": "descriptor-device-mode-repeat",
+      "provider_sha256": "ac43961eb297f9ba326709bd57a15a62b1fcee3eda7805ea47c390523c3b4d2b",
+      "log_sha256": "ef057de8730fc86f75c347bca62f75f5a50e871e604ded703690ba758b5e5916",
+      "console_sha256": "faac058e78ee56beca51fe7c8d637282552ba86fd3b3d9dffe4fe406a5975e66",
+      "package_config": "microsoft_gameconfig.bin",
+      "shader_preparation": true,
+      "exit_code": 5,
+      "runtime": "3.3s",
+      "operation": "A fresh layout and prefix reproduced Construct startup, InProgress, and the same two worker faults in graphics pipeline creation at RVA 0x575970a with the final DLL.",
+      "loaded_compute_sources": [
+        "57966dfcc6f37f7ada1338f226766593475242039f41f87b398092d707d3fa3e"
+      ],
+      "map": "/Game/Map/P_Construct_WP",
+      "match_state": "InProgress",
+      "fault_rva": "0x575970a",
+      "shader_sources_prepared": 10
+    }
+  ],
+  "placement_baseline": {
+    "function": "FXboxCommonD3D12Adapter::CreatePlacedResourceX",
+    "device_slot": 44,
+    "call_rva": "0x5759ce0",
+    "operation": "Create a texture that aliases a virtual address chosen by the title.",
+    "final_trace": "unsupported CreatePlacedResourceX at 0x350000000, dim=3 32x32x1 mips=6 format=70 layout=0x105 flags=0x0 state=0x80",
+    "format": "DXGI_FORMAT_BC1_TYPELESS",
+    "tiled_layout": "0x105 (4 KiB)",
+    "dimensions": [
+      32,
+      32,
+      1
+    ],
+    "mips": 6,
+    "state": "0x80 (PIXEL_SHADER_RESOURCE)",
+    "flags": 0,
+    "provider_result": "E_NOTIMPL",
+    "backing": "Another texture can occupy offset 0x1000 of the same 64 KiB page. Data may be committed or changed after resource creation. A correct GPU upload must observe those changes and preserve the Xbox mip layout.",
+    "comparison": {
+      "scope": "Separate earlier Radeon run with reference graphics provider. First three placement records and the first presentation upload batch.",
+      "log_sha256": "6309e9ba424493655b43d5b748bfd2c305ea00d93198f1ddf31840f762a40676",
+      "line_ranges": [
+        [
+          16776,
+          16792
+        ],
+        [
+          29826,
+          29826
+        ]
+      ],
+      "first_present": {
+        "textures_staged": 362,
+        "subresources_uploaded": 1633,
+        "subresources_deferred_unreadable": 302
+      }
+    },
+    "original_xg_control": {
+      "xg_xs_dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+      "description": "At 32×32, compare each logical block or texel address with the packaged computer writing that mip. Offsets are bytes relative to the texture backing address.",
+      "bc1": {
+        "bytes": 4096,
+        "mip_origins": [
+          2048,
+          1536,
+          1280,
+          1024,
+          768,
+          512
+        ],
+        "elements_checked": 87
+      },
+      "bgra8": {
+        "bytes": 8192,
+        "mip_origins": [
+          4096,
+          2048,
+          1536,
+          1280,
+          1024,
+          768
+        ],
+        "elements_checked": 1365
+      }
+    }
+  },
+  "placement_and_compute": {
+    "method": "Each trial changes the app-local D3D12 provider in a separate copy of the same Frosty layout and prefix. The compiled-config runs also remove the XML from that private copy. The prepared run uses the normal launcher and the exact cooked source hash.",
+    "shipping_symbol_lookups": [
+      {
+        "rva": "0x5759ce0",
+        "status": "matched",
+        "function": "FXboxCommonD3D12Adapter::CreatePlacedResourceX",
+        "function_rva": "0x5759c50",
+        "offset": "0x90"
+      },
+      {
+        "rva": "0x57584a2",
+        "status": "matched",
+        "function": "FD3D12PipelineStateCache::OnPSOCreated",
+        "function_rva": "0x5758400",
+        "offset": "0xa2"
+      },
+      {
+        "rva": "0x57a3a5d",
+        "status": "matched",
+        "function": "FD3D12PipelineStateCacheBase::AddToLowLevelCache",
+        "function_rva": "0x57a38d0",
+        "offset": "0x18d"
+      },
+      {
+        "rva": "0x57da030",
+        "status": "matched",
+        "function": "FD3D12DynamicRHI::RHICreateComputePipelineState",
+        "function_rva": "0x57d9f90",
+        "offset": "0xa0"
+      }
+    ],
+    "layout_comparison": "evidence/providers/xg-placement-layouts.json",
+    "gpu_readback": [
+      "evidence/providers/d3d12-placement-valve.json",
+      "evidence/providers/d3d12-placement-ge.json",
+      "evidence/providers/d3d12-placement-radeon.json",
+      "evidence/matrix-awakens/tuxbox-compute-cache.json"
+    ],
+    "cache_flush": {
+      "interface": "Xbox graphics command list",
+      "method": "FXboxCommonD3D12CommandContext::FlushTextureCache",
+      "slot": 67,
+      "return_rva": "0x57f0b72",
+      "caller": {
+        "rva": "0x57f0b72",
+        "status": "matched",
+        "function": "FD3D12StateCacheBase::ApplyState<1>",
+        "function_rva": "0x57f0b20",
+        "offset": "0x52"
+      },
+      "global": {
+        "mask": "0xc00000",
+        "address": "0",
+        "bytes": "0xffffffff00",
+        "function_rva": "0x5750f30"
+      },
+      "range": {
+        "mask": "0x3000",
+        "function": "FXboxCommonD3D12CommandContext::RHIFlushTextureCacheBOP",
+        "function_rva": "0x5750f7c"
+      },
+      "implementation": "Conservative enhanced global D3D12 barrier for supported global and byte-range requests on direct and compute lists.",
+      "gpu_checks": "Two dependent read/modify/write dispatches check ordering. The guest also rejects unknown masks, empty or overflowing ranges."
+    },
+    "descriptor_mode": {
+      "device_offset": "0x18",
+      "value": 1,
+      "branch_rva": "0x579b2b9",
+      "guest_copy_slot": 24,
+      "range_copy_slot": 23,
+      "set_uavs_range_call_rva": "0x579d03f",
+      "effect": "The zero branch copies 32 descriptor bytes inline. Setting the stable byte selects the guest device copy method and lets desktop handles remain opaque."
+    },
+    "shader_preparation": "evidence/matrix-awakens/tuxbox-compute-preparation.json"
+  },
+  "previous_device2_blocker": {
+    "function": "CreatePipelineState",
+    "caller": "FD3D12DynamicRHI::RHICreateGraphicsPipelineState",
+    "fault_rva": "0x575970a",
+    "operation": "Frosty queries for ID3D12Device2 during FD3D12Adapter::InitializeDevices. TuxBox exposes only the base D3D12 device. The title retains the empty result and later dereferences it before calling Xbox slot 86 with a 712-byte graphics pipeline stream.",
+    "exception": "0xc0000005",
+    "retail_frame_verified": false,
+    "requested_interface": "ID3D12Device2",
+    "requested_iid": "30baa41e-b15b-475c-a0bb-1af5c5b64328",
+    "query_call_rva": "0x5766fcf",
+    "adapter_member_offset": "0x28",
+    "guest_device_slot": 86,
+    "desktop_device2_slot": 47,
+    "stream_bytes": 712,
+    "result_iid": "765a30f3-f624-4c6f-a828-ace948622445"
+  },
+  "current_blocker": {
+    "follow_up": "evidence/matrix-awakens/tuxbox-menu-startup.json",
+    "first_retail_present": "3840x2160",
+    "retail_menu_verified": true,
+    "remaining": "The animated green menu background is missing. Interactive 3D chase gameplay with TuxBox D3D12 remains unverified."
+  }
+}

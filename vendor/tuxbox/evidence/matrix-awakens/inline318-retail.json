@@ -1,0 +1,36 @@
+{
+  "scope": "Frosty desktop run on Proton Experimental with the packaged graphics settings. Dispatch records report commands recorded by the title. GPU output comparisons are recorded separately.",
+  "adapter": "10de:2705",
+  "executable_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "compiler_sha256": "9ac68accc2396ad3cd892a1024cda8c69f660cbfee1eaeade4d471010482697a",
+  "provider_sha256": "819eaab2a0ac25fc83c7edef464804f36d3e4a3fd050d87378887046920776ea",
+  "log_sha256": "d7a77299ac68e855ccbc0ff1f0ce31a93a06cb5255741a835625b4ae2e4129c9",
+  "lumen_hardware_ray_tracing": 1,
+  "construct_loaded": true,
+  "recorded_dispatches": {
+    "219": {
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "version": 1,
+      "table_slot": 0,
+      "descriptor_offset": 5,
+      "source_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+      "scene_gpu_va": "0xff800000"
+    },
+    "318": {
+      "root_sha256": "0d77ad060f55ea28833193819cbb1e3b1a96728cff39d983a68ca93d3284dc82",
+      "version": 1,
+      "table_slot": 0,
+      "descriptor_offset": 13,
+      "source_sha256": "29285864ab5a502a45dfe24cb3d1a775f849831c9f0587465ad206d6734a4944",
+      "scene_gpu_va": "0xff800000"
+    }
+  },
+  "mangohud_frames": 1,
+  "next_shader_failure": {
+    "entry": 306,
+    "source_sha256": "c96870c66198cee9fc7b8407b62425e86f8fab5d48238d0d767561ab362f7511",
+    "diagnostic": "raw BVH node intersection requires traversal translation at 0x7d0"
+  },
+  "exit_code": 1,
+  "elapsed_seconds": 142.2
+}

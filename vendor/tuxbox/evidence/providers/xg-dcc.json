@@ -1,0 +1,22 @@
+{
+  "reference": "Frosty xg_xs.dll",
+  "reference_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "provider_sha256": "07576cb2724600e833171ddce6d15fe3a6e392f7eaed2b9acae94b432f12884a",
+  "guest": "runtime/xg/dcc_control.cpp",
+  "guest_sha256": "a881a5f3d3327a6b9cd62f6a7a78e9c4bc068c548eac9e0d78b789ab15038154",
+  "platform": "Valve Proton Experimental",
+  "blocks_cross_decoded": 205920,
+  "reference_clear_and_raw_blocks_compared": 38880,
+  "formats": 45,
+  "checks": [
+    "Both decoders read raw, fast-clear and single-stored-texel encodings across 45 formats, including floating point, signed colors, RGB10A2, R11G11B10_FLOAT and A8.",
+    "Eighteen eight-bit component formats use compressed 32- and 64-byte chunks. Tested independent channels, green-channel decorrelation, and all 16 combinations of solid and noisy sectors.",
+    "120,960 cross-codec comparisons used low-amplitude noise, gradients, isolated impulses and byte wraparound. Both encode/decode directions matched for all three prediction window sizes and all three tested dimension values, including cross-sector width inheritance.",
+    "Clear/raw checks covered eight swizzles (0 through 28, step 4), three block sizes, two channel configurations and dimension values 0, 3 and 4."
+  ],
+  "remaining": "Compressed deltas in formats with wider components and additional swizzles. Encoding can fall back to hardware-valid raw blocks.",
+  "delta_controls": 120960,
+  "delta_profile_formats": 18,
+  "reproduce": "python build.py xg; run build/xg-provider/xg-dcc.exe alongside the supplied xg_xs.dll renamed to xg_reference.dll and its xmem dependency. The regular xg-provider suite embeds two reference encodings and needs no Xbox binaries.",
+  "rejected_reference_blocks": 0
+}

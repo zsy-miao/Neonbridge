@@ -1,0 +1,249 @@
+{
+  "scope": "Synthetic LLVM-assembled SAD and 64-bit multiply-add instructions; dynamic instrumented inputs and observed outputs",
+  "adapter": "1002:73a5",
+  "proton": "1794497090 experimental-11.0-20261112-x86_64",
+  "seed": 1396786253,
+  "assembly": [
+    "v_mov_b32_e32 v4, 0x13572468",
+    "v_mov_b32_e32 v5, 0x24681357",
+    "v_mov_b32_e32 v6, 0x35792468",
+    "v_mov_b32_e32 v7, 0x46813579",
+    "v_mov_b32_e32 v10, 0xdead000a",
+    "v_mov_b32_e32 v11, 0xdead000b",
+    "v_mov_b32_e32 v12, 0xdead000c",
+    "v_mov_b32_e32 v13, 0xdead000d",
+    "v_mov_b32_e32 v14, 0xdead000e",
+    "v_mov_b32_e32 v15, 0xdead000f",
+    "v_mov_b32_e32 v16, 0xdead0010",
+    "v_mov_b32_e32 v17, 0xdead0011",
+    "v_mov_b32_e32 v18, 0xdead0012",
+    "v_mov_b32_e32 v19, 0xdead0013",
+    "v_mov_b32_e32 v20, 0xdead0014",
+    "v_sad_u8 v10, v4, v5, v6",
+    "v_sad_hi_u8 v11, v4, v5, v6",
+    "v_sad_u16 v12, v4, v5, v6",
+    "v_sad_u32 v13, v4, v5, v6",
+    "v_mad_i64_i32 v[14:15], null, v4, v5, v[6:7]",
+    "v_mad_u64_u32 v[16:17], null, v4, v5, v[6:7]",
+    "v_mov_b32_e32 v18, v6",
+    "v_mov_b32_e32 v19, v7",
+    "v_mad_i64_i32 v[18:19], null, v4, v5, v[18:19]",
+    "v_mov_b32_e32 v20, v6",
+    "v_sad_u8 v20, v4, v5, v20",
+    "s_endpgm"
+  ],
+  "native_words": [
+    "7e0802ff",
+    "13572468",
+    "7e0a02ff",
+    "24681357",
+    "7e0c02ff",
+    "35792468",
+    "7e0e02ff",
+    "46813579",
+    "7e1402ff",
+    "dead000a",
+    "7e1602ff",
+    "dead000b",
+    "7e1802ff",
+    "dead000c",
+    "7e1a02ff",
+    "dead000d",
+    "7e1c02ff",
+    "dead000e",
+    "7e1e02ff",
+    "dead000f",
+    "7e2002ff",
+    "dead0010",
+    "7e2202ff",
+    "dead0011",
+    "7e2402ff",
+    "dead0012",
+    "7e2602ff",
+    "dead0013",
+    "7e2802ff",
+    "dead0014",
+    "d55a000a",
+    "041a0b04",
+    "d55b000b",
+    "041a0b04",
+    "d55c000c",
+    "041a0b04",
+    "d55d000d",
+    "041a0b04",
+    "d5777d0e",
+    "041a0b04",
+    "d5767d10",
+    "041a0b04",
+    "7e240306",
+    "7e260307",
+    "d5777d12",
+    "044a0b04",
+    "7e280306",
+    "d55a0014",
+    "04520b04",
+    "bf810000"
+  ],
+  "emitted_sha256": "0617067081a5766f419f4c9a76270be283f3b5f013ac39ad66101832e380fbb2",
+  "shader_cases": 24,
+  "inputs": 288,
+  "result_words": 3168,
+  "compared_words": 9216,
+  "mismatches": 0,
+  "failures": [],
+  "baseline_refused": true,
+  "negative_controls": [
+    {
+      "kind": "clamp",
+      "assembly": "v_sad_u8 v10, v4, v5, v6 clamp",
+      "refusal": "unsupported ordinary 32-bit integer modifiers [v_sad_u8 @ 0x0]"
+    },
+    {
+      "kind": "scalar_source",
+      "assembly": "v_sad_u32 v10, s4, v5, v6",
+      "refusal": "unsupported ordinary 32-bit integer source or encoding [v_sad_u32 @ 0x0]"
+    },
+    {
+      "kind": "carry_destination",
+      "assembly": "v_mad_i64_i32 v[14:15], vcc_lo, v4, v5, v[6:7]",
+      "refusal": "unsupported multiply-add carry destination [v_mad_i64_i32 @ 0x0]"
+    },
+    {
+      "kind": "masked_sad",
+      "assembly": "v_msad_u8 v10, v4, v5, v6",
+      "refusal": "unsupported vector op [v_msad_u8 @ 0x0]"
+    }
+  ],
+  "tool_sha256": {
+    "emitter": "3d03c1f7c6dae424ace5a2bc8986b656aa96af2d1708db87323f19921b748ad8",
+    "dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "provider": "241a341d95edeb415418435dfcced81b38c497c3d6fc3e8c391ef93883c4b95d",
+    "baseline": "b1ad7b7621d4716ace199ae16d8d8a384eb4d88149d0195f5d68a20f923379e5"
+  },
+  "guest_sha256": "cd298d454350738633fba7aef4cba0286f1323ad5be1491950dcbfccbe97cc08",
+  "rows": [
+    {
+      "case": "sad_mad64_00",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "6293ba92a611580595cf117ec856eba0d7dae50089af881d68ffef2da01de399"
+    },
+    {
+      "case": "sad_mad64_01",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "c2f1fc7612eef214bd34ded80ef3e9a8b58e0fb3520beb00802683d99d026658"
+    },
+    {
+      "case": "sad_mad64_02",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "adacb73a7a279f941798e928347c74f9d3d9277da708a70df0b25efc69806312"
+    },
+    {
+      "case": "sad_mad64_03",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "59a8cebdc54a00a5582a610d994d37f8e65dce00cfd9d3d17fda9b956edcae80"
+    },
+    {
+      "case": "sad_mad64_04",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "f0f29f973992df3af9f8e4d913a68e6dd19fa9bc81815e736d3369531ab2fc34"
+    },
+    {
+      "case": "sad_mad64_05",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "46f7b4dcf177d991092f24b90fa5cf679316cea52ac137b947526383144d2ae7"
+    },
+    {
+      "case": "sad_mad64_06",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "cf9c79c8276c66365197caca3449b0f8198e906c452bb31414f0372e77e33e19"
+    },
+    {
+      "case": "sad_mad64_07",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "0172243e69715321882d0621efca96e45008496ec2c38acbb51df39fdbc6241d"
+    },
+    {
+      "case": "sad_mad64_08",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "f0a61ce7de9fb58074f307d165038351d0d9c836fa2856ff8c63e0e89bd8f686"
+    },
+    {
+      "case": "sad_mad64_09",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "de3f601086aaadce6861ea28d69c07576090367ec5dff13775c01436b792907c"
+    },
+    {
+      "case": "sad_mad64_10",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "e7dbaa2b11be2465281740cdc009335e1c9017eee21aa6c1398a079d46f0cb6b"
+    },
+    {
+      "case": "sad_mad64_11",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "86d320c3a94dbe340f9e47db4af493d6faa7eb55bd14ba7303e6b77187012211"
+    },
+    {
+      "case": "sad_mad64_12",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "882c34b7798b297ca43ff370c83330c0b51dcdb0ee60f4a9c1e7c946b162654b"
+    },
+    {
+      "case": "sad_mad64_13",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "aca523f1a6caf7f1f9546027e591c3d2fbc495e4348f69ce8a2d13cf088fc497"
+    },
+    {
+      "case": "sad_mad64_14",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "c46cd57e5adf3121a1bbe70c721efcb8bd40f057f30a77dc9c1e7277434ccb2e"
+    },
+    {
+      "case": "sad_mad64_15",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "c0dd7a634909f150c168e375eea238fe7d9a062481b63d6769d59494674bd9fe"
+    },
+    {
+      "case": "sad_mad64_16",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "375817bff8cf80d5af13caee24d7985da7c32f00fa6af50c95e9636ba545e3f6"
+    },
+    {
+      "case": "sad_mad64_17",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "5832938d0a33d8478f9a56295666d6294a074cc1e44123f465e084aea31980fa"
+    },
+    {
+      "case": "sad_mad64_18",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "c6d414092362f1c4d4bb83e61b1d5d146fd34f1af4bce602d7136c47c226ce4c"
+    },
+    {
+      "case": "sad_mad64_19",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "5102262010ff49c22e6fad00c86dbde49d6123a1ce7416b986e077bda7fed093"
+    },
+    {
+      "case": "sad_mad64_20",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "66ee65dc81fa525f293a395d520ac4d73a71baac368fa947158f196bf9c81535"
+    },
+    {
+      "case": "sad_mad64_21",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "6ce51d6a1f8e1502cdc19498c9bc94693ca0de2e3a5c7c7e47900e6d77cbe5b8"
+    },
+    {
+      "case": "sad_mad64_22",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "3dd4291869b3d4b0bb76f15c463494d8b2db8177670376e23bc6b19ca59c929d"
+    },
+    {
+      "case": "sad_mad64_23",
+      "dxil_sha256": "017ab46d6d2c30ff5621c5cec3463cda8ee727172bdaca7acba15ecdcd92ca4a",
+      "readback_sha256": "95ef3f4b62d7258b22400cd1abe35de17676cd43ede4caf258ac0a6a4a83d9bc"
+    }
+  ],
+  "hardware": "AMD Radeon RX 6950 XT",
+  "test_date_utc": "2026-11-24"
+}

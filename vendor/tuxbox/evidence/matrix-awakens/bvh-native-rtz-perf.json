@@ -1,0 +1,30 @@
+{
+  "scope": "Synthetic single triangle, 65536 dynamic rays with 1024 distinct origins; strict float32 candidate, GPU timestamps include UAV barriers. Not a game benchmark or a general accuracy proof.",
+  "native_agent": "agent=gfx1036 signal=0 records=65536",
+  "native_sha256": "256f7b9fa6ed5d97a5f45bad6541e9e640cbf03afce80c72fd538963172e1620",
+  "dxil_sha256": "dabb12d7a37ea1462e60d83cf430e775c36d5915e540828d5299318db51f572c",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "runs_ms_per_dispatch": [
+        0.17084,
+        0.17072,
+        0.17076
+      ],
+      "median_ms_per_dispatch": 0.17076,
+      "threads_per_dispatch": 65536,
+      "native_mismatched_words": 0
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "runs_ms_per_dispatch": [
+        0.004352,
+        0.004352,
+        0.004352
+      ],
+      "median_ms_per_dispatch": 0.004352,
+      "threads_per_dispatch": 65536,
+      "native_mismatched_words": 0
+    }
+  }
+}

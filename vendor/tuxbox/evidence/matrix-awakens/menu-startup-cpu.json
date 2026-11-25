@@ -1,0 +1,58 @@
+{
+  "scope": "Desktop startup with packaged settings, MangoHud, Vulkan profiling and shader dumps. The window was closed before the menu measurement. The resulting presentation failure ended the process. Linux CPU samples continue between presents.",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider_sha256": "25b45d2421190e2573912d91b7aaf67121824a94597324c404da71acf12a5f34",
+  "log_sha256": "a4c7e8a374a1f2328f6c79d8f6dba9b9f5f38028dec2e45aa9e913ad2032cf1b",
+  "cpu_samples_sha256": "0b38f5d0e56de8328b5caf41fc4e4369c477eff72e7fd8655268185e609d4b6c",
+  "method": "Read the game process and all live thread CPU ticks via procfs once per second. A value of 100% for a process or thread means one logical CPU. Host busy percent includes every process and excludes idle and I/O wait. Threads that exit between samples contribute to process totals and may be absent individually.",
+  "logical_cpus": 16,
+  "clock_ticks_per_second": 100,
+  "start_utc": "2026-11-23T10:22:00.483+00:00",
+  "end_utc": "2026-11-23T10:22:49.533+00:00",
+  "samples": 49,
+  "elapsed_seconds": 49.05,
+  "process_one_core_percent": {
+    "p50": 106.89,
+    "maximum": 334.63,
+    "average": 116.72
+  },
+  "host_busy_percent": {
+    "p50": 8.04,
+    "maximum": 22.17
+  },
+  "busiest_thread_one_core_percent": {
+    "p50": 76.92,
+    "maximum": 99.91,
+    "intervals_at_least_95_percent": 21
+  },
+  "top_threads": [
+    {
+      "tid": 2132828,
+      "name": "Frosty-XSX-Ship",
+      "cpu_seconds": 25.1
+    },
+    {
+      "tid": 2132454,
+      "name": "Frosty-XSX-Ship",
+      "cpu_seconds": 5.86
+    },
+    {
+      "tid": 2132459,
+      "name": "TuxBox storage",
+      "cpu_seconds": 4.13
+    },
+    {
+      "tid": 2132534,
+      "name": "mangohud-nvidia",
+      "cpu_seconds": 1.57
+    },
+    {
+      "tid": 2132594,
+      "name": "Frosty-XSX-Ship",
+      "cpu_seconds": 1.12
+    }
+  ],
+  "memory_high_events": 0,
+  "memory_pressure_stall_microseconds": 0,
+  "notes": "Wine exposes several distinct threads with the game name. No function attribution was obtained from this launch."
+}

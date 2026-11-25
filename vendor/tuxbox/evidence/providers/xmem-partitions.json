@@ -1,0 +1,25 @@
+{
+  "scope": "Single-pool desktop physical layout, system and title partition ID queries, and transfers from the title memory budget to the system budget.",
+  "guest": "runtime/xmem/partition_control.c",
+  "provider_sha256": "535894e5add064b363fa21af4b8bf051c801924ce5344cf73e166b29449cb3f8",
+  "guest_sha256": "4b88ec4a988a5eecea99c2bccefb9f7f818bb7620588fdf532f6cd71af43c23d",
+  "console_modules": {
+    "xmem.dll": "adc182acae5340b0618a3d57a239ed2e8deb305dbefc49439cb8a2d06c7ce812",
+    "xbthunk.dll": "be6fb5cb6ad675f814d47bbf47aab5605465a6334e747e9863dac6d335716f03",
+    "drivers/xvcmgmt.sys": "c652b2f797813c93396c9451635291fc329c7915cc98bbdf5c2c2228e16aabb4"
+  },
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "receipt": "xmem-partitions PASS stable_cpu_pfns=2 budget_reduced=1 ids=2 native_handles=0",
+  "reference_behavior": [
+    "XbGetPartitionHandleAndId accepts partitions 0 (system), 1 (title), 2 (tools). Both outputs are optional. A missing partition sets ERROR_OBJECT_NOT_FOUND. An unknown selector sets ERROR_INVALID_PARAMETER.",
+    "XMemGetPhysicalMemoryLayout writes two 64-bit words. xvcmgmt uses the first 4 KiB page frame number of the title memory ranges. Single-pool topologies repeat the first PFN in the second word.",
+    "XMemTransferMemory sends direction 0 from the title to the system memory partition. It rounds the transfer up to a multiple of 512 4 KiB pages. The retail profile rejects directions 1 and 2 when the tools partition is absent."
+  ],
+  "provider_checks": [
+    "Presence and ID for selectors 0 and 1, missing tools and invalid selector with output canaries",
+    "Two allocated 64 KiB page tokens at the reported title boundary and the next 16-PFN interval, followed by free",
+    "Zero-byte transfer, tools gating, invalid direction and overflow rejection",
+    "A transfer of 256 MiB minus one byte measurably reduced the working-set budget"
+  ],
+  "limits": "Stock Proton has no native memory partition handles. TuxBox reports IDs for desktop memory and leaves both handle and ID outputs untouched when a requested handle is unavailable. The query-only native Windows handle path has not been run on a Windows control. The guest budget is enforced for TuxBox CPU physical pages."
+}

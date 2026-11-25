@@ -1,0 +1,99 @@
+--- a/crates/compat/d3d12_xs/src/upload.rs
++++ b/crates/compat/d3d12_xs/src/upload.rs
+@@ -25,7 +25,7 @@
+ //!     transitions and subresources last transitioned on another queue are deferred;
+ //!   * memory that is not committed/readable is skipped and retried later;
+ //!   * a write racing the read is repaired on a later frame (hash changes again), but a
+-//!     decommit racing the read would fault;
++//!     decommit racing a snapshot defers that subresource until a later frame;
+ //!   * Texture3D, multi-plane and render-target/depth placed textures are not mirrored.
+ 
+ use core::ffi::c_void;
+@@ -35,6 +35,9 @@
+ use crate::placed::Placed;
+ 
+ extern "system" {
++    fn GetCurrentProcess() -> *mut c_void;
++    fn ReadProcessMemory(process: *mut c_void, src: *const c_void, dst: *mut c_void,
++        len: usize, copied: *mut usize) -> i32;
+     fn VirtualQuery(addr: *const c_void, mbi: *mut Mbi, len: usize) -> usize;
+     fn GetModuleHandleA(n: *const u8) -> *mut c_void;
+     fn LoadLibraryA(n: *const u8) -> *mut c_void;
+@@ -119,6 +122,27 @@
+         p = m.base + m.region_size;
+     }
+     true
++}
++
++// The title may decommit a texture after VirtualQuery, or while other subresources
++// are being staged. Hash and detile the same owned bytes. A partial read is retried.
++fn snapshot(addr: usize, len: usize) -> Option<Vec<u8>> {
++    if !readable(addr, len) {
++        return None;
++    }
++    let mut bytes: Vec<u8> = Vec::new();
++    bytes.try_reserve_exact(len).ok()?;
++    let mut copied = 0;
++    // SAFETY: the destination has capacity for len bytes. The OS checks the
++    // source range. Expose the initialized bytes only after a complete read.
++    unsafe {
++        if ReadProcessMemory(GetCurrentProcess(), addr as *const c_void,
++                bytes.as_mut_ptr().cast(), len, &mut copied) == 0 || copied != len {
++            return None;
++        }
++        bytes.set_len(len);
++    }
++    Some(bytes)
+ }
+ 
+ fn hash_bytes(b: &[u8]) -> u64 {
+@@ -503,12 +527,11 @@
+             continue; // layout query failed for this subresource (counted at adoption time)
+         };
+         let base = t.p.va as usize + origin;
+-        if !readable(base + map.lo, map.hi - map.lo) {
++        let Some(mem) = snapshot(base + map.lo, map.hi - map.lo) else {
+             unreadable += 1;
+             continue;
+-        }
+-        let mem = core::slice::from_raw_parts((base + map.lo) as *const u8, map.hi - map.lo);
+-        let h = hash_bytes(mem);
++        };
++        let h = hash_bytes(&mem);
+         *hashed += mem.len() as u64;
+         if t.hashes[sub as usize].is_none() && mem.iter().all(|&b| b == 0) {
+             // Never written by the title (fresh committed pages are zero). Do not upload:
+@@ -518,7 +541,7 @@
+             continue;
+         }
+         if t.hashes[sub as usize] != Some(h) {
+-            changed.push((sub, base as *const u8, map, h));
++            changed.push((sub, mem, map, h));
+         }
+     }
+     up.unreadable += unreadable;
+@@ -528,7 +551,7 @@
+     // One upload buffer for this texture's changed subresources.
+     let (buf, data) = mapped_upload_buffer(device, t.total_bytes)?;
+     let mut subs = Vec::with_capacity(changed.len());
+-    for (sub, base, map, h) in changed {
++    for (sub, mem, map, h) in changed {
+         let fp = t.fps[sub as usize];
+         let dst0 = data.add(fp.offset() as usize);
+         let pitch = fp.row_pitch() as usize;
+@@ -540,13 +563,13 @@
+                     let run = map.w_e.min(16 / format.element_bytes()) as usize;
+                     for x in (0..map.w_e).step_by(run) {
+                         let offset = format.offset(map.w_e, x, y as u32);
+-                        core::ptr::copy_nonoverlapping(base.add(map.lo + offset as usize), row.add(x as usize * bpe), run * bpe);
++                        core::ptr::copy_nonoverlapping(mem.as_ptr().add(offset as usize), row.add(x as usize * bpe), run * bpe);
+                     }
+                 }
+                 ElementOffsets::FromXg(offs) => {
+                     let start = y * map.w_e as usize;
+                     for (x, &o) in offs[start..start + map.w_e as usize].iter().enumerate() {
+-                        core::ptr::copy_nonoverlapping(base.add(o as usize), row.add(x * bpe), bpe);
++                        core::ptr::copy_nonoverlapping(mem.as_ptr().add(o as usize - map.lo), row.add(x * bpe), bpe);
+                     }
+                 }
+             }

@@ -1,0 +1,62 @@
+--- a/crates/compat/d3d12_xs/src/barriers.rs
++++ b/crates/compat/d3d12_xs/src/barriers.rs
+@@ -54,30 +54,45 @@
+     }
+ }
+ 
++// Frosty's SetSRVs adds the command-context mask to all-shader or compute-only
++// reads for a flagged SRV. Ordinary desktop SRV reads cover these uses. Keep
++// all other encodings intact: the individual platform bits are undocumented.
++pub(super) fn shader_read_state(state: u32) -> u32 {
++    match state {
++        0x1200_00c0 => 0xc0,
++        0x1200_0040 => 0x40,
++        _ => state,
++    }
++}
++
+ // The host and both trackers consume this same batch. Allocate at the first change.
+ pub(crate) unsafe fn translate(input: &[Barrier]) -> Cow<'_, [Barrier]> {
+     let mut output: Option<Vec<Barrier>> = None;
+     for (i, &barrier) in input.iter().enumerate() {
+         let mut host = barrier;
+         if let Some(mut t) = barrier.transition() {
+-            if (t.before | t.after) & crate::device_wrap::BUFFER_ONLY_STATES != 0
++            let mut before = shader_read_state(t.before);
++            let mut after = shader_read_state(t.after);
++            if (before | after) & crate::device_wrap::BUFFER_ONLY_STATES != 0
+                 && !t.resource.is_null()
+                 && !crate::device_wrap::is_buffer(t.resource)
+             {
++                before = crate::device_wrap::texture_state(before);
++                after = crate::device_wrap::texture_state(after);
++            }
++            if (before, after) != (t.before, t.after) {
+                 let batch = output.get_or_insert_with(|| {
+                     let mut batch = Vec::with_capacity(input.len());
+                     batch.extend_from_slice(&input[..i]);
+                     batch
+                 });
+-                let before = crate::device_wrap::texture_state(t.before);
+-                let after = crate::device_wrap::texture_state(t.after);
+                 static LOGGED: AtomicUsize = AtomicUsize::new(0);
+                 if LOGGED.fetch_add(1, Ordering::Relaxed) < 4 {
+                     compat_common::record(
+                         "d3d12_xs",
+                         "ResourceBarrier",
+                         &format!(
+-                            "texture {:p}: {:#x}->{:#x} becomes {before:#x}->{after:#x}",
++                            "resource {:p}: {:#x}->{:#x} becomes {before:#x}->{after:#x}",
+                             t.resource, t.before, t.after
+                         ),
+                     );
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -504,6 +504,7 @@
+ 
+ /// Initial state of a new resource of dimension `dim` (1 = buffer).
+ fn initial_state(dim: u32, state: u32) -> u32 {
++    let state = crate::barriers::shader_read_state(state);
+     if dim == 1 { state } else { texture_state(state) }
+ }
+ 

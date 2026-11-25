@@ -1,0 +1,2197 @@
+//! `xcl shaders <file|folder> [--top N] [--json] [--recomp] [--compile N]` – statistics over
+//! a shader corpus: formats, stages, FSSM variants and the RDNA2 instruction histogram that
+//! sets the recompiler's priorities. Inputs: a single blob, a folder (e.g. `<data>\shaders\`)
+//! or an RPF9 shader pack (records found by scanning, see `gpu::pack`). `--recomp`
+//! translates every program to HLSL (kernel mode) and reports what is still missing;
+//! `--compile N` also compiles N of the complete translations with DXC. `--export-hlsl`
+//! writes deterministic compute HLSL, and `--measure-pso` times one exact driver compile.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+use crate::gpu::{dxbc, pack, rdna2, recomp, shader, xbox};
+
+/// `--iface`: how console programs connect to their DXBC signatures (hypothesis checks for
+/// the VS/PS interface of the recompiler).
+#[derive(Default)]
+struct IfaceAgg {
+    ps: usize,
+    ps_in_regs: usize,
+    ps_eq_regs: usize,
+    ps_examples: Vec<String>,
+    vs: usize,
+    vs_param_in_regs: usize,
+    vs_param_eq: usize,
+    vs_param_examples: Vec<String>,
+    vs_inputs: usize,
+    vs_in_vec4: usize,
+    vs_in_packed: usize,
+    vs_input_examples: Vec<String>,
+    /// attr / param index = rank among the non-system elements (register order)
+    ps_rank: usize,
+    vs_rank: usize,
+    /// (hw stage, smallest base B with inputs ⊆ {B + 4·register + c}) → programs
+    vs_base: BTreeMap<String, usize>,
+    /// PS: SPI_PS_INPUT_ENA at FSSM +0x248 explains the I/J VGPRs of v_interp / the initial VGPRs read
+    ps_ena_ij: usize,
+    ps_ena_reads: usize,
+    ps_ena_examples: Vec<String>,
+    /// hardware stage → (programs, VGPR read before written → programs, SGPR → programs, export target → programs)
+    inputs: BTreeMap<String, StageInputs>,
+}
+
+#[derive(Default)]
+struct StageInputs {
+    programs: usize,
+    vgpr: BTreeMap<u64, usize>,
+    sgpr: BTreeMap<u64, usize>,
+    exports: BTreeMap<u64, usize>,
+    sendmsg: BTreeMap<u64, usize>,
+    /// PSV0: "kind / max verts / max prims / topology / numthreads / groupshared" → programs
+    psv: BTreeMap<String, usize>,
+    /// first instruction reading an input register (v0–v7, s0–s3) → programs
+    first_use: BTreeMap<String, usize>,
+}
+
+impl IfaceAgg {
+    fn merge(&mut self, o: IfaceAgg) {
+        self.ps += o.ps;
+        self.ps_in_regs += o.ps_in_regs;
+        self.ps_eq_regs += o.ps_eq_regs;
+        self.vs += o.vs;
+        self.vs_param_in_regs += o.vs_param_in_regs;
+        self.vs_param_eq += o.vs_param_eq;
+        self.vs_inputs += o.vs_inputs;
+        self.vs_in_vec4 += o.vs_in_vec4;
+        self.vs_in_packed += o.vs_in_packed;
+        self.ps_rank += o.ps_rank;
+        self.ps_ena_ij += o.ps_ena_ij;
+        self.ps_ena_reads += o.ps_ena_reads;
+        self.ps_ena_examples.extend(o.ps_ena_examples);
+        self.ps_ena_examples.truncate(8);
+        self.vs_rank += o.vs_rank;
+        for (k, v) in o.vs_base {
+            *self.vs_base.entry(k).or_default() += v;
+        }
+        for (a, b) in [(&mut self.ps_examples, o.ps_examples), (&mut self.vs_param_examples, o.vs_param_examples), (&mut self.vs_input_examples, o.vs_input_examples)] {
+            a.extend(b);
+            a.truncate(8);
+        }
+        for (k, x) in o.inputs {
+            let e = self.inputs.entry(k).or_default();
+            e.programs += x.programs;
+            for (a, b) in [(&mut e.vgpr, x.vgpr), (&mut e.sgpr, x.sgpr), (&mut e.exports, x.exports), (&mut e.sendmsg, x.sendmsg)] {
+                for (r, n) in b {
+                    *a.entry(r).or_default() += n;
+                }
+            }
+            for (r, n) in x.psv {
+                *e.psv.entry(r).or_default() += n;
+            }
+            for (r, n) in x.first_use {
+                *e.first_use.entry(r).or_default() += n;
+            }
+        }
+    }
+
+    fn add(&mut self, name: &str, blob: &[u8], sh: &xbox::XboxShader) {
+        let (isg, osg) = dxbc::signatures(blob);
+        let user = |s: &[dxbc::SigElement]| -> Vec<(u32, u8, String)> {
+            s.iter().filter(|e| e.system_value == 0 && !e.name.starts_with("SV_")).map(|e| (e.register, e.mask, e.semantic())).collect()
+        };
+        let sig_txt = |s: &[dxbc::SigElement]| s.iter().map(|e| format!("{}@r{}:{:x}", e.semantic(), e.register, e.mask)).collect::<Vec<_>>().join(" ");
+        for f in &sh.fssm {
+            let Some(p) = f.programs.first() else { continue };
+            let code = &f.data[p.offset..p.offset + p.len];
+            let mut attrs = std::collections::BTreeSet::new();
+            let mut ij = std::collections::BTreeSet::new();
+            let mut params = std::collections::BTreeSet::new();
+            let (mut read, mut written) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+            let (mut sread, mut swritten) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+            let (mut exps, mut msgs) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+            let mut first: Vec<String> = Vec::new();
+            let mut off = 0;
+            while off + 4 <= code.len() {
+                let Ok(d) = rdna2::decode(&code[off..], off as u64) else { break };
+                off += d.len;
+                let n = d.inst.name;
+                if n.starts_with("V_INTERP") {
+                    let a = rdna2::field_value(d.enc, &d.words, "ATTR")
+                        .or_else(|| rdna2::field_value(d.enc, &d.words, "SRC0").map(|v| v & 0x3f));
+                    if let Some(a) = a {
+                        attrs.insert(a as u32);
+                    }
+                    if n == "V_INTERP_P1_F32" || n == "V_INTERP_P2_F32" {
+                        if let Some(v) = rdna2::field_value(d.enc, &d.words, "VSRC") {
+                            ij.insert(v);
+                        }
+                    }
+                }
+                if n == "EXP" {
+                    let t = rdna2::field_value(d.enc, &d.words, "TGT").unwrap_or(0);
+                    if (32..64).contains(&t) {
+                        params.insert((t - 32) as u32);
+                    }
+                }
+                let (r, w) = rdna2::vgpr_uses(&d);
+                for v in r {
+                    if !written.contains(&v) {
+                        if v < 8 && !read.contains(&v) {
+                            first.push(format!("v{v}: {}", rdna2::format(&d)));
+                        }
+                        read.insert(v);
+                    }
+                }
+                written.extend(w);
+                let (r, w) = rdna2::sgpr_uses(&d);
+                for v in r {
+                    if !swritten.contains(&v) {
+                        if v < 4 && !sread.contains(&v) {
+                            first.push(format!("s{v}: {}", rdna2::format(&d)));
+                        }
+                        sread.insert(v);
+                    }
+                }
+                swritten.extend(w);
+                if n == "EXP" {
+                    exps.insert(rdna2::field_value(d.enc, &d.words, "TGT").unwrap_or(0));
+                }
+                if n == "S_SENDMSG" || n == "S_SENDMSGHALT" {
+                    msgs.insert(rdna2::field_value(d.enc, &d.words, "SIMM16").unwrap_or(0) & 0xF);
+                }
+            }
+            {
+                let hw0 = f.stages.first().map(|s| s.hw).unwrap_or(99);
+                let e = self.inputs.entry(format!("{} {}", sh.stage, xbox::hw_stage_name(hw0))).or_default();
+                e.programs += 1;
+                for &v in &read {
+                    *e.vgpr.entry(v).or_default() += 1;
+                }
+                for &v in &sread {
+                    *e.sgpr.entry(v).or_default() += 1;
+                }
+                for &t in &exps {
+                    *e.exports.entry(t).or_default() += 1;
+                }
+                for &m in &msgs {
+                    *e.sendmsg.entry(m).or_default() += 1;
+                }
+                let key = match dxbc::psv(blob) {
+                    Some(p) if p.kind == Some(13) => format!(
+                        "MS v{} p{} topo{} threads{:?} lds{} wave{}-{}",
+                        p.ms_max_vertices, p.ms_max_primitives, p.ms_topology, p.numthreads.unwrap_or_default(), p.ms_groupshared, p.min_wave, p.max_wave
+                    ),
+                    Some(p) => format!("kind {:?} threads{:?} wave{}-{}", p.kind, p.numthreads, p.min_wave, p.max_wave),
+                    None => "no PSV0".into(),
+                };
+                *e.psv.entry(key).or_default() += 1;
+                for u in first {
+                    *e.first_use.entry(u).or_default() += 1;
+                }
+            }
+            let hw = f.stages.first().map(|s| s.hw).unwrap_or(99);
+            if sh.stage == "PS" && hw == 5 && !attrs.is_empty() {
+                self.ps += 1;
+                let regs: std::collections::BTreeSet<u32> = user(&isg).iter().map(|x| x.0).collect();
+                let inside = attrs.is_subset(&regs);
+                self.ps_in_regs += inside as usize;
+                self.ps_eq_regs += (attrs == regs) as usize;
+                let n = user(&isg).len() as u32;
+                self.ps_rank += attrs.iter().all(|&a| a < n) as usize;
+                // VGPR layout of the enabled PS inputs (hardware order, sizes 2/2/2/3/2/2/2/1…)
+                let ena = f.data.get(0x248..0x24C).map(|b| u32::from_le_bytes(b.try_into().unwrap())).unwrap_or(0);
+                let sizes = [2u64, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+                let (mut at, mut pairs) = (0u64, std::collections::BTreeSet::new());
+                for (bit, sz) in sizes.iter().enumerate() {
+                    if ena >> bit & 1 == 1 {
+                        if bit <= 6 && bit != 3 {
+                            pairs.insert(at);
+                            pairs.insert(at + 1);
+                        }
+                        at += sz;
+                    }
+                }
+                let ij_ok = ij.is_subset(&pairs);
+                let rd_ok = read.iter().all(|&v| v < at);
+                self.ps_ena_ij += ij_ok as usize;
+                self.ps_ena_reads += rd_ok as usize;
+                if (!ij_ok || !rd_ok) && self.ps_ena_examples.len() < 8 {
+                    self.ps_ena_examples.push(format!("{name}: ena {ena:#x} ({at} VGPR) I/J {ij:?} read before write {:?}", read.iter().take(12).collect::<Vec<_>>()));
+                }
+                if !inside && self.ps_examples.len() < 8 {
+                    self.ps_examples.push(format!("{name}: attr {attrs:?} vs ISG1 {}", sig_txt(&isg)));
+                }
+            }
+            if sh.stage == "VS" && (hw == 4 || hw == 2) {
+                self.vs += 1;
+                let regs: std::collections::BTreeSet<u32> = user(&osg).iter().map(|x| x.0).collect();
+                let inside = params.is_subset(&regs);
+                self.vs_param_in_regs += inside as usize;
+                self.vs_param_eq += (params == regs) as usize;
+                let n = user(&osg).len() as u32;
+                let rank_ok = params.iter().all(|&a| a < n);
+                self.vs_rank += rank_ok as usize;
+                if !rank_ok && self.vs_param_examples.len() < 8 {
+                    self.vs_param_examples.push(format!("RANK {name} [{}]: param {params:?} vs OSG1 {}", xbox::hw_stage_name(hw), sig_txt(&osg)));
+                }
+
+                // attribute VGPRs the fetch shader fills: read before written, above the 4 system VGPRs
+                let ins: std::collections::BTreeSet<u64> = read.iter().copied().filter(|&v| v >= 4).collect();
+                let u = user(&isg);
+                if !ins.is_empty() && !u.is_empty() {
+                    self.vs_inputs += 1;
+                    let vec4: std::collections::BTreeSet<u64> =
+                        u.iter().flat_map(|(r, m, _)| (0..4).filter(move |c| m >> c & 1 == 1).map(move |c| 4 + 4 * *r as u64 + c)).collect();
+                    let mut packed = std::collections::BTreeSet::new();
+                    let mut sorted = u.clone();
+                    sorted.sort();
+                    let mut next = 4u64;
+                    for (_, m, _) in &sorted {
+                        let n = 8 - m.leading_zeros() as u64; // highest component + 1
+                        packed.extend(next..next + n);
+                        next += n;
+                    }
+                    // system values with a register (SV_VertexID / SV_InstanceID) arrive like attributes
+                    let sv_regs: Vec<u32> = isg.iter().filter(|e| matches!(e.system_value, 6 | 8)).map(|e| e.register).collect();
+                    for b in [4u64, 9] {
+                        let all: std::collections::BTreeSet<u64> =
+                            u.iter().map(|x| x.0).chain(sv_regs.iter().copied()).flat_map(|r| (0..4).map(move |c| b + 4 * r as u64 + c)).collect();
+                        if ins.is_subset(&all) {
+                            *self.vs_base.entry(format!("{} matches v{b}+4r+c", xbox::hw_stage_name(hw))).or_default() += 1;
+                        } else if b == 4 && hw == 4 && self.vs_input_examples.len() < 8 {
+                            let extra: Vec<u64> = ins.difference(&all).copied().collect();
+                            self.vs_input_examples.push(format!("v4 NO: {name}: reads {ins:?} outside: {extra:?} | ISG1 {}", sig_txt(&isg)));
+                        }
+                    }
+                    *self.vs_base.entry(format!("{} total", xbox::hw_stage_name(hw))).or_default() += 1;
+                    let a = ins.is_subset(&vec4);
+                    let b = ins.is_subset(&packed);
+                    self.vs_in_vec4 += a as usize;
+                    self.vs_in_packed += b as usize;
+let _ = b;
+                }
+            }
+        }
+    }
+}
+
+static HEADER_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `xcl shaders --example MNEMONIC`
+static EXAMPLE_FOR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[derive(Default)]
+struct RecompAgg {
+    programs: usize,
+    complete: usize,
+    wave32: usize,
+    errors: usize,
+    error_examples: Vec<String>,
+    /// mnemonic → (instructions, programs that use it)
+    missing: HashMap<String, (usize, usize)>,
+    /// programs whose only missing mnemonic is this one
+    sole: HashMap<String, usize>,
+    /// "mnemonic: reason" → programs
+    why: HashMap<String, usize>,
+    /// (name, HLSL, profile) of complete translations kept for the DXC check
+    samples: Vec<(String, String, &'static str)>,
+    /// programs translated in a graphics mode (VS / PS interface from the container)
+    by_mode: BTreeMap<String, (usize, usize)>,
+    hlsl_bytes: usize,
+    /// VS / PS (the driver picks the wave size): wave32 programs (run split in 64-lane waves)
+    /// and wave64 programs whose cross-lane reads break in 32-lane waves (kind → programs)
+    graphics_wave32: usize,
+    graphics_wave64: usize,
+    wave_hazards: BTreeMap<String, usize>,
+    /// … and the reads of lanes ≥ 32 the 32-lane form resolves (kind → programs)
+    wave_resolved: BTreeMap<String, usize>,
+    /// `--example MNEMONIC`: listing of the first program missing it, its HLSL and profile
+    example: Option<(String, String, &'static str)>,
+    /// `lane_masks` (direct DXIL): programs analysed, those with no guard left, vector
+    /// instructions, those still guarded, lane branches, uniform branches; failures by reason
+    lanes: [usize; 6],
+    lanes_failed: BTreeMap<String, usize>,
+    /// compute programs, per-lane DXIL (`lower_dxil`) vs #1426's per-instruction form: tried,
+    /// per-lane ok, per-instruction ok, both ok, per-lane bytes and per-instruction bytes where
+    /// both are ok; why the per-lane form refused (first words of the reason)
+    cs_forms: [usize; 6],
+    cs_lane_why: BTreeMap<String, usize>,
+    /// survey of every refusal, per stage (CS, MS): tried, wave64, per-lane ok, per-instruction
+    /// ok, both ok, per-lane refused only for instructions (no structural reason), the same with
+    /// the per-instruction form ok, refused by the lane-mask analysis
+    forms: BTreeMap<String, [usize; 8]>,
+    /// "stage | reason" → programs (each reason once per program): every per-lane reason, the
+    /// structural ones that are a program's only structural reason, the per-instruction reasons
+    lane_every: BTreeMap<String, usize>,
+    lane_sole: BTreeMap<String, usize>,
+    inst_why: BTreeMap<String, usize>,
+}
+
+impl RecompAgg {
+    fn merge(&mut self, o: RecompAgg, keep: usize) {
+        self.programs += o.programs;
+        self.complete += o.complete;
+        self.wave32 += o.wave32;
+        self.errors += o.errors;
+        self.error_examples.extend(o.error_examples);
+        self.error_examples.truncate(10);
+        for (k, (a, b)) in o.missing {
+            let e = self.missing.entry(k).or_default();
+            e.0 += a;
+            e.1 += b;
+        }
+        for (k, v) in o.sole {
+            *self.sole.entry(k).or_default() += v;
+        }
+        for (k, v) in o.why {
+            *self.why.entry(k).or_default() += v;
+        }
+        self.samples.extend(o.samples);
+        self.samples.truncate(keep);
+        if self.example.is_none() {
+            self.example = o.example;
+        }
+        self.graphics_wave32 += o.graphics_wave32;
+        self.graphics_wave64 += o.graphics_wave64;
+        for (k, v) in o.wave_hazards {
+            *self.wave_hazards.entry(k).or_default() += v;
+        }
+        for (k, v) in o.wave_resolved {
+            *self.wave_resolved.entry(k).or_default() += v;
+        }
+        for (k, (a, b)) in o.by_mode {
+            let e = self.by_mode.entry(k).or_default();
+            e.0 += a;
+            e.1 += b;
+        }
+        self.hlsl_bytes += o.hlsl_bytes;
+        for (a, b) in self.lanes.iter_mut().zip(o.lanes) {
+            *a += b;
+        }
+        for (k, v) in o.lanes_failed {
+            *self.lanes_failed.entry(k).or_default() += v;
+        }
+        for (a, b) in self.cs_forms.iter_mut().zip(o.cs_forms) {
+            *a += b;
+        }
+        for (k, v) in o.cs_lane_why {
+            *self.cs_lane_why.entry(k).or_default() += v;
+        }
+        for (k, v) in o.forms {
+            for (a, b) in self.forms.entry(k).or_default().iter_mut().zip(v) {
+                *a += b;
+            }
+        }
+        for (m, o) in [(&mut self.lane_every, o.lane_every), (&mut self.lane_sole, o.lane_sole), (&mut self.inst_why, o.inst_why)] {
+            for (k, v) in o {
+                *m.entry(k).or_default() += v;
+            }
+        }
+    }
+
+    fn add(&mut self, name: &str, code: &[u8], keep: usize, mode: recomp::Mode) {
+        // `XCL_RECOMP_ONLY=<hash>` (the hex prefix of an `XCL_DUMP_HLSL` file): that program alone
+        if let Ok(only) = std::env::var("XCL_RECOMP_ONLY") {
+            if format!("{:016x}", name_hash(name)) != only {
+                return;
+            }
+        }
+        // `XCL_RECOMP_STAGES=CS,MS`: only programs of these stages
+        if let Ok(st) = std::env::var("XCL_RECOMP_STAGES") {
+            let l = match &mode {
+                recomp::Mode::Vertex(_) => "VS",
+                recomp::Mode::Pixel(_) => "PS",
+                recomp::Mode::Kernel => "kernel",
+                recomp::Mode::Mesh(_) => "MS",
+                recomp::Mode::Geometry(_) => "GS",
+                recomp::Mode::Compute(_) => "CS",
+            };
+            if !st.split(',').any(|x| x == l) {
+                return;
+            }
+        }
+        self.programs += 1;
+        let wave64 = recomp::detect_wave64(code);
+        self.wave32 += !wave64 as usize;
+        let (label, profile) = match &mode {
+            recomp::Mode::Vertex(_) => ("VS", "vs_6_6"),
+            recomp::Mode::Pixel(_) => ("PS", "ps_6_6"),
+            recomp::Mode::Kernel => ("kernel", "cs_6_6"),
+            recomp::Mode::Mesh(_) => ("MS", "cs_6_6"),
+            recomp::Mode::Geometry(_) => ("GS", "cs_6_6"),
+            recomp::Mode::Compute(_) => ("CS", "cs_6_6"),
+        };
+        if matches!(label, "VS" | "PS") {
+            if wave64 {
+                self.graphics_wave64 += 1;
+                let (hz, resolved) = recomp::wave_lane_reads(code);
+                for k in &hz {
+                    *self.wave_hazards.entry(k.to_string()).or_default() += 1;
+                }
+                for k in &resolved {
+                    *self.wave_resolved.entry(k.to_string()).or_default() += 1;
+                }
+                if !resolved.is_empty() {
+                    *self.wave_resolved.entry("(programs)".into()).or_default() += 1;
+                }
+                if !hz.is_empty() {
+                    *self.wave_hazards.entry("(programs at risk)".into()).or_default() += 1;
+                }
+            } else {
+                self.graphics_wave32 += 1;
+            }
+        }
+        if let recomp::Mode::Compute(cs) = &mode {
+            let lane = recomp::lower_dxil::compute_code(code, cs, wave64);
+            let o = crate::gpu::dxil::kernel::KernelOptions { wave64, split: false, mem_windows: 1, sampler_base: 0 };
+            let inst = crate::gpu::dxil::kernel::translate_compute(code, o, cs).map(|k| k.dxil);
+            self.cs_forms[0] += 1;
+            self.cs_forms[1] += lane.is_ok() as usize;
+            self.cs_forms[2] += inst.is_ok() as usize;
+            if let (Ok(a), Ok(b)) = (&lane, &inst) {
+                self.cs_forms[3] += 1;
+                self.cs_forms[4] += a.len();
+                self.cs_forms[5] += b.len();
+            }
+            if let Err(e) = &lane {
+                let key: String = e.split([':', '(']).next().unwrap_or("").split_whitespace().take(5).collect::<Vec<_>>().join(" ");
+                *self.cs_lane_why.entry(key).or_default() += 1;
+            }
+        }
+        let survey_cs = match &mode {
+            recomp::Mode::Compute(cs) => Some(("CS", cs.clone())),
+            // the mesh pass is a compute pass of the NGG program: its threads in a 1-D group
+            recomp::Mode::Mesh(ms) => Some(("MS", recomp::CsInterface { threads: [ms.threads, 1, 1], tid_components: 1, ..Default::default() })),
+            _ => None,
+        };
+        if let Some((st, cs)) = survey_cs {
+            let lane = recomp::lower_dxil::survey_compute_code(code, &cs, wave64);
+            let o = crate::gpu::dxil::kernel::KernelOptions { wave64, split: false, mem_windows: 1, sampler_base: 0 };
+            let inst = match &mode {
+                recomp::Mode::Mesh(ms) => crate::gpu::dxil::kernel::translate_mesh(code, o, ms).map(|_| ()),
+                _ => crate::gpu::dxil::kernel::translate_compute(code, o, &cs).map(|_| ()),
+            };
+            let mut keys: Vec<(String, bool)> = lane.iter().map(|r| (survey_key(r), survey_structural(r))).collect();
+            keys.sort();
+            keys.dedup();
+            let structural: Vec<&String> = keys.iter().filter(|k| k.1).map(|k| &k.0).collect();
+            let lm = lane.len() == 1 && ["lane conditions", "indirect jump", "branch to the entry", "irreducible", "no fixpoint", "cannot decode"].iter().any(|w| lane[0].starts_with(w));
+            let f = self.forms.entry(st.to_string()).or_default();
+            let bridge = !lane.is_empty() && structural.is_empty();
+            for (i, c) in [true, wave64, lane.is_empty(), inst.is_ok(), lane.is_empty() && inst.is_ok(), bridge, bridge && inst.is_ok(), lm].into_iter().enumerate() {
+                f[i] += c as usize;
+            }
+            for (k, _) in &keys {
+                *self.lane_every.entry(format!("{st} | {k}")).or_default() += 1;
+            }
+            if let [k] = structural[..] {
+                *self.lane_sole.entry(format!("{st} | {k}")).or_default() += 1;
+            }
+            if let Err(e) = &inst {
+                *self.inst_why.entry(format!("{st} | {}", survey_key(e.lines().next().unwrap_or("")))).or_default() += 1;
+            }
+        }
+        match recomp::lane_masks::analyze_code(code, wave64) {
+            Ok(s) => {
+                let counts = [1, s.guarded.is_empty() as usize, s.vector, s.guarded.len(), s.lane_branches, s.uniform_branches];
+                for (a, b) in self.lanes.iter_mut().zip(counts) {
+                    *a += b;
+                }
+            }
+            Err(why) => *self.lanes_failed.entry(why.to_string()).or_default() += 1,
+        }
+        // `XCL_RECOMP_NO_HLSL=1`: the direct DXIL survey alone
+        if std::env::var("XCL_RECOMP_NO_HLSL").is_ok() {
+            return;
+        }
+        // `XCL_RECOMP_WINDOWS=4`: as a title with unified memory translates (`pso::mem_windows`)
+        let mem_windows = std::env::var("XCL_RECOMP_WINDOWS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        match recomp::translate(code, &recomp::Options { mode, wave64, mem_windows, ..Default::default() }) {
+            Ok(t) => {
+                let e = self.by_mode.entry(label.to_string()).or_default();
+                e.0 += 1;
+                e.1 += t.complete() as usize;
+                self.hlsl_bytes += t.hlsl.len();
+                for (m, n) in &t.unsupported {
+                    let e = self.missing.entry(m.clone()).or_default();
+                    e.0 += n;
+                    e.1 += 1;
+                }
+                for k in t.unsupported_why.keys() {
+                    *self.why.entry(k.clone()).or_default() += 1;
+                }
+                if t.unsupported.len() == 1 {
+                    *self.sole.entry(t.unsupported.keys().next().unwrap().clone()).or_default() += 1;
+                }
+                if let (Some(want), None) = (EXAMPLE_FOR.get(), &self.example) {
+                    // `--example MNEMONIC` (first program missing it) or `--example name=SUBSTR`
+                    let hit = match want.strip_prefix("name=") {
+                        Some(sub) => name.contains(sub),
+                        None => t.unsupported.contains_key(want),
+                    };
+                    if hit {
+                        let why: Vec<&String> = t.unsupported_why.keys().collect();
+                        let mut txt = format!("{name} (mode {label}, wave{}): {why:?}
+", if wave64 { 64 } else { 32 });
+                        for l in crate::gpu::rdna2::disassemble(code, 0, false) {
+                            txt.push_str(&format!("  {:04x}: {}
+", l.pc, l.text));
+                        }
+                        self.example = Some((txt, t.hlsl.clone(), profile));
+                    }
+                }
+                if t.complete() {
+                    dump_hlsl(name, label, profile, &t.hlsl);
+                    self.complete += 1;
+                    if self.samples.len() < keep {
+                        self.samples.push((name.to_string(), t.hlsl, profile));
+                    }
+                }
+            }
+            Err(e) => {
+                self.errors += 1;
+                if self.error_examples.len() < 10 {
+                    self.error_examples.push(format!("{name}: {e}"));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct Agg {
+    /// translate programs (`--recomp`), keep this many complete HLSL samples
+    recomp_on: bool,
+    keep: usize,
+    rc: RecompAgg,
+    iface_on: bool,
+    iface: IfaceAgg,
+    total: usize,
+    by_kind: BTreeMap<String, usize>,
+    by_stage: BTreeMap<String, usize>,
+    by_hw: BTreeMap<String, usize>,
+    fssm: usize,
+    programs: usize,
+    data_blocks: usize,
+    no_code: usize,
+    failed: Vec<String>,
+    failed_count: usize,
+    /// examples: FSSM with several programs, programs with undecodable dwords
+    odd: Vec<String>,
+    odd_count: usize,
+    inflate_errors: usize,
+    insts: xbox::InstStats,
+    /// in how many shaders a mnemonic appears
+    shader_count: HashMap<String, usize>,
+    /// distinct mnemonics of every console shader (for coverage)
+    sets: Vec<Vec<String>>,
+}
+
+impl Agg {
+    fn merge(&mut self, o: Agg) {
+        self.total += o.total;
+        for (k, v) in o.by_kind {
+            *self.by_kind.entry(k).or_default() += v;
+        }
+        for (k, v) in o.by_stage {
+            *self.by_stage.entry(k).or_default() += v;
+        }
+        for (k, v) in o.by_hw {
+            *self.by_hw.entry(k).or_default() += v;
+        }
+        self.fssm += o.fssm;
+        self.programs += o.programs;
+        self.data_blocks += o.data_blocks;
+        self.no_code += o.no_code;
+        self.failed_count += o.failed_count;
+        self.failed.extend(o.failed);
+        self.failed.truncate(20);
+        self.odd_count += o.odd_count;
+        self.odd.extend(o.odd);
+        self.odd.truncate(20);
+        self.inflate_errors += o.inflate_errors;
+        self.insts.merge(&o.insts);
+        for (k, v) in o.shader_count {
+            *self.shader_count.entry(k).or_default() += v;
+        }
+        self.sets.extend(o.sets);
+        let keep = self.keep;
+        self.rc.merge(o.rc, keep);
+        self.iface.merge(o.iface);
+    }
+
+    fn add(&mut self, name: &str, blob: &[u8]) {
+        self.total += 1;
+        let (kind, _) = shader::classify(blob);
+        *self.by_kind.entry(kind.label().to_string()).or_default() += 1;
+        if kind != shader::Kind::XboxNative {
+            return;
+        }
+        let Some(sh) = xbox::parse(blob) else { return };
+        *self.by_stage.entry(sh.stage.clone()).or_default() += 1;
+        let mut failed = !sh.notes.is_empty() || sh.fssm.is_empty();
+        let mut st = xbox::InstStats::default();
+        for f in &sh.fssm {
+            self.fssm += 1;
+            *self.by_hw.entry(f.stage_label()).or_default() += 1;
+            self.programs += f.programs.len();
+            self.data_blocks += f.data_blocks.len();
+            if f.programs.is_empty() {
+                self.no_code += 1;
+            }
+            failed |= f.error.is_some() || f.programs.is_empty() || !f.code_from_header;
+        }
+        st.add_shader(&sh);
+        let multi = sh.fssm.iter().filter(|f| f.programs.len() > 1).count();
+        if multi > 0 || st.undecoded > 0 {
+            self.odd_count += 1;
+            if self.odd.len() < 20 {
+                self.odd.push(format!("{name}: FSSMs with several programs: {multi}, undecoded dwords: {}", st.undecoded));
+            }
+        }
+        if failed {
+            self.failed_count += 1;
+            if self.failed.len() < 20 {
+                let why: Vec<String> =
+                    sh.notes.iter().cloned().chain(sh.fssm.iter().filter_map(|f| f.error.clone())).collect();
+                self.failed.push(format!("{name}: {}", if why.is_empty() { "no code / code found by scanning".into() } else { why.join("; ") }));
+            }
+        }
+        if self.iface_on {
+            self.iface.add(name, blob, &sh);
+        }
+        // `--example name=SUBSTR` only needs the matching programs
+        let wanted = match EXAMPLE_FOR.get().and_then(|w| w.strip_prefix("name=")) {
+            Some(sub) => name.contains(sub),
+            None => true,
+        };
+        if self.recomp_on && wanted {
+            for (fi, f) in sh.fssm.iter().enumerate() {
+                let mode = recomp::interface(blob, &sh, f).unwrap_or(recomp::Mode::Kernel);
+                for p in &f.programs {
+                    let keep = self.keep;
+                    self.rc.add(&format!("{name} FSSM#{fi}"), &f.data[p.offset..p.offset + p.len], keep, mode.clone());
+                    // `--example name=…`: FSSM header (up to the code) as dwords, once
+                    if EXAMPLE_FOR.get().is_some_and(|w| w.starts_with("name=")) && !HEADER_SHOWN.swap(true, Ordering::Relaxed) {
+                        let end = f.code.map(|c| c.0).unwrap_or(0x400).min(f.data.len()).min(0x800);
+                        let mut txt = format!("FSSM header {name} (up to the code, {end:#x} B):
+");
+                        for (i, c) in f.data[..end].chunks(4).enumerate() {
+                            if i % 8 == 0 {
+                                txt.push_str(&format!("  {:04x}:", i * 4));
+                            }
+                            let v = u32::from_le_bytes([c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0), *c.get(3).unwrap_or(&0)]);
+                            txt.push_str(&format!(" {v:08x}"));
+                            if i % 8 == 7 {
+                                txt.push(10 as char);
+                            }
+                        }
+                        println!("{txt}");
+                    }
+                }
+            }
+        }
+        let set: Vec<String> = st.by_mnemonic.keys().cloned().collect();
+        for m in &set {
+            *self.shader_count.entry(m.clone()).or_default() += 1;
+        }
+        self.sets.push(set);
+        self.insts.merge(&st);
+    }
+}
+
+enum Input {
+    Pack { data: Vec<u8>, records: Vec<pack::Record> },
+    Files(Vec<PathBuf>),
+}
+
+impl Input {
+    fn len(&self) -> usize {
+        match self {
+            Input::Pack { records, .. } => records.len(),
+            Input::Files(f) => f.len(),
+        }
+    }
+
+    /// (name, blob); blob is None when a record does not inflate
+    fn get(&self, i: usize) -> (String, Option<Vec<u8>>) {
+        match self {
+            Input::Pack { data, records } => (format!("{} @{:#x}", records[i].name, records[i].offset), pack::inflate(data, &records[i])),
+            Input::Files(f) => (f[i].display().to_string(), std::fs::read(&f[i]).ok()),
+        }
+    }
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            collect_files(&p, out);
+            continue;
+        }
+        let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        // our own side files in <data>\shaders\ (FSSM dumps, listings)
+        if name.ends_with(".txt") || name.contains(".fssm") {
+            continue;
+        }
+        out.push(p);
+    }
+}
+
+fn analyze(input: &Input, recomp_on: bool, keep: usize, iface_on: bool) -> Agg {
+    let n = input.len();
+    let next = AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(32);
+    let parts: Vec<Agg> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut a = Agg { recomp_on, keep, iface_on, ..Default::default() };
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= n {
+                            break;
+                        }
+                        match input.get(i) {
+                            (name, Some(blob)) => a.add(&name, &blob),
+                            (_, None) => a.inflate_errors += 1,
+                        }
+                    }
+                    a
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let mut agg = Agg { recomp_on, keep, iface_on, ..Default::default() };
+    for p in parts {
+        agg.merge(p);
+    }
+    agg
+}
+
+fn fmt_map(m: &BTreeMap<String, usize>) -> String {
+    let mut v: Vec<_> = m.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    v.iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", ")
+}
+
+/// Mnemonics in implementation order: used by the most shaders first (ties: more
+/// frequent first) – the order that unlocks whole shaders soonest.
+fn by_shader_count(agg: &Agg, ranked: &[(String, u64)]) -> Vec<String> {
+    let mut v: Vec<(&String, usize, u64)> = ranked.iter().map(|(m, c)| (m, agg.shader_count.get(m).copied().unwrap_or(0), *c)).collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)).then_with(|| a.0.cmp(b.0)));
+    v.into_iter().map(|x| x.0.clone()).collect()
+}
+
+/// Shaders whose every mnemonic is among the first `k` of `order`.
+fn coverage(agg: &Agg, order: &[String], ks: &[usize]) -> Vec<(usize, usize)> {
+    let rank: HashMap<&str, usize> = order.iter().enumerate().map(|(i, m)| (m.as_str(), i)).collect();
+    let max_rank: Vec<usize> = agg.sets.iter().map(|s| s.iter().map(|m| rank[m.as_str()] + 1).max().unwrap_or(0)).collect();
+    ks.iter().map(|&k| (k, max_rank.iter().filter(|&&r| r <= k).count())).collect()
+}
+
+pub fn run(path: &Path, args: &[String]) -> i32 {
+    let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<usize>().ok());
+    // a flag that needs a value: missing, or another flag in its place, is an error
+    let required = |name: &str| -> Result<Option<&String>, String> {
+        match args.iter().position(|a| a == name) {
+            None => Ok(None),
+            Some(i) => match args.get(i + 1) {
+                Some(v) if !v.starts_with("--") => Ok(Some(v)),
+                _ => Err(format!("xcl shaders: {name} needs a value")),
+            },
+        }
+    };
+    let (export_dir, record_hash, measure) = match (required("--export-hlsl"), required("--record-hash"), required("--measure-pso")) {
+        (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    // the runtime's memory windows: from the descriptor heap with `XCL_HEAP_WINDOWS=1`
+    // (`pso::mem_windows`), as `--precompile`
+    let runtime_windows = || {
+        let windows = opt("--windows").unwrap_or(4) as u32;
+        if windows > 1 && recomp::pso::heap_windows() { windows | recomp::HEAP_WINDOWS } else { windows }
+    };
+    let top = opt("--top").unwrap_or(60);
+    let json = args.iter().any(|a| a == "--json");
+    let compile = opt("--compile").unwrap_or(0);
+    let recomp_on = compile > 0 || args.iter().any(|a| a == "--recomp");
+    let iface_on = args.iter().any(|a| a == "--iface");
+    if let Some(m) = args.iter().position(|a| a == "--example").and_then(|i| args.get(i + 1)) {
+        let _ = EXAMPLE_FOR.set(m.clone());
+    }
+    let t0 = std::time::Instant::now();
+
+    let (input, what) = if path.is_dir() {
+        let mut files = Vec::new();
+        collect_files(path, &mut files);
+        let n = files.len();
+        (Input::Files(files), format!("folder, {n} files"))
+    } else {
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("xcl shaders: {}: {e}", path.display());
+                return 2;
+            }
+        };
+        if data.starts_with(pack::RPF9_MAGIC) {
+            let records = pack::scan(&data, 0x40);
+            let what = format!("RPF9 package {:.1} MB, {} shader records", data.len() as f64 / 1048576.0, records.len());
+            (Input::Pack { data, records }, what)
+        } else if export_dir.is_some() || measure.is_some() {
+            // one shader file: the record to export or measure
+            (Input::Files(vec![path.to_path_buf()]), "single file".to_string())
+        } else {
+            let mut a = Agg { recomp_on, keep: compile, iface_on, ..Default::default() };
+            a.add(&path.display().to_string(), &data);
+            return print(path, "single file", a, top, json, t0, compile);
+        }
+    };
+    if let Some(dir) = export_dir {
+        let record_hash = match record_hash.map(|v| parse_record_hash(v)) {
+            Some(Ok(h)) => Some(h),
+            Some(Err(e)) => {
+                eprintln!("xcl shaders: --record-hash: {e}");
+                return 2;
+            }
+            None => None,
+        };
+        return export_hlsl(
+            &input,
+            Path::new(dir),
+            opt("--min-kb").unwrap_or(1024),
+            opt("--count").unwrap_or(2),
+            runtime_windows(),
+            opt("--split").map(|v| v != 0),
+            record_hash,
+        );
+    }
+    if let Some(hash) = measure {
+        let hash = match parse_record_hash(hash) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("xcl shaders: --measure-pso: {e}");
+                return 2;
+            }
+        };
+        return measure_pso(
+            &input,
+            hash,
+            opt("--repeat").unwrap_or(1).max(1),
+            runtime_windows(),
+            opt("--split").map(|v| v != 0),
+        );
+    }
+    if args.iter().any(|a| a == "--precompile") {
+        let only = args.iter().position(|a| a == "--only").and_then(|i| args.get(i + 1)).map(|s| s.to_ascii_lowercase());
+        let pipelines = args.iter().any(|a| a == "--pipelines");
+        // `--used-only`: only the compute programs whose pipelines an earlier run of a title used
+        let used = args.iter().any(|a| a == "--used-only").then(crate::hle::d3d12x::pso_async::earlier_used_keys);
+        // the runtime's key: heap windows with `XCL_HEAP_WINDOWS=1` (`pso::mem_windows`)
+        let windows = runtime_windows();
+        return precompile(&input, opt("--limit").unwrap_or(usize::MAX), windows, opt("--split").map(|v| v != 0), only.as_deref(), pipelines, used.as_ref(), t0);
+    }
+    if args.iter().any(|a| a == "--direct") {
+        return direct_sweep(&input, args, top, json, t0);
+    }
+    let agg = analyze(&input, recomp_on, compile, iface_on);
+    drop(input);
+    print(path, &what, agg, top, json, t0, compile)
+}
+
+fn parse_record_hash(s: &str) -> Result<u64, String> {
+    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    if hex.is_empty() || hex.len() > 16 || !hex.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("{s:?} is not a 1–16 digit hexadecimal hash"));
+    }
+    u64::from_str_radix(hex, 16).map_err(|e| e.to_string())
+}
+
+fn is_compute_container(blob: &[u8]) -> bool {
+    if recomp::pso::fspx(blob).is_some() {
+        return true;
+    }
+    xbox::parse(blob).is_some_and(|sh| sh.fssm.iter().any(|f| matches!(recomp::interface(blob, &sh, f), Some(recomp::Mode::Compute(_)))))
+}
+
+fn record_by_hash(input: &Input, target: u64) -> Result<(String, Vec<u8>), String> {
+    let mut unreadable = 0usize;
+    for i in 0..input.len() {
+        let (name, blob) = input.get(i);
+        let Some(blob) = blob else {
+            unreadable += 1;
+            continue;
+        };
+        if shader::fnv64(&blob) == target {
+            return Ok((name, blob));
+        }
+    }
+    Err(format!("record {target:016x} not found ({unreadable} record(s) could not be read or inflated)"))
+}
+
+/// Write compute HLSL in input order. `record_hash` selects exactly one console blob and
+/// bypasses the size threshold, so a timing experiment can name its source reproducibly.
+fn export_hlsl(input: &Input, dir: &Path, min_kb: usize, count: usize, windows: u32, split: Option<bool>, record_hash: Option<u64>) -> i32 {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("{}: {e}", dir.display());
+        return 2;
+    }
+    let split = split.unwrap_or_else(|| recomp::pso::split_wave64_forced() || recomp::runner::wave64_supported().is_ok_and(|w| !w));
+    let wanted = if record_hash.is_some() { 1 } else { count };
+    let min_bytes = min_kb.saturating_mul(1024);
+    let mut written = 0usize;
+    let mut failures = 0usize;
+    let mut matched = false;
+    let mut exported = HashSet::new();
+    for i in 0..input.len() {
+        if written == wanted {
+            break;
+        }
+        let (name, blob) = input.get(i);
+        let Some(blob) = blob else {
+            failures += 1;
+            eprintln!("  {name}: could not read or inflate record");
+            continue;
+        };
+        let hash = shader::fnv64(&blob);
+        if record_hash.is_some_and(|want| want != hash) {
+            continue;
+        }
+        if exported.contains(&hash) {
+            continue;
+        }
+        if !is_compute_container(&blob) {
+            if record_hash.is_some() {
+                matched = true;
+                failures += 1;
+                eprintln!("  {name} ({hash:016x}): not a console compute shader");
+                break;
+            }
+            continue;
+        }
+        matched = true;
+        let hlsl = match recomp::pso::console_hlsl(&blob, recomp::pso::Stage::Compute, windows, split) {
+            Ok((hlsl, _)) => hlsl,
+            Err(e) => {
+                failures += 1;
+                eprintln!("  {name} ({hash:016x}): {e}");
+                if record_hash.is_some() {
+                    break;
+                }
+                continue;
+            }
+        };
+        if record_hash.is_none() && hlsl.len() < min_bytes {
+            continue;
+        }
+        let file = format!("{hash:016x}.hlsl");
+        if let Err(e) = std::fs::write(dir.join(&file), &hlsl) {
+            failures += 1;
+            eprintln!("  {name} ({hash:016x}): cannot write {file}: {e}");
+            if record_hash.is_some() {
+                break;
+            }
+            continue;
+        }
+        println!("{:>8} KB  {file} {name}", hlsl.len() / 1024);
+        exported.insert(hash);
+        written += 1;
+    }
+    if record_hash.is_some() && !matched {
+        eprintln!("  record {:016x} not found", record_hash.unwrap());
+    }
+    println!(
+        "{written} program(s) written to {} (split wave64: {split}, {} windows{}, {failures} failure(s))",
+        dir.display(),
+        windows & !recomp::HEAP_WINDOWS,
+        if windows & recomp::HEAP_WINDOWS != 0 { " from the descriptor heap" } else { "" }
+    );
+    if written == wanted { 0 } else {
+        eprintln!("xcl shaders --export-hlsl: requested {wanted} program(s), wrote {written}");
+        2
+    }
+}
+
+/// Why `measure_pso` did not measure: this machine cannot (no device, no cache control,
+/// no DXC), or the record or the driver failed.
+#[derive(Debug)]
+enum MeasureError {
+    Unavailable(String),
+    Failed(String),
+}
+
+/// Compile one exact console compute shader through DXC, then time only the driver's
+/// `CreateComputePipelineState`. The implicit D3D and driver caches must both be disabled;
+/// refusing to do that is an error rather than a misleading warm-cache measurement.
+/// This is the HLSL path the runtime uses by default (not `XCL_DIRECT_DXIL`).
+fn measure_pso(input: &Input, hash: u64, repeat: usize, windows: u32, split: Option<bool>) -> i32 {
+    match measure_pso_result(input, hash, repeat, windows, split) {
+        Ok(()) => 0,
+        Err(MeasureError::Unavailable(e) | MeasureError::Failed(e)) => {
+            eprintln!("xcl shaders --measure-pso: {e}");
+            2
+        }
+    }
+}
+
+fn measure_pso_result(input: &Input, hash: u64, repeat: usize, windows: u32, split: Option<bool>) -> Result<(), MeasureError> {
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Direct3D12::*;
+    use MeasureError::{Failed, Unavailable};
+
+    let (name, blob) = record_by_hash(input, hash).map_err(Failed)?;
+    if !is_compute_container(&blob) {
+        return Err(Failed(format!("{name} is not a console compute shader")));
+    }
+    recomp::dxc::location().map_err(|e| Unavailable(format!("DXC: {e}")))?;
+    let pipeline = Pipelines::new().map_err(|e| Unavailable(format!("no GPU device: {e}")))?;
+    // before translating and compiling (tens of seconds for a big program): a machine that
+    // cannot turn the caches off fails at once
+    let dev9 = pipeline.dev.cast::<ID3D12Device9>().map_err(|e| Unavailable(format!("ID3D12Device9 is required to disable the driver cache: {e}")))?;
+    let cache_kinds = D3D12_SHADER_CACHE_KIND_FLAG_IMPLICIT_DRIVER_MANAGED | D3D12_SHADER_CACHE_KIND_FLAG_IMPLICIT_D3D_CACHE_FOR_DRIVER;
+    unsafe { dev9.ShaderCacheControl(cache_kinds, D3D12_SHADER_CACHE_CONTROL_FLAG_DISABLE) }
+        .map_err(|e| Unavailable(format!("cannot disable the driver cache (Windows Developer Mode is required): {e}")))?;
+    let split = split.unwrap_or_else(|| recomp::pso::split_wave64_forced() || recomp::pso::wave32_only_for_device(&pipeline.dev));
+    let (translation, profile) = recomp::pso::console_translation(&blob, recomp::pso::Stage::Compute, 0, windows, split).map_err(|e| Failed(format!("{name}: {e}")))?;
+    let dxc_start = std::time::Instant::now();
+    let dxil = recomp::dxc::compile(&translation.hlsl, "main", profile, &[]).map_err(|e| Failed(format!("DXC: {e}")))?;
+    let dxc_ms = dxc_start.elapsed().as_millis();
+    let rs = recomp::pso::abi_root_signature_with(&pipeline.dev, true, &translation.static_samplers).map_err(|e| Failed(format!("root signature: {e}")))?;
+    let mut desc = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+        pRootSignature: std::mem::ManuallyDrop::new(Some(rs)),
+        CS: D3D12_SHADER_BYTECODE { pShaderBytecode: dxil.as_ptr().cast(), BytecodeLength: dxil.len() },
+        ..Default::default()
+    };
+    let mut times = Vec::with_capacity(repeat);
+    let mut failure = None;
+    for run in 1..=repeat {
+        let start = std::time::Instant::now();
+        let result = unsafe { pipeline.dev.CreateComputePipelineState::<ID3D12PipelineState>(&desc) };
+        let elapsed = start.elapsed();
+        match result {
+            Ok(pso) => drop(pso),
+            Err(e) => {
+                failure = Some(Failed(format!("CreateComputePipelineState run {run}: {e}")));
+                break;
+            }
+        }
+        println!("PSO run {run}/{repeat}: {:.3} s", elapsed.as_secs_f64());
+        times.push(elapsed.as_secs_f64());
+    }
+    // the root signature's reference, on every path
+    drop(unsafe { std::mem::ManuallyDrop::take(&mut desc.pRootSignature) });
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    times.sort_by(f64::total_cmp);
+    let median = if times.len() & 1 == 0 { (times[times.len() / 2 - 1] + times[times.len() / 2]) / 2.0 } else { times[times.len() / 2] };
+    println!(
+        "PSO {hash:016x}: {} bytes DXIL, {dxc_ms} ms DXC, {repeat} cache-off run(s), median {:.3} s, min {:.3} s, max {:.3} s, {name}",
+        dxil.len(),
+        median,
+        times[0],
+        times[times.len() - 1]
+    );
+    Ok(())
+}
+
+/// `--precompile`: translate every VS / PS / MS / CS program and compile it into the DXIL cache
+/// (`recomp::dxc::cache_dir()`), the same HLSL the runtime will ask for, so a title does not
+/// wait for DXC on first use. Resumable: cached programs are skipped. GS halves need their
+/// pipeline partner and are left to the runtime.
+/// The cache key is the HLSL, so the options are the runtime's: `windows` memory windows as a
+/// title's unified memory has (`pso::mem_windows`, 4; `--windows 1` for a title without it),
+/// and the split wave64 form when this machine's GPU (`XCL_ADAPTER`) runs only 32-lane waves
+/// (`pso::wave32_only_for_device`). Before, the programs were translated with one window and
+/// no split form, so a title asked for other HLSL and compiled everything again. Still
+/// different at run time: a PS's static samplers after its VS's (sampler base 0 here) and the
+/// mesh pass-through, which the runtime builds for its pixel shader.
+/// `--pipelines`: each compute program's pipeline made on the GPU as a title's would be (XCL's
+/// ABI root signature with its static samplers). Save the driver's compiled blob in the same
+/// cache the runtime reads at startup. Nothing runs on the GPU.
+/// Programs whose DXIL is over `XCL_PIPELINE_MAX_KB` (8 MiB by default; 0 turns the cap off)
+/// and that have no blob yet are counted as capped and left to the runtime: their driver
+/// compile takes tens of minutes and gigabytes, and stopped the pass on the biggest programs
+/// (the > 8 MB HLSL programs DXC compiles at `-O0`, #1269).
+struct Pipelines {
+    dev: windows::Win32::Graphics::Direct3D12::ID3D12Device,
+    signatures: Mutex<std::collections::HashMap<Vec<u32>, windows::Win32::Graphics::Direct3D12::ID3D12RootSignature>>,
+    made: AtomicUsize,
+    refused: AtomicUsize,
+    reused: AtomicUsize,
+    /// programs over `max_dxil` with no blob yet, and their DXIL bytes
+    capped: AtomicUsize,
+    capped_bytes: AtomicUsize,
+    /// driver compiles running and the most at once (`XCL_PIPELINE_THREADS`, 4): each of the
+    /// biggest takes ~1.5 GB in the driver – fifteen at once took 24 GB
+    running: (Mutex<usize>, std::sync::Condvar),
+    most: usize,
+    /// DXIL bytes a pipeline is still handed to the driver (`XCL_PIPELINE_MAX_KB`, 8 MiB; 0: off)
+    max_dxil: usize,
+}
+
+/// `XCL_PIPELINE_MAX_KB`: the KiB of DXIL `--pipelines` still compiles (default 8 MiB; 0: no
+/// cap). Above it sit the programs whose driver compile takes tens of minutes and gigabytes —
+/// the > 8 MB HLSL programs DXC compiles at `-O0` (#1269) — and they hang the pass.
+fn pipeline_cap_kb(set: Option<&str>) -> usize {
+    set.and_then(|v| v.parse().ok()).unwrap_or(8192)
+}
+
+#[cfg(test)]
+mod pipeline_cap_tests {
+    use super::pipeline_cap_kb;
+
+    #[test]
+    fn the_cap_is_8_mib_unless_set_and_off_at_zero() {
+        assert_eq!(pipeline_cap_kb(None), 8192);
+        assert_eq!(pipeline_cap_kb(Some("512")), 512);
+        assert_eq!(pipeline_cap_kb(Some("0")), 0);
+        // not a number: the default, not a crash
+        assert_eq!(pipeline_cap_kb(Some("off")), 8192);
+    }
+
+    #[test]
+    fn stale_blob_cannot_bypass_the_offline_pipeline_cap() {
+        use super::{Pipelines, recomp, Ordering};
+        use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        }
+        if let Err(reason) = recomp::dxc::location() {
+            recomp::runner::skip_test(&format!("no DXC: {reason}"));
+            return;
+        }
+        let mut pipelines = match Pipelines::new() {
+            Ok(pipelines) => pipelines,
+            Err(reason) => {
+                recomp::runner::skip_test(&format!("no D3D12 device: {reason}"));
+                return;
+            }
+        };
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let scratch = Scratch(std::env::temp_dir().join(format!("xcl-stale-pso-{}-{nonce}", std::process::id())));
+        std::fs::create_dir(&scratch.0).expect("scratch cache directory");
+        let hlsl = "RWByteAddressBuffer mem : register(u2); [numthreads(1,1,1)] void main() { mem.Store(0, 42); }";
+        let dxil = recomp::dxc::compile(hlsl, "main", "cs_6_6", &[]).expect("DXC compile");
+        let path = scratch.0.join("stale.pso");
+        std::fs::write(&path, b"deliberately invalid cached PSO").expect("stale blob");
+
+        pipelines.max_dxil = dxil.len() - 1;
+        let start = Instant::now();
+        pipelines.make_with_cache_path(&recomp::pso::Compiled { dispatch_chain: None, dxil: dxil.clone(), samplers: vec![] }, Some(path.clone()));
+        let elapsed = start.elapsed();
+        let capped = pipelines.capped.load(Ordering::Relaxed);
+        let made = pipelines.made.load(Ordering::Relaxed);
+        let refused = pipelines.refused.load(Ordering::Relaxed);
+        let output = recomp::runner::dispatch(&dxil, [1, 1, 1], &[], &[0; 64]).expect("runtime GPU dispatch");
+        println!("adapter={} dxil_bytes={} offline_ms={} capped={} made={} refused={} gpu_word0={}", recomp::runner::adapter().unwrap_or_default(), dxil.len(), elapsed.as_millis(), capped, made, refused, output[0]);
+        assert_eq!(output[0], 42);
+        assert_eq!((capped, made, refused), (1, 0, 0));
+        assert!(!path.exists(), "rejected blob should not be retried next run");
+    }
+}
+
+// D3D12 devices and root signatures are free-threaded
+unsafe impl Sync for Pipelines {}
+
+impl Pipelines {
+    fn new() -> Result<Pipelines, String> {
+        use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_12_0;
+        use windows::Win32::Graphics::Dxgi::*;
+        unsafe {
+            let factory: IDXGIFactory6 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).map_err(|e| e.to_string())?;
+            let sel = crate::gpu::adapter::Selector::from_env_or("auto");
+            let (adapter, _) = crate::gpu::adapter::candidates(&factory, &sel).into_iter().next().ok_or_else(|| crate::gpu::adapter::no_match(&factory, &sel))?;
+            let dev = crate::gpu::agility::create_device(&adapter, D3D_FEATURE_LEVEL_12_0).map_err(|e| e.to_string())?;
+            let most = std::env::var("XCL_PIPELINE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(4usize).max(1);
+            let max_dxil = pipeline_cap_kb(std::env::var("XCL_PIPELINE_MAX_KB").ok().as_deref()).saturating_mul(1024);
+            Ok(Pipelines { dev, signatures: Mutex::new(Default::default()), made: AtomicUsize::new(0), refused: AtomicUsize::new(0), reused: AtomicUsize::new(0), capped: AtomicUsize::new(0), capped_bytes: AtomicUsize::new(0), running: (Mutex::new(0), std::sync::Condvar::new()), most, max_dxil })
+        }
+    }
+
+    /// The compute pipeline of `c` (made and released).
+    fn make(&self, c: &recomp::pso::Compiled) {
+        self.make_with_cache_path(c, None);
+    }
+
+    fn make_with_cache_path(&self, c: &recomp::pso::Compiled, path_override: Option<PathBuf>) {
+        use windows::Win32::Graphics::Direct3D12::*;
+        let key: Vec<u32> = c.samplers.iter().flat_map(|(w, cmp)| w.iter().copied().chain([*cmp as u32])).collect();
+        let rs = {
+            let mut g = self.signatures.lock().unwrap();
+            match g.get(&key) {
+                Some(rs) => rs.clone(),
+                None => match recomp::pso::abi_root_signature_with(&self.dev, true, &c.samplers) {
+                    Ok(rs) => {
+                        g.insert(key, rs.clone());
+                        rs
+                    }
+                    Err(_) => {
+                        self.refused.fetch_add(1, Ordering::Relaxed);
+                        return;
+                    }
+                },
+            }
+        };
+        let mut desc = D3D12_COMPUTE_PIPELINE_STATE_DESC {
+            pRootSignature: std::mem::ManuallyDrop::new(Some(rs)),
+            CS: D3D12_SHADER_BYTECODE { pShaderBytecode: c.dxil.as_ptr() as *const _, BytecodeLength: c.dxil.len() },
+            ..Default::default()
+        };
+        use crate::hle::d3d12x::real::driver_cache;
+        let path = path_override.or_else(|| driver_cache::path(&c.dxil, desc.Flags.0));
+        let cached = path.as_deref().and_then(driver_cache::load);
+        let over_cap = self.max_dxil != 0 && c.dxil.len() > self.max_dxil;
+        // over the cap and no blob from an earlier run: the driver's compile of this one takes
+        // tens of minutes and gigabytes; the pass finishes without it, and the runtime builds it
+        // when a title needs the pipeline. `XCL_PIPELINE_MAX_KB` 0 turns the cap off.
+        if cached.is_none() && over_cap {
+            self.capped.fetch_add(1, Ordering::Relaxed);
+            self.capped_bytes.fetch_add(c.dxil.len(), Ordering::Relaxed);
+            drop(std::mem::ManuallyDrop::into_inner(desc.pRootSignature));
+            return;
+        }
+        {
+            let mut n = self.running.0.lock().unwrap();
+            while *n >= self.most {
+                n = self.running.1.wait(n).unwrap();
+            }
+            *n += 1;
+        }
+        let from_cache = cached.as_ref().and_then(|bytes| {
+            desc.CachedPSO = D3D12_CACHED_PIPELINE_STATE { pCachedBlob: bytes.as_ptr().cast(), CachedBlobSizeInBytes: bytes.len() };
+            // a driver that cannot use the blob may compile from the DXIL itself and still
+            // return Ok: only the pipeline carrying a blob of the size we handed over is a hit
+            unsafe { self.dev.CreateComputePipelineState::<ID3D12PipelineState>(&desc) }
+                .ok()
+                .filter(|pso| unsafe { pso.GetCachedBlob() }.is_ok_and(|b| unsafe { b.GetBufferSize() } == bytes.len()))
+        });
+        // A stale blob is not a usable cache hit. Do not let its presence bypass the offline
+        // size cap and start the expensive uncached driver compile.
+        if cached.is_some() && from_cache.is_none() && over_cap {
+            if let Some(path) = path.as_deref() {
+                let _ = std::fs::remove_file(path);
+            }
+            *self.running.0.lock().unwrap() -= 1;
+            self.running.1.notify_one();
+            self.capped.fetch_add(1, Ordering::Relaxed);
+            self.capped_bytes.fetch_add(c.dxil.len(), Ordering::Relaxed);
+            drop(std::mem::ManuallyDrop::into_inner(desc.pRootSignature));
+            return;
+        }
+        let r = if let Some(pso) = from_cache {
+            self.reused.fetch_add(1, Ordering::Relaxed);
+            Ok(pso)
+        } else {
+            desc.CachedPSO = D3D12_CACHED_PIPELINE_STATE::default();
+            let pso = unsafe { self.dev.CreateComputePipelineState::<ID3D12PipelineState>(&desc) };
+            if let (Some(path), Ok(pso)) = (path.as_deref(), &pso) {
+                if let Ok(blob) = unsafe { pso.GetCachedBlob() } {
+                    let bytes = unsafe { blob.GetBufferPointer() }.cast::<u8>();
+                    let len = unsafe { blob.GetBufferSize() };
+                    if !bytes.is_null() && len != 0 {
+                        driver_cache::write(path, unsafe { std::slice::from_raw_parts(bytes, len) });
+                    }
+                }
+            }
+            pso
+        };
+        *self.running.0.lock().unwrap() -= 1;
+        self.running.1.notify_one();
+        drop(std::mem::ManuallyDrop::into_inner(desc.pRootSignature));
+        let done = match r {
+            Ok(_) => self.made.fetch_add(1, Ordering::Relaxed) + 1,
+            Err(_) => self.refused.fetch_add(1, Ordering::Relaxed) + 1,
+        };
+        if done % 25 == 0 {
+            eprintln!("  pipelines: {} made, {} refused", self.made.load(Ordering::Relaxed), self.refused.load(Ordering::Relaxed));
+        }
+    }
+}
+
+/// A compute program a title used in an earlier run (`--used-only`): its pipeline's key, as the
+/// runtime notes it (`real::shaders_key` of the one shader), is among `used`.
+fn used_compute(blob: &[u8], used: &std::collections::HashSet<u64>) -> bool {
+    used.contains(&crate::hle::d3d12x::real::shaders_key(&[blob.to_vec()]))
+}
+
+fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, only: Option<&str>, pipelines: bool, used: Option<&std::collections::HashSet<u64>>, t0: std::time::Instant) -> i32 {
+    let pipelines = if pipelines {
+        match Pipelines::new() {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("xcl shaders --pipelines: no GPU device: {e}");
+                return 2;
+            }
+        }
+    } else {
+        None
+    };
+    let pipelines = pipelines.as_ref();
+    let n = input.len().min(limit);
+    let next = AtomicUsize::new(0);
+    let (done, compiled, cached, failed, skipped) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    let errors: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let unused = AtomicUsize::new(0);
+    if let Some(u) = used {
+        println!("--used-only: {} pipelines earlier runs used (used-pipelines.txt); compute programs of other pipelines are passed over", u.len());
+    }
+    // the compiles run on the DXC pool; these threads translate and keep it fed
+    let threads = recomp::dxc::compile_threads() + 2;
+    // no title runs: only a little commit is kept free besides the compiles
+    recomp::dxc::set_memory_reserve(2);
+    // VS / PS: the 32-lane form wherever the GPU can run 32-lane waves (`pso::graphics_wave32`);
+    // `--split` sets both
+    let graphics_split = split.unwrap_or_else(recomp::runner::graphics_wave32);
+    let split = split.unwrap_or_else(|| recomp::pso::split_wave64_forced() || recomp::runner::wave64_supported().is_ok_and(|w| !w));
+    println!(
+        "precompiling {n} shaders into {} ({} compile threads; {} memory windows{}{})",
+        recomp::dxc::cache_dir().display(),
+        recomp::dxc::compile_threads(),
+        windows & !recomp::HEAP_WINDOWS,
+        if windows & recomp::HEAP_WINDOWS != 0 { " from the descriptor heap" } else { "" },
+        if split { ", split wave64 for a GPU with 32-lane waves" } else { "" }
+    );
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= n {
+                    break;
+                }
+                let (name, blob) = input.get(i);
+                let Some(blob) = blob else { continue };
+                let Some(sh) = xbox::parse(&blob) else { continue };
+                if only.is_some_and(|o| !sh.stage.eq_ignore_ascii_case(o)) {
+                    done.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                // a compute program as a title's pipeline translates it (`pso::console_to_dxil_in`):
+                // into the translation cache too, so the title does not translate it again
+                if sh.fssm.iter().any(|f| matches!(recomp::interface(&blob, &sh, f), Some(recomp::Mode::Compute(_)))) {
+                    if used.is_some_and(|u| !used_compute(&blob, u)) {
+                        unused.fetch_add(1, Ordering::Relaxed);
+                        done.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    match recomp::pso::console_to_dxil_in(&blob, recomp::pso::Stage::Compute, 0, split, windows) {
+                        Ok(c) => {
+                            if let Some(p) = pipelines {
+                                p.make(&c);
+                            }
+                            compiled.fetch_add(1, Ordering::Relaxed)
+                        }
+                        Err(e) => {
+                            let mut g = errors.lock().unwrap();
+                            if g.len() < 10 {
+                                g.push(format!("{name}: {}", e.lines().find(|l| l.contains("error")).unwrap_or(e.lines().next().unwrap_or(""))));
+                            }
+                            failed.fetch_add(1, Ordering::Relaxed)
+                        }
+                    };
+                    let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if d % 200 == 0 {
+                        eprintln!("  {d}/{n} ({:.0} s)", t0.elapsed().as_secs_f64());
+                    }
+                    continue;
+                }
+                for f in &sh.fssm {
+                    let Some(mode) = recomp::interface(&blob, &sh, f) else { continue };
+                    let jobs: Vec<(&str, Option<String>)> = match &mode {
+                        recomp::Mode::Vertex(_) => vec![("vs_6_6", None)],
+                        recomp::Mode::Pixel(_) => vec![("ps_6_6", None)],
+                        recomp::Mode::Compute(_) => vec![("cs_6_6", None)],
+                        recomp::Mode::Mesh(ms) => vec![("cs_6_6", None), ("ms_6_6", Some(recomp::mesh_passthrough(ms)))],
+                        _ => {
+                            skipped.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                    };
+                    for p in &f.programs {
+                        let code = &f.data[p.offset..p.offset + p.len];
+                        // as `pso` translates: with the title's memory windows (`console_translation`,
+                        // `translate_mesh`)
+                        let split = if matches!(mode, recomp::Mode::Vertex(_) | recomp::Mode::Pixel(_)) { graphics_split } else { split };
+                        let opt = recomp::Options { mode: mode.clone(), wave64: recomp::detect_wave64(code), split_wave64: split, mem_windows: windows, ..Default::default() };
+                        let Ok(t) = recomp::translate(code, &opt) else { continue };
+                        if !t.complete() {
+                            continue;
+                        }
+                        for (profile, src) in &jobs {
+                            match recomp::dxc::compile_cached(src.as_deref().unwrap_or(&t.hlsl), "main", profile) {
+                                Ok((_, true)) => cached.fetch_add(1, Ordering::Relaxed),
+                                Ok(_) => compiled.fetch_add(1, Ordering::Relaxed),
+                                Err(e) => {
+                                    let mut g = errors.lock().unwrap();
+                                    if g.len() < 10 {
+                                        g.push(format!("{name}: {}", e.lines().find(|l| l.contains("error")).unwrap_or("")));
+                                    }
+                                    failed.fetch_add(1, Ordering::Relaxed)
+                                }
+                            };
+                        }
+                    }
+                }
+                let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                if d % 200 == 0 {
+                    eprintln!("  {d}/{n} ({:.0} s)", t0.elapsed().as_secs_f64());
+                }
+            });
+        }
+    });
+    println!(
+        "compiled {}, already cached {}, errors {}, skipped (GS – paired at pipeline creation) {}, time {:.1} s",
+        compiled.into_inner(),
+        cached.into_inner(),
+        failed.into_inner(),
+        skipped.into_inner(),
+        t0.elapsed().as_secs_f64()
+    );
+    if used.is_some() {
+        println!("compute programs passed over (no earlier run used their pipeline): {}", unused.into_inner());
+    }
+    if let Some(p) = pipelines {
+        println!("pipelines made on the GPU {}, refused {}", p.made.load(Ordering::Relaxed), p.refused.load(Ordering::Relaxed));
+        println!("pipelines loaded from the driver cache {}", p.reused.load(Ordering::Relaxed));
+        let capped = p.capped.load(Ordering::Relaxed);
+        if capped != 0 {
+            println!("pipelines over the {} MiB DXIL cap, left to the runtime: {} ({} MiB of DXIL; XCL_PIPELINE_MAX_KB)", p.max_dxil >> 20, capped, p.capped_bytes.load(Ordering::Relaxed) >> 20);
+        }
+    }
+    for e in errors.into_inner().unwrap() {
+        println!("  {e}");
+    }
+    0
+}
+
+/// Compile the kept HLSL samples with DXC on all cores: (ok, failures with the first error line).
+fn compile_samples(samples: &[(String, String, &'static str)]) -> (usize, Vec<String>) {
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let times: Mutex<Vec<(f64, usize, String)>> = Mutex::new(Vec::new());
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16);
+    let parts: Vec<(usize, Vec<String>)> = std::thread::scope(|s| {
+        let hs: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let (mut ok, mut bad) = (0usize, Vec::new());
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((name, hlsl, profile)) = samples.get(i) else { break };
+                        let t0 = std::time::Instant::now();
+                        match recomp::dxc::compile(hlsl, "main", profile, &[]) {
+                            Ok(_) => ok += 1,
+                            Err(e) => bad.push(format!("{name}: {}", e.lines().find(|l| l.contains("error")).unwrap_or(e.as_str()))),
+                        }
+                        times.lock().unwrap().push((t0.elapsed().as_secs_f64(), hlsl.len(), name.clone()));
+                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        if n % 100 == 0 {
+                            eprintln!("DXC: {n}/{}", samples.len());
+                        }
+                    }
+                    (ok, bad)
+                })
+            })
+            .collect();
+        hs.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let ok = parts.iter().map(|p| p.0).sum();
+    let mut t = times.into_inner().unwrap();
+    t.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if !t.is_empty() {
+        let q = |f: f64| t[((t.len() - 1) as f64 * f) as usize].0;
+        let sum: f64 = t.iter().map(|x| x.0).sum();
+        eprintln!(
+            "DXC time per shader: median {:.2} s, p90 {:.2} s, max {:.2} s, sum {:.0} s (threads: in parallel)",
+            q(0.5),
+            q(0.9),
+            q(1.0),
+            sum
+        );
+        for (secs, len, name) in t.iter().rev().take(5) {
+            eprintln!("  {secs:.1} s, HLSL {} KB: {name}", len / 1024);
+        }
+    }
+    (ok, parts.into_iter().flat_map(|p| p.1).collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print(path: &Path, what: &str, agg: Agg, top: usize, json: bool, t0: std::time::Instant, compile: usize) -> i32 {
+    let rc = &agg.rc;
+    let compiled = if compile > 0 && !rc.samples.is_empty() { Some(compile_samples(&rc.samples)) } else { None };
+    let mut missing: Vec<(&String, &(usize, usize))> = rc.missing.iter().collect();
+    missing.sort_by(|a, b| b.1 .1.cmp(&a.1 .1).then_with(|| a.0.cmp(b.0)));
+    let ranked = agg.insts.sorted();
+    let ks: Vec<usize> = [10, 25, 50, 75, 100, 150, 200, 300].into_iter().filter(|&k| k < ranked.len()).chain([ranked.len()]).collect();
+    let order = by_shader_count(&agg, &ranked);
+    let cov = coverage(&agg, &order, &ks);
+    let n_xbox = agg.sets.len();
+    let total_inst = agg.insts.instructions.max(1);
+
+    if json {
+        let mnemonics: Vec<serde_json::Value> = ranked
+            .iter()
+            .map(|(m, c)| serde_json::json!({ "mnemonic": m, "count": c, "shaders": agg.shader_count.get(m).copied().unwrap_or(0) }))
+            .collect();
+        let v = serde_json::json!({
+            "path": path.display().to_string(),
+            "source": what,
+            "shaders": agg.total,
+            "inflate_errors": agg.inflate_errors,
+            "by_kind": agg.by_kind,
+            "by_dxil_stage": agg.by_stage,
+            "by_hw_stage": agg.by_hw,
+            "fssm": agg.fssm,
+            "programs": agg.programs,
+            "embedded_data_blocks": agg.data_blocks,
+            "fssm_without_code": agg.no_code,
+            "parse_problems": agg.failed_count,
+            "parse_problem_examples": agg.failed,
+            "unusual": agg.odd_count,
+            "unusual_examples": agg.odd,
+            "instructions": agg.insts.instructions,
+            "undecoded_dwords": agg.insts.undecoded,
+            "distinct_mnemonics": ranked.len(),
+            "implementation_order": order,
+            "coverage_top_k": cov.iter().map(|(k, c)| serde_json::json!({ "k": k, "shaders": c })).collect::<Vec<_>>(),
+            "mnemonics": mnemonics,
+            "recomp": agg.recomp_on.then(|| serde_json::json!({
+                "programs": rc.programs,
+                "complete": rc.complete,
+                "wave32_programs": rc.wave32,
+                "translate_errors": rc.errors,
+                "translate_error_examples": rc.error_examples,
+                "hlsl_bytes": rc.hlsl_bytes,
+                "missing": missing.iter().map(|(m, (n, p))| serde_json::json!({
+                    "mnemonic": m, "instructions": n, "programs": p, "sole_blocker": rc.sole.get(*m).copied().unwrap_or(0)
+                })).collect::<Vec<_>>(),
+                "dxc_compiled": compiled.as_ref().map(|c| c.0),
+                "dxc_failed": compiled.as_ref().map(|c| c.1.clone()),
+            })),
+            "seconds": t0.elapsed().as_secs_f64(),
+        });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+        return 0;
+    }
+
+    println!("{} – {what}", path.display());
+    println!("shaders: {}{}", agg.total, if agg.inflate_errors > 0 { format!(" (+{} records could not be unpacked)", agg.inflate_errors) } else { String::new() });
+    println!("formats: {}", fmt_map(&agg.by_kind));
+    if n_xbox == 0 {
+        println!("no console containers (xbox-native)");
+        return 0;
+    }
+    println!("stages (DXIL): {}", fmt_map(&agg.by_stage));
+    println!("FSSM variants by hardware stage: {}", fmt_map(&agg.by_hw));
+    println!("FSSM: {}, programs: {}, data blocks in code: {}, FSSM without code: {}", agg.fssm, agg.programs, agg.data_blocks, agg.no_code);
+    println!(
+        "RDNA2 instructions: {}, undecoded dwords: {} ({:.4}%), distinct mnemonics: {}",
+        agg.insts.instructions,
+        agg.insts.undecoded,
+        agg.insts.undecoded as f64 * 100.0 / (agg.insts.instructions + agg.insts.undecoded).max(1) as f64,
+        ranked.len()
+    );
+    if agg.failed_count > 0 {
+        println!("parse problems: {} containers, e.g.:", agg.failed_count);
+        for f in &agg.failed {
+            println!("  {f}");
+        }
+    }
+    if agg.odd_count > 0 {
+        println!("unusual: {} containers (several programs in an FSSM or undecoded dwords), e.g.:", agg.odd_count);
+        for o in agg.odd.iter().take(10) {
+            println!("  {o}");
+        }
+    }
+    println!("coverage: shaders made up only of the first K mnemonics (order: number of shaders it appears in):");
+    for (k, c) in &cov {
+        let last = order.get(k.saturating_sub(1)).map(String::as_str).unwrap_or("");
+        println!("  K = {k:>4}: {c:>6} / {n_xbox} ({:>5.1}%)   K-th: {last}", *c as f64 * 100.0 / n_xbox as f64);
+    }
+    println!("top {} mnemonics (count, % of instructions, cumulative %, number of shaders):", top.min(ranked.len()));
+    let mut cum = 0u64;
+    for (i, (m, c)) in ranked.iter().take(top).enumerate() {
+        cum += c;
+        let sc = agg.shader_count.get(m).copied().unwrap_or(0);
+        println!(
+            "  {:>4}. {m:<34} {c:>10} {:>6.2}% {:>6.2}%  {sc:>6} ({:.0}%)",
+            i + 1,
+            *c as f64 * 100.0 / total_inst as f64,
+            cum as f64 * 100.0 / total_inst as f64,
+            sc as f64 * 100.0 / n_xbox as f64
+        );
+    }
+    if agg.iface_on {
+        let i = &agg.iface;
+        println!("interface (hypotheses):");
+        println!(
+            "  PS: {} programs with v_interp; attributes ⊆ ISG1 registers: {}, = ISG1 registers: {}, attribute < number of non-SV elements (rank): {}",
+            i.ps, i.ps_in_regs, i.ps_eq_regs, i.ps_rank
+        );
+        for e in &i.ps_examples {
+            println!("    {e}");
+        }
+        println!(
+            "  PS: SPI_PS_INPUT_ENA from FSSM+0x248 explains the v_interp I/J: {} / {}, all VGPRs read before write fit the layout: {} / {}",
+            i.ps_ena_ij, i.ps, i.ps_ena_reads, i.ps
+        );
+        for e in &i.ps_ena_examples {
+            println!("    {e}");
+        }
+        println!(
+            "  VS: {} programs; exp param ⊆ OSG1 registers: {}, = OSG1 registers: {}, param < number of non-SV elements (rank): {}",
+            i.vs, i.vs_param_in_regs, i.vs_param_eq, i.vs_rank
+        );
+        for e in &i.vs_param_examples {
+            println!("    {e}");
+        }
+        println!(
+            "  VS inputs (VGPRs ≥ v4 read before write): {} programs; matching v4+4·register: {}, with consecutive attributes packed: {}",
+            i.vs_inputs, i.vs_in_vec4, i.vs_in_packed
+        );
+        for e in &i.vs_input_examples {
+            println!("    {e}");
+        }
+        println!("  inputs by stage (API hardware stage: register read before write → number of programs; exports; s_sendmsg):");
+        let sreg = |r: u64| match r {
+            106 => "vcc_lo".to_string(),
+            107 => "vcc_hi".to_string(),
+            124 => "m0".to_string(),
+            126 => "exec_lo".to_string(),
+            127 => "exec_hi".to_string(),
+            r => format!("s{r}"),
+        };
+        let tgt = |t: u64| match t {
+            0..=7 => format!("mrt{t}"),
+            8 => "mrtz".into(),
+            9 => "null".into(),
+            12..=15 => format!("pos{}", t - 12),
+            20 => "prim".into(),
+            32..=63 => format!("param{}", t - 32),
+            t => format!("tgt{t}"),
+        };
+        for (k, e) in &i.inputs {
+            let pct = |n: usize| n * 100 / e.programs.max(1);
+            let list = |m: &BTreeMap<u64, usize>, f: &dyn Fn(u64) -> String| {
+                m.iter().filter(|(_, &n)| pct(n) >= 1).map(|(r, &n)| format!("{} {}%", f(*r), pct(n))).collect::<Vec<_>>().join(", ")
+            };
+            println!("    {k}: {} programs", e.programs);
+            println!("      VGPR: {}", list(&e.vgpr, &|r| format!("v{r}")));
+            println!("      SGPR: {}", list(&e.sgpr, &sreg));
+            println!("      exp: {}", list(&e.exports, &tgt));
+            println!("      sendmsg: {}", list(&e.sendmsg, &|m| m.to_string()));
+            let mut ps: Vec<_> = e.psv.iter().collect();
+            ps.sort_by(|a, b| b.1.cmp(a.1));
+            println!("      PSV0: {}", ps.iter().take(6).map(|(k, n)| format!("{k}: {n}")).collect::<Vec<_>>().join("; "));
+            let mut fu: Vec<_> = e.first_use.iter().collect();
+            fu.sort_by(|a, b| a.0.split(':').next().cmp(&b.0.split(':').next()).then(b.1.cmp(a.1)));
+            let mut shown: BTreeMap<String, usize> = BTreeMap::new();
+            for (k, n) in fu {
+                let reg = k.split(':').next().unwrap_or("").to_string();
+                let c = shown.entry(reg).or_default();
+                if *c < 4 && *n * 100 >= e.programs {
+                    println!("      first use {k}  ({n})");
+                }
+                *c += 1;
+            }
+        }
+        println!("  VS input layout (smallest base B: inputs ⊆ B + 4·register + component): {}", fmt_map(&i.vs_base));
+    }
+    if agg.recomp_on {
+        println!(
+            "recompiler (kernel mode): programs {}, fully translated {} ({:.1}%), translation errors {}, wave32: {}, HLSL: {:.1} MB",
+            rc.programs,
+            rc.complete,
+            rc.complete as f64 * 100.0 / rc.programs.max(1) as f64,
+            rc.errors,
+            rc.wave32,
+            rc.hlsl_bytes as f64 / 1048576.0
+        );
+        for e in &rc.error_examples {
+            println!("  error: {e}");
+        }
+        for (m, (n, c)) in &rc.by_mode {
+            println!("  mode {m}: {n} programs, complete {c} ({:.1}%)", *c as f64 * 100.0 / (*n).max(1) as f64);
+        }
+        println!("missing instructions (number of programs; programs it blocks as the only missing one; occurrences):");
+        for (m, (n, p)) in missing.iter().take(top) {
+            println!("  {m:<34} {p:>6} {:>6} {n:>9}", rc.sole.get(*m).copied().unwrap_or(0));
+        }
+        let mut why: Vec<(&String, &usize)> = rc.why.iter().collect();
+        why.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        println!("reasons (instruction: reason → number of programs):");
+        for (k, v) in why.iter().take(top) {
+            println!("  {k:<60} {v:>6}");
+        }
+        println!(
+            "VS/PS and the wave size (the driver picks it): wave32 {} (handled – the halves of a 64-wide wave run separately), wave64 {}; hazards in 32-thread waves: {:?}; reads of lanes ≥ 32 resolved (32-lane GPUs): {:?}",
+            rc.graphics_wave32, rc.graphics_wave64, rc.wave_hazards, rc.wave_resolved
+        );
+        let c = &rc.cs_forms;
+        let mut why: Vec<_> = rc.cs_lane_why.iter().collect();
+        why.sort_by(|a, b| b.1.cmp(a.1));
+        println!(
+            "compute programs, direct DXIL: {} tried; per-lane form {} ok, per-instruction form (#1426) {} ok; where both are ok ({}): per-lane {} KB, per-instruction {} KB of DXIL; per-lane refused for: {:?}",
+            c[0], c[1], c[2], c[3], c[4] / 1024, c[5] / 1024, &why[..why.len().min(15)]
+        );
+        for (st, f) in &rc.forms {
+            println!(
+                "{st} programs, every refusal: {} tried ({} wave64); per-lane ok {}, per-instruction ok {}, both {}; per-lane refused for instructions only {} (per-instruction ok on {} of them); lane-mask analysis refused {}",
+                f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]
+            );
+        }
+        for (title, m) in [
+            ("per-lane reasons (stage | reason → programs; [S] structural)", &rc.lane_every),
+            ("the only structural reason of a program (stage | reason → programs)", &rc.lane_sole),
+            ("per-instruction form (#1426) refused (stage | first line → programs)", &rc.inst_why),
+        ] {
+            let mut v: Vec<_> = m.iter().collect();
+            v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+            println!("{title}:");
+            for (k, n) in v.iter().take(top.max(40)) {
+                let tag = if survey_structural(k.split(" | ").nth(1).unwrap_or("")) { "[S] " } else { "" };
+                println!("  {n:>6}  {tag}{k}");
+            }
+        }
+        let l = &rc.lanes;
+        println!(
+            "lane masks (direct DXIL, no EXEC emulation): analysed {} of {} programs, {} with no guard left; vector instructions {}, still guarded {} ({:.1}%); branches per lane {}, uniform {}; not analysed: {:?}",
+            l[0],
+            rc.programs,
+            l[1],
+            l[2],
+            l[3],
+            l[3] as f64 * 100.0 / l[2].max(1) as f64,
+            l[4],
+            l[5],
+            rc.lanes_failed
+        );
+        if let Some((x, hlsl, profile)) = &rc.example {
+            println!("example:
+{x}");
+            match recomp::dxc::compile(hlsl, "main", profile, &[]) {
+                Ok(b) => println!("DXC ({profile}): OK, {} B DXIL", b.len()),
+                Err(e) => println!("DXC ({profile}): {}", e.split("--- HLSL ---").next().unwrap_or("").trim()),
+            }
+            if let Ok(path) = std::env::var("XCL_EXAMPLE_HLSL") {
+                let _ = std::fs::write(&path, hlsl);
+                println!("HLSL saved: {path}");
+            }
+        }
+        if let Some((ok, bad)) = &compiled {
+            println!("DXC (vs/ps/cs_6_6) on a sample of complete translations: {ok} OK, {} errors", bad.len());
+            for b in bad.iter().take(10) {
+                println!("  {b}");
+            }
+        }
+    }
+    println!("time: {:.1} s", t0.elapsed().as_secs_f64());
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    /// `--used-only` keeps a compute program exactly when the runtime noted its pipeline: the
+    /// key of a pipeline of that one shader, as `real::shaders_key` makes it.
+    #[test]
+    fn used_only_keeps_the_compute_programs_an_earlier_run_used() {
+        let (a, b) = (vec![1u8, 2, 3, 4], vec![5u8, 6, 7, 8]);
+        let used: std::collections::HashSet<u64> = [crate::hle::d3d12x::real::shaders_key(&[a.clone()])].into_iter().collect();
+        assert!(super::used_compute(&a, &used));
+        assert!(!super::used_compute(&b, &used));
+        // the keys as the runtime writes them, one hexadecimal key a line
+        let text = format!("{:016x}
+", crate::hle::d3d12x::real::shaders_key(&[b.clone()]));
+        let keys: std::collections::HashSet<u64> = text.lines().filter_map(|l| u64::from_str_radix(l.trim(), 16).ok()).collect();
+        assert!(super::used_compute(&b, &keys));
+    }
+
+    use super::*;
+    use crate::gpu::xbox::tests::{fssm, sample, CODE};
+
+    fn compute_sample() -> Vec<u8> {
+        let mut compute = fssm(&CODE, &[(6, 3)]);
+        for offset in [0x13C, 0x140, 0x144] {
+            compute[offset..offset + 4].copy_from_slice(&1u32.to_le_bytes());
+        }
+        sample(5, &[compute])
+    }
+
+    #[test]
+    fn record_hash_is_strict_hex() {
+        assert_eq!(parse_record_hash("0x0123aB").unwrap(), 0x123AB);
+        for bad in ["", "0x", "xyz", "1234567890abcdef0"] {
+            assert!(parse_record_hash(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn hlsl_export_is_ordered_and_exact_hash_selects_one_record() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Temp(std::env::temp_dir().join(format!("xcl-export-hlsl-{}", std::process::id())));
+        let _ = std::fs::remove_dir_all(&root.0);
+        std::fs::create_dir_all(&root.0).unwrap();
+        let first = compute_sample();
+        let mut second = first.clone();
+        *second.last_mut().unwrap() ^= 1; // outside the shader data; a distinct console-blob hash
+        let first_path = root.0.join("first.bin");
+        let second_path = root.0.join("second.bin");
+        std::fs::write(&first_path, &first).unwrap();
+        std::fs::write(&second_path, &second).unwrap();
+        let input = Input::Files(vec![second_path, first_path]);
+
+        let ordered = root.0.join("ordered");
+        assert_eq!(export_hlsl(&input, &ordered, 0, 1, 4, Some(false), None), 0);
+        let second_hash = shader::fnv64(&second);
+        assert!(ordered.join(format!("{second_hash:016x}.hlsl")).is_file());
+        assert_eq!(std::fs::read_dir(&ordered).unwrap().count(), 1);
+
+        let exact = root.0.join("exact");
+        let first_hash = shader::fnv64(&first);
+        assert_eq!(export_hlsl(&input, &exact, usize::MAX, 9, 4, Some(false), Some(first_hash)), 0);
+        assert!(exact.join(format!("{first_hash:016x}.hlsl")).is_file());
+        assert_eq!(std::fs::read_dir(&exact).unwrap().count(), 1);
+
+        let short = root.0.join("short");
+        assert_eq!(export_hlsl(&input, &short, 0, 3, 4, Some(false), None), 2);
+        let missing = root.0.join("missing");
+        assert_eq!(export_hlsl(&input, &missing, 0, 1, 4, Some(false), Some(u64::MAX)), 2);
+
+        // a non-compute record is skipped silently, unless it is the one asked for
+        let other_path = root.0.join("other.bin");
+        let other = b"not a console shader".to_vec();
+        std::fs::write(&other_path, &other).unwrap();
+        let mixed = Input::Files(vec![other_path.clone(), root.0.join("first.bin")]);
+        assert_eq!(export_hlsl(&mixed, &root.0.join("mixed"), 0, 1, 4, Some(false), None), 0);
+        assert_eq!(export_hlsl(&mixed, &root.0.join("other"), 0, 1, 4, Some(false), Some(shader::fnv64(&other))), 2);
+
+        // through the command line: one shader file is an input of its own
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let single = root.0.join("single");
+        let hex = format!("{first_hash:016x}");
+        assert_eq!(run(&root.0.join("first.bin"), &args(&["--export-hlsl", single.to_str().unwrap(), "--record-hash", &hex, "--split", "0"])), 0);
+        assert!(single.join(format!("{hex}.hlsl")).is_file());
+    }
+
+    #[test]
+    fn a_flag_without_its_value_is_an_error() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let dir = std::env::temp_dir().join(format!("xcl-flag-value-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        assert_eq!(run(&dir, &args(&["--export-hlsl", "--record-hash", "DEADBEEF"])), 2);
+        assert!(!std::path::Path::new("--record-hash").exists(), "the next flag is not taken as the value");
+        assert_eq!(run(&dir, &args(&["--measure-pso"])), 2);
+        assert_eq!(run(&dir, &args(&["--export-hlsl", "out", "--record-hash"])), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pso_measurement_compiles_an_exact_synthetic_record() {
+        if let Err(e) = recomp::runner::wave64_supported() {
+            recomp::runner::skip_test(&e);
+            return;
+        }
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let path = Temp(std::env::temp_dir().join(format!("xcl-measure-pso-{}.bin", std::process::id())));
+        let blob = compute_sample();
+        std::fs::write(&path.0, &blob).unwrap();
+        let hash = shader::fnv64(&blob);
+        match measure_pso_result(&Input::Files(vec![path.0.clone()]), hash, 1, 4, None) {
+            Ok(()) => {}
+            // no DXC, a WARP-only or cacheless device, cache control without Developer Mode
+            Err(MeasureError::Unavailable(e)) => recomp::runner::skip_test(&e),
+            Err(MeasureError::Failed(e)) => panic!("{e}"),
+        }
+    }
+
+    #[test]
+    fn aggregates_console_shaders() {
+        let mut a = Agg::default();
+        a.add("PS_a", &sample(0, &[fssm(&CODE, &[(5, 1)])]));
+        a.add("VS_b", &sample(1, &[fssm(&CODE, &[(2, 0)]), fssm(&CODE, &[(4, 0)])]));
+        a.add("junk", b"not a shader");
+        assert_eq!(a.total, 3);
+        assert_eq!(a.by_kind.get("xbox-native"), Some(&2));
+        assert_eq!(a.by_hw.get("ES"), Some(&1));
+        assert_eq!(a.fssm, 3);
+        assert_eq!(a.programs, 3);
+        assert_eq!(a.insts.instructions, 9);
+        assert_eq!(a.failed_count, 0, "{:?}", a.failed);
+        assert_eq!(a.shader_count.get("s_endpgm"), Some(&2));
+        let ranked = a.insts.sorted();
+        let order = by_shader_count(&a, &ranked);
+        assert_eq!(order.len(), 3);
+        let cov = coverage(&a, &order, &[1, 3]);
+        assert_eq!(cov, vec![(1, 0), (3, 2)]);
+    }
+
+    /// Real data check (skipped unless XCL_SAMPLE_RPF points at an RPF9 shader pack).
+    #[test]
+    fn retail_pack_sample() {
+        let Ok(p) = std::env::var("XCL_SAMPLE_RPF") else {
+            println!("XCL_SAMPLE_RPF not set – skipping");
+            return;
+        };
+        let data = std::fs::read(&p).unwrap();
+        let mut records = pack::scan(&data, 0x40);
+        records.truncate(300);
+        let agg = analyze(&Input::Pack { data, records }, false, 0, false);
+        assert_eq!(agg.inflate_errors, 0);
+        assert_eq!(agg.by_kind.get("xbox-native"), Some(&agg.total), "{:?}", agg.by_kind);
+        assert_eq!(agg.failed_count, 0, "{:?}", agg.failed);
+        assert_eq!(agg.insts.undecoded, 0);
+    }
+}
+
+/// `XCL_DUMP_HLSL=<folder>` (`--recomp`): every `XCL_DUMP_EVERY`-th complete translation (by a
+/// hash of its name, default 100) is written there – samples for timing DXC on its own.
+fn dump_hlsl(name: &str, label: &str, profile: &str, hlsl: &str) {
+    let Some(dir) = std::env::var_os("XCL_DUMP_HLSL") else { return };
+    let every: u64 = std::env::var("XCL_DUMP_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(100).max(1);
+    let h = name_hash(name);
+    if h % every != 0 {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{h:016x}_{label}_{profile}.hlsl")), hlsl);
+}
+
+/// FNV-1a of a program's name (`XCL_DUMP_HLSL` file names, `XCL_RECOMP_ONLY`).
+fn name_hash(name: &str) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for b in name.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
+/// `--direct [--sample N] [--seed S] [--validate] [--compare] [--split 0|1] [--windows W]`:
+/// every program of a seeded sample of N records (default 200 programs' worth; `--sample 0` =
+/// all) through the direct DXIL translator; per-stage outcomes, a ranked histogram of what it
+/// cannot translate, translation times and (`--compare`) DXIL size vs HLSL + DXC.
+fn direct_sweep(input: &Input, args: &[String], top: usize, json: bool, t0: std::time::Instant) -> i32 {
+    use crate::gpu::dxil::coverage::{self, Report, Sample};
+    let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
+    let want = opt("--sample").map(|v| v as usize).unwrap_or(200);
+    let want = if want == 0 { usize::MAX } else { want };
+    let seed = opt("--seed").unwrap_or(1);
+    let validate = args.iter().any(|a| a == "--validate");
+    let compare = args.iter().any(|a| a == "--compare");
+    let windows = opt("--windows").unwrap_or(4) as u32;
+    let split = opt("--split").map(|v| v != 0).unwrap_or(true);
+    // records hold one or more programs: sample records, stop at `want` programs
+    let order = coverage::sample_indices(input.len(), want, seed);
+    let next = AtomicUsize::new(0);
+    let taken = AtomicUsize::new(0);
+    let threads = opt("--threads").map(|v| v.max(1) as usize).unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8));
+    let trace = args.iter().any(|a| a == "--trace");
+    // big programs translate slowly (SSA over every guarded access): skip above the cap,
+    // give up on one after the timeout (its thread is left to finish; the process ends soon)
+    let max_bytes = opt("--max-bytes").map(|v| v as usize).unwrap_or(16384);
+    let timeout = std::time::Duration::from_secs(opt("--timeout").unwrap_or(10));
+    let skipped = AtomicUsize::new(0);
+    // `--lanes`: compute programs through the per-lane form too (`recomp::lower_dxil`); where it
+    // translates, its DXIL size against the per-instruction form's, and the refusals ranked
+    let lanes = args.iter().any(|a| a == "--lanes");
+    let lanes_tried = AtomicUsize::new(0);
+    let lanes_ok = AtomicUsize::new(0);
+    let lanes_bytes = AtomicUsize::new(0);
+    let lanes_vs = AtomicUsize::new(0);
+    let lanes_why: Mutex<HashMap<String, usize>> = Mutex::new(HashMap::new());
+    // `--hash H`: only the container whose `[SHADER]` hash (FNV-64 of the container) is H, every
+    // record searched; `--dump DIR`: write each program's direct DXIL (and with `--compare` the
+    // HLSL path's source and DXIL) to DIR, for diffing the two (`dxc -dumpbin`)
+    let only_hash = args.iter().position(|a| a == "--hash").and_then(|i| args.get(i + 1)).and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok());
+    let dump_dir = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
+    if let Some(d) = &dump_dir {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let (order, want, max_bytes) = if only_hash.is_some() { ((0..input.len()).collect(), usize::MAX, 0) } else { (order, want, max_bytes) };
+    // translator panics are counted, not printed (`--trace` keeps the messages)
+    if !trace {
+        std::panic::set_hook(Box::new(|_| {}));
+    }
+    let results: Mutex<Vec<(String, Sample)>> = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                let Some(&ri) = order.get(i) else { break };
+                if taken.load(Ordering::Relaxed) >= want {
+                    break;
+                }
+                let (name, Some(blob)) = input.get(ri) else { continue };
+                let blob_hash = crate::gpu::shader::fnv64(&blob);
+                if only_hash.is_some_and(|h| h != blob_hash) {
+                    continue;
+                }
+                let Some(sh) = xbox::parse(&blob) else { continue };
+                for (fi, f) in sh.fssm.iter().enumerate() {
+                    let Some(mode) = recomp::interface(&blob, &sh, f) else { continue };
+                    for p in &f.programs {
+                        if taken.fetch_add(1, Ordering::Relaxed) >= want {
+                            return;
+                        }
+                        let code = &f.data[p.offset..p.offset + p.len];
+                        if max_bytes > 0 && code.len() > max_bytes {
+                            skipped.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        let wave64 = recomp::detect_wave64(code);
+                        let o = crate::gpu::dxil::kernel::KernelOptions { wave64, split: wave64 && split, mem_windows: windows, sampler_base: 0 };
+                        if trace {
+                            eprintln!("direct: {name} FSSM#{fi} ({} B, {})", code.len(), coverage::stage_name(&mode));
+                        }
+                        let t = std::time::Instant::now();
+                        let r = {
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            let (c, m) = (code.to_vec(), mode.clone());
+                            std::thread::spawn(move || {
+                                let _ = tx.send(coverage::translate_mode(&c, &m, o, validate));
+                            });
+                            rx.recv_timeout(timeout).unwrap_or_else(|_| Err(format!("timeout: over {} s", timeout.as_secs())))
+                        };
+                        let time = t.elapsed();
+                        if let (true, recomp::Mode::Compute(cs)) = (lanes, &mode) {
+                            lanes_tried.fetch_add(1, Ordering::Relaxed);
+                            // under the sweep's timeout too (the thread is left to finish)
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            let (c, csc) = (code.to_vec(), cs.clone());
+                            std::thread::spawn(move || {
+                                let _ = tx.send(recomp::lower_dxil::compute_with(&c, &csc, o));
+                            });
+                            match rx.recv_timeout(timeout).unwrap_or_else(|_| Err(format!("timeout: over {} s", timeout.as_secs()))) {
+                                Ok(k) => {
+                                    lanes_ok.fetch_add(1, Ordering::Relaxed);
+                                    lanes_bytes.fetch_add(k.dxil.len(), Ordering::Relaxed);
+                                    lanes_vs.fetch_add(r.as_ref().map_or(0, |d| d.len()), Ordering::Relaxed);
+                                    if trace {
+                                        eprintln!("per-lane: {name} FSSM#{fi}: {} B, per-instruction {:?} B", k.dxil.len(), r.as_ref().map(|d| d.len()));
+                                    }
+                                }
+                                Err(e) => *lanes_why.lock().unwrap().entry(survey_key(&e)).or_default() += 1,
+                            }
+                        }
+                        let dump = |suffix: &str, bytes: &[u8]| {
+                            if let Some(d) = &dump_dir {
+                                let _ = std::fs::write(d.join(format!("{blob_hash:016x}_f{fi}_{:x}.{suffix}", p.offset)), bytes);
+                            }
+                        };
+                        dump("guest.bin", code);
+                        match &r {
+                            Ok(dxil) => dump("direct.dxil", dxil),
+                            Err(e) => dump("direct.err.txt", e.as_bytes()),
+                        }
+                        let hlsl_size = (compare && r.is_ok())
+                            .then(|| {
+                                let profile = match mode {
+                                    recomp::Mode::Vertex(_) => "vs_6_6",
+                                    recomp::Mode::Pixel(_) => "ps_6_6",
+                                    _ => "cs_6_6",
+                                };
+                                let opt = recomp::Options { mode: mode.clone(), wave64, split_wave64: wave64 && split, mem_windows: windows, ..Default::default() };
+                                let t = recomp::translate(code, &opt).ok().filter(|t| t.complete())?;
+                                dump("hlsl", t.hlsl.as_bytes());
+                                let d = recomp::dxc::compile(&t.hlsl, "main", profile, &[]).ok()?;
+                                dump("hlsl.dxil", &d);
+                                Some(d.len())
+                            })
+                            .flatten();
+                        let sample = Sample { stage: coverage::stage_name(&mode), result: r.map(|d| d.len()), time, hlsl_size };
+                        results.lock().unwrap().push((format!("{name} FSSM#{fi}"), sample));
+                    }
+                }
+            });
+        }
+    });
+    let mut results = results.into_inner().unwrap();
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut rep = Report::default();
+    for (name, s) in &results {
+        rep.add(name, s);
+    }
+    if json {
+        println!("{}", rep.json(top));
+    } else {
+        println!("{} programs from {} sampled records (seed {seed}; {} over {max_bytes} B skipped){}{}", results.len(), order.len().min(input.len()), skipped.load(Ordering::Relaxed), if validate { ", validated" } else { "" }, if compare { ", compared with HLSL+DXC" } else { "" });
+        if lanes {
+            let mut why: Vec<(String, usize)> = lanes_why.into_inner().unwrap().into_iter().collect();
+            why.sort_by(|a, b| b.1.cmp(&a.1));
+            why.truncate(top);
+            println!("per-lane form: {} of {} compute programs; where it translates, {} B against {} B per instruction; refused for: {why:?}", lanes_ok.load(Ordering::Relaxed), lanes_tried.load(Ordering::Relaxed), lanes_bytes.load(Ordering::Relaxed), lanes_vs.load(Ordering::Relaxed));
+        }
+        print!("{}", rep.text(top));
+        println!("time {:.1} s", t0.elapsed().as_secs_f64());
+    }
+    0
+}
+
+/// A survey reason without its program's numbers: registers as `sN`, other numbers as `N`
+/// (an `s_setreg`'s hardware register is kept), at most eight words.
+fn survey_key(r: &str) -> String {
+    let r = r.split(" (").next().unwrap_or(r);
+    let words: Vec<&str> = r.split_whitespace().collect();
+    let mut out: Vec<String> = Vec::new();
+    for (i, raw) in words.iter().enumerate() {
+        let w = raw.trim_end_matches([':', ',']);
+        let digits = |x: &str| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit());
+        let w = if w.strip_prefix('s').is_some_and(digits) {
+            "sN".to_string()
+        } else if digits(w) && !(i > 0 && words[i - 1] == "hwreg") {
+            "N".to_string()
+        } else {
+            w.to_string()
+        };
+        out.push(if raw.ends_with(':') { format!("{w}:") } else { w });
+        if out.len() == 8 {
+            break;
+        }
+    }
+    out.join(" ")
+}
+
+/// A per-lane refusal no instruction lowering removes (the CFG, masks across joins, lanes
+/// elsewhere, the group shape), as opposed to an instruction the per-lane form lacks.
+fn survey_structural(r: &str) -> bool {
+    [
+        "2-D / 3-D",
+        "elsewhere",
+        "read as a number",
+        "read as a mask",
+        "across two masks",
+        "successors",
+        "unsupported branch",
+        "neither a number nor a mask",
+        "empty program",
+        "lane conditions",
+        "indirect jump",
+        "branch to the entry",
+        "irreducible",
+        "no fixpoint",
+        "cannot decode",
+    ]
+    .iter()
+    .any(|w| r.contains(w))
+}

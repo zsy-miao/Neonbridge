@@ -1,0 +1,13 @@
+[package]
+name = "tuxbox-xg"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+tuxbox-xg-layout = { path = "../xg-layout" }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_Debug"] }

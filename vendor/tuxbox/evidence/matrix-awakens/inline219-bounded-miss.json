@@ -1,0 +1,171 @@
+{
+  "scope": "48 seeded synthetic paired triangle cases, bounded lattice misses, native gfx1036 instruction versus dynamic-input experimental HLSL; not general traversal or opcode equivalence",
+  "seed": 219091,
+  "float_rtz": true,
+  "batches": [
+    {
+      "source_sha256": "398bb613315c9459b33bb1fa8aa14d4275a12bc4ba77aacf13c1cee554fcae9d",
+      "native_dump_sha256": "e7d3046c70e047839bc497768905a82bba0539bb431f2390aa2ff739c4ef82c5",
+      "hlsl_sha256": "29a2ed2ee76eb192e24facd5ab7e7ca51dfb171f589b56ae3af734e41b3c3aef",
+      "dxil_sha256": "254b161755e04ec5e56b39da740b7900c8c89e79e35ae61fb7befbb240f0c03c",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "b0766559b4d5fb6533d832311f2a1ee1ab1bb5ee4c437665ea5d90fc65276cb6",
+      "native_dump_sha256": "827422076872870362d6f1646a0fc53281957d82a6aad0edc47abc0012d5a12f",
+      "hlsl_sha256": "b7f5d0f33386b2da0a3bd1e30cecb9733f008654e1c1087d3177429d281a9f6e",
+      "dxil_sha256": "936df83cf5a90a8a53a98ae68483fb3c9f13c5ac928295e22b3ff5f85de9bbf3",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "fb98b5b536308ce3299a7efbdbea11acb17dd00ad9af9d976a80061c92b60704",
+      "native_dump_sha256": "fddd1c145d24c6a39c2c6a5dfc0f1989584c04b09f2181d6fc840e087302f275",
+      "hlsl_sha256": "8fd4ad696d5fe49cd4e6420772d9c3e9d901dfae76e7da043b3e7053934c38f9",
+      "dxil_sha256": "4b5daa9e28af8c94a0e7a5ed567361b22a3123f16815089e1e3b5ab2496fd8b5",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "240f2145c3e54368353cef2262f262a5781310c3e0c16ee3befce7b887f1b5e3",
+      "native_dump_sha256": "2de484d43ee8a5f017e1bb4fa45e7a5cc600fc13b4125a349bcba840af0d61fa",
+      "hlsl_sha256": "c8e1183ad8c53eea9dda72934565c55c513d3bf11a34c1eadd11bf289d0b80ad",
+      "dxil_sha256": "ca0a9928c2930d28d1cb0520820142920aeb158b3b9ae4394b0332003a81115a",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "7b43aa9dd3241df3b987e836b31e0b994b1e4c127a8789875740a7258847e7cd",
+      "native_dump_sha256": "3cc12116ab9d7d9e3bb60c300a01799868af71cfa1afd49e8dccce04087e4ce1",
+      "hlsl_sha256": "5b6c1da6c122656e08ac77ccecd56a6463cd0e6b936b2dda8deeccbd29361064",
+      "dxil_sha256": "1f30b7b08188ba6fe8fcff10485bbf47343bd9cf7303ec93a301c41a8226f5ab",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "a650e15d00562c6246ba289bde030bf653b5b4fbad1c01b421ba805a36915537",
+      "native_dump_sha256": "87d87bb46c66f03ef109a96c90b698d3f743bc8b0354602c0a10615175f1b879",
+      "hlsl_sha256": "0f68efe198cf883a2248964dad1706fb10c2e81d5d91b01c3a8ae5fc9ebb2682",
+      "dxil_sha256": "fdbf41053cd3e37a7b75f47be5e187b01fdd582b8543f1d19fc74faec58c4b6c",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "0839a2cf456b78e1783239519e23040dc58db3fa3bc8cb59250721bc1aa541bd",
+      "native_dump_sha256": "c8507195b04cd22a0329081a0b70cba98c1ad40e74f4a828c2a7872f84f26d63",
+      "hlsl_sha256": "5c3e670c416843215a6283de1b9188976efac25f69a06ba006086097b58491d9",
+      "dxil_sha256": "6c9cac19d8c56ff37876e546c328b6bc69f5c2c30b03692a890315f47250dc51",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    },
+    {
+      "source_sha256": "b5ddabd6506c3617c45b5794fc94622199a4a3d4b0edea9bb645323e5417c290",
+      "native_dump_sha256": "065b422e9d956a3c1e1ce4fcdafcae28f4292b1627be4d71f25fb4d20669f475",
+      "hlsl_sha256": "b8d55979cdf69640c9d038d648670abb587384b6f2ed9112662b8a135c690616",
+      "dxil_sha256": "bddf46da91369d4a55275b51aed462afc3e145c4f96ae23fbeadbcfb6d7637e8",
+      "adapters": {
+        "AMD": {
+          "adapter": "1002:13c0",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        },
+        "NVIDIA": {
+          "adapter": "10de:2705",
+          "cases": 6,
+          "guard_words": 360,
+          "mismatches": []
+        }
+      }
+    }
+  ],
+  "cases": 48,
+  "native_hits": 0,
+  "native_misses": 48,
+  "mismatches": 0
+}

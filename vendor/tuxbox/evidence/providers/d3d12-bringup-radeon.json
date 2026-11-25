@@ -1,0 +1,163 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-signatures.exe": "510eb3985a9004ffd81ff8b0b8034eab81f24924df1d2faa6ceee261e430d408",
+    "d3d12-smoke/d3d12_xs.dll": "fb93c8fbc4c55b74a1ca228ac651ae7c1d1fb4884feeabd0b45099311cf82b29",
+    "d3d12-smoke/d3d12-guids.exe": "8f948e30d1e19291c226570b1deda222e9f225978c6d8f05201f6bce5269168e",
+    "d3d12-smoke/d3d12-root-smoke.exe": "f5710fe8fa6e4426a7f237fda5800d6e5f05e47552df9deaea6e20ddaa7e755e",
+    "d3d12-smoke/d3d12-exports.exe": "168d373032c4be63f4b9a7b0f6efd7fb8b9d7021e187094d322ce86e49da9155",
+    "d3d12-smoke/d3d12-features.exe": "d94628db50fa9ec51a03f6dd2a8c38c7a10fd46bcfa250eda57f18903df5ca10",
+    "d3d12-smoke/d3d12-heaps.exe": "adf4ec194b16aed3069e44a792e90fb67aff4d189890e9a018751e95f1920425",
+    "d3d12-smoke/d3d12-draw.exe": "cbc6784924495830e8f9dcdf7bd33f9fb261ad60c506eb8ca011c132a0fd505b",
+    "d3d12-smoke/d3d12-frame-events.exe": "a7b3aa979387b9245297d2d05b9dca2f78739987127cbfb73e5e0213f9e2043e",
+    "d3d12-smoke/d3d12-tables.exe": "6f468dc61b5c4106cdd8b24295c333c756402c3d7036a191071f942692bff54f",
+    "d3d12-smoke/d3d12-queues.exe": "86f4bce41c773e0220173d2fa7aee0593fa5c9456f5a08ce0be856bead5f365f",
+    "d3d12-smoke/d3d12-queries.exe": "15a31145e8ca9331541bf154dfca299f1c9e67184686421ea1dba9723057502c",
+    "d3d12-smoke/d3d12-indirect.exe": "0d725f767b68febeae9fecd8337784a407a78779271c18ead1e7dbd1ab5599ff",
+    "d3d12-smoke/d3d12-factory.exe": "fe07d6bdc7ed4728460b704cd34374c39dba2843d41a6a2b43cf99d0029de6fc",
+    "d3d12-smoke/xbox-frame.exe": "b9ec9057483c9fd0e0c5dfed6f310eafdc3f6eb5d382633fbc1142ddd320e624",
+    "d3d12-smoke/xbox-frame-rgb10.exe": "5c8c374cac0087d51252ced2512ed6bfbbb6b1be83c1c07fccb455786c74ac0c",
+    "d3d12-smoke/xbox-frame-negative.exe": "aabb0053b8b03b5394638316937dd37d3453c500ba30cffc24cdaba2c47ba57e",
+    "lanes/lanes.exe": "43388204db8bb56a35ab0ffccf6e85fc5577f5dca415235812abb78433d639d2",
+    "lanes/xmem.dll": "ac3e68c658c9ff8684d5e9c0d991900f0102e5a90f234976fa8875acd3fdd5f3",
+    "lanes/GameInput.dll": "54ed6429d071c9893ca712852e4c6aa757a6985813a8c1aecf6b7ff8e6c86903",
+    "lanes/d3d12_xs.dll": "fb93c8fbc4c55b74a1ca228ac651ae7c1d1fb4884feeabd0b45099311cf82b29",
+    "lanes/MicrosoftGame.config": "09e0b87d4f4fd90b6cb04f339c16eaa76d8668ab2f6ad5fa1b10290647790a04"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-signatures",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-signatures PASS versions=1.0,1.1 ranges=1 invalid=2"
+    },
+    {
+      "gate": "d3d12-guids",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-guids PASS identifiers=32 bytes=512"
+    },
+    {
+      "gate": "root-signature",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=1002:13c0 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+    },
+    {
+      "gate": "d3d12-exports",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-exports PASS debug=1 blob=1 dxgix=4"
+    },
+    {
+      "gate": "d3d12-features",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-features PASS pci=1002:13c0 queries=7 binding=3 heap=2 root=1 dxr=0 allocations=4 footprints=4"
+    },
+    {
+      "gate": "d3d12-heaps",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-heaps PASS pci=1002:13c0 heap=32MiB offsets=0,65536 words=256/256 invalid=4 display=3840x2160/RGB10A2 pixel=c00ffc00 volume=45/45"
+    },
+    {
+      "gate": "d3d12-draw",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-draw PASS pci=1002:13c0 red=36 blue=220"
+    },
+    {
+      "gate": "d3d12-frame-events",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-frame-events PASS pci=1002:13c0 slots=78,79,80 tokens=2 timeout=S_FALSE flip=1 detached=1"
+    },
+    {
+      "gate": "d3d12-tables",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-tables PASS pci=1002:13c0 words=16/16 guards=4 heaps=2 rejected=3"
+    },
+    {
+      "gate": "d3d12-queues",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-queues PASS pci=1002:13c0 queues=3 bytes=64 wait=1 signal-x=2"
+    },
+    {
+      "gate": "d3d12-queries",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-queries PASS pci=1002:13c0 timestamps=2 occlusion=0 guards=2 heaps=6 rejected=3"
+    },
+    {
+      "gate": "d3d12-indirect",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-indirect PASS pci=1002:13c0 sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero mesh=0x00000000 rays=0x00000000"
+    },
+    {
+      "gate": "guest-factories",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-factory PASS pci=1002:13c0 adapter=selected profile=0x20004 queues=2 fences=2 flag-masks=4 dxgi=2"
+    },
+    {
+      "gate": "guest-command-list",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=1002:13c0 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+    },
+    {
+      "gate": "guest-frame-rgb10",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=1002:13c0 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 format=rgb10a2"
+    },
+    {
+      "gate": "guest-command-errors",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame-negative PASS pci=1002:13c0 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+    },
+    {
+      "gate": "lanes-xbox-replay",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-replay PASS pci=1002:13c0 course=16/16 win=16/16 safe-miss=1 collision=1 frames=2 input=gameinput"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="Neonbridge: one launcher for every leader's GTA VI Xbox Series emulator">
+  <defs>
+    <filter id="glow" x="-10%" y="-40%" width="120%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#1b1a2e" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="320" fill="#0b0b12"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.6"/>
+  <rect width="1280" height="6" fill="#ff2e97"/>
+  <rect y="314" width="1280" height="6" fill="#00e5ff"/>
+
+  <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+    <text x="72" y="140" font-size="104" font-weight="800" letter-spacing="2" filter="url(#glow)"><tspan fill="#ff2e97">NEON</tspan><tspan fill="#00e5ff">BRIDGE</tspan></text>
+    <rect x="76" y="164" width="300" height="6" fill="#ff2e97"/>
+    <rect x="376" y="164" width="60" height="6" fill="#00e5ff"/>
+    <text x="74" y="212" font-size="28" fill="#dedeec">Test them all in one convenient launcher.</text>
+
+    <g font-size="20" font-weight="600" fill="#dedeec">
+      <rect x="74" y="244" width="146" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="147" y="271" text-anchor="middle">ScarlettPort</text>
+      <rect x="232" y="244" width="112" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="288" y="271" text-anchor="middle">victory</text>
+      <rect x="356" y="244" width="136" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="424" y="271" text-anchor="middle">VItoriaBr</text>
+      <rect x="504" y="244" width="84" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="546" y="271" text-anchor="middle">ztrx</text>
+      <rect x="600" y="244" width="72" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="636" y="271" text-anchor="middle">xcl</text>
+      <rect x="684" y="244" width="108" height="40" rx="20" fill="#16152a" stroke="#00e5ff"/>
+      <text x="738" y="271" text-anchor="middle">TuxBox</text>
+    </g>
+
+    <rect x="1036" y="58" width="176" height="48" rx="24" fill="#ff2e97"/>
+    <text x="1124" y="90" text-anchor="middle" font-size="22" font-weight="800" fill="#ffffff">WIP · v0.1.0</text>
+  </g>
+</svg>

@@ -1,0 +1,342 @@
+{
+  "title": "The Matrix Awakens",
+  "capture": {
+    "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "kernel": "7.3.4-1-cachyos",
+    "game_arguments": "-DisablePlugins=XboxCommonGDKMoviePlayer -nosound ../../../Frosty/Frosty.uproject",
+    "prepared_xbox_programs": 1959,
+    "prepared_graphics_links": 228,
+    "profile": "Reduced effects, conventional temporal AA with temporal upsampling, 33.3333% screen percentage",
+    "last_present_utc": "2026-11-22T05:08:11.527+00:00",
+    "csv": "Frosty-XSX-Shipping_2026-11-22_04-55-18.csv",
+    "csv_sha256": "e36d72038d4fb1cc5b42d1a4b15064cc57e1d96b6edb7f2530bfd05f5776a7d4",
+    "log_sha256": "722409bd9a500425f9620cf77bda848a556c3568f1f390e0ef7708f041375ae7",
+    "valid_samples": 18312,
+    "invalid_samples": 6,
+    "vkd3d_proton_build": "cae2e003bb82516",
+    "gameplay_profile_sha256": "eb10eff360b8d05b7c3dd8dec05321b7502fe08ad4f1cd8a15c895066e43530f",
+    "xwayland": "24.1.15",
+    "hyprland": "0.57.2",
+    "frame_clock_origin_utc": "2026-11-22T04:55:18.921269+00:00"
+  },
+  "method": {
+    "wall_clock": "CSV inode creation time plus MangoHud elapsed nanoseconds. Discard incomplete, nonpositive and uptime-sized rows.",
+    "visibility": "Hyprland state polled every 0.5 s. Include only frames wholly within a focused, mapped, visible Frosty interval on the powered active workspace, with 0.6 s margin around visibility transitions. A different fullscreen surface counts as hidden. Percentiles use nearest rank. Frames crossing phase boundaries are omitted from phase summaries.",
+    "screenshot_clock": "UTC from file creation immediately after the compositor grab. The first sampled HUD is an upper bound on the time the prompt appeared."
+  },
+  "milestones": [
+    {
+      "event": "Start Chase input",
+      "utc": "2026-11-22T04:57:50.049+00:00",
+      "seconds_after_selection": 0.0,
+      "source": "input marker"
+    },
+    {
+      "event": "ChaseSection-WakeUp",
+      "utc": "2026-11-22T04:57:53.529+00:00",
+      "seconds_after_selection": 3.479,
+      "guest_frame": 955,
+      "source": "engine log"
+    },
+    {
+      "event": "ChaseSection-CityIntro",
+      "utc": "2026-11-22T05:04:43.183+00:00",
+      "seconds_after_selection": 413.133,
+      "guest_frame": 141,
+      "source": "engine log"
+    },
+    {
+      "event": "test closed during CityIntro",
+      "utc": "2026-11-22T05:08:12.506+00:00",
+      "seconds_after_selection": 622.457,
+      "source": "intentional close marker"
+    }
+  ],
+  "foreground_after_selection": {
+    "presents": 13240,
+    "seconds_included": 602.927,
+    "mean_fps": 21.96,
+    "frametime_ms": {
+      "p50": 5.617,
+      "p95": 38.118,
+      "p99": 74.463,
+      "max": 27523.4
+    },
+    "over_100_ms": 87,
+    "seconds_in_frames_over_100_ms": 475.543,
+    "over_one_second": 42,
+    "within_999_1010_ms": 0
+  },
+  "foreground_phases": {
+    "before chase selection": {
+      "presents": 4255,
+      "seconds_included": 82.753,
+      "mean_fps": 51.42,
+      "frametime_ms": {
+        "p50": 11.546,
+        "p95": 16.659,
+        "p99": 24.796,
+        "max": 12763.2
+      },
+      "over_100_ms": 9,
+      "seconds_in_frames_over_100_ms": 31.227,
+      "over_one_second": 4,
+      "within_999_1010_ms": 0
+    },
+    "after selection": {
+      "presents": 159,
+      "seconds_included": 2.456,
+      "mean_fps": 64.73,
+      "frametime_ms": {
+        "p50": 15.103,
+        "p95": 18.501,
+        "p99": 30.259,
+        "max": 42.319
+      },
+      "over_100_ms": 0,
+      "seconds_in_frames_over_100_ms": 0.0,
+      "over_one_second": 0,
+      "within_999_1010_ms": 0
+    },
+    "WakeUp": {
+      "presents": 13015,
+      "seconds_included": 392.078,
+      "mean_fps": 33.19,
+      "frametime_ms": {
+        "p50": 5.574,
+        "p95": 35.809,
+        "p99": 64.982,
+        "max": 27065.9
+      },
+      "over_100_ms": 62,
+      "seconds_in_frames_over_100_ms": 269.842,
+      "over_one_second": 24,
+      "within_999_1010_ms": 0
+    },
+    "CityIntro": {
+      "presents": 64,
+      "seconds_included": 208.342,
+      "mean_fps": 0.31,
+      "frametime_ms": {
+        "p50": 73.868,
+        "p95": 20306.3,
+        "p99": 27523.4,
+        "max": 27523.4
+      },
+      "over_100_ms": 25,
+      "seconds_in_frames_over_100_ms": 205.701,
+      "over_one_second": 18,
+      "within_999_1010_ms": 0
+    }
+  },
+  "all_capture_by_visibility": {
+    "focused and visible": {
+      "presents": 17495,
+      "seconds_included": 685.68,
+      "mean_fps": 25.51,
+      "frametime_ms": {
+        "p50": 6.715,
+        "p95": 32.367,
+        "p99": 68.224,
+        "max": 27523.4
+      },
+      "over_100_ms": 96,
+      "seconds_in_frames_over_100_ms": 506.77,
+      "over_one_second": 46,
+      "within_999_1010_ms": 0
+    },
+    "focus transition": {
+      "presents": 740,
+      "seconds_included": 34.235,
+      "mean_fps": 21.62,
+      "frametime_ms": {
+        "p50": 12.25,
+        "p95": 20.815,
+        "p99": 879.976,
+        "max": 15403.6
+      },
+      "over_100_ms": 13,
+      "seconds_in_frames_over_100_ms": 24.956,
+      "over_one_second": 7,
+      "within_999_1010_ms": 5
+    },
+    "hidden": {
+      "presents": 52,
+      "seconds_included": 52.066,
+      "mean_fps": 1.0,
+      "frametime_ms": {
+        "p50": 1001.01,
+        "p95": 1003.64,
+        "p99": 1008.0,
+        "max": 1008.0
+      },
+      "over_100_ms": 52,
+      "seconds_in_frames_over_100_ms": 52.066,
+      "over_one_second": 50,
+      "within_999_1010_ms": 52
+    },
+    "unfocused on visible workspace": {
+      "presents": 25,
+      "seconds_included": 0.311,
+      "mean_fps": 80.33,
+      "frametime_ms": {
+        "p50": 12.142,
+        "p95": 14.65,
+        "p99": 16.64,
+        "max": 16.64
+      },
+      "over_100_ms": 0,
+      "seconds_in_frames_over_100_ms": 0.0,
+      "over_one_second": 0,
+      "within_999_1010_ms": 0
+    }
+  },
+  "visibility_changes": [
+    {
+      "utc": "2026-11-22T04:55:17.771+00:00",
+      "status": "focused and visible"
+    },
+    {
+      "utc": "2026-11-22T04:56:14.545+00:00",
+      "status": "hidden"
+    },
+    {
+      "utc": "2026-11-22T04:56:26.699+00:00",
+      "status": "focused and visible"
+    },
+    {
+      "utc": "2026-11-22T04:56:50.149+00:00",
+      "status": "hidden"
+    },
+    {
+      "utc": "2026-11-22T04:56:57.262+00:00",
+      "status": "focused and visible"
+    },
+    {
+      "utc": "2026-11-22T04:57:04.371+00:00",
+      "status": "hidden"
+    },
+    {
+      "utc": "2026-11-22T04:57:05.893+00:00",
+      "status": "unfocused on visible workspace"
+    },
+    {
+      "utc": "2026-11-22T04:57:07.415+00:00",
+      "status": "focused and visible"
+    },
+    {
+      "utc": "2026-11-22T04:57:09.980+00:00",
+      "status": "hidden"
+    },
+    {
+      "utc": "2026-11-22T04:57:50.452+00:00",
+      "status": "focused and visible"
+    },
+    {
+      "utc": "2026-11-22T04:59:47.483+00:00",
+      "status": "unfocused on visible workspace"
+    },
+    {
+      "utc": "2026-11-22T04:59:47.988+00:00",
+      "status": "hidden"
+    },
+    {
+      "utc": "2026-11-22T04:59:48.495+00:00",
+      "status": "focused and visible"
+    }
+  ],
+  "largest_foreground_frames_after_selection": [
+    {
+      "ending_utc": "2026-11-22T05:05:43.973+00:00",
+      "frametime_ms": 27523.4
+    },
+    {
+      "ending_utc": "2026-11-22T05:01:09.072+00:00",
+      "frametime_ms": 27065.9
+    },
+    {
+      "ending_utc": "2026-11-22T05:07:02.306+00:00",
+      "frametime_ms": 26902.5
+    },
+    {
+      "ending_utc": "2026-11-22T05:02:25.806+00:00",
+      "frametime_ms": 26373.7
+    },
+    {
+      "ending_utc": "2026-11-22T05:00:41.677+00:00",
+      "frametime_ms": 24718.6
+    }
+  ],
+  "visibility_control": [
+    {
+      "start_utc": "04:56:14.545",
+      "end_utc": "04:56:26.699",
+      "compositor": "covered by other fullscreen surface on directly active workspace",
+      "samples": 10,
+      "minimum_ms": 999.9,
+      "median_ms": 1000.59,
+      "maximum_ms": 1001.37,
+      "median_gpu_load": 0.0
+    },
+    {
+      "start_utc": "04:56:26.699",
+      "end_utc": "04:56:50.149",
+      "compositor": "Frosty visible and focused",
+      "samples": 1763,
+      "minimum_ms": 9.27,
+      "median_ms": 11.92,
+      "maximum_ms": 122.13,
+      "median_gpu_load": 39.0
+    },
+    {
+      "start_utc": "04:56:50.149",
+      "end_utc": "04:56:57.262",
+      "compositor": "outside active workspace",
+      "samples": 4,
+      "minimum_ms": 1000.86,
+      "median_ms": 1001.01,
+      "maximum_ms": 1001.14,
+      "median_gpu_load": 1.0
+    },
+    {
+      "start_utc": "04:56:57.262",
+      "end_utc": "04:57:03.000",
+      "compositor": "Frosty visible and focused",
+      "samples": 362,
+      "minimum_ms": 1.88,
+      "median_ms": 12.08,
+      "maximum_ms": 22.57,
+      "median_gpu_load": 40.0
+    }
+  ],
+  "outcome": {
+    "last_engine_chase_section": "CityIntro",
+    "interactive_tutorial_observed": false,
+    "exit_code": 1
+  },
+  "screenshots": [
+    {
+      "capture": "foreground-city-car.jpg",
+      "sha256": "14b754565c1027da8e31660d677514ddcc749c377c0ae2cddeee9852d731e0fb",
+      "utc": "2026-11-22T05:05:03.387+00:00",
+      "seconds_after_selection": 433.338,
+      "observation": "Body panels intersect and large triangles obscure the front of the car."
+    },
+    {
+      "capture": "foreground-city-street.jpg",
+      "sha256": "9594d8131ef9a77d366095eabb92bb4d78a21345a83d9a470f6d9585c7caca6d",
+      "utc": "2026-11-22T05:07:04.386+00:00",
+      "seconds_after_selection": 554.337,
+      "observation": "Black gaps cross the road and the buildings have missing surfaces."
+    },
+    {
+      "capture": "foreground-city-dialogue.jpg",
+      "sha256": "e02d5465cd2391a44568c44ba7d0ff54b97a31fba1e0e77b654f28da60b1ad93",
+      "utc": "2026-11-22T05:07:54.749+00:00",
+      "seconds_after_selection": 604.7,
+      "observation": "Trinity appears behind the wheel during CityIntro."
+    }
+  ]
+}

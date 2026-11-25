@@ -1,0 +1,13 @@
+{
+  "scope": "Original DLL survey only; no provider implementation. ParsePdbInfo mutates input and appends to MSVC C++ containers; allocator compatibility and malformed-input behavior need further validation.",
+  "reference_sha256": "fa97410d99c482d45e9ae5686ccef43cd0c921fd13bba0d50eb042d50482b034",
+  "guest_sha256": "d37d6714667ef5cef51a886ee631ed50287bd4bcfb660a488232f16f2b79f54c",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "observations": {
+    "empty": "00000000,0",
+    "malformed": "80004005,0",
+    "valid": "00000000,1,a:12345678:42:test.pdb",
+    "missing_space": "00000000,1,a:12345678:2:test",
+    "multi": "00000000,2,one:00000000:1:first.pdb,wo:12345678:2:second.pdb"
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "export": "D3D12UploadCustomMicrocodeX",
+  "runner": [
+    "Valve Proton Experimental (1789159601 experimental-11.0-20260910b-x86_64)",
+    "GE-Proton11-11 (1792432585)"
+  ],
+  "guest": "runtime/d3d12/exports_guest.cpp --extra-only, built with the ordinals for each DLL",
+  "controls": [
+    {
+      "dll": "Frosty d3d12_xs.dll",
+      "ordinal": 12,
+      "sha256": "e8279440c6980eba9ba42de1e189870407c7665cf2b3fc1fb683ac07cf07f780",
+      "passed": true,
+      "guest_sha256": "def6351e5be29d5f282b86d8e7778756a8f8e025aa8996e9f6d8264bd2018e68"
+    },
+    {
+      "dll": "Fortnite d3d12_xs.dll",
+      "ordinal": 10,
+      "sha256": "58c623c001444a22fc0e435691b57e49d05789ee8369d868f3786e031c5d676a",
+      "passed": true,
+      "guest_sha256": "a282f3dfc34f513ca0ac22f6088579c83df5e9c956da78bd1b30ebb252064e80"
+    },
+    {
+      "dll": "TuxBox d3d12_xs.dll",
+      "ordinal": 12,
+      "sha256": "50bf45863da3bd36b8573ea84266f3063b539a32ef4a033d0e176d6935fb562e",
+      "passed": true,
+      "guest_sha256": "def6351e5be29d5f282b86d8e7778756a8f8e025aa8996e9f6d8264bd2018e68"
+    }
+  ],
+  "observations": [
+    "Each of seven independently zeroed arguments returned E_INVALIDARG and preserved the calling thread’s last error (0xa14c).",
+    "With three inert buffers of 3, 5 and 7 bytes, selectors 1, 2, 0xffffffff and 1 returned E_FAIL and set last error to ERROR_INVALID_HANDLE (6) on each call."
+  ],
+  "frosty_driver": {
+    "module": "xgskmd10.sys",
+    "sha256": "13f9284a9b114a3f36af320fc371d39bc1c51c4089d699db3bddacffaece7640",
+    "upload_rva": "0x12184",
+    "transport_rva": "0x101a4",
+    "query_rva": "0x12030",
+    "request": "The driver concatenates the images in a type-10 staging window and sends the selector and three lengths to HostOS graphics service 2 in XVIO message 0x1a4.",
+    "reply": "Message 0x1a5 returns 16 bytes. The process keeps the accepted descriptor. A later driver query exposes its first two 32-bit words. Reply kind 2 triggers a recovery attempt and upload failure."
+  },
+  "title_imports": "No regular or delay import by name or ordinal in the inspected Frosty, Fortnite or Minecraft title binaries or the available ProjectScarlett DLLs.",
+  "open": "No successful upload control. A known accepted selector and three images, together with the before/after query and the graphics behavior they enable, would give TuxBox a profile to translate.",
+  "wrapper_control": {
+    "method": "Executed the unmodified packaged Series PE export routines in an isolated x64 interpreter (Unicorn). The transport import was replaced with fixed replies. No firmware was installed.",
+    "dlls": [
+      "Frosty d3d12_xs.dll",
+      "Fortnite d3d12_xs.dll"
+    ],
+    "request": "Each produced the same 56-byte descriptor with the selector, zero DWORD, and three address/length pairs in input order.",
+    "reply_to_hresult": {
+      "0": "S_OK",
+      "1": "E_FAIL",
+      "0x40000001": "E_FAIL",
+      "0xc0000001": "E_FAIL"
+    }
+  },
+  "static_import_scan": {
+    "method": "Inspected regular and delay imports by name and by ordinal against each package’s own export table.",
+    "pe_files": {
+      "Frosty title and Game OS": 354,
+      "Fortnite title and Game OS": 342,
+      "ProjectScarlett game directory": 16
+    },
+    "importers": 0
+  },
+  "tuxbox_transport_control": {
+    "source": "runtime/d3d12/src/microcode.rs",
+    "test": "delivers_the_console_record_and_normalizes_driver_status",
+    "runners": [
+      "Valve Proton Experimental (1789159601 experimental-11.0-20260910b-x86_64)",
+      "GE-Proton11-11 (1792432585)"
+    ],
+    "result": "Passed on both. The same submit function used by the guest export delivered the expected selector and three original pointers and byte counts. Its results matched the packaged wrappers for each of the four supplied replies in wrapper_control. Invalid requests skip dispatch.",
+    "desktop_backend": "No Xbox firmware receiver. A valid request returns STATUS_UNSUCCESSFUL, becomes E_FAIL, and leaves ERROR_INVALID_HANDLE on the calling thread."
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "title": "Frosty-XSX-Shipping.exe",
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "provider_sha256": "8b4e898c7f55c7e2a737227efb2dd6aa6013ebcc7f22a3d49a258ec7021a2fd7",
+  "source": "The supplied title symbol map and PE code identify the producer. FXboxCommonD3D12DynamicRHI::CreateCommandContext writes 0x12000000 into +0x3e68 at RVA 0x5752708. Five FD3D12DescriptorCache::SetSRVs permutations combine this value with 0xc0 for a flagged shader-resource view. Permutation 5 combines it with 0x40. Other branches select ordinary SRV or depth read states. Individual high-bit names remain unknown.",
+  "set_srvs_load_rvas": {
+    "0": "0x579bd30",
+    "1": "0x579bf33",
+    "2": "0x579c143",
+    "4": "0x579c353",
+    "3": "0x579c563",
+    "5": "0x579c773"
+  },
+  "translation": {
+    "0x120000c0": "0xc0 (pixel and non-pixel SRV read)",
+    "0x12000040": "0x40 (non-pixel SRV read)"
+  },
+  "scope": "Only these two exact encodings. Existing buffer-only bits on texture states retain their previous treatment.",
+  "guest_sha256": "366c1c95dc1607512fb4d6f335b393bc08439f9e2ea7d9b8d36d86228c096e18",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "gpu_tests": [
+    {
+      "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.6)",
+      "pixel_reads": 2048,
+      "observed_transitions": [
+        "0x80->0x120000c0 becomes 0x80->0xc0",
+        "0x120000c0->0x400 becomes 0xc0->0x400",
+        "0x400->0x12000040 becomes 0x400->0x40",
+        "0x12000040->0x120000c0 becomes 0x40->0xc0"
+      ],
+      "scope": "Draw two distinct 32x32 RGBA images via point sampling, with COPY_DEST writes and transitions back to read. Both readbacks include all pixels. Every command list close and fence passed. The 0x40 state was entered and left by the graphics guest."
+    },
+    {
+      "adapter": "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+      "pixel_reads": 2048,
+      "observed_transitions": [
+        "0x80->0x120000c0 becomes 0x80->0xc0",
+        "0x120000c0->0x400 becomes 0xc0->0x400",
+        "0x400->0x12000040 becomes 0x400->0x40",
+        "0x12000040->0x120000c0 becomes 0x40->0xc0"
+      ],
+      "scope": "Draw two distinct 32x32 RGBA images via point sampling, with COPY_DEST writes and transitions back to read. Both readbacks include all pixels. Every command list close and fence passed. The 0x40 state was entered and left by the graphics guest."
+    }
+  ],
+  "compute_validation": [
+    {
+      "provider_sha256": "8b4e898c7f55c7e2a737227efb2dd6aa6013ebcc7f22a3d49a258ec7021a2fd7",
+      "guest_sha256": "e26f56396caf7134a17490859ae893f2a25e1e131d2d71395a7bad01226b17f7",
+      "shader_sha256": "8bddcdbb37638234a50e7ea1196d99135fc97e1045e863571e0189eefb7f0adf",
+      "scope": "An Xbox compute dispatch executes 1,024 texture loads after a GPU copy in state 0x12000040. Pixel shaders read 2,048 texels across two images before and after the GPU copy. The command list also returns from each translated state.",
+      "results": {
+        "nvidia": {
+          "compute_texture_reads": 1024,
+          "pixel_shader_reads": 2048,
+          "log_sha256": "b37333deb28f7b1ad4e4753de413efeb61f357d97c9a0e2d0f964be530a409a8"
+        },
+        "amd": {
+          "compute_texture_reads": 1024,
+          "pixel_shader_reads": 2048,
+          "log_sha256": "95c64a90f9ce977082cb144f1a214baa5027c8e8eb932bb7f083fbe68f921757"
+        }
+      }
+    },
+    {
+      "provider_sha256": "e6f98299f5a9c70e379fc988a971075c07f1649e5aba0bc8e52ddfc039bb17d7",
+      "guest_sha256": "e26f56396caf7134a17490859ae893f2a25e1e131d2d71395a7bad01226b17f7",
+      "shader_sha256": "8bddcdbb37638234a50e7ea1196d99135fc97e1045e863571e0189eefb7f0adf",
+      "scope": "An Xbox compute dispatch executes 1,024 texture loads after a GPU copy in state 0x12000040. Pixel shaders read 2,048 texels across two images before and after the GPU copy. The command list also returns from each translated state.",
+      "results": {
+        "nvidia": {
+          "compute_texture_reads": 1024,
+          "pixel_shader_reads": 2048,
+          "log_sha256": "ca9c823d68927af1b6ccbccb81809fb0b0981c95b5e85a0a2bd9ec94690b5759"
+        },
+        "amd": {
+          "compute_texture_reads": 1024,
+          "pixel_shader_reads": 2048,
+          "log_sha256": "0f0467a110eadc60041eb426a918e80e0ea358d756b8ed39c3765b322b54175c"
+        }
+      }
+    }
+  ]
+}

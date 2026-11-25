@@ -1,0 +1,72 @@
+{
+  "scope": "Paired native DXR and Xbox serialized hit-group collection dispatch with shader-record local geometry, material resources, closest-hit and any-hit exports. Both native and Xbox paths run the same translated shaders and check decisions independently against the decoded guest branches.",
+  "provider_sha256": "7e01b49515fe44d8083e498b14823bd0ebc02e2c464bb1e85b0ba58c74b652c7",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "rays": [
+    "nonopaque from -Z, mask clear",
+    "nonopaque from +Z, mask clear",
+    "nonopaque from -Z, mask set",
+    "nonopaque from +Z, mask set",
+    "geometric miss",
+    "force opaque, instance 7",
+    "force opaque, instance 8"
+  ],
+  "material_payload_flag": "word 9, bit 26",
+  "materials": {
+    "0": {
+      "shader": {
+        "state_sha256": "9d4fecb43610409c63d3732e4f0a6fb387c146281fac57810cef518ce4b55625",
+        "dxil_sha256": "bc67651fbd116e3d18cb5652cd5e82f90664c3b9d437af70bd599874f7176c7c"
+      },
+      "ray_results": [
+        "hit",
+        "hit",
+        "hit",
+        "hit",
+        "miss",
+        "hit",
+        "hit"
+      ],
+      "payload_sha256": "83fc2a53e77ee641e19362dd1afd5618836c4dabcd59c3a6b01888d29b5f98b4"
+    },
+    "31": {
+      "shader": {
+        "state_sha256": "5f0b5e41e2113590dc839aa9b4bb841a1ba85f9e25973339a8f89b16914794e3",
+        "dxil_sha256": "69e873999bb351d3b2b1ba9c33eabccf5b06945894d6b665978816a25129e06f"
+      },
+      "ray_results": [
+        "hit",
+        "hit",
+        "miss",
+        "miss",
+        "miss",
+        "hit",
+        "hit"
+      ],
+      "payload_sha256": "f09df97d6093d6ae76829de59fc343b91bd82c9c0c2378078a6b36ce4601b02c"
+    },
+    "520": {
+      "shader": {
+        "state_sha256": "76a79023db976ced5f61080d4024e33c6dc0df39cc4afbcdc3aac314ec43b7bc",
+        "dxil_sha256": "9e7eb3b71cc1beed3adac631ba686bb37847a32f284e061ca68933af24712527"
+      },
+      "ray_results": [
+        "miss",
+        "miss",
+        "miss",
+        "miss",
+        "miss",
+        "hit",
+        "hit"
+      ],
+      "payload_sha256": "7a22789408b489e917311d7d04f82c542bcf615bd5deab0aa25e1d729e258241"
+    }
+  },
+  "words_compared_per_adapter": 336,
+  "mismatches": 0,
+  "limits": "Three any-hit control-flow patterns with opaque local material inputs. Texture-based alpha tests require separate fixtures."
+}

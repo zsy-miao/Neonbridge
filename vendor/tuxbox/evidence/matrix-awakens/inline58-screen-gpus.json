@@ -1,0 +1,35 @@
+{
+  "scope": "Global compute 58 through original Xbox slot 62 and packaged root signature, compared against separate native TLAS and packaged ray generation 64. Readbacks cover two depth words, two float4 radiance texels and four five-word records.",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "7e01b49515fe44d8083e498b14823bd0ebc02e2c464bb1e85b0ba58c74b652c7",
+  "shaders": {
+    "58": {
+      "source_sha256": "c7a41d0c26504bd7ce2a95d18355d47ffc0c6839c6ff38259668c7c0df8377e8",
+      "dxil_sha256": "8daecfd7a5164a88726725d87e126b2c1f9f5a03e1283311efabb222067db7f2"
+    },
+    "64": {
+      "source_sha256": "3b9c215b502d6fbe8bca42ee1aa8eef1697036a03a14756f540aac94f78466f5",
+      "dxil_sha256": "0576671d8c9781fb80a2d8786ea582ebfcac6755881c84c8d87bbdb060e93113"
+    },
+    "114": {
+      "source_sha256": "c1d37ea3f753a8426aa8831dbe5546aa31496f30152b0fb76e87eeef9ab73b6b",
+      "dxil_sha256": "25659ec055581b1a394f64c1a4be29251de790866a9bcc6953db1147ac22900c"
+    },
+    "71": {
+      "source_sha256": "248aad22fe2ba86d0078187ed382be9d5d010bfef34738425b6b355ba3e8768c",
+      "dxil_sha256": "fac83939f008d1e0bf2ab27480f1b32b61ce66f6a069121879de9e888d3f1c43"
+    }
+  },
+  "cases": {
+    "empty_queue": "depth deadbeef,deadbeef; rgb deadbeef,deadbeef,deadbeef; record 00000000,00000000,00000000,00000000,00000000; match 1",
+    "miss": "depth 00000000,deadbeef; rgb 00000000,00000000,00000000; record 00000000,00000000,00000000,00000000,00000000; match 1",
+    "near_triangle": "depth 00000000,deadbeef; rgb 00000000,00000000,00000000; record 00000000,00000000,00000000,00000000,00000000; match 1",
+    "far_triangle": "depth 40000000,deadbeef; rgb 00000000,00000000,00000000; record 00000000,ffffffff,4189c918,ffffffff,ffffffff; match 1"
+  },
+  "observations": "Original 114 produces a GPU retrace buffer; 58 reads that same DEFAULT buffer at u3 without a CPU write. On a near instance visible to mask 0x01, 114 hits while 58 misses. At the translated instance with mask 0x20, 114 misses twice, then 58 hits. Each compute output matches the respective 71/64 raygen and all retrace records survive the far pass.",
+  "limits": "One active pixel with null lighting textures. Full retail colors, queue compaction and runtime presentation require separate measurements."
+}

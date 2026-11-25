@@ -1,0 +1,44 @@
+name: Hardware report
+description: Results from your GPU, even if nothing is broken
+labels: [hardware-report]
+body:
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and VRAM
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Driver version
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: CPU, RAM, Windows build
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: [XCL, VIctory-based runtime]
+    validations:
+      required: true
+  - type: input
+    id: fps
+    attributes:
+      label: Frame rate
+      description: Menus and world, as numbers.
+  - type: textarea
+    id: progress
+    attributes:
+      label: How far it got
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes

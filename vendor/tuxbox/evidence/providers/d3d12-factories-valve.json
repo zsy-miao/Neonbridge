@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-root-smoke.exe": "f5710fe8fa6e4426a7f237fda5800d6e5f05e47552df9deaea6e20ddaa7e755e",
+    "d3d12-smoke/d3d12_xs.dll": "cf3d580bfccf583af7ed48742d624ca3e227314b73dc31afe7554e7519ba618a",
+    "d3d12-smoke/d3d12-factory.exe": "fe07d6bdc7ed4728460b704cd34374c39dba2843d41a6a2b43cf99d0029de6fc",
+    "d3d12-smoke/xbox-frame.exe": "918aff8c72861af1fa0bb1ff5702d463d13949c465a4a034416fbc94ccd1833b",
+    "d3d12-smoke/xbox-frame-negative.exe": "3efdf6b7bff56f66a2438f83a2f722d1aa66aa7be5f8cb1adf4b8c807cc6545d",
+    "lanes/lanes.exe": "5ca022902cc584043ae48d74da53165dbafbdfe04fe503a995e591f5efb6e2b6",
+    "lanes/xmem.dll": "c7b7364c455d21c639fe6550cb7f90ff77f288161197c1d3833cce9a2dc1640b",
+    "lanes/d3d12_xs.dll": "cf3d580bfccf583af7ed48742d624ca3e227314b73dc31afe7554e7519ba618a",
+    "lanes/MicrosoftGame.config": "09e0b87d4f4fd90b6cb04f339c16eaa76d8668ab2f6ad5fa1b10290647790a04"
+  },
+  "checks": [
+    {
+      "gate": "root-signature",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-root-smoke PASS import=D3D12SerializeRootSignature pci=10de:2705 constant=b5/space2 uav=u3/space4 dispatches=2 words=64/64 guards=16"
+    },
+    {
+      "gate": "guest-factories",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-factory PASS pci=10de:2705 adapter=default profile=0x20004 queues=2 fences=2 flag-masks=4 dxgi=2"
+    },
+    {
+      "gate": "guest-command-list",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=10de:2705 submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7"
+    },
+    {
+      "gate": "guest-command-errors",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame-negative PASS pci=10de:2705 foreign-parents=2 copy-errors=2 recovered=1 rejected-batches=3 compute-present-rejected=1"
+    },
+    {
+      "gate": "lanes-package-replay",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "lanes-replay PASS pci=10de:2705 course=16/16 win=16/16 safe-miss=1 collision=1"
+    }
+  ]
+}

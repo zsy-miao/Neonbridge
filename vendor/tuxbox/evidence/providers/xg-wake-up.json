@@ -1,0 +1,95 @@
+{
+  "scope": "Original and TuxBox XG replay of successful descriptors captured by the research proxy; compares complete layouts and first/last mip-slice origin addresses for each supported case. Numeric descriptor values and file hashes only; the game and its binaries are not included.",
+  "trace_sha256": "43bf734cfebf192f52506b7fc57e8abccafd2a38af8e8f44f69fcaa8ab855029",
+  "original_xg_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "provider_sha256": "1209bc211305d7f5faaaec2889bd992ffb3433fc3d81d156d3149e309a39451a",
+  "xmem_sha256": "1151f3569939eada5e6a20b967495d4ae2d1706cf5ab1120a418af1dd67b1e8b",
+  "guest_source_sha256": "1f3200b4b159b33c1f2b6cde35028964d228f7518b68663f56dee2371d92bb72",
+  "guest_sha256": "6f88e4d2ad4ffc1b1b837052592626da308597854de5e179b6dc607a97e0fd91",
+  "captured_calls": 1918,
+  "successful_unique_descriptors": 1918,
+  "original_replay_failures": 0,
+  "matched_layouts_and_samples": 1918,
+  "unsupported_unique_descriptors": 0,
+  "unsupported_descriptors": [],
+  "unsupported_families": [],
+  "mismatched_supported": [],
+  "capture": "Reduced Series graphics profile through the Wake Up chase, one log record per distinct successful input from the packaged XG control.",
+  "failing_inputs_before_fix": [
+    {
+      "format": 53,
+      "width": 6144,
+      "height": 2048,
+      "array_size": 1,
+      "flags": "0x01000002",
+      "description": "Typeless 16-bit shadow atlas with HTILE."
+    },
+    {
+      "format": 53,
+      "width": 1024,
+      "height": 1024,
+      "array_size": 6,
+      "flags": "0x81300002",
+      "description": "Six-slice typeless depth target with HTILE disabled."
+    }
+  ],
+  "depth_array_replay": {
+    "formats": [
+      19,
+      20,
+      39,
+      40,
+      44,
+      45,
+      53,
+      55
+    ],
+    "sizes": [
+      [
+        1,
+        1
+      ],
+      [
+        257,
+        144
+      ],
+      [
+        1024,
+        1024
+      ],
+      [
+        6144,
+        2048
+      ]
+    ],
+    "array_sizes": [
+      1,
+      2,
+      3,
+      6,
+      8,
+      17,
+      39,
+      65,
+      257,
+      513,
+      1025,
+      2048
+    ],
+    "flags": [
+      "0x01000002",
+      "0x01000006",
+      "0x0100000a",
+      "0x81300002"
+    ],
+    "layouts_and_two_origin_offsets_matched": 1536
+  },
+  "library_control": {
+    "guest": "runtime/xg/library_control.cpp",
+    "guest_sha256": "e3e24243d0bd36ebefe4ee683e20dd699559d04b986cff1c219a88e6fd4255fa",
+    "map_target_cases": 1474,
+    "new_depth_targets": 92,
+    "receipt_hash_fnv1a64": "af589d97b6800766",
+    "result": "Packaged and translated XG returned matching layouts and element addresses. The 12 new layered cases sampled 800 positions per plane across layers of six- and seventeen-slice depth arrays."
+  }
+}

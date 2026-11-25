@@ -1,0 +1,103 @@
+{
+  "scope": "Packaged globals 500 and 502 hair cluster prefix sums through TuxBox\u2019s D3D12 guest provider and runtime shader compiler. Both GPUs match eight CPU-modeled cases, each checking 2,060 output and guard words. This verifies prefix sums, not end-to-end hair rendering.",
+  "results": {
+    "amd": {
+      "shader_entries": {
+        "500": "MainClusterCullingPreFixSumCS",
+        "502": "MainPerBlockPreFixSumCS"
+      },
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_sha256": {
+        "500": "784beb40fe291b076dcab2930238a71b2e2c684813d82705bd6ec8966027a76e",
+        "502": "3262d7c9f78d41cb2b552bf0605e0f66963aea7d8630d3c3e8ff5d80656ae5a0"
+      },
+      "guest_slot": 62,
+      "mop": "BUFFER_STORE_FORMAT_XY",
+      "mop_code": "0x5",
+      "retail_entry": 502,
+      "workgroup": [
+        512,
+        1,
+        1
+      ],
+      "shader_views": [
+        "R32_UINT",
+        "R32G32_UINT"
+      ],
+      "test_inputs": "769 elements crossing two blocks, 512, one and zero. Nonzero offsets, wrapped unsigned values, exclusive/inclusive prefix, per-block totals and guard words.",
+      "checked_words_per_case": 2060,
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "readback": {
+        "entry_502_count_769": "2060",
+        "entry_502_count_512": "2060",
+        "entry_502_count_1": "2060",
+        "entry_502_count_0": "2060",
+        "entry_500_count_769": "2060",
+        "entry_500_count_512": "2060",
+        "entry_500_count_1": "2060",
+        "entry_500_count_0": "2060"
+      },
+      "guest_sha256": "80215cbb8c547f7f486cf007cb23154f0adc0ec26a21d1b5bd1f66ce3878a157",
+      "provider_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    },
+    "nvidia": {
+      "shader_entries": {
+        "500": "MainClusterCullingPreFixSumCS",
+        "502": "MainPerBlockPreFixSumCS"
+      },
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_sha256": {
+        "500": "784beb40fe291b076dcab2930238a71b2e2c684813d82705bd6ec8966027a76e",
+        "502": "3262d7c9f78d41cb2b552bf0605e0f66963aea7d8630d3c3e8ff5d80656ae5a0"
+      },
+      "guest_slot": 62,
+      "mop": "BUFFER_STORE_FORMAT_XY",
+      "mop_code": "0x5",
+      "retail_entry": 502,
+      "workgroup": [
+        512,
+        1,
+        1
+      ],
+      "shader_views": [
+        "R32_UINT",
+        "R32G32_UINT"
+      ],
+      "test_inputs": "769 elements crossing two blocks, 512, one and zero. Nonzero offsets, wrapped unsigned values, exclusive/inclusive prefix, per-block totals and guard words.",
+      "checked_words_per_case": 2060,
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "readback": {
+        "entry_502_count_769": "2060",
+        "entry_502_count_512": "2060",
+        "entry_502_count_1": "2060",
+        "entry_502_count_0": "2060",
+        "entry_500_count_769": "2060",
+        "entry_500_count_512": "2060",
+        "entry_500_count_1": "2060",
+        "entry_500_count_0": "2060"
+      },
+      "guest_sha256": "80215cbb8c547f7f486cf007cb23154f0adc0ec26a21d1b5bd1f66ce3878a157",
+      "provider_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    }
+  }
+}

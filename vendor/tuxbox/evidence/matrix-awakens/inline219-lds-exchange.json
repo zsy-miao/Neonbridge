@@ -1,0 +1,27 @@
+{
+  "scope": "One real 219 LDS exchange in a synthetic 32-lane group; no full shader, traversal or wave control claim",
+  "shader_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": [
+        "unique",
+        "inactive",
+        "collision"
+      ],
+      "lanes_per_case": 32,
+      "mismatches": 0
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": [
+        "unique",
+        "inactive",
+        "collision"
+      ],
+      "lanes_per_case": 32,
+      "mismatches": 0
+    }
+  },
+  "hlsl_sha256": "5d6695093d234910d79b621362f9ad75d4f8a66f2581500a29134b9d9063a672"
+}

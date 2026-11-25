@@ -1,0 +1,43 @@
+# Copy to `victory.toml` (git-ignored) and point it at YOUR files.
+# Every path must be OUTSIDE the repository; the tools refuse otherwise.
+# Environment variables (shown below) take precedence over this file.
+# VICTORY_CONFIG selects a different config file.
+
+[paths]
+# Your own dump of the title.     env: VICTORY_GAME_DIR
+game_dir = 'D:\victory-data\game'
+
+# Derived data. Default: %LOCALAPPDATA%\victory\cache.   env: VICTORY_CACHE_DIR
+# cache_dir = 'D:\victory-data\cache'
+
+# What titles save (persistent local storage), kept apart from the cache.
+# Default: %LOCALAPPDATA%\victory\data.   env: VICTORY_DATA_DIR
+# data_dir = 'D:\victory-data\data'
+
+# Other Xbox Series titles used to test platform-level code.
+# env: VICTORY_TEST_TITLES (separated by ';')
+test_titles = []
+
+# Keyboard and mouse, played like a PC game (see README "Input"). Every
+# entry is optional; the values shown are the defaults.
+[controls]
+# enabled = true           # false: the old fixed stand-in pad only (VICTORY_KBM=0)
+# mouse_sensitivity = 1.0  # 1.0: 2,000 mouse counts/s = a full right stick
+# mouse_y_scale = 1.0      # vertical sensitivity relative to horizontal
+# mouse_invert_y = false
+# mouse_capture = true     # a click hides and holds the cursor; Alt or focus loss frees it
+# mouse_carry = true       # a flick past full stick is turned in full, later
+# stick_deadzone = 0.0     # the title's stick dead zone, skipped over
+# stick_curve = 1.0        # the title's stick response exponent, undone
+# walk_speed = 0.5         # left stick while the walk key is held
+
+# Rebind keys; a table replaces only the keys it names. A value is a pad
+# output (A B X Y LB RB LT RT LS RS View Menu DpadUp DpadDown DpadLeft
+# DpadRight LeftUp LeftDown LeftLeft LeftRight RightUp RightDown RightLeft
+# RightRight), an action (Walk ToggleVehicle ReleaseCursor), a list of
+# them, or "" to unbind.
+# [controls.on_foot]
+# Space = "X"
+# MouseLeft = "RT"
+# [controls.vehicle]
+# W = "RT"

@@ -1,0 +1,149 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -828,6 +828,32 @@
+     data: *const u8,
+ }
+ 
++/// Validate the declared DXIL program kind and the LLVM bitcode envelope. A
++/// Scarlett DXIL chunk may hold only a four-byte NOBC marker and an XDAT image.
++fn portable_mesh_stream_stage(shader: &[u8], kind: u32) -> bool {
++    let word = |bytes: &[u8], at: usize| -> Option<u32> {
++        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
++    };
++    if shader.get(..4) != Some(b"DXBC") || word(shader, 24) != u32::try_from(shader.len()).ok() {
++        return false;
++    }
++    let Some(count) = word(shader, 28) else { return false };
++    let Some(toc) = shader.get(32..32 + count as usize * 4) else { return false };
++    for entry in toc.chunks_exact(4) {
++        let at = u32::from_le_bytes(entry.try_into().unwrap()) as usize;
++        if shader.get(at..at + 4) != Some(b"DXIL") { continue; }
++        let Some(size) = word(shader, at + 4) else { return false };
++        let Some(program) = shader.get(at + 8..at + 8 + size as usize) else { return false };
++        let (Some(version), Some(offset), Some(length)) =
++            (word(program, 0), word(program, 16), word(program, 20)) else { return false };
++        let bitcode = 8 + offset as usize;
++        return version >> 16 == kind && program.get(8..12) == Some(b"DXIL") && length >= 4
++            && word(program, 4).map(|n| n as usize * 4) == Some(program.len())
++            && program.get(bitcode..bitcode + length as usize).is_some_and(|bc| bc.starts_with(b"BC\xc0\xde"));
++    }
++    false
++}
++
+ /// # Safety
+ /// The guest supplies a live device, a readable stream and its referenced shader
+ /// bytecode, a valid requested IID, and writable COM output storage.
+@@ -840,42 +866,74 @@
+     if input.is_null() || iid.is_null() { return E_POINTER; }
+     // SAFETY: the caller supplies a valid descriptor for the duration of the call.
+     let input = unsafe { &*input };
+-    const PC_SIZE: usize = 0x2a8;
+     if input.data.is_null() { return E_POINTER; }
+-    if input.size != 0x2c8 {
+-        record("d3d12_xs", "CreatePipelineState", &format!("unsupported stream size={:#x}", input.size));
+-        return compat_common::E_NOTIMPL;
+-    }
+-    // SAFETY: the supplied stream has exactly the expected number of readable bytes.
++    // MeshPipelineStateStream starts with MS/AS/PS. GraphicsPipelineStateStream
++    // starts with input layout, strip cut, VS/GS/PS. Their fixed state tails match.
++    let (mesh, fixed_state) = match input.size {
++        0x2a8 => (true, 0x68),
++        0x2c8 => (false, 0x88),
++        size => {
++            record("d3d12_xs", "CreatePipelineState", &format!("unsupported stream size={size:#x}"));
++            return compat_common::E_NOTIMPL;
++        }
++    };
++    // SAFETY: the guest supplies exactly this many readable bytes.
+     let source = unsafe { std::slice::from_raw_parts(input.data, input.size) };
+     let u32_at = |at: usize| u32::from_le_bytes(source[at..at + 4].try_into().unwrap());
+-    const SUBOBJECTS: &[(usize, u32)] = &[
+-        (0,20), (8,0), (0x18,12), (0x30,13), (0x38,14), (0x40,1), (0x58,5),
+-        (0x70,2), (0x88,8), (0x1d8,21), (0x218,16), (0x220,10), (0x250,15),
+-        (0x278,17), (0x288,9), (0x290,19), (0x2a8,26),
++    let header: &[(usize, u32)] = if mesh {
++        &[(0,20), (8,0), (0x18,14), (0x20,24), (0x38,23), (0x50,2)]
++    } else {
++        &[(0,20), (8,0), (0x18,12), (0x30,13), (0x38,14), (0x40,1), (0x58,5), (0x70,2)]
++    };
++    const FIXED: &[(usize, u32)] = &[
++        (0,8), (0x150,21), (0x190,16), (0x198,10), (0x1c8,15), (0x1f0,17),
++        (0x200,9), (0x208,19), (0x220,26),
+     ];
+-    let stencil = u8::from(u32_at(0x1e8) != 0);
+-    if SUBOBJECTS.iter().any(|&(at, kind)| u32_at(at) != kind)
+-        || source[0x2b0..0x2bc].iter().any(|&v| v != 0)
+-        || source[0x2bc..0x2be] != source[0x1ec..0x1ee]
+-        || source[0x2be..0x2c0] != [0, 0] || source[0x2c0..0x2c2] != [stencil, stencil] {
++    let pc_size = fixed_state + 0x220;
++    let depth = fixed_state + 0x150;
++    let ext = pc_size;
++    let stencil = u8::from(u32_at(depth + 0x10) != 0);
++    if header.iter().any(|&(at, kind)| u32_at(at) != kind)
++        || FIXED.iter().any(|&(at, kind)| u32_at(fixed_state + at) != kind)
++        || source[ext + 8..ext + 20].iter().any(|&v| v != 0)
++        || source[ext + 20..ext + 22] != source[depth + 20..depth + 22]
++        || source[ext + 22..ext + 24] != [0, 0] || source[ext + 24..ext + 26] != [stencil, stencil] {
+         record("d3d12_xs", "CreatePipelineState", "unsupported subobject layout or stencil extension");
+         return compat_common::E_NOTIMPL;
+     }
+     // D3D12 stream subobjects require pointer alignment even when the first field is a DWORD.
+     #[repr(align(8))]
+-    struct AlignedStream([u8; PC_SIZE]);
+-    let mut normalized = AlignedStream([0; PC_SIZE]);
+-    normalized.0.copy_from_slice(&source[..PC_SIZE]);
++    struct AlignedStream([u8; 0x2a8]);
++    let mut normalized = AlignedStream([0; 0x2a8]);
++    normalized.0[..pc_size].copy_from_slice(&source[..pc_size]);
++    if mesh {
++        // Xbox MS/AS tags are 24/23. Desktop D3D12 reserves 23 and uses 25/24.
++        normalized.0[0x20..0x24].copy_from_slice(&25u32.to_le_bytes());
++        normalized.0[0x38..0x3c].copy_from_slice(&24u32.to_le_bytes());
++    }
+     let word = |at: usize| usize::from_le_bytes(source[at..at + 8].try_into().unwrap());
+     let producer = if word(0x68) != 0 { 0x60 } else { 0x48 };
+     let mut keep = Vec::with_capacity(3);
+     let mut pixel = None;
+-    for (stage, at) in [("PS", 0x78), ("VS", 0x48), ("GS", 0x60)] {
++    let stages = if mesh { [("MS", 0x28), ("AS", 0x40), ("PS", 0x58)] }
++                 else { [("PS", 0x78), ("VS", 0x48), ("GS", 0x60)] };
++    let mut active_stages = 0;
++    for (stage, at) in stages {
+         let pointer = word(at) as *const u8;
+         let length = word(at + 8);
+         if length == 0 { continue; }
+         if pointer.is_null() || length > isize::MAX as usize { return E_POINTER; }
++        active_stages += 1;
++        if mesh {
++            let kind = match stage { "MS" => 13, "AS" => 14, _ => 0 };
++            // SAFETY: the caller owns each bytecode descriptor until the call returns.
++            let shader = unsafe { std::slice::from_raw_parts(pointer, length) };
++            if !portable_mesh_stream_stage(shader, kind) {
++                record("d3d12_xs", "CreatePipelineState", &format!("{stage} lacks portable DXIL of the expected stage; native mesh pipeline translation unavailable"));
++                return compat_common::E_NOTIMPL;
++            }
++            continue;
++        }
+         // SAFETY: the guest keeps the referenced bytecode alive throughout this call.
+         let translated = unsafe {
+             match pixel.as_ref().filter(|_| at == producer) {
+@@ -896,8 +954,8 @@
+         keep.push(shader.code);
+     }
+     // Clear the Xbox cached PSO hint. Its compiled native code targets a different driver.
+-    normalized.0[0x298..0x2a8].fill(0);
+-    let stream = PipelineStream { size: PC_SIZE, data: normalized.0.as_ptr() };
++    normalized.0[fixed_state + 0x210..pc_size].fill(0);
++    let stream = PipelineStream { size: pc_size, data: normalized.0.as_ptr() };
+     // SAFETY: DeviceWrapper owns its native ID3D12Device for the duration of the COM call.
+     let real = unsafe { (*this).real };
+     let query: unsafe extern "system" fn(*mut c_void, &Guid, *mut *mut c_void) -> i32 =
+@@ -919,7 +977,7 @@
+         hr
+     };
+     record("d3d12_xs", "CreatePipelineState", &format!("stages={} numRT={} topo={} desktop hr={hr:#010x}",
+-           keep.len(), u32_at(0x274), u32_at(0x3c)));
++           active_stages, u32_at(fixed_state + 0x1ec), u32_at(if mesh { 0x1c } else { 0x3c })));
+     hr
+ }
+ 

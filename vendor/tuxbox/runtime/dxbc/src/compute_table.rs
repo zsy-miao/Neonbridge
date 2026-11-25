@@ -1,0 +1,1017 @@
+//! Physical FSSM shader bindings for programs compiled against descriptor tables.
+//! Each record names the hardware slot (in dwords), binding class and D3D register.
+//! PSV supplies the register space and independently confirms each used resource.
+use crate::{Dxbc, compute_threads, xdat};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Binding {
+    pub table: u32,
+    /// The descriptor range type (0 SRV, 1 UAV, 2 CBV), or ROOT_SRV, for which
+    /// `table` is the root parameter and `slot` is 0.
+    pub kind: u32,
+    pub register: u32,
+    pub space: u32,
+    pub slot: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ResolveConstants {
+    pub register: u32,
+    pub space: u32,
+}
+
+fn word(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(*bytes.get(at..)?.first_chunk()?))
+}
+
+/// Validated physical binding records for FSSM 1.1 programs. Each row holds
+/// the binding class, dword offset, register, resource shape and hardware location.
+pub fn records(program: &[u8]) -> Option<impl ExactSizeIterator<Item = [u32; 5]> + '_> {
+    if program.get(..8)? != b"FSSM\x01\x01\0\0"
+        || word(program, 8)? as usize != program.len().checked_sub(16)?
+    {
+        return None;
+    }
+    table_rows(program, 0xf0, 0xfc)
+}
+
+/// FSSM 1.1 root argument records, separate from the used-resource table.
+pub fn user_data_records(program: &[u8]) -> Option<impl ExactSizeIterator<Item = [u32; 5]> + '_> {
+    let _ = records(program)?;
+    table_rows(program, 0xe8, 0xf8)
+}
+
+fn table_rows(
+    program: &[u8],
+    offset_field: usize,
+    count_field: usize,
+) -> Option<impl ExactSizeIterator<Item = [u32; 5]> + '_> {
+    let count = word(program, count_field)? as usize;
+    let rows = if count == 0 {
+        &[][..]
+    } else {
+        let at = usize::try_from(u64::from_le_bytes(
+            *program.get(offset_field..)?.first_chunk()?,
+        ))
+        .ok()?;
+        if at < 0xf0 || at % 4 != 0 {
+            return None;
+        }
+        program
+            .get(16..)?
+            .get(at..)?
+            .get(..count.checked_mul(20)?)?
+    };
+    Some(rows.chunks_exact(20).map(|row| {
+        std::array::from_fn(|i| u32::from_le_bytes(row[i * 4..][..4].try_into().unwrap()))
+    }))
+}
+
+/// Returns the resource table ABI only when hardware reflection and PSV agree.
+pub fn bindings(bytes: &[u8], stage: u32) -> Option<Vec<Binding>> {
+    read_bindings(bytes, stage, None).map(|(bindings, _)| bindings)
+}
+
+/// Also require every descriptor to appear at the same SGPR and offset in
+/// the independently encoded user-data layout.
+pub fn root_bindings(bytes: &[u8], stage: u32, root: &crate::rootsig::RootSig) -> Option<Vec<Binding>> {
+    read_bindings(bytes, stage, Some(root)).map(|(bindings, _)| bindings)
+}
+
+pub fn compute_root_bindings(
+    bytes: &[u8],
+    root: &crate::rootsig::RootSig,
+) -> Option<(Vec<Binding>, Option<ResolveConstants>)> {
+    read_bindings(bytes, 5, Some(root))
+}
+
+fn read_bindings(
+    bytes: &[u8],
+    stage: u32,
+    root: Option<&crate::rootsig::RootSig>,
+) -> Option<(Vec<Binding>, Option<ResolveConstants>)> {
+    let dxbc = Dxbc::parse(bytes).ok()?;
+    if dxbc.chunk(b"RTS0").is_some() {
+        return None;
+    }
+    let part = |tag| {
+        let c = dxbc.chunk(tag)?;
+        bytes.get(c.offset..c.offset + c.size)
+    };
+    let dxil = part(b"DXIL")?;
+    if !matches!(stage, 0 | 1 | 5) || word(dxil, 0)? >> 16 != stage || dxil.get(8..12)? != b"DXIL" {
+        return None;
+    }
+    let psv = part(b"PSV0")?;
+    if stage == 5 {
+        compute_threads(psv)?;
+    } else if psv.get(28) != Some(&(stage as u8)) {
+        return None;
+    }
+    let psv_table = psv.get(4 + word(psv, 0)? as usize..)?;
+    let count = word(psv_table, 0)? as usize;
+    if count > 128 {
+        return None;
+    }
+    let programs = xdat::programs(dxil.get(24..)?).ok()?;
+    let [program] = programs.as_slice() else {
+        return None;
+    };
+    let records = records(program)?;
+    if records.len() != count {
+        return None;
+    }
+    // A resource-free raster stage shares its partner's descriptor table. PSV
+    // omits the stride entirely for this case and starts the next field here.
+    if count == 0 {
+        return Some((Vec::new(), None));
+    }
+    let stride = word(psv_table, 4)? as usize;
+    if stride < 16 {
+        return None;
+    }
+    let rows = psv_table.get(8..)?.get(..count.checked_mul(stride)?)?;
+    let mut bindings = Vec::new();
+    let mut seen = Vec::new();
+    // Independent user-data records identify the root parameter and its
+    // base SGPR. Descriptor offsets are relative to each table separately.
+    let user_layout = if root.is_some() {
+        Some(table_rows(program, 0xe8, 0xf8)?.collect::<std::collections::BTreeSet<_>>())
+    } else { None };
+    let resolve_register = root
+        .filter(|root| stage == 5 && root.flags & 0xc00 == 0xc00 && root.params.len() == 3
+            && compute_threads(psv) == Some([32, 1, 1]))
+        .and_then(|_| resolve_constants_register(program));
+    let mut resolve_constants = None;
+    let multi_table = root.filter(|root| stage <= 1 && leading_tables(root) > 1);
+    for [class, offset, register, shape, location] in records {
+        let raster_table = match multi_table {
+            Some(root) if matches!(class, 0x300 | 0x302 | 0x303) => Some(multi_table_descriptor(location, root)?),
+            _ => None,
+        };
+        // Root constants name their parameter the same way; the user-data check
+        // below confirms that parameter's register and SGPR.
+        let raster_constants = multi_table.is_some() && class == 2;
+        // A root SRV: its 64-bit address arrives in two SGPRs, and the record
+        // names its root parameter the same way (as mesh_table reads it).
+        let raster_root_srv = multi_table.is_some() && class == 0x100;
+        let table = if stage == 5 || raster_constants || raster_root_srv { location >> 16 }
+            else { raster_table.map_or(0, |(table, _)| table) };
+        // Root-less raster programs (RAGE) can receive their descriptor table in
+        // s9 instead of s8. The descriptor encodings are otherwise identical.
+        let descriptor_location = if let Some((_, normalized)) = raster_table {
+            normalized
+        } else if stage <= 1 && matches!(class, 0x300 | 0x302 | 0x303)
+            && (location >> 8) & 0xff == 9 { 0x800 | (location & 0xff) } else { location };
+        let (kind, psv_type) = match (class, descriptor_location) {
+            (0x300, 0x408 | 0x10508) if stage == 5 => (0, 3), // typed SRV
+            // A four-dword buffer descriptor represents typed, raw or structured
+            // views. PSV distinguishes those encodings, and FSSM gives the stride.
+            (0x300 | 0x303, 0x404 | 0x10504) | (0x303, 0x804)
+                if stage == 5 && descriptor_location != 0x804
+                    || stage <= 1 && descriptor_location == 0x804 && multi_table.is_some() =>
+            {
+                let uav = class == 0x303;
+                let typed = if uav { 6 } else { 3 };
+                let raw = typed + 1;
+                let structured = typed + 2;
+                let mut types = rows.chunks_exact(stride).filter_map(|row| {
+                    if word(row, 8)? != register || word(row, 12)? != register { return None; }
+                    let ty = word(row, 0)?;
+                    ((ty == raw && shape == 1) || ((ty == typed || ty == structured)
+                        && (4..=2048).contains(&shape) && shape.is_multiple_of(4))).then_some(ty)
+                });
+                let ty = types.next()?;
+                if types.next().is_some() { return None; }
+                (u32::from(uav), ty)
+            }
+            (0x303, 0x408 | 0x10508) if stage == 5 => (1, 6), // typed UAV
+            (0x302, 0x404 | 0x10504) if stage == 5 => (2, 2), // CBV
+            (0x300, 0x808) if stage <= 1 => (0, 3),
+            (0x303, 0x808) if stage <= 1 => (1, 6),
+            (0x300, 0x804) if stage <= 1 && shape == 1 => (0, 4), // raw SRV
+            // Structured SRV, or a typed buffer when PSV names no structured view here.
+            (0x300, 0x804) if stage <= 1 && (4..=2048).contains(&shape) && shape % 4 == 0 => {
+                let named = |ty| rows.chunks_exact(stride)
+                    .any(|r| word(r, 0) == Some(ty) && word(r, 8) == Some(register) && word(r, 12) == Some(register));
+                // Only under the newly reflected roots, so other paths keep their result.
+                (0, if named(5) || multi_table.is_none() { 5 } else { 3 })
+            }
+            (0x302, 0x804) if stage <= 1 => (2, 2),
+            (2, 0x10904) if stage == 0 => (4, 2), // root constants in s9
+            (2, _) if raster_constants && location & 0xff == 4 => (4, 2),
+            (2, 0x10504 | 0x20604) if stage == 5 => (4, 2),
+            (0x100, _) if raster_root_srv && location & 0xff == 4 && shape == 1 => (ROOT_SRV, 4),
+            (0x401, _) => (3, 1),                 // inlined static sampler
+            _ => return None,
+        };
+        let mut matching = rows.chunks_exact(stride).filter(|r| {
+            word(r, 0) == Some(psv_type)
+                && word(r, 8) == Some(register)
+                && word(r, 12) == Some(register)
+        });
+        let space = word(matching.next()?, 4)?;
+        if matching.next().is_some() || seen.contains(&(kind, register, space)) {
+            return None;
+        }
+        seen.push((kind, register, space));
+        if let (Some(root), Some(user_layout)) = (root, &user_layout) {
+            use crate::rootsig::RootParamKind;
+            if kind == 4 {
+                let param = root.params.get(table as usize)?;
+                let RootParamKind::Constants { register: reg, space: sp, num32 } = param.kind else { return None };
+                if param.visibility != 0
+                    || !user_layout.contains(&[0, 0, num32, register, location >> 8]) {
+                    return None;
+                }
+                if resolve_register == Some(register) && location == 0x20604 && num32 == 4 {
+                    resolve_constants = Some(ResolveConstants { register, space });
+                } else if (reg, sp) != (register, space) {
+                    return None;
+                }
+            } else if kind == ROOT_SRV {
+                let param = root.params.get(table as usize)?;
+                if param.visibility != 0 || offset != 0
+                    || !matches!(param.kind, RootParamKind::Descriptor { kind: 3, .. })
+                    || !user_layout.contains(&[1, 0, 2, register, location >> 8]) {
+                    return None;
+                }
+            } else if kind < 3 && !user_layout.contains(&[3, offset, 1, register, location >> 8]) {
+                return None;
+            }
+        }
+        if kind == 3 || kind == 4 {
+            continue;
+        }
+        if offset % 8 != 0 || bindings.iter().any(|b: &Binding| (b.table, b.slot) == (table, offset / 8)) {
+            return None;
+        }
+        bindings.push(Binding {
+            table,
+            kind,
+            register,
+            space,
+            slot: offset / 8,
+        });
+    }
+    bindings.sort_by_key(|b| (b.table, b.slot));
+    Some((bindings, resolve_constants))
+}
+
+/// One physical descriptor whose FSSM user-data record, used-resource row, and
+/// PSV binding name the same register. `byte_offset` is the scalar load's
+/// immediate table offset. The hardware SGPR is the low byte of the user-data
+/// location. Returns `(kind, register, space)`: 0 SRV, 1 UAV, 2 CBV.
+///
+/// An unrelated resource that would make [`read_bindings`] fail does not reject
+/// this slot. Root constants and inline samplers are not descriptor loads.
+pub fn corroborated_descriptor(
+    program: &[u8],
+    resources: &[[u32; 4]],
+    stage: u32,
+    sgpr: u8,
+    byte_offset: u32,
+) -> Option<(u32, u32, u32)> {
+    let (kind, register, space, table, slot) =
+        slot_binding(program, resources, stage, sgpr, byte_offset)?;
+    let conflict = user_data_records(program)?.any(|[class, offset, width, _, location]| {
+        if class != 3 || width != 1 || offset % 8 != 0 {
+            return false;
+        }
+        let Ok(other_sgpr) = u8::try_from(location & 0xff) else { return false };
+        let Some(other_offset) = offset.checked_mul(4) else { return false };
+        if other_sgpr == sgpr && other_offset == byte_offset {
+            return false;
+        }
+        slot_binding(program, resources, stage, other_sgpr, other_offset).is_some_and(
+            |(other_kind, other_register, other_space, other_table, other_slot)| {
+                (other_kind, other_register, other_space) == (kind, register, space)
+                    && (other_table, other_slot) != (table, slot)
+            },
+        )
+    });
+    (!conflict).then_some((kind, register, space))
+}
+
+/// The same descriptor as [`corroborated_descriptor`], when `root` leaves its
+/// table slot empty.
+pub fn uncovered_descriptor(
+    program: &[u8],
+    resources: &[[u32; 4]],
+    stage: u32,
+    sgpr: u8,
+    byte_offset: u32,
+    root: &crate::rootsig::RootSig,
+) -> Option<(u32, u32, u32)> {
+    let (kind, register, space) =
+        corroborated_descriptor(program, resources, stage, sgpr, byte_offset)?;
+    let table = table_parameter(stage, sgpr)?;
+    let slot = byte_offset / 32;
+    if !matches!(
+        root.params.get(table as usize).map(|param| &param.kind),
+        Some(crate::rootsig::RootParamKind::Table(_))
+    ) || table_covers_slot(root, table, slot)
+    {
+        return None;
+    }
+    // An embedded root numbers its ranges independently of the shader. A number it gave to
+    // another slot is replaced with one of our own.
+    if root_declares(root, kind, register, space) {
+        return Some((kind, slot, UNCOVERED_SPACE + table));
+    }
+    Some((kind, register, space))
+}
+
+/// Spaces of slots whose own register an embedded root already uses, one per table.
+const UNCOVERED_SPACE: u32 = 32_700;
+
+/// FSSM descriptor slots missing from an embedded root. Each returned binding
+/// is one range to append: the slot is uncovered and the register is free.
+pub fn missing_root_descriptors(bytes: &[u8], root: &crate::rootsig::RootSig) -> Vec<Binding> {
+    let Some((program, resources)) = stage_program(bytes, 5) else {
+        return Vec::new();
+    };
+    let Some(users) = user_data_records(&program) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for [class, offset, width, _, location] in users {
+        if class != 3 || width != 1 || offset % 8 != 0 {
+            continue;
+        }
+        let Ok(sgpr) = u8::try_from(location & 0xff) else { continue };
+        let Some(byte_offset) = offset.checked_mul(4) else { continue };
+        let Some((kind, register, space)) =
+            uncovered_descriptor(&program, &resources, 5, sgpr, byte_offset, root)
+        else {
+            continue;
+        };
+        let Some(table) = table_parameter(5, sgpr) else { continue };
+        let binding = Binding { table, kind, register, space, slot: offset / 8 };
+        if found.iter().any(|seen: &Binding| {
+            (seen.table, seen.slot) == (binding.table, binding.slot)
+                || (seen.kind, seen.register, seen.space) == (kind, register, space)
+        }) {
+            continue;
+        }
+        found.push(binding);
+    }
+    found
+}
+
+/// Binding kind for a root SRV read through its GPU address in two SGPRs. The
+/// shader names it with its own register, which the host root must then carry.
+pub const ROOT_SRV: u32 = 5;
+
+/// A raster descriptor record under a root with several leading tables names its
+/// table in the high half of the location, as compute records do, and table N is
+/// read from s8 + N. Returns the table and the location in the single-table (s8)
+/// encoding, or None when the record names no such table.
+fn multi_table_descriptor(location: u32, root: &crate::rootsig::RootSig) -> Option<(u32, u32)> {
+    let table = location >> 16;
+    ((location >> 8) & 0xff == 8 + table && (table as usize) < leading_tables(root))
+        .then_some((table, 0x800 | (location & 0xff)))
+}
+
+/// Merge vertex and pixel table bindings under one root. Both stages must agree:
+/// a slot holding two registers, or a register at two slots, returns None.
+pub fn merge_raster_bindings(mut vertex: Vec<Binding>, pixel: Vec<Binding>) -> Option<Vec<Binding>> {
+    for b in pixel {
+        let same_slot = vertex.iter().find(|r| (r.table, r.slot) == (b.table, b.slot));
+        let same_register = vertex.iter().find(|r| (r.kind, r.register, r.space) == (b.kind, b.register, b.space));
+        match (same_slot, same_register) {
+            (Some(existing), _) if *existing == b => {}
+            (None, None) => vertex.push(b),
+            _ => return None,
+        }
+    }
+    vertex.sort_by_key(|r| (r.table, r.slot));
+    Some(vertex)
+}
+
+/// How many root parameters, from the first, are descriptor tables.
+pub fn leading_tables(root: &crate::rootsig::RootSig) -> usize {
+    root.params.iter()
+        .take_while(|param| matches!(param.kind, crate::rootsig::RootParamKind::Table(_)))
+        .count()
+}
+
+fn table_parameter(stage: u32, sgpr: u8) -> Option<u32> {
+    let base = match stage {
+        5 => 4,
+        0 | 1 => 8,
+        _ => return None,
+    };
+    u32::from(sgpr).checked_sub(base)
+}
+
+fn slot_binding(
+    program: &[u8],
+    resources: &[[u32; 4]],
+    stage: u32,
+    sgpr: u8,
+    byte_offset: u32,
+) -> Option<(u32, u32, u32, u32, u32)> {
+    if byte_offset % 32 != 0 {
+        return None;
+    }
+    let dword_offset = byte_offset / 4;
+    let mut users = user_data_records(program)?.filter(|row| {
+        row[0] == 3 && row[1] == dword_offset && row[2] == 1 && (row[4] & 0xff) == u32::from(sgpr)
+    });
+    let Some([3, _, 1, register, user_location]) = users.next() else { return None };
+    if users.next().is_some() {
+        return None;
+    }
+    let mut used = records(program)?.filter(|row| {
+        row[1] == dword_offset && row[2] == register && (row[4] >> 8) == user_location
+    });
+    let Some([class, _, _, shape, location]) = used.next() else { return None };
+    if used.next().is_some() {
+        return None;
+    }
+    let (kind, psv_type) = descriptor_class(class, location, shape, stage, register, resources)?;
+    if kind >= 3 {
+        return None;
+    }
+    let mut spaces = resources.iter().filter_map(|[ty, space, lower, upper]| {
+        (*ty == psv_type && *lower == register && *upper == register).then_some(*space)
+    });
+    let space = spaces.next()?;
+    if spaces.next().is_some() {
+        return None;
+    }
+    let table = if stage == 5 {
+        let table = location >> 16;
+        if table != table_parameter(stage, sgpr)? {
+            return None;
+        }
+        table
+    } else if stage <= 1 {
+        if location >> 16 != 0 {
+            return None;
+        }
+        0
+    } else {
+        return None;
+    };
+    Some((kind, register, space, table, byte_offset / 32))
+}
+
+/// Class and PSV type for one descriptor load. Copies the resource arms of
+/// [`read_bindings`] and stops before root constants and samplers.
+fn descriptor_class(
+    class: u32,
+    location: u32,
+    shape: u32,
+    stage: u32,
+    register: u32,
+    resources: &[[u32; 4]],
+) -> Option<(u32, u32)> {
+    let location = if stage <= 1 && matches!(class, 0x300 | 0x302 | 0x303)
+        && (location >> 8) & 0xff == 9 { 0x800 | (location & 0xff) } else { location };
+    Some(match (class, location) {
+        (0x300, 0x408 | 0x10508) if stage == 5 => (0, 3),
+        (0x300 | 0x303, 0x404 | 0x10504) if stage == 5 => {
+            let uav = class == 0x303;
+            let typed = if uav { 6 } else { 3 };
+            let raw = typed + 1;
+            let structured = typed + 2;
+            let mut types = resources.iter().filter_map(|[ty, _, lower, upper]| {
+                if *lower != register || *upper != register {
+                    return None;
+                }
+                ((*ty == raw && shape == 1)
+                    || ((*ty == typed || *ty == structured)
+                        && (4..=2048).contains(&shape)
+                        && shape.is_multiple_of(4)))
+                .then_some(*ty)
+            });
+            let ty = types.next()?;
+            if types.next().is_some() {
+                return None;
+            }
+            (u32::from(uav), ty)
+        }
+        (0x303, 0x408 | 0x10508) if stage == 5 => (1, 6),
+        (0x302, 0x404 | 0x10504) if stage == 5 => (2, 2),
+        (0x300, 0x808) if stage <= 1 => (0, 3),
+        (0x303, 0x808) if stage <= 1 => (1, 6),
+        (0x300, 0x804) if stage <= 1 && shape == 1 => (0, 4),
+        (0x300, 0x804) if stage <= 1 && (4..=2048).contains(&shape) && shape.is_multiple_of(4) => {
+            (0, 5)
+        }
+        (0x302, 0x804) if stage <= 1 => (2, 2),
+        _ => return None,
+    })
+}
+
+fn table_covers_slot(root: &crate::rootsig::RootSig, table: u32, slot: u32) -> bool {
+    let Some(crate::rootsig::RootParamKind::Table(ranges)) =
+        root.params.get(table as usize).map(|param| &param.kind)
+    else {
+        return false;
+    };
+    let mut next = 0u64;
+    ranges.iter().any(|range| {
+        let start = if range.offset_in_table == u32::MAX {
+            next
+        } else {
+            u64::from(range.offset_in_table)
+        };
+        next = start.saturating_add(u64::from(range.num));
+        (start..next).contains(&u64::from(slot))
+    })
+}
+
+fn root_declares(root: &crate::rootsig::RootSig, kind: u32, register: u32, space: u32) -> bool {
+    use crate::rootsig::RootParamKind;
+    root.params.iter().any(|param| match &param.kind {
+        RootParamKind::Table(ranges) => ranges.iter().any(|range| {
+            range.range_type == kind
+                && range.space == space
+                && register.checked_sub(range.base_register).is_some_and(|delta| delta < range.num)
+        }),
+        RootParamKind::Descriptor { kind: declared, register: reg, space: sp } => {
+            *declared == kind && *reg == register && *sp == space
+        }
+        RootParamKind::Constants { register: reg, space: sp, .. } => {
+            kind == 2 && *reg == register && *sp == space
+        }
+    })
+}
+
+fn stage_program(bytes: &[u8], stage: u32) -> Option<(Vec<u8>, Vec<[u32; 4]>)> {
+    let dxbc = Dxbc::parse(bytes).ok()?;
+    let part = |tag| {
+        let chunk = dxbc.chunk(tag)?;
+        bytes.get(chunk.offset..chunk.offset + chunk.size)
+    };
+    let dxil = part(b"DXIL")?;
+    if word(dxil, 0)? >> 16 != stage || dxil.get(8..12)? != b"DXIL" {
+        return None;
+    }
+    let resources = psv_resources(part(b"PSV0")?)?;
+    let mut programs = xdat::programs(dxil.get(24..)?).ok()?;
+    if programs.len() != 1 {
+        return None;
+    }
+    let program = programs.pop()?;
+    if records(&program).is_none() {
+        return None;
+    }
+    Some((program, resources))
+}
+
+fn psv_resources(psv: &[u8]) -> Option<Vec<[u32; 4]>> {
+    let table = psv.get(4 + word(psv, 0)? as usize..)?;
+    let count = word(table, 0)? as usize;
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    let stride = word(table, 4)? as usize;
+    if stride < 16 {
+        return None;
+    }
+    let rows = table.get(8..)?.get(..count.checked_mul(stride)?)?;
+    let mut resources = Vec::with_capacity(count);
+    for row in rows.chunks_exact(stride) {
+        resources.push([word(row, 0)?, word(row, 4)?, word(row, 8)?, word(row, 12)?]);
+    }
+    Some(resources)
+}
+
+/// Wave32 layout with two table pointers, four root constants and both heaps.
+/// GroupID follows in s12. Return the register encoded for those constants.
+pub fn resolve_constants_register(program: &[u8]) -> Option<u32> {
+    let mut tables = [false; 2];
+    let mut constants = None;
+    let mut heaps = [false; 2];
+    for [class, offset, width, reg, location] in user_data_records(program)? {
+        match (class, offset, width, location) {
+            (3, _, 1, 4) => tables[0] = true,
+            (3, _, 1, 0x105) => tables[1] = true,
+            (0, 0, 4, 0x206) if constants.is_none() => constants = Some(reg),
+            (5, 0, 1, 10) if reg == 0 && !heaps[0] => heaps[0] = true,
+            (6, 0, 1, 11) if reg == 0 && !heaps[1] => heaps[1] = true,
+            (4, _, _, _) => (),
+            _ => return None,
+        }
+    }
+    if tables != [true; 2] || heaps != [true; 2] {
+        return None;
+    }
+    constants
+}
+
+/// Two table pointers can be followed by a reserved resource-heap SGPR even
+/// when the compiler eliminated all direct resource accesses. Group X then
+/// starts in s7. Validate the user-data allocation separately from SFI0 usage.
+pub fn two_tables_and_heap(program: &[u8]) -> bool {
+    let Some(rows) = table_rows(program, 0xe8, 0xf8) else { return false };
+    let mut seen = [false; 3];
+    for [class, offset, width, register, location] in rows {
+        match (class, width, location) {
+            (3, 1, 4) => seen[0] = true,
+            (3, 1, 0x105) => seen[1] = true,
+            (4, _, _) => (),
+            (5, 1, 6) if offset == 0 && register == 0 && !seen[2] => seen[2] = true,
+            _ => return false,
+        }
+    }
+    seen == [true; 3]
+}
+
+/// User-data layout for the global descriptor heap. Root constants and the
+/// heap's SGPR are independently represented alongside the physical bindings.
+pub fn pixel_heap_base(program: &[u8], count: u32) -> Option<u32> {
+    if !(1..=4).contains(&count) {
+        return None;
+    }
+    let mut constants = None;
+    let mut heap = None;
+    for [class, offset, width, register, location] in table_rows(program, 0xe8, 0xf8)? {
+        match (class, offset, width, location) {
+            (0, 0, n, 0x109) if n == count && constants.is_none() => constants = Some(register),
+            (5, 0, 1, base) if register == 0 && base == 9 + count && heap.is_none() => {
+                heap = Some(base)
+            }
+            (3 | 4, _, _, _) => (),
+            _ => return None,
+        }
+    }
+    let register = constants?;
+    records(program)?
+        .any(|row| row == [2, 0, register, 0, 0x10904])
+        .then_some(heap?)
+}
+
+/// A pixel program with only static samplers and register-backed constants
+/// requests descriptor heap resources through SFI0. DXIL declares this feature
+/// independently of any root signature passed in the pipeline stream.
+pub fn pixel_heap_indices(shader: &[u8], root_constant_count: u32) -> bool {
+    fn check(shader: &[u8], count: u32) -> Option<()> {
+        if !(1..=4).contains(&count) {
+            return None;
+        }
+        let dxbc = Dxbc::parse(shader).ok()?;
+        let part = |tag| {
+            let c = dxbc.chunk(tag)?;
+            shader.get(c.offset..c.offset + c.size)
+        };
+        let features = u64::from_le_bytes(part(b"SFI0")?.try_into().ok()?);
+        if features & (3 << 25) != 1 << 25 || !bindings(shader, 0)?.is_empty() {
+            return None;
+        }
+        let programs = xdat::programs(part(b"DXIL")?.get(24..)?).ok()?;
+        let [program] = programs.as_slice() else {
+            return None;
+        };
+        pixel_heap_base(program, count)?;
+        let mut samplers = 0;
+        let mut constants = 0;
+        for [class, offset, _, _, location] in records(program)? {
+            match (class, offset, location) {
+                (2, 0, 0x10904) => constants += 1,
+                (0x401, 0, _) => samplers += 1,
+                _ => return None,
+            }
+        }
+        (constants == 1 && samplers != 0).then_some(())
+    }
+    check(shader, root_constant_count).is_some()
+}
+
+/// Which root-constant word contains the logical descriptor used by scalar
+/// buffer loads, and which bits select that descriptor. Runtime checks the
+/// actual view at this index before executing an HLSL ConstantBuffer load.
+pub fn scalar_heap_index(shader: &[u8], count: u32) -> Option<(u32, u32)> {
+    if !pixel_heap_indices(shader, count) {
+        return None;
+    }
+    let d = Dxbc::parse(shader).ok()?;
+    let part = d.chunk(b"DXIL")?;
+    let variants = xdat::programs(shader.get(part.offset + 24..part.offset + part.size)?).ok()?;
+    let [program] = variants.as_slice() else {
+        return None;
+    };
+    let code = crate::fssm::decode(program).ok()?;
+    scalar_heap_operand(&code.isa, count)
+}
+
+/// Prove every four-dword resource heap fetch uses the same root constant
+/// (optionally masked). Texture indices remain unrestricted. Locally walk from
+/// each fetch through its defining left shift and optional AND. A branch may
+/// not enter between a definition and the fetch, and the entry SGPR supplying
+/// the index must be preserved throughout the shader.
+pub fn scalar_heap_operand(isa: &[u8], count: u32) -> Option<(u32, u32)> {
+    use crate::rdna2::{self, Enc, Opnd};
+    use std::collections::BTreeSet;
+
+    if !(1..=4).contains(&count) {
+        return None;
+    }
+    let ops = rdna2::disassemble(isa);
+    let mut block_entries = BTreeSet::from([0usize]);
+    let mut first_write = [usize::MAX; 4];
+    let mut earliest_back_edge = usize::MAX;
+    for (i, op) in ops.iter().enumerate() {
+        if !op.is_complete()
+            || op.enc == Enc::Unknown
+            || op.mnemonic.contains('<')
+            || op.mnemonic.starts_with("s_movrel")
+            || op.mnemonic.starts_with("s_subvector_loop")
+            || matches!(
+                op.mnemonic.as_str(),
+                "s_call_b64" | "s_setpc_b64" | "s_swappc_b64" | "s_rfe_b64" | "s_trap"
+            )
+        {
+            return None;
+        }
+        for r in 0..count as u8 {
+            if rdna2::clobbers_scalar(op, 9 + r) {
+                first_write[r as usize] = first_write[r as usize].min(i);
+            }
+        }
+        if op.mnemonic == "s_branch" || op.mnemonic.starts_with("s_cbranch_") {
+            if op.enc != Enc::Sopp {
+                return None;
+            }
+            let target = (op.offset + op.dwords * 4)
+                .checked_add_signed(isize::try_from(op.aux.imm * 4).ok()?)?;
+            let target = ops.binary_search_by_key(&target, |ins| ins.offset).ok()?;
+            if target <= i {
+                earliest_back_edge = earliest_back_edge.min(target);
+            }
+            block_entries.insert(target);
+            block_entries.insert(i + 1);
+        }
+    }
+    let mut found = None;
+    for (i, op) in ops
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| op.enc == Enc::Smem && op.op == 2)
+    {
+        if op.aux.imm != 0 {
+            return None;
+        }
+        let soff = u8::try_from(*op.raw.get(1)? >> 25).ok()?;
+        let start = *block_entries.range(..=i).next_back()?;
+        let previous = |end, reg| {
+            ops[start..end]
+                .iter()
+                .rposition(|x| rdna2::clobbers_scalar(x, reg))
+                .map(|idx| idx + start)
+        };
+        let at = previous(i, soff)?;
+        let shift = &ops[at];
+        let ("s_lshl_b32", [Opnd::Sgpr(input), Opnd::ConstInt(5)]) =
+            (shift.mnemonic.as_str(), shift.src.as_slice())
+        else {
+            return None;
+        };
+        let (entry, mask) = if let Some(idx) = previous(at, *input) {
+            let and = &ops[idx];
+            if and.mnemonic != "s_and_b32" {
+                return None;
+            }
+            match and.src.as_slice() {
+                [Opnd::Sgpr(entry), Opnd::Literal(mask)] => (*entry, *mask),
+                [Opnd::Sgpr(entry), Opnd::ConstInt(mask)] => (*entry, *mask as u32),
+                _ => return None,
+            }
+        } else {
+            (*input, u32::MAX)
+        };
+        let word = entry.checked_sub(9)?;
+        // Earlier clobbers and loops potentially revisiting the read both
+        // invalidate an entry register. Later straight-line writes are harmless.
+        let first = *first_write.get(usize::from(word))?;
+        if u32::from(word) >= count
+            || first <= at
+            || (first != usize::MAX && earliest_back_edge <= at)
+        {
+            return None;
+        }
+        let proof = (u32::from(word), mask);
+        if found.replace(proof).is_some_and(|prior| prior != proof) {
+            return None;
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rootsig::{RootParam, RootParamKind, RootRange, RootSig};
+
+    fn put_u32(buf: &mut [u8], at: usize, value: u32) {
+        buf[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn put_u64(buf: &mut [u8], at: usize, value: u64) {
+        buf[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn program(user: &[[u32; 5]], used: &[[u32; 5]]) -> Vec<u8> {
+        let user_at = 0xf0u64;
+        let used_at = user_at + (user.len() * 20) as u64;
+        let len = 16 + used_at as usize + used.len() * 20;
+        let mut bytes = vec![0u8; len];
+        bytes[..8].copy_from_slice(b"FSSM\x01\x01\0\0");
+        put_u32(&mut bytes, 8, (len - 16) as u32);
+        put_u64(&mut bytes, 0xe8, user_at);
+        put_u64(&mut bytes, 0xf0, used_at);
+        put_u32(&mut bytes, 0xf8, user.len() as u32);
+        put_u32(&mut bytes, 0xfc, used.len() as u32);
+        for (index, row) in user.iter().chain(used).enumerate() {
+            let at = if index < user.len() { user_at } else { used_at };
+            let row_index = if index < user.len() { index } else { index - user.len() };
+            for (word, value) in row.iter().enumerate() {
+                put_u32(&mut bytes, 16 + at as usize + row_index * 20 + word * 4, *value);
+            }
+        }
+        bytes
+    }
+
+    fn root(ranges: Vec<RootRange>) -> RootSig {
+        RootSig {
+            version: 2,
+            flags: 0,
+            params: vec![
+                RootParam { visibility: 0, kind: RootParamKind::Table(Vec::new()) },
+                RootParam { visibility: 0, kind: RootParamKind::Table(ranges) },
+            ],
+            num_static_samplers: 0,
+            static_samplers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn corroborated_cbv_uses_the_free_register_only() {
+        let image = program(&[[3, 0xc8, 1, 28, 0x105]], &[[0x302, 0xc8, 28, 0, 0x10504]]);
+        let resources = [[2u32, 1, 28, 28]];
+        assert_eq!(corroborated_descriptor(&image, &resources, 5, 5, 0x320), Some((2, 28, 1)));
+        let open = root(vec![RootRange {
+            range_type: 0, num: 16, base_register: 0, space: 0, offset_in_table: 0,
+        }]);
+        assert_eq!(uncovered_descriptor(&image, &resources, 5, 5, 0x320, &open), Some((2, 28, 1)));
+        let taken = root(vec![RootRange {
+            range_type: 2, num: 1, base_register: 28, space: 1, offset_in_table: 16,
+        }]);
+        assert_eq!(uncovered_descriptor(&image, &resources, 5, 5, 0x320, &taken), Some((2, 25, 32_701)));
+    }
+
+    #[test]
+    fn rejects_ambiguous_unaligned_and_non_descriptor_slots() {
+        let duplicated = program(
+            &[[3, 0xc8, 1, 28, 0x105], [3, 0xc8, 1, 28, 0x105]],
+            &[[0x302, 0xc8, 28, 0, 0x10504]],
+        );
+        assert_eq!(corroborated_descriptor(&duplicated, &[[2, 1, 28, 28]], 5, 5, 0x320), None);
+        let sampler = program(&[[3, 0, 1, 3, 0x105]], &[[0x401, 0, 3, 0, 0x10500]]);
+        assert_eq!(corroborated_descriptor(&sampler, &[[1, 0, 3, 3]], 5, 5, 0), None);
+        let image = program(&[[3, 0xc8, 1, 28, 0x105]], &[[0x302, 0xc8, 28, 0, 0x10504]]);
+        assert_eq!(corroborated_descriptor(&image, &[[2, 1, 28, 28]], 5, 5, 0x324), None);
+    }
+
+    #[test]
+    fn raster_descriptor_in_s9_table_is_recognized() {
+        let (kind, psv) = descriptor_class(0x300, 0x908, 0, 0, 5, &[]).unwrap();
+        assert_eq!((kind, psv), (0, 3));
+        let (kind, psv) = descriptor_class(0x302, 0x904, 0, 1, 8, &[]).unwrap();
+        assert_eq!((kind, psv), (2, 2));
+    }
+
+    fn tables_then(kinds: &[RootParamKind]) -> RootSig {
+        RootSig {
+            version: 2,
+            flags: 0,
+            params: kinds.iter().cloned().map(|kind| RootParam { visibility: 0, kind }).collect(),
+            num_static_samplers: 0,
+            static_samplers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn leading_tables_counts_only_the_first_run_of_tables() {
+        let table = RootParamKind::Table(Vec::new());
+        let constants = RootParamKind::Constants { register: 500, space: 0, num32: 1 };
+        let srv = RootParamKind::Descriptor { kind: 3, register: 0, space: 3 };
+        assert_eq!(leading_tables(&tables_then(&[table.clone(), table.clone(), table.clone(), srv, constants.clone()])), 3);
+        assert_eq!(leading_tables(&tables_then(&[table.clone(), constants.clone(), table.clone()])), 1);
+        assert_eq!(leading_tables(&tables_then(&[constants, table])), 0);
+    }
+
+    #[test]
+    fn multi_table_raster_records_name_their_table() {
+        let table = RootParamKind::Table(Vec::new());
+        let constants = RootParamKind::Constants { register: 500, space: 0, num32: 1 };
+        let two = tables_then(&[table.clone(), table.clone(), constants]);
+        // Table N is read from s8 + N; the location keeps the descriptor width.
+        assert_eq!(multi_table_descriptor(0x0808, &two), Some((0, 0x808)));
+        assert_eq!(multi_table_descriptor(0x1_0908, &two), Some((1, 0x808)));
+        assert_eq!(multi_table_descriptor(0x1_0904, &two), Some((1, 0x804)));
+        // A table index that disagrees with the SGPR, or names a parameter that is
+        // not a leading table, fails closed.
+        assert_eq!(multi_table_descriptor(0x1_0808, &two), None);
+        assert_eq!(multi_table_descriptor(0x0908, &two), None);
+        assert_eq!(multi_table_descriptor(0x2_0a08, &two), None);
+        let three = tables_then(&[table.clone(), table.clone(), table]);
+        assert_eq!(multi_table_descriptor(0x2_0a04, &three), Some((2, 0x804)));
+    }
+
+    #[test]
+    fn raster_stage_bindings_merge_only_when_they_agree() {
+        let b = |table, kind, register, space, slot| Binding { table, kind, register, space, slot };
+        let vs = vec![b(1, 0, 4, 1, 2), b(0, 2, 0, 1, 0)];
+        // Shared identical binding, plus a new one: merged and sorted by (table, slot).
+        assert_eq!(merge_raster_bindings(vs.clone(), vec![b(0, 2, 0, 1, 0), b(0, 0, 3, 0, 5)]),
+            Some(vec![b(0, 2, 0, 1, 0), b(0, 0, 3, 0, 5), b(1, 0, 4, 1, 2)]));
+        // One slot, two registers.
+        assert_eq!(merge_raster_bindings(vs.clone(), vec![b(1, 0, 9, 1, 2)]), None);
+        // One register, two slots.
+        assert_eq!(merge_raster_bindings(vs.clone(), vec![b(0, 0, 4, 1, 7)]), None);
+        // Same register number in another space or kind is a different binding.
+        assert_eq!(merge_raster_bindings(vs, vec![b(0, 0, 4, 2, 7), b(0, 1, 4, 1, 8)]).map(|v| v.len()), Some(4));
+    }
+
+    /// A one-program raster stage: FSSM user and used rows, and PSV resource rows
+    /// ([type, space, lower, upper]; one per used row).
+    fn raster_shader(stage: u32, user: &[[u32; 5]], used: &[[u32; 5]], psv_rows: &[[u32; 4]]) -> Vec<u8> {
+        let xdat = crate::xdat::tests::container(&[(13, crate::xdat::tests::xbch(&program(user, used)))]);
+        let mut dxil = vec![0u8; 24];
+        put_u32(&mut dxil, 0, stage << 16);
+        dxil[8..12].copy_from_slice(b"DXIL");
+        dxil.extend(xdat);
+        let mut psv = vec![0u8; 36];
+        put_u32(&mut psv, 0, 32);
+        psv[28] = stage as u8;
+        psv.extend((psv_rows.len() as u32).to_le_bytes());
+        psv.extend(16u32.to_le_bytes());
+        psv.extend(psv_rows.iter().flatten().flat_map(|w| w.to_le_bytes()));
+        crate::container::tests::container_with(&[(b"DXIL", &dxil), (b"PSV0", &psv)])
+    }
+
+    /// [table, table, table, root SRV t4 space3, constants b500].
+    fn three_tables_srv_constants() -> RootSig {
+        let table = RootParamKind::Table(Vec::new());
+        tables_then(&[table.clone(), table.clone(), table,
+            RootParamKind::Descriptor { kind: 3, register: 4, space: 3 },
+            RootParamKind::Constants { register: 500, space: 0, num32: 1 }])
+    }
+
+    #[test]
+    fn multi_table_root_srv_carries_the_shader_register() {
+        let root = three_tables_srv_constants();
+        // Parameter 3's address arrives in s11-s12; the shader names it t5 space7.
+        let used = [[0x100, 0, 5, 1, 0x3_0b04]];
+        let srv = raster_shader(1, &[[1, 0, 2, 5, 0x30b]], &used, &[[4, 7, 5, 5]]);
+        assert_eq!(root_bindings(&srv, 1, &root),
+            Some(vec![Binding { table: 3, kind: ROOT_SRV, register: 5, space: 7, slot: 0 }]));
+        // Without the user-data row, or when parameter 3 is not a root SRV, it fails closed.
+        assert_eq!(root_bindings(&raster_shader(1, &[], &used, &[[4, 7, 5, 5]]), 1, &root), None);
+        let mut constants = root.clone();
+        constants.params[3].kind = RootParamKind::Constants { register: 5, space: 7, num32: 2 };
+        assert_eq!(root_bindings(&srv, 1, &constants), None);
+        // Root-less callers never see a root SRV binding.
+        assert_eq!(bindings(&srv, 1), None);
+    }
+
+    #[test]
+    fn multi_table_raster_buffer_views_follow_psv() {
+        let root = three_tables_srv_constants();
+        // A raw UAV in table 0 (s8) and a typed SRV buffer in table 1 (s9).
+        let user = [[3, 8, 1, 2, 0x008], [3, 16, 1, 3, 0x109]];
+        let used = [[0x303, 8, 2, 1, 0x0804], [0x300, 16, 3, 4, 0x1_0904]];
+        let shader = raster_shader(0, &user, &used, &[[7, 1, 2, 2], [3, 2, 3, 3]]);
+        assert_eq!(root_bindings(&shader, 0, &root), Some(vec![
+            Binding { table: 0, kind: 1, register: 2, space: 1, slot: 1 },
+            Binding { table: 1, kind: 0, register: 3, space: 2, slot: 2 },
+        ]));
+        // PSV must confirm the view type: a raw UAV named typed is refused.
+        assert_eq!(root_bindings(&raster_shader(0, &user, &used, &[[6, 1, 2, 2], [3, 2, 3, 3]]), 0, &root), None);
+        // Under a single-table root the same typed SRV buffer keeps its old result.
+        let single = tables_then(&[RootParamKind::Table(Vec::new()),
+            RootParamKind::Constants { register: 500, space: 0, num32: 1 }]);
+        let typed = raster_shader(0, &[[3, 16, 1, 3, 0x008]], &[[0x300, 16, 3, 4, 0x0804]], &[[3, 2, 3, 3]]);
+        assert_eq!(root_bindings(&typed, 0, &single), None);
+        assert_eq!(bindings(&typed, 0), None);
+        let uav = raster_shader(0, &[[3, 8, 1, 2, 0x008]], &[[0x303, 8, 2, 1, 0x0804]], &[[7, 1, 2, 2]]);
+        assert_eq!(root_bindings(&uav, 0, &single), None);
+        assert_eq!(bindings(&uav, 0), None);
+    }
+
+    #[test]
+    fn same_register_at_two_slots_fails_closed() {
+        let image = program(
+            &[[3, 0xc8, 1, 28, 0x105], [3, 0xd0, 1, 28, 0x105]],
+            &[[0x302, 0xc8, 28, 0, 0x10504], [0x302, 0xd0, 28, 0, 0x10504]],
+        );
+        let resources = [[2u32, 1, 28, 28]];
+        assert_eq!(corroborated_descriptor(&image, &resources, 5, 5, 0x320), None);
+        assert_eq!(corroborated_descriptor(&image, &resources, 5, 5, 0x340), None);
+    }
+}

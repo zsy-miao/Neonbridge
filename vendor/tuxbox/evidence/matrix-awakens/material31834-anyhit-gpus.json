@@ -1,0 +1,52 @@
+{
+  "scope": "The original room material collection at material archive entry 31834 was translated, DXV-validated and dispatched as a native DXR state object and through the serialized Xbox provider.",
+  "exports": [
+    "MaterialAHS_ac386707",
+    "MaterialCHS_ac386707"
+  ],
+  "shader": {
+    "state_sha256": "01fdf34be23e088ef99c3e05514f1e3cd11c694330b47738b4f716eaf4f38663",
+    "dxil_sha256": "17c5da9a7093a8382b26dd4eb0be06fe03d1e9c245cd248cc7b85504045f1c52"
+  },
+  "dxv": "Validation succeeded.",
+  "worker_sha256": "842f0d9e609f46272937f568d62df3bfb89991a4e2935c5b0c8a32166879b679",
+  "provider_sha256": "ca123ec040ea68ef752008bb23c5af037c5333df1829e9ac9a780b640233d1bd",
+  "guest_sha256": "9df990c0b7e745e3437792a1a6e1599e5a45cea7ccdbeac0591efddd4abf5f07",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "command": "tools/check_frosty_blas.py --masked-materials",
+  "inputs": "Two records select the same hit group, geometry and resources. The sole difference is the opacity floor at local b3[28].x. One record uses the float immediately below 0.33 (0x3ea8f5c2); the other uses exactly the shader threshold (0x3ea8f5c3). The ray payload has no mask bit set.",
+  "ray_order": [
+    "below threshold front",
+    "below threshold back",
+    "at threshold front",
+    "at threshold back",
+    "geometric miss",
+    "force opaque below",
+    "force opaque at threshold"
+  ],
+  "expected": [
+    "miss",
+    "miss",
+    "hit",
+    "hit",
+    "miss",
+    "hit",
+    "hit"
+  ],
+  "adapters": {
+    "AMD": {
+      "pci": "1002:13c0",
+      "payload_sha256": "1f79b8a28ac359a78cab1ff3ddbcfdd755c086acabea014a8f3370087a4acc71",
+      "material_words_compared": 112,
+      "five_materials_words_compared": 560,
+      "mismatches": 0
+    },
+    "NVIDIA": {
+      "pci": "10de:2705",
+      "payload_sha256": "1f79b8a28ac359a78cab1ff3ddbcfdd755c086acabea014a8f3370087a4acc71",
+      "material_words_compared": 112,
+      "five_materials_words_compared": 560,
+      "mismatches": 0
+    }
+  }
+}

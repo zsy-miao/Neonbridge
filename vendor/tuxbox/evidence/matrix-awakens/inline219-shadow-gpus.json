@@ -1,0 +1,58 @@
+{
+  "scope": "Frosty global compute 219 through Xbox device slot 62. Same-fixture comparison with packaged ray-generation entry 218 and analytic solid-triangle shadows. Each case checks 64 pixels, all four mask words, the pre-resolved first pixel and 28 guard words.",
+  "adapters": [
+    "1002:13c0",
+    "10de:2705"
+  ],
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "provider_sha256": "cbeff2c6c7bf462b33b0aa15123e7799eacd3a1678115a4ca69f828d28ffbf5b",
+  "shaders": {
+    "218": {
+      "source_sha256": "7d8bbcef8d2b310caf71240bff586b48eca6e7dad8b59548c55f94348098ce11",
+      "dxil_sha256": "251d7b41aab9afe0a1ad7adc3703350b067f0fbb1d2719319a81364f1775bc19"
+    },
+    "219": {
+      "source_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+      "dxil_sha256": "3c460f9202764f2d52429175cde720aa2ef995d2c7ea7ab75ddc1fc11be8516f"
+    }
+  },
+  "guest_scene": "Xbox List4 slot 117 builds triangle BLAS and two-instance TLAS. Raw t5 in the original SRV table names the TLAS resource. The guest binds only its four original root descriptor tables.",
+  "dispatch": "8 by 1 by 1 groups, 8 by 4 by 1 threads. Queue length zero or one. Instance masks 0x20 at x=-1 and 0x01 at x=3.",
+  "cases": {
+    "empty_queue": "218 00000002,00000000,00000000,00000000; 219 00000002,00000000,00000000,00000000; guards 1; direct",
+    "geometry_miss": "218 aaaaaaaa,aaaaaaaa,aaaaaaaa,aaaaaaaa; 219 aaaaaaaa,aaaaaaaa,aaaaaaaa,aaaaaaaa; guards 1; direct",
+    "primary_mask_20": "218 fffffffe,ffffffff,ffffffff,ffffffff; 219 fffffffe,ffffffff,ffffffff,ffffffff; guards 1; indirect",
+    "fallback_mask_01": "218 fffffffe,ffffffff,ffffffff,ffffffff; 219 fffffffe,ffffffff,ffffffff,ffffffff; guards 1; direct",
+    "fallback_excludes_mask_20": "218 aaaaaaaa,aaaaaaaa,aaaaaaaa,aaaaaaaa; 219 aaaaaaaa,aaaaaaaa,aaaaaaaa,aaaaaaaa; guards 1; indirect",
+    "primary_excludes_mask_01": "218 aaaaaaaa,aaaaaaaa,aaaaaaaa,aaaaaaaa; 219 aaaaaaaa,aaaaaaaa,aaaaaaaa,aaaaaaaa; guards 1; direct"
+  },
+  "root_signatures": {
+    "adapters": [
+      "1002:13c0",
+      "10de:2705"
+    ],
+    "slot_62": [
+      "packaged_root",
+      "reserialized_root",
+      "embedded_root"
+    ],
+    "slot_86": [
+      "packaged_root",
+      "reserialized_root",
+      "null_root_record",
+      "omitted_root_record"
+    ],
+    "created_pipelines_per_adapter": 7,
+    "shader_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee"
+  },
+  "limits": "Controlled triangle scenes. Native Xbox BVH traversal order, iteration exhaustion, procedural primitives and in-game output remain unverified.",
+  "engine_root_controls": {
+    "provider_sha256": "582f5e913d37c062aad64d9f095f0f887d16fd1269a878c8a883213146944a28",
+    "adapters": [
+      "1002:13c0",
+      "10de:2705"
+    ],
+    "version_1_0": "Reordered SRV table at root slot 2, t5 at table offset 7 via APPEND, UAV at root slot 0 and b0 through b2 as root CBVs; all six shadow cases passed on each adapter.",
+    "volatile_scene": "Replacing t5 with another valid TLAS after command-list Close rejected the batch before submission. Signal returned E_INVALIDARG and the fence stayed at zero. A changed scene requires re-recording the list."
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "title_build": {
+    "function": "FD3D12RayTracingScene::BuildAccelerationStructure",
+    "upload_instances_rva": "0x57b57dc",
+    "copy_gpu_transforms_rva": "0x57b5a8a",
+    "list4_build_rva": "0x57b5e88",
+    "list4_slot": 117
+  },
+  "commands": [
+    "python tools/check_frosty_blas.py --single-build --gpu-instances --provider \"$PROVIDER\" --proton \"$PROTON\" --prefix \"$PREFIX\" --output \"$OUTPUT\"",
+    "python tools/check_frosty_blas.py --single-build --gpu-instances --deserialize \"$COOKED_SPHERE\" --sphere-vertices \"$SPHERE_VERTICES\" --provider \"$PROVIDER\" --proton \"$PROTON\" --prefix \"$PREFIX\" --output \"$OUTPUT\""
+  ],
+  "source": "Three contiguous records at byte offset 32 in a default heap. The guest queues a copy from upload memory, closes the list, creates a relocated BLAS, restores the original masks and submits twice with fences. A separate guest compute dispatch reads its bindings after the build. A short instance array is rejected when closing the list.",
+  "layouts": "Contiguous upload and default-heap records. Upload arrays of pointers resolve through registered upload ranges. GPU arrays of pointers require native BLAS addresses.",
+  "adapters": {
+    "1002:13c0": {
+      "test_guest_sha256": "91d4c252bcafa6ea7a80422d731e435d12d0aacaec8daea94ec7f1f7a84a629a",
+      "quad": {
+        "guest_bytes": 192,
+        "native_compacted_bytes": 448,
+        "late_relocation_rays": "11/0/1/1,11/0/0/1,miss",
+        "unrelated_instance_rays": "70010,70120,80010,80120,dead",
+        "closed_list_executions": 2,
+        "restored_table_srv_constants": "17,23,37,53"
+      },
+      "retail_sphere": {
+        "guest_bytes": 31232,
+        "native_compacted_bytes": 56704,
+        "guest_sha256": "91d4c252bcafa6ea7a80422d731e435d12d0aacaec8daea94ec7f1f7a84a629a",
+        "instances": 2,
+        "rays": 3171,
+        "same_as_desktop": true,
+        "hits": 2112,
+        "misses": 1059,
+        "max_distance_error": 2.9087066650390625e-05,
+        "readback_sha256": "010abd43743f3c7fbfdc2755c71c2fd23f73635938a76b35f432e38eda94426a"
+      }
+    },
+    "10de:2705": {
+      "test_guest_sha256": "91d4c252bcafa6ea7a80422d731e435d12d0aacaec8daea94ec7f1f7a84a629a",
+      "quad": {
+        "guest_bytes": 192,
+        "native_compacted_bytes": 1152,
+        "late_relocation_rays": "11/0/1/1,11/0/0/1,miss",
+        "unrelated_instance_rays": "70010,70120,80010,80120,dead",
+        "closed_list_executions": 2,
+        "restored_table_srv_constants": "17,23,37,53"
+      },
+      "retail_sphere": {
+        "guest_bytes": 31232,
+        "native_compacted_bytes": 13824,
+        "guest_sha256": "91d4c252bcafa6ea7a80422d731e435d12d0aacaec8daea94ec7f1f7a84a629a",
+        "instances": 2,
+        "rays": 3171,
+        "same_as_desktop": true,
+        "hits": 2112,
+        "misses": 1059,
+        "max_distance_error": 2.9087066650390625e-05,
+        "readback_sha256": "f7f6b35e037944cade880d8126401fb877ca4ffdb12fdb838aca39f26c7872b3"
+      }
+    }
+  },
+  "provider_sha256": "e7575bf2d5cf54927c91064023918f7a6df242ad9cc053ffbee093a898b09a7b",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64"
+}

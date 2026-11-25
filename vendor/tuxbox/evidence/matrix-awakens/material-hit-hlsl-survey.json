@@ -1,0 +1,29 @@
+{
+  "scope": "Frosty material archive, full HLSL emission from MaterialCHS hit groups. Paired entries require both closest-hit and any-hit HLSL exports. DXIL compilation, GPU output and title dispatch are evaluated separately.",
+  "material_archive_sha256": "9de0439f815138c89fd414e69f4f5f3497fd523ac4dd2321c5207f7fd67eb2e1",
+  "compiler_sha256": "7f502654627fd947d9e678313dad92ad7c3a4c3fbdbd19641c2b943d300b0844",
+  "stages": {
+    "opaque": {
+      "entries": 2551,
+      "translated": 2551,
+      "failed": 0,
+      "failure_reasons": {}
+    },
+    "paired": {
+      "entries": 2551,
+      "translated": 2551,
+      "failed": 0,
+      "failure_reasons": {}
+    }
+  },
+  "result_set_sha256": "56b1ce10cc476d1eb9d57ca193316e70bb28d1fc1652437a6e15aa9c63ea10c0",
+  "procedural_candidate_dxil": {
+    "scope": "The 628 paired programs outside the three simple native any-hit bodies. Each entire hit-group library was compiled from its emitted HLSL and validated.",
+    "profile": "lib_6_3",
+    "entries": 628,
+    "compiled_and_validated": 628,
+    "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+    "dxv_sha256": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+    "sorted_index_state_hlsl_dxil_sha256": "eeb96221a9a748e96b1d2dd634bf1e398c6cc21d182cafc053bfd366cd18bcb0"
+  }
+}

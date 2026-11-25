@@ -1,0 +1,590 @@
+{
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "native_global_records": 4271,
+  "unique_global_indices": 4271,
+  "scope": "Native non-ray global shader containers; expand full instruction streams with TomBox RDNA2 disassemble. Include nearby cluster culling entries independently of opcode use. DXIL compilation checks compiler acceptance; GPU readbacks for entries 500/502 are in hair-prefix.json.",
+  "xshader_sha256": "a79c55dcf26422826e2f7afe10aa367f06ac86166f344dff9193e2a1df01572b",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "native_scan_sha256": "ee606d6f0a8bf6bc1bf5e46c91ac870f1b4a79619d4c82ca85b0ac74e19539bf",
+  "matching_entries": 62,
+  "decoded_xy_stores": 74,
+  "dxil_compiled_matching": 17,
+  "matching_other_translation_failure": 45,
+  "matching_dxc_failure": 0,
+  "cooked": [
+    {
+      "index": 496,
+      "name": "MainClusterCullingPrepareIndirectDrawsCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "e4c13b208a63077270b05dfa18af36184818fd336d19edbc44feeddfcf00264f"
+    },
+    {
+      "index": 497,
+      "name": "MainClusterCullingIndClearCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "357abcb649094f07dbc7d607321a4cf3cc35f69a53d62646c8fbadff79028116"
+    },
+    {
+      "index": 498,
+      "name": "MainClusterCullingPrepareIndirectDispatchCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "723c0bae3bbf6f651580157a85925d036922c0acc0780eca81b47b9edad5665b"
+    },
+    {
+      "index": 499,
+      "name": "MainClusterCullingIndClearCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "9c9044b24e3d99e80100d74df2809f15384a84992d8eb172a65940395928692e"
+    },
+    {
+      "index": 500,
+      "name": "MainClusterCullingPreFixSumCS",
+      "stage": "Compute",
+      "format_xy_stores": 2,
+      "profile": "cs_6_0",
+      "dxil_sha256": "239376700d129ac56d75dd90a2af76a4751bb8a871fa7899b46937ecd9e7a0b8"
+    },
+    {
+      "index": 501,
+      "name": "MainClusterCullingPrepareIndirectDispatchCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "b1f90e5da5eddd20bfdaef3ab6a713b81333141630413fdd403d3c7d9e68059b"
+    },
+    {
+      "index": 502,
+      "name": "MainPerBlockPreFixSumCS",
+      "stage": "Compute",
+      "format_xy_stores": 2,
+      "profile": "cs_6_0",
+      "dxil_sha256": "f4baaaab1cdf266900870692c09fe57d0d1e946069dec5463f9eb1dbf4be9464"
+    },
+    {
+      "index": 503,
+      "name": "MainClusterCullingCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "translation_error": "unverified EXEC election at 0x620"
+    },
+    {
+      "index": 504,
+      "name": "MainClusterCullingCompactVertexIdsLocalBlockCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "153ec384f15233ab056e1ece95242a265e713825be87811b0acfc9615c35a79a"
+    },
+    {
+      "index": 506,
+      "name": "MainClusterCullingCS",
+      "stage": "Compute",
+      "format_xy_stores": 0,
+      "profile": "cs_6_0",
+      "dxil_sha256": "3d05a4dc85cfa978048412609a5b86d4080fd8c0c656d3e46a4a4fa20674d3cd"
+    },
+    {
+      "index": 575,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "24f23726a00f9a1e8fae58ad66f6d733ee5493311881d5fbefcfc1141a8b1a64"
+    },
+    {
+      "index": 576,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x450: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 577,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "bc617a91bcafbc368d77f5bb6350557b37d3c002abb8bee470fe0714fe0b3edf"
+    },
+    {
+      "index": 579,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x450: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 580,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x44c: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 581,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "d2198e24043d732424570501e0e18c6e00ce1b0234166259e4725e19bba6d8ca"
+    },
+    {
+      "index": 582,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x22c: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 583,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "de68541e1cfeb82f078b089ec328d36d84ac9cedd6435243d1aab0bf11bbb8f5"
+    },
+    {
+      "index": 587,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x230: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 588,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "b4f5c1db8664518e9d9dd7a54074330edc3111c782ca4a56f93b31aa061589f9"
+    },
+    {
+      "index": 589,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x450: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 591,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "b36cb6b7df5847e88f128fe07cae83abaf9c981194a8ceffb8940673a44253c9"
+    },
+    {
+      "index": 592,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x230: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 595,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "0cb04ec1ab3dcd937cc3044e336dd99555027f370f01d52a03e3079a8600b56b"
+    },
+    {
+      "index": 596,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "44d586db1ac0bdac6f6a462348b387812f6fe951ec1dcbbd5240efc60265628c"
+    },
+    {
+      "index": 597,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "8e5aca25c9fac5def5b91721e76beb01c50c5452081d222eec1ec7da557ce3b8"
+    },
+    {
+      "index": 600,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x230: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 601,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x450: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 604,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "c57d7cdac43d905eaf99f59a63ff236465c1feca146dc82c9c8253075fc92fb5"
+    },
+    {
+      "index": 606,
+      "name": "ReflectionCompactTracesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "wave reduction at 0x230: unsupported reduction op v_add_f32"
+    },
+    {
+      "index": 679,
+      "name": "GenerateProbeTraceTilesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x168"
+    },
+    {
+      "index": 681,
+      "name": "GenerateProbeTraceTilesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x8b0"
+    },
+    {
+      "index": 686,
+      "name": "SortProbeTraceTilesCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "e0571ea49813a29c04465c39939ddf704678ec1589abeed89183b10a1e8c3966"
+    },
+    {
+      "index": 741,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "6aa8a4802b490b02458693ee0fb8531231386a1fcbc68eec437795afa1b99462"
+    },
+    {
+      "index": 744,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4ec"
+    },
+    {
+      "index": 745,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x490"
+    },
+    {
+      "index": 752,
+      "name": "MarkValid_PrepareCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x6c4"
+    },
+    {
+      "index": 753,
+      "name": "MarkValid_PrepareCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "9ffce1cab25e651f867442456b3d1abd1025e9039fc83400b69091b018bcdab2"
+    },
+    {
+      "index": 977,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x414"
+    },
+    {
+      "index": 978,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4cc"
+    },
+    {
+      "index": 979,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x174"
+    },
+    {
+      "index": 980,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x229c"
+    },
+    {
+      "index": 981,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4cc"
+    },
+    {
+      "index": 982,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x174"
+    },
+    {
+      "index": 983,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0xb50"
+    },
+    {
+      "index": 984,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x47c"
+    },
+    {
+      "index": 985,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x47c"
+    },
+    {
+      "index": 986,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4cc"
+    },
+    {
+      "index": 987,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0xb50"
+    },
+    {
+      "index": 988,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x22f8"
+    },
+    {
+      "index": 989,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x22f8"
+    },
+    {
+      "index": 990,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x1c0"
+    },
+    {
+      "index": 991,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4d8"
+    },
+    {
+      "index": 992,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x47c"
+    },
+    {
+      "index": 993,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x414"
+    },
+    {
+      "index": 994,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x47c"
+    },
+    {
+      "index": 995,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x47c"
+    },
+    {
+      "index": 996,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x1c0"
+    },
+    {
+      "index": 997,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x229c"
+    },
+    {
+      "index": 998,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x414"
+    },
+    {
+      "index": 999,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x47c"
+    },
+    {
+      "index": 1000,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4cc"
+    },
+    {
+      "index": 1001,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0xafc"
+    },
+    {
+      "index": 1002,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x4d8"
+    },
+    {
+      "index": 1003,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0xafc"
+    },
+    {
+      "index": 1004,
+      "name": "MainCS",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "translation_error": "unverified EXEC election at 0x414"
+    },
+    {
+      "index": 1657,
+      "name": "TileMainCS",
+      "stage": "Compute",
+      "format_xy_stores": 2,
+      "translation_error": "unverified EXEC election at 0x3d8"
+    },
+    {
+      "index": 2140,
+      "name": "SetupVisBufferShadingCS",
+      "stage": "Compute",
+      "format_xy_stores": 3,
+      "translation_error": "typed-buffer MUBUF with offset addressing unsupported [buffer_store_format_x @ 0x70]"
+    },
+    {
+      "index": 2221,
+      "name": "DistortionSTMapProcessorMainCS",
+      "stage": "Compute",
+      "format_xy_stores": 8,
+      "profile": "cs_6_0",
+      "dxil_sha256": "f72be73e642d0bd51b7a64c9bc20d6dbabf49b128bdf4dfb67b41d81a484407d"
+    },
+    {
+      "index": 2753,
+      "name": "GenerateParticleSortKeys",
+      "stage": "Compute",
+      "format_xy_stores": 1,
+      "profile": "cs_6_0",
+      "dxil_sha256": "8eca2ce48a8503d9474a700c270d7a79a3c078ac6db9a32e4ae4d4f24d71bab6"
+    }
+  ],
+  "saved_retail_shader_dumps": [
+    {
+      "file": "1be6d7f0a5efda73.dxbc",
+      "name": "MainClusterCullingCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "5520f1a5a8969275.dxbc",
+      "name": "MainPerBlockPreFixSumCS",
+      "format_xy_stores": [
+        "0x0154",
+        "0x0174"
+      ]
+    },
+    {
+      "file": "9bfcd5e4cea86fb4.dxbc",
+      "name": "InstanceCullBuildInstanceIdBufferCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "9f41e8a1d63f0870.dxbc",
+      "name": "MainCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "bcf519a155724e05.dxbc",
+      "name": "PackFreePages",
+      "format_xy_stores": []
+    },
+    {
+      "file": "cb07140b1ec595b9.dxbc",
+      "name": "MainCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "d8d1d5c254cb81c3.dxbc",
+      "name": "LightGridInjectionCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "e984c98c08eb8064.dxbc",
+      "name": "BuildCardsUpdateListCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "f86e702d691e9da6.dxbc",
+      "name": "SetupIndirectCS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "inflight_639e4ace3a0ace89.dxbc",
+      "name": "EmitSceneDepthStencilPS",
+      "format_xy_stores": []
+    },
+    {
+      "file": "inflight_7e7b5fa4bacf2f26.dxbc",
+      "name": "DeferredLightPixelMain",
+      "format_xy_stores": []
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "library": "xgameruntime.dll",
+  "architecture": "x86_64",
+  "host": "Linux",
+  "implementation": "runtime/xgameruntime",
+  "guest": "runtime/xgameruntime/guest.cpp",
+  "scope": "Runtime initialization, threading interface and the task queue operations exercised by the startup control. Unsupported runtime classes return E_NOINTERFACE.",
+  "abi": "evidence/matrix-awakens/runtime-wrappers.csv",
+  "interface": "073b7dcb-1fcf-4030-94be-e3c9eb623428",
+  "exports": {
+    "InitializeApiImpl": 1,
+    "InitializeApiImplEx": 2,
+    "QueryApiImpl": 3,
+    "UninitializeApiImpl": 4,
+    "XErrorReport": 5
+  },
+  "checks": [
+    "Initialize twice, release once, request the known interface and reject unknown class and interface IDs.",
+    "Duplicate a manual queue handle and close the original. Submit zero-delay work and delayed completion. Terminate, dispatch canceled work, dispatch termination, close and reject the stale handle.",
+    "Create a threadpool work and manual completion queue. Asynchronously terminate without a callback and verify an infinite-timeout completion dispatch returns.",
+    "Dispatch work through threadpool, serialized threadpool and immediate modes. Obtain and close a duplicate of the default process queue."
+  ],
+  "limitations": [
+    "This control covers one runtime interface. User, account, platform storage, package and other service classes are outside its scope.",
+    "A console-side successful-path control for these internal entry points is outstanding."
+  ],
+  "reproduce": "python build.py xgameruntime, then run build/xgameruntime/runtime-control.exe result.txt with the selected host.",
+  "runs": [
+    {
+      "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+      "dll_sha256": "5a83cb0998cf99be48a4f2cfbfd39aa55deb7725b3b3245f599b42f8aca7f61b",
+      "guest_sha256": "805fb4a17580858e601718fe29daffb0c1c03049eb29e43d975f9f2ab68a27eb",
+      "receipt": "xgameruntime PASS init=balanced interfaces=checked manual=ordered termination=canceled automatic=3 stale=rejected",
+      "exit": 0
+    },
+    {
+      "provider": "1792432585 GE-Proton11-11",
+      "dll_sha256": "5a83cb0998cf99be48a4f2cfbfd39aa55deb7725b3b3245f599b42f8aca7f61b",
+      "guest_sha256": "805fb4a17580858e601718fe29daffb0c1c03049eb29e43d975f9f2ab68a27eb",
+      "receipt": "xgameruntime PASS init=balanced interfaces=checked manual=ordered termination=canceled automatic=3 stale=rejected",
+      "exit": 0
+    }
+  ]
+}

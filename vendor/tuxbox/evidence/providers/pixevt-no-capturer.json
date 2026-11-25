@@ -1,0 +1,46 @@
+{
+  "scope": "No PIX capture backend: capture state, unavailable begin/end operations, ordinal lookups and optional TuxBox counter log. No actual PIX capture or backend registration is implemented.",
+  "reference_sha256": "a4831fb50f9c5d36bc46753e481b0cd39be6ccc0d0f209dad33f3d13726a6321",
+  "provider_sha256": "1506f13ed235d235119a6dd96b791c2b8f2699771f1ec64a72bcbfdd094fd768",
+  "guest_sha256": "1200322f0c28685e48374d74fc201a724f41a663dfa7526419a10bf21ea4b401",
+  "xmem_sha256": "43235560fb9a31b00066b55db2117133fe820eee18910c6957cc7dfb08289c19",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "runs": {
+    "reference": {
+      "results": {
+        "no_capture": "1",
+        "legacy": "E_NOTIMPL",
+        "begin2": "E_UNEXPECTED",
+        "end": "E_UNEXPECTED",
+        "flags": "4",
+        "guards": "4",
+        "counters": "2"
+      },
+      "counter_trace_found": false
+    },
+    "provider": {
+      "results": {
+        "no_capture": "1",
+        "legacy": "E_NOTIMPL",
+        "begin2": "E_UNEXPECTED",
+        "end": "E_UNEXPECTED",
+        "flags": "4",
+        "guards": "4",
+        "counters": "2"
+      },
+      "counter_trace_found": false
+    },
+    "provider_trace": {
+      "results": {
+        "no_capture": "1",
+        "legacy": "E_NOTIMPL",
+        "begin2": "E_UNEXPECTED",
+        "end": "E_UNEXPECTED",
+        "flags": "4",
+        "guards": "4",
+        "counters": "2"
+      },
+      "counter_trace_found": true
+    }
+  }
+}

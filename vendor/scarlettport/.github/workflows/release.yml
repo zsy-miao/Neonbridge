@@ -1,0 +1,110 @@
+name: Release
+
+# On a tag v*: build the launcher and the VIctory-based runtime, assemble the ZIP
+# (ScarlettPort.exe beside a runtime\ folder), write SHA-256 checksums and publish a release.
+# No binaries are committed to the repository.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  AGILITY_VERSION: 1.614.1
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            launcher
+            runtime/victory
+
+      - name: Build the launcher
+        working-directory: launcher
+        run: |
+          cargo build --release --locked
+          cargo test --release --locked
+
+      # runtime/victory/rust-toolchain.toml pins its toolchain; rustup installs it on first use.
+      - name: Build the VIctory-based runtime
+        working-directory: runtime/victory
+        run: cargo rustc --release -p victory --bin victory --features diagnostics --locked -- -C link-arg=/EXPORT:D3D12SDKVersion,DATA -C link-arg=/EXPORT:D3D12SDKPath,DATA
+
+      - name: Fetch the D3D12 Agility SDK (Microsoft, NuGet)
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'agility'
+          New-Item -ItemType Directory -Force $tmp | Out-Null
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/$env:AGILITY_VERSION" -OutFile "$tmp\agility.zip"
+          Expand-Archive "$tmp\agility.zip" -DestinationPath $tmp -Force
+          "AGILITY_BIN=$tmp\build\native\bin\x64" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Assemble the ZIP and checksums
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $root = Join-Path $env:RUNNER_TEMP "ScarlettPort-$tag"
+          $rt = Join-Path $root 'runtime'
+          New-Item -ItemType Directory -Force (Join-Path $rt 'D3D12') | Out-Null
+          Copy-Item launcher\target\release\ScarlettPort.exe $root
+          Copy-Item runtime\victory\target\release\victory.exe (Join-Path $rt 'ScarlettPort-Runtime.exe')
+          Copy-Item "$env:AGILITY_BIN\D3D12Core.dll" (Join-Path $rt 'D3D12')
+          Copy-Item "$env:AGILITY_BIN\d3d12SDKLayers.dll" (Join-Path $rt 'D3D12')
+          Copy-Item LICENSE.md $root
+          Copy-Item runtime\victory\LICENSE (Join-Path $rt 'LICENSE-victory.txt')
+          @"
+          ScarlettPort $tag
+
+          Keep ScarlettPort.exe and the runtime folder side by side, then run ScarlettPort.exe.
+          You need your own dump of your own legally obtained copy; no game files are included.
+          Source and instructions: https://github.com/${{ github.repository }}
+          "@ | Set-Content (Join-Path $root 'README.txt')
+          $files = Get-ChildItem $root -Recurse -File | Sort-Object FullName
+          $sums = $files | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.FullName.Substring($root.Length + 1).Replace('\', '/') }
+          $sums | Set-Content (Join-Path $root 'SHA256SUMS.txt')
+          $zip = "ScarlettPort-$tag-win64.zip"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip
+          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$zipHash  $zip" | Set-Content SHA256SUMS.txt
+          $sums | Add-Content SHA256SUMS.txt
+          $exeHash = (Get-FileHash (Join-Path $root 'ScarlettPort.exe') -Algorithm SHA256).Hash.ToLower()
+          $vicHash = (Get-FileHash (Join-Path $rt 'ScarlettPort-Runtime.exe') -Algorithm SHA256).Hash.ToLower()
+          @"
+          One ZIP: ``ScarlettPort.exe`` (the launcher) and a ``runtime\`` folder beside it holding ``ScarlettPort-Runtime.exe`` (the World engine, VIctory-based) and the Microsoft D3D12 Agility SDK DLLs. Extract the whole ZIP and keep the two side by side. Nothing is unpacked or installed at run time; an update downloads only when you click it (Settings, Options), is checked against SHA256SUMS.txt and is used from the next start. You need your own dump of your own legally obtained copy; no game files are included.
+
+          Built from ``${{ github.sha }}`` by the [Release workflow](https://github.com/${{ github.repository }}/actions/workflows/release.yml).
+
+          ### Shader build
+          The launcher builds the shader cache with the World engine (``victory warm``, about 3 minutes on a 12-thread CPU, then ``victory precompile-graphics``, about 10 minutes more), shown phase by phase with the current step and its elapsed time, and resumable. See the README FAQ if a build looks stuck.
+
+          ### Verify the download
+          These files are **not code-signed**, so Windows SmartScreen may warn on first run ("More info", then "Run anyway"). Compare the SHA-256 before running:
+
+          | File | SHA-256 |
+          |---|---|
+          | ``$zip`` | ``$zipHash`` |
+          | ``ScarlettPort.exe`` | ``$exeHash`` |
+          | ``runtime/ScarlettPort-Runtime.exe`` | ``$vicHash`` |
+
+          ``SHA256SUMS.txt`` lists every file. In PowerShell: ``Get-FileHash .\$zip -Algorithm SHA256``.
+
+          ### If your antivirus flags it
+          A new unsigned build can be flagged by heuristics. Please report it as a false positive to Microsoft at https://www.microsoft.com/en-us/wdsi/filesubmission (choose "Incorrectly detected as malware/malicious"), and open an issue with the detection name so we can track it.
+          "@ | Set-Content notes.md
+          "ZIP=$zip" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: gh release create "${{ github.ref_name }}" "$env:ZIP" SHA256SUMS.txt --title "ScarlettPort ${{ github.ref_name }}" --notes-file notes.md --prerelease

@@ -1,0 +1,114 @@
+{
+  "scope": "Scarlett XG process state and locking, hardware profiles, packed textures, color and depth/stencil layouts, metadata, element addressing and CPU transfers.",
+  "guest_source": "runtime/xg/library_control.cpp",
+  "guest_sha256": "0c09b99e031a71f4b4af1bf394f6eb5a3356aff02c0acb2bbc4f8e961be3fd63",
+  "reference_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "provider_sha256": "69854ff3fe42282ccafed108f8d44dc219179b0c7e8e3fa50f32716f437b2f1e",
+  "xmem_sha256": "1151f3569939eada5e6a20b967495d4ae2d1706cf5ab1120a418af1dd67b1e8b",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "depth_formats": 129,
+  "depth_flag_combinations": 4,
+  "depth_selections": 516,
+  "packed_descriptor_computers": 375,
+  "layout_bytes_each": 6976,
+  "layout_and_offset_receipt_bytes": 19829683,
+  "receipt_sha256": "f6d6ca1f299e7f04d174ac47dd96a2658c9f98f0f3596d55230b0ac1c2be1a7c",
+  "checks": [
+    "Library first and repeated initialize/terminate, implicit initialization by factory and hardware selection",
+    "External recursive exclusive lock blocks another thread inside the packed-descriptor factory until final release, including release after disabling future entry",
+    "Packed full-resource SRVs for linear 1D, 2D, 3D and arrays, 4 KiB 2D, 3D, and 64 KiB single-mip 2D and arrays across five element sizes",
+    "Version 3, version 4, then switch back to 3. Full layout bytes and sampled element addresses match both hardware profiles.",
+    "Texture-computer slots 3, 4 and 5 return byte size, alignment and mip offsets. Slots 8 and 9 copy pitched array/volume subresources in both directions. Complete tiled buffers and untouched row and slice padding matched for every covered mip.",
+    "D32/S8 with and without HTILE: whole layouts, allocation size/alignment, plane offsets and every in-bounds address in all depth, stencil and HTILE planes; pitched transfers matched both ways for every data plane on 16 surfaces.",
+    "Slot 11 returns the eight original words of packed images and reproduces the hardware descriptor for 880 typed 1D, 2D and 3D SRV, UAV and render-target images. Checks include format conversion for typeless targets, BC channel mapping, CMASK, depth/stencil descriptors and untouched output on absent planes.",
+    "Slot 7 resolves linear allocation offsets to plane, mip and element coordinates. 26,260 probes matched both HRESULT and optional output values across 404 computers, including negative results on tiled storage, HTILE metadata, pitch padding, array and volume bounds.",
+    "Slots 10 and 12 query 64 KiB tiling and sparse layout status. The 1,271 computers matched packed mip counts, tile shape, total tiles, per-subresource tile offsets, output capacities and null outputs. All 13 native texture computer vtable slots now have implementations.",
+    "Single-mip 64 KiB display and sparse swizzles 10, 17 and 18 on both hardware versions, including array slices, sparse flags, bank selection and tiled resource queries. Packed descriptors and typed factories have distinct sparse status for swizzle 10.",
+    "64 KiB color mip tails and array slices on both hardware versions. Full 11-mip chains at 512 x 1024, five storage widths and 1 or 3 slices matched native layouts, per-subresource tile maps and 14,080 sampled interior or tail addresses.",
+    "Version 3 and 4 color metadata allocation and addressing, including CMASK and DCC planes, five storage widths, tiled metadata, slice bank selection and both byte/bit address outputs. 594,080 address checks on 20 rectangular eight-slice images.",
+    "Construct map streaming: 4 KiB color textures with UAV and metadata flags, including the 4096 x 4096 BC7_TYPELESS resource with flags 0x300000 that failed after frame one. All 144 resource layouts and 11,520 element addresses match the packaged DLL.",
+    "Large uncompressed targets: complete layouts and 800 sampled byte/bit addresses per plane on 1,140 combinations (57 formats, ten render/UAV/metadata flag combinations, 4096 x 4096 or 16384 x 8193). Two additional R16_UINT and R8_UNORM 2560 x 1440 DCC targets verify metadata plane sizes and the horizontal address bit at x=1024.",
+    "Single-sample D16, D32, D24/S8 and D32/S8, each typed and typeless: all 240 combinations of eight formats, three resource flag sets, five widths from 160 to 16384 and two heights (90 and 1440). Complete layouts and 800 sampled addresses per plane matched the packaged DLL.",
+    "384 multisample depth targets match packaged XG on full layouts, HTILE and Z-order plane offsets, packed shader-resource views and individual sample queries. Pitched copies select each sample at the 17 by 13 control size."
+  ],
+  "remaining": [
+    "Packed views of subranges, multisample images, additional swizzle and sparse mip-chain combinations need independent controls.",
+    "Depth/stencil coverage is single-sample 2D with one mip and one slice on the tested Scarlett profiles. Additional array, multisample and mipmapped depth resources are outside this receipt."
+  ],
+  "copy_methods": {
+    "slot_8": "into(computer, destination_resource, plane, subresource, linear_source, row_pitch, slice_pitch)",
+    "slot_9": "from(computer, linear_destination, plane, subresource, sample, source_resource, row_pitch, slice_pitch)"
+  },
+  "depth_stencil": {
+    "format": 19,
+    "flags": [
+      "0x01000006",
+      "0x81300002"
+    ],
+    "widths": [
+      1,
+      64,
+      257,
+      1024
+    ],
+    "heights": [
+      127,
+      1024
+    ],
+    "hardware_version": 3,
+    "surfaces": 16,
+    "plane_addresses": 7746230,
+    "data_plane_uploads_and_readbacks": 32
+  },
+  "typed_image_computers": 880,
+  "map_streaming_descriptors": 144,
+  "large_color_targets": 1142,
+  "large_depth_targets": 240,
+  "multisample_depth": {
+    "surfaces": 384,
+    "formats": [
+      19,
+      20,
+      39,
+      40,
+      44,
+      45,
+      53,
+      55
+    ],
+    "samples": [
+      2,
+      4,
+      8
+    ],
+    "flags": [
+      "0x01000002",
+      "0x01000006",
+      "0x0100000a",
+      "0x81300002"
+    ],
+    "width_height_slices": [
+      [
+        17,
+        13,
+        1
+      ],
+      [
+        257,
+        144,
+        6
+      ],
+      [
+        2976,
+        1676,
+        1
+      ],
+      [
+        3840,
+        2160,
+        1
+      ]
+    ],
+    "sampled_addresses_per_plane": 800
+  }
+}

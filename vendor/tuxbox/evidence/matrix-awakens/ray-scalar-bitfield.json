@@ -1,0 +1,19 @@
+{
+  "scope": "S_BFE_U32 in the Xbox ray-continuation translator. Synthetic values checked against one native gfx1036 device. The scalar and vector instructions encode field width differently.",
+  "isa_reference": "AMD RDNA 2 ISA guide, SOP2 instruction 39",
+  "reference_implementation": "https://github.com/ivall/xcl/blob/dd713e34f5b157430a8920e014bdf66b3c43d1a9/crates/xcl/src/gpu/recomp/emit.rs#L4544",
+  "cases": "For i from 0 to 4095, input = 0xc001d00d XOR ((i / 4) * 0x9e3779b9) in uint32 arithmetic, control = ((i / 32) << 16) | (i % 32). The native probe executed s_bfe_u32, then s_cselect_b32 on SCC. Each result row contains input, control, output and SCC as little-endian uint32.",
+  "distinct_offset_width_pairs": 4096,
+  "previous_wrong_values": 1480,
+  "native_rows_sha256": "24b3e745f504880aa73786e0d60785ead162c82c4e41dc4df6fb089023f306c3",
+  "translated_check": "The HLSL control used the generated bit-field helper, emitted result and condition as UAV output and compared the readback against the native rows. The GPU harness repeated the same input set 16 times.",
+  "dxil_sha256": "077129d37747f29f48236faeea9b74b7473933042c8a2693f3af189583a68f0c",
+  "gpu_readback": {
+    "1002:13c0": {
+      "mismatched_words": 0
+    },
+    "10de:2705": {
+      "mismatched_words": 0
+    }
+  }
+}

@@ -1,0 +1,117 @@
+--- a/crates/compat/d3d12_xs/src/device_wrap.rs
++++ b/crates/compat/d3d12_xs/src/device_wrap.rs
+@@ -694,6 +694,111 @@
+     }
+ }
+ 
++/// Frosty's graphics stream contains desktop-compatible state followed by an
++/// Xbox stencil extension. The retail builder copies both masks and enable bits
++/// from DEPTH_STENCIL1 into this extension. Preserve the original depth state
++/// and remove the redundant copy only when these fields agree.
++#[repr(C)]
++struct PipelineStream {
++    size: usize,
++    data: *const u8,
++}
++
++/// # Safety
++/// The guest supplies a live device, a readable stream and its referenced shader
++/// bytecode, a valid requested IID, and writable COM output storage.
++unsafe extern "system" fn create_pipeline_stream(
++    this: *mut DeviceWrapper, input: *const PipelineStream, iid: *const Guid, out: *mut *mut c_void,
++) -> i32 {
++    if out.is_null() { return E_POINTER; }
++    // SAFETY: COM supplies writable return storage even on failure.
++    unsafe { out.write(core::ptr::null_mut()) };
++    if input.is_null() || iid.is_null() { return E_POINTER; }
++    // SAFETY: the caller supplies a valid descriptor for the duration of the call.
++    let input = unsafe { &*input };
++    const PC_SIZE: usize = 0x2a8;
++    if input.data.is_null() { return E_POINTER; }
++    if input.size != 0x2c8 {
++        record("d3d12_xs", "CreatePipelineState", &format!("unsupported stream size={:#x}", input.size));
++        return compat_common::E_NOTIMPL;
++    }
++    // SAFETY: the supplied stream has exactly the expected number of readable bytes.
++    let source = unsafe { std::slice::from_raw_parts(input.data, input.size) };
++    let u32_at = |at: usize| u32::from_le_bytes(source[at..at + 4].try_into().unwrap());
++    const SUBOBJECTS: &[(usize, u32)] = &[
++        (0,20), (8,0), (0x18,12), (0x30,13), (0x38,14), (0x40,1), (0x58,5),
++        (0x70,2), (0x88,8), (0x1d8,21), (0x218,16), (0x220,10), (0x250,15),
++        (0x278,17), (0x288,9), (0x290,19), (0x2a8,26),
++    ];
++    let stencil = u8::from(u32_at(0x1e8) != 0);
++    if SUBOBJECTS.iter().any(|&(at, kind)| u32_at(at) != kind)
++        || source[0x2b0..0x2bc].iter().any(|&v| v != 0)
++        || source[0x2bc..0x2be] != source[0x1ec..0x1ee]
++        || source[0x2be..0x2c0] != [0, 0] || source[0x2c0..0x2c2] != [stencil, stencil] {
++        record("d3d12_xs", "CreatePipelineState", "unsupported subobject layout or stencil extension");
++        return compat_common::E_NOTIMPL;
++    }
++    // D3D12 stream subobjects require pointer alignment even when the first field is a DWORD.
++    #[repr(align(8))]
++    struct AlignedStream([u8; PC_SIZE]);
++    let mut normalized = AlignedStream([0; PC_SIZE]);
++    normalized.0.copy_from_slice(&source[..PC_SIZE]);
++    let word = |at: usize| usize::from_le_bytes(source[at..at + 8].try_into().unwrap());
++    let producer = if word(0x68) != 0 { 0x60 } else { 0x48 };
++    let mut keep = Vec::with_capacity(3);
++    let mut pixel = None;
++    for (stage, at) in [("PS", 0x78), ("VS", 0x48), ("GS", 0x60)] {
++        let pointer = word(at) as *const u8;
++        let length = word(at + 8);
++        if length == 0 { continue; }
++        if pointer.is_null() || length > isize::MAX as usize { return E_POINTER; }
++        // SAFETY: the guest keeps the referenced bytecode alive throughout this call.
++        let translated = unsafe {
++            match pixel.as_ref().filter(|_| at == producer) {
++                Some(ps) => crate::shader_xlat::translate_producer(pointer, length, ps),
++                None => crate::shader_xlat::translate(pointer, length),
++            }
++        };
++        let shader = match translated {
++            Ok(shader) => shader,
++            Err(reason) => {
++                record("d3d12_xs", "CreatePipelineState", &format!("{stage} translation failed: {reason}"));
++                return 0x80004005u32 as i32;
++            }
++        };
++        if stage == "PS" { pixel = Some(shader.clone()); }
++        normalized.0[at..at + 8].copy_from_slice(&(shader.code.as_ptr() as usize).to_le_bytes());
++        normalized.0[at + 8..at + 16].copy_from_slice(&shader.code.len().to_le_bytes());
++        keep.push(shader.code);
++    }
++    // Clear the Xbox cached PSO hint. Its compiled native code targets a different driver.
++    normalized.0[0x298..0x2a8].fill(0);
++    let stream = PipelineStream { size: PC_SIZE, data: normalized.0.as_ptr() };
++    // SAFETY: DeviceWrapper owns its native ID3D12Device for the duration of the COM call.
++    let real = unsafe { (*this).real };
++    let query: unsafe extern "system" fn(*mut c_void, &Guid, *mut *mut c_void) -> i32 =
++        unsafe { core::mem::transmute(*real_vtbl(real)) };
++    let mut device2 = core::ptr::null_mut();
++    // SAFETY: query receives the standard desktop ID3D12Device2 IID and output storage.
++    let hr = unsafe { query(real, &DEVICE_IIDS[2], &mut device2) };
++    if hr < 0 { return hr; }
++    if device2.is_null() { return E_NOINTERFACE; }
++    // SAFETY: desktop ID3D12Device2's slot 47 is CreatePipelineState, slot 2 is Release.
++    // The normalized stream and every replacement shader are live until create returns.
++    let hr = unsafe {
++        let methods = real_vtbl(device2);
++        let create: unsafe extern "system" fn(*mut c_void, &PipelineStream, *const Guid, *mut *mut c_void) -> i32 =
++            core::mem::transmute(*methods.add(47));
++        let release: unsafe extern "system" fn(*mut c_void) -> u32 = core::mem::transmute(*methods.add(2));
++        let hr = create(device2, &stream, iid, out);
++        release(device2);
++        hr
++    };
++    record("d3d12_xs", "CreatePipelineState", &format!("stages={} numRT={} topo={} desktop hr={hr:#010x}",
++           keep.len(), u32_at(0x274), u32_at(0x3c)));
++    hr
++}
++
+ // Forwarding thunk: this(rcx) -> this->real; jmp real->vtbl[slot].
+ macro_rules! fwd {
+     ($name:ident, $slot:expr) => {
+@@ -1439,1 +1549,2 @@
++        v[86] = create_pipeline_stream as *const () as usize;
+         v[73] = create_command_list_x as usize;  // Xbox command-list create

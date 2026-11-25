@@ -1,0 +1,32 @@
+{
+  "material": "Frosty material/2035",
+  "source_sha256": "67403bca51bbb2049299b2d1099d9743f83763db682588fa3807029afa93eacc",
+  "db_shader_control": "0x1410",
+  "host": "stock Proton Experimental 1793301796 experimental-11.0-20261027b-x86_64",
+  "method": "Run the translated material pixel shader on a 16 x 16 triangle at Z=0.5 against EQUAL depth. Clear left half to 0.5, right half to 0.875. Bind zero constants, null SRVs and null material UAV, with a separate per-pixel UAV witness at the entry point. Both versions use the same vertex shader, bindings, and material computation. Compare every witness dword with CPU expectations and all five float MRTs and depth before/after.",
+  "old_dxil_with_witness": "e8902d1bf44bf0deb6b7b4d495efbfdf3fbcb8a07197f58da3799d0479f76470",
+  "new_dxil_with_witness": "c4d59e1748af3908fb89f8f00538b47ba85c22b3fef1319236d53e498d2355d7",
+  "adapters": {
+    "AMD": {
+      "pci_id": "1002:13c0",
+      "visible_writes_before": 128,
+      "occluded_writes_before": 128,
+      "visible_writes_after": 128,
+      "occluded_writes_after": 0,
+      "color_depth_identical": true
+    },
+    "NVIDIA": {
+      "pci_id": "10de:2705",
+      "visible_writes_before": 128,
+      "occluded_writes_before": 128,
+      "visible_writes_after": 128,
+      "occluded_writes_after": 0,
+      "color_depth_identical": true
+    }
+  },
+  "observed_city_material_source_hashes_with_matching_control": {
+    "0x1410": 98,
+    "0x1450": 5
+  },
+  "scope": "The control measures side effects in occluded fragments. City image and frame-time effects require retail measurements."
+}

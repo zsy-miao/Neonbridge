@@ -1,0 +1,292 @@
+{
+  "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "shader_count": 4576,
+  "device_contract": {
+    "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+    "method": "Device8->DeserializeStateObjectX",
+    "device_iid": "728f1fa2-ea11-4a9f-9b52-9b42a484d5c9",
+    "title_caller": "FD3D12RayTracingPipelineCache::GetOrCompileShader",
+    "slot": 115,
+    "call_rva": "0x57aa048",
+    "output_iid": "47016943-fca8-4594-93ea-af258b55346d",
+    "inspection_function": "FD3D12Device::GetRayTracingPipelineInfo",
+    "properties_iid": "de5fa827-9bf9-4f26-89ff-d7f56fde3860",
+    "properties_slot": 7,
+    "properties_selectors": [
+      0,
+      1
+    ],
+    "state_object_inspection_slot": 8
+  },
+  "counts_by_frequency": {
+    "0": 199,
+    "1": 192,
+    "3": 1369,
+    "4": 3,
+    "5": 2508,
+    "6": 289,
+    "7": 6,
+    "8": 10
+  },
+  "xshader_sha256": "601e962d376c5cbf5946e018d7133af82a193da57d9af491d26aba8d5ae5e215",
+  "dxc_sha256": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+  "samples": [
+    {
+      "index": 0,
+      "frequency": 0,
+      "stored_bytes": 1046,
+      "decoded_bytes": 2587,
+      "decoded_sha256": "b516fabd7acaa3dbb0cf1cd360038d8fd1f842ac3d49bf8b7148dd093675854d",
+      "translation": {
+        "instructions": 17,
+        "isa_bytes": 112,
+        "profile": "vs_6_0",
+        "dxil_bytes": 2852,
+        "dxil_sha256": "715ff673be2fac8c3906e58eb5f49f33dffc0d522082caec832aa033037926b1"
+      }
+    },
+    {
+      "index": 1,
+      "frequency": 5,
+      "stored_bytes": 3318,
+      "decoded_bytes": 3886,
+      "decoded_sha256": "47a4bd7cb4aeb012e04f5b204f4b1c594dcfb16f620f9979a319e5323ba92013",
+      "translation": {
+        "instructions": 722,
+        "isa_bytes": 3932,
+        "profile": "cs_6_0",
+        "dxil_bytes": 24952,
+        "dxil_sha256": "91b185b60325b497085b1f87ffdf6b106fc7c6d7019c4d462d7cf7e1068c7612"
+      }
+    },
+    {
+      "index": 1280,
+      "frequency": 6,
+      "stored_bytes": 6781,
+      "decoded_bytes": 13955,
+      "decoded_sha256": "b3b4a485890147ae2ad0a9d3e165f242c90a620b18a69285a7def5297ba06e62",
+      "export": "OcclusionMainRG_d7cd43b4",
+      "container": "SPTR",
+      "device_input": {
+        "version": 2,
+        "offset_in_decoded_entry": 65,
+        "bytes": 13876,
+        "fnv1a64": "57e7a82f68fec501",
+        "sha256": "e2dfc27ed0f4469ceab36a4ac3fe4b680b1bff1957b6e2aae60556f52725ba05",
+        "programs": [
+          {
+            "offset": 340,
+            "bytes": 3432,
+            "sha256": "87efa03caa5960dbad833e490493f24ecd73bf2b2ad4e0c341e18e39aee41914",
+            "gfx1030_opcodes_observed": [
+              "image_bvh64_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 4212,
+            "bytes": 1896,
+            "sha256": "c83b4a1ea26398624e2ec85ddb6169005f00e6d00feb114241d5a62b716b571b",
+            "gfx1030_opcodes_observed": [
+              "image_bvh64_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 6548,
+            "bytes": 4456,
+            "sha256": "2ed586a043e7131ddd370bb5a2f31518bebc59248f71828909e61b0d706736a3",
+            "gfx1030_opcodes_observed": [
+              "image_bvh_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 11732,
+            "bytes": 1896,
+            "sha256": "e1f86e69a9f8cd8cd94dd784ed8dab44e375b4dae2cc1319488af0167c59d682",
+            "gfx1030_opcodes_observed": [
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          }
+        ]
+      }
+    },
+    {
+      "index": 1282,
+      "frequency": 7,
+      "stored_bytes": 6495,
+      "decoded_bytes": 13391,
+      "decoded_sha256": "3398fc7c2e24e65ec9bed091580ee3f63a2b628123fcb62ac7ef302de808cf5e",
+      "export": "DefaultPayloadMS_1b832205",
+      "container": "SPTR",
+      "device_input": {
+        "version": 2,
+        "offset_in_decoded_entry": 66,
+        "bytes": 13311,
+        "fnv1a64": "00103d20b7578ada",
+        "sha256": "e668787c5574913553c67024c861ed46201447af385c90085e7e5d343250651b",
+        "programs": [
+          {
+            "offset": 340,
+            "bytes": 3432,
+            "sha256": "87efa03caa5960dbad833e490493f24ecd73bf2b2ad4e0c341e18e39aee41914",
+            "gfx1030_opcodes_observed": [
+              "image_bvh64_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 4212,
+            "bytes": 1896,
+            "sha256": "c83b4a1ea26398624e2ec85ddb6169005f00e6d00feb114241d5a62b716b571b",
+            "gfx1030_opcodes_observed": [
+              "image_bvh64_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 6548,
+            "bytes": 4456,
+            "sha256": "2ed586a043e7131ddd370bb5a2f31518bebc59248f71828909e61b0d706736a3",
+            "gfx1030_opcodes_observed": [
+              "image_bvh_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 11732,
+            "bytes": 1384,
+            "sha256": "4dafae8f023ff2130cac190aa392c5042da8bc2d16719b1be6a09861a6dcb905",
+            "gfx1030_opcodes_observed": [
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          }
+        ]
+      }
+    },
+    {
+      "index": 1286,
+      "frequency": 6,
+      "stored_bytes": 6827,
+      "decoded_bytes": 13980,
+      "decoded_sha256": "1d026b27885046736123fab6e91c36e64be4187b664ce7104b799e15b400f949",
+      "export": "IntersectionMainRG_d7cd43b4",
+      "container": "SPTR",
+      "device_input": {
+        "version": 2,
+        "offset_in_decoded_entry": 68,
+        "bytes": 13898,
+        "fnv1a64": "20064be53f35b1a9",
+        "sha256": "361ea477ff7b2d5f6c4e5c2b62a8f631cc7fb75849e7ca04ac9db7e1af792551",
+        "programs": [
+          {
+            "offset": 340,
+            "bytes": 3432,
+            "sha256": "87efa03caa5960dbad833e490493f24ecd73bf2b2ad4e0c341e18e39aee41914",
+            "gfx1030_opcodes_observed": [
+              "image_bvh64_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 4212,
+            "bytes": 1896,
+            "sha256": "c83b4a1ea26398624e2ec85ddb6169005f00e6d00feb114241d5a62b716b571b",
+            "gfx1030_opcodes_observed": [
+              "image_bvh64_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 6548,
+            "bytes": 4456,
+            "sha256": "2ed586a043e7131ddd370bb5a2f31518bebc59248f71828909e61b0d706736a3",
+            "gfx1030_opcodes_observed": [
+              "image_bvh_intersect_ray",
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          },
+          {
+            "offset": 11748,
+            "bytes": 1896,
+            "sha256": "24616ec0b0e7504c4ffed45f14d9a844a587cd781103911908d82300fcb53393",
+            "gfx1030_opcodes_observed": [
+              "s_endpgm",
+              "s_setpc_b64",
+              "s_swappc_b64"
+            ],
+            "decoder_warnings": 0
+          }
+        ]
+      }
+    }
+  ],
+  "global_translation": {
+    "scope": "Non-ray global archive entries, deduplicated native containers translated to HLSL",
+    "xscan_sha256": "d3650af9dfae4e2487ce3e8c7ec74b39dc91f54be3a0a6fdfae1e78eca26d815",
+    "containers": 4271,
+    "unique": 4264,
+    "translated": 3413,
+    "failed": 851,
+    "stages": {
+      "CS": {
+        "translated": 1895,
+        "failed": 606
+      },
+      "GS": {
+        "translated": 3,
+        "failed": 0
+      },
+      "MS": {
+        "translated": 0,
+        "failed": 192
+      },
+      "PS": {
+        "translated": 1317,
+        "failed": 52
+      },
+      "VS": {
+        "translated": 198,
+        "failed": 1
+      }
+    }
+  },
+  "retail_call": {
+    "matched_archive_index": 1280,
+    "observed": "DeserializeStateObjectX bytes=13876 fnv1a64=57e7a82f68fec501 prefix=[02, 00, 00, 00, 00, 00, 00, 00] root=true flags=0x0 iid={47016943-fca8-4594-93ea-af258b55346d} E_NOTIMPL"
+  }
+}

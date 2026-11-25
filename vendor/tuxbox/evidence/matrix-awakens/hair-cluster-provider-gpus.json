@@ -1,0 +1,103 @@
+{
+  "scope": "Packaged global 506 hair cluster culling through TuxBox\u2019s D3D12 guest provider and runtime shader compiler. Both GPUs match five CPU-modeled cases, each checking all 420 output words. This checks culling, not end-to-end hair rendering.",
+  "archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+  "entry": 506,
+  "results": {
+    "amd": {
+      "shader": "FHairClusterCullingCS / MainClusterCullingCS",
+      "archive_entry": 506,
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_fnv1a64": "1be6d7f0a5efda73",
+      "cooked_sha256": "7ec661710d5cf782cd2269d90db832fad2d349c6b05970e98bf099dc54bf2d39",
+      "guest_slot": 62,
+      "workgroup": [
+        64,
+        1,
+        1
+      ],
+      "source_isa_instructions": 343,
+      "source_isa_bytes": 1816,
+      "first_election": "0x5d8",
+      "second_election": "0x694",
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)",
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ],
+      "test_inputs": "Sparse clusters across both wave halves, forced and automatic LOD, blended vertex counts and FP16 radius values, view plane excluding cluster 60, partial range, hidden group.",
+      "initial_cluster_count": 2,
+      "initial_draw_vertices": 17,
+      "checked_words_per_case": 420,
+      "readback": {
+        "lod0_matched": "420",
+        "lod0_cluster_count": "8",
+        "lod0_draw_vertices": "753",
+        "blended_matched": "420",
+        "blended_cluster_count": "7",
+        "blended_draw_vertices": "529",
+        "automatic_matched": "420",
+        "automatic_cluster_count": "8",
+        "automatic_draw_vertices": "753",
+        "hidden_matched": "420",
+        "hidden_cluster_count": "2",
+        "hidden_draw_vertices": "17",
+        "frustum_matched": "420",
+        "frustum_cluster_count": "7",
+        "frustum_draw_vertices": "509"
+      },
+      "guest_sha256": "7cb98fe134e800c00cb965030ad01e9745a25211bfbc0f946a05070bef72c237",
+      "provider_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    },
+    "nvidia": {
+      "shader": "FHairClusterCullingCS / MainClusterCullingCS",
+      "archive_entry": 506,
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_fnv1a64": "1be6d7f0a5efda73",
+      "cooked_sha256": "7ec661710d5cf782cd2269d90db832fad2d349c6b05970e98bf099dc54bf2d39",
+      "guest_slot": 62,
+      "workgroup": [
+        64,
+        1,
+        1
+      ],
+      "source_isa_instructions": 343,
+      "source_isa_bytes": 1816,
+      "first_election": "0x5d8",
+      "second_election": "0x694",
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)",
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ],
+      "test_inputs": "Sparse clusters across both wave halves, forced and automatic LOD, blended vertex counts and FP16 radius values, view plane excluding cluster 60, partial range, hidden group.",
+      "initial_cluster_count": 2,
+      "initial_draw_vertices": 17,
+      "checked_words_per_case": 420,
+      "readback": {
+        "lod0_matched": "420",
+        "lod0_cluster_count": "8",
+        "lod0_draw_vertices": "753",
+        "blended_matched": "420",
+        "blended_cluster_count": "7",
+        "blended_draw_vertices": "529",
+        "automatic_matched": "420",
+        "automatic_cluster_count": "8",
+        "automatic_draw_vertices": "753",
+        "hidden_matched": "420",
+        "hidden_cluster_count": "2",
+        "hidden_draw_vertices": "17",
+        "frustum_matched": "420",
+        "frustum_cluster_count": "7",
+        "frustum_draw_vertices": "509"
+      },
+      "guest_sha256": "7cb98fe134e800c00cb965030ad01e9745a25211bfbc0f946a05070bef72c237",
+      "provider_sha256": "611d34e2c28a6309020477980409cab860fbbeb10c6671fd1f708f75e5eb2e8e",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64"
+    }
+  }
+}

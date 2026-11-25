@@ -1,0 +1,63 @@
+{
+  "adapter": "10de:2705",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "dimensions": [
+    16,
+    16
+  ],
+  "cbv_offset": 416,
+  "expected_rgb_quadrants": [
+    "131313",
+    "8f532a",
+    "65acc0",
+    "e0e0e0"
+  ],
+  "scope": "R8 luma and R8G8 chroma with four known quadrant values rendered to BGRA8_SRGB. 256 pixels checked per draw on NVIDIA. Retail uses the translated movie shader pair saved from Frosty. Control uses an independent conversion shader.",
+  "guest_sha256": "f03cf777de2731147e8091f9fddb793a8607e379598ad41855329eb33fae39e8",
+  "pixel_shader_sha256": "8df41838e32644c41702ab36f091b7e8d07b6df500585df909f7391b86256a77",
+  "vertex_shader_sha256": "4d51ef7618d89eb0412357c3ec8338ac66a16a44ca880512e84cf2044961d339",
+  "baseline": {
+    "control": {
+      "matched_pixels": 0,
+      "samples_bgra8": [
+        "ff0000f7",
+        "ff0000f7",
+        "ff0000f7",
+        "ff0000f7"
+      ]
+    },
+    "retail": {
+      "matched_pixels": 0,
+      "samples_bgra8": [
+        "ff0000f7",
+        "ff0000f7",
+        "ff0000f7",
+        "ff0000f7"
+      ]
+    }
+  },
+  "app_local_layer": {
+    "control": {
+      "matched_pixels": 256,
+      "samples_bgra8": [
+        "ff131313",
+        "ff8f532a",
+        "ff65acc0",
+        "ffe0e0e0"
+      ]
+    },
+    "retail": {
+      "matched_pixels": 256,
+      "samples_bgra8": [
+        "ff131313",
+        "ff8f532a",
+        "ff65acc0",
+        "ffe0e0e0"
+      ]
+    }
+  },
+  "layer_sha256": "801a20e75f1eeced9be3e6f05e8f55a9bb21c66114bef86291d90dfab777f325",
+  "vkd3d_disable_extensions": "VK_EXT_descriptor_buffer",
+  "vkd3d_config": "",
+  "shader_cache": "Same per-application cache directory through baseline and fixed runs."
+}

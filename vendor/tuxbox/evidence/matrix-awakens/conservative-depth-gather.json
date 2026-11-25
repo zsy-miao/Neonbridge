@@ -1,0 +1,58 @@
+{
+  "scope": "Explicit integer-mip gathers in two complete packaged compute shaders. The conservative-depth shader also ran with a gradient depth pyramid and a point-clamp sampler.",
+  "programs": [
+    {
+      "entry": 1075,
+      "name": "VirtualSmInvalidateInstancePagesCS",
+      "cooked_sha256": "b3a4bd83ea729e2c64fcae7b109fd159a81a4a174e2dfebad82813a51d301ab7",
+      "dxil_sha256": "9b8331940b923fad53c43931a8bc096006cc8431ff22cd7b3c41c7d02ebc690a",
+      "profile": "cs_6_0",
+      "dxv": "passed"
+    },
+    {
+      "entry": 1293,
+      "name": "GenerateConservativeDepthBufferCS",
+      "cooked_sha256": "5147d9816cf4165d0fd5629d07f01506b56af25453f55b8e90b9b1dcd13599a3",
+      "dxil_sha256": "3597d80bd3d54b8ec860fe52dff9564e17e7f8e64670a0c78cee0c210345fba5",
+      "profile": "cs_6_0",
+      "dxv": "passed"
+    }
+  ],
+  "gpu_control": {
+    "entry": 1293,
+    "input": "8x8 R32_FLOAT pyramid, three uploaded mips. Each texel contains 0.125 + mip/4 + (y * mip_width + x)/256.",
+    "view_extent": [
+      16,
+      16
+    ],
+    "output_extent": [
+      8,
+      8
+    ],
+    "active_extent": [
+      7,
+      6
+    ],
+    "downsample_factors": [
+      1,
+      4,
+      8
+    ],
+    "reference": "CPU tile extent and integer mip selection followed by the minimum depth within the clamped gather footprint. Out-of-bounds output initialized to -1.",
+    "comparisons_per_adapter": 192,
+    "adapters": [
+      {
+        "pci": "1002:13c0",
+        "readback_sha256": "d0d2dfe05c9c398e9b5842e06bb0ae448c4439cf480a96ee5758d7ca22561d92",
+        "matched_active_pixels": 126,
+        "preserved_guard_pixels": 66
+      },
+      {
+        "pci": "10de:2705",
+        "readback_sha256": "02ad74bce3cbc9032fd722e74731f9e1a39ca0d65cc8a700f966de8f75c4d20f",
+        "matched_active_pixels": 126,
+        "preserved_guard_pixels": 66
+      }
+    ]
+  }
+}

@@ -1,0 +1,135 @@
+--- a/crates/tuxbox-xshader/src/hlsl.rs
++++ b/crates/tuxbox-xshader/src/hlsl.rs
+@@ -648,6 +648,50 @@
+     Ok(())
+ }
+ 
++// These instruction sequences elect the lowest active lane to reserve a contiguous
++// range, restore EXEC, broadcast the atomic result and add a per-lane prefix.
++// The two register allocations differ. Match the complete regions before changing
++// a saved EXEC mask from its usual per-invocation predicate into wave-uniform data.
++fn mark_wave_allocations(insns: &mut [Insn]) -> Result<bool, String> {
++    const REGIONS: [&[u32]; 2] = [
++        &[
++        0xd7650007, 0x000100c1, 0xbe8e147e, 0xbe8c047e, 0xd7660007, 0x00020ec1,
++        0xd482000e, 0x00020e0e, 0x7e0e0280, 0xbe8e240e, 0xbf880005, 0xbf800000,
++        0xbe8c100c, 0x7e0e020c, 0xe0c84000, 0x80070700, 0xbefe040e, 0xd7650008,
++        0x0001007e, 0xbf8c3f70, 0x7e180507, 0xd7660007, 0x0002107f, 0x4a0e0e0c
++        ],
++        &[
++        0xd7650007, 0x000100c1, 0xbe83147e, 0xbe8e047e, 0xd7660007, 0x00020ec1,
++        0xd4820012, 0x00020e03, 0x7e0e0280, 0xbe922412, 0xbf880005, 0xbf800000,
++        0xbe83100e, 0x7e0e0203, 0xe0c84000, 0x80070700, 0xbefe0412, 0xd7650008,
++        0x0001007e, 0xbf8c3f70, 0x7e060507, 0xd7660007, 0x0002107f, 0x4a0e0e03
++        ],
++    ];
++    const COUNT: usize = 18;
++    let mut found = false;
++    for i in 0..insns.len() {
++        if insns[i].mnemonic != "s_ff1_i32_b64" || insns[i].src != [Opnd::ExecLo] { continue; }
++        let region = i.checked_sub(1).and_then(|first| insns.get(first..first + COUNT))
++            .ok_or("incomplete wave allocation sequence")?;
++        if !REGIONS.iter().any(|words| region.iter().flat_map(|op| op.raw.iter()).eq(words.iter())) {
++            return Err(format!("unverified EXEC election at {:#x}", insns[i].offset));
++        }
++        let first = region[0].offset;
++        let end = region[COUNT - 1].offset + 4;
++        for branch in insns.iter().filter(|b| b.enc == Enc::Sopp && Emitter::branch_cond(b.op).is_some()) {
++            let target = branch.offset as i64 + 4 + 4 * branch.aux.imm;
++            if !(first..end).contains(&branch.offset) && target > first as i64 && target < end as i64 {
++                return Err("external branch enters wave allocation".into());
++            }
++        }
++        insns[i + 1].mnemonic = "tb_capture_allocation_mask".into();
++        insns[i + 12].mnemonic = "tb_allocation_prefix_lo".into();
++        insns[i + 15].mnemonic = "tb_allocation_prefix_hi".into();
++        found = true;
++    }
++    Ok(found)
++}
++
+ fn compute_group(ex: &ShaderExtract) -> [u32; 3] {
+     if let Some(threads) = ex.psv_threads { return threads; }
+     let [_, x, y, z] = ex.isa_preamble;
+@@ -684,6 +728,7 @@
+     })).then(|| compute_group(ex));
+     lower_local_pc_transfers(&mut insns)?;
+     let material_classify = ps09_classify::prepare(ex, &mut insns);
++    let allocation_wave64 = mark_wave_allocations(&mut insns)?;
+     let required_wave_size = lower_wave_reductions(&mut insns)?;
+     let uses_bpermute = insns.iter().any(|ins| ins.mnemonic == "ds_bpermute_b32");
+     if uses_bpermute && insns.iter().any(|ins| ins.enc == Enc::Sopp && Emitter::branch_cond(ins.op).is_some()) {
+@@ -715,7 +760,31 @@
+         if scan_width.is_some() { return Err("wave scan needs a verified packed root layout".into()); }
+         em.resolve_resources()?;
+     }
+-    let requires_ballot = em.packed.as_ref().is_some_and(|p| !p.ballots.is_empty());
++    if allocation_wave64 {
++        // Both following stores write list data to the same typed view: the light
++        // index and the previous uint head returned by the indexed atomic exchange.
++        // Validate the producer and addresses instead of inferring the element
++        // type from the PSV kind alone.
++        let mut list_slots = BTreeSet::new();
++        for (i, _) in em.insns.iter().enumerate().filter(|(_, i)| i.mnemonic == "tb_allocation_prefix_hi") {
++            let tail = em.insns.get(i + 9..i + 14).ok_or("missing allocated list writes")?;
++            if tail[0].raw != [0xe0c06000, 0x80080801] || tail[1].raw != [0x38140e81]
++                || tail[2].raw != [0xe0102000, 0x80060907] || tail[3].raw != [0xbf8c3f70]
++                || tail[4].raw != [0xe0102000, 0x8006080a] {
++                return Err("unverified list stores after wave allocation".into());
++            }
++            let Some([Res::TBuf(slot, true)]) = em.res.get(&(i + 11)).map(Vec::as_slice) else {
++                return Err("missing list UAV for wave allocation".into());
++            };
++            if em.res.get(&(i + 13)) != em.res.get(&(i + 11)) || !em.ex.resources.iter().any(|r|
++                r.space == 0 && r.res_type == 6 && r.lower <= *slot && *slot <= r.upper) {
++                return Err("conflicting list UAV bindings".into());
++            }
++            list_slots.insert(*slot);
++        }
++        em.tbuf_uint.extend(list_slots);
++    }
++    let requires_ballot = allocation_wave64 || em.packed.as_ref().is_some_and(|p| !p.ballots.is_empty());
+     if (requires_ballot && scan_width.or(required_wave_size) == Some(32))
+         || matches!((scan_width, required_wave_size), (Some(a), Some(b)) if a != b) {
+         return Err("conflicting wave widths for ballot and reduction".into());
+@@ -2495,6 +2564,29 @@
+         let d = ins.dst.first().cloned();
+         self.line(&format!("// {:#06x} {m}", ins.offset));
+         self.cur_idx = idx;
++        match m {
++            "s_ff1_i32_b64" if ins.src == [Opnd::ExecLo] => {
++                // WaveActiveMin returns the same lane ID to all participating invocations.
++                let dst = d.ok_or("missing elected lane register")?;
++                return self.ws(&dst, "WaveActiveMin((exec_lo & 1u) ? WaveGetLaneIndex() : 0xffffffffu)");
++            }
++            "tb_capture_allocation_mask" => {
++                let dst = d.ok_or("missing mask register")?;
++                let upper = hi(&dst);
++                self.touch(&upper);
++                self.line(&format!("uint4 alloc_mask{idx} = WaveActiveBallot((exec_lo & 1u) != 0u);"));
++                self.ws(&dst, &format!("alloc_mask{idx}.x"))?;
++                return self.ws(&upper, &format!("alloc_mask{idx}.y"));
++            }
++            "tb_allocation_prefix_lo" | "tb_allocation_prefix_hi" => {
++                let high = m.ends_with("_hi");
++                let lane = if high { "max(32u, WaveGetLaneIndex()) - 32u" } else { "WaveGetLaneIndex()" };
++                let word = if high { "y" } else { "x" };
++                let prefix = format!("countbits(WaveActiveBallot((exec_lo & 1u) != 0u).{word} & {})", low_mask(lane));
++                return self.wv(&d.ok_or("missing prefix destination")?, &format!("({} + {prefix})", r(&s[1])?));
++            }
++            _ => {}
++        }
+         if ps09_classify::emit(self, ins) { return Ok(()); }
+         if let Some(tile) = self.lds_tile {
+             if tile.emit(self, idx)? { return Ok(()); }
+--- a/crates/tuxbox-xshader/src/rdna2/mnem.rs
++++ b/crates/tuxbox-xshader/src/rdna2/mnem.rs
+@@ -213,7 +213,7 @@
+     Some(match op {
+         0x03 => "s_mov_b32", 0x04 => "s_mov_b64", 0x05 => "s_cmov_b32", 0x06 => "s_cmov_b64",
+         0x07 => "s_not_b32", 0x08 => "s_not_b64", 0x09 => "s_wqm_b32", 0x0a => "s_wqm_b64",
+-        0x0b => "s_brev_b32", 0x0f => "s_bcnt1_i32_b32", 0x10 => "s_bcnt1_i32_b64", 0x13 => "s_ff1_i32_b32",
++        0x0b => "s_brev_b32", 0x0f => "s_bcnt1_i32_b32", 0x10 => "s_bcnt1_i32_b64", 0x13 => "s_ff1_i32_b32", 0x14 => "s_ff1_i32_b64",
+         0x15 => "s_flbit_i32_b32", 0x19 => "s_sext_i32_i8", 0x1a => "s_sext_i32_i16",
+         0x1b => "s_bitset0_b32", 0x1d => "s_bitset1_b32",
+         0x1f => "s_getpc_b64", 0x20 => "s_setpc_b64", 0x21 => "s_swappc_b64",

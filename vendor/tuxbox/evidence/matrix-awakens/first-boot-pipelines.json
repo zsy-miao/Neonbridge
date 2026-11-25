@@ -1,0 +1,97 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "graphics_provider_sha256": "cd44cac87ebf83e6a10edb5322dd9f331ae930d30179651af8eb758b6c38a439",
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "driver": "620.70.06",
+  "source_sha256": "9923464df764a9b41ccaadc499538c6c260b8851000b23ed3b090886cd338534",
+  "vk_archive_sha256": "9e29ddcb2bdc80c40a65619d9df355f117a5cf56da5afe3d911023e60688a80a",
+  "programs": [
+    {
+      "archive": "global",
+      "entry": 379,
+      "compiled_dxil_sha256": "7f911c22446f15c4dba38e6e6912dd1946f18403ea645b6b27e52c782b41c518",
+      "pso_key": "f35045efae4e54ca",
+      "historical_retail_key_match": true,
+      "cold_ms": 4.4391,
+      "warm_ms": 0.0377
+    },
+    {
+      "archive": "global",
+      "entry": 2227,
+      "compiled_dxil_sha256": "ef378ee733aee96305b54fe9a5db5dbb448f495fff1a6110b7d44e0c626d638b",
+      "pso_key": "fa22c60c026499ec",
+      "historical_retail_key_match": true,
+      "cold_ms": 75.3731,
+      "warm_ms": 0.1498
+    },
+    {
+      "archive": "global",
+      "entry": 3333,
+      "compiled_dxil_sha256": "c76a6e46786eb7007b5676bde8398cc92d9cc75a79f12ba6914d34bd80c69137",
+      "pso_key": "f11088fd594ce24b",
+      "historical_retail_key_match": true,
+      "cold_ms": 91.0636,
+      "warm_ms": 0.1455
+    },
+    {
+      "archive": "global",
+      "entry": 2696,
+      "compiled_dxil_sha256": "7afccfd6240eb9f853caaeb2865577408bd7b1459316ed8069b5e81f3ca22449",
+      "pso_key": "24b602ef753766bf",
+      "historical_retail_key_match": true,
+      "cold_ms": 637.247,
+      "warm_ms": 0.4883
+    },
+    {
+      "archive": "global",
+      "entry": 856,
+      "compiled_dxil_sha256": "5bfdb781a7b7d76c848fb72daa23587ab4ea9a0333cf647f9149372dca3f44f1",
+      "pso_key": "03685e8d6eb0010c",
+      "historical_retail_key_match": true,
+      "cold_ms": 18.6285,
+      "warm_ms": 0.0391
+    },
+    {
+      "archive": "material",
+      "entry": 37635,
+      "compiled_dxil_sha256": "956b32ea59b0f4396c80cb0ba20b4f66ec53e0a7be1299ac0bf8755b6a961353",
+      "pso_key": "d1c0de8406308908",
+      "historical_retail_key_match": false,
+      "cold_ms": 26785.5,
+      "warm_ms": 3.0205
+    },
+    {
+      "archive": "material",
+      "entry": 15458,
+      "compiled_dxil_sha256": "74a56601351fee1fe03c48bb514244f1752ebae6a006b33ea8490491a4b865fa",
+      "pso_key": "952657336a99ad99",
+      "historical_retail_key_match": false,
+      "cold_ms": 24739.4,
+      "warm_ms": 2.3053
+    }
+  ],
+  "method": "Prepared seven PSOs using Frosty\u2019s translated DXIL, observed root signature 005e28bf2a30eb01 and node mask 1. Cold run used empty vkd3d and driver caches. A second Proton process recreated the same PSOs with the same disk caches after moving the TuxBox preparation receipt. Timings cover CreateComputePipelineState only. A third launch reused the receipt and skipped that process.",
+  "scope": "Five global pipeline keys matched previously recorded retail caches. The two profiled material simulations are prepared with the same layout; the reduced-effects title traces did not encounter their grouped PSO keys. No gameplay frame-time delta was measured.",
+  "vkd3d_proton_commit": "cae2e003bb8251627ff93c0f471ae18a28234490",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "complete_preparation": {
+    "entry": "tuxbox.py run --prepare-only",
+    "environment": "Independent Proton prefix, empty profiled DXIL, vkd3d and driver caches on the first run, desktop progress enabled under private Xvfb. Wall time includes Xvfb and the complete CLI invocation.",
+    "cold_wall_seconds": 118.78999999999999,
+    "repeat_wall_seconds": 3.994,
+    "cold_dxil_compiled": 11,
+    "cold_gpu_pipelines_created": 7,
+    "repeat_dxil_reused": 11,
+    "repeat_gpu_helper_started": false,
+    "archive_sha256": "59fdb6818a4dc6de3326cc47ab4049b37a53cbb3face9e40d7841bf28ac1fdbc",
+    "gpu_create_ms_with_freshly_compiled_dxil": {
+      "379": 4.714,
+      "2227": 74.1605,
+      "3333": 78.9301,
+      "2696": 581.344,
+      "856": 15.6051,
+      "37635": 25945.8,
+      "15458": 25383.6
+    }
+  }
+}

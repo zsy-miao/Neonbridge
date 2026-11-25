@@ -1,0 +1,148 @@
+{
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "inputs": [
+    "Unmodified packaged Xbox system DLLs",
+    "Installed Proton distribution",
+    "TuxBox source and Windows SDK/CRT import libraries"
+  ],
+  "reproduce": [
+    "python -m project_tuxbox.media --help",
+    "python tools/check_frosty_media.py --help",
+    "python tools/check_frosty_hevc.py --help",
+    "python tools/check_frosty_aac.py --help"
+  ],
+  "build_sha256": {
+    "aac.exe": "2c8615dd0f96e945b5802a2635179f0cf5601c526cbe916f543a8643a93c3474",
+    "frosty_h264.dll": "5c3158463dc13826f3ca3e6f033f46e5e02c03ba0402b715d4cd34daff6138d9",
+    "frosty_hevc.dll": "70b8c53c59b2d29dec98af616f2acb5cdeb5942a178bb6753787435b5e8aff54",
+    "frosty_packaged_aac.dll": "810c007551ec389a2c7dd0f0066747e453b5c3d1efb3cdc62cc1f22a76c5b454",
+    "frosty_packaged_h264.dll": "9db2936779eec00c69c9a549e7ec4ab2af717b64b95454065e80dfa5c5a439ac",
+    "mfhevcdec.dll": "fecc135bf0387f68c304542af3cb2c4aaed1267a06027f5198223f585678cd0d",
+    "mfplat.dll": "ba2b8d3123865b8ce25a9e44bc1b9cc9335f28d3a012d600ee202994d39e9c0f",
+    "mfplat_sys.dll": "3df8aff6ca29903c6a9109b8154d36d9133d2fa371aaab2fa4be564dbba8bb1b",
+    "register_h264.exe": "68b74d0880ffbceabf778cb2f49716ab11f24ca71161ec4f8a4e8d59c1b69aa9",
+    "register_hevc.exe": "68b74d0880ffbceabf778cb2f49716ab11f24ca71161ec4f8a4e8d59c1b69aa9",
+    "xmem.dll": "92a9f43a929e5b1c54015c9a239e23be4d8999228f1795200fe3706741e6efe0"
+  },
+  "registration": {
+    "fresh_prefix": true,
+    "registered_inproc_servers": [
+      "frosty_packaged_aac.dll",
+      "frosty_h264.dll",
+      "frosty_hevc.dll"
+    ]
+  },
+  "mfplat": {
+    "packaged_binary_sha256": "0b29c4da03055c34fb6c6f3fbbac426cb3693ac25c419c4c6699897405966a44",
+    "packaged_named_exports": 140,
+    "present_at_packaged_ordinal": 135,
+    "common_named_host_exports": 133,
+    "additional_host_exports": 50,
+    "missing_xbox_names": [
+      "MFCreateFileFromHandle",
+      "MFCreateMediaEventResult",
+      "MFCreateSourceResolverInternal",
+      "MFGetSupportedMimeTypes",
+      "MFGetSupportedSchemes"
+    ],
+    "xbox_device_manager_reset_ordinal": 117,
+    "xbox_surface_buffer_ordinal": 35,
+    "pixel_readback": {
+      "desktop_device": {
+        "exit": 0,
+        "wrong_token_hr": "0x80070057",
+        "verified_pixel_words": "4"
+      },
+      "xbox_device": {
+        "exit": 0,
+        "wrong_token_hr": "0x80070057",
+        "verified_pixel_words": "4"
+      },
+      "d3d12_xs_sha256": "4e963e8c505ecdf239df7acf829cad08eb0df99c34555b46c448c561b3c11b3d"
+    }
+  },
+  "hevc": {
+    "source": "LOGO_VID_HEVC.mp4",
+    "source_sha256": "bac74a082a9baf114564df5db4b7bd4541087a11d3131989e3fffe674ec32a53",
+    "size": [
+      3840,
+      2160
+    ],
+    "matching_paths": [
+      "packaged decoder CPU buffer",
+      "TuxBox D3D12 NV12 readback",
+      "FFmpeg NV12"
+    ],
+    "frames": {
+      "0": {
+        "y_sha256": "b3c6077b5b06a99403125b05c5963a07efa1b119a01b86702107b3de67bdb317",
+        "uv_sha256": "acbbceef81ae2ab47d2a69bb1ea004e12ab48fe419933cb569c10c54dae412ab"
+      },
+      "12": {
+        "y_sha256": "8bd7771e835565840c1866a057b16572f9cf1107df253b7cd9beefa7c09356fb",
+        "uv_sha256": "6b1888d40c390c9cb056b4a25fbadac076cfa6bc5aa2ce4baa73fddde3d2278e"
+      },
+      "13": {
+        "y_sha256": "4420337f1989234a8735b3943638e636f10941f7014b9efea77bb136cf4d33f5",
+        "uv_sha256": "39a3cac028dc351fb5af315a4b9098768c01acedfd72a14a4fd8303124cc3f37"
+      },
+      "14": {
+        "y_sha256": "41d69486105c1a0917658485daef037e6f092e54c080acb5debcfa1e066cd924",
+        "uv_sha256": "d74502104ccf1f233ba55adfb5f8f5d83fc61eea8eb78a64fd7fa1a3a1194002"
+      }
+    }
+  },
+  "h264": {
+    "source": "Chase.mp4",
+    "source_sha256": "127b8ebd0fb530a2b7a782eba325ac34894670554350f1b0171d0c484cb42cb5",
+    "size": [
+      1024,
+      512
+    ],
+    "matching_paths": [
+      "packaged decoder CPU buffer",
+      "TuxBox D3D12 NV12 readback",
+      "FFmpeg NV12"
+    ],
+    "frames": {
+      "0": {
+        "y_sha256": "9e2eb77d952b6f4df737b8a844e170e54fd83c84f748c5d14ff73b1e987c361c",
+        "uv_sha256": "28c907d62896a71c60f823fba1bdec4f72222db32d27f7915e476eea484bc431"
+      },
+      "1": {
+        "y_sha256": "fde2d6a99992ee0591c71c636d24a1bab1476ff1f9bfdaa1acc1471b8ddf0d17",
+        "uv_sha256": "3b55b1c5ea1ebb67f20d5fbf9deeb513de46811711c3371db51d3806a777a57f"
+      },
+      "12": {
+        "y_sha256": "c6d8e454cd6f297aeb1ed6418611e49691dfe8aed6e90624872ab8ae7c401bb7",
+        "uv_sha256": "9832dec2a648489218f1f4747ab8083bd4772b3fad15d866d98667ae7fea7c80"
+      },
+      "60": {
+        "y_sha256": "581516a7e43a4d8a3c88b766b541ffe2d164796f107f27397c8b63510cb10d7a",
+        "uv_sha256": "c45392a5d196384a75971396a64ec9d4efb64e6f1eb69527d2d26d5edd98efee"
+      }
+    }
+  },
+  "aac": {
+    "source": "LOGO_VID_HEVC.mp4",
+    "rate": "48000",
+    "channels": "6",
+    "bits": "32",
+    "float": "1",
+    "access_units": "96",
+    "pcm_bytes": "2359296",
+    "source_sha256": "bac74a082a9baf114564df5db4b7bd4541087a11d3131989e3fffe674ec32a53",
+    "decoder_sha256": "810c007551ec389a2c7dd0f0066747e453b5c3d1efb3cdc62cc1f22a76c5b454",
+    "pcm_sha256": "1e69f326e9b048c0a7440ac1e81f8fdee5e1facf2371df39610262ad47132437",
+    "ffmpeg_sha256": "744a9ebe58044c5f2b4241768e74b43091faee12c2fad9152a8e9857a623e918",
+    "pcm_max_absolute_error": 2.4719432985875756e-05,
+    "channel_cosine_similarity": [
+      0.9999999999411289,
+      0.9999999999402098,
+      0.999999993147535,
+      0.9999999999999084,
+      0.9999999998274682,
+      0.9999999997115895
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "archive": "global",
+  "entry": 3770,
+  "export": "OcclusionRGS_7b8a9555",
+  "state_sha256": "454cdd84e6c9438f8ff156c3e741383c0f745c2eb12e9b784671dd9711384958",
+  "adapter": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "host": "1789159601 experimental-11.0-20260910b-x86_64",
+  "gpu_scope": "Single cold D3D12 DXR collection containing the real ray generator, then a pipeline importing it with a closest-hit and miss observer. Independent process and empty NVIDIA disk-cache directory for each variant.",
+  "cpu_scope": "One DXC lib_6_3 -O3 compilation and median of three conversions with the stock Proton DXIL-to-SPIR-V library. Both modules passed spirv-val --target-env vulkan1.2.",
+  "before": {
+    "dxil_sha256": "4752e9bc17ec8e9bd9d1403993acfb7369d0a7b1c2b468df41a5f95c9ce0e429",
+    "dxc_s": 10.15,
+    "dxil_spirv_s": 6.1226,
+    "spirv_bytes": 2167516,
+    "spirv_trace_ray_ops": 8,
+    "spirv_phi": 21041,
+    "conditional_branches": 3888,
+    "collection_ms": 38671,
+    "process_user_s": 38.16,
+    "process_kernel_s": 0.37,
+    "peak_process_working_set_bytes": 2806177792,
+    "final_pipeline_ms": 18
+  },
+  "after": {
+    "dxil_sha256": "24d64e1e632b45e30c914df8a4f4eeb8736e3474b29cda83d17b2c3e6235b47a",
+    "dxc_s": 5.26,
+    "dxil_spirv_s": 1.2426,
+    "spirv_bytes": 1651384,
+    "spirv_trace_ray_ops": 1,
+    "spirv_phi": 14501,
+    "conditional_branches": 2578,
+    "collection_ms": 7255,
+    "process_user_s": 7.14,
+    "process_kernel_s": 0.09,
+    "peak_process_working_set_bytes": 855638016,
+    "final_pipeline_ms": 18
+  },
+  "permutation_validation": {
+    "validated": 96,
+    "failures": [],
+    "compiler_sha256": "db128fae49f0d3223114b0f8c0deaed221e2c6cba13be8e8756f4659c37b1160",
+    "backend_sha256": "7f3fbb1fab6d619aa8c9135c4201df924e53f8edd9f33bf7bc060fc02022b879"
+  },
+  "radeon_control": {
+    "matching_readback_fields": 118,
+    "includes": "screen shadow 3801 and 3824, hair voxel 3810, both Lumen volume and both opening reflection ray generators"
+  }
+}

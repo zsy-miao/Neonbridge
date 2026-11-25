@@ -1,0 +1,62 @@
+{
+  "method": "Identical Xbox imports in the SDK guest run separately against the original DLL and the TuxBox provider. For each DXGI format the guest compares the complete multi-mip layout and every valid byte address with fingerprints from the supplied DLL for the same element size. Both linear and 4 KiB tiled layouts are exercised.",
+  "guest_source": "runtime/xg/guest.cpp",
+  "formats": 41,
+  "layouts": 82,
+  "element_or_block_addresses": 6231134,
+  "scope": "Single-slice 2D color textures with one sample and default alignment, including normalized, integer, sRGB and typeless interpretations. The family test covers 26 four-byte pixel formats and 15 sixteen-byte compressed-block formats.",
+  "runs": [
+    {
+      "host": "1789159601 experimental-11.0-20260910b-x86_64",
+      "control_exit": 0,
+      "tuxbox_exit": 0,
+      "matching_receipt": "xg-formats PASS formats=41 layouts=82 element-addresses=6231134"
+    },
+    {
+      "host": "1792432585 GE-Proton11-11",
+      "control_exit": 0,
+      "tuxbox_exit": 0,
+      "matching_receipt": "xg-formats PASS formats=41 layouts=82 element-addresses=6231134"
+    }
+  ],
+  "guest_sha256": "894f7a78b49c18ba1daa79d6bb3e98c77e3ed9b4515448844e688dbf73e7920b",
+  "console_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+  "tuxbox_sha256": "2f0fffb525b36c20bf537670e3f2309001430d03a68e3fc32cd8ea78900c7dc6",
+  "benchmark": {
+    "provider": "1789159601 experimental-11.0-20260910b-x86_64",
+    "cpu": "AMD Ryzen 7 9800X3D",
+    "scope": "One warm-up followed by seven full --formats checks, timed inside the same process with QueryPerformanceCounter. Includes layout creation, indirect address calls and validation hashes.",
+    "runs": [
+      {
+        "library": "TuxBox",
+        "guest_sha256": "894f7a78b49c18ba1daa79d6bb3e98c77e3ed9b4515448844e688dbf73e7920b",
+        "dll_sha256": "2f0fffb525b36c20bf537670e3f2309001430d03a68e3fc32cd8ea78900c7dc6",
+        "milliseconds": [
+          40.565,
+          39.525,
+          39.245,
+          39.149,
+          39.043,
+          39.086,
+          39.056
+        ],
+        "median_ms": 39.149
+      },
+      {
+        "library": "supplied XG",
+        "guest_sha256": "894f7a78b49c18ba1daa79d6bb3e98c77e3ed9b4515448844e688dbf73e7920b",
+        "dll_sha256": "fee85ef80b6fe47edaa083270933c08a37f9e27e7541f86f731daecf7ead1493",
+        "milliseconds": [
+          221.364,
+          219.155,
+          217.978,
+          221.413,
+          219.852,
+          218.553,
+          220.938
+        ],
+        "median_ms": 219.852
+      }
+    ]
+  }
+}

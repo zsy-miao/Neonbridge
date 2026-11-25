@@ -1,0 +1,25 @@
+[package]
+name = "xcl-testtitle"
+description = "Fake 'console title' used to test XCL. Imports console DLLs (kernelx.dll, xgameruntime.dll, d3d12_xs.dll) and cannot run on plain Windows."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "xcl_testtitle"
+path = "src/main.rs"
+
+[dependencies]
+# zlib for the synthetic retail-format console shader (XBCH)
+miniz_oxide = "0.9"
+
+# D3D12 types/interfaces only – the device itself comes from d3d12_xs.dll (XCL).
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi_Common",
+]

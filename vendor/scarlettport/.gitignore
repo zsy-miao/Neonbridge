@@ -1,0 +1,70 @@
+# Build output
+target/
+**/target/
+
+# Game files: never commit anything from a game dump
+*.exe
+*.rpf
+*.ttpf
+*.xvc
+*.msixvc
+*.dxbc
+*.pdb
+*.dmp
+**/MicrosoftGame.config
+!runtime/xcl/tests/data/testgame/MicrosoftGame.config
+game/
+dump/
+
+# Runtime DLLs you download yourself (Agility SDK, DXC)
+*.dll
+D3D12/
+
+# Logs, caches, local config
+*.log
+logs/
+cache/
+victory.toml
+xcl.toml
+.env
+press.txt
+
+# Launcher
+launcher/target
+launcher/runtime
+
+# Private research and anything derived from a game copy: never commit
+kb-private/
+**/kb-private/
+re-*.md
+*decomp*/
+decompilation/
+graphics_research/
+corpus/
+shader-names/
+capture-*/
+captures/
+*.dump
+precompiled-dump/
+settings.xml
+
+# More: captures, shader dumps and compiled shaders, archives and game package formats
+*.cso
+*.dxil
+*.spv
+*.pix
+*.rdc
+*.etl
+*.npy
+*.pkl
+*.xvd
+*.xsp
+*.pck
+*.bin.gz
+shader-dump*/
+shaders-dump/
+dumps/
+frames/
+research/
+notes-private/
+victory-data/

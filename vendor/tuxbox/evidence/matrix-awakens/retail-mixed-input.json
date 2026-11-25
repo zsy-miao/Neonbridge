@@ -1,0 +1,57 @@
+{
+  "title_sha256": "ae39eb1e92fa806df189c768c1478a53dfb54a2cc9769a9f2301ca7921e3eb04",
+  "gameinput_sha256": "50af3c2268e06f2cc7d92ce47b55945bb225eadfa5c7d677dae6aaedd2a5fc50",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "input_source": "Linux X11 keyboard and mouse, plus a kernel uinput Xbox 360-style controller enumerated by Proton XInput. No physical gamepad was connected.",
+  "actions": [
+    "K selected Settings and I returned to Start Chase with keyboard alone.",
+    "After hotplug, D-pad down selected Settings. B changed Controller Rumble from ON to OFF and B restored ON.",
+    "D-pad up returned to Start Chase. With that same controller connected, K and I changed selection again.",
+    "Left click with Start Chase selected activated the Chase_Global data layer at 13:33:52.796 UTC."
+  ],
+  "rumble_option_checks": {
+    "region_on_xyxy": [
+      1220,
+      570,
+      1287,
+      610
+    ],
+    "region_off_xyxy": [
+      1287,
+      570,
+      1352,
+      610
+    ],
+    "pixels_green_above_140_before_toggle_off_and_restored": [
+      [
+        370,
+        251
+      ],
+      [
+        199,
+        420
+      ],
+      [
+        370,
+        251
+      ]
+    ]
+  },
+  "snapshots": {
+    "01-main.png": "b241a0af7b603b797c97a567cfc3fce3241f03dabde532dbaf3a8d685c38d4fd",
+    "02-keyboard-settings.png": "dca2d4122d4c4a769ab696d5a5f3e7062ce6b8bc71fe28f971b648df37e1ad51",
+    "03-keyboard-start.png": "939a980ee7f94c1ebd9e05a5159fb48f90e25b3cc29d5d22c95dd803ee7c2698",
+    "04-pad-settings.png": "7414fb7f2129d68bf3f7d2620898fd4d2a6f371f1a367fa6110598b9a8dbca27",
+    "05-pad-rumble.png": "5e41c1b06cdef8cdbdf4692f76b5f9ee63f8b151085ca0d7130d52f464a7f807",
+    "06-pad-rumble-restore.png": "5f004234b78c68baf71b918174850716f40632592d33921e86b079b6c65e0862",
+    "07-pad-start.png": "2468e9d6fe627d3b025ef2e4a070e7e404627a1f60f644d55d95216e9b3db728",
+    "08-mixed-settings.png": "fe4267b48c23eb013badbafce800332d07b32e55029e1055ad0dbd8219939bff",
+    "09-mixed-start.png": "744e72d5f7aa0f621d5fe7ab8fa9723d11eeb648d1d61ead6bc4c18b846d45dd",
+    "10-mouse-accept.png": "e95c0eda406aab59485803a024616ea5f0c68293f83a67969d2916f1218d57b8"
+  },
+  "settings_screenshot": "retail-input-settings.png",
+  "log_sha256": "285c2f71f63092192b149225ea535d5cae4953156060257953cebdb72aa37436",
+  "desktop_capture_sha256": "7ae5b13018efe6fccb1f863cad45b927c97aad82c43e022654dff7eca8bbc183",
+  "scope": "Retail menu navigation, settings and chase activation. The separate GameInput guest checks the aimed pointer mapping and simultaneous analog inputs. In-game driving/aiming is unverified."
+}

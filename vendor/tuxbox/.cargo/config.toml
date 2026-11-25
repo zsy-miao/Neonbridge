@@ -1,0 +1,8 @@
+[build]
+# Both Proton and native Windows load the same x64 PE providers.
+target = "x86_64-pc-windows-msvc"
+target-dir = "build/cargo"
+
+[target.x86_64-pc-windows-msvc]
+# Match the /MT guests and keep the provider independent of the VC redistributable.
+rustflags = ["-C", "target-feature=+crt-static"]

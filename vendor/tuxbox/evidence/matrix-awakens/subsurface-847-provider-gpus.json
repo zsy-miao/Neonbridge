@@ -1,0 +1,110 @@
+{
+  "scope": "Frosty global 847 subsurface indirect setup through TuxBox provider and runtime shader compiler, with modeled image, append counters and guards on both GPUs. This tests setup, not full material rendering.",
+  "results": {
+    "amd": {
+      "shader": "FSubsurfaceIndirectDispatchSetupCS / SetupIndirectCS",
+      "archive_entry": 847,
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_sha256": "93932adbc024e0a75d8a5fbbf27ab4a640d152fd6e95eb56c8bf2fc9ba11d329",
+      "guest_slot": 62,
+      "size": [
+        16,
+        16
+      ],
+      "workgroup": [
+        8,
+        8,
+        1
+      ],
+      "source_isa_instructions": 183,
+      "source_isa_bytes": 1008,
+      "first_election": "0x290",
+      "second_election": "0x358",
+      "test_inputs": "Four qualifying pixels with material IDs 5/9 in three groups. Depth dithering, zero RGB output, independent material masks and viewport guards.",
+      "expected_allocations": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "initial_count": 1,
+      "pixel_tolerance": 1e-05,
+      "readback": {
+        "capacity_5_channels": "1024",
+        "capacity_5_counter": "4",
+        "capacity_5_valid_records": "1",
+        "capacity_1_channels": "1024",
+        "capacity_1_counter": "4",
+        "capacity_1_valid_records": "1"
+      },
+      "guest_sha256": "292cbd7f538c458c06f6139dfa3fb31c3856b79bed4e11d2b5d8fa7617dc123f",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "adapters": [
+        "AMD Ryzen 7 9800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (radv 26.2.6)"
+      ]
+    },
+    "nvidia": {
+      "shader": "FSubsurfaceIndirectDispatchSetupCS / SetupIndirectCS",
+      "archive_entry": 847,
+      "global_archive_sha256": "afab84fa891e491d64f1c2a9bdf26a66afc2054aef2cd9110e358402473b4fb2",
+      "cooked_sha256": "93932adbc024e0a75d8a5fbbf27ab4a640d152fd6e95eb56c8bf2fc9ba11d329",
+      "guest_slot": 62,
+      "size": [
+        16,
+        16
+      ],
+      "workgroup": [
+        8,
+        8,
+        1
+      ],
+      "source_isa_instructions": 183,
+      "source_isa_bytes": 1008,
+      "first_election": "0x290",
+      "second_election": "0x358",
+      "test_inputs": "Four qualifying pixels with material IDs 5/9 in three groups. Depth dithering, zero RGB output, independent material masks and viewport guards.",
+      "expected_allocations": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "initial_count": 1,
+      "pixel_tolerance": 1e-05,
+      "readback": {
+        "capacity_5_channels": "1024",
+        "capacity_5_counter": "4",
+        "capacity_5_valid_records": "1",
+        "capacity_1_channels": "1024",
+        "capacity_1_counter": "4",
+        "capacity_1_valid_records": "1"
+      },
+      "guest_sha256": "292cbd7f538c458c06f6139dfa3fb31c3856b79bed4e11d2b5d8fa7617dc123f",
+      "provider_sha256": "d9c5185f220d5e8b3d58de0096b0d6eb71148691abd0d2755f6726d1b0afb754",
+      "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+      "adapters": [
+        "NVIDIA GeForce RTX 4070 Ti SUPER (NVIDIA 620.73.4)"
+      ]
+    }
+  },
+  "compiler_sha256": "441066fcf54579f631a7dc3b6aceba1ce78ae0af24d92bc634c84f87d839eb3e",
+  "negative_control": "A one-bit ISA change disables exact-program handling; the unknown election is rejected at 0x290.",
+  "regression": "The previously supported global 856 passes both capacity cases on AMD through the same provider fixture."
+}

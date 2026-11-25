@@ -1,0 +1,93 @@
+{
+  "shader": "SimulateMainComputeCS",
+  "archive_entry": 37635,
+  "cooked_sha256": "fd74a543c491e2e51740079ffb047e6159a76debc7eb097bf64208770e3f94b9",
+  "translated_dxil_bytes": 711768,
+  "d3d12core_sha256": "5edbb1df81ce270e2263e4472e1dcddaeaccdd8624af561a00eea865926f3c40",
+  "vkd3d_proton": "cae2e003bb8251627ff93c0f471ae18a28234490",
+  "dxil_spirv": "8b48f0e0392d76be4fdcea2a3ba3ea99dddaae5b",
+  "proton": "1793301796 experimental-11.0-20261027b-x86_64",
+  "retail": {
+    "perf_sha256": "959ff36daf8fb94e6f32e26185c0f3f9c4475db2d06b27022c81465261107526",
+    "event": "cycles:u",
+    "text_mapping_module_base": "0x6ffff9c10000",
+    "groups": {
+      "all": {
+        "samples": 493,
+        "sum_period": 15473261620,
+        "weighted_percent": 100.0
+      },
+      "core": {
+        "samples": 195,
+        "sum_period": 15439853059,
+        "weighted_percent": 99.784
+      },
+      "dominates": {
+        "samples": 193,
+        "sum_period": 15273318359,
+        "weighted_percent": 98.708
+      },
+      "post_dominates": {
+        "samples": 1,
+        "sum_period": 83268448,
+        "weighted_percent": 0.538
+      }
+    }
+  },
+  "isolated": {
+    "perf_sha256": "fd0f64ed0a2f7d03be633ee8bb5b81d1e480e8d6e0c1a2e3615c02d5b5312364",
+    "event": "cycles:u",
+    "text_mapping_module_base": "0x6ffffd940000",
+    "groups": {
+      "all": {
+        "samples": 120,
+        "sum_period": 10286209720,
+        "weighted_percent": 100.0
+      },
+      "core": {
+        "samples": 95,
+        "sum_period": 10286203111,
+        "weighted_percent": 100.0
+      },
+      "dominates": {
+        "samples": 90,
+        "sum_period": 9728408752,
+        "weighted_percent": 94.577
+      },
+      "post_dominates": {
+        "samples": 4,
+        "sum_period": 446242837,
+        "weighted_percent": 4.338
+      }
+    }
+  },
+  "source_match": {
+    "source": "https://github.com/HansKristian-Work/dxil-spirv/blob/8b48f0e0392d76be4fdcea2a3ba3ea99dddaae5b/node.cpp",
+    "vkd3d_submodule": "https://github.com/HansKristian-Work/vkd3d-proton/tree/cae2e003bb8251627ff93c0f471ae18a28234490/subprojects",
+    "methods": {
+      "0x2e91c0..0x2e91e8": "CFGNode::dominates, follows immediate_dominator at +0x110",
+      "0x2e74e0..0x2e7508": "CFGNode::post_dominates, follows immediate_post_dominator at +0x118"
+    },
+    "method": "Read module mapping and sum sampled instruction addresses inside PE runtime-function table bounds. Compare the loops to disassembly of just node.cpp at the exact dxil-spirv submodule commit. The named functions each produce a 40-byte parent walk with distinct next-pointer offset, null and self-parent termination, and equality result. No debug symbols in the installed PE.",
+    "reproduce": [
+      "perf script -i warm-title.perf -F period,ip,dso",
+      "perf script --show-mmap-events -i warm-title.perf",
+      "llvm-readobj --file-headers --sections d3d12core.dll",
+      "llvm-objdump -d --start-address=0x1cb0791c0 --stop-address=0x1cb0791e8 d3d12core.dll",
+      "Compile node.cpp from the pinned submodule with g++ -O2 -DNDEBUG -std=c++17, include the source root, util/, debug/ and the pinned SPIRV-Headers include/spirv/unified1 directory. Inspect objdump -dC node.o."
+    ]
+  },
+  "scope": "Short hardware counter samples during an outstanding compute PSO call. Percentages weight each sample by period. Identifies the sampled inner routines; does not establish an infinite loop, whole-frame cost or a specific caller.",
+  "dxil_spirv_config": "The pinned converter exposes wmma_rdna3_workaround, wmma_conv_hack and debug_simulate_min16float_min_spec. None selects a faster dominator implementation.",
+  "fxc_trials": {
+    "proton_builtin": "D3DCompile returned E5005: reversebits is undefined. No PSO.",
+    "embedded": "Frosty-provided d3dcompiler_47.dll SHA-256 80f44c8fe0d173886e56629269b53be65914504d01887cd17024e4fd80ca886a was unavailable to the local guest when forced native. No PSO.",
+    "desktop_redistributable": {
+      "sha256": "4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3",
+      "option": "TOMBOX_SHADER_COMPILER=fxc plus native d3dcompiler_47",
+      "deadline_seconds": 50,
+      "exit": 124,
+      "observed": "Microsoft desktop compiler entered FXC compilation. No emitted shader or PSO when the bounded run ended. This run does not establish eventual failure or success."
+    }
+  }
+}

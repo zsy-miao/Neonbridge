@@ -1,0 +1,119 @@
+# Builds the solution and runs the tests. CI has no game files: tests that read a dump skip and say why.
+# Windows runs everything else, including the shader translator tests on D3D12 WARP; Linux runs what is not Windows-only.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # The shader test programs come assembled (tests/FiveStar.Shaders.Tests/Assembled), so CI needs no LLVM.
+      - name: Locate dxc
+        run: |
+          $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+          $dxc = Get-ChildItem $kits -Directory -Filter '10.*' |
+            Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { Join-Path $_.FullName 'x64\dxc.exe' } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+
+          if ($dxc) {
+            Add-Content $env:GITHUB_ENV "FIVESTAR_DXC=$dxc"
+          }
+
+          Write-Output "Windows: $([Environment]::OSVersion.Version)"
+          Write-Output "dxc: $dxc"
+          Write-Output "WARP: $(Test-Path "$env:SystemRoot\System32\d3d10warp.dll")"
+
+      - name: Restore
+        run: dotnet restore FiveStar.slnx
+
+      - name: Build
+        run: dotnet build FiveStar.slnx --no-restore
+
+      - name: Architecture rules
+        run: dotnet test tests/FiveStar.Architecture.Tests --no-build
+
+      - name: Test
+        run: dotnet test FiveStar.slnx --no-build --logger trx --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows
+          path: TestResults
+          if-no-files-found: ignore
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('global.json', 'Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore FiveStar.slnx
+
+      - name: Build
+        run: dotnet build FiveStar.slnx --no-restore
+
+      # The loader maps Windows images through kernel32, so its tests are Windows-only.
+      # The D3D12 tests in FiveStar.Shaders.Tests skip on their own outside Windows.
+      - name: Test
+        run: |
+          for project in Architecture Formats Shaders Cli; do
+            dotnet test "tests/FiveStar.$project.Tests" --no-build --logger trx --results-directory TestResults
+          done
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: TestResults
+          if-no-files-found: ignore

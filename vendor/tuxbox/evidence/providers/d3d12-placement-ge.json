@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1792432585 GE-Proton11-11",
+  "binaries_sha256": {
+    "d3d12-smoke/d3d12-placement.exe": "1263c1d000807f102539306cd22ee5a70b75712f770e294930a0fdb8710037b7",
+    "d3d12-smoke/d3d12_xs.dll": "ac43961eb297f9ba326709bd57a15a62b1fcee3eda7805ea47c390523c3b4d2b",
+    "d3d12-smoke/d3d12-tables.exe": "0d9af048c0abf9366bca40b278db70b561c11c3ee5717815edf652c062f2ef86",
+    "d3d12-smoke/d3d12-indirect.exe": "cea9e8c811a4465b303fb0bb88c670a4b29d96ac1ae575f3b963a0b7d8cd8a1e"
+  },
+  "checks": [
+    {
+      "gate": "d3d12-placement",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-placement PASS pci=10de:2705 slot=44 VA-offsets=0,4096,0 passes=2 BC1-blocks=522 cube-blocks=16404 R8-texels=262144 rejected=3"
+    },
+    {
+      "gate": "d3d12-tables",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-tables PASS pci=10de:2705 words=16/16 guards=4 heaps=2 rejected=3 placed-srv=16/16 range-copies=4 descriptor-mode=1"
+    },
+    {
+      "gate": "d3d12-indirect",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-indirect PASS pci=10de:2705 sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero flush=global,range mesh=0x00000000 rays=0x00000000"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "xbox_primitive": {
+    "pipeline_type": "0x13",
+    "ia_topology": "0x11",
+    "vertices_per_rectangle": 3
+  },
+  "control": {
+    "target": "16x16 R8G8B8A8_UNORM",
+    "rectangles": 2,
+    "covered_pixels": 72,
+    "guard_pixels": 184,
+    "channels": "U and V threshold, primitive or instance ID, alpha",
+    "descriptor": "DrawInstanced with six vertices",
+    "stream": "ExecuteIndirect with one five-word indexed draw, three indices per instance, two instances, first index 1",
+    "procedure": "runtime/d3d12/README.md#screen-rectangles",
+    "guard": "Zero-alpha blue clear. Every covered sample has full alpha."
+  },
+  "sha256": {
+    "d3d12_xs.dll": "332f2f9b4fb85d04f7a7dfca3180c63b6d005db1381e24b6f03fd5d359dd10db",
+    "draw guest": "47c1c58dc31f51983638a0b1a740ae5a3b74385c95f80333605c6453e22ea0d4",
+    "dxcompiler.dll": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9",
+    "dxil.dll": "0cf5fa4b90f74550166108b3870c883f4a85243976b246b1da3ea90ad5b92015"
+  },
+  "runs": [
+    {
+      "adapter": "1002:13c0",
+      "checks": [
+        {
+          "mode": "--rect",
+          "receipt": "d3d12-rectangle PASS pci=1002:13c0 slot=60 rectangles=2 texels=256"
+        },
+        {
+          "mode": "--rect-stream",
+          "receipt": "d3d12-rectangle PASS pci=1002:13c0 slot=86 rectangles=2 texels=256"
+        },
+        {
+          "mode": "--stream",
+          "receipt": "d3d12-stream PASS pci=1002:13c0 slot=86 bytes=712 indices=16,32 half-red-blue=18 magenta=18 blue=220 rejected=4"
+        }
+      ],
+      "original_vs_readbacks": [
+        "d3d12-rectangle PASS pci=1002:13c0 slot=60 originalVS=1766 indexed=3 covered=72 texels=256",
+        "d3d12-rectangle PASS pci=1002:13c0 slot=86 originalVS=1766 indexed=3 covered=72 texels=256"
+      ]
+    },
+    {
+      "adapter": "10de:2705",
+      "checks": [
+        {
+          "mode": "--rect",
+          "receipt": "d3d12-rectangle PASS pci=10de:2705 slot=60 rectangles=2 texels=256"
+        },
+        {
+          "mode": "--rect-stream",
+          "receipt": "d3d12-rectangle PASS pci=10de:2705 slot=86 rectangles=2 texels=256"
+        },
+        {
+          "mode": "--stream",
+          "receipt": "d3d12-stream PASS pci=10de:2705 slot=86 bytes=712 indices=16,32 half-red-blue=18 magenta=18 blue=220 rejected=4"
+        }
+      ],
+      "original_vs_readbacks": [
+        "d3d12-rectangle PASS pci=10de:2705 slot=60 originalVS=1766 indexed=3 covered=72 texels=256",
+        "d3d12-rectangle PASS pci=10de:2705 slot=86 originalVS=1766 indexed=3 covered=72 texels=256"
+      ]
+    }
+  ],
+  "retail_controls": {
+    "vertex": {
+      "archive": "global",
+      "entry": 1766,
+      "source_sha256": "68e435959ae979d72805d3eedd1ba8437b12235cac98b012c16e102a7b687eb0",
+      "vertex_shader_readback_guest_sha256": "6bf5eda4e2bf01910c8fd0c2f7e80e6db9634a24d1f3fb5ca8da39519f8596ba",
+      "inputs": "Retail root signature and vertex shader, constant-color control pixel shader. A nonempty tile mask selects two tile instances. Three indexed float2 ATTRIBUTE0 corners per instance cover two 6x6 rectangles in a 16x16 target. Both device slots matched 72 colored texels and 184 guards."
+    },
+    "paired_pixel": {
+      "archive": "material",
+      "entry": 19002,
+      "source_sha256": "335103c00f8890a637b65a1f8bcd817a93cef60060543f7f9b37df9a5ba77b2b",
+      "pipeline_creation_guest_sha256": "54b57bbb972ca8b3fdf1680b429897fb89df6c0d3ac8d4e909c464184b85cdfe",
+      "adapters": [
+        "1002:13c0",
+        "10de:2705"
+      ],
+      "device_slots": [
+        60,
+        86
+      ],
+      "measurement": "Pipeline creation with the original vertex and material pixel shader containers and the retail root signature. The stream PSO declares four color targets. The descriptor PSO declares one."
+    }
+  }
+}

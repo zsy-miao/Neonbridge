@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1792432585 GE-Proton11-11",
+  "binaries_sha256": {
+    "xmem-smoke/xmem-smoke.exe": "37c5124181038c88c5d8083d921edebe2208b896307d022077752621d23241c7",
+    "xmem-smoke/xmem.dll": "b8dd12c7fb279d582a3839ee19517c5f6356908267fbbcab4bb6ea17131e71f1"
+  },
+  "checks": [
+    {
+      "gate": "xmem-default",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-default: PASS (allocator pairs 1/6 and 2/7, ordinary and 64 KiB allocations, host working set v2, virtual reserve/commit)"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "guest_sha256": "51efb289d88bbf4cf52b1ef18cf6ed95811b56091278c9e46e093a500a94730f",
+  "host": "1793301796 experimental-11.0-20261027b-x86_64",
+  "samples": 1,
+  "method": "whole-plane CopyTextureRegion via default-heap buffer and compute RWTexture2D<float>",
+  "cases": {
+    "typed": {
+      "adapter": "10de:2705",
+      "resource_format": "20",
+      "width": "73",
+      "height": "19",
+      "depth_format": "39",
+      "stencil_format": "60",
+      "uav_format": "41",
+      "depth_pitch": "512",
+      "stencil_pitch": "512",
+      "uav_pitch": "512",
+      "matched_depth": "1387",
+      "matched_stencil": "1387",
+      "expected_modified": "278"
+    },
+    "typeless": {
+      "adapter": "10de:2705",
+      "resource_format": "19",
+      "width": "1024",
+      "height": "1024",
+      "depth_format": "39",
+      "stencil_format": "60",
+      "uav_format": "41",
+      "depth_pitch": "4096",
+      "stencil_pitch": "1024",
+      "uav_pitch": "4096",
+      "matched_depth": "1048576",
+      "matched_stencil": "1048576",
+      "expected_modified": "209715"
+    },
+    "wrapped": {
+      "adapter": "10de:2705",
+      "resource_format": "19",
+      "width": "1024",
+      "height": "1024",
+      "depth_format": "39",
+      "stencil_format": "60",
+      "uav_format": "41",
+      "depth_pitch": "4096",
+      "stencil_pitch": "1024",
+      "uav_pitch": "4096",
+      "matched_depth": "1048576",
+      "matched_stencil": "1048576",
+      "expected_modified": "209715"
+    }
+  },
+  "exit": 0,
+  "provider_sha256": "72002963ec599d840babc9e099e9399581ea8ce0f92a7e97d61b2ce2882e2098",
+  "wrapped_exit": 0
+}

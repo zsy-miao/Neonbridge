@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "type": "homebrew",
+  "date_utc": "2026-11-21",
+  "host": "Linux",
+  "os_release": "7.3.4-1-cachyos",
+  "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+  "machine": "x86_64",
+  "backend": "proton",
+  "provider": "1793301796 experimental-11.0-20261027b-x86_64",
+  "binaries_sha256": {
+    "dxc-utils/dxc-utils.exe": "e8eabc91cfc281d2efef83d62c0ecdc421cb5d61b3c5632c8268b722dff158a5",
+    "dxc-utils/dxcompiler_xs.dll": "a085156b0eb127644d9107a0d807b3b94693f769e623f30fd5c5cb7d62951b3e",
+    "dxc-utils/dxcompiler.dll": "5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9"
+  },
+  "checks": [
+    {
+      "gate": "dxc-create-blob",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "dxc-utils PASS bytes=257 source-freed=1 writable=257 retained=1"
+    }
+  ]
+}

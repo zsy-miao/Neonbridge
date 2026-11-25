@@ -1,0 +1,150 @@
+{
+  "scope": "Standalone bounded 64-bit guest-address lookup for aligned DWORD vectors; no runtime guest VA translation",
+  "limitations": [
+    "Caller must prove descriptor allocation identity, physical non-aliasing, lifetime and queue synchronization.",
+    "Unaligned accesses, stores and atomics are unsupported; no claim about native 219 alignment or VA width."
+  ],
+  "shader_sha256": "87c87e9eda00eb39a70b42b135ed1b2ca12130dbdae212251f7b092ffed8b130",
+  "registry_sha256": "0210f32cedc90ba906cff9b7b01b565e3ceb728628030fd329ccb4860287f7a8",
+  "adapters": {
+    "AMD": {
+      "adapter": "1002:13c0",
+      "cases": {
+        "valid_and_random": {
+          "queries_checked": 335,
+          "guard_words": 32
+        },
+        "empty": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "adjacent_ranges": {
+          "queries_checked": 3,
+          "guard_words": 32
+        },
+        "overlap": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "aliased_slot": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "null_base": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "unaligned_base": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "zero_length": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "unaligned_length": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "address_overflow": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "invalid_slot": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_backing": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "too_many_entries": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_directory": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_queries": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_output": {
+          "queries_checked": 4,
+          "guard_words": 32
+        }
+      }
+    },
+    "NVIDIA": {
+      "adapter": "10de:2705",
+      "cases": {
+        "valid_and_random": {
+          "queries_checked": 335,
+          "guard_words": 32
+        },
+        "empty": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "adjacent_ranges": {
+          "queries_checked": 3,
+          "guard_words": 32
+        },
+        "overlap": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "aliased_slot": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "null_base": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "unaligned_base": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "zero_length": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "unaligned_length": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "address_overflow": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "invalid_slot": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_backing": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "too_many_entries": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_directory": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_queries": {
+          "queries_checked": 8,
+          "guard_words": 32
+        },
+        "short_output": {
+          "queries_checked": 4,
+          "guard_words": 32
+        }
+      }
+    }
+  },
+  "dxil_sha256": "14e7a753d96bef2b70368436eff1c8f5efa7dd62d002af25d5ec1378840085de"
+}

@@ -1,0 +1,51 @@
+{
+  "scope": "Independent compiler and pipeline checks on Frosty's packaged global compute shader 219. Neither reference shader was dispatched.",
+  "entry": "LumenSceneDirectLightingHardwareRayTracingCS",
+  "input_sha256": "48734d454c987936dbb898ca88b3f5c2014dccefb6b1fc01c095726f29a985ee",
+  "related_direct_lighting_entries": {
+    "global_entries": [211, 213, 215, 219],
+    "image_bvh64_count_in_entry_order": [1, 2, 1, 2],
+    "lds_exchange_count_in_entry_order": [1, 2, 1, 2],
+    "result": "Running the same frontends on these four LumenSceneDirectLightingHardwareRayTracingCS variants gave four clean LLVM disassemblies, four SPIR-V validation passes, four complete xcl translations and four DXC compilation passes. Each variant contains a buffer_atomic_or instruction."
+  },
+  "leonida": {
+    "revision": "https://github.com/ItsNotRexed/Leonida/tree/d0835dd9f9ec0a88faee510126436f2427854c2e",
+    "steps": [
+      "For this input SHA, inflate the zlib stream at byte 1104 of 219.dxbc into work/fssm/cs_219.fssm. Its 6084 bytes have SHA-256 d274e9a4362ce948b809cf5f5f51f38570d675b530cb650f3bf51bc3ea794256.",
+      "python -I tools/shader_disasm.py work/fssm/cs_219.fssm --out work/dis --mcpu gfx1013",
+      "python -I tools/rdna2spirv.py work/dis --out work/out",
+      "spirv-val --target-env vulkan1.2 work/out/cs_219.spv"
+    ],
+    "tools": "LLVM 23.1.5 and SPIRV-Tools v2026.4.rc2-0-gef96ed763",
+    "fssm_code_range": "[0x168, 0x1508), 967 instructions, zero invalid words and two image_bvh64_intersect_ray instructions. The two earlier 12-byte v_nop markers in xcl's count precede this range.",
+    "spirv": {
+      "bytes": 275260,
+      "sha256": "76f23bfcb9fc0eb065be0405912d4e9666f2136938320de1d36d0aa7a9b665a8",
+      "vulkan_1_2_validation": "passed",
+      "workgroup": [8, 4, 1],
+      "subgroup": 32,
+      "lds_bytes": 2048,
+      "abi": "144-byte push constants, physical storage buffer addresses, set 0 image array, sampler array and descriptor lookup buffer. The compiler identifies four 32-bit table pointers in s4 through s7."
+    },
+    "negative_control": "Replace only the first image_bvh64_intersect_ray mnemonic in the decoded listing with tux_unknown_bvh, keeping the encodings and FSSM the same. The tool reported 0 translated, named the unknown opcode, and emitted no .spv.",
+    "limits": "The reference models triangle results with a normalized denominator. TuxBox's native RDNA2 comparisons check each raw result word. The reference Vulkan compute test lacks shader 219's set 0 descriptor layout and resources."
+  },
+  "xcl": {
+    "revision": "https://github.com/ivall/xcl/tree/dd713e34f5b157430a8920e014bdf66b3c43d1a9",
+    "steps": [
+      "Build xcl at the pinned revision and set XCL_DXC_DIR to a directory containing dxcompiler.dll. The test DLL had SHA-256 5888d3e590f5bfd8743484e7f31313996734adec5741506271a5c6368cbe8ba9.",
+      "xcl.exe shaders 219.dxbc --json --recomp --compile 1",
+      "Place only 219.dxbc in a separate directory, set XCL_DXIL_CACHE to an empty output directory and run xcl.exe shaders <input-directory> --precompile."
+    ],
+    "result": "One wave32 compute program, 969 decoded instructions, zero undecoded dwords, zero missing instructions and zero translation errors. DXC compiled 221895 bytes of HLSL for cs_6_6.",
+    "dxil_bytes": 37268,
+    "dxil_sha256": "71f41a5a42cbbb52a990eed172bab4e28a6ab68c44c9dbf409ddafa566584c58",
+    "pipeline_check": {
+      "host": "GeForce RTX 4070 Ti SUPER (10de:2705), Proton Experimental 1793301796, vkd3d-proton cae2e003bb82516",
+      "procedure": "On the same ID3D12Device, use the cached DXIL unchanged as CS in CreateComputePipelineState. Change only pRootSignature between the two calls.",
+      "packaged_root": "CreateRootSignature on the original 219.dxbc succeeded. The xcl compute pipeline returned E_INVALIDARG (0x80070057). A separately compiled cs_6_5 shader writing a single u0 buffer created its pipeline successfully with the same root.",
+      "reference_abi_root": "Three root UAVs at u0 through u2, four static point/clamp samplers at s0 through s3 in space1, CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED and SAMPLER_HEAP_DIRECTLY_INDEXED. Both root and xcl compute pipeline creation returned S_OK."
+    },
+    "limits": "xcl counts unsupported instructions and emits comments for them. The measured missing list for this shader was empty. Its guest-memory windows and texture bindings require runtime setup. Its triangle helper handles TRI0 and TRI1 vertex selection and uses host floating-point intersection arithmetic."
+  }
+}
