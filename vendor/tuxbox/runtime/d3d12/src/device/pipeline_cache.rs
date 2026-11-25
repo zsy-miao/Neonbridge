@@ -45,9 +45,9 @@
 //! removed with that reason after five saves, at 165 MiB of free commit.
 //! TUXBOX_PIPELINE_LIBRARY_HANDLE=0 closes it after mapping, as before.
 //!
-//! All library calls are serialised: the interface does not promise that
-//! stores, loads and serialising may overlap. A saver thread writes both
-//! files every 20 s when they changed.
+//! Stores and serialising never overlap (STORES). Loads only take LIBRARY
+//! to clone the interface, so a save does not stall them. A saver thread
+//! writes both files every 20 s when they changed.
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -436,6 +436,7 @@ fn load_or_make(
     land.2 = Some(made.clone());
     let made = made?;
     let _held = parallel_loads().then(|| Held::new(&text));
+    let _stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
     with_library(host, |l| {
         // A name already present (another description) keeps its entry.
         if unsafe { l.library.StorePipeline(&name, &made) }.is_ok() {
@@ -622,25 +623,48 @@ pub(crate) fn build_journal(threads: u32) -> u32 {
     super::stream::background::journal::build(threads)
 }
 
+/// Held by a store and by a save across its Serialize: the library does not
+/// promise that the two may overlap. Loads take neither it nor LIBRARY past
+/// a clone of the interface.
+static STORES: Mutex<()> = Mutex::new(());
+
 fn save(dir: &Path) {
     super::stream::background::journal::flush();
-    let written = {
-        let mut state = LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
-        match &mut *state {
-            State::Ready(Some(library)) if library.dirty => {
-                let size = unsafe { library.library.GetSerializedSize() };
-                let path = dir.join(LIBRARY_FILE);
-                let ok = if mapped() { serialize_mapped(&library.library, &path, size) } else { None }
-                    .unwrap_or_else(|| {
-                        let mut blob = vec![0u8; size];
-                        unsafe { library.library.Serialize(&mut blob) }.is_ok() && write_atomic(&path, &blob)
-                    });
-                library.dirty = !ok;
-                ok.then_some(size)
-            }
-            _ => None,
-        }
+    // The save held LIBRARY across Serialize, and every load takes LIBRARY
+    // for a moment (with_library) to clone the interface: each 20 s save of
+    // a GB-size library stalled every library hit for its length.
+    // VIctory-fxceless (library.rs:557, 589-612, GPL-3.0, credit to its
+    // authors) saves under a lock stores take and loads do not. Here a save
+    // holds STORES across Serialize and LIBRARY only to read and clear the
+    // dirty flag, so loads go on. TUXBOX_PIPELINE_SAVE_LOCKED=1 holds
+    // LIBRARY throughout as before.
+    let locked = crate::env_toggle!("TUXBOX_PIPELINE_SAVE_LOCKED") == Some("1");
+    let _stores = STORES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut held = Some(LIBRARY.lock().unwrap_or_else(|e| e.into_inner()));
+    let library = match held.as_deref_mut() {
+        Some(State::Ready(Some(library))) if library.dirty => library.library.clone(),
+        _ => return save_lists(dir),
     };
+    if !locked {
+        held = None;
+    }
+    let size = unsafe { library.GetSerializedSize() };
+    let path = dir.join(LIBRARY_FILE);
+    let ok = if mapped() { serialize_mapped(&library, &path, size) } else { None }
+        .unwrap_or_else(|| {
+            let mut blob = vec![0u8; size];
+            unsafe { library.Serialize(&mut blob) }.is_ok() && write_atomic(&path, &blob)
+        });
+    if ok {
+        // No store ran meanwhile (STORES), so nothing new is left unsaved.
+        let mut state = held.unwrap_or_else(|| LIBRARY.lock().unwrap_or_else(|e| e.into_inner()));
+        if let State::Ready(Some(library)) = &mut *state {
+            library.dirty = false;
+        }
+    } else {
+        drop(held);
+    }
+    let written = ok.then_some(size);
     if let Some(len) = written {
         let (loaded, stored) = (LOADED.load(Ordering::Relaxed), STORED.load(Ordering::Relaxed));
         let (new, known) = (MISSED_NEW.load(Ordering::Relaxed), MISSED_KNOWN.load(Ordering::Relaxed));
@@ -649,6 +673,11 @@ fn save(dir: &Path) {
             format!("pipeline library saved: {loaded} loaded, {stored} stored, {} bytes; misses: {new} named by no earlier run (the host description changed), {known} named by an earlier run (refused by the driver or lost with the library); {joined} waited for the same pipeline compiling on another thread (TUXBOX_PIPELINE_JOIN=0 compiles it again)", len)
         });
     }
+    save_lists(dir);
+}
+
+/// Writes the stored names and the used list, when they changed.
+fn save_lists(dir: &Path) {
     if let Some(names) = names() {
         let mut names = names.lock().unwrap_or_else(|e| e.into_inner());
         if !names.new.is_empty() {
