@@ -1372,7 +1372,36 @@ pub(super) unsafe extern "system" fn sampler_x(
         ComparisonFunc: D3D12_COMPARISON_FUNC(w[16] as _),
         BorderColor: [w[17], w[18], w[19], w[20]].map(f32::from_bits),
     };
+    let host = if crate::env_toggle!("TUXBOX_SAMPLER_SANITIZE") == Some("0") { host } else { sanitized(host, w[3], comparison) };
     unsafe { sampler(device, &host, handle) };
+}
+
+/// A console sampler's values the host accepts (VIctory 43b7c08, GPL-3.0,
+/// PR #474, credit to its authors). The console takes any LOD bound, bias
+/// and address mode word; D3D12 wants finite LOD bounds with min <= max, a
+/// bias within D3D12_MIP_LOD_BIAS_MIN..MAX, address modes 1..=5 and a valid
+/// comparison function, and a sampler outside that is undefined (debug
+/// layer error, driver-specific results). Without a mip filter (mip word 0)
+/// the console clamps sampling to the minimum LOD, where ours sampled every
+/// mip with a point mip filter. NaN bounds fall back to 0 (min) and the min
+/// (max), an inverted range clamps max up to min, an unknown address mode
+/// clamps, and a plain sampler compares with NEVER. The filter decode is
+/// unchanged. TUXBOX_SAMPLER_SANITIZE=0 passes the words through as before.
+fn sanitized(mut host: D3D12_SAMPLER_DESC, mip: u32, comparison: bool) -> D3D12_SAMPLER_DESC {
+    let finite = |value: f32, fallback: f32| if value.is_nan() { fallback } else { value.clamp(-D3D12_FLOAT32_MAX, D3D12_FLOAT32_MAX) };
+    let min_lod = finite(host.MinLOD, 0.0);
+    host.MinLOD = min_lod;
+    host.MaxLOD = if mip == 0 { min_lod } else { finite(host.MaxLOD, min_lod).max(min_lod) };
+    host.MipLODBias = if host.MipLODBias.is_nan() { 0.0 } else { host.MipLODBias.clamp(D3D12_MIP_LOD_BIAS_MIN, D3D12_MIP_LOD_BIAS_MAX) };
+    for mode in [&mut host.AddressU, &mut host.AddressV, &mut host.AddressW] {
+        if !(1..=5).contains(&mode.0) {
+            *mode = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        }
+    }
+    if !comparison || !(1..=8).contains(&host.ComparisonFunc.0) {
+        host.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    }
+    host
 }
 
 /// Device slot 71: CreateUnorderedAccessView over a GPU address (GTA VI
