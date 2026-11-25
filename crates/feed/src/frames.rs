@@ -174,15 +174,41 @@ fn target_window() -> Option<windows_sys::Win32::Foundation::HWND> {
     (!c.best.is_null()).then_some(c.best)
 }
 
+/// NEONBRIDGE_FEED_SCREEN=1: show the whole leftmost monitor instead of one window.
+fn screen_on() -> bool {
+    std::env::var("NEONBRIDGE_FEED_SCREEN").is_ok_and(|v| v.trim() == "1")
+}
+
+fn left_monitor() -> windows_sys::Win32::Foundation::RECT {
+    use windows_sys::Win32::Foundation::*;
+    use windows_sys::Win32::Graphics::Gdi::*;
+    unsafe extern "system" fn each(_: HMONITOR, _: HDC, r: *mut RECT, l: LPARAM) -> windows_sys::core::BOOL {
+        let best = unsafe { &mut *(l as *mut Option<RECT>) };
+        let r = unsafe { *r };
+        if best.is_none_or(|b| r.left < b.left) {
+            *best = Some(r);
+        }
+        1
+    }
+    let mut best: Option<RECT> = None;
+    unsafe { EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), Some(each), &mut best as *mut Option<RECT> as LPARAM) };
+    best.unwrap_or(RECT { left: 0, top: 0, right: 1920, bottom: 1080 })
+}
+
 fn capture(max_w: usize) -> Option<(usize, usize, Vec<u8>)> {
     use windows_sys::Win32::Foundation::*;
     use windows_sys::Win32::Graphics::Gdi::*;
     use windows_sys::Win32::Storage::Xps::PrintWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
-    let h = target_window()?;
+    let screen_mode = screen_on();
+    let h = if screen_mode { std::ptr::null_mut() } else { target_window()? };
     unsafe {
         let mut r: RECT = std::mem::zeroed();
-        GetClientRect(h, &mut r);
+        if screen_mode {
+            r = left_monitor();
+        } else {
+            GetClientRect(h, &mut r);
+        }
         let (sw, sh) = ((r.right - r.left) as usize, (r.bottom - r.top) as usize);
         let scale = (max_w.min(MAX_W) as f64 / sw as f64).min(MAX_H as f64 / sh as f64).min(1.0);
         let w = ((sw as f64 * scale) as usize) & !1;
@@ -195,7 +221,11 @@ fn capture(max_w: usize) -> Option<(usize, usize, Vec<u8>)> {
         let full = CreateCompatibleBitmap(screen, sw as i32, sh as i32);
         let old_full = SelectObject(full_dc, full);
         // 1 = PW_CLIENTONLY, 2 = PW_RENDERFULLCONTENT (DirectX swap chains)
-        let ok = PrintWindow(h, full_dc, 3) != 0;
+        let ok = if screen_mode {
+            BitBlt(full_dc, 0, 0, sw as i32, sh as i32, screen, r.left, r.top, SRCCOPY) != 0
+        } else {
+            PrintWindow(h, full_dc, 3) != 0
+        };
         let out_dc = CreateCompatibleDC(screen);
         let mut bi: BITMAPINFO = std::mem::zeroed();
         bi.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
@@ -238,5 +268,5 @@ pub(crate) fn next_frame(after: u64) -> Option<Frame> {
 
 /// A window the feed can show exists (the loader or a game).
 pub(crate) fn window_live() -> bool {
-    windows_on() && target_window().is_some()
+    windows_on() && (screen_on() || target_window().is_some())
 }
