@@ -12,7 +12,7 @@ Best first, by how far each project's own authors say it gets. The launcher list
 
 | # | Runtime | How far it gets (its authors' own results) | Verified here |
 |---|---|---|---|
-| 1 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene, shadows still dark | No |
+| 1 | [Flamingo](https://github.com/realblastex/flamingo) | 9–14 fps in the first scene, shadows still dark | Yes: boots through the first-boot settings into the first mission ("Go with the prison guard", player in control) at 5–7 fps; the 3D scene renders black (dark lighting, upstream) and menu text is missing glyphs |
 | 2 | [VIctory-fxceless](https://github.com/fxceless/victory-fork) | 7–8 fps in the first rooms; the graphics device is lost in the open world | No |
 | 3 | [VItoriaBr](https://github.com/uiliannn/VItoriaBr) | 3.5–6 fps in the open world | Partly: the intro runs, 3D scenes stop |
 | 4 | [VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | 3–5 fps in a lit world with vehicles (AMD cards) | No |
