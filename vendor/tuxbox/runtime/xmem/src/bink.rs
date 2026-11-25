@@ -131,8 +131,9 @@ fn record(index: usize, movie: u64, result: u64, us: u64) {
             c.total_us as f64 / 1e3 / f64::from(c.count), c.max_us as f64 / 1e3, c.nonzero)
     }).collect();
     let movie_line = match (header(window.movie), window.first_frame) {
-        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, {:.1}/s, TUXBOX_BINK_CATCHUP; smallest lead over the clock {}, TUXBOX_BINK_LEAD) against {:.2} nominal",
+        (Some(h), Some(first)) => format!("; movie {}x{} frame {} of {}, {:.1} frames/s ({} extra decoded to catch up, {:.1}/s, {:.1} ms/s on the title's thread, TUXBOX_BINK_CATCHUP; smallest lead over the clock {}, TUXBOX_BINK_LEAD) against {:.2} nominal",
             h[0], h[1], h[3], h[2], f64::from(window.last_frame.wrapping_sub(first)) / seconds, window.caught_up, f64::from(window.caught_up) / seconds,
+            CATCH_UP_US.swap(0, Ordering::Relaxed) as f64 / 1e3 / seconds,
             MIN_LEAD.lock().unwrap_or_else(|e| e.into_inner()).take().map_or("-".into(), |ms| format!("{ms:.0} ms")),
             if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) }),
         _ => String::new(),
@@ -143,6 +144,10 @@ fn record(index: usize, movie: u64, result: u64, us: u64) {
 
 /// Extra frames decoded since the last record.
 static CAUGHT_UP: Mutex<u32> = Mutex::new(0);
+/// Microseconds the title's thread spent in catch-up decodes since the last
+/// 10 s line (test155: 23 extra 4K decodes/s on the thread whose movie loop
+/// ran 7/s; how much of its frame they take was not logged).
+static CATCH_UP_US: AtomicU64 = AtomicU64::new(0);
 
 struct Clock {
     movie: u64,
@@ -362,6 +367,7 @@ unsafe fn catch_up(movie: u64) {
     };
     let real = |i: usize| -> F4 { unsafe { std::mem::transmute(REAL[i].load(Ordering::Acquire)) } };
     let mut done = 0;
+    let began = Instant::now();
     for _ in 0..behind.min(cap) {
         if header(movie).is_none_or(|h| h[3] >= frames) || !planes_fenced() {
             break;
@@ -384,6 +390,7 @@ unsafe fn catch_up(movie: u64) {
         unsafe { real(NEXT_FRAME)(movie, 0, 0, 0) };
         done += 1;
     }
+    CATCH_UP_US.fetch_add(began.elapsed().as_micros() as u64, Ordering::Relaxed);
     if done != 0 {
         *CAUGHT_UP.lock().unwrap_or_else(|e| e.into_inner()) += done;
     }
