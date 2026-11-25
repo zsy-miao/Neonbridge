@@ -6,8 +6,7 @@ Open work. Each item is tested in a run of its own.
 - Pending A/B runs: `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
-- A/B `TB_VIEW_MARKS=1` (498fc37, 9549a0d; needs a prewarm): shadow write-backs should copy only marked pages.
-- `TUXBOX_PIPELINE_SHAPE=fxceless` (449d9f7) against the bb35fd2 fps hold, then `TUXBOX_PIPELINE_HANDOFF_MS=0`.
+- `TUXBOX_PIPELINE_HANDOFF_MS=0` (fxceless shape default on since 717accd; =0 restores the fps hold).
 
 ## d3d12
 - Memory: system commit is the danger, not device memory. test179: private 7.5 -> 23 GiB, free commit down to 267 MiB, the jumps at heavy driver compiles that kept their arena on the compiling thread (+2.1-2.9 GiB each). Device local over budget (8788 of 7188 MiB: page pools 4720, images 3330, shadows 1070, render heaps 848) is paged by WDDM: idle pools are demoted, render heaps evicted, placed textures trimmed and unmapped. Re-measure free commit in test181 with 5793004 (fresh thread per heavy compile); then try `TUXBOX_PAGES_SYSTEM_PCT` (new sampled-texture pools to system memory over budget; off since test59 died at 1 GiB of commit).
