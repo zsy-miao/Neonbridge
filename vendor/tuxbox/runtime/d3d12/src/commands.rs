@@ -1627,7 +1627,7 @@ unsafe extern "system" fn execute_indirect(
     if !state.can_record(&list.native) {
         return;
     }
-    let Some(max_count) = indirect_guard(&state, max_count) else { return };
+    let (max_count, stale) = indirect_guard(&state, max_count);
     let owner = parent(&list.parent);
     // Each object is borrowed from a live guest reference for this call.
     let (Some(signature), Some(arguments)) = (
@@ -1652,6 +1652,7 @@ unsafe extern "system" fn execute_indirect(
     // root view) skips the clamp: its copy and dispatch fed records nothing
     // reads (VIctory 4e60ea3, GPL-3.0, credit to its authors).
     let compute = usize::from(signature.state.kind == D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH);
+    let mut clamped_now = false;
     if max_count != 0 && !state.pipeline_pending && state.unresolved_roots[compute] == 0 && clamp_enabled()
         && let Some(host) = list.state.raytracing.as_ref()
     {
@@ -1670,9 +1671,13 @@ unsafe extern "system" fn execute_indirect(
                 }
                 // The clamp replaced the compute root and the pipeline.
                 if ran { unsafe { state.bindings.restore(host) }; }
+                clamped_now = ran;
             }
             Err(error) => { { state.error = error.code(); state.error_at = (file!(), line!()); } return; }
         }
+    }
+    if stale && !stale_runs(clamped_now) {
+        return;
     }
     let execute = || unsafe {
         let order = fresh_arguments_buffer(&list.native);
@@ -1722,25 +1727,38 @@ unsafe extern "system" fn execute_indirect(
 /// recording did not run, an ExecuteIndirect's arguments and count are
 /// whatever the buffer held before, not what that dispatch would have
 /// written; stale counts ran huge draws and dispatches. Such a call runs
-/// nothing (None). MaxCommandCount is capped at TUXBOX_INDIRECT_MAX (65536).
+/// nothing. MaxCommandCount is capped at TUXBOX_INDIRECT_MAX (65536).
+/// Returns the capped count and whether the arguments are stale.
 /// TUXBOX_INDIRECT_GUARD=0 off.
-fn indirect_guard(state: &Recording, max_count: u32) -> Option<u32> {
+fn indirect_guard(state: &Recording, max_count: u32) -> (u32, bool) {
     static ON: OnceLock<bool> = OnceLock::new();
     static MAX: OnceLock<u32> = OnceLock::new();
     if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_GUARD") != Some("0")) {
-        return Some(max_count);
-    }
-    if state.skipped_compute {
-        static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n <= 4 || n.is_power_of_two() {
-            crate::diagnostics::log_line(format_args!(
-                "ExecuteIndirect run empty: a dispatch earlier in its list did not run, so its arguments are stale ({n} so far; TUXBOX_INDIRECT_GUARD=0 off)"));
-        }
-        return None;
+        return (max_count, false);
     }
     let cap = *MAX.get_or_init(|| crate::env_toggle!("TUXBOX_INDIRECT_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(65536));
-    Some(max_count.min(cap))
+    (max_count.min(cap), state.skipped_compute)
+}
+
+/// Whether an ExecuteIndirect with stale arguments runs. Every one after a
+/// dropped dispatch ran empty, so one compute pipeline still being made
+/// emptied every later indirect draw of its list, the mesh world among
+/// them. VIctory-fxceless (indirect.rs:247-278, GPL-3.0, credit to its
+/// authors) has no such guard and bounds the records on the GPU instead,
+/// as indirect_clamp already does here: a call whose records were clamped
+/// this time runs, the huge stale counts the guard was for bounded by the
+/// clamp, and only one the clamp did not cover runs empty.
+/// TUXBOX_INDIRECT_STALE=empty empties them all as before.
+fn stale_runs(clamped: bool) -> bool {
+    let runs = clamped && crate::env_toggle!("TUXBOX_INDIRECT_STALE") != Some("empty");
+    static COUNTS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+    let n = COUNTS[usize::from(runs)].fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "ExecuteIndirect after a dispatch of its list did not run (stale arguments): {} ({n} so far; TUXBOX_INDIRECT_STALE=empty empties all, TUXBOX_INDIRECT_GUARD=0 runs all)",
+            if runs { "run with its records clamped" } else { "run empty, the clamp did not cover it" }));
+    }
+    runs
 }
 
 /// A buffer of our own whose COMMON -> INDIRECT_ARGUMENT transition goes before
