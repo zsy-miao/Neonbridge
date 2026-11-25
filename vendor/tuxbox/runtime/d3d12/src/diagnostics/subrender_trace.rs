@@ -200,7 +200,9 @@ fn exits(base: usize) {
     let pid = unsafe { GetCurrentProcessId() };
     let mut watched: HashMap<u32, (windows::Win32::Foundation::HANDLE, usize)> = HashMap::new();
     let mut ignored = std::collections::HashSet::new();
+    let mut credit = Credit::default();
     loop {
+        credit.poll(base);
         if let Ok(snap) = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) } {
             let mut entry = THREADENTRY32 { dwSize: size_of::<THREADENTRY32>() as u32, ..Default::default() };
             let mut more = unsafe { Thread32First(snap, &mut entry) }.is_ok();
@@ -233,5 +235,41 @@ fn exits(base: usize) {
             false
         });
         std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+/// The frame thread's ring credit (game+0x75e5ed8, count in the high 32 bits):
+/// taken one at a time in game+0x2a42d0 (it waits at 0x2a442d when none is
+/// left) and given back by the submit thread game+0x2481e90 at 0x24825a2,
+/// after its ExecuteCommandListsX (queue slot 35) and PresentX (slot 32).
+/// Polled every 500 ms: each stretch of 2 s or more with no credit left is
+/// logged once, with the word, and when credit comes back.
+#[derive(Default)]
+struct Credit {
+    empty_since: Option<std::time::Instant>,
+    told: bool,
+}
+
+const CREDIT: usize = 0x75e5ed8;
+
+impl Credit {
+    fn poll(&mut self, base: usize) {
+        let word = unsafe { ((base + CREDIT) as *const AtomicU64).as_ref() }.map_or(0, |w| w.load(Ordering::Relaxed));
+        let count = (word as i64) >> 32;
+        if count > 0 {
+            if self.told {
+                crate::diagnostics::log_line(format_args!(
+                    "subrender trace: ring credit back ({count} free, word {word:#x}) after {} ms with none",
+                    self.empty_since.map_or(0, |t| t.elapsed().as_millis())));
+            }
+            *self = Self::default();
+            return;
+        }
+        let since = *self.empty_since.get_or_insert_with(std::time::Instant::now);
+        if !self.told && since.elapsed().as_secs() >= 2 {
+            self.told = true;
+            crate::diagnostics::log_line(format_args!(
+                "subrender trace: no ring credit for 2 s (word game+{CREDIT:#x} = {word:#x}): the frame thread waits in game+0x2a42d0 until the submit thread game+0x2481e90 gives one back"));
+        }
     }
 }
