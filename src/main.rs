@@ -29,7 +29,7 @@ use std::{
 };
 
 const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>] [--exe <name>] [--log <file>]
-                      [--build-only | --stage-only | --build-shaders | --pipelines | --restore] [-- <game args>]
+                      [--build-only | --stage-only | --build-shaders | --prewarm | --pipelines | --restore] [-- <game args>]
   --game       dumped package folder (holds MicrosoftGame.Config and the exe)
   --tuxbox     provider source (default: the vendored vendor/tuxbox, or env TUXBOX_ROOT)
   providers build into %LOCALAPPDATA%/6ixpack/tuxbox; a release build ships them
@@ -43,6 +43,9 @@ const USAGE: &str = "usage: neonbridge --game <dir> [--tuxbox <TuxBox checkout>]
   --build-only build the providers, touch nothing in the game folder
   --stage-only build and stage the providers beside the exe, do not start it
   --build-shaders translate every shader in shaders.rpf into the cache, do not start the game
+  --prewarm    translate the programs earlier runs asked for into the current translator's
+               cache and exit: no provider build, no staging, no game (--game optional), so
+               the next run starts warm. NEONBRIDGE_SHADER_THREADS sets the parallelism
   --pipelines  build the pipelines earlier runs created (their journal) into the pipeline
                library in this process, below normal priority, without starting the game
                (NEONBRIDGE_PIPELINE_THREADS, default half the cores; waits while under
@@ -95,6 +98,7 @@ enum Mode {
     BuildOnly,
     StageOnly,
     BuildShaders,
+    Prewarm,
     Pipelines,
     Restore,
 }
@@ -123,6 +127,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
             Some("--build-only") => mode = Mode::BuildOnly,
             Some("--stage-only") => mode = Mode::StageOnly,
             Some("--build-shaders") => mode = Mode::BuildShaders,
+            Some("--prewarm" | "prewarm") => mode = Mode::Prewarm,
             Some("--pipelines" | "pipelines") => mode = Mode::Pipelines,
             Some("--restore") => mode = Mode::Restore,
             Some("--debug") => debug = true,
@@ -161,7 +166,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         }
     }
     // No --game: the one-line picker (folder, exe or MicrosoftGame.Config).
-    if game.is_none() && mode != Mode::BuildOnly && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
+    if game.is_none() && mode != Mode::BuildOnly && mode != Mode::Prewarm && std::env::var("NEONBRIDGE_PICKER").map_or(true, |v| v.trim() != "0") {
         let Some((folder, picked_exe)) = picker::pick() else { return Ok(()) };
         game = Some(folder);
         exe = exe.or(picked_exe);
@@ -194,6 +199,9 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         } else {
             format!("{} is not a TuxBox provider source (no runtime/d3d12/d3d12_xs.def)", tuxbox.display())
         }.into());
+    }
+    if mode == Mode::Prewarm {
+        return prewarm_only(&tuxbox, prebuilt.as_deref());
     }
     let game = if mode == Mode::BuildOnly { game } else { Some(game.ok_or(USAGE)?) };
     let target = match &game {
@@ -495,6 +503,48 @@ fn xshader_commit(tuxbox: &Path) -> String {
 /// `xshader-good.txt`. When a build fails (another session's edit in
 /// progress, test141), the last good binary is used and said so loudly,
 /// with its commit; with none the launch stops.
+/// --prewarm: the programs earlier runs asked for (the seen set) translated
+/// into the current translator's cache, without a game. Every xshader commit
+/// changes the cache key, so the first run after one spent about ten minutes
+/// (test143, ~1,300 programs) translating before the game started; run this
+/// after an xshader landing and the next run finds them cached. Nothing in
+/// the game folder or the provider output is touched. TUXBOX_PREWARM=1 also
+/// translates the whole shaders.rpf archive; the time cap is off unless
+/// NEONBRIDGE_PREWARM_MAX_S is set.
+fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Error>> {
+    // SAFETY: no other thread of ours runs yet.
+    unsafe {
+        if std::env::var_os("NEONBRIDGE_PREWARM_MAX_S").is_none() {
+            std::env::set_var("NEONBRIDGE_PREWARM_MAX_S", "0");
+        }
+        if std::env::var_os("TUXBOX_PREWARM").is_none() {
+            std::env::set_var("TUXBOX_PREWARM", "0");
+        }
+    }
+    let out = env_path("LOCALAPPDATA").unwrap_or_else(std::env::temp_dir).join("6ixpack/tuxbox");
+    fs::create_dir_all(&out)?;
+    let xshader = match prebuilt.map(|d| d.join("xshader.exe")).filter(|p| p.is_file()) {
+        Some(prebuilt) => prebuilt,
+        None => build_xshader(tuxbox, &out)?,
+    };
+    let dxc = shaders::find_dxc().ok_or("no Windows SDK dxc.exe with dxil.dll (or set DXC)")?;
+    let cache_root = std::env::temp_dir().join("tuxbox_shader_cache");
+    let session = cache_root.join(format!("prewarm-{}", std::process::id()));
+    println!("[prewarm] {} + {}", xshader.display(), dxc.display());
+    let started = Instant::now();
+    let worker = shaders::Worker::start(shaders::Tools { xshader, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
+        |line| println!("[prewarm] {line}"))?;
+    let st = worker.stop();
+    let _ = fs::remove_dir_all(&session);
+    use std::sync::atomic::Ordering::Relaxed;
+    let secs = started.elapsed().as_secs_f64();
+    let done = st.prewarmed.load(Relaxed) + st.reused.load(Relaxed) + st.cached.load(Relaxed) + st.unsupported.load(Relaxed) + st.failed.load(Relaxed);
+    println!("[prewarm] done in {secs:.1} s ({:.1} programs/s): {} translated, {} with dxc output reused, {} already cached, {} unsupported, {} failed",
+        done as f64 / secs.max(0.001), st.prewarmed.load(Relaxed), st.reused.load(Relaxed), st.cached.load(Relaxed),
+        st.unsupported.load(Relaxed), st.failed.load(Relaxed));
+    Ok(())
+}
+
 fn build_xshader(tuxbox: &Path, out: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let manifest = tuxbox.join("tools/shader-compiler/Cargo.toml");
     if !manifest.is_file() {
