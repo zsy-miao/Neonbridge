@@ -217,11 +217,11 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     }
     branches::count(branches::QUERY);
     let query = branches::Phase::new(branches::WALK);
-    if let Some(end) = walk_cache(guest, None) {
+    if let Some((start, end)) = walk_cache(guest, None) {
         drop(query);
         let span = end.saturating_sub(guest).min(0x10000).max(1);
         let _p = branches::Phase::new(branches::IMPORT);
-        return root_import(list, state, guest, span);
+        return span_import(list, state, guest, span, (start, end));
     }
     let mut region = MEMORY_BASIC_INFORMATION::default();
     if unsafe { VirtualQuery(Some(guest as _), &mut region, size_of_val(&region)) } == 0 || region.State != MEM_COMMIT {
@@ -250,7 +250,37 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
     drop(query);
     let span = end.saturating_sub(guest).min(0x10000).max(1);
     let _p = branches::Phase::new(branches::IMPORT);
-    root_import(list, state, guest, span)
+    span_import(list, state, guest, span, (region.BaseAddress as u64, end))
+}
+
+/// test167: 649 walked binds in 10 s spent 1285 ms importing (2 ms each): an
+/// import covered only the bind's own 64 KiB, so the next bind a little below
+/// or past it in the same committed span missed buffer_at's reuse and imported
+/// again. The import covers the 32 MiB-aligned window of the walked span that
+/// holds the bind (up to 64 MiB), so nearby binds reuse it; the bind's address
+/// is that import's address plus its offset. TUXBOX_ROOT_SPAN_IMPORT=0
+/// imports the bind's 64 KiB alone.
+fn span_import(list: &List, state: &mut super::Recording, guest: u64, span: u64, (start, end): (u64, u64)) -> Option<u64> {
+    const ALIGN: u64 = 32 << 20;
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| crate::env_toggle!("TUXBOX_ROOT_SPAN_IMPORT") != Some("0")) {
+        return root_import(list, state, guest, span);
+    }
+    let base = (guest & !(ALIGN - 1)).max(start).max(1 << 32);
+    let top = end.min(base.saturating_add(2 * ALIGN));
+    if base > guest || top < guest.saturating_add(span) {
+        return root_import(list, state, guest, span);
+    }
+    match unsafe { device::command_buffer_address(parent(&list.parent), base, top - base) } {
+        Ok((buffer, va)) if va != base || buffer.is_some() => {
+            if let Some(buffer) = buffer {
+                super::raytracing::retain(state, &[&buffer]).ok()?;
+                ROOT_IMPORT.with(|b| b.replace(Some(buffer)));
+            }
+            Some(va + (guest - base))
+        }
+        _ => root_import(list, state, guest, span),
+    }
 }
 
 /// test165: 200 root view binds in 10 s took 653 ms in the VirtualQuery walk
@@ -258,7 +288,7 @@ fn root_address(list: &List, state: &mut super::Recording, guest: u64) -> Option
 /// and these regions are GiB views). A walked committed span (region base to
 /// the end it reached) is kept for 1 s; a bind inside it takes that end
 /// without querying. TUXBOX_ROOT_WALK_CACHE=0 walks every bind as before.
-fn walk_cache(guest: u64, store: Option<(u64, u64)>) -> Option<u64> {
+fn walk_cache(guest: u64, store: Option<(u64, u64)>) -> Option<(u64, u64)> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -276,7 +306,7 @@ fn walk_cache(guest: u64, store: Option<(u64, u64)>) -> Option<u64> {
         spans.push((start, end, now));
         return None;
     }
-    spans.iter().rev().find(|s| s.0 <= guest && guest < s.1).map(|s| s.1)
+    spans.iter().rev().find(|s| s.0 <= guest && guest < s.1).map(|s| (s.0, s.1))
 }
 
 /// root_address branch counts and time per phase, logged every 10 s
@@ -333,8 +363,8 @@ mod branches {
         let c: Vec<u64> = COUNTS.iter().map(|a| a.swap(0, Relaxed)).collect();
         let ms: Vec<f64> = NS.iter().map(|a| a.swap(0, Relaxed) as f64 / 1e6).collect();
         crate::diagnostics::log_line(format_args!(
-            "root views last 10 s: {} binds ({:.1} ms): null/span {}, known view {}, VirtualQuery walk {}; ms in commit_lazy {:.1}, view_state {:.1}, VirtualQuery walk {:.1}, import {:.1} (TUXBOX_ROOT_BRANCHES=0 off)",
-            c.iter().sum::<u64>(), ms[TOTAL], c[NULL], c[KNOWN], c[QUERY], ms[COMMIT], ms[STATE], ms[WALK], ms[IMPORT]));
+            "root views last 10 s: {} binds ({:.1} ms): null/span {}, known view {}, VirtualQuery walk {}; ms in commit_lazy {:.1}, view_state {:.1}, VirtualQuery walk {:.1}, import {:.1}; new buffer imports {} (TUXBOX_ROOT_BRANCHES=0 off)",
+            c.iter().sum::<u64>(), ms[TOTAL], c[NULL], c[KNOWN], c[QUERY], ms[COMMIT], ms[STATE], ms[WALK], ms[IMPORT], crate::device::new_buffer_imports()));
     }
 }
 

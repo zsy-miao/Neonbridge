@@ -467,6 +467,13 @@ fn title_buffer_covers(device: &Device, address: u64, bytes: u64) -> bool {
     })
 }
 
+/// buffer_at calls that went past reuse to a new import, since last asked
+/// (the root views line).
+static NEW_IMPORTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn new_buffer_imports() -> u64 {
+    NEW_IMPORTS.swap(0, std::sync::atomic::Ordering::Relaxed)
+}
+
 fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool, uav: bool)
     -> windows::core::Result<Option<std::sync::Arc<TextureAddress>>> {
     use windows::Win32::Foundation::E_INVALIDARG;
@@ -503,6 +510,7 @@ fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: b
         }
         return Ok(None);
     }
+    NEW_IMPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // FirstElement is measured in whole records. If the guest's suballocation
     // starts between records relative to a 64 KiB page, place the buffer at
     // the guest byte offset using the adapter's tight buffer alignment.
