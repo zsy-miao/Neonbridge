@@ -773,14 +773,18 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         let dest = cache.join(format!("{key}.cso"));
         let checksum = cache.join(format!("{key}.sha256"));
         let refusal = cache.join(format!("{key}.unsupported"));
-        // xshader's heap access reflection (<hlsl>.heap, TB_HEAP_REFLECT) rides
-        // beside the DXIL: kept in the cache as <key>.heap and published to
-        // the session before the .cso, so d3d12 finds it when the .cso shows.
-        let heap_cached = cache.join(format!("{key}.heap"));
+        // xshader's sidecars ride beside the DXIL: the heap access reflection
+        // (<hlsl>.heap, TB_HEAP_REFLECT) and the UAV-from-SRV slots
+        // (<hlsl>.slots). Each is kept in the cache as <key>.<ext> and
+        // published to the session before the .cso, so d3d12 finds it when
+        // the .cso shows.
+        const SIDECARS: [&str; 2] = ["heap", "slots"];
         let publish = |bytes: &[u8]| -> Result<(), String> {
-            if let Ok(text) = fs::read(&heap_cached) {
-                let tmp = session.join(format!("{key}.{}.heapreply", std::process::id()));
-                let _ = fs::write(&tmp, text).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.heap"))));
+            for ext in SIDECARS {
+                if let Ok(text) = fs::read(cache.join(format!("{key}.{ext}"))) {
+                    let tmp = session.join(format!("{key}.{}.{ext}reply", std::process::id()));
+                    let _ = fs::write(&tmp, text).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.{ext}"))));
+                }
             }
             let tmp = session.join(format!("{key}.{}.reply", std::process::id()));
             fs::write(&tmp, bytes).and_then(|_| publish_file(&tmp, &session.join(format!("{key}.cso")))).map_err(|e| format!("publish to {}: {e}", session.display()))
@@ -801,7 +805,9 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         let (hlsl, output, profile) = (work.join("shader.hlsl"), work.join("out.cso"), work.join("profile"));
         let translate_started = std::time::Instant::now();
-        let _ = fs::remove_file(work.join("shader.hlsl.heap"));
+        for ext in SIDECARS {
+            let _ = fs::remove_file(work.join(format!("shader.hlsl.{ext}")));
+        }
         // In-process first (xshader_lib.rs): the same inputs as the command line below.
         let dll = tools.xshader.with_file_name(crate::xshader_lib::DLL);
         let inproc = if crate::xshader_lib::enabled() && dll.is_file() && ext != "quadmask" {
@@ -848,10 +854,12 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Err(ToolError::Other(msg)) => return Err(format!("xshader: {msg}")),
         } }
         let translate_ms = translate_started.elapsed().as_millis() as u64;
-        let heap_out = work.join("shader.hlsl.heap");
-        match fs::read(&heap_out) {
-            Ok(text) => { let _ = fs::write(&heap_cached, text); }
-            Err(_) => { let _ = fs::remove_file(&heap_cached); }
+        for ext in SIDECARS {
+            let cached = cache.join(format!("{key}.{ext}"));
+            match fs::read(work.join(format!("shader.hlsl.{ext}"))) {
+                Ok(text) => { let _ = fs::write(&cached, text); }
+                Err(_) => { let _ = fs::remove_file(&cached); }
+            }
         }
         let target = fs::read_to_string(&profile).map_err(|e| format!("xshader wrote no profile: {e}"))?.trim().to_owned();
         let allowed: &[&str] = if ext == "link" {
