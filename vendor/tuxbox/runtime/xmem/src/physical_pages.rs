@@ -1397,11 +1397,7 @@ impl Pool {
         JOIN_GEN.fetch_add(1, Ordering::AcqRel);
         JOINING[1].store(hi, Ordering::Release);
         JOINING[0].store(lo, Ordering::Release);
-        // xbox-emulator phys_runs.rs break_run (GPL, credited): every other
-        // thread is suspended while the views are unmapped and remapped, so
-        // none touches or holds the range in between. TUXBOX_JOIN_FREEZE=0 off.
-        let frozen = join_freeze().then(Frozen::new);
-        let joined = (|| -> Result<(), u32> {
+        let attempt = || -> Result<(), u32> {
             let mut unmapped = 0;
             let undo = |unmapped: usize| -> Result<(), u32> {
                 for &(a, b) in &pieces[..unmapped] { section.map_range(offset + (a - lo) as u64, a, b - a)?; }
@@ -1424,8 +1420,21 @@ impl Pool {
                 return Err(e);
             }
             Ok(())
-        })();
-        drop(frozen);
+        };
+        // xbox-emulator phys_runs.rs break_run (GPL, credited): every other
+        // thread is suspended while the views are unmapped and remapped, so
+        // none touches or holds the range in between. Only a join that failed
+        // 87 unfrozen (its views restored) is retried frozen: freezing every
+        // join cost a snapshot and ~100 suspends each, and boot's thousands of
+        // growing joins starved the title (test166: 0 presents; test167 with
+        // the freeze off presented). TUXBOX_JOIN_FREEZE=0 off.
+        let mut joined = attempt();
+        if joined == Err(87) && join_freeze() {
+            let frozen = Frozen::new();
+            joined = attempt();
+            drop(frozen);
+            crate::loader::log(&format!("join range {lo:#x}..{hi:#x}: failed 87 unfrozen; frozen retry {joined:?} (TUXBOX_JOIN_FREEZE=0 off)"));
+        }
         JOINING[0].store(0, Ordering::Release);
         JOIN_GEN.fetch_add(1, Ordering::AcqRel);
         {
