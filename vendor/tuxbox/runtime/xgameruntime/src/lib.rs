@@ -126,6 +126,9 @@ unsafe extern "system" fn QueryApiImpl(
     if same(class, &SYSTEM) {
         return unsafe { query(&SYSTEM_OBJECT, iid, out) };
     }
+    if same(class, &FEATURE) && feature_enabled() {
+        return unsafe { query(&FEATURE_OBJECT, iid, out) };
+    }
     if !same(class, &THREADING) {
         let by_interface = probe::CLASSES.iter().position(|(c, _)| same(c, iid))
             .filter(|&i| i == probe::GAMERTAG);
@@ -189,6 +192,8 @@ unsafe extern "system" fn query(this: &Object, iid: *const GUID, out: *mut *mut 
     };
     let supported = if ptr::eq(this, &SYSTEM_OBJECT) {
         same(iid, &SYSTEM_V1) || same(iid, &SYSTEM_V2)
+    } else if ptr::eq(this, &FEATURE_OBJECT) {
+        same(iid, &FEATURE)
     } else {
         same(iid, &THREADING)
     };
@@ -316,5 +321,69 @@ static SYSTEM_TABLE: [Slot; 32] = {
 };
 static SYSTEM_OBJECT: Object = Object {
     vtable: &SYSTEM_TABLE,
+    references: AtomicU32::new(0),
+};
+
+/// XGameRuntimeFeatureImpl (8836fe87, its interface id the class id; test154
+/// asked for it once): slot 3 is `bool XGameRuntimeIsFeatureAvailable(XGameRuntimeFeature)`.
+/// Ported from leonida runtime/shims/xgameruntime.cpp (kGameRuntimeFeatureClass,
+/// GPL-3.0, with credit): a feature is available when QueryApiImpl serves the
+/// class its functions go through; XDisplay is console-only there, but our
+/// services serve it, so it follows the class. Values past XGameStreaming (21)
+/// are false. TUXBOX_RUNTIME_FEATURE=0 answers E_NOINTERFACE as before.
+const FEATURE: GUID = GUID::from_u128(0x8836fe87_edb9_4fe3_8dad_05f0d2cd5b40);
+
+fn feature_enabled() -> bool {
+    std::env::var("TUXBOX_RUNTIME_FEATURE").as_deref() != Ok("0")
+}
+
+/// Whether QueryApiImpl hands out an object for `class`.
+fn class_served(class: &GUID) -> bool {
+    same(class, &SYSTEM) || same(class, &THREADING)
+        || probe::CLASSES.iter().position(|(c, _)| same(c, class)).is_some_and(probe::available)
+}
+
+extern "system" fn is_feature_available(_: &Object, feature: u32) -> bool {
+    // XGameRuntimeFeature order (Microsoft's enum page, leonida kRuntimeFeatures).
+    const CLASS: [Option<u128>; 22] = [
+        Some(0x3e241977_6237_41e9_8559_102c2d9983f1), // XAccessibility
+        None,                                          // XAppCapture
+        Some(0), Some(0),                              // XAsync, XAsyncProvider (threading)
+        Some(0x03f0fe74_fdd9_4e5c_b630_f9339c47acc5), // XDisplay
+        Some(0x973a344e_24bf_4d0f_8457_56c534892b29), // XGame
+        None,                                          // XGameInvite
+        Some(0x704c3f58_e629_4cc2_b197_30511b996fe2), // XGameSave
+        Some(0xdfcd4649_4ff8_4043_ba07_35d607df98b0), // XGameUI
+        None,                                          // XLauncher
+        Some(0x37e56907_2f10_41e8_b72f_36edb185331a), // XNetworking
+        Some(0xaf406016_e850_4aa8_a88d_2f3dcb9dac7e), // XPackage
+        Some(0xf4faf4d4_2d04_4fce_b3e0_474a713a3e84), // XPersistentLocalStorage
+        Some(0x3e241977_6237_41e9_8559_102c2d9983f1), // XSpeechSynthesizer (in IXAccessibilityImpl)
+        Some(0x0dd112ac_7c24_448c_b92b_3960fb5bd30c), // XStore
+        Some(1),                                       // XSystem
+        Some(0), Some(0),                              // XTaskQueue, XThread
+        Some(0x01acd177_91f9_4763_a38e_ccbb55ce32e0), // XUser
+        Some(1),                                       // XError (exported directly)
+        None, None,                                    // XGameEvent, XGameStreaming
+    ];
+    let answer = match CLASS.get(feature as usize).copied().flatten() {
+        None => false,
+        Some(0 | 1) => true,
+        Some(class) => class_served(&GUID::from_u128(class)),
+    };
+    report(format_args!("XGameRuntimeIsFeatureAvailable({feature}) = {answer} (TUXBOX_RUNTIME_FEATURE=0 off)"));
+    answer
+}
+
+static FEATURE_TABLE: [Slot; 32] = {
+    let mut slots = unsupported_methods!(true; 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31);
+    slots[0] = slot!(query);
+    slots[1] = slot!(add_ref);
+    slots[2] = slot!(release);
+    slots[3] = slot!(is_feature_available);
+    slots
+};
+static FEATURE_OBJECT: Object = Object {
+    vtable: &FEATURE_TABLE,
     references: AtomicU32::new(0),
 };
