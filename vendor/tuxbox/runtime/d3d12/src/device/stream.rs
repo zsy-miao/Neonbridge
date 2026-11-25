@@ -1026,38 +1026,61 @@ thread_local! {
 
 /// The quad-mask variant of `host` (built in the background from the stream
 /// it was made from), None while it is being made or when it cannot be.
-pub(crate) unsafe fn quad_variant(device: *mut c_void, host: &compute::Pipeline) -> Option<&'static compute::Pipeline> {
-    let device = unsafe { &*device.cast::<Device>() };
+pub(crate) unsafe fn quad_variant(device: *mut c_void, host: &compute::Pipeline, mask: u64) -> Option<&'static compute::Pipeline> {
     use std::sync::{Arc, Mutex};
-    static VARIANTS: Mutex<Vec<(usize, Arc<background::Upgrade>)>> = Mutex::new(Vec::new());
+    let device = unsafe { &*device.cast::<Device>() };
+    type Entry = (usize, Arc<background::Upgrade>, std::time::Instant, bool);
+    static VARIANTS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+    static SKIPPED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
     let key = host as *const compute::Pipeline as usize;
-    let slot = {
+    let name = || host.state.key.as_deref().map_or_else(|| format!("{key:#x}"), str::to_owned);
+    let (slot, started, logged) = {
         let mut variants = VARIANTS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, slot)) = variants.iter().find(|(k, _)| *k == key) {
-            slot.clone()
+        if let Some(e) = variants.iter().find(|e| e.0 == key) {
+            (e.1.clone(), e.2, e.3)
         } else {
-            let base = host.state.derive_from.as_ref()?;
-            // A deep copy of the kept stream (patched with nothing points
-            // into `base`, which outlives the copy here).
-            let mut storage = base.patched(&[])?;
-            let desc = D3D12_PIPELINE_STATE_STREAM_DESC {
-                SizeInBytes: storage.len() * size_of::<usize>(),
-                pPipelineStateSubobjectStream: storage.as_mut_ptr().cast(),
+            let made = host.state.derive_from.as_ref().and_then(|base| {
+                // A deep copy of the kept stream (patched with nothing points
+                // into `base`, which outlives the copy here).
+                let mut storage = base.patched(&[])?;
+                let desc = D3D12_PIPELINE_STATE_STREAM_DESC {
+                    SizeInBytes: storage.len() * size_of::<usize>(),
+                    pPipelineStateSubobjectStream: storage.as_mut_ptr().cast(),
+                };
+                unsafe { background::OwnedStream::copy(&desc) }
+            });
+            let Some(mut stream) = made else {
+                let mut skipped = SKIPPED.lock().unwrap_or_else(|e| e.into_inner());
+                if skipped.len() < 4096 && !skipped.contains(&key) {
+                    skipped.push(key);
+                    crate::diagnostics::log_line(format_args!(
+                        "quad-mask variant: pipeline {} (mask {mask:#018x}) has no kept stream (derived-PSO budget, TUXBOX_DERIVED_PSO_MB); drawn with full coverage", name()));
+                }
+                return None;
             };
-            let mut stream = unsafe { background::OwnedStream::copy(&desc) }?;
-            stream.quad = true;
-            let slot = background::lazy((*identity(device)).clone(), background::Work::Stream(stream));
             // Kept for the process (no eviction: draws hold `&'static` to them).
             if variants.len() >= 4096 {
                 return None;
             }
-            variants.push((key, slot.clone()));
-            slot
+            stream.quad = true;
+            let slot = background::lazy((*identity(device)).clone(), background::Work::Stream(stream));
+            let now = std::time::Instant::now();
+            variants.push((key, slot.clone(), now, false));
+            (slot, now, false)
         }
     };
-    let built = background::wait_for(&slot, std::time::Duration::from_millis(200))?;
+    let built = background::wait_for(&slot, std::time::Duration::from_millis(200));
+    if !logged && (built.is_some() || background::failed(&slot)) {
+        let mut variants = VARIANTS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(e) = variants.iter_mut().find(|e| e.0 == key) {
+            e.3 = true;
+        }
+        crate::diagnostics::log_line(format_args!(
+            "quad-mask variant: pipeline {} (mask {mask:#018x}) {} after {} ms (TUXBOX_QUAD_MASK_VARIANT=0 off)",
+            name(), if built.is_some() { "built" } else { "failed" }, started.elapsed().as_millis()));
+    }
     // SAFETY: `slot` stays in VARIANTS for the process, so its pipeline does too.
-    Some(unsafe { &*(built.pipeline() as *const compute::Pipeline) })
+    built.map(|built| unsafe { &*(built.pipeline() as *const compute::Pipeline) })
 }
 
 pub(super) unsafe extern "system" fn create_pipeline(

@@ -134,7 +134,7 @@ fn draw_quad(list: &List, state: &mut super::Recording, rasterizes: bool, draw: 
     if data.raster_table.as_ref().is_some_and(|t| t.quad_mask.is_some()) {
         return state.draw(list, rasterizes, draw);
     }
-    let Some(variant) = (unsafe { crate::device::quad_variant(parent(&list.parent), host) }) else {
+    let Some(variant) = (unsafe { crate::device::quad_variant(parent(&list.parent), host, state.bindings.quad_mask.unwrap_or(u64::MAX)) }) else {
         return state.draw(list, rasterizes, draw);
     };
     // The variant's root table holds tb_quad_mask's constants: the draw binds
