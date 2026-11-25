@@ -412,7 +412,7 @@ pub(super) fn private_root(
             core::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
         Ok(Some(SceneRoot {
             program,
-            native: device.CreateRootSignature(node_mask, bytes)?,
+            native: super::root_name::named(device.CreateRootSignature(node_mask, bytes), bytes)?,
             original,
             source: binding,
             appended: count,

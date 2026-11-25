@@ -17,6 +17,7 @@ mod allocation;
 mod cb_blend;
 mod slot57;
 mod compile_budget;
+pub(crate) mod root_name;
 mod plane_size;
 pub(crate) mod alloc_swap;
 mod fallback;

@@ -105,6 +105,7 @@ mod census {
     pub(super) static PINNED: AtomicU64 = AtomicU64::new(0);
     pub(super) static DEVICE: AtomicU64 = AtomicU64::new(0);
     pub(super) static NOT_COMMITTED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static EMPTY: AtomicU64 = AtomicU64::new(0);
     pub(super) static NOT_RW: AtomicU64 = AtomicU64::new(0);
     pub(super) static LAST_PROTECT: AtomicU64 = AtomicU64::new(0);
     pub(super) static PROTECT_FAILED: AtomicU64 = AtomicU64::new(0);
@@ -117,8 +118,8 @@ mod census {
         }
         let g = |c: &AtomicU64| c.load(Relaxed);
         crate::loader::log(&format!(
-            "section watch census: {n} queries ({} not a view), blocks {} clean (skipped) / {} reported; reported blocks {} guarded, unguarded: {} pinned, {} device pages, {} not committed, {} not read-write (last protect {:#x}), {} VirtualProtect failed; {} opened by a write",
-            g(&NOT_VIEW), g(&CLEAN), g(&REPORTED), g(&GUARDED), g(&PINNED), g(&DEVICE), g(&NOT_COMMITTED), g(&NOT_RW), g(&LAST_PROTECT), g(&PROTECT_FAILED), g(&OPENED)));
+            "section watch census: {n} queries ({} not a view), blocks {} clean (skipped) / {} empty (nothing committed, skipped) / {} reported; reported blocks {} guarded, unguarded: {} pinned, {} device pages, {} not committed, {} not read-write (last protect {:#x}), {} VirtualProtect failed; {} opened by a write",
+            g(&NOT_VIEW), g(&CLEAN), g(&EMPTY), g(&REPORTED), g(&GUARDED), g(&PINNED), g(&DEVICE), g(&NOT_COMMITTED), g(&NOT_RW), g(&LAST_PROTECT), g(&PROTECT_FAILED), g(&OPENED)));
     }
 }
 
@@ -146,7 +147,7 @@ pub(crate) fn query(start: usize, end: usize, cap: usize) -> Option<Vec<usize>> 
                 // later commit (lazy_commit -> writing) shows here as a
                 // block with committed runs, reported then (test177: 82%
                 // of reported blocks were these, re-reported every query).
-                census::add(&census::NOT_COMMITTED);
+                census::add(&census::EMPTY);
             } else {
                 census::add(&census::REPORTED);
                 let from = block.max(start & !0xfff);

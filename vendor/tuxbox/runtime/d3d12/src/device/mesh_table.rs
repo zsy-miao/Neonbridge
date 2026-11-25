@@ -135,7 +135,7 @@ pub(super) fn reflected(
         let bytes =
             std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
         Ok(Some(Arc::new(ComputeTable {
-            native: device.CreateRootSignature(node, bytes)?,
+            native: super::root_name::named(device.CreateRootSignature(node, bytes), bytes)?,
             original: original.clone(),
             layout: RootSource::new(bytes),
             lengths,

@@ -656,7 +656,7 @@ pub(in crate::device) fn placeholder(device: &Device) -> Option<ID3D12PipelineSt
         unsafe { D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &mut blob, None) }.ok()?;
         let blob = blob?;
         let bytes = unsafe { slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()) };
-        let root: ID3D12RootSignature = unsafe { device.native.CreateRootSignature(0, bytes) }.ok()?;
+        let root: ID3D12RootSignature = crate::device::root_name::named(unsafe { device.native.CreateRootSignature(0, bytes) }, bytes).ok()?;
         let compute = D3D12_COMPUTE_PIPELINE_STATE_DESC {
             pRootSignature: core::mem::ManuallyDrop::new(Some(root)),
             CS: super::super::fallback::bytecode(code),

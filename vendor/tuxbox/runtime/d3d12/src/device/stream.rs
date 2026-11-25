@@ -120,6 +120,9 @@ unsafe fn canonical_parts(guest: Option<&Device>, desc: &D3D12_PIPELINE_STATE_ST
         let _ = write!(out, "{tag}:");
         match tag {
             0 => {
+                if guest.is_none() && super::root_name::on() {
+                    let _ = write!(out, "{};", super::root_name::digest(unsafe { payload.cast::<*mut c_void>().read() }).unwrap_or_default());
+                }
                 if let Some(device) = guest {
                     let root = unsafe { compute::root_proxy(payload.cast::<*mut c_void>().read(), identity(device).as_raw()) }.ok()?;
                     match root {

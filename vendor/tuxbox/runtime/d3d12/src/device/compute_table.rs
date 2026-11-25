@@ -343,7 +343,7 @@ fn reflected_tables(
         let blob = blob.ok_or(E_POINTER)?;
         let bytes =
             std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
-        let native = device.CreateRootSignature(node, bytes)?;
+        let native = super::root_name::named(device.CreateRootSignature(node, bytes), bytes)?;
         Ok(TableLayout::Reflected(Arc::new(ComputeTable {
             native,
             original: original.clone(),
@@ -452,7 +452,7 @@ fn extend_root_from(
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
         let layout = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
-        let native = device.CreateRootSignature(node, layout)?;
+        let native = super::root_name::named(device.CreateRootSignature(node, layout), layout)?;
         Ok(TableLayout::Reflected(Arc::new(ComputeTable {
             native,
             original: original.clone(),
@@ -589,7 +589,7 @@ pub(super) fn with_runtime_tables(
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
         let layout = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
-        let native = device.CreateRootSignature(node, layout)?;
+        let native = super::root_name::named(device.CreateRootSignature(node, layout), layout)?;
         Ok(Arc::new(ComputeTable {
             native,
             original: table.map_or_else(|| guest.clone(), |t| t.original.clone()),
@@ -700,7 +700,7 @@ fn append_corroborated_ranges(
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
         let bytes = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
-        let native = device.CreateRootSignature(node, bytes)?;
+        let native = super::root_name::named(device.CreateRootSignature(node, bytes), bytes)?;
         Ok(TableLayout::Reflected(Arc::new(ComputeTable {
             native,
             original: original.clone(),
@@ -831,7 +831,7 @@ pub(super) fn srv_as_uav(
         D3D12SerializeVersionedRootSignature(&desc, &mut blob, None)?;
         let blob = blob.ok_or(E_POINTER)?;
         let bytes = std::slice::from_raw_parts(blob.GetBufferPointer().cast(), blob.GetBufferSize());
-        let native = device.CreateRootSignature(node, bytes)?;
+        let native = super::root_name::named(device.CreateRootSignature(node, bytes), bytes)?;
         Ok(Some(Arc::new(ComputeTable {
             native,
             original: original.clone(),

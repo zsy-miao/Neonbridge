@@ -651,12 +651,16 @@ fn compute_name(desc: &D3D12_COMPUTE_PIPELINE_STATE_DESC) -> Option<String> {
     let code = unsafe { core::slice::from_raw_parts(cs.pShaderBytecode.cast::<u8>(), cs.BytecodeLength) };
     // Root signatures are left out, as for streams: the driver rejects a
     // loaded entry whose root differs, and the pipeline is then compiled.
-    let canonical = format!(
+    let mut canonical = format!(
         "host-compute:{};{};{}",
         super::shader_cache::source_digest(code)?,
         desc.NodeMask,
         desc.Flags.0
     );
+    if super::root_name::on() {
+        let raw = desc.pRootSignature.as_ref().map_or(core::ptr::null_mut(), |r| r.as_raw());
+        canonical.push_str(&format!(";root:{}", super::root_name::digest(raw).unwrap_or_default()));
+    }
     super::shader_cache::source_digest(canonical.as_bytes())
 }
 

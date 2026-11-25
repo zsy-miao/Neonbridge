@@ -337,8 +337,8 @@ pub(super) unsafe extern "system" fn create_root_signature(
         None => (bytes, None),
     };
     match unsafe {
-        this.native
-            .CreateRootSignature::<ID3D12RootSignature>(node, bytes)
+        super::root_name::named(this.native
+            .CreateRootSignature::<ID3D12RootSignature>(node, bytes), bytes)
     } {
         // SAFETY: the returned guest child owns both its native interface and device.
         Ok(native) => unsafe {
