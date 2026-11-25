@@ -162,6 +162,30 @@ fn bink_gate() -> bool {
     since.get_or_insert_with(std::time::Instant::now).elapsed() < std::time::Duration::from_millis(250)
 }
 
+/// Gap 3: each plane was gated on its own, so a decode finishing between the
+/// Y and CbCr reads of one refresh uploaded planes of two frames. A refresh
+/// now fixes Bink's completed-decode count at its start (begin_plane_pass);
+/// once a plane is gated, or the count moves, every later plane of that
+/// refresh is gated too and reads next refresh together.
+/// TUXBOX_BINK_FRAME_GATE=0 gates each plane alone.
+static PLANE_PASS: std::sync::Mutex<Option<(u64, bool)>> = std::sync::Mutex::new(None);
+
+pub(super) fn begin_plane_pass() {
+    let mut pass = PLANE_PASS.lock().unwrap_or_else(|e| e.into_inner());
+    *pass = (crate::env_toggle!("TUXBOX_BINK_FRAME_GATE") != Some("0"))
+        .then(bink_state).flatten().map(|(_, done)| (done, false));
+}
+
+fn plane_gated() -> bool {
+    let alone = bink_gate();
+    let mut pass = PLANE_PASS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((done, gated)) = pass.as_mut() else { return alone };
+    if alone || bink_state().is_some_and(|(_, now)| now != *done) {
+        *gated = true;
+    }
+    *gated
+}
+
 /// This refresh's whole byte budget (refresh_read_budget, scaled for a busy
 /// refresh): a level is never deferred while the budget is untouched.
 pub(super) static REFRESH_FULL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -925,7 +949,7 @@ impl Texture {
                 continue;
             }
             let plane = video_plane(&self.desc, self.mips.len());
-            if plane && bink_gate() {
+            if plane && plane_gated() {
                 let n = PLANE_GATED.fetch_add(1, Ordering::Relaxed) + 1;
                 if n <= 8 || n.is_power_of_two() {
                     crate::diagnostics::log_line(format_args!(

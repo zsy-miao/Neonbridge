@@ -232,6 +232,7 @@ impl Transfer {
         // completed-decode count seen while Bink was idle before this pass.
         let bink_before = super::bink_state().filter(|&(busy, _)| busy == 0).map(|(_, done)| done);
         let mut planes_whole = false;
+        super::begin_plane_pass();
         for k in 0..count {
             let i = (start + k) % count;
             if limited && budget != 0 && ms != 0 && k != 0 && started.elapsed() >= std::time::Duration::from_millis(ms) {
