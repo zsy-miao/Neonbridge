@@ -130,15 +130,11 @@ unsafe extern "system" fn wait_stub() {
 #[unsafe(naked)]
 unsafe extern "system" fn set_stub() {
     core::arch::naked_asm!(
-        "mov rax, [rsp]",
-        "cmp rax, qword ptr [rip + {ret}]",
-        "jne 2f",
         "mov rdx, r14",
         "mov r8, r15",
+        "mov r9, [rsp]",
         "jmp {slow}",
-        "2:",
-        "jmp qword ptr [rip + {real}]",
-        ret = sym SET_RET, real = sym SET_REAL, slow = sym set_job,
+        slow = sym set_job,
     )
 }
 
@@ -158,7 +154,34 @@ extern "system" fn wait_go(handle: usize, timeout: u32, slot: usize) -> u32 {
     real(handle, timeout)
 }
 
-extern "system" fn set_job(handle: usize, job: usize, slot: usize) -> i32 {
+/// test176: no SetEvent came from game+0x43c4318 in 330 s while the loading
+/// render's groups kept completing, so every SetEvent of a group event
+/// (game+0x9c3be78 + 0x30 * group) is logged with its caller too: the first
+/// 8 per (group, caller), then every power of two.
+fn group_set(handle: usize, ret: usize) {
+    let base = BASE.load(Ordering::Relaxed);
+    let Some(group) = (0..8).find(|g| unsafe { ((base + 0x9c3be78 + g * 0x30) as *const usize).read_volatile() } == handle) else { return };
+    static SEEN: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(usize, usize), u64>>> = std::sync::LazyLock::new(Default::default);
+    let n = {
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let n = seen.entry((group, ret)).or_insert(0);
+        *n += 1;
+        *n
+    };
+    if n <= 8 || n.is_power_of_two() {
+        let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+        let at = ret.checked_sub(base).filter(|&r| r < 0x2000_0000).map_or(format!("{ret:#x}"), |r| format!("game+{r:#x}"));
+        crate::diagnostics::log_line(format_args!(
+            "subrender trace: group {group}'s event {handle:#x} set from {at} on thread {tid} ({n} from there)"));
+    }
+}
+
+extern "system" fn set_job(handle: usize, job: usize, slot: usize, ret: usize) -> i32 {
+    let real: extern "system" fn(usize) -> i32 = unsafe { core::mem::transmute(SET_REAL.load(Ordering::Acquire)) };
+    if ret != SET_RET.load(Ordering::Relaxed) {
+        group_set(handle, ret);
+        return real(handle);
+    }
     static N: AtomicU64 = AtomicU64::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed) + 1;
     if n <= 64 || n.is_power_of_two() {
@@ -167,7 +190,6 @@ extern "system" fn set_job(handle: usize, job: usize, slot: usize) -> i32 {
         crate::diagnostics::log_line(format_args!(
             "subrender trace: {who} on thread {tid} sets job {job:#x}'s event {handle:#x} ({n} so far)"));
     }
-    let real: extern "system" fn(usize) -> i32 = unsafe { core::mem::transmute(SET_REAL.load(Ordering::Acquire)) };
     real(handle)
 }
 
