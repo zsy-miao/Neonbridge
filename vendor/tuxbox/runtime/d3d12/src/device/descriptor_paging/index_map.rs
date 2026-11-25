@@ -155,6 +155,14 @@ impl Direct {
         remember(&mut self.written, range);
     }
 
+    /// Whether the index map names any slot of the range `first..first+count`
+    /// resident at `physical` (such a range is never freed, retire.rs).
+    pub(super) fn references(&self, first: u32, count: u32, physical: u32) -> bool {
+        self.resident.as_ref().is_some_and(|resident| {
+            (0..count).any(|i| resident.slots.get((first + i) as usize) == Some(&(physical + i)))
+        })
+    }
+
     pub(super) fn contiguous(&self, first: u32, count: u32) -> Option<u32> {
         let slots = &self.resident.as_ref()?.slots[first as usize..(first + count) as usize];
         let (&start, rest) = slots.split_first()?;

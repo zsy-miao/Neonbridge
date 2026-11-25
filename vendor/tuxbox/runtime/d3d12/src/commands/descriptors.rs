@@ -140,6 +140,11 @@ pub(super) unsafe extern "system" fn bind_heaps(
         retained[index] = Some(heap.native.clone());
     }
     state.resource_heap = resource_heap;
+    if let Some(arena) = &descriptor_arena
+        && !state.arena_leases.iter().any(|lease| std::sync::Arc::ptr_eq(lease.arena(), arena))
+    {
+        state.arena_leases.push(arena.lease());
+    }
     state.descriptor_arena = descriptor_arena;
     state.bindings.heaps(&retained[..count as usize]);
     unsafe {

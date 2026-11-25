@@ -120,6 +120,9 @@ struct Recording {
     resource_heap: Option<descriptors::ResourceHeap>,
     descriptor_arena: Option<Arc<device::descriptor_paging::Arena>>,
     indexed_arenas: Vec<Arc<device::descriptor_paging::Arena>>,
+    /// Holds on the table slots of each paged arena this recording bound
+    /// (descriptor_paging/retire.rs); dropped at reset or release.
+    arena_leases: Vec<device::descriptor_paging::Lease>,
     scalar_descriptors: std::collections::HashSet<descriptors::ScalarDescriptor>,
     sampled_heaps: Vec<Range<usize>>,
     /// TUXBOX_LIST_RING=1: guest caller RVAs of the latest recording calls,
@@ -832,6 +835,7 @@ unsafe extern "system" fn reset(
         state.resource_heap = None;
         state.descriptor_arena = None;
         state.indexed_arenas.clear();
+        state.arena_leases.clear();
         state.scalar_descriptors.clear();
         state.sampled_heaps.clear();
         state.ring.clear();
@@ -2747,6 +2751,8 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     // A list of the batch writes a 64-bit value (retire_waits).
     let retire_write = std::cell::Cell::new(false);
     let swap_lists = std::cell::RefCell::new(Vec::new());
+    // Leases of the batch's lists on paged arenas (descriptor_paging::submitted).
+    let arena_leases = std::cell::RefCell::new(Vec::new());
     // The batch's lists, for the transient-pool lifetime check.
     let pool_lists = std::cell::RefCell::new(Vec::new());
     // Later host lists of lists split at GPU memory waits (split), by first host list.
@@ -2843,6 +2849,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             trace_samples.borrow_mut().extend(state.trace_samples.iter().cloned());
             cpu_copies.borrow_mut().extend(state.cpu_copies.iter().copied());
             swap_lists.borrow_mut().push(list as *const List as usize);
+            arena_leases.borrow_mut().extend(state.arena_leases.iter().map(|lease| lease.state()));
             let first = state.segments.first(&list.native);
             if first != list.native.as_raw() {
                 tails.borrow_mut().push((first, state.segments.tails(&list.native)));
@@ -2992,6 +2999,7 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
     );
     if result.is_ok() {
         device::alloc_swap::submitted(&queue.native, &swap_lists.borrow());
+        device::descriptor_paging::submitted(&queue.native, &arena_leases.borrow());
     }
     if let Err(error) = result {
         drop_batch(queue, error);
@@ -3402,6 +3410,7 @@ pub(crate) unsafe fn wrap_command_list(
             resource_heap: None,
             descriptor_arena: None,
             indexed_arenas: Vec::new(),
+            arena_leases: Vec::new(),
             scalar_descriptors: Default::default(),
             sampled_heaps: Vec::new(),
             ring: std::collections::VecDeque::new(),

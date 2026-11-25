@@ -12,6 +12,8 @@ use windows::core::Result;
 use super::title_memory::GuestMemory;
 mod index_map;
 pub(crate) use index_map::index_map;
+mod retire;
+pub(crate) use retire::{Lease, submitted};
 
 #[derive(Default)]
 pub(crate) struct Registry {
@@ -74,6 +76,8 @@ pub(crate) struct Arena {
     // Guest ranges can overlap. Keep stable slots for every table that has
     // been referenced; a CPU descriptor update is published to each alias.
     tables: Mutex<Tables>,
+    /// Lease clock for freeing table ranges (retire.rs).
+    clock: retire::Clock,
 }
 #[derive(Default)]
 struct Tables {
@@ -83,6 +87,10 @@ struct Tables {
     longest: u32,
     direct: index_map::Direct,
     resident_records: BTreeMap<usize, InlineDescriptor>,
+    /// The clock stamp of each range's last use (retire.rs).
+    stamps: std::collections::HashMap<(u32, u32), u64>,
+    /// Slots below `used` given back by freed ranges.
+    free: retire::FreeSlots,
 }
 impl Drop for Arena {
     fn drop(&mut self) {
@@ -192,6 +200,7 @@ impl Arena {
             inline: owner.state.device11_queue && stride >= INLINE_BYTES && stride.is_multiple_of(INLINE_BYTES),
             authored: Mutex::default(),
             tables: Mutex::new(Tables::default()),
+            clock: retire::Clock::default(),
         });
         let mut entries = registry.arenas.lock().unwrap_or_else(|e| e.into_inner());
         entries.insert(arena.base(), Arc::downgrade(&arena));
@@ -201,6 +210,35 @@ impl Arena {
         Ok(arena)
     }
     pub(crate) fn uses_inline_records(&self) -> bool { self.inline }
+
+    /// A recording's hold on this arena's table slots (retire.rs).
+    pub(crate) fn lease(self: &Arc<Self>) -> Lease {
+        Lease { arena: self.clone(), state: self.clock.lease() }
+    }
+
+    /// Frees every range no live lease may read and that the index map does
+    /// not name (VIctory HostHeap release, GPL-3.0): its slots go back to
+    /// `tables.free`, its resident records are dropped.
+    fn reclaim(&self, tables: &mut Tables) -> u32 {
+        let horizon = self.clock.horizon();
+        let Tables { ranges, stamps, free, resident_records, direct, .. } = tables;
+        let mut freed = 0;
+        ranges.retain(|&(first, length), &mut slot| {
+            let stamp = stamps.get(&(first, length)).copied().unwrap_or(0);
+            if stamp > horizon || direct.references(first, length, slot) {
+                return true;
+            }
+            stamps.remove(&(first, length));
+            free.give_back(slot, length);
+            for s in slot..slot + length {
+                resident_records.remove(&(s as usize));
+            }
+            freed += length;
+            false
+        });
+        tables.longest = tables.ranges.keys().map(|&(_, l)| l).max().unwrap_or(0);
+        freed
+    }
 
     pub(crate) fn base(&self) -> usize {
         self.memory.address
@@ -287,7 +325,7 @@ impl Arena {
             return;
         }
         let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
-        let Tables { direct, used, ranges, longest, resident_records } = &mut *tables;
+        let Tables { direct, used, ranges, longest, resident_records, .. } = &mut *tables;
         direct.publish(self, first..end, used);
         // test86: a title thread spent most of its time here and waiting on
         // this lock: every descriptor write walked every resident table. Only
@@ -373,9 +411,27 @@ impl Arena {
         }
         let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
         let key = (first, length);
+        let freeing = retire::enabled();
         let resident = if let Some(index) = tables.ranges.get(&key) {
-            *index
+            let index = *index;
+            if freeing {
+                tables.stamps.insert(key, self.clock.stamp());
+            }
+            index
         } else if !self.inline && let Some(index) = tables.direct.contiguous(first, length) {
+            index
+        } else if freeing && let Some(index) = tables.free.take(length).or_else(|| {
+            // Full: free what no list in flight reads, then search again.
+            (tables.used.checked_add(length).is_none_or(|end| end > self.limit)
+                && self.reclaim(&mut tables) != 0)
+                .then(|| tables.free.take(length)).flatten()
+        }) {
+            if !self.inline {
+                self.copy(first, index, length);
+            }
+            tables.ranges.insert(key, index);
+            tables.stamps.insert(key, self.clock.stamp());
+            tables.longest = tables.longest.max(length);
             index
         } else {
             let index = tables.used;
@@ -396,6 +452,9 @@ impl Arena {
                 self.copy(first, index, length);
             }
             tables.ranges.insert(key, index);
+            if freeing {
+                tables.stamps.insert(key, self.clock.stamp());
+            }
             tables.longest = tables.longest.max(length);
             tables.used = end;
             index

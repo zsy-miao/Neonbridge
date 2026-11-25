@@ -390,6 +390,17 @@ fn adopt_bundle(parent_state: &mut Recording, bundle: &Recording) -> Result<(), 
     for range in &bundle.sampled_heaps {
         super::descriptors::include_range(&mut parent_state.sampled_heaps, range.clone());
     }
+    // The bundle's tables are read when this list runs (descriptor_paging/retire.rs).
+    for lease in &bundle.arena_leases {
+        match parent_state.arena_leases.iter().find(|held| std::sync::Arc::ptr_eq(held.arena(), lease.arena())) {
+            Some(held) => held.cover(lease),
+            None => {
+                let held = lease.arena().lease();
+                held.cover(lease);
+                parent_state.arena_leases.push(held);
+            }
+        }
+    }
     for arena in &bundle.indexed_arenas {
         if parent_state.indexed_arenas.iter().any(|used| std::sync::Arc::ptr_eq(used, arena)) {
             continue;
