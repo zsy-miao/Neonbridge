@@ -352,6 +352,7 @@ fn watch_hang() {
     let mut last: [Option<u64>; 6] = [None; 6];
     let (mut beat, mut beat_at) = (None, std::time::Instant::now());
     let mut lines = 0u32;
+    let mut dumped = false;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let session = read(base + 0xAAE_3B70, 8).filter(|&p| p != 0).and_then(|p| read(p as usize + 0x1B3, 1));
@@ -372,7 +373,15 @@ fn watch_hang() {
             last = now;
         }
         let heartbeat = read(base + 0x71B_6338, 8);
+        if heartbeat == beat && beat.is_some() && !dumped && beat_at.elapsed().as_secs() >= 5 && lines < 4096 {
+            dumped = true;
+            for line in subrender_lines(base, &read) {
+                lines += 1;
+                super::log_line(format_args!("{line}"));
+            }
+        }
         if heartbeat != beat {
+            dumped = false;
             let still = beat_at.elapsed();
             if beat.is_some() && still.as_secs_f32() >= 2.0 && lines < 4096 {
                 lines += 1;
@@ -385,13 +394,69 @@ fn watch_hang() {
     }
 }
 
+/// The loading-screen render (game+0x43c38a0) hands its job groups to the
+/// five Subrender workers (game+0x43c4140) and waits, per group, on the
+/// group's event (0x43c3d58: WaitForSingleObject([group-0x10]); groups are
+/// 0x30 apart from game+0x9c3be78, their counter at +0x10 gets 0x2000000
+/// added by the waiter, game+0x55acf10), then on each worker's done event
+/// ([slot+0x10], slots 0x40 apart from game+0x9c3d670, a worker sleeping on
+/// [slot+8] while its flag byte [slot+0x38] is set). Work comes from the
+/// queue word at game+0x9c3be58. test148's hang had the frame thread in the
+/// group wait and four workers asleep on their go events: a group whose
+/// completion nobody signalled. Once per heartbeat stall of 5 s this prints
+/// that state, events as signalled/unset (NtQueryEvent, which consumes
+/// nothing), so a run names which side dropped it.
+/// TUXBOX_SUBRENDER_DUMP=0 off.
+fn subrender_lines(base: usize, read: &dyn Fn(usize, usize) -> Option<u64>) -> Vec<String> {
+    if crate::env_toggle!("TUXBOX_SUBRENDER_DUMP") == Some("0") {
+        return Vec::new();
+    }
+    type Query = unsafe extern "system" fn(isize, u32, *mut [u32; 2], u32, *mut u32) -> i32;
+    static QUERY: std::sync::OnceLock<Option<Query>> = std::sync::OnceLock::new();
+    let query = *QUERY.get_or_init(|| unsafe {
+        let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("ntdll.dll")).ok()?;
+        windows::Win32::System::LibraryLoader::GetProcAddress(ntdll, windows::core::s!("NtQueryEvent"))
+            .map(|f| std::mem::transmute::<_, Query>(f))
+    });
+    let event = |h: Option<u64>| -> String {
+        let Some(h) = h else { return "?".into() };
+        let mut info = [0u32; 2];
+        match query {
+            Some(q) if h != 0 && unsafe { q(h as isize, 0, &mut info, 8, std::ptr::null_mut()) } >= 0 =>
+                format!("{h:#x} {} {}", if info[0] == 1 { "auto" } else { "manual" }, if info[1] != 0 { "SIGNALLED" } else { "unset" }),
+            _ => format!("{h:#x} (not an event)"),
+        }
+    };
+    let f = |v: Option<u64>| v.map_or("?".to_string(), |v| format!("{v:#x}"));
+    let mut out = vec![format!(
+        "subrender: queue word {} (heartbeat still 5 s; TUXBOX_SUBRENDER_DUMP=0 off)", f(read(base + 0x9c3_be58, 8)))];
+    for i in 0..8usize {
+        let g = base + 0x9c3_be78 + i * 0x30;
+        out.push(format!(
+            "subrender: group {i}: event {}, job {}, counter {}",
+            event(read(g, 8)), f(read(g - 8, 8)), f(read(g + 0x10, 4))));
+    }
+    for i in 0..5usize {
+        let w = base + 0x9c3_d670 + i * 0x40;
+        out.push(format!(
+            "subrender: worker {i}: go {}, done {}, flag {}",
+            event(read(w + 8, 8)), event(read(w + 0x10, 8)), f(read(w + 0x38, 1))));
+    }
+    out
+}
+
 /// TUXBOX_HANG_FIND="0x23cf104,0x23cf0ff": the hang report also samples every
 /// thread three times 500 ms apart and, for each thread whose stack holds a
 /// return into one of these main-image offsets, prints its full chain (48
 /// frames, not 12) and RIP each time, so a thread parked in one wait shows the
 /// same leaf thrice. Unset prints nothing.
 fn find_lines() -> Vec<String> {
-    let Ok(spec) = std::env::var("TUXBOX_HANG_FIND") else { return Vec::new() };
+    // Default on (user order): the frame thread's return into its tick and
+    // the Subrender workers' return from their go wait. TUXBOX_HANG_FIND=0 off.
+    let spec = std::env::var("TUXBOX_HANG_FIND").unwrap_or_else(|_| "0x23cf104,0x43c3d5d,0x43c421e".into());
+    if spec.trim() == "0" {
+        return Vec::new();
+    }
     let Ok(base) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }) else { return Vec::new() };
     let base = base.0 as usize;
     let targets: Vec<usize> = spec
