@@ -641,6 +641,12 @@ fn bind_cache(tools: &Tools, cache_root: &Path, private: &Path) -> Result<(Tools
     fs::create_dir_all(private).map_err(|e| e.to_string())?;
     let xshader = private.join("xshader.exe");
     fs::copy(&tools.xshader, &xshader).map_err(|e| format!("copy xshader: {e}"))?;
+    // Its cdylib from the same build goes beside the copy (xshader_lib.rs); a
+    // rebuild then replaces the original, not a DLL this process holds.
+    let _ = fs::remove_file(xshader.with_file_name(crate::xshader_lib::DLL));
+    if let Some(dll) = crate::xshader_lib::beside(&tools.xshader) {
+        let _ = fs::copy(&dll, xshader.with_file_name(crate::xshader_lib::DLL));
+    }
     let version = Command::new(&tools.dxc).arg("--version").output().map_err(|e| format!("dxc: {e}"))?.stdout;
     let defines = wave_size_defines(cache_root);
     let mut fp = Sha256::new();
@@ -750,7 +756,34 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
         }
         let (hlsl, output, profile) = (work.join("shader.hlsl"), work.join("out.cso"), work.join("profile"));
         let translate_started = std::time::Instant::now();
-        match run(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
+        // In-process first (xshader_lib.rs): the same inputs as the command line below.
+        let dll = tools.xshader.with_file_name(crate::xshader_lib::DLL);
+        let inproc = if crate::xshader_lib::enabled() && dll.is_file() {
+            let read = |p: &Path| fs::read(p).map_err(|e| format!("read {}: {e}", p.display()));
+            let (consumer, order) = if ext == "link" {
+                (Some(read(&work.join("pixel.dxbc"))?), Some(read(&work.join("pixel.cso"))?))
+            } else { (None, None) };
+            let stencil = (ext == "stencil").then(|| key.split_once("_rt").and_then(|(_, n)| n.parse().ok())).flatten();
+            match crate::xshader_lib::translate(&dll, read(&cooked)?, consumer, order, stencil, Duration::from_secs(120)) {
+                crate::xshader_lib::Outcome::Done(text, prof) => {
+                    fs::write(&hlsl, text).and_then(|_| fs::write(&profile, prof)).map_err(|e| format!("write {}: {e}", hlsl.display()))?;
+                    true
+                }
+                crate::xshader_lib::Outcome::Unsupported(msg) => {
+                    let _ = fs::write(&refusal, format!("{key}
+{msg}"));
+                    forget(cache, key);
+                    return Ok(Outcome::Unsupported(msg));
+                }
+                crate::xshader_lib::Outcome::Failed(msg) => return Err(format!("xshader failed (1): {msg}")),
+                crate::xshader_lib::Outcome::Fallback(why) => {
+                    static SAID: std::sync::Once = std::sync::Once::new();
+                    SAID.call_once(|| println!("[launch] shaders: in-process xshader fell back to the xshader process: {why} (more may follow unlogged)"));
+                    false
+                }
+            }
+        } else { false };
+        if !inproc { match run(Command::new(&tools.xshader).arg(&cooked).args(&flags).arg("--hlsl-out").arg(&hlsl)
             .arg("--profile-out").arg(&profile), Duration::from_secs(120)) {
             Ok(()) => {}
             Err(ToolError::Exit(XSHADER_UNSUPPORTED_HLSL, msg)) => {
@@ -761,7 +794,7 @@ fn compile(source: &Path, key: &str, ext: &str, tools: &Tools, cache: &Path, ses
             Err(ToolError::Exit(c, msg)) => return Err(format!("xshader failed ({c}): {msg}")),
             Err(ToolError::Other(msg)) if msg == "timed out" => return Err("xshader: timed out after 120 s".into()),
             Err(ToolError::Other(msg)) => return Err(format!("xshader: {msg}")),
-        }
+        } }
         let translate_ms = translate_started.elapsed().as_millis() as u64;
         let target = fs::read_to_string(&profile).map_err(|e| format!("xshader wrote no profile: {e}"))?.trim().to_owned();
         let allowed: &[&str] = if ext == "link" {

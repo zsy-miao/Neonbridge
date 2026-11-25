@@ -15,6 +15,7 @@ mod dxc;
 mod dxil_upgrade;
 mod game_settings;
 mod picker;
+mod xshader_lib;
 mod progress;
 mod replay;
 mod shaders;

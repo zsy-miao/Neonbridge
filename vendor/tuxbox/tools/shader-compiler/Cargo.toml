@@ -9,6 +9,11 @@ description = "Translate Xbox Series shader programs for the TuxBox host shader 
 default = ["legacy-hlsl"]
 legacy-hlsl = []
 
+# cdylib: Neonbridge's launcher loads it to translate in-process
+# (lib.rs tuxbox_xshader_translate), not one xshader process per program.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [[bin]]
 name = "xshader"
 path = "src/main.rs"

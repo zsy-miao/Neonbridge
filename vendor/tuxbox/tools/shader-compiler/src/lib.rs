@@ -260,3 +260,160 @@ pub fn extract(bytes: &[u8]) -> Result<ShaderExtract, String> {
         root_sig: root.map(rootsig::parse_rts0).transpose()?,
     })
 }
+
+/// One translation as the `xshader` command line does it (main.rs `run` and
+/// `translate`), for callers that link the crate: Neonbridge's launcher loads
+/// this crate's cdylib and calls `tuxbox_xshader_translate` on its worker
+/// threads instead of starting one xshader process per program. Returns the
+/// HLSL (or a ray library's bytes) and the DXC profile; Err((65, reason)) is
+/// an unsupported program, as the exit code 65 of the command line.
+#[cfg(feature = "legacy-hlsl")]
+pub fn translate_request(
+    source: &[u8],
+    consumer: Option<&[u8]>,
+    pixel_order: Option<&[u8]>,
+    stencil_target: Option<u32>,
+) -> Result<(Vec<u8>, String), (u8, String)> {
+    const UNSUPPORTED: u8 = 65;
+    let unsupported = |m: String| (UNSUPPORTED, m);
+    let other = |m: String| (1u8, m);
+    if source.starts_with(&2_u32.to_le_bytes()) {
+        if consumer.is_some() || stencil_target.is_some() {
+            return Err(other("raster linking options cannot be applied to a ray library".into()));
+        }
+        let (_name, library) = ray::library(source).map_err(other)?;
+        return Ok((library.into(), "lib_6_3".into()));
+    }
+    if consumer.is_some() && stencil_target.is_some() {
+        return Err(other("a stencil export requires an unlinked pixel shader".into()));
+    }
+    if pixel_order.is_some() && consumer.is_none() {
+        return Err(other("--pixel-order requires --link-pixel".into()));
+    }
+    let shader = extract(source).map_err(other)?;
+    let translated = if let Some(bytes) = consumer {
+        if !matches!(shader.stage, Stage::Vertex | Stage::Geometry | Stage::Mesh) {
+            return Err(other("expected a vertex, geometry or mesh producer and a pixel consumer".into()));
+        }
+        let portable = psv::portable_pixel_interface(bytes);
+        let is_portable = portable.is_some();
+        let mut producer = shader.clone();
+        let interp = if let Some(interface) = portable {
+            if pixel_order.is_some_and(|code| code != bytes) {
+                return Err(unsupported("portable pixel consumer differs from its bound bytecode".into()));
+            }
+            for output in producer.output_sig.iter_mut().filter(|o| o.sysval == 0) {
+                let mut matches = interface.inputs.iter().filter(|i| i.sysval == 0
+                    && i.index == output.index && i.name.eq_ignore_ascii_case(&output.name));
+                if let Some(input) = matches.next() {
+                    if matches.next().is_some() || !matches!(input.comp_type, 1..=3) {
+                        return Err(unsupported("ambiguous or unsupported portable pixel component type".into()));
+                    }
+                    output.comp_type = input.comp_type;
+                }
+            }
+            let read = (shader.stage == Stage::Mesh)
+                .then(|| interface.inputs.iter().map(|i| format!("{}{}", i.name, i.index)).collect());
+            hlsl::InputInterp(interface.interpolation, read)
+        } else {
+            let pixel = extract(bytes).map_err(other)?;
+            if pixel.stage != Stage::Pixel {
+                return Err(other("expected a pixel consumer".into()));
+            }
+            for output in producer.output_sig.iter_mut().filter(|o| o.sysval == 0) {
+                let input = pixel.input_sig.iter().find(|i| {
+                    i.sysval == 0 && i.index == output.index && i.name.eq_ignore_ascii_case(&output.name)
+                });
+                let integer = |t: u32| matches!(t, 1 | 2);
+                match input.map(|i| i.comp_type) {
+                    Some(t) if integer(t) => output.comp_type = t,
+                    Some(_) if integer(output.comp_type) => output.comp_type = 3,
+                    _ => {}
+                }
+            }
+            let mut interp = hlsl::translate(&pixel).map_err(unsupported)?.ps_input_interp;
+            if shader.stage == Stage::Mesh {
+                interp.1 = Some(pixel.input_sig.iter().map(|i| format!("{}{}", i.name, i.index)).collect());
+            }
+            interp
+        };
+        let order = pixel_order.map(meta::pixel_input_order)
+            .unwrap_or_else(|| if is_portable { meta::pixel_input_order(bytes) } else { Vec::new() });
+        hlsl::translate_ordered(&producer, Some(&interp), &order)
+    } else if let Some(target) = stencil_target {
+        hlsl::translate_stencil_target(&shader, target)
+    } else {
+        hlsl::translate(&shader)
+    }.map_err(unsupported)?;
+    let model = if translated.required_wave_size.is_some()
+        || translated.typed_int64_atomics
+        || matches!(translated.profile, "ps_6_6" | "cs_6_6" | "ms_6_6")
+    {
+        "6_6"
+    } else if shader.stage == Stage::Mesh || translated.profile == "cs_6_5" {
+        "6_5"
+    } else if translated.packed_dot_product {
+        "6_4"
+    } else if translated.needs_barycentrics {
+        "6_1"
+    } else {
+        "6_0"
+    };
+    let stage = match shader.stage {
+        Stage::Pixel => "ps",
+        Stage::Vertex => "vs",
+        Stage::Geometry => "gs",
+        Stage::Compute => "cs",
+        Stage::Mesh => "ms",
+        _ => return Err(other("unsupported DXC stage".into())),
+    };
+    Ok((translated.hlsl.into_bytes(), format!("{stage}_{model}")))
+}
+
+/// C ABI of `translate_request` for the launcher's cdylib load. Byte inputs
+/// are (pointer, length); a null pointer is None, `stencil_target` < 0 None.
+/// On return `*out`/`*out_len` hold the HLSL (status 0) or the reason
+/// (status 65 unsupported, 1 failed, 2 panicked), and `*profile` the DXC
+/// profile, NUL-terminated. Free `*out` with `tuxbox_xshader_free`.
+///
+/// # Safety
+/// Every pointer is valid for its length; `out`, `out_len`, `profile` are writable.
+#[cfg(feature = "legacy-hlsl")]
+#[no_mangle]
+pub unsafe extern "C" fn tuxbox_xshader_translate(
+    source: *const u8, source_len: usize,
+    consumer: *const u8, consumer_len: usize,
+    pixel_order: *const u8, pixel_order_len: usize,
+    stencil_target: i64,
+    out: *mut *mut u8, out_len: *mut usize, profile: *mut [u8; 16],
+) -> u32 {
+    let bytes = |p: *const u8, n: usize| (!p.is_null()).then(|| std::slice::from_raw_parts(p, n));
+    let (source, consumer, pixel_order) = (bytes(source, source_len).unwrap_or(&[]), bytes(consumer, consumer_len), bytes(pixel_order, pixel_order_len));
+    let stencil = u32::try_from(stencil_target).ok();
+    let result = std::panic::catch_unwind(|| translate_request(source, consumer, pixel_order, stencil));
+    let (status, data, prof) = match result {
+        Ok(Ok((data, prof))) => (0, data, prof),
+        Ok(Err((code, reason))) => (code as u32, reason.into_bytes(), String::new()),
+        Err(_) => (2, b"panic in the translator".to_vec(), String::new()),
+    };
+    let mut p = [0u8; 16];
+    for (d, s) in p.iter_mut().zip(prof.bytes().take(15)) {
+        *d = s;
+    }
+    *profile = p;
+    let boxed = data.into_boxed_slice();
+    *out_len = boxed.len();
+    *out = Box::into_raw(boxed) as *mut u8;
+    status
+}
+
+/// Frees a buffer `tuxbox_xshader_translate` returned.
+///
+/// # Safety
+/// `p`/`len` are exactly what one `tuxbox_xshader_translate` call wrote.
+#[no_mangle]
+pub unsafe extern "C" fn tuxbox_xshader_free(p: *mut u8, len: usize) {
+    if !p.is_null() {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(p, len)));
+    }
+}
