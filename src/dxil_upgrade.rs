@@ -276,7 +276,11 @@ fn other_launcher() -> bool {
         let mut ok = Process32FirstW(snap, &mut e) != 0;
         while ok {
             let n = String::from_utf16_lossy(&e.szExeFile[..e.szExeFile.iter().position(|&c| c == 0).unwrap_or(260)]);
-            if e.th32ProcessID != me && n.eq_ignore_ascii_case(&exe) {
+            // The game too: a run started without this launcher (or one whose
+            // launcher already exited) still needs the machine. NEONBRIDGE_DRAIN_YIELD_GAME=0 off.
+            let game = std::env::var("NEONBRIDGE_DRAIN_YIELD_GAME").as_deref() != Ok("0")
+                && n.to_ascii_lowercase().starts_with("game_scarlett");
+            if e.th32ProcessID != me && (n.eq_ignore_ascii_case(&exe) || game) {
                 found = true;
                 break;
             }
@@ -326,7 +330,16 @@ pub fn spawn_drainer() {
         .creation_flags(flags).spawn();
     let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | IDLE_PRIORITY_CLASS;
     // Out of the launcher's job object when it allows, so closing it does not end the drain.
-    if let Ok(child) = spawn(base | CREATE_BREAKAWAY_FROM_JOB).or_else(|_| spawn(base)) {
+    let (child, broke_away) = match spawn(base | CREATE_BREAKAWAY_FROM_JOB) {
+        Ok(c) => (Ok(c), true),
+        Err(_) => (spawn(base), false),
+    };
+    if let Ok(child) = child {
+        if !broke_away {
+            // test164: drainer 38264 vanished mid-queue (stale drain.pid, no
+            // "drained" line): a job that refuses breakaway ends it with its owner.
+            println!("[launch] dxil upgrade: this launcher's job does not allow breakaway; the drainer ends when that job closes (the next launcher's exit restarts it)");
+        }
         println!("[launch] dxil upgrade: {} -O0 programs queued; draining them at -O1 in the background (pid {}, NEONBRIDGE_DXC_UPGRADE_DRAIN=0 off)",
             left(dxil), child.id());
     }
@@ -346,6 +359,7 @@ pub fn drain(dxil: &Path) -> Result<(), String> {
     let pid_file = dir.join("drain.pid");
     let _ = fs::write(&pid_file, std::process::id().to_string());
     DRAINER.store(true, Ordering::Relaxed);
+    let mut stepped_aside = false;
     let secs = std::env::var("NEONBRIDGE_DXC_UPGRADE_SECS").ok().and_then(|v| v.trim().parse().ok()).filter(|&s| s > 0).unwrap_or(900);
     let log_path = dir.join("drain.log");
     let log = |line: String| {
@@ -355,8 +369,14 @@ pub fn drain(dxil: &Path) -> Result<(), String> {
         }
     };
     let (mut done, mut failed) = (0usize, 0usize);
+    log(format!("drainer {} started: {} jobs", std::process::id(), left(dxil)));
     loop {
-        if yield_now() {
+        let aside = yield_now();
+        if aside != stepped_aside {
+            stepped_aside = aside;
+            log(format!("{} ({done} done, {} left)", if aside { "stepped aside: a launcher or the game runs" } else { "resumed: no launcher or game" }, left(dxil)));
+        }
+        if aside {
             std::thread::sleep(Duration::from_secs(10));
             continue;
         }
