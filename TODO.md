@@ -11,7 +11,7 @@ Open work. Each item is tested in a run of its own.
 - Depth twins (00b029c, 000f78a, 86f630f): the close-time pass.
 - VItoriaBr b62bbc0 (descriptor addresses by computed heap index, SLOT_VIEWS): waits on a runtime per-slot view-address table.
 - Identity-heap header for xshader's e5ae009 clamp: unpaged heaps' last slot is a real descriptor, not null (836d91f).
-- Pending A/B runs: `TUXBOX_DEPTH_TWINS=1`; `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_WAIT_HOIST` vs ad8e641; `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8).
+- Pending A/B runs: `TUXBOX_DEPTH_TWINS=1`; `TUXBOX_RENDER_HEAP_EVICT` (now on); `TUXBOX_WAIT_HOIST` vs ad8e641; `TUXBOX_REFRESH_BUSY_SCALE` (the base env sets it to 1, which disables the x3 catch-up of 92823b8); `TUXBOX_PRESENT_RELEASE_ALL=1` (five-star b828157); `TUXBOX_SAMPLER_DECODE=fxceless` (check slot 61 lines).
 
 ## Runs
 - Turn the untested commits back on, one per run: 04a7bee, 81a0a3a, 65e77ca (stale shader serving).
@@ -58,6 +58,7 @@ Open work. Each item is tested in a run of its own.
 - ref better: b16f2f9 (clip write-watch spans), 689199f (alpha blend factor 19/20; a placeholder pipeline drops draws).
 - f40b107: the table arena never frees (VIctory HostHeap release + c1c3281 scan fix are better).
 - five-star b828157 (e1ce01d): release every pending memory wait at each present (79dff41 releases only waits no queued list writes).
+- five-star 226887c (f96284e): trigger on the slot-74 64-bit wait.
 - ab5af3f: snapshot every CBV no title buffer covers.
 - 2e53f61: reopen a closed list with a native Reset.
 - Symptom fix 00f5205: the placeholder pipeline hides refusals. Chase them through the refused() reasons.
