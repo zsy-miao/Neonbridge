@@ -98,7 +98,7 @@ pub(crate) static DEVICE: Table<22> = Table([
     f!(zero), // IsForceFeedbackMotorPoweredOn
     f!(nothing), // SetForceFeedbackMotorGain
     f!(not_implemented), // SetHapticMotorState
-    f!(nothing), f!(nothing), f!(nothing), f!(nothing), // SetRumbleState, SetInputSynchronizationState, SendInputSynchronizationHint, PowerOff
+    f!(set_rumble), f!(nothing), f!(nothing), f!(nothing), // SetRumbleState, SetInputSynchronizationState, SendInputSynchronizationHint, PowerOff
     f!(clear_3), // CreateRawDeviceReport
     f!(clear_2), // GetRawDeviceFeature
     f!(not_implemented), f!(not_implemented), // SetRawDeviceFeature, SendRawDeviceOutput
@@ -203,7 +203,7 @@ unsafe extern "system" fn info(this: &Object) -> *const DeviceInfo {
                 device_family: if i < 2 { 3 } else { 2 }, // GameInputFamilyHid, GameInputFamilyXbox360
                 capabilities: 0,
                 supported_input: match i { 0 => 0x10, 1 => 0x20, _ => 0x4_0000 }, // keyboard, mouse, gamepad
-                supported_rumble_motors: 0,
+                supported_rumble_motors: if rumble_on() && (2..2 + crate::PORTS).contains(&i) { 0x3 } else { 0 }, // low, high frequency
                 counts: [0; 12],
                 info,
                 supported_system_buttons: 0,
@@ -233,4 +233,27 @@ unsafe extern "system" fn accept_reading(_: usize, _: usize, _: u32, _: usize, _
 }
 unsafe extern "system" fn accept_layout(_: usize, _: usize, _: usize, _: usize, token: *mut u64) -> i32 {
     accept(token)
+}
+
+// SetRumbleState drives an XInput pad's two motors (trigger motors dropped:
+// XInput has none), as VIctory-fxceless gameinput.rs set_rumble (GPL-3.0,
+// credit); it was a no-op. TUXBOX_PAD_RUMBLE=0 keeps it silent.
+fn rumble_on() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("TUXBOX_PAD_RUMBLE").is_none_or(|v| v != "0"));
+    *ON
+}
+unsafe extern "system" fn set_rumble(this: &Object, params: *const [f32; 4]) {
+    let slot = gi_slot(this) as usize;
+    if !rumble_on() || !(2..2 + crate::PORTS).contains(&slot) {
+        return;
+    }
+    let [low, high, ..] = if params.is_null() { [0.0; 4] } else { unsafe { *params } };
+    let speed = |level: f32| (level.clamp(0.0, 1.0) * f32::from(u16::MAX)) as u16;
+    let speeds = windows_sys::Win32::UI::Input::XboxController::XINPUT_VIBRATION {
+        wLeftMotorSpeed: speed(low),
+        wRightMotorSpeed: speed(high),
+    };
+    // An empty port just fails.
+    unsafe { windows_sys::Win32::UI::Input::XboxController::XInputSetState((slot - 2) as u32, &speeds) };
 }
