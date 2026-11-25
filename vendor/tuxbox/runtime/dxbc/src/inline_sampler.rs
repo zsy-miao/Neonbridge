@@ -420,7 +420,7 @@ pub fn literal_words(shader: &[u8]) -> Vec<[u32; 4]> {
             return None;
         };
         let states = states(&fssm::decode(program).ok()?.isa, 0, true, false)?;
-        let unique: std::collections::BTreeSet<_> = states.into_values().map(|(words, _)| words).collect();
+        let unique: std::collections::BTreeSet<_> = states.into_values().map(|(words, _)| canonical_sampler(words)).collect();
         Some(unique.into_iter().collect())
     };
     words().unwrap_or_default()
@@ -682,6 +682,19 @@ mod tests {
         words[6] = 0xbf84_0002; // s_cbranch_scc0 also allows the point filter.
         assert!(classify(&words).is_none());
     }
+}
+
+/// The tb_desc_table form of an S#, shared by the runtime and xshader
+/// (f1b5622 with the AnyPS5 fold, credit to its authors): word 3 keeps only
+/// BORDER_COLOR_PTR [11:0] and BORDER_COLOR_TYPE [31:30] (reserved [29:12]
+/// cleared), and is zero when no CLAMP_X/Y/Z mode reads the border (mode
+/// bit 2, word 0 bits 2, 5, 8). TUXBOX_SAMPLER_FOLD=0 keeps the words as is.
+pub fn canonical_sampler(words: [u32; 4]) -> [u32; 4] {
+    if !sampler_fold() {
+        return words;
+    }
+    let [a, b, c, d] = words;
+    [a, b, c, if a & 0x124 == 0 { 0 } else { d & 0xC000_0FFF }]
 }
 
 fn sampler_fold() -> bool {
