@@ -588,10 +588,6 @@ fn job_peaks() -> String {
         JOB_PEAK_SUM.load(Ordering::Relaxed) / n >> 20, JOB_PEAK_MAX.load(Ordering::Relaxed) >> 20, JOB_PEAK_N.load(Ordering::Relaxed), crate::dxc::abandoned())
 }
 
-fn run(cmd: &mut Command, timeout: Duration) -> Result<(), ToolError> {
-    run_until(cmd, timeout, || false)
-}
-
 /// `run`, also ending the tool early (as a timeout) once `give_up` says so.
 fn run_until(cmd: &mut Command, timeout: Duration, give_up: impl Fn() -> bool) -> Result<(), ToolError> {
     let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
