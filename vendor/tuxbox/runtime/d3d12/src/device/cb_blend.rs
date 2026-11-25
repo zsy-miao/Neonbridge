@@ -182,6 +182,11 @@ pub(super) fn decode(control: u32) -> Result<D3D12_RENDER_TARGET_BLEND_DESC, &'s
     Ok(desc)
 }
 
+fn dual_source(t: &D3D12_RENDER_TARGET_BLEND_DESC) -> bool {
+    [t.SrcBlend, t.DestBlend, t.SrcBlendAlpha, t.DestBlendAlpha].iter().any(|f| matches!(*f,
+        D3D12_BLEND_SRC1_COLOR | D3D12_BLEND_INV_SRC1_COLOR | D3D12_BLEND_SRC1_ALPHA | D3D12_BLEND_INV_SRC1_ALPHA))
+}
+
 /// Where CB_TARGET_MASK sits in state block A.
 const TARGET_MASK: usize = 0x78;
 
@@ -199,9 +204,23 @@ pub(super) fn state_block_blend(block: &[u8]) -> Result<D3D12_BLEND_DESC, (usize
         IndependentBlendEnable: TRUE,
         RenderTarget: [unblended(); 8],
     };
+    // Xbox2Windows 16c9a721 (MIT, credit to its authors): dual-source
+    // blending reads the PS's second output, which exists for RT0 only; a SRC1
+    // factor on RT1-7, or another target blending beside a dual-source RT0,
+    // is no valid D3D12 blend state (E_INVALIDARG, the pipeline lost). Such a
+    // target is left unblended. TUXBOX_CB_DUAL_SOURCE_RT0=0 keeps them.
+    let rt0_only = crate::env_toggle!("TUXBOX_CB_DUAL_SOURCE_RT0") != Some("0");
+    let mut rt0_dual = false;
     for (n, word) in words.chunks_exact(4).enumerate() {
         let control = u32::from_le_bytes(word.try_into().unwrap());
-        blend.RenderTarget[n] = decode(control).map_err(|reason| (n, reason))?;
+        let desc = decode(control).map_err(|reason| (n, reason))?;
+        let dual = desc.BlendEnable.as_bool() && dual_source(&desc);
+        if n == 0 {
+            rt0_dual = dual;
+        } else if rt0_only && desc.BlendEnable.as_bool() && (dual || rt0_dual) {
+            continue;
+        }
+        blend.RenderTarget[n] = desc;
     }
     // The console writes only the channels CB_TARGET_MASK enables; writing
     // all of them overwrote what a pass meant to keep (OpenScarlett
