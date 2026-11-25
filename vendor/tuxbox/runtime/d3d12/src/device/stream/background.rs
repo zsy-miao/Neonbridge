@@ -115,16 +115,17 @@ pub(crate) fn failed_bind(slot: &Upgrade) {
     if limit == 0 {
         return;
     }
-    static SEEN: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    static SEEN: std::sync::LazyLock<Mutex<std::collections::HashSet<usize>>> = std::sync::LazyLock::new(Default::default);
     static BINDS: AtomicU64 = AtomicU64::new(0);
     let binds = BINDS.fetch_add(1, Ordering::Relaxed) + 1;
     let id = slot as *const Upgrade as usize;
     let first = {
         let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-        let new = seen.len() < limit && !seen.contains(&id);
-        if new {
-            seen.push(id);
-        }
+        // Every placeholder pipeline says once why it was refused, however
+        // many there are (00f5205/689199f: refusals were hidden past the
+        // first 32). TUXBOX_PLACEHOLDER_REASONS=0 keeps the cap.
+        let capped = crate::env_toggle!("TUXBOX_PLACEHOLDER_REASONS") == Some("0");
+        let new = (!capped || seen.len() < limit) && seen.insert(id);
         new.then_some(seen.len())
     };
     if first.is_some() || binds.is_power_of_two() {
