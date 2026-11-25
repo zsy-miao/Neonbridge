@@ -172,8 +172,24 @@ fn mark(seen: &mut std::collections::BTreeMap<(usize, usize), (u64, u16)>, key: 
     *e = (n, kept | pages);
 }
 
+/// test171: the journal never forgot a block, so every query walked all the
+/// blocks ever written in its span and submit grew 57 to 83 ms/frame. A
+/// block both readers have read in full since its last write (or that a
+/// reader never watches) is dropped with its marks.
+fn prune(written: &mut std::collections::BTreeMap<usize, u64>, seen: &mut std::collections::BTreeMap<(usize, usize), (u64, u16)>, b: usize, w: u64) {
+    let done = |side: usize, seen: &std::collections::BTreeMap<(usize, usize), (u64, u16)>| {
+        seen.get(&(side, b)).is_some_and(|&(n, m)| n >= w && m == u16::MAX) || owed_to(side, &[b * BLOCK]).is_empty()
+    };
+    if done(0, seen) && done(1, seen) {
+        written.remove(&b);
+        seen.remove(&(0, b));
+        seen.remove(&(1, b));
+    }
+}
+
 unsafe fn journal_query(me: usize, reset: bool, base: *const c_void, bytes: usize, out: *mut *mut c_void, count: *mut usize, granularity: *mut u32) -> u32 {
     let t0 = std::time::Instant::now();
+    note_watched(me, base as usize, bytes);
     let mut j = lock(&JOURNAL);
     let t1 = std::time::Instant::now();
     let n = match unsafe { j.ask(base, bytes) } {
@@ -216,6 +232,7 @@ unsafe fn journal_query(me: usize, reset: bool, base: *const c_void, bytes: usiz
     if reset {
         for (b, w, got) in read {
             mark(seen, (me, b), w, n, got);
+            prune(written, seen, b, w);
         }
     }
     unsafe {
@@ -297,6 +314,7 @@ pub(crate) unsafe extern "system" fn title_get(flags: u32, base: *const c_void, 
 /// The title's ResetWriteWatch import: pages it drops stay owed to the runtime.
 pub(crate) unsafe extern "system" fn title_reset(base: *const c_void, bytes: usize) -> u32 {
     if journal_on() {
+        note_watched(0, base as usize, bytes);
         let mut j = lock(&JOURNAL);
         return match unsafe { j.ask(base, bytes) } {
             Ok(n) => {
@@ -304,7 +322,9 @@ pub(crate) unsafe extern "system" fn title_reset(base: *const c_void, bytes: usi
                 let blocks: Vec<usize> = j.written.range(start / BLOCK..=(end.max(1) - 1) / BLOCK).map(|(&b, _)| b).collect();
                 for b in blocks {
                     let w = j.written[&b];
-                    mark(&mut j.seen, (0, b), w, n, page_mask(b, start, end));
+                    let Journal { written, seen, .. } = &mut *j;
+                    mark(seen, (0, b), w, n, page_mask(b, start, end));
+                    prune(written, seen, b, w);
                 }
                 0
             }
