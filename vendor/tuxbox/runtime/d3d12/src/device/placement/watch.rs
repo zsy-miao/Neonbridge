@@ -36,6 +36,38 @@ static SAVED_SCANS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// (scans of merged ranges, write-watch calls they saved), for the memory line.
 /// TUXBOX_WATCH_CLIP=0: a merged span is scanned whole, and one range at a
 /// time when the OS refuses it (b16f2f9).
+fn refused_cache() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_WATCH_REFUSED_CACHE") != Some("0"))
+}
+
+/// Ranges the OS refused a write-watch query for: start -> (end, when).
+static REFUSED: std::sync::Mutex<std::collections::BTreeMap<u64, (u64, std::time::Instant)>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn refused_recently(range: &Range<u64>) -> bool {
+    let map = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    map.range(..=range.start).next_back()
+        .is_some_and(|(_, &(end, at))| range.end <= end && at.elapsed() < std::time::Duration::from_secs(10))
+}
+
+fn note_refused(range: Range<u64>) {
+    let mut map = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() >= 8192 {
+        map.retain(|_, (_, at)| at.elapsed() < std::time::Duration::from_secs(10));
+        if map.len() >= 8192 {
+            map.clear();
+        }
+    }
+    map.insert(range.start, (range.end, std::time::Instant::now()));
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n <= 4 || n.is_power_of_two() {
+        crate::diagnostics::log_line(format_args!(
+            "placed watch: the OS refused a write-watch query of {:#x}..{:#x}; not asked again for 10 s ({n} so far; TUXBOX_WATCH_REFUSED_CACHE=0 off)", range.start, range.end));
+    }
+}
+
 fn clip_on() -> bool {
     crate::env_toggle!("TUXBOX_WATCH_CLIP") != Some("0")
 }
@@ -233,6 +265,22 @@ impl Watch {
 
     /// Queries (and resets) one range; false when the OS refused it.
     fn scan(&mut self, take: Take, range: Range<u64>) -> bool {
+        // test173: every runtime query was refused (6167 in 10 s, 1947 ms
+        // in the OS): placed textures live in mapped section views, which
+        // carry no write watch. A refused range is not asked again for 10 s
+        // and counts as unwatched (compared). TUXBOX_WATCH_REFUSED_CACHE=0
+        // asks every time.
+        if refused_cache() && refused_recently(&range) {
+            return false;
+        }
+        let ok = self.scan_os(take, range.clone());
+        if !ok && refused_cache() {
+            note_refused(range);
+        }
+        ok
+    }
+
+    fn scan_os(&mut self, take: Take, range: Range<u64>) -> bool {
         let base = range.start & !0xfff;
         let size = (range.end - base) as usize;
         let pages = size.div_ceil(0x1000);
