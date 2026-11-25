@@ -23,8 +23,11 @@ pub(super) fn primary(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC>
 /// stays barrier-driven (a handoff copy at each transition into or out of
 /// unordered access) where fxceless tracks which side is behind. A stencil
 /// plane gets its own R8_UINT twin, copied through the transfer buffer as
-/// fxceless does (`Twin::through`). Not ported: fxceless's pass that draws a
-/// 24-bit depth plane from its twin (24-bit depth is not paired). Off: only one-mip, one-slice R32G8X24 textures with the two
+/// fxceless does (`Twin::through`). Console 16-bit depth with stencil
+/// (D16_UNORM_S8_UINT, a host D24S8 texture) is paired too, its twin 16-bit
+/// steps: no copy turns 24 bits into 16 or back, so the depth plane is drawn
+/// from its twin when the list closes (fxceless host.rs record_plane_pass,
+/// `TwinUse::late`; commands/depth.rs `late_pass`). Off: only one-mip, one-slice R32G8X24 textures with the two
 /// console flag words seen first, as before.
 pub(crate) fn twins() -> bool {
     crate::env_toggle!("TUXBOX_DEPTH_TWINS") == Some("1")
@@ -38,7 +41,7 @@ fn pair_primary(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
     let paired = if twins() {
         // Both the depth-stencil and the unordered-access bit (0x2 | 0x4).
         common
-            && matches!(desc.Format, DXGI_FORMAT_R32G8X24_TYPELESS | DXGI_FORMAT_R32_TYPELESS | DXGI_FORMAT_R16_TYPELESS)
+            && matches!(desc.Format, DXGI_FORMAT_R32G8X24_TYPELESS | DXGI_FORMAT_R32_TYPELESS | DXGI_FORMAT_R16_TYPELESS | super::format::D16_UNORM_S8_UINT)
             && desc.Flags.0 as u32 & 0x6 == 0x6
             && desc.MipLevels >= 1
             && desc.DepthOrArraySize >= 1
@@ -51,6 +54,8 @@ fn pair_primary(desc: &D3D12_RESOURCE_DESC) -> Option<D3D12_RESOURCE_DESC> {
     };
     paired.then_some(D3D12_RESOURCE_DESC {
         Flags: D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+        // Typeless storage so the depth, stencil and plane views share it.
+        Format: if desc.Format == super::format::D16_UNORM_S8_UINT { DXGI_FORMAT_R24G8_TYPELESS } else { desc.Format },
         ..*desc
     })
 }
@@ -67,6 +72,9 @@ pub(crate) struct Pair {
     pub(crate) stencil: bool,
     /// The twin's texels are 16 bits (16-bit depth).
     pub(crate) narrow: bool,
+    /// The host depth plane is 24 bits (console D16S8): no copy reaches it
+    /// from the twin, a pass draws it (commands/depth.rs `late_pass`).
+    pub(crate) deep: bool,
     /// TUXBOX_DEPTH_TWINS with a stencil plane: its R8_UINT twin and, per
     /// stencil subresource, the layouts as in `planes`.
     pub(crate) stencil_image: Option<ID3D12Resource>,
@@ -134,8 +142,9 @@ impl Pair {
         guest: &D3D12_RESOURCE_DESC,
         primary: &D3D12_RESOURCE_DESC,
     ) -> Result<Self> {
-        let narrow = primary.Format == DXGI_FORMAT_R16_TYPELESS;
-        let stencil = primary.Format == DXGI_FORMAT_R32G8X24_TYPELESS;
+        let deep = primary.Format == DXGI_FORMAT_R24G8_TYPELESS;
+        let narrow = primary.Format == DXGI_FORMAT_R16_TYPELESS || deep;
+        let stencil = primary.Format == DXGI_FORMAT_R32G8X24_TYPELESS || deep;
         let companion = D3D12_RESOURCE_DESC {
             Format: if narrow { DXGI_FORMAT_R16_TYPELESS } else { DXGI_FORMAT_R32_FLOAT },
             Flags: D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
@@ -143,7 +152,7 @@ impl Pair {
         };
         let texel = if narrow { 2 } else { 4 };
         let count = u32::from(primary.MipLevels.max(1)) * u32::from(primary.DepthOrArraySize.max(1));
-        let depth = footprints(device, primary, 0, count, texel)?;
+        let depth = footprints(device, primary, 0, count, if deep { 4 } else { texel })?;
         let image = footprints(device, &companion, 0, count, texel)?;
         // One pitch per subresource for both sides, packed at 512 bytes.
         let mut offset = 0u64;
@@ -204,6 +213,7 @@ impl Pair {
             planes,
             stencil,
             narrow,
+            deep,
             stencil_image: if stencil_planes.is_empty() {
                 None
             } else {

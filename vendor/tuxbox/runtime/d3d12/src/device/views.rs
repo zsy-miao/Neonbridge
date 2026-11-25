@@ -1112,7 +1112,7 @@ pub(super) unsafe extern "system" fn uav(
             // The stencil plane's twin: plane slice 1, or the stencil formats.
             use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8_UINT, DXGI_FORMAT_X32_TYPELESS_G8X24_UINT};
             if let Some(stencil) = &pair.stencil_image
-                && (plane == Some(1) || matches!(view.Format, DXGI_FORMAT_R8_UINT | DXGI_FORMAT_X32_TYPELESS_G8X24_UINT))
+                && (plane == Some(1) || matches!(view.Format, DXGI_FORMAT_R8_UINT | DXGI_FORMAT_X32_TYPELESS_G8X24_UINT | DXGI_FORMAT(120)))
             {
                 let mut host = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: DXGI_FORMAT_R8_UINT, ..*view };
                 match host.ViewDimension {

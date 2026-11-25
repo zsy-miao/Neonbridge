@@ -308,9 +308,24 @@ pub(super) unsafe fn handoff(
         if pair.stencil_image.is_some() {
             copy_subresources(list, depth, pair, &stencil, entering, from, to);
         } else {
-            for s in stencil {
+            for &s in &stencil {
                 transition(list, depth, s, from, to);
             }
+        }
+        if pair.deep {
+            // A 24-bit plane: only its states move here. The twin is not
+            // given the plane on entry (fxceless's shortcut, counted); on
+            // exit the plane is drawn from the twin when the list closes.
+            for &p in &planes {
+                transition(list, depth, p, from, to);
+            }
+            if entering {
+                LATE[3].fetch_add(planes.len() as u64, Ordering::Relaxed);
+            } else {
+                let both: Vec<u32> = planes.iter().chain(&stencil).copied().collect();
+                defer_plane(list, depth, pair, &both, to);
+            }
+            return;
         }
         copy_subresources(list, depth, pair, &planes, entering, from, to);
         return;
@@ -495,6 +510,13 @@ pub(super) fn enhanced_handoff(
         return Err(E_NOTIMPL.into());
     }
     let twins = crate::device::depth::twins();
+    if pair.deep {
+        // Not ported: the 24-bit plane's close-time pass runs on legacy
+        // barriers only (`late_pass`); enhanced layouts are refused as any
+        // other unsupported depth barrier is.
+        crate::diagnostics::log_line(format_args!("enhanced barrier on a 24-bit depth twin: not supported"));
+        return Err(E_NOTIMPL.into());
+    }
     let (float_list, stencil_list) = if twins { selected_subresources(pair, &b.Subresources)? } else { (vec![0], vec![1]) };
     let (float, stencil) = if twins {
         (!float_list.is_empty(), !stencil_list.is_empty())
@@ -623,4 +645,306 @@ pub(super) fn enhanced_handoff(
         api.Barrier(&[global]);
     }
     Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// The 24-bit depth plane's pass (TUXBOX_DEPTH_TWINS=1, console D16S8 on a host
+// D24S8 texture). Ported from VIctory-fxceless victory-gpu host.rs (GPL-3.0,
+// credited): `record_plane_pass`, `PLANE_STEPS`, `TwinUse::late`,
+// `twins_to_depth` and `settle`. No copy turns the twin's 16-bit steps into
+// 24-bit depth, so when the title takes the texture out of unordered access
+// the depth plane is left as it was and drawn from the twin when the list
+// closes; a pass mid-list would replace the title's bound pipeline, root
+// signature and targets. As in fxceless, the list's own uses between the
+// barrier and its close see the plane as it was (counted in LATE[1]), and the
+// twin is not given the plane when the texture enters unordered access
+// (fxceless's shortcut: in the title only the twin's pass writes that plane).
+// Per list, each such texture's subresource states are settled from the
+// title's barriers so the pass moves them from where the title left them.
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock, atomic::{AtomicU32, AtomicU64, Ordering}};
+
+/// [passes drawn, uses that saw the plane before its pass, subresources
+/// skipped with no known state, twin entries not given the plane].
+pub(crate) static LATE: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+
+struct Late {
+    depth: ID3D12Resource,
+    image: ID3D12Resource,
+    /// Host state per subresource of both planes, as the title left it in
+    /// this list (`None`: not named since the texture left unordered access).
+    states: Vec<Option<D3D12_RESOURCE_STATES>>,
+}
+
+/// Per host list (its raw pointer): the 24-bit planes its close must draw.
+fn pending() -> std::sync::MutexGuard<'static, HashMap<usize, Vec<Late>>> {
+    static PENDING: OnceLock<Mutex<HashMap<usize, Vec<Late>>>> = OnceLock::new();
+    PENDING.get_or_init(Mutex::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Leaves the deep pair's depth plane where the title asked, the twin
+/// holding it: notes the pass for the list's close.
+fn defer_plane(list: &ID3D12GraphicsCommandList, depth: &ID3D12Resource, pair: &Pair, subresources: &[u32], state: D3D12_RESOURCE_STATES) {
+    let mut pending = pending();
+    let lates = pending.entry(list.as_raw() as usize).or_default();
+    let at = match lates.iter().position(|l| l.depth.as_raw() == depth.as_raw()) {
+        Some(at) => at,
+        None => {
+            lates.push(Late { depth: depth.clone(), image: pair.image.clone(), states: vec![None; 2 * pair.count() as usize] });
+            lates.len() - 1
+        }
+    };
+    for &s in subresources {
+        if let Some(slot) = lates[at].states.get_mut(s as usize) {
+            *slot = Some(state);
+        }
+    }
+}
+
+/// commands.rs barrier hook: the title moves `depth`'s `subresource` to host
+/// state `after` outside unordered access. A pending pass follows it
+/// (fxceless `settle`) and counts the use that sees the plane early.
+pub(super) fn note_state(list: &ID3D12GraphicsCommandList, depth: &ID3D12Resource, subresource: u32, after: D3D12_RESOURCE_STATES) {
+    let mut pending = pending();
+    let Some(late) = pending
+        .get_mut(&(list.as_raw() as usize))
+        .and_then(|l| l.iter_mut().find(|l| l.depth.as_raw() == depth.as_raw()))
+    else {
+        return;
+    };
+    LATE[1].fetch_add(1, Ordering::Relaxed);
+    if subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES {
+        late.states.iter_mut().for_each(|s| *s = Some(after));
+    } else if let Some(slot) = late.states.get_mut(subresource as usize) {
+        *slot = Some(after);
+    }
+}
+
+/// commands.rs reset hook: a reset list drops what it had pending.
+pub(super) fn forget(list: &ID3D12GraphicsCommandList) {
+    if crate::device::depth::twins() {
+        pending().remove(&(list.as_raw() as usize));
+    }
+}
+
+const PLANE_SOURCE: &str = r#"
+#define RS "DescriptorTable(SRV(t0), visibility = SHADER_VISIBILITY_PIXEL)"
+Texture2DArray<uint> twin : register(t0);
+float4 corner(uint i : SV_VertexID) : SV_Position {
+    return float4(float(i & 1) * 4.0 - 1.0, float(i >> 1) * 4.0 - 1.0, 0.0, 1.0);
+}
+// A 16-bit twin holds whole steps of 1/65535; the depth written is the step
+// times the float nearest 1/65535 (0x37800080), as the title's tiled lighting
+// computes the depth it then tests equal against (fxceless PLANE_STEPS).
+[RootSignature(RS)]
+float plane(float4 p : SV_Position) : SV_Depth {
+    return float(twin.Load(int4(int2(p.xy), 0, 0))) * asfloat(0x37800080);
+}
+"#;
+
+/// Views of twins (a shader-visible ring) and depth views (a CPU ring), as
+/// fxceless PLANE_VIEWS: a view lasts until its list ran, and one or two
+/// passes a frame are far from coming round.
+const PLANE_VIEWS: u32 = 256;
+
+struct PlanePass {
+    root: ID3D12RootSignature,
+    pipeline: ID3D12PipelineState,
+    views: ID3D12DescriptorHeap,
+    targets: ID3D12DescriptorHeap,
+    view_step: u32,
+    target_step: u32,
+    next: AtomicU32,
+}
+
+// SAFETY: D3D12 objects are free-threaded.
+unsafe impl Send for PlanePass {}
+// SAFETY: as above.
+unsafe impl Sync for PlanePass {}
+
+fn compile_plane(entry: windows::core::PCSTR, target: windows::core::PCSTR) -> windows::core::Result<Vec<u8>> {
+    use windows::Win32::Foundation::{E_NOTIMPL, FreeLibrary};
+    use windows::Win32::Graphics::Direct3D::ID3DBlob;
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW};
+    use windows::core::{HRESULT, s, w};
+    type Compile = unsafe extern "system" fn(
+        *const c_void, usize, *const u8, *const c_void, *const c_void,
+        *const u8, *const u8, u32, u32, *mut *mut c_void, *mut *mut c_void,
+    ) -> HRESULT;
+    let library = unsafe { LoadLibraryExW(w!("d3dcompiler_47.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32)? };
+    let result = (|| unsafe {
+        let entry_point = GetProcAddress(library, s!("D3DCompile")).ok_or(E_NOTIMPL)?;
+        let compile: Compile = core::mem::transmute(entry_point);
+        let mut raw = ptr::null_mut();
+        compile(
+            PLANE_SOURCE.as_ptr().cast(), PLANE_SOURCE.len(), s!("plane").as_ptr(), ptr::null(), ptr::null(),
+            entry.as_ptr(), target.as_ptr(), 0, 0, &mut raw, ptr::null_mut(),
+        )
+        .ok()?;
+        let blob = ID3DBlob::from_raw(raw);
+        Ok(core::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize()).to_vec())
+    })();
+    let _ = unsafe { FreeLibrary(library) };
+    result
+}
+
+fn make_pass(device: &ID3D12Device) -> windows::core::Result<PlanePass> {
+    use core::mem::ManuallyDrop;
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_SAMPLE_DESC};
+    use windows::core::s;
+    let vs = compile_plane(s!("corner"), s!("vs_5_1"))?;
+    let ps = compile_plane(s!("plane"), s!("ps_5_1"))?;
+    let code = |bytes: &[u8]| D3D12_SHADER_BYTECODE { pShaderBytecode: bytes.as_ptr().cast(), BytecodeLength: bytes.len() };
+    unsafe {
+        let root: ID3D12RootSignature = device.CreateRootSignature(0, &ps)?;
+        let mut desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
+            pRootSignature: ManuallyDrop::new(Some(root.clone())),
+            VS: code(&vs),
+            PS: code(&ps),
+            SampleMask: u32::MAX,
+            RasterizerState: D3D12_RASTERIZER_DESC {
+                FillMode: D3D12_FILL_MODE_SOLID,
+                CullMode: D3D12_CULL_MODE_NONE,
+                DepthClipEnable: true.into(),
+                ..Default::default()
+            },
+            // Every texel is written; stencil stays off and untouched.
+            DepthStencilState: D3D12_DEPTH_STENCIL_DESC {
+                DepthEnable: true.into(),
+                DepthWriteMask: D3D12_DEPTH_WRITE_MASK_ALL,
+                DepthFunc: D3D12_COMPARISON_FUNC_ALWAYS,
+                ..Default::default()
+            },
+            PrimitiveTopologyType: D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+            DSVFormat: DXGI_FORMAT_D24_UNORM_S8_UINT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            ..Default::default()
+        };
+        let pipeline = device.CreateGraphicsPipelineState(&desc);
+        ManuallyDrop::drop(&mut desc.pRootSignature);
+        let heap = |kind, flags| {
+            device.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&D3D12_DESCRIPTOR_HEAP_DESC {
+                Type: kind,
+                NumDescriptors: PLANE_VIEWS,
+                Flags: flags,
+                NodeMask: 0,
+            })
+        };
+        Ok(PlanePass {
+            root,
+            pipeline: pipeline?,
+            views: heap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE)?,
+            targets: heap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, D3D12_DESCRIPTOR_HEAP_FLAG_NONE)?,
+            view_step: device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV),
+            target_step: device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV),
+            next: AtomicU32::new(0),
+        })
+    }
+}
+
+fn plane_pass(device: &ID3D12Device) -> Option<&'static PlanePass> {
+    static PASS: OnceLock<Option<PlanePass>> = OnceLock::new();
+    PASS.get_or_init(|| match make_pass(device) {
+        Ok(pass) => Some(pass),
+        Err(error) => {
+            crate::diagnostics::log_line(format_args!(
+                "no pass to draw a 24-bit depth plane from its twin ({error}): such planes stay as they are"
+            ));
+            None
+        }
+    })
+    .as_ref()
+}
+
+/// commands.rs close hook, before the host list closes: draws each pending
+/// 24-bit depth plane from its twin, each mip and slice, and puts every
+/// subresource back in the state the title left it (fxceless
+/// `twins_to_depth`). Nothing of the title's is recorded after it, so the
+/// pass leaves its own heap, pipeline and target bound.
+pub(super) fn late_pass(list: &ID3D12GraphicsCommandList) {
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_R16_UINT};
+    if !crate::device::depth::twins() {
+        return;
+    }
+    let Some(lates) = pending().remove(&(list.as_raw() as usize)) else { return };
+    let Ok(device) = (unsafe { list.GetDevice::<ID3D12Device>() }) else { return };
+    let Some(pass) = plane_pass(&device) else { return };
+    let write = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    let uav = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    let read = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    for late in &lates {
+        let of = unsafe { late.depth.GetDesc() };
+        let mips = u32::from(of.MipLevels.max(1));
+        let count = mips * u32::from(of.DepthOrArraySize.max(1));
+        for i in 0..count {
+            let (Some(Some(depth_state)), Some(Some(stencil_state))) =
+                (late.states.get(i as usize).copied(), late.states.get((count + i) as usize).copied())
+            else {
+                LATE[2].fetch_add(1, Ordering::Relaxed);
+                continue;
+            };
+            let (mip, slice) = (i % mips, i / mips);
+            let slot = pass.next.fetch_add(1, Ordering::Relaxed) % PLANE_VIEWS;
+            let view = D3D12_SHADER_RESOURCE_VIEW_DESC {
+                Format: DXGI_FORMAT_R16_UINT,
+                ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2DARRAY,
+                Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
+                    Texture2DArray: D3D12_TEX2D_ARRAY_SRV {
+                        MostDetailedMip: mip,
+                        MipLevels: 1,
+                        FirstArraySlice: slice,
+                        ArraySize: 1,
+                        ..Default::default()
+                    },
+                },
+            };
+            let target = D3D12_DEPTH_STENCIL_VIEW_DESC {
+                Format: DXGI_FORMAT_D24_UNORM_S8_UINT,
+                ViewDimension: D3D12_DSV_DIMENSION_TEXTURE2DARRAY,
+                Anonymous: D3D12_DEPTH_STENCIL_VIEW_DESC_0 {
+                    Texture2DArray: D3D12_TEX2D_ARRAY_DSV { MipSlice: mip, FirstArraySlice: slice, ArraySize: 1 },
+                },
+                ..Default::default()
+            };
+            let (width, height) = ((of.Width >> mip).max(1) as u32, (of.Height >> mip).max(1));
+            unsafe {
+                let cpu = D3D12_CPU_DESCRIPTOR_HANDLE {
+                    ptr: pass.views.GetCPUDescriptorHandleForHeapStart().ptr + (slot * pass.view_step) as usize,
+                };
+                let gpu = D3D12_GPU_DESCRIPTOR_HANDLE {
+                    ptr: pass.views.GetGPUDescriptorHandleForHeapStart().ptr + u64::from(slot * pass.view_step),
+                };
+                let dsv = D3D12_CPU_DESCRIPTOR_HANDLE {
+                    ptr: pass.targets.GetCPUDescriptorHandleForHeapStart().ptr + (slot * pass.target_step) as usize,
+                };
+                device.CreateShaderResourceView(&late.image, Some(&view), cpu);
+                device.CreateDepthStencilView(&late.depth, Some(&target), dsv);
+                transition(list, &late.depth, i, depth_state, write);
+                transition(list, &late.depth, count + i, stencil_state, write);
+                transition(list, &late.image, i, uav, read);
+                list.SetDescriptorHeaps(&[Some(pass.views.clone())]);
+                list.SetGraphicsRootSignature(&pass.root);
+                list.SetPipelineState(&pass.pipeline);
+                list.SetGraphicsRootDescriptorTable(0, gpu);
+                list.OMSetRenderTargets(0, None, false, Some(&dsv));
+                list.RSSetViewports(&[D3D12_VIEWPORT {
+                    TopLeftX: 0.0,
+                    TopLeftY: 0.0,
+                    Width: width as f32,
+                    Height: height as f32,
+                    MinDepth: 0.0,
+                    MaxDepth: 1.0,
+                }]);
+                list.RSSetScissorRects(&[RECT { left: 0, top: 0, right: width as i32, bottom: height as i32 }]);
+                list.IASetPrimitiveTopology(windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY(4));
+                list.DrawInstanced(3, 1, 0, 0);
+                transition(list, &late.image, i, read, uav);
+                transition(list, &late.depth, i, write, depth_state);
+                transition(list, &late.depth, count + i, write, stencil_state);
+            }
+            LATE[0].fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }

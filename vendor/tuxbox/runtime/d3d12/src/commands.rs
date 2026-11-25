@@ -706,6 +706,7 @@ unsafe extern "system" fn reset(
         Err(error) => return error,
     };
     let mut state = recording(list);
+    depth::forget(&list.native);
     if matches!(state.phase, ListState::Open) {
         // Pooled titles reset a list they never closed (rebox closes and retries).
         // Close the host recording and discard it; the reset below replaces it.
@@ -884,6 +885,7 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
         ListState::Open => {
             if let Err(error) = state.prefix.finish(&list.native) { { state.error = error.code(); state.error_at = (file!(), line!()); } }
             state.balance(&list.native);
+            depth::late_pass(&list.native);
             let closed = unsafe { list.native.Close() };
             if closed.is_ok() {
                 enhanced::closed_ok(list);
@@ -1099,6 +1101,12 @@ unsafe extern "system" fn transition(
                         *state = D3D12_RESOURCE_STATE_COMMON;
                     }
                 }
+            }
+            if resource.state.depth().is_some_and(|pair| pair.deep)
+                && host.before != D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                && host.after != D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+            {
+                depth::note_state(&list.native, &resource.native, host.subresource, host.after);
             }
             if let Some(pair) = resource.state.depth()
                 && (host.before == D3D12_RESOURCE_STATE_UNORDERED_ACCESS
