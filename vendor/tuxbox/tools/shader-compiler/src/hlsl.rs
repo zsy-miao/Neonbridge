@@ -1480,7 +1480,7 @@ fn mark_wave_allocations(insns: &mut [Insn], wave32_mask: bool) -> Result<(bool,
                     trial[i].mnemonic = "tb_first_active_lane".into();
                     insns.clone_from_slice(&trial);
                 }
-                Err(e) if std::env::var_os("TB_DFDEBUG").is_some() => eprintln!("{e}"),
+                Err(e) if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) => eprintln!("{e}"),
                 Err(_) => {}
             }
             continue;
@@ -2518,7 +2518,7 @@ fn translate_outputs_lone(ex: &ShaderExtract, feeds_ps: Option<&InputInterp>, ou
     match alone {
         Ok(translated) => Ok(translated),
         Err(e) => {
-            if std::env::var_os("TB_DFDEBUG").is_some() { eprintln!("{e}"); }
+            if std::env::var_os("TB_DFDEBUG").is_some_and(|v| !v.is_empty()) { eprintln!("{e}"); }
             first
         }
     }

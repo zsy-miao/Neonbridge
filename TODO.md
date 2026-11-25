@@ -57,7 +57,6 @@ Open work. Each item is tested in a run of its own.
 ### d3d12
 - ref better: b16f2f9 (clip write-watch spans), 689199f (alpha blend factor 19/20; a placeholder pipeline drops draws).
 - f40b107: the table arena never frees (VIctory HostHeap release + c1c3281 scan fix are better).
-- c6c3416: the merge 61c1359 regressed TB_DFDEBUG=0 at 4 sites.
 - five-star b828157 (e1ce01d): release every pending memory wait at each present (79dff41 releases only waits no queued list writes).
 - ab5af3f: snapshot every CBV no title buffer covers.
 - 2e53f61: reopen a closed list with a native Reset.
