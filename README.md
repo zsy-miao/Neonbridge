@@ -10,6 +10,8 @@ Neonbridge is a Windows app that runs every project trying to bring the Xbox Ser
 
 Best first, by how far each project's own authors say it gets. The launcher lists them in this order too.
 
+"Verified here" means tested on our PC: Intel Core i5-14400F (10 cores), NVIDIA GeForce RTX 4060 8 GB (driver 616.92), 16 GB RAM, Windows 11. Most authors test on faster cards (RTX 4070 to 5090, RX 9070 XT), so expect lower frame rates here than theirs.
+
 | # | Runtime | How far it gets (its authors' own results) | Verified here |
 |---|---|---|---|
 | 1 | [KLBF Lab](https://github.com/PastiiJay/klbf-lab) | 5–9 fps in free roam; new game to the open world in one 77-minute session without a crash (AMD RX 9070 XT). First on the [GTA VI PC race tracker](https://github.com/vuyp/gta6-pc-race) | No (not yet tested on NVIDIA by its author) |
