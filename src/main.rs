@@ -224,7 +224,7 @@ fn run(args: &[OsString]) -> Result<(), Box<dyn Error>> {
         }.into());
     }
     if mode == Mode::Prewarm {
-        return prewarm_only(&tuxbox, prebuilt.as_deref());
+        return prewarm_only(&tuxbox, prebuilt.as_deref(), game.as_deref());
     }
     let game = if mode == Mode::BuildOnly { game } else { Some(game.ok_or(USAGE)?) };
     let target = match &game {
@@ -547,7 +547,7 @@ fn xshader_commit(tuxbox: &Path) -> String {
 /// the game folder or the provider output is touched. TUXBOX_PREWARM=1 also
 /// translates the whole shaders.rpf archive; the time cap is off unless
 /// NEONBRIDGE_PREWARM_MAX_S is set.
-fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Error>> {
+fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>, game: Option<&Path>) -> Result<(), Box<dyn Error>> {
     shaders::PREWARM_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
     // SAFETY: no other thread of ours runs yet.
     unsafe {
@@ -576,6 +576,23 @@ fn prewarm_only(tuxbox: &Path, prebuilt: Option<&Path>) -> Result<(), Box<dyn Er
     println!("[prewarm] per-compile dxc times: {}", out.join("shader-worker.log").display());
     let worker = shaders::Worker::start(shaders::Tools { xshader, source_key, dxc, defines: Vec::new(), dxil: None }, cache_root, session.clone(),
         |line| println!("[prewarm] {line}"))?;
+    // Driver pipelines too, graphics and compute (the journal's G and C
+    // records, as --pipelines builds them), through this worker: test173
+    // hung binding compute pipelines that were not built yet (1108 pending
+    // with the dxc prewarm at 1272/1695), because --prewarm only ran dxc.
+    // Needs the game folder's staged d3d12_xs.dll (--game).
+    // NEONBRIDGE_PREWARM_PIPELINES=0 runs dxc only, as before.
+    if std::env::var("NEONBRIDGE_PREWARM_PIPELINES").as_deref() != Ok("0") {
+        match game.filter(|g| g.join("d3d12_xs.dll").is_file()) {
+            Some(game) => {
+                let name = session.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if let Err(e) = build_pipelines(game, &name) {
+                    println!("[prewarm] pipelines not built: {e}");
+                }
+            }
+            None => println!("[prewarm] pipelines not built: pass --game <folder with the staged d3d12_xs.dll> (NEONBRIDGE_PREWARM_PIPELINES=0 skips this)"),
+        }
+    }
     let st = worker.stop();
     let _ = fs::remove_dir_all(&session);
     use std::sync::atomic::Ordering::Relaxed;
