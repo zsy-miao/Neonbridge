@@ -225,34 +225,84 @@ fn note_multi(movie: u64, b: u64, c: u64, d: u64) {
 
 /// After the title's BinkNextFrame: decode and advance the frames the movie
 /// is behind its clock, at most catch_up_cap().
+/// Frames the movie is behind its clock (fractional), starting or restarting
+/// the clock as needed; None while it (re)starts.
+fn clock_behind(movie: u64, frame: u32, rate: f64) -> Option<(f64, Option<(u64, u64, u64)>)> {
+    let mut guard = CLOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    let restart = guard.as_ref().is_none_or(|c| c.movie != movie || frame < c.first_frame);
+    if restart {
+        let multi = guard.as_ref().filter(|c| c.movie == movie).and_then(|c| c.multi);
+        *guard = Some(Clock { movie, started: now, first_frame: frame, multi });
+        return None;
+    }
+    let clock = guard.as_mut().unwrap();
+    let target = f64::from(clock.first_frame) + now.duration_since(clock.started).as_secs_f64() * rate;
+    let behind = target - f64::from(frame);
+    if behind > rate * 2.0 {
+        clock.started = now;
+        clock.first_frame = frame;
+        return None;
+    }
+    Some((behind, clock.multi))
+}
+
+fn movie_rate(h: &[u32; 7]) -> Option<f64> {
+    let rate = if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) };
+    (1.0..=240.0).contains(&rate).then_some(rate)
+}
+
+/// TUXBOX_BINK_SKIP_SIGNAL (default on): BinkShouldSkip says skip while the
+/// movie is a whole frame or more behind its clock. The title's own loop then
+/// decodes and advances the next frame in order, before showing one, with
+/// the frame buffers under its own GPU sync, which is what Bink's skip
+/// contract is for (RAD's loop: DoFrame, while ShouldSkip { NextFrame;
+/// DoFrame }, NextFrame). Our catch-up decoded the same frames from outside
+/// the title's loop into the registered plane ring while the title's copy of
+/// the shown frame was still reading it: the garble. Audio is fed from the
+/// decoded frames, so it keeps the clock. TUXBOX_BINK_SKIP_SIGNAL=0 passes
+/// Bink's own answer through.
+fn skip_signal() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_BINK_SKIP_SIGNAL").map_or(true, |v| v.trim() != "0"))
+}
+
+static SKIPS_SIGNALLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn should_skip(movie: u64, real: u64) -> u64 {
+    if real != 0 || !skip_signal() || catch_up_cap() != 0 {
+        return real;
+    }
+    let Some(h) = header(movie) else { return real };
+    let Some(rate) = movie_rate(&h) else { return real };
+    if h[3] >= h[2] {
+        return real;
+    }
+    match clock_behind(movie, h[3], rate) {
+        Some((behind, _)) if behind >= 1.0 => {
+            SKIPS_SIGNALLED.fetch_add(1, Ordering::Relaxed);
+            1
+        }
+        _ => real,
+    }
+}
+
 unsafe fn catch_up(movie: u64) {
     let cap = catch_up_cap();
-    let Some(h) = header(movie).filter(|_| cap != 0) else { return };
-    let (frames, frame, rate) = (h[2], h[3], if h[6] == 0 { 0.0 } else { f64::from(h[5]) / f64::from(h[6]) });
-    if !(1.0..=240.0).contains(&rate) {
+    let Some(h) = header(movie) else { return };
+    let (frames, frame) = (h[2], h[3]);
+    let Some(rate) = movie_rate(&h) else { return };
+    if cap == 0 {
+        // Keeps the clock (and the smallest-lead log) running for should_skip.
+        let _ = clock_behind(movie, frame, rate);
         return;
     }
     let (behind, multi) = {
-        let mut guard = CLOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Instant::now();
-        let restart = guard.as_ref().is_none_or(|c| c.movie != movie || frame < c.first_frame);
-        if restart {
-            let multi = guard.as_ref().filter(|c| c.movie == movie).and_then(|c| c.multi);
-            *guard = Some(Clock { movie, started: now, first_frame: frame, multi });
-            return;
-        }
-        let clock = guard.as_mut().unwrap();
-        let target = f64::from(clock.first_frame) + now.duration_since(clock.started).as_secs_f64() * rate;
-        let behind = target - f64::from(frame);
-        // A stall over 2 s (loading, pause) restarts the clock instead of racing.
-        if behind > rate * 2.0 {
-            clock.started = now;
-            clock.first_frame = frame;
-            return;
-        }
+        let Some((behind, multi)) = clock_behind(movie, frame, rate) else { return };
         // Any fraction behind counts: decode up to the lead past the clock.
         let wanted = behind + lead_frames();
-        (if behind > 0.0 { wanted.ceil().max(0.0) as u32 } else { 0 }, clock.multi)
+        (if behind > 0.0 { wanted.ceil().max(0.0) as u32 } else { 0 }, multi)
     };
     let real = |i: usize| -> F4 { unsafe { std::mem::transmute(REAL[i].load(Ordering::Acquire)) } };
     let mut done = 0;
@@ -303,7 +353,10 @@ unsafe fn traced(index: usize, a: u64, b: u64, c: u64, d: u64) -> u64 {
         trace_call(index, a, "start");
     }
     let start = Instant::now();
-    let result = unsafe { real(a, b, c, d) };
+    let mut result = unsafe { real(a, b, c, d) };
+    if index == SHOULD_SKIP {
+        result = should_skip(a, result);
+    }
     let us = start.elapsed().as_micros() as u64;
     match index {
         DO_FRAME => {
