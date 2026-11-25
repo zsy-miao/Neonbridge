@@ -590,10 +590,25 @@ pub fn setup(name: &str) -> Result<(), Box<dyn Error>> {
         let f = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("6ixpack/last_game.txt");
         fs::read_to_string(f).ok().map(|t| PathBuf::from(t.trim())).filter(|p| p.is_dir())
     });
-    let exe = spec.str("exe").map(|e| root.join(e));
     if steps.is_empty() {
         println!("[launch] {name}: its NEONBRIDGE.toml has no setup steps");
     }
+    let ask = |mark: &str| {
+        print!("[setup] {mark}. Run it? Type yes to run, anything else skips: ");
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        let _ = std::io::stdin().read_line(&mut answer);
+        answer.trim() == "yes"
+    };
+    run_steps(name, &root, &spec, game.as_deref(), &ask)
+}
+
+/// The toml's setup steps in order. A step marked `[asks first: ...]` runs
+/// only when `ask` says yes. Err names the first step that failed.
+fn run_steps(name: &str, root: &Path, spec: &Spec, game: Option<&Path>, ask: &dyn Fn(&str) -> bool) -> Result<(), Box<dyn Error>> {
+    let root = root.to_path_buf();
+    let steps = spec.list("setup").unwrap_or_default();
+    let exe = spec.str("exe").map(|e| root.join(e));
     for step in steps {
         let (title, rest) = step.split_once(": ").unwrap_or(("step", step));
         if rest.contains("{game}") && game.is_none() {
@@ -604,15 +619,9 @@ pub fn setup(name: &str) -> Result<(), Box<dyn Error>> {
         let rest = rest.as_str();
         let (command, mark) = rest.split_once(" [").map_or((rest.trim(), ""), |(c, m)| (c.trim(), m.trim_end_matches(']')));
         println!("[setup] {name}: {title}: {command}");
-        if mark.contains("asks first") {
-            print!("[setup] {mark}. Run it? Type yes to run, anything else skips: ");
-            let _ = std::io::stdout().flush();
-            let mut answer = String::new();
-            let _ = std::io::stdin().read_line(&mut answer);
-            if answer.trim() != "yes" {
-                println!("[setup] skipped");
-                continue;
-            }
+        if mark.contains("asks first") && !ask(mark) {
+            println!("[setup] skipped");
+            continue;
         }
         // `python ...` steps run under the Python [`python`] finds.
         let command = match command.strip_prefix("python ") {
@@ -625,6 +634,40 @@ pub fn setup(name: &str) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+/// A launch runs the runtime's author setup itself (choose the folder and it
+/// does the rest): the first time, and again whenever its setup list or the
+/// game folder changes (setup-stamp.txt in its cache records both). Steps
+/// that ask first (downloads, hours-long preparation) get a Yes/No box. A
+/// failed step is logged and tried again next launch; the launch goes on.
+/// NEONBRIDGE_AUTO_SETUP=0 leaves setup to --setup.
+fn auto_setup(name: &str, root: &Path, spec: &Spec, game: &Path) {
+    let Some(steps) = spec.list("setup").filter(|s| !s.is_empty()) else { return };
+    if std::env::var("NEONBRIDGE_AUTO_SETUP").is_ok_and(|v| v.trim() == "0") {
+        return;
+    }
+    let stamp = cache(name).join("setup-stamp.txt");
+    let want = format!("{}\n{}", game.display(), steps.join("\n"));
+    if fs::read_to_string(&stamp).is_ok_and(|s| s == want) {
+        return;
+    }
+    crate::splash::status(0.46, &format!("Setting up {name}"));
+    println!("[setup] {name}: first launch or changed setup: running its setup steps");
+    let ask = |mark: &str| {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO, MessageBoxW};
+        let wide = |t: &str| t.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (text, title) = (wide(&format!("{name}'s setup has a step that {mark}.\n\nRun it now?")), wide("Neonbridge"));
+        // SAFETY: both strings are NUL-terminated and live across the call.
+        unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION) == IDYES }
+    };
+    match run_steps(name, root, spec, Some(game), &ask) {
+        Ok(()) => {
+            let _ = fs::create_dir_all(cache(name));
+            let _ = fs::write(&stamp, want);
+        }
+        Err(e) => println!("[setup] {e}; the launch goes on, and the setup runs again next time"),
+    }
 }
 
 /// (name, about, presets) of tuxbox and every vendor/<name>/NEONBRIDGE.toml.
@@ -1669,6 +1712,9 @@ pub fn run(name: &str, task: Task, game: Option<&Path>, exe: Option<&str>, log: 
     };
     let cache = cache(name);
     let _ = fs::create_dir_all(&cache);
+    if matches!(task, Task::Run) && choice.mix.is_none() {
+        auto_setup(name, &root, &spec, &game);
+    }
     let family = victory_tree(name).is_some();
     // The victory family's cache is the one shared folder; this runtime's
     // own files (press.txt, warm-total.txt, last-run.log) stay in its own.
