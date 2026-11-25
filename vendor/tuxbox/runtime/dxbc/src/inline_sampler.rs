@@ -303,7 +303,18 @@ fn states(
         && matches!(op.dst[..], [Opnd::Sgpr(n)] if n & 1 != 0));
     // Accept a literal only if every reaching definition supplies exactly
     // that value, including loop backedges and moves between SGPRs.
-    let reaching = |pc: usize, reg: u8| -> Option<u32> {
+    // Words built from literals by s_and/s_or/s_andn2 fold to their constant
+    // (AnyPS5 computed S# words, credit to its authors; f1b5622, reverted
+    // under the AnyPS5 ban, now ported again). TUXBOX_SAMPLER_FOLD=0 refuses
+    // computed words as before.
+    struct Flow<'a> {
+        ops: &'a [rdna2::Insn],
+        incoming: &'a [Vec<usize>],
+        entries: &'a BTreeSet<usize>,
+        one_word: bool,
+    }
+    fn reach(f: &Flow, pc: usize, reg: u8, depth: u32) -> Option<u32> {
+        let (ops, incoming, entries, one_word) = (f.ops, f.incoming, f.entries, f.one_word);
         if pc == 0 || entries.contains(&pc) {
             return None; // No reaching definition at program entry.
         }
@@ -339,6 +350,18 @@ fn states(
                             r = *src;
                             None
                         }
+                        (name @ ("s_and_b32" | "s_or_b32" | "s_andn2_b32"), [a, b])
+                            if op.dst == [Opnd::Sgpr(r)] && depth < 8 && sampler_fold() =>
+                        {
+                            let operand = |o: &Opnd| match *o {
+                                Opnd::ConstInt(v) => Some(v as u32),
+                                Opnd::Literal(v) => Some(v),
+                                Opnd::Sgpr(s) => reach(f, i, s, depth + 1),
+                                _ => None,
+                            };
+                            let (a, b) = (operand(a)?, operand(b)?);
+                            Some(match name { "s_and_b32" => a & b, "s_or_b32" => a | b, _ => a & !b })
+                        }
                         _ => Some(constant_word(op, r)?),
                     }
                 };
@@ -355,7 +378,9 @@ fn states(
             pending.extend(incoming[i].iter().map(|&pred| (pred, r)));
         }
         literal
-    };
+    }
+    let flow = Flow { ops: &ops, incoming: &incoming, entries: &entries, one_word };
+    let reaching = |pc: usize, reg: u8| reach(&flow, pc, reg, 0);
     let mut states = BTreeMap::new();
     for (i, op) in ops.iter().enumerate().filter(|(_, op)| {
         op.enc == Enc::Mimg
@@ -657,6 +682,11 @@ mod tests {
         words[6] = 0xbf84_0002; // s_cbranch_scc0 also allows the point filter.
         assert!(classify(&words).is_none());
     }
+}
+
+fn sampler_fold() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TUXBOX_SAMPLER_FOLD").map_or(true, |v| v.trim() != "0"))
 }
 
 fn pair_moves() -> bool {
