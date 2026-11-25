@@ -75,6 +75,16 @@ pub(crate) fn scan_stats() -> (u64, u64) {
 pub(crate) const PLACED: usize = 0;
 pub(crate) const SHADOWS: usize = 1;
 const CAP: usize = 1 << 20;
+
+/// test164: the 4K intro's refresh spent 16-22 ms a frame in the watch
+/// refresh, with Bink writing about 3000 pages a decode. Each range's scan
+/// walked the whole hand-off list from the other consumer (9eea0b4), so the
+/// cost was ranges times listed pages. The list is now merged once per
+/// refresh. TUXBOX_WATCH_HANDOFF_ONCE=0 merges per scan as before.
+fn handoff_once() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_WATCH_HANDOFF_ONCE") != Some("0"))
+}
 const OVERFLOW_REFRESHES: u32 = 4;
 static HANDOFF: std::sync::Mutex<[Vec<u64>; 2]> = std::sync::Mutex::new([Vec::new(), Vec::new()]);
 static OVERFLOW: [std::sync::atomic::AtomicBool; 2] = [const { std::sync::atomic::AtomicBool::new(false) }; 2];
@@ -179,6 +189,25 @@ impl Watch {
             }
             start = end;
         }
+        if SHADOWS_ON.load(std::sync::atomic::Ordering::Relaxed) && handoff_once() {
+            let _site = crate::diagnostics::cost::site();
+            // The other consumer's pages, taken once for every range this
+            // refresh watched (sorted, so each page is one binary search).
+            let mut watched = self.watched.clone();
+            watched.sort_unstable_by_key(|r| r.start);
+            let mut handoff = HANDOFF.lock().unwrap_or_else(|e| e.into_inner());
+            let dirty = &mut self.dirty;
+            handoff[self.consumer].retain(|&p| {
+                let at = watched.partition_point(|r| r.start <= p);
+                // A range's scan starts at its page (scan's base).
+                let hit = (at > 0 && p < watched[at - 1].end)
+                    || watched.get(at).is_some_and(|r| p >= r.start & !0xfff && p < r.end);
+                if hit {
+                    dirty.push(p);
+                }
+                !hit
+            });
+        }
         self.dirty.sort_unstable();
     }
 
@@ -209,11 +238,13 @@ impl Watch {
             } else {
                 other.extend(found.iter().map(|&p| p as u64));
             }
-            let mine = &mut handoff[self.consumer];
-            let before = self.dirty.len();
-            self.dirty.extend(mine.iter().copied().filter(|p| (base..range.end).contains(p)));
-            if self.dirty.len() > before {
-                mine.retain(|p| !(base..range.end).contains(p));
+            if !handoff_once() {
+                let mine = &mut handoff[self.consumer];
+                let before = self.dirty.len();
+                self.dirty.extend(mine.iter().copied().filter(|p| (base..range.end).contains(p)));
+                if self.dirty.len() > before {
+                    mine.retain(|p| !(base..range.end).contains(p));
+                }
             }
         }
         self.watched.push(range);
