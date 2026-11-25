@@ -120,6 +120,8 @@ struct Recording {
     placed_reads: Vec<Arc<Texture>>,
     placed_writes: Vec<Arc<Texture>>,
     bound_placed_targets: Vec<Arc<Texture>>,
+    /// render heaps of its RTVs and DSVs, touched again at submit
+    target_heaps: device::placement::TargetHeaps,
     /// when its recording began (render heap residency)
     opened: std::time::Instant,
     resource_heap: Option<descriptors::ResourceHeap>,
@@ -810,6 +812,7 @@ unsafe extern "system" fn reset(
         device::alloc_swap::recorded(list as *const List as usize, allocator, &used, unsafe { list.native.GetType() });
         state.phase = ListState::Open;
         state.opened = std::time::Instant::now();
+        state.target_heaps.clear();
         state.resources = allocator.state.clone();
         state.timestamp_page = None;
         state.prefix = memory_wait::Prefix::default();
@@ -1450,7 +1453,7 @@ unsafe extern "system" fn clear_rtv(
         return;
     }
     crate::diagnostics::display::clear(handle.ptr);
-    if let Some(target) = unsafe { placement::render_target(parent(&list.parent), handle.ptr) }
+    if let Some(target) = unsafe { placement::render_target(parent(&list.parent), handle.ptr, &mut state.target_heaps) }
         && let Err(error) = Recording::track_texture(&mut state.placed_writes, &target)
     {
         { state.error = error; state.error_at = (file!(), line!()); }
@@ -2792,6 +2795,9 @@ unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut c_void, fr
             .ok_or(E_INVALIDARG)?;
             let mut state = recording(list);
             placement::list_submitted(state.opened.elapsed());
+            if placement::target_retouch() {
+                state.target_heaps.retouch();
+            }
             // A closed list submitted again holds eviction only for its age
             // since the last submit: its heaps are stamped at each submit
             // (touch_render_views), so a list recorded once and resubmitted
@@ -3442,6 +3448,7 @@ pub(crate) unsafe fn wrap_command_list(
             placed_reads: Vec::new(),
             placed_writes: Vec::new(),
             bound_placed_targets: Vec::new(),
+            target_heaps: Default::default(),
             opened: std::time::Instant::now(),
             resource_heap: None,
             descriptor_arena: None,

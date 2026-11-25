@@ -29,7 +29,7 @@ pub(super) unsafe extern "system" fn clear(
         { recording.error = E_INVALIDARG; recording.error_at = (file!(), line!()); }
         return;
     }
-    unsafe { crate::device::placement::touch_target(parent(&list.parent), handle.ptr) };
+    unsafe { crate::device::placement::touch_target(parent(&list.parent), handle.ptr, &mut recording.target_heaps) };
     let depth = if flags.0 & D3D12_CLEAR_FLAG_DEPTH.0 != 0 { clear_depth(depth) } else { depth };
     unsafe {
         (list.native.vtable().ClearDepthStencilView)(

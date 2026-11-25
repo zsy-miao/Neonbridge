@@ -177,9 +177,10 @@ pub(super) unsafe extern "system" fn targets(
     }
     // CPU RTV descriptors are consumed by OMSetRenderTargets immediately.
     // Capture their resources now even if the guest overwrites a slot before drawing.
+    let placed = &mut *state;
     if let Err(error) = unsafe {
         crate::device::placement::render_targets(
-            parent(&list.parent), count, rtvs, contiguous.as_bool(), &mut state.bound_placed_targets,
+            parent(&list.parent), count, rtvs, contiguous.as_bool(), &mut placed.bound_placed_targets, &mut placed.target_heaps,
         )
     } {
         { state.error = error.code(); state.error_at = (file!(), line!()); }
@@ -192,7 +193,7 @@ pub(super) unsafe extern "system" fn targets(
     state.display_sized = state.bound_placed_targets.iter()
         .any(|t| { let (w, h) = t.extent(); crate::diagnostics::display_sized(w, h) });
     if let Some(h) = unsafe { dsv.as_ref() } {
-        unsafe { crate::device::placement::touch_target(parent(&list.parent), h.ptr) };
+        unsafe { crate::device::placement::touch_target(parent(&list.parent), h.ptr, &mut state.target_heaps) };
     }
     if crate::diagnostics::display::capture_draws() {
         state.trace_target = if count == 1 {

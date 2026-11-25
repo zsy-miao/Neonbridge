@@ -1038,20 +1038,57 @@ pub(super) struct Placements {
     memory: Arc<PlacementMemory>,
 }
 
-pub(crate) unsafe fn render_target(device: *mut c_void, handle: usize) -> Option<Arc<Texture>> {
-    let device = unsafe { &*device.cast::<Device>() };
-    if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
-        heap.touch();
+/// The render heaps a recording's RTVs and DSVs live in, touched again at
+/// each submit (retouch): a list recorded once, or long before its submit,
+/// stamped them only while recording, so they looked idle while still in
+/// use. That is what the hold by list age guarded, and the hold kept every
+/// idle heap resident (test154/155: 572 render heaps idle 30 s+, none
+/// evicted, device-local 7739/6969 MiB). With the retouch the hold is
+/// dropped; TUXBOX_TARGET_RETOUCH=0 keeps the hold by list age.
+#[derive(Default)]
+pub(crate) struct TargetHeaps(Vec<Arc<super::heap::RenderHeap>>);
+
+impl TargetHeaps {
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
     }
+
+    fn note(&mut self, heap: Arc<super::heap::RenderHeap>) {
+        heap.touch();
+        if !self.0.iter().any(|h| Arc::ptr_eq(h, &heap)) && self.0.try_reserve(1).is_ok() {
+            self.0.push(heap);
+        }
+    }
+
+    /// The submit of a list that recorded these targets: each heap is used now.
+    pub(crate) fn retouch(&self) {
+        for heap in &self.0 {
+            heap.touch();
+        }
+    }
+}
+
+pub(crate) fn target_retouch() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| crate::env_toggle!("TUXBOX_TARGET_RETOUCH") != Some("0"))
+}
+
+fn note_target(device: &Device, handle: usize, heaps: &mut TargetHeaps) {
+    if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
+        heaps.note(heap);
+    }
+}
+
+pub(crate) unsafe fn render_target(device: *mut c_void, handle: usize, heaps: &mut TargetHeaps) -> Option<Arc<Texture>> {
+    let device = unsafe { &*device.cast::<Device>() };
+    note_target(device, handle, heaps);
     device.state.placements.targets.get(handle)
 }
 
 /// A bound or cleared DSV (or RTV) handle: its render heap is used.
-pub(crate) unsafe fn touch_target(device: *mut c_void, handle: usize) {
+pub(crate) unsafe fn touch_target(device: *mut c_void, handle: usize, heaps: &mut TargetHeaps) {
     let device = unsafe { &*device.cast::<Device>() };
-    if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
-        heap.touch();
-    }
+    note_target(device, handle, heaps);
 }
 
 pub(super) fn evict_after() -> f64 {
@@ -1103,7 +1140,7 @@ pub(crate) fn list_submitted(age: std::time::Duration) {
 
 pub(crate) unsafe fn render_targets(
     device: *mut c_void, count: u32, handles: *const D3D12_CPU_DESCRIPTOR_HANDLE, contiguous: bool,
-    output: &mut Vec<Arc<Texture>>,
+    output: &mut Vec<Arc<Texture>>, heaps: &mut TargetHeaps,
 ) -> Result<()> {
     let device = unsafe { &*device.cast::<Device>() };
     output.clear();
@@ -1116,9 +1153,7 @@ pub(crate) unsafe fn render_targets(
         } else {
             unsafe { (*handles.add(i)).ptr }
         };
-        if super::heap::residency::tracking() && let Some(heap) = device.state.placements.render_targets.get(handle) {
-            heap.touch();
-        }
+        note_target(device, handle, heaps);
         if let Some(texture) = device.state.placements.targets.get(handle) {
             output.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
             output.push(texture);

@@ -1388,6 +1388,9 @@ pub(super) mod residency {
     /// A list opened `age` ago is being submitted.
     pub(crate) fn list_submitted(age: std::time::Duration) {
         let after = after_ms();
+        if crate::device::placement::target_retouch() {
+            return;
+        }
         if after != 0 && age.as_millis() as u64 > after / 2 {
             HOLD_UNTIL.fetch_max(now_ms() + after, Relaxed);
             HOLDS.fetch_add(1, Relaxed);
