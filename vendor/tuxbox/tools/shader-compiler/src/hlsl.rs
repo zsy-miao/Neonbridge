@@ -180,6 +180,8 @@ enum Sym {
     /// An inline word that is one of two literals, set on two paths that join
     /// (VItoriaBr 67bb579: two immediate samplers picked on a branch).
     InlineChoice(u32, u32),
+    /// Dword 0 of a descriptor of table array `id`, holding its element index.
+    TableArr(u16),
     Table(u8),
     Desc { table: u8, off: u32, k: u32 },
     /// Dword `k` of one of several descriptors (control-flow join of different `s_load`s,
@@ -205,6 +207,27 @@ struct MSel {
     samp_words: Vec<(u16, u32)>,
 }
 
+/// A root descriptor table read at a run-time offset (a cbuffer value << 4
+/// or << 5, test154 1062c1e9 0x3f8): declared as an HLSL array over the
+/// table's range, indexed by (offset / stride) - offset in table.
+#[derive(Clone, Debug, PartialEq)]
+struct TableArr {
+    kind: u8,
+    base: u32,
+    space: u32,
+    num: u32,
+    first: u32,
+    stride: u32,
+    dim: Option<u32>,
+    cmp: Option<bool>,
+}
+
+/// TB_TABLE_ARRAYS=0: a root-table descriptor at a run-time offset is refused
+/// ("dynamic soffset unsupported") as before.
+fn table_arrays_on() -> bool {
+    std::env::var("TB_TABLE_ARRAYS").map_or(true, |v| v.trim() != "0")
+}
+
 /// TB_INLINE_SAMPLER_CHOICE=0: inline sampler words that differ between two
 /// joining paths are dropped and the image op refused, as before.
 fn inline_choice_on() -> bool {
@@ -213,6 +236,11 @@ fn inline_choice_on() -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Res {
+    /// s_load of a root-table descriptor at a run-time byte offset (table array, SGPR).
+    TableIdx(u16, u16),
+    /// Texture / sampler of table array `id`, element index in this SGPR.
+    TableTex(u16, u16),
+    TableSamp(u16, u16),
     HeapLoad(u16),
     HeapBuffer(u16),
     /// Byte-address buffer named by a heap index held in this SGPR (compute heap).
@@ -933,6 +961,7 @@ struct Emitter<'a> {
     uav_uint: BTreeSet<u32>,
     /// Typed image slots carrying a two-word visibility value in a 64-bit atomic.
     wide_visibility_uavs: BTreeSet<u32>,
+    table_arrays: Vec<TableArr>,
     /// A buffer_atomic_*_x2 on a raw UAV (SM 6.6 64-bit raw atomics).
     raw_int64_atomics: bool,
     /// Instruction where all 128 rasterizer threads vote in their logical wave.
@@ -3812,6 +3841,7 @@ impl<'a> Emitter<'a> {
             multi_sets: Vec::new(),
             uav_uint: BTreeSet::new(),
             wide_visibility_uavs: BTreeSet::new(),
+            table_arrays: Vec::new(),
             raw_int64_atomics: false,
             micropoly_vote: None,
             view_cull: None,
@@ -5028,6 +5058,33 @@ impl<'a> Emitter<'a> {
 
     /// Join of two different descriptor symbols at a control-flow merge: the union of
     /// their candidates when both are the same dword of some descriptor, else nothing.
+    /// Table array id for an s_load of `n` dwords from root table `table` at a
+    /// run-time offset, when the table is one SRV (8 dwords) or sampler (4) range.
+    fn table_array(&mut self, table: u8, n: u32, imm: i64) -> Option<u16> {
+        if !table_arrays_on() || imm < 0 {
+            return None;
+        }
+        let [range] = self.root_table(table)? else { return None };
+        let (kind, stride) = match (range.range_type, n) {
+            (0, 8) => (0u8, 32u32),
+            (3, 4) => (3, 16),
+            _ => return None,
+        };
+        if range.num == 0 || imm as u32 % stride != 0 {
+            return None;
+        }
+        let first = if range.offset_in_table == u32::MAX { 0 } else { range.offset_in_table };
+        let entry = TableArr { kind, base: range.base_register, space: range.space, num: range.num, first, stride, dim: None, cmp: None };
+        let id = match self.table_arrays.iter().position(|t| (t.kind, t.base, t.space, t.num, t.first, t.stride) == (kind, entry.base, entry.space, entry.num, first, stride)) {
+            Some(id) => id,
+            None => {
+                self.table_arrays.push(entry);
+                self.table_arrays.len() - 1
+            }
+        };
+        u16::try_from(id).ok()
+    }
+
     fn static_sampler_slot(&mut self, slot: u32, space: u32) -> Result<u32, String> {
         // A sampler register already used in another space gets a name
         // of its own, as table resources do (table_binding, SPACE_ALIAS;
@@ -5705,6 +5762,17 @@ impl<'a> Emitter<'a> {
                         }
                         self.dsel_runtime.insert(idx, (d, table, reg, imm));
                         continue;
+                    } else if let Some(id) = ((ins.raw.get(1).copied().unwrap_or(0) >> 25) < 106)
+                        .then(|| self.table_array(table, n as u32, ins.aux.imm)).flatten()
+                    {
+                        let soff = (ins.raw[1] >> 25) as u16;
+                        for k in 0..n as u16 {
+                            sym.remove(&(d + k));
+                            written.insert(d + k);
+                        }
+                        sym.insert(d, Sym::TableArr(id));
+                        self.res.insert(idx, vec![Res::TableIdx(id, soff)]);
+                        continue;
                     } else {
                         return Err(format!("s_load at {:#x}: dynamic soffset unsupported", ins.offset));
                     };
@@ -5929,7 +5997,14 @@ impl<'a> Emitter<'a> {
                     let ss = ins.src.get(n - 1).and_then(sg).ok_or("mimg: bad ssamp")?;
                     let dim = ins.aux.imm as u32;
                     let mut tex_res: Vec<(u32, Res)> = Vec::new();
-                    if heap_descriptor(sym, rs, 8) {
+                    if let Some(Sym::TableArr(id)) = sym.get(&rs).copied() {
+                        let t = &mut self.table_arrays[id as usize];
+                        if t.kind != 0 || t.dim.is_some_and(|d| d != dim) || ins.mnemonic.starts_with("image_store") || ins.mnemonic.starts_with("image_atomic") {
+                            return Err(format!("mimg at {:#x}: table array {id} used as another kind or dimension", ins.offset));
+                        }
+                        t.dim = Some(dim);
+                        tex_res.push((0, Res::TableTex(id, rs)));
+                    } else if heap_descriptor(sym, rs, 8) {
                         // Ours: texel loads and sizes in any stage; TuxBox 63343eb: cube samples,
                         // gathers, pixel LOD queries and texel stores.
                         let load = is_image_load(&ins.mnemonic) && matches!(dim, 0 | 1 | 2 | 4 | 5);
@@ -5984,7 +6059,15 @@ impl<'a> Emitter<'a> {
                             }
                             any.then_some(pair)
                         }).flatten();
-                    if let Some(pair) = choice {
+                    if let Some(Sym::TableArr(id)) = sym.get(&ss).copied() {
+                        let compare = ins.op & 8 != 0;
+                        let t = &mut self.table_arrays[id as usize];
+                        if t.kind != 3 || t.cmp.is_some_and(|c| c != compare) {
+                            return Err(format!("mimg at {:#x}: table array {id} used as another kind of sampler", ins.offset));
+                        }
+                        t.cmp = Some(compare);
+                        samp_res.push((0, Res::TableSamp(id, ss)));
+                    } else if let Some(pair) = choice {
                         let compare = ins.op & 8 != 0;
                         let k = (0..4).find(|&k| pair[0][k] != pair[1][k]).unwrap_or(0);
                         for words in pair {
@@ -8206,6 +8289,17 @@ uint tb_fmac_half(uint a, uint b, uint c) {
                         // D3D12 sampler heaps hold at most 2048 descriptors; clamp a stray
                         // guest offset onto the heap instead of faulting (VIctory #483).
                         self.ws(&dst, &format!("min({value} >> 4, 2047u)"))?;
+                        return Ok(());
+                    }
+                    if let Some(Res::TableIdx(id, offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
+                        let t = self.table_arrays[id as usize].clone();
+                        let value = ssrc_name(u32::from(offset))?;
+                        self.regs.insert(value.clone());
+                        let dst = d.ok_or("missing table descriptor destination")?;
+                        self.touch(&dst);
+                        let element = format!("((({value} + {:#x}u) / {}u) - {}u)", ins.aux.imm as u32, t.stride, t.first);
+                        let element = if t.num == u32::MAX { element } else { format!("min({element}, {}u)", t.num - 1) };
+                        self.ws(&dst, &element)?;
                         return Ok(());
                     }
                     if let Some(Res::HeapLoad(offset)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
@@ -12473,6 +12567,12 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         let (tex, dim) = match rs.first() {
             Some(Res::Tex(slot, d)) => (format!("tex{slot}"), *d),
+            Some(Res::TableTex(id, reg)) => {
+                let index = ssrc_name(u32::from(*reg))?;
+                self.regs.insert(index.clone());
+                let dim = self.table_arrays[*id as usize].dim.ok_or("table array without a dimension")?;
+                (format!("tb_ta{id}[NonUniformResourceIndex({index})]"), dim)
+            }
             Some(Res::HeapTexture(src, dim)) => {
                 let (src, dim) = (*src, *dim);
                 let view = match dim {
@@ -12538,7 +12638,7 @@ uint tb_fmac_half(uint a, uint b, uint c) {
         }
         let sslot = match rs.get(1) {
             Some(Res::Samp(s)) => Some(*s),
-            Some(Res::HeapSampler(_) | Res::HeapSamplerAt(_) | Res::SamplerLookup(_) | Res::HeapSamplerDyn(_)) => None,
+            Some(Res::HeapSampler(_) | Res::HeapSamplerAt(_) | Res::SamplerLookup(_) | Res::HeapSamplerDyn(_) | Res::TableSamp(..)) => None,
             _ => return Err("image op without sampler unsupported".into()),
         };
         // RDNA2 sample/gather family. Opcode = family base (0x20 sample, 0x40 gather4) +
@@ -12704,6 +12804,10 @@ uint tb_fmac_half(uint a, uint b, uint c) {
             let hash = key.iter().fold(2166136261u32, |h, &k| (h ^ k).wrapping_mul(16777619));
             self.line(&format!("{ty} {name} = SamplerDescriptorHeap[tb_desc_lookup({hash:#x}u, uint4({:#x}u, {:#x}u, {:#x}u, {:#x}u), uint4(0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu))];", w[0], w[1], w[2], w[3]));
             name
+        } else if let Some(Res::TableSamp(id, reg)) = rs.get(1).copied() {
+            let index = ssrc_name(u32::from(reg))?;
+            self.regs.insert(index.clone());
+            format!("tb_ta{id}[NonUniformResourceIndex({index})]")
         } else if let Some(Res::HeapSamplerDyn(reg)) = rs.get(1).copied() {
             let name = format!("tb_sampler{idx}");
             let ty = if cmp { "SamplerComparisonState" } else { "SamplerState" };
@@ -13366,6 +13470,30 @@ uint tb_heap_index(uint i) { return i; }
             };
             let space = self.space_suffix(0, *slot);
             let _ = writeln!(h, "{ty}<{e}> tex{slot} : register(t{}{space});", self.register_of(0, *slot));
+        }
+        for (id, t) in self.table_arrays.iter().enumerate() {
+            let ty = match (t.kind, t.dim, t.cmp) {
+                (0, Some(0), _) => "Texture1D<float4>",
+                (0, Some(4), _) => "Texture1DArray<float4>",
+                (0, Some(1), _) => "Texture2D<float4>",
+                (0, Some(2), _) => "Texture3D<float4>",
+                (0, Some(3), _) => "TextureCube<float4>",
+                (0, Some(5), _) => "Texture2DArray<float4>",
+                (3, _, Some(true)) => "SamplerComparisonState",
+                (3, _, Some(false)) => "SamplerState",
+                _ => continue,
+            };
+            let end = t.base.saturating_add(t.num);
+            let statics: Vec<u32> = if t.kind == 0 { self.tex.keys().copied().collect() } else { self.samp.iter().chain(&self.samp_cmp).copied().collect() };
+            if statics.iter().any(|&slot| {
+                let reg = self.register_of(u32::from(t.kind), slot);
+                self.binding_spaces.get(&(u32::from(t.kind), slot)).copied().unwrap_or(0) == t.space && t.base <= reg && reg < end
+            }) {
+                return Err(format!("table array {id} overlaps a static binding"));
+            }
+            let count = if t.num == u32::MAX { String::new() } else { t.num.to_string() };
+            let letter = if t.kind == 0 { 't' } else { 's' };
+            let _ = writeln!(h, "{ty} tb_ta{id}[{count}] : register({letter}{}, space{});", t.base, t.space);
         }
         for slot in self.samp.iter().filter(|s| !self.heap_sampler_slots.contains(s)) {
             let space = self.space_suffix(3, *slot);
