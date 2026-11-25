@@ -1057,6 +1057,45 @@ pub(super) fn evict_after() -> f64 {
     alias::evict_after()
 }
 
+/// Descriptor ranges submitted since the last walk of their render views.
+static PENDING_VIEWS: Mutex<Vec<Range<usize>>> = Mutex::new(Vec::new());
+
+/// A submission's descriptor ranges use their render views' heaps. While
+/// no heap is evicted they are queued and stamped once a second
+/// (`flush_render_views`): the per-submit walk under the views mutex took
+/// test97 from 35-40 fps to 15. The queue push comes first, so an eviction
+/// either sees it in its flush or is seen here. TUXBOX_RENDER_HEAP_TOUCH=submit
+/// walks at every submit, as before.
+fn touch_render_views(placements: &Placements, heaps: &[Range<usize>]) {
+    let every = crate::env_toggle!("TUXBOX_RENDER_HEAP_TOUCH") == Some("submit");
+    if !every {
+        let mut pending = PENDING_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+        for range in heaps {
+            if !pending.contains(range) {
+                if pending.len() >= 4096 {
+                    drop(pending);
+                    flush_render_views(placements, false);
+                    pending = PENDING_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+                }
+                pending.push(range.clone());
+            }
+        }
+    }
+    if every || super::heap::residency::any_evicted() {
+        placements.render_views.each_in(heaps, |heap| heap.touch());
+    }
+}
+
+/// Stamps the render heaps of every queued range. `stamp_only` inside the
+/// evictor (which holds the residency lock): a heap it just flagged is
+/// only stamped, and its recheck keeps it resident.
+fn flush_render_views(placements: &Placements, stamp_only: bool) {
+    let ranges = std::mem::take(&mut *PENDING_VIEWS.lock().unwrap_or_else(|e| e.into_inner()));
+    if !ranges.is_empty() {
+        placements.render_views.each_in(&ranges, |heap| if stamp_only { heap.stamp() } else { heap.touch() });
+    }
+}
+
 pub(crate) fn list_submitted(age: std::time::Duration) {
     super::heap::residency::list_submitted(age);
 }
@@ -1411,7 +1450,7 @@ pub(crate) unsafe fn submit(
     let device = unsafe { &*device.cast::<Device>() };
     let placements = &device.state.placements;
     if super::heap::residency::tracking() {
-        placements.render_views.each_in(heaps, |heap| heap.touch());
+        touch_render_views(placements, heaps);
         static PASS: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
         let now = std::time::Instant::now();
         let due = {
@@ -1420,8 +1459,11 @@ pub(crate) unsafe fn submit(
             if due { *pass = Some(now); }
             due
         };
+        if due {
+            flush_render_views(placements, false);
+        }
         if due && alias::over_budget(&device.native) {
-            super::heap::residency::evict_idle(&device.native);
+            super::heap::residency::evict_idle(&device.native, || flush_render_views(placements, true));
         }
     }
     {

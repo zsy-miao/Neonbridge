@@ -1224,6 +1224,11 @@ impl RenderHeaps {
 }
 
 impl RenderHeap {
+    /// A use recorded now, without making it resident (the evictor's flush).
+    pub(super) fn stamp(&self) {
+        self.used.store(residency::now_ms(), std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// A use of an image in it: recorded now, made resident first if evicted.
     pub(super) fn touch(&self) {
         use std::sync::atomic::Ordering::{Relaxed, SeqCst};
@@ -1286,11 +1291,23 @@ pub(super) mod residency {
     /// test97 fell from 35-40 fps to 15 with this on: every submit walked
     /// all render views of its descriptor heaps under the map's mutex, which
     /// every view creation and descriptor copy on the title's threads takes
-    /// too. Use tracking and eviction stay off unless
-    /// TUXBOX_RENDER_HEAP_EVICT=1.
+    /// too, so it was turned off, and test145 kept 3.1 GiB of render heaps
+    /// resident 900 MiB over budget. Submissions now queue their descriptor
+    /// ranges and the walk runs once a second (placement.rs
+    /// `touch_render_views`), per submit only while a heap is evicted.
+    /// Tracking and eviction are on; TUXBOX_RENDER_HEAP_EVICT=0 turns both off.
     pub(crate) fn tracking() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RENDER_HEAP_EVICT") == Some("1"))
+        *ON.get_or_init(|| crate::env_toggle!("TUXBOX_RENDER_HEAP_EVICT") != Some("0"))
+    }
+
+    /// Heaps evicted and not yet made resident again.
+    static EVICTED_NOW: AtomicU64 = AtomicU64::new(0);
+
+    /// Whether any heap is evicted now: a submission then touches its views
+    /// at once, so an evicted heap it uses is made resident before it runs.
+    pub(crate) fn any_evicted() -> bool {
+        EVICTED_NOW.load(SeqCst) != 0
     }
 
     fn enabled() -> bool {
@@ -1322,6 +1339,7 @@ pub(super) mod residency {
         match made {
             Ok(()) => {
                 heap.evicted.store(false, SeqCst);
+                EVICTED_NOW.fetch_sub(1, SeqCst);
                 let n = RESTORED.fetch_add(1, Relaxed) + 1;
                 if n <= 4 || n.is_power_of_two() {
                     crate::diagnostics::log_line(format_args!(
@@ -1342,7 +1360,10 @@ pub(super) mod residency {
     }
 
     /// Evicts this device's render heaps unused for TUXBOX_SPAN_EVICT_S.
-    pub(crate) fn evict_idle(device: &ID3D12Device) {
+    /// `flush` stamps the uses submissions queued; it runs after the chosen
+    /// heaps are flagged and counted, so a submission queued before it is
+    /// seen by the recheck, and one queued after it sees `any_evicted`.
+    pub(crate) fn evict_idle(device: &ID3D12Device, flush: impl Fn()) {
         let after = after_ms();
         if !enabled() || after == 0 || now_ms() < HOLD_UNTIL.load(Relaxed) {
             return;
@@ -1350,6 +1371,7 @@ pub(super) mod residency {
         let _held = RESIDENCY.lock().unwrap_or_else(|e| e.into_inner());
         let id = device.as_raw() as usize;
         let mut chosen: Vec<Arc<RenderHeap>> = Vec::new();
+        let mut flagged: Vec<(Arc<RenderHeap>, u64)> = Vec::new();
         {
             let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
             live.retain(|w| w.strong_count() != 0);
@@ -1362,10 +1384,19 @@ pub(super) mod residency {
                     continue;
                 }
                 heap.evicted.store(true, SeqCst);
-                if heap.used.load(SeqCst) != used {
-                    heap.evicted.store(false, SeqCst);
-                    continue;
-                }
+                EVICTED_NOW.fetch_add(1, SeqCst);
+                flagged.push((heap, used));
+            }
+        }
+        if flagged.is_empty() {
+            return;
+        }
+        flush();
+        for (heap, used) in flagged {
+            if heap.used.load(SeqCst) != used {
+                heap.evicted.store(false, SeqCst);
+                EVICTED_NOW.fetch_sub(1, SeqCst);
+            } else {
                 chosen.push(heap);
             }
         }
@@ -1380,6 +1411,7 @@ pub(super) mod residency {
         if let Err(e) = unsafe { device.Evict(&list) } {
             for heap in &chosen {
                 heap.evicted.store(false, SeqCst);
+                EVICTED_NOW.fetch_sub(1, SeqCst);
             }
             crate::diagnostics::log_line(format_args!("render heaps: Evict of {} idle heaps failed {e}", chosen.len()));
             return;
