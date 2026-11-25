@@ -67,7 +67,8 @@ pub(super) unsafe extern "system" fn cbv(
         if address != 0 && value.SizeInBytes != 0 {
             let guest = unsafe { &*desc }.SizeInBytes.max(1);
             let copied = (cbv_snapshot::on()
-                && crate::commands::page_mapping::remapped_import_over(address, address.saturating_add(u64::from(value.SizeInBytes))))
+                && (crate::commands::page_mapping::remapped_import_over(address, address.saturating_add(u64::from(value.SizeInBytes)))
+                    || (cbv_snapshot::all() && !title_buffer_covers(device, address, u64::from(value.SizeInBytes)))))
                 .then(|| cbv_snapshot::copy(device, address, u64::from(guest), u64::from(value.SizeInBytes)).ok())
                 .flatten();
             if let Some((gpu, chunk)) = copied {
@@ -439,6 +440,16 @@ fn uav_reimport() -> bool {
 
 fn uav_imports() -> bool {
     crate::env_toggle!("TUXBOX_UAV_IMPORTS") != Some("0")
+}
+
+/// Whether a listed, current buffer (title-made or an earlier import) holds
+/// [address, address + bytes): five-star 1ea5bce's GameMemory.TryFind.
+fn title_buffer_covers(device: &Device, address: u64, bytes: u64) -> bool {
+    device.state.texture_addresses.preceding(address as usize).is_some_and(|entry| {
+        !entry.buffer_heap.as_ref().is_some_and(|heap| heap.stale())
+            && unsafe { entry.native.GetDesc() }.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+            && entry.offset(address).checked_add(bytes).is_some_and(|end| end <= unsafe { entry.native.GetDesc() }.Width)
+    })
 }
 
 fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool, uav: bool)

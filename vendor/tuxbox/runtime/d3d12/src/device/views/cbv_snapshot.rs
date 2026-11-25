@@ -20,6 +20,15 @@ pub(super) fn on() -> bool {
     crate::env_toggle!("TUXBOX_REMAPPED_CBV_COPY") != Some("0")
 }
 
+/// five-star-recomp 1ea5bce (GPL-3) XboxDescriptorMethods.ConstantSource:
+/// a CBV no game buffer covers is copied into the upload ring when the view
+/// is made, not imported over live title pages. Ours copied only over
+/// remapped imports; this widens it to every uncovered CBV.
+/// TUXBOX_CBV_SNAPSHOT_ALL=0 keeps the remapped-only rule.
+pub(super) fn all() -> bool {
+    crate::env_toggle!("TUXBOX_CBV_SNAPSHOT_ALL") != Some("0")
+}
+
 const CHUNK: u64 = 4 << 20;
 
 struct Chunk {
