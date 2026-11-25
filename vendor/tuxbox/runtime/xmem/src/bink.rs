@@ -754,6 +754,7 @@ mod sound {
         let real: F8 = unsafe { std::mem::transmute(OPEN.load(Ordering::Acquire)) };
         let result = unsafe { real(snd, b, c, d, e, f, g, h) };
         if snd != 0 {
+            unsafe { hook_engine() };
             let mut names = Vec::new();
             // test165 crashed in Bink after the first +0x1a0 call: only
             // Ready/Lock/Unlock (+0x170..+0x180, integer arguments, test164's
@@ -787,11 +788,11 @@ mod sound {
         result
     }
 
-    unsafe fn call(i: usize, snd: u64, b: u64, c: u64, d: u64) -> u64 {
-        let real: F4 = unsafe { std::mem::transmute(ORIG[i].load(Ordering::Acquire)) };
+    unsafe fn call(i: usize, snd: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64, h: u64) -> u64 {
+        let real: F8 = unsafe { std::mem::transmute(ORIG[i].load(Ordering::Acquire)) };
         let total = || unsafe { ((snd + 0x8c) as *const u32).read_unaligned() };
         let before = if i == UNLOCK && snd != 0 { total() } else { 0 };
-        let result = unsafe { real(snd, b, c, d) };
+        let result = unsafe { real(snd, b, c, d, e, f, g, h) };
         CALLS[i].fetch_add(1, Ordering::Relaxed);
         if result == 0 {
             ZERO[i].fetch_add(1, Ordering::Relaxed);
@@ -858,13 +859,51 @@ mod sound {
             let head = if count != 0 && entries != 0 { r32(entries + 8) } else { 0 };
             format!("sink {sink:#x} capacity {} entries {count} head {head} bytes", r32(sink + 0xc))
         };
-        format!("{q}; {sink}; stream {stream:#x}, mixer table {}, gate byte {} (0: the normal path)", table.join(" "), unsafe { *((game + 0x9dd_6ee8) as *const u8) })
+        let this = ENGINE_THIS.load(Ordering::Relaxed) as u64;
+        let engine = if this == 0 { format!("engine mix game+0x5267350 {} calls", ENGINE_CALLS.swap(0, Ordering::Relaxed)) } else {
+            let b = |o: u64| unsafe { *((this + o) as *const u8) };
+            format!("engine mix game+0x5267350 {} calls (this {this:#x}, skip flags +0x3ceba {} +0x3cebb {} +0x3cdfa {})",
+                ENGINE_CALLS.swap(0, Ordering::Relaxed), b(0x3_ceba), b(0x3_cebb), b(0x3_cdfa))
+        };
+        format!("{engine}; {q}; {sink}; stream {stream:#x}, mixer table {}, gate byte {} (0: the normal path)", table.join(" "), unsafe { *((game + 0x9dd_6ee8) as *const u8) })
+    }
+
+    static ENGINE: AtomicUsize = AtomicUsize::new(0);
+    static ENGINE_THIS: AtomicUsize = AtomicUsize::new(0);
+    static ENGINE_CALLS: AtomicU64 = AtomicU64::new(0);
+
+    /// Counts the audio engine method that drains the sink (game+0x5267350,
+    /// vtable entry game+0x65f4930; it skips the mix while this+0x3ceba
+    /// bit 0, this+0x3cebb bit 0 or this+0x3cdfa is set).
+    unsafe fn hook_engine() {
+        use windows_sys::Win32::System::Memory::{PAGE_READWRITE, VirtualProtect};
+        let game = unsafe { windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(core::ptr::null()) } as u64;
+        let entry = (game + 0x65f_4930) as *mut usize;
+        let wrapper = engine_wrapper as F8 as usize;
+        let old = unsafe { entry.read_unaligned() };
+        if old == wrapper || old != (game + 0x526_7350) as usize {
+            return;
+        }
+        ENGINE.store(old, Ordering::Release);
+        let mut protect = 0;
+        if unsafe { VirtualProtect(entry.cast(), 8, PAGE_READWRITE, &mut protect) } != 0 {
+            unsafe { entry.write_unaligned(wrapper) };
+            unsafe { VirtualProtect(entry.cast(), 8, protect, &mut protect) };
+        }
+    }
+
+    unsafe extern "system" fn engine_wrapper(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64, h: u64) -> u64 {
+        ENGINE_CALLS.fetch_add(1, Ordering::Relaxed);
+        ENGINE_THIS.store(a as usize, Ordering::Relaxed);
+        let real: F8 = unsafe { std::mem::transmute(ENGINE.load(Ordering::Acquire)) };
+        unsafe { real(a, b, c, d, e, f, g, h) }
     }
 
     macro_rules! slot {
         ($name:ident, $i:expr) => {
-            unsafe extern "system" fn $name(a: u64, b: u64, c: u64, d: u64) -> u64 {
-                unsafe { call($i, a, b, c, d) }
+            // Eight words forwarded, as for the open (stack arguments).
+            unsafe extern "system" fn $name(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64, h: u64) -> u64 {
+                unsafe { call($i, a, b, c, d, e, f, g, h) }
             }
         };
     }
@@ -877,5 +916,5 @@ mod sound {
     slot!(s6, 6);
     slot!(s7, 7);
     slot!(s8, 8);
-    static WRAPPERS: [F4; SLOTS] = [s0, s1, s2, s3, s4, s5, s6, s7, s8];
+    static WRAPPERS: [F8; SLOTS] = [s0, s1, s2, s3, s4, s5, s6, s7, s8];
 }
