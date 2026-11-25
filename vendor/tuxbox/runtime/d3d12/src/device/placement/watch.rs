@@ -65,13 +65,37 @@ pub(crate) fn scan_stats() -> (u64, u64) {
     (MERGED_SCANS.load(Relaxed), SAVED_SCANS.load(Relaxed))
 }
 
-pub(super) fn enabled() -> bool {
+/// Two consumers take (and so reset) the same write watch: placed textures
+/// (0) and read-only buffer shadows (1, TUXBOX_SHADOW_WATCH). Pages one takes
+/// are handed to the other, which adds those in the ranges it scans, so
+/// neither's reset hides a write from the other. A hand-off list past CAP
+/// pages is dropped and its consumer treats every range as written for its
+/// next OVERFLOW_REFRESHES refreshes.
+#[allow(dead_code)] // the Default consumer
+pub(crate) const PLACED: usize = 0;
+pub(crate) const SHADOWS: usize = 1;
+const CAP: usize = 1 << 20;
+const OVERFLOW_REFRESHES: u32 = 4;
+static HANDOFF: std::sync::Mutex<[Vec<u64>; 2]> = std::sync::Mutex::new([Vec::new(), Vec::new()]);
+static OVERFLOW: [std::sync::atomic::AtomicBool; 2] = [const { std::sync::atomic::AtomicBool::new(false) }; 2];
+static SHADOWS_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts hand-offs; called once the shadow consumer exists.
+pub(crate) fn share_with_shadows() {
+    SHADOWS_ON.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !std::env::var("TUXBOX_PLACED_WATCH").is_ok_and(|v| v.trim() == "0") && take().is_some())
 }
 
 #[derive(Default)]
-pub(super) struct Watch {
+pub(crate) struct Watch {
+    /// PLACED or SHADOWS.
+    consumer: usize,
+    /// Refreshes left that treat every range as written (hand-off overflow).
+    blind: u32,
     /// Merged ranges with a working write watch.
     watched: Vec<Range<u64>>,
     /// Written page addresses (sorted) and the watch granularity.
@@ -84,10 +108,20 @@ pub(super) struct Watch {
 unsafe impl Send for Watch {}
 
 impl Watch {
+    pub(crate) fn for_consumer(consumer: usize) -> Self {
+        // Pages taken before the hand-off began are unknown: the first
+        // refresh treats every range as written.
+        Self { consumer, blind: 2, ..Default::default() }
+    }
+
     /// Query (and reset) the write watch over every range once.
-    pub(super) fn refresh(&mut self, mut ranges: Vec<Range<u64>>) {
+    pub(crate) fn refresh(&mut self, mut ranges: Vec<Range<u64>>) {
         self.watched.clear();
         self.dirty.clear();
+        if OVERFLOW[self.consumer].swap(false, std::sync::atomic::Ordering::Relaxed) {
+            self.blind = OVERFLOW_REFRESHES;
+        }
+        self.blind = self.blind.saturating_sub(1);
         ranges.retain(|r| r.start < r.end);
         ranges.sort_unstable_by_key(|r| r.start);
         let mut merged: Vec<Range<u64>> = Vec::with_capacity(ranges.len());
@@ -155,14 +189,31 @@ impl Watch {
             return false;
         }
         self.granularity = u64::from(granularity);
-        self.dirty.extend(self.buffer[..count.min(pages)].iter().map(|&p| p as u64));
+        let found = &self.buffer[..count.min(pages)];
+        self.dirty.extend(found.iter().map(|&p| p as u64));
+        if SHADOWS_ON.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut handoff = HANDOFF.lock().unwrap_or_else(|e| e.into_inner());
+            let other = &mut handoff[1 - self.consumer];
+            if other.len() + found.len() > CAP {
+                other.clear();
+                OVERFLOW[1 - self.consumer].store(true, std::sync::atomic::Ordering::Relaxed);
+            } else {
+                other.extend(found.iter().map(|&p| p as u64));
+            }
+            let mine = &mut handoff[self.consumer];
+            let before = self.dirty.len();
+            self.dirty.extend(mine.iter().copied().filter(|p| (base..range.end).contains(p)));
+            if self.dirty.len() > before {
+                mine.retain(|p| !(base..range.end).contains(p));
+            }
+        }
         self.watched.push(range);
         true
     }
 
     /// False when `range` must be compared: not watched, or a page written.
-    pub(super) fn unchanged(&self, range: Range<u64>) -> bool {
-        if range.start >= range.end || !self.watched.iter().any(|w| w.start <= range.start && range.end <= w.end) {
+    pub(crate) fn unchanged(&self, range: Range<u64>) -> bool {
+        if self.blind > 0 || range.start >= range.end || !self.watched.iter().any(|w| w.start <= range.start && range.end <= w.end) {
             return false;
         }
         let first = range.start & !(self.granularity.max(1) - 1);

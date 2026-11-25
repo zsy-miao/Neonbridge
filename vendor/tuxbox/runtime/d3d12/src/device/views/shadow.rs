@@ -826,6 +826,24 @@ pub(crate) unsafe fn write_back(device: &Device, queue: &ID3D12CommandQueue) -> 
     unsafe { transfer(device, queue, true) }
 }
 
+/// TUXBOX_SHADOW_WATCH=0 copies every fresh read-only shadow piece whole on
+/// each refresh. Otherwise a piece whose title pages the CPU has not written
+/// since the last refresh (the placed-texture write watch, shared with it so
+/// neither reset hides a write) is not copied or filled. test154: 11564 live
+/// shadows, 1052 copied whole per refresh, 198 MB. Credit VIctory/LMIII
+/// 28c6588 (overlapping refreshes of one buffer copied once) for the cost
+/// finding; here the shadows are separate buffers, so the cut is by writes.
+fn shadow_watch() -> Option<&'static Mutex<crate::device::placement::watch::Watch>> {
+    use crate::device::placement::watch;
+    static WATCH: std::sync::OnceLock<Option<Mutex<watch::Watch>>> = std::sync::OnceLock::new();
+    WATCH.get_or_init(|| {
+        (crate::env_toggle!("TUXBOX_SHADOW_WATCH") != Some("0") && watch::enabled()).then(|| {
+            watch::share_with_shadows();
+            Mutex::new(watch::Watch::for_consumer(watch::SHADOWS))
+        })
+    }).as_ref()
+}
+
 unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> Result<()> {
     let shadows = &device.state.shadows;
     let kind = unsafe { queue.GetDesc() }.Type;
@@ -850,8 +868,13 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         let skip = !back && skip_unchanged();
         let aging = !back && aging();
         let now = if back { 0 } else { REFRESHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 };
-        let (mut live, mut skipped, mut aged) = (0u64, 0u64, 0u64);
+        let (mut live, mut skipped, mut aged, mut unwritten) = (0u64, 0u64, 0u64, 0u64);
         let all = write_back_all();
+        let mut watch = if back { None } else { shadow_watch().map(|w| lock(w)) };
+        if let Some(w) = watch.as_mut() {
+            w.refresh(entries.iter().filter(|(_, e)| !e.writable && e.view.strong_count() > 0)
+                .map(|(&(address, bytes, _), _)| address..address + bytes).collect());
+        }
         // (key, is an aged check, view) to hash outside the lock.
         let mut checks: Vec<((u64, u64, bool), bool, Arc<TextureAddress>)> = Vec::new();
         if back {
@@ -883,6 +906,17 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                     // Changed: copy, and treat it as fresh again.
                     entry.bound = now;
                 }
+            }
+            if !back && !entry.writable && let Some(w) = watch.as_ref() {
+                fills.extend(entry.cpu.iter().filter(|(_, a, b, _)| !w.unchanged(*a..*a + *b)).map(|(m, a, b, r)| (*m, *a, *b, r.clone())));
+                for (source, offset, at, bytes) in &entry.pieces {
+                    if w.unchanged(address + at..address + at + bytes) {
+                        unwritten += 1;
+                    } else {
+                        copies.push((source.clone(), *offset, *at, *bytes, view.clone()));
+                    }
+                }
+                continue;
             }
             if !back {
                 fills.extend(entry.cpu.iter().map(|(m, a, b, r)| (*m, *a, *b, r.clone())));
@@ -916,6 +950,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
                 }
             }
         }
+        drop(watch);
         drop(entries);
         drop(pruned);
         static LOGGED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
@@ -923,7 +958,7 @@ unsafe fn transfer(device: &Device, queue: &ID3D12CommandQueue, back: bool) -> R
         if n < 4 || (n + 1).is_power_of_two() {
             let total: u64 = copies.iter().map(|c| c.3).sum();
             crate::diagnostics::log_line(format_args!(
-                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {aged} aged skipped (TUXBOX_SHADOW_AGING=0 copies them), {} copies, {total} bytes",
+                "shadow {} #{}: {live} live, {skipped} unchanged skipped, {aged} aged skipped (TUXBOX_SHADOW_AGING=0 copies them), {unwritten} unwritten pieces skipped (TUXBOX_SHADOW_WATCH=0 copies them), {} copies, {total} bytes",
                 if back { "write-back" } else { "refresh" }, n + 1, copies.len()));
         }
     }
