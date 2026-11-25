@@ -49,6 +49,8 @@ pub(crate) struct Upgrade {
     why: OnceLock<String>,
     /// A title thread bound it or waits on it (see `waited_on`).
     wanted: std::sync::atomic::AtomicBool,
+    /// A compute pipeline (set when its job is made; see `compute_waits`).
+    compute: std::sync::atomic::AtomicBool,
 }
 
 // SAFETY: D3D12 objects are free-threaded. The built state is published once
@@ -169,6 +171,7 @@ pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
             Work::Stream(stream) => unsafe { super::is_graphics(&stream.desc()) },
             Work::Compute(_) => false,
         };
+        slot.compute.store(!graphics, Ordering::Release);
         let job = Job { device, work, graphics, slot: slot.clone() };
         // five-star-recomp 9d61a3c (GPL-3.0, credit to its authors): a small
         // compute first use made inline waited on programs still being made
@@ -215,11 +218,35 @@ pub(crate) fn wait_for(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Optio
     }
     let _held = Held::new();
     promote(slot);
+    // VIctory-fxceless draw.rs prepare_for (GPL-3.0, credit to its authors)
+    // never drops a dispatch: a compute pipeline not yet made is built on
+    // the title's thread, or waited for, as long as it takes. Ours dropped
+    // bursts of 32 to 1024 dispatches as "still being made" (test147) when
+    // the first-use bucket or the bind's limit ran out, and a dispatch the
+    // title needs (one that writes a counter or a label) left it waiting
+    // for work that never ran. TUXBOX_COMPUTE_WAIT_BUILD=0 keeps the limit.
+    if compute_waits() && slot.compute.load(Ordering::Acquire) {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let started = std::time::Instant::now();
+        let built = wait_granted(slot, std::time::Duration::from_secs(3600));
+        first_use::spend(started.elapsed());
+        let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_power_of_two() {
+            crate::diagnostics::log_line(format_args!(
+                "background pipelines: a compute bind waited {:.1} ms for its build, {} ({n} so far; TUXBOX_COMPUTE_WAIT_BUILD=0 keeps the bind limit)",
+                started.elapsed().as_secs_f64() * 1e3, if built.is_some() { "made" } else { "failed" }));
+        }
+        return built;
+    }
     let Some(limit) = first_use::grant(limit) else { return None };
     let started = std::time::Instant::now();
     let built = wait_granted(slot, limit);
     first_use::spend(started.elapsed());
     built
+}
+
+fn compute_waits() -> bool {
+    crate::env_toggle!("TUXBOX_COMPUTE_WAIT_BUILD") != Some("0")
 }
 
 fn wait_granted(slot: &Arc<Upgrade>, limit: std::time::Duration) -> Option<&Built> {
@@ -872,6 +899,7 @@ pub(in crate::device) fn queue(device: IUnknown, mut work: Work) -> Arc<Upgrade>
         Work::Stream(stream) => unsafe { super::is_graphics(&stream.desc()) },
         Work::Compute(_) => false,
     };
+    slot.compute.store(!graphics, Ordering::Release);
     send(Job { device, work, graphics, slot: slot.clone() }, false);
     slot
 }
