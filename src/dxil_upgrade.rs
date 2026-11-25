@@ -59,8 +59,12 @@ pub fn start(dxc: PathBuf, defines: Vec<String>, dxil: PathBuf, log: impl Fn(Str
         let dir = queue(&dxil);
         let (mut done, mut failed) = (0usize, 0usize);
         loop {
-            let jobs: Vec<PathBuf> = fs::read_dir(&dir).map(|d| d.flatten().map(|e| e.path())
+            let mut jobs: Vec<PathBuf> = fs::read_dir(&dir).map(|d| d.flatten().map(|e| e.path())
                 .filter(|p| p.extension().is_some_and(|e| e == "job")).collect()).unwrap_or_default();
+            // Programs the title asked for before (<cache_root>/seen, the intro's
+            // among them) first: their -O0 DXIL is what the next run draws with.
+            let seen = dxil.parent().and_then(Path::parent).map(|root| root.join("seen"));
+            jobs.sort_by_key(|job| !seen.as_ref().is_some_and(|seen| asked_before(job, seen)));
             if jobs.is_empty() {
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
@@ -151,4 +155,12 @@ fn upgrade(dxc: &Path, defines: &[String], job: &Path, secs: u64) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Whether a job writes the build-cache entry of a program in `seen` (its
+/// `<key>.cso` path, the request `<key>.dxbc` or `.link`).
+fn asked_before(job: &Path, seen: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(job) else { return false };
+    text.lines().skip(1).filter_map(|l| Path::new(l).file_stem()?.to_str().map(str::to_owned))
+        .any(|key| seen.join(format!("{key}.dxbc")).exists() || seen.join(format!("{key}.link")).exists())
 }
