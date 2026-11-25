@@ -566,6 +566,23 @@ pub(super) fn evict_after() -> f64 {
     *S.get_or_init(|| crate::env_toggle!("TUXBOX_SPAN_EVICT_S").and_then(|v| v.trim().parse().ok()).unwrap_or(10.0))
 }
 
+/// evict_after() shortened under device-local pressure, as VItoriaBr
+/// vram_idle_ms (host.rs:121, tiers tested at host.rs:6574, credit to its
+/// authors): half at 75% of the budget, a fifth at 85% or more (their
+/// 5000 / 2500 / 1000 ms), never under one second. A world load over budget
+/// then lets idle memory go in 2 s instead of 10.
+/// TUXBOX_EVICT_PRESSURE_TIERS=0 keeps evict_after().
+pub(super) fn evict_after_at(device: &ID3D12Device) -> f64 {
+    let after = evict_after();
+    if after <= 0.0 || crate::env_toggle!("TUXBOX_EVICT_PRESSURE_TIERS") == Some("0") {
+        return after;
+    }
+    let Some((usage, budget)) = segment(device, true) else { return after };
+    let pct = u128::from(usage) * 100 / u128::from(budget.max(1));
+    let tiered = if pct >= 85 { after / 5.0 } else if pct >= 75 { after / 2.0 } else { after };
+    tiered.max(after.min(1.0))
+}
+
 /// Device-local or non-local usage over TUXBOX_SPAN_EVICT_PCT (default 90)
 /// percent of its budget.
 pub(super) fn over_budget(device: &ID3D12Device) -> bool {
@@ -627,7 +644,7 @@ fn evict_idle(device: &ID3D12Device, after: f64, keep: &HashSet<(u64, usize)>, n
 /// the evicted ones resident again, and, at most once a second under memory
 /// pressure, evicts the spans gone unused for evict_after() seconds.
 pub(super) fn touch<'a>(device: &ID3D12Device, placed: impl Iterator<Item = &'a Placed>) -> windows::core::Result<()> {
-    let after = evict_after();
+    let after = evict_after_at(device);
     if !enabled() || after <= 0.0 {
         return Ok(());
     }
