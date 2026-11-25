@@ -63,6 +63,9 @@ pub(crate) fn current(p: &Pipeline) -> (&ID3D12PipelineState, &PipelineData, boo
     let Some(slot) = p.state.upgrade.get() else {
         return (&p.native, &p.state, false);
     };
+    if p.state.lazy {
+        super::stream::background::release::bound(slot);
+    }
     let built = if p.state.lazy { super::stream::background::ready(slot) } else { slot.get() };
     match built {
         Some(built) => {

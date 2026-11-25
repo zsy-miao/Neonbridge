@@ -22,6 +22,7 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::{IUnknown, Interface, PCSTR};
 
 pub(in crate::device) mod journal;
+pub(crate) mod release;
 
 /// The pipeline a worker made for one created without its translation: an
 /// ordinary pipeline proxy of the same device, owned by the slot.
@@ -37,7 +38,9 @@ impl Built {
 /// Written once by a worker, then only read by command lists.
 #[derive(Default)]
 pub(crate) struct Upgrade {
-    built: OnceLock<Built>,
+    built: release::Slot,
+    /// What an idle release keeps to make it again (TUXBOX_PSO_RELEASE_IDLE).
+    kept: release::Kept,
     /// A lazy pipeline's description until its first bind hands it to the workers.
     deferred: Mutex<Option<(IUnknown, Work)>>,
     /// A worker found no translation for it: it stays a null pipeline.
@@ -163,6 +166,9 @@ impl Drop for Held {
 
 pub(crate) fn ready(slot: &Arc<Upgrade>) -> Option<&Built> {
     if let Some(built) = slot.built.get() {
+        return Some(built);
+    }
+    if let Some(built) = release::remake(slot) {
         return Some(built);
     }
     let _held = Held::new();
@@ -1367,6 +1373,7 @@ fn build(mut job: Job) {
         let counter = match made {
             Some(proxy) if !nulled => {
                 let _ = job.slot.built.set(Built(proxy));
+                release::keep(&job.slot, job.device.clone(), job.work);
                 &MADE
             }
             _ if let Some(prefetch) = HANDING.with(|h| h.get())
