@@ -552,6 +552,14 @@ pub(super) extern "system" fn save_close_provider(_: &Object, _provider: *const 
 const BUFFER_TOO_SMALL: i32 = 0x8083_0007u32 as i32;
 const BLOB_NOT_FOUND: i32 = 0x8083_0008u32 as i32;
 const SAVE_QUOTA: i64 = 256 << 20;
+/// One update writes at most 16 MiB (a blob, or all its blobs together), else
+/// E_GS_UPDATE_TOO_BIG, as VIctory-fxceless xgamesave.rs MAX_UPDATE (GPL-3.0,
+/// credit). TUXBOX_SAVE_UPDATE_LIMIT=0 lifts it.
+const UPDATE_TOO_BIG: i32 = 0x8083_0005u32 as i32;
+const MAX_UPDATE: usize = 16 << 20;
+fn update_limit() -> bool {
+    std::env::var_os("TUXBOX_SAVE_UPDATE_LIMIT").is_none_or(|v| v != "0")
+}
 const OUT_OF_LOCAL_STORAGE: i32 = 0x8083_0003u32 as i32;
 const QUOTA_EXCEEDED: i32 = 0x8083_0006u32 as i32;
 
@@ -925,6 +933,7 @@ pub(super) unsafe extern "system" fn save_blob_write(_: &Object, update: usize, 
     // The staging suffix is reserved: a blob named like one would be hidden.
     if atomic_saves() && is_staging(&encode(&name)) { return INVALID; }
     if data.is_null() && bytes != 0 { return POINTER; }
+    if bytes > MAX_UPDATE && update_limit() { return UPDATE_TOO_BIG; }
     let copy = if bytes == 0 { Vec::new() } else { unsafe { core::slice::from_raw_parts(data, bytes) }.to_vec() };
     match UPDATES.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&update) {
         Some(pending) => { pending.writes.push((name, copy)); OK }
@@ -957,6 +966,9 @@ fn tree_bytes(path: &std::path::Path) -> u64 {
 /// written before the one it replaces is renamed away. TUXBOX_SAVE_SPACE_CHECK=0
 /// skips both (VIctory f0ee35e, re-derived).
 fn space_check(pending: &Update, blobs: &std::path::Path) -> Option<i32> {
+    if pending.writes.iter().map(|(_, data)| data.len()).sum::<usize>() > MAX_UPDATE && update_limit() {
+        return Some(UPDATE_TOO_BIG);
+    }
     if std::env::var("TUXBOX_SAVE_SPACE_CHECK").is_ok_and(|v| v.trim() == "0") {
         return None;
     }
