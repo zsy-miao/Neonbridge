@@ -626,7 +626,8 @@ unsafe extern "system" fn create_allocator(
 }
 
 /// leonida-ce 1403e90e: a refused descriptor heap is logged with its
-/// description, the host increment and the step that refused it.
+/// description, the host increment and the HRESULT (the step that refused
+/// it is not known here).
 /// TUXBOX_HEAP_FAIL_LOG=0 off.
 unsafe extern "system" fn create_heap(
     this: &Device,

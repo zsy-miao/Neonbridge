@@ -232,6 +232,9 @@ fn commit_guard() {
                 "commit guard: the system can commit only {} MiB more (limit {} MiB; this process holds {} MiB private): ending the process before allocations fail everywhere (TUXBOX_MIN_COMMIT_MB={}; 0 off)",
                 mib(status.ullAvailPageFile), mib(status.ullTotalPageFile), mib(private_bytes()), floor >> 20));
             crate::diagnostics::log_line(format_args!("{}", line((0, 0), (0, 0), private_bytes(), status.ullAvailPageFile, status.ullTotalPageFile, &[(0, 0, 0, 0); N])));
+            // Its lines reach the log before the process ends (733f135 left
+            // them to the 100 ms wait alone).
+            let _ = std::io::Write::flush(&mut std::io::stderr());
             std::thread::sleep(std::time::Duration::from_millis(100));
             const STATUS_COMMITMENT_LIMIT: u32 = 0xC000_012D;
             let _ = unsafe { windows::Win32::System::Threading::TerminateProcess(windows::Win32::System::Threading::GetCurrentProcess(), STATUS_COMMITMENT_LIMIT) };
