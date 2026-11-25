@@ -163,14 +163,42 @@ unsafe extern "system" fn on_completion(this: &Fence, value: u64, event: HANDLE)
 /// Report fence event registrations that stay incomplete 10 s, so a title
 /// thread blocked on one can be traced to the fence and value it needs. On in
 /// survey mode and by default (TUXBOX_FENCE_STALLS=0 off outside survey).
-mod stalls {
+pub(crate) mod stalls {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     use windows::Win32::Graphics::Direct3D12::ID3D12Fence;
     use windows::core::Interface;
 
-    struct Pending { fence: ID3D12Fence, value: u64, since: Instant, rva: usize, reported: bool }
+    struct Pending { fence: ID3D12Fence, value: u64, since: Instant, rva: usize, reported: bool, early: bool }
     static PENDING: Mutex<Vec<Pending>> = Mutex::new(Vec::new());
+
+    /// Last value signalled per host fence and by which queue (0: the CPU).
+    static SIGNALS: Mutex<Option<std::collections::HashMap<usize, (u64, usize)>>> = Mutex::new(None);
+
+    pub(crate) fn signalled(fence: &ID3D12Fence, value: u64, queue: usize) {
+        let mut signals = SIGNALS.lock().unwrap_or_else(|e| e.into_inner());
+        let map = signals.get_or_insert_with(Default::default);
+        if map.len() >= 65536 { map.clear(); }
+        map.insert(fence.as_raw() as usize, (value, queue));
+    }
+
+    fn last_signal(fence: &ID3D12Fence) -> String {
+        let signals = SIGNALS.lock().unwrap_or_else(|e| e.into_inner());
+        match signals.as_ref().and_then(|m| m.get(&(fence.as_raw() as usize))) {
+            Some((value, 0)) => format!("last signalled {value} by the CPU"),
+            Some((value, queue)) => format!("last signalled {value} by queue {queue:#x}"),
+            None => "never signalled through us".into(),
+        }
+    }
+
+    /// A wait held this long is logged (black screen: presents stop at world
+    /// load; this shows whether a fence signal never comes). TUXBOX_FENCE_WAIT_LOG_MS
+    /// sets it; 0 leaves only the 10 s survey line.
+    fn threshold() -> Option<Duration> {
+        static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let ms = *MS.get_or_init(|| crate::env_toggle!("TUXBOX_FENCE_WAIT_LOG_MS").and_then(|v| v.trim().parse().ok()).unwrap_or(2000));
+        (ms != 0).then(|| Duration::from_millis(ms))
+    }
 
     pub(super) fn register(fence: &ID3D12Fence, value: u64) {
         if !crate::survey::enabled() && crate::env_toggle!("TUXBOX_FENCE_STALLS") == Some("0") { return; }
@@ -179,7 +207,7 @@ mod stalls {
         let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
         if pending.len() < 4096 {
             let rva = crate::survey::title_rva().unwrap_or(0);
-            pending.push(Pending { fence: fence.clone(), value, since: Instant::now(), rva, reported: false });
+            pending.push(Pending { fence: fence.clone(), value, since: Instant::now(), rva, reported: false, early: false });
         }
     }
 
@@ -192,9 +220,22 @@ mod stalls {
 
     fn scan() {
         loop {
-            std::thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(if threshold().is_some() { Duration::from_millis(500) } else { Duration::from_secs(5) });
             let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
             pending.retain(|p| unsafe { p.fence.GetCompletedValue() } < p.value);
+            if let Some(limit) = threshold() {
+                static LOGGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                for p in pending.iter_mut().filter(|p| !p.early && p.since.elapsed() > limit) {
+                    p.early = true;
+                    let n = LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if n <= 32 || n.is_power_of_two() {
+                        let completed = unsafe { p.fence.GetCompletedValue() };
+                        crate::diagnostics::log_line(format_args!(
+                            "fence wait: fence {:p} waited for value {} {:.1} s, completed {completed}, {}, registered from title RVA {:#x} ({n} so far; TUXBOX_FENCE_WAIT_LOG_MS=0 off)",
+                            p.fence.as_raw(), p.value, p.since.elapsed().as_secs_f64(), last_signal(&p.fence), p.rva));
+                    }
+                }
+            }
             for p in pending.iter_mut().filter(|p| !p.reported && p.since.elapsed() > Duration::from_secs(10)) {
                 p.reported = true;
                 let completed = unsafe { p.fence.GetCompletedValue() };
@@ -208,6 +249,7 @@ mod stalls {
 
 unsafe extern "system" fn signal(this: &Fence, value: u64) -> HRESULT {
     let host = &this.native;
+    stalls::signalled(host, value, 0);
     let hr = unsafe { (host.vtable().Signal)(host.as_raw(), value) };
     if hr.is_ok()
         && let Some(word) = this.state.get()

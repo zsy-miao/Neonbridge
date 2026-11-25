@@ -3064,6 +3064,7 @@ unsafe extern "system" fn queue_fence<const WAIT: bool>(
         unsignalled::waited(fence, value);
     } else {
         unsignalled::signalled(fence, value);
+        crate::device::fence::stalls::signalled(fence, value, queue.native.as_raw() as usize);
     }
     let status = unsafe { method(queue.native.as_raw(), fence.as_raw(), value) };
     if !WAIT && status.is_ok() {

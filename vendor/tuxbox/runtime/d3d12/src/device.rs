@@ -36,7 +36,7 @@ mod dxgi;
 mod features;
 pub(crate) mod format;
 pub(crate) mod frame_events;
-mod fence;
+pub(crate) mod fence;
 pub(crate) use fence::hang_lines as fence_hang_lines;
 mod graphics;
 mod heap;
